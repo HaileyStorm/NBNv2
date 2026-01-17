@@ -9,10 +9,12 @@ namespace Nbn.Runtime.RegionHost;
 public sealed class RegionShardCpuBackend
 {
     private readonly RegionShardState _state;
+    private readonly RegionShardCostConfig _costConfig;
 
-    public RegionShardCpuBackend(RegionShardState state)
+    public RegionShardCpuBackend(RegionShardState state, RegionShardCostConfig? costConfig = null)
     {
         _state = state ?? throw new ArgumentNullException(nameof(state));
+        _costConfig = costConfig ?? RegionShardCostConfig.Default;
     }
 
     public RegionShardComputeResult Compute(ulong tickId, Guid brainId, ShardId32 shardId, RegionShardRoutingTable routing)
@@ -23,12 +25,22 @@ public sealed class RegionShardCpuBackend
         List<OutputEvent>? outputs = _state.IsOutputRegion ? new List<OutputEvent>() : null;
         var brainProto = brainId.ToProtoUuid();
 
+        var regionDistanceCache = new int?[NbnConstants.RegionCount];
+        var sourceRegionZ = RegionZ(_state.RegionId);
+
+        long costAccum = 0;
+        long costActivation = 0;
+        long costReset = 0;
+        long costDistance = 0;
+        const long costRemote = 0;
+
         uint firedCount = 0;
         uint outContribs = 0;
 
         for (var i = 0; i < _state.NeuronCount; i++)
         {
             MergeInbox(i);
+            costAccum++;
 
             if (!_state.Exists[i])
             {
@@ -46,8 +58,10 @@ public sealed class RegionShardCpuBackend
                 continue;
             }
 
+            costActivation++;
             var potential = Activate((ActivationFunction)_state.ActivationFunctions[i], buffer, _state.ParamA[i], _state.ParamB[i]);
             _state.Buffer[i] = Reset((ResetFunction)_state.ResetFunctions[i], buffer, potential, _state.ActivationThreshold[i], _state.AxonCounts[i]);
+            costReset++;
 
             if (MathF.Abs(potential) <= _state.ActivationThreshold[i])
             {
@@ -74,6 +88,7 @@ public sealed class RegionShardCpuBackend
             }
 
             var axonStart = _state.AxonStartOffsets[i];
+            var sourceNeuronId = _state.NeuronStart + i;
             for (var a = 0; a < axonCount; a++)
             {
                 var index = axonStart + a;
@@ -98,11 +113,17 @@ public sealed class RegionShardCpuBackend
                     Value = value
                 });
                 outContribs++;
+
+                var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
+                costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
             }
         }
 
-        IReadOnlyList<OutputEvent> outputList = outputs ?? new List<OutputEvent>();
-        return new RegionShardComputeResult(outbox, outputList, firedCount, outContribs);
+        var tickCostTotal = costAccum + costActivation + costReset + costDistance + costRemote;
+        var costSummary = new RegionShardCostSummary(tickCostTotal, costAccum, costActivation, costReset, costDistance, costRemote);
+
+        IReadOnlyList<OutputEvent> outputList = outputs ?? (IReadOnlyList<OutputEvent>)Array.Empty<OutputEvent>();
+        return new RegionShardComputeResult(outbox, outputList, firedCount, outContribs, costSummary);
     }
 
     private void MergeInbox(int index)
@@ -258,10 +279,95 @@ public sealed class RegionShardCpuBackend
     {
         return value == 0f ? 0f : 1f / value;
     }
+
+    private long ComputeDistanceUnits(int sourceNeuronId, byte destRegionId, int destNeuronId, int sourceRegionZ, int?[] regionDistanceCache)
+    {
+        var destRegion = (int)destRegionId;
+        var regionDist = regionDistanceCache[destRegion] ??= ComputeRegionDistance(sourceRegionZ, destRegion);
+        var span = destRegion >= 0 && destRegion < _state.RegionSpans.Length ? _state.RegionSpans[destRegion] : 0;
+
+        var d = Math.Abs(sourceNeuronId - destNeuronId);
+        var wrap = span > 0 && d < span ? Math.Min(d, span - d) : d;
+        var neuronUnits = _costConfig.NeuronDistShift > 0 ? wrap >> _costConfig.NeuronDistShift : wrap;
+
+        return (_costConfig.RegionWeight * regionDist) + neuronUnits;
+    }
+
+    private int ComputeRegionDistance(int sourceRegionZ, int destRegionId)
+    {
+        if (destRegionId == _state.RegionId)
+        {
+            return 0;
+        }
+
+        var destZ = RegionZ(destRegionId);
+        if (destZ == sourceRegionZ)
+        {
+            return _costConfig.RegionIntrasliceUnit;
+        }
+
+        return _costConfig.RegionAxialUnit * Math.Abs(destZ - sourceRegionZ);
+    }
+
+    private static int RegionZ(int regionId)
+    {
+        if (regionId == 0)
+        {
+            return -3;
+        }
+
+        if (regionId <= 3)
+        {
+            return -2;
+        }
+
+        if (regionId <= 8)
+        {
+            return -1;
+        }
+
+        if (regionId <= 22)
+        {
+            return 0;
+        }
+
+        if (regionId <= 27)
+        {
+            return 1;
+        }
+
+        if (regionId <= 30)
+        {
+            return 2;
+        }
+
+        return 3;
+    }
 }
+
+public sealed class RegionShardCostConfig
+{
+    public static RegionShardCostConfig Default { get; } = new();
+
+    public long AxonBaseCost { get; init; } = 1;
+    public long AxonUnitCost { get; init; } = 1;
+    public int RegionWeight { get; init; } = 1;
+    public int RegionIntrasliceUnit { get; init; } = 3;
+    public int RegionAxialUnit { get; init; } = 5;
+    public int NeuronDistShift { get; init; } = 10;
+}
+
+public readonly record struct RegionShardCostSummary(
+    long Total,
+    long Accum,
+    long Activation,
+    long Reset,
+    long Distance,
+    long Remote);
 
 public sealed record RegionShardComputeResult(
     Dictionary<ShardId32, List<Contribution>> Outbox,
     IReadOnlyList<OutputEvent> OutputEvents,
     uint FiredCount,
-    uint OutContribs);
+    uint OutContribs,
+    RegionShardCostSummary Cost);

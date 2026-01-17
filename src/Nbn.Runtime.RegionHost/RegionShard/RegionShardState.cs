@@ -9,6 +9,7 @@ public sealed class RegionShardState
         int regionId,
         int neuronStart,
         int neuronCount,
+        int[] regionSpans,
         float[] buffer,
         bool[] enabled,
         bool[] exists,
@@ -26,6 +27,7 @@ public sealed class RegionShardState
         RegionId = regionId;
         NeuronStart = neuronStart;
         NeuronCount = neuronCount;
+        RegionSpans = regionSpans ?? throw new ArgumentNullException(nameof(regionSpans));
         Buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
         Enabled = enabled ?? throw new ArgumentNullException(nameof(enabled));
         Exists = exists ?? throw new ArgumentNullException(nameof(exists));
@@ -39,6 +41,11 @@ public sealed class RegionShardState
         AxonCounts = axonCounts ?? throw new ArgumentNullException(nameof(axonCounts));
         AxonStartOffsets = axonStartOffsets ?? throw new ArgumentNullException(nameof(axonStartOffsets));
         Axons = axons ?? throw new ArgumentNullException(nameof(axons));
+
+        if (RegionSpans.Length != NbnConstants.RegionCount)
+        {
+            throw new ArgumentException("Region spans must include 32 entries.", nameof(regionSpans));
+        }
 
         if (Buffer.Length != neuronCount
             || Enabled.Length != neuronCount
@@ -63,6 +70,7 @@ public sealed class RegionShardState
     public int RegionId { get; }
     public int NeuronStart { get; }
     public int NeuronCount { get; }
+    public int[] RegionSpans { get; }
 
     public float[] Buffer { get; }
     public bool[] Enabled { get; }

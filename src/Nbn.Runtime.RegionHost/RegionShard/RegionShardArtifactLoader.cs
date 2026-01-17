@@ -134,6 +134,12 @@ public static class RegionShardArtifactLoader
         var axonTargetNeurons = new int[totalAxons];
         var axonStrengths = new float[totalAxons];
 
+        var regionSpans = new int[header.Regions.Length];
+        for (var i = 0; i < header.Regions.Length; i++)
+        {
+            regionSpans[i] = (int)header.Regions[i].NeuronSpan;
+        }
+
         var overlayMap = BuildOverlayMap(overlays, regionId, neuronStart, neuronCount);
 
         var nbsBufferCodes = nbsRegion?.BufferCodes;
@@ -209,7 +215,7 @@ public static class RegionShardArtifactLoader
         }
 
         var axons = new RegionShardAxons(axonTargetRegions, axonTargetNeurons, axonStrengths);
-        return new RegionShardState(regionId, neuronStart, neuronCount, buffer, enabled, exists, accum, activation, reset,
+        return new RegionShardState(regionId, neuronStart, neuronCount, regionSpans, buffer, enabled, exists, accum, activation, reset,
             paramA, paramB, preThreshold, activationThreshold, axonCounts, axonStartOffsets, axons);
     }
 
