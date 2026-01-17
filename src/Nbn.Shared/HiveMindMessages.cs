@@ -10,8 +10,8 @@ public sealed record RegisterBrain(Guid BrainId, PID? BrainRootPid = null, PID? 
 public sealed record UpdateBrainSignalRouter(Guid BrainId, PID SignalRouterPid);
 public sealed record UnregisterBrain(Guid BrainId);
 
-public sealed record RegisterShard(Guid BrainId, int RegionId, ShardId32 ShardId, PID ShardPid);
-public sealed record UnregisterShard(Guid BrainId, ShardId32 ShardId);
+public sealed record RegisterShard(Guid BrainId, int RegionId, int ShardIndex, PID ShardPid);
+public sealed record UnregisterShard(Guid BrainId, int RegionId, int ShardIndex);
 
 public sealed record PauseBrainRequest(Guid BrainId, string? Reason);
 public sealed record ResumeBrainRequest(Guid BrainId);

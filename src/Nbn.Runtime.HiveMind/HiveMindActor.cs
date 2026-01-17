@@ -176,12 +176,13 @@ public sealed class HiveMindActor : IActor
             _brains.Add(message.BrainId, brain);
         }
 
-        if (message.ShardId.RegionId != message.RegionId)
+        if (!ShardId32.TryFrom(message.RegionId, message.ShardIndex, out var shardId))
         {
-            Log($"RegisterShard mismatch: brain {message.BrainId} region {message.RegionId} shard {message.ShardId}.");
+            Log($"RegisterShard invalid shard index: brain {message.BrainId} region {message.RegionId} shardIndex {message.ShardIndex}.");
+            return;
         }
 
-        brain.Shards[message.ShardId] = message.ShardPid;
+        brain.Shards[shardId] = message.ShardPid;
         UpdateRoutingTable(context, brain);
 
         if (_phase == TickPhase.Compute && _tick is not null)
@@ -194,7 +195,13 @@ public sealed class HiveMindActor : IActor
     {
         if (_brains.TryGetValue(message.BrainId, out var brain))
         {
-            brain.Shards.Remove(message.ShardId);
+            if (!ShardId32.TryFrom(message.RegionId, message.ShardIndex, out var shardId))
+            {
+                Log($"UnregisterShard invalid shard index: brain {message.BrainId} region {message.RegionId} shardIndex {message.ShardIndex}.");
+                return;
+            }
+
+            brain.Shards.Remove(shardId);
             UpdateRoutingTable(context, brain);
         }
 
@@ -203,7 +210,8 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (_pendingCompute.Remove(new ShardKey(message.BrainId, message.ShardId)))
+        if (ShardId32.TryFrom(message.RegionId, message.ShardIndex, out var pendingShardId)
+            && _pendingCompute.Remove(new ShardKey(message.BrainId, pendingShardId)))
         {
             _tick.ExpectedComputeCount = Math.Max(_tick.CompletedComputeCount, _tick.ExpectedComputeCount - 1);
             MaybeCompleteCompute(context);

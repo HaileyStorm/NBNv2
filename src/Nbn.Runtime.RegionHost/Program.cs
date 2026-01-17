@@ -51,7 +51,7 @@ var config = new RegionShardActorConfig(options.BrainId, shardId, routerPid, out
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 
-system.Root.Send(tickPid, new RegisterShard(options.BrainId, options.RegionId, shardId, shardPid));
+system.Root.Send(tickPid, new RegisterShard(options.BrainId, options.RegionId, options.ShardIndex, shardPid));
 
 Console.WriteLine("NBN RegionHost online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
@@ -73,7 +73,7 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
 
-system.Root.Send(tickPid, new UnregisterShard(options.BrainId, shardId));
+system.Root.Send(tickPid, new UnregisterShard(options.BrainId, options.RegionId, options.ShardIndex));
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();
