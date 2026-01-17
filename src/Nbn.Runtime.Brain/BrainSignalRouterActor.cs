@@ -90,6 +90,8 @@ public sealed class BrainSignalRouterActor : IActor
 
     private void HandleTickDeliver(IContext context, TickDeliver tickDeliver)
     {
+        ExpirePendingDeliveries(tickDeliver.TickId);
+
         if (_pendingDeliveries.ContainsKey(tickDeliver.TickId))
         {
             return;
@@ -162,6 +164,7 @@ public sealed class BrainSignalRouterActor : IActor
 
         if (!_pendingDeliveries.TryGetValue(ack.TickId, out var pending))
         {
+            BrainTelemetry.RecordLateAck();
             return;
         }
 
@@ -188,6 +191,36 @@ public sealed class BrainSignalRouterActor : IActor
         {
             context.Send(replyTo, deliverDone);
         }
+    }
+
+    private void ExpirePendingDeliveries(ulong currentTickId)
+    {
+        if (_pendingDeliveries.Count == 0)
+        {
+            return;
+        }
+
+        List<ulong>? expired = null;
+        foreach (var entry in _pendingDeliveries)
+        {
+            if (entry.Key < currentTickId)
+            {
+                expired ??= new List<ulong>();
+                expired.Add(entry.Key);
+            }
+        }
+
+        if (expired is null)
+        {
+            return;
+        }
+
+        foreach (var tickId in expired)
+        {
+            _pendingDeliveries.Remove(tickId);
+        }
+
+        BrainTelemetry.RecordDeliveryTimeout(expired.Count);
     }
 
     private static void ForwardToParent(IContext context, object message)
