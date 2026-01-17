@@ -24,6 +24,16 @@ enum VizEventType {
   VIZ_AXON_SENT = 40;
 }
 
+message VizSubscribe {
+  string subscriber_actor = 1; // actor name/path
+}
+
+message VizUnsubscribe {
+  string subscriber_actor = 1;
+}
+
+message VizFlushAll { }
+
 message VisualizationEvent {
   string event_id = 1;     // uuid string or monotonic id
   fixed64 time_ms = 2;

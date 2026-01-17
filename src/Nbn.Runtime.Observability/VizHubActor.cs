@@ -14,11 +14,14 @@ public sealed class VizHubActor : IActor
         {
             case Started:
                 return Task.CompletedTask;
-            case VizSubscribe subscribe:
-                HandleSubscribe(context, subscribe.Subscriber);
+            case Nbn.Proto.Viz.VizSubscribe subscribe:
+                HandleSubscribe(context, subscribe.SubscriberActor);
                 return Task.CompletedTask;
-            case VizUnsubscribe unsubscribe:
-                HandleUnsubscribe(context, unsubscribe.Subscriber);
+            case Nbn.Proto.Viz.VizUnsubscribe unsubscribe:
+                HandleUnsubscribe(context, unsubscribe.SubscriberActor);
+                return Task.CompletedTask;
+            case Nbn.Proto.Viz.VizFlushAll:
+                FlushAll(context);
                 return Task.CompletedTask;
             case PID pid:
                 HandleSubscribe(context, pid);
@@ -32,6 +35,16 @@ public sealed class VizHubActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private void HandleSubscribe(IContext context, string? subscriberActor)
+    {
+        if (!TryParsePid(subscriberActor, out var pid))
+        {
+            return;
+        }
+
+        HandleSubscribe(context, pid);
     }
 
     private void HandleSubscribe(IContext context, PID pid)
@@ -48,6 +61,16 @@ public sealed class VizHubActor : IActor
         }
     }
 
+    private void HandleUnsubscribe(IContext context, string? subscriberActor)
+    {
+        if (!TryParsePid(subscriberActor, out var pid))
+        {
+            return;
+        }
+
+        HandleUnsubscribe(context, pid);
+    }
+
     private void HandleUnsubscribe(IContext context, PID pid)
     {
         var key = PidKey(pid);
@@ -56,6 +79,21 @@ public sealed class VizHubActor : IActor
             context.Unwatch(pid);
             ObservabilityTelemetry.Metrics.VizSubscribers.Add(-1);
         }
+    }
+
+    private void FlushAll(IContext context)
+    {
+        foreach (var pid in _subscribers.Values)
+        {
+            context.Unwatch(pid);
+        }
+
+        if (_subscribers.Count > 0)
+        {
+            ObservabilityTelemetry.Metrics.VizSubscribers.Add(-_subscribers.Count);
+        }
+
+        _subscribers.Clear();
     }
 
     private void HandleEvent(IContext context, VisualizationEvent vizEvent)
@@ -101,4 +139,33 @@ public sealed class VizHubActor : IActor
 
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
+    }
 }
