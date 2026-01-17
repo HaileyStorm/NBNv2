@@ -109,6 +109,9 @@ public sealed class HiveMindActor : IActor
             case GetHiveMindStatus:
                 context.Respond(BuildStatus());
                 break;
+            case GetBrainRouting message:
+                context.Respond(BuildRoutingInfo(message.BrainId));
+                break;
         }
 
         return Task.CompletedTask;
@@ -125,9 +128,22 @@ public sealed class HiveMindActor : IActor
         var brainRootPid = NormalizePid(context, message.BrainRootPid);
         var routerPid = NormalizePid(context, message.SignalRouterPid);
 
-        if (routerPid is null && brainRootPid is not null && message.SignalRouterPid is not null)
+        if (routerPid is not null && string.IsNullOrWhiteSpace(routerPid.Address))
         {
-            routerPid = new PID(brainRootPid.Address, message.SignalRouterPid.Id);
+            var fallbackAddress = brainRootPid?.Address;
+            if (!string.IsNullOrWhiteSpace(fallbackAddress))
+            {
+                routerPid = new PID(fallbackAddress, routerPid.Id);
+            }
+        }
+
+        if (brainRootPid is not null && string.IsNullOrWhiteSpace(brainRootPid.Address))
+        {
+            var fallbackAddress = routerPid?.Address;
+            if (!string.IsNullOrWhiteSpace(fallbackAddress))
+            {
+                brainRootPid = new PID(fallbackAddress, brainRootPid.Id);
+            }
         }
 
         if (brainRootPid is not null)
@@ -282,12 +298,13 @@ public sealed class HiveMindActor : IActor
 
             if (brain.RoutingSnapshot.Count == 0)
             {
-                continue;
+                LogError($"Routing snapshot missing for brain {brain.BrainId} with {brain.Shards.Count} shard(s).");
             }
 
             var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
             if (computeTarget is null)
             {
+                LogError($"TickCompute skipped: missing BrainRoot/SignalRouter PID for brain {brain.BrainId}.");
                 continue;
             }
 
@@ -419,12 +436,17 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            if (brain.SignalRouterPid is null || brain.RoutingSnapshot.Count == 0)
+            if (brain.RoutingSnapshot.Count == 0)
             {
-                continue;
+                LogError($"Routing snapshot missing for brain {brain.BrainId} with {brain.Shards.Count} shard(s).");
             }
 
-            var deliverTarget = brain.SignalRouterPid;
+            var deliverTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
+            if (deliverTarget is null)
+            {
+                LogError($"TickDeliver skipped: missing BrainRoot/SignalRouter PID for brain {brain.BrainId}.");
+                continue;
+            }
             _pendingDeliver.Add(brain.BrainId);
             context.Send(deliverTarget, new TickDeliver { TickId = _tick.TickId });
         }
@@ -659,6 +681,30 @@ public sealed class HiveMindActor : IActor
     private static void Log(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [HiveMind] {message}");
 
+    private static void LogError(string message)
+        => Console.WriteLine($"[{DateTime.UtcNow:O}] [HiveMind][ERROR] {message}");
+
+    private static void SendRoutingTable(IContext context, PID pid, RoutingTableSnapshot snapshot, string label)
+    {
+        if (!string.IsNullOrWhiteSpace(pid.Address) && string.IsNullOrWhiteSpace(context.System.Address))
+        {
+            LogError($"Routing table not sent to {label} {PidLabel(pid)} because remoting is not configured.");
+            return;
+        }
+
+        try
+        {
+            context.Send(pid, new SetRoutingTable(snapshot));
+        }
+        catch (Exception ex)
+        {
+            LogError($"Failed to send routing table to {label} {PidLabel(pid)}: {ex.Message}");
+        }
+    }
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
     private static PID? NormalizePid(IContext context, PID? pid)
     {
         if (pid is null)
@@ -691,6 +737,21 @@ public sealed class HiveMindActor : IActor
             _brains.Count,
             _brains.Values.Sum(brain => brain.Shards.Count));
 
+    private BrainRoutingInfo BuildRoutingInfo(Guid brainId)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return new BrainRoutingInfo(brainId, null, null, 0, 0);
+        }
+
+        return new BrainRoutingInfo(
+            brain.BrainId,
+            brain.BrainRootPid,
+            brain.SignalRouterPid,
+            brain.Shards.Count,
+            brain.RoutingSnapshot.Count);
+    }
+
     private void UpdateRoutingTable(IContext? context, BrainState brain)
     {
         var snapshot = RoutingTableSnapshot.Empty;
@@ -714,12 +775,12 @@ public sealed class HiveMindActor : IActor
 
         if (brain.SignalRouterPid is not null)
         {
-            context.Send(brain.SignalRouterPid, new SetRoutingTable(brain.RoutingSnapshot));
+            SendRoutingTable(context, brain.SignalRouterPid, brain.RoutingSnapshot, "SignalRouter");
         }
 
         if (brain.BrainRootPid is not null && brain.BrainRootPid != brain.SignalRouterPid)
         {
-            context.Send(brain.BrainRootPid, new SetRoutingTable(brain.RoutingSnapshot));
+            SendRoutingTable(context, brain.BrainRootPid, brain.RoutingSnapshot, "BrainRoot");
         }
     }
 

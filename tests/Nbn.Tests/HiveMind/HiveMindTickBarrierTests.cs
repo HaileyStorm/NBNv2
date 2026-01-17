@@ -33,8 +33,56 @@ public class HiveMindTickBarrierTests
 
         var shardA = ShardId32.From(1, 0);
         var shardB = ShardId32.From(1, 1);
-        var shardPidA = root.Spawn(Props.FromProducer(() => new TestShardActor(brainId, shardA, router, sink, shardB)));
-        var shardPidB = root.Spawn(Props.FromProducer(() => new TestShardActor(brainId, shardB, router, sink, shardA)));
+        var shardPidA = root.Spawn(Props.FromProducer(() => new TestShardActor(brainId, shardA, router, sink, shardB, hiveMind)));
+        var shardPidB = root.Spawn(Props.FromProducer(() => new TestShardActor(brainId, shardB, router, sink, shardA, hiveMind)));
+
+        root.Send(hiveMind, new RegisterShard(brainId, shardA.RegionId, shardA.ShardIndex, shardPidA));
+        root.Send(hiveMind, new RegisterShard(brainId, shardB.RegionId, shardB.ShardIndex, shardPidB));
+
+        await WaitForRoutingTable(root, router, table => table.Count == 2, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await signalTcs.Task.WaitAsync(timeoutCts.Token);
+        var status = await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId >= 1 && s.PendingCompute == 0 && s.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+
+        Assert.True(status.LastCompletedTickId >= 1);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_Completes_With_External_Router()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions();
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind, autoSpawnSignalRouter: false)));
+        root.Send(brainRoot, new SetSignalRouter(router));
+
+        await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        root.Send(hiveMind, new Nbn.Shared.HiveMind.RegisterBrain(brainId, brainRoot, router));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var signalTcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sink = root.Spawn(Props.FromProducer(() => new SignalSinkActor(signalTcs, expected: 2)));
+
+        var shardA = ShardId32.From(1, 0);
+        var shardB = ShardId32.From(1, 1);
+        var shardPidA = root.Spawn(Props.FromProducer(() => new TestShardActor(brainId, shardA, router, sink, shardB, hiveMind)));
+        var shardPidB = root.Spawn(Props.FromProducer(() => new TestShardActor(brainId, shardB, router, sink, shardA, hiveMind)));
 
         root.Send(hiveMind, new RegisterShard(brainId, shardA.RegionId, shardA.ShardIndex, shardPidA));
         root.Send(hiveMind, new RegisterShard(brainId, shardB.RegionId, shardB.ShardIndex, shardPidB));
@@ -95,6 +143,28 @@ public class HiveMindTickBarrierTests
         root.Send(hiveMind, new StopTickLoop());
 
         Assert.True(status.TargetTickHz < options.TargetTickHz);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RegisterBrain_Normalizes_Router_Address_From_BrainRoot()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions();
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRootPid = new PID("127.0.0.1:12001", "BrainRoot");
+        var routerPid = new PID(string.Empty, "Router");
+
+        root.Send(hiveMind, new Nbn.Shared.HiveMind.RegisterBrain(brainId, brainRootPid, routerPid));
+
+        var info = await WaitForRoutingInfo(root, hiveMind, brainId, TimeSpan.FromSeconds(2));
+        Assert.NotNull(info.SignalRouterPid);
+        Assert.Equal(brainRootPid.Address, info.SignalRouterPid!.Address);
 
         await system.ShutdownAsync();
     }
@@ -185,9 +255,11 @@ public class HiveMindTickBarrierTests
         TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
+        HiveMindStatus? lastStatus = null;
         while (sw.Elapsed < timeout)
         {
             var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+            lastStatus = status;
             if (predicate(status))
             {
                 return status;
@@ -196,7 +268,30 @@ public class HiveMindTickBarrierTests
             await Task.Delay(20);
         }
 
-        throw new TimeoutException("HiveMind status did not reach expected state.");
+        throw new TimeoutException($"HiveMind status did not reach expected state. Last: brains={lastStatus?.RegisteredBrains}, shards={lastStatus?.RegisteredShards}, pendingCompute={lastStatus?.PendingCompute}, pendingDeliver={lastStatus?.PendingDeliver}.");
+    }
+
+    private static async Task<BrainRoutingInfo> WaitForRoutingInfo(
+        IRootContext root,
+        PID hiveMind,
+        Guid brainId,
+        TimeSpan timeout)
+    {
+        var sw = Stopwatch.StartNew();
+        BrainRoutingInfo? lastInfo = null;
+        while (sw.Elapsed < timeout)
+        {
+            var info = await root.RequestAsync<BrainRoutingInfo>(hiveMind, new GetBrainRouting(brainId));
+            lastInfo = info;
+            if (info.BrainRootPid is not null || info.SignalRouterPid is not null)
+            {
+                return info;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException($"HiveMind routing info did not become available. Last: root={lastInfo?.BrainRootPid}, router={lastInfo?.SignalRouterPid}.");
     }
 
     private sealed record TestSignalReceived;
@@ -235,8 +330,9 @@ public class HiveMindTickBarrierTests
         private readonly PID _router;
         private readonly PID _signalSink;
         private readonly ShardId32 _destShard;
+        private readonly PID? _tickSink;
 
-        public TestShardActor(Guid brainId, ShardId32 shardId, PID router, PID signalSink, ShardId32 destShard)
+        public TestShardActor(Guid brainId, ShardId32 shardId, PID router, PID signalSink, ShardId32 destShard, PID? tickSink = null)
         {
             _brainId = brainId;
             _shardId = shardId;
@@ -244,6 +340,7 @@ public class HiveMindTickBarrierTests
             _router = router;
             _signalSink = signalSink;
             _destShard = destShard;
+            _tickSink = tickSink;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -291,7 +388,7 @@ public class HiveMindTickBarrierTests
                 OutContribs = 1
             };
 
-            var target = context.Sender ?? _router;
+            var target = _tickSink ?? context.Sender ?? _router;
             if (target is not null)
             {
                 context.Send(target, done);

@@ -17,6 +17,7 @@ public sealed record PauseBrainRequest(Guid BrainId, string? Reason);
 public sealed record ResumeBrainRequest(Guid BrainId);
 
 public sealed record GetHiveMindStatus;
+public sealed record GetBrainRouting(Guid BrainId);
 
 public sealed record HiveMindStatus(
     ulong LastCompletedTickId,
@@ -27,3 +28,10 @@ public sealed record HiveMindStatus(
     bool RescheduleInProgress,
     int RegisteredBrains,
     int RegisteredShards);
+
+public sealed record BrainRoutingInfo(
+    Guid BrainId,
+    PID? BrainRootPid,
+    PID? SignalRouterPid,
+    int ShardCount,
+    int RoutingCount);
