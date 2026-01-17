@@ -509,7 +509,8 @@ public class HiveMindTickBarrierTests
         int computeTimeoutMs = 500,
         int deliverTimeoutMs = 500,
         float backpressureDecay = 0.9f,
-        float backpressureRecovery = 1.1f)
+        float backpressureRecovery = 1.1f,
+        int lateBackpressureThreshold = 2)
         => new(
             BindHost: "127.0.0.1",
             Port: 0,
@@ -521,6 +522,7 @@ public class HiveMindTickBarrierTests
             DeliverTimeoutMs: deliverTimeoutMs,
             BackpressureDecay: backpressureDecay,
             BackpressureRecovery: backpressureRecovery,
+            LateBackpressureThreshold: lateBackpressureThreshold,
             TimeoutRescheduleThreshold: 3,
             TimeoutPauseThreshold: 6,
             RescheduleMinTicks: 10,
