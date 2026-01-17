@@ -17,7 +17,13 @@ public sealed record HiveMindOptions(
     int RescheduleMinMinutes,
     int RescheduleQuietMs,
     int RescheduleSimulatedMs,
-    bool AutoStart)
+    bool AutoStart,
+    bool EnableOpenTelemetry,
+    bool EnableOtelMetrics,
+    bool EnableOtelTraces,
+    bool EnableOtelConsoleExporter,
+    string? OtlpEndpoint,
+    string ServiceName)
 {
     public static HiveMindOptions FromArgs(string[] args)
     {
@@ -44,6 +50,13 @@ public sealed record HiveMindOptions(
         var rescheduleSimulatedMs = GetEnvInt("NBN_HIVE_RESCHEDULE_SIM_MS") ?? 1000;
 
         var autoStart = GetEnvBool("NBN_HIVE_AUTOSTART") ?? true;
+
+        var enableOtel = GetEnvBool("NBN_HIVE_OTEL_ENABLED") ?? false;
+        var enableOtelMetrics = GetEnvBool("NBN_HIVE_OTEL_METRICS_ENABLED");
+        var enableOtelTraces = GetEnvBool("NBN_HIVE_OTEL_TRACES_ENABLED");
+        var enableOtelConsole = GetEnvBool("NBN_HIVE_OTEL_CONSOLE") ?? false;
+        var otlpEndpoint = GetEnv("NBN_HIVE_OTEL_ENDPOINT") ?? GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+        var serviceName = GetEnv("NBN_HIVE_OTEL_SERVICE_NAME") ?? GetEnv("OTEL_SERVICE_NAME") ?? "nbn.hivemind";
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -160,6 +173,35 @@ public sealed record HiveMindOptions(
                 case "--no-auto-start":
                     autoStart = false;
                     continue;
+                case "--enable-otel":
+                case "--otel":
+                    enableOtel = true;
+                    continue;
+                case "--disable-otel":
+                case "--no-otel":
+                    enableOtel = false;
+                    continue;
+                case "--otel-metrics":
+                    enableOtelMetrics = true;
+                    continue;
+                case "--otel-traces":
+                    enableOtelTraces = true;
+                    continue;
+                case "--otel-console":
+                    enableOtelConsole = true;
+                    continue;
+                case "--otel-endpoint":
+                    if (i + 1 < args.Length)
+                    {
+                        otlpEndpoint = args[++i];
+                    }
+                    continue;
+                case "--otel-service-name":
+                    if (i + 1 < args.Length)
+                    {
+                        serviceName = args[++i];
+                    }
+                    continue;
             }
 
             if (arg.StartsWith("--bind=", StringComparison.OrdinalIgnoreCase))
@@ -267,6 +309,18 @@ public sealed record HiveMindOptions(
             if (arg.StartsWith("--reschedule-sim-ms=", StringComparison.OrdinalIgnoreCase) && int.TryParse(arg.Substring("--reschedule-sim-ms=".Length), out var simInline))
             {
                 rescheduleSimulatedMs = simInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--otel-endpoint=", StringComparison.OrdinalIgnoreCase))
+            {
+                otlpEndpoint = arg.Substring("--otel-endpoint=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--otel-service-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                serviceName = arg.Substring("--otel-service-name=".Length);
             }
         }
 
@@ -282,6 +336,14 @@ public sealed record HiveMindOptions(
 
         computeTimeoutMs ??= (int)Math.Ceiling(1000d / minTickHz);
         deliverTimeoutMs ??= (int)Math.Ceiling(1000d / minTickHz);
+
+        if (enableOtelMetrics == true || enableOtelTraces == true)
+        {
+            enableOtel = true;
+        }
+
+        enableOtelMetrics ??= enableOtel;
+        enableOtelTraces ??= enableOtel;
 
         return new HiveMindOptions(
             bindHost,
@@ -300,7 +362,13 @@ public sealed record HiveMindOptions(
             rescheduleMinMinutes,
             rescheduleQuietMs,
             rescheduleSimulatedMs,
-            autoStart);
+            autoStart,
+            enableOtel,
+            enableOtelMetrics.Value,
+            enableOtelTraces.Value,
+            enableOtelConsole,
+            otlpEndpoint,
+            serviceName);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -355,5 +423,11 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --reschedule-quiet-ms <ms>          Quiet period before reschedule (default 250)");
         Console.WriteLine("  --reschedule-sim-ms <ms>            Simulated reschedule duration (default 1000)");
         Console.WriteLine("  --auto-start | --no-auto-start      Auto start tick loop (default on)");
+        Console.WriteLine("  --enable-otel | --disable-otel      Toggle OpenTelemetry (default off)");
+        Console.WriteLine("  --otel-metrics                       Enable OTel metrics");
+        Console.WriteLine("  --otel-traces                        Enable OTel traces");
+        Console.WriteLine("  --otel-console                       Enable OTel console exporter");
+        Console.WriteLine("  --otel-endpoint <uri>                OTLP endpoint (env OTEL_EXPORTER_OTLP_ENDPOINT)");
+        Console.WriteLine("  --otel-service-name <name>           Service name (env OTEL_SERVICE_NAME)");
     }
 }

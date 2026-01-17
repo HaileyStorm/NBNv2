@@ -3,6 +3,7 @@ using Nbn.Proto;
 using Nbn.Runtime.RegionHost;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Nbn.Shared.Validation;
 using Proto;
 using Proto.Remote;
@@ -47,6 +48,8 @@ var config = new RegionShardActorConfig(options.BrainId, shardId, routerPid, out
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 
+system.Root.Send(tickPid, new RegisterShard(options.BrainId, options.RegionId, shardId, shardPid));
+
 Console.WriteLine("NBN RegionHost online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");
@@ -66,6 +69,8 @@ Console.CancelKeyPress += (_, eventArgs) =>
 AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
+
+system.Root.Send(tickPid, new UnregisterShard(options.BrainId, shardId));
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();

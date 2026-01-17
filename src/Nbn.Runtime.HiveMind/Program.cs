@@ -5,6 +5,8 @@ using Proto.Remote.GrpcNet;
 
 var options = HiveMindOptions.FromArgs(args);
 
+using var telemetry = HiveMindTelemetrySession.Start(options);
+
 var system = new ActorSystem();
 var remoteConfig = HiveMindRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);

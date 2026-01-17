@@ -9,6 +9,7 @@ public static class HiveMindTelemetry
 
     private static readonly Meter Meter = new(MeterName);
     public static readonly ActivitySource ActivitySource = new(MeterName);
+    public static string MeterNameValue => Meter.Name;
 
     private static readonly Counter<long> TickCompleted = Meter.CreateCounter<long>("nbn.hivemind.tick.completed");
     private static readonly Histogram<double> TickComputeMs = Meter.CreateHistogram<double>("nbn.hivemind.tick.compute.ms");

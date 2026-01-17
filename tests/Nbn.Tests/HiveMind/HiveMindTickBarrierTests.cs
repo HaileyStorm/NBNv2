@@ -17,24 +17,7 @@ public class HiveMindTickBarrierTests
     public async Task TickBarrier_Completes_When_Shards_And_Router_Ack()
     {
         var system = new ActorSystem();
-        var options = new HiveMindOptions(
-            BindHost: "127.0.0.1",
-            Port: 0,
-            AdvertisedHost: null,
-            AdvertisedPort: null,
-            TargetTickHz: 50f,
-            MinTickHz: 10f,
-            ComputeTimeoutMs: 500,
-            DeliverTimeoutMs: 500,
-            BackpressureDecay: 0.9f,
-            BackpressureRecovery: 1.1f,
-            TimeoutRescheduleThreshold: 3,
-            TimeoutPauseThreshold: 6,
-            RescheduleMinTicks: 10,
-            RescheduleMinMinutes: 1,
-            RescheduleQuietMs: 50,
-            RescheduleSimulatedMs: 50,
-            AutoStart: false);
+        var options = CreateOptions();
 
         var root = system.Root;
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
@@ -71,6 +54,88 @@ public class HiveMindTickBarrierTests
         root.Send(hiveMind, new StopTickLoop());
 
         Assert.True(status.LastCompletedTickId >= 1);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_ComputeTimeout_Triggers_Backpressure()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(
+            targetTickHz: 20f,
+            minTickHz: 5f,
+            computeTimeoutMs: 100,
+            deliverTimeoutMs: 100,
+            backpressureDecay: 0.5f);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new SilentComputeShardActor(brainId, shardId, router)));
+        root.Send(hiveMind, new RegisterShard(brainId, shardId.RegionId, shardId, shardPid));
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+
+        var status = await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId >= 1 && s.TargetTickHz < options.TargetTickHz,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+
+        Assert.True(status.TargetTickHz < options.TargetTickHz);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_DeliverTimeout_Triggers_Backpressure()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(
+            targetTickHz: 20f,
+            minTickHz: 5f,
+            computeTimeoutMs: 200,
+            deliverTimeoutMs: 100,
+            backpressureDecay: 0.5f);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new NoAckShardActor(brainId, shardId, router)));
+        root.Send(hiveMind, new RegisterShard(brainId, shardId.RegionId, shardId, shardPid));
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+
+        var status = await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId >= 1 && s.TargetTickHz < options.TargetTickHz,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+
+        Assert.True(status.TargetTickHz < options.TargetTickHz);
 
         await system.ShutdownAsync();
     }
@@ -252,4 +317,124 @@ public class HiveMindTickBarrierTests
             context.Send(_signalSink, new TestSignalReceived());
         }
     }
+
+    private sealed class SilentComputeShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly uint _regionId;
+        private readonly PID _router;
+
+        public SilentComputeShardActor(Guid brainId, ShardId32 shardId, PID router)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _regionId = (uint)shardId.RegionId;
+            _router = router;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is SignalBatch batch)
+            {
+                var ack = new SignalBatchAck
+                {
+                    BrainId = _brainId.ToProtoUuid(),
+                    RegionId = _regionId,
+                    ShardId = _shardId.ToProtoShardId32(),
+                    TickId = batch.TickId
+                };
+
+                context.Send(context.Sender ?? _router, ack);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoAckShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly uint _regionId;
+        private readonly PID _router;
+
+        public NoAckShardActor(Guid brainId, ShardId32 shardId, PID router)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _regionId = (uint)shardId.RegionId;
+            _router = router;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is TickCompute tick)
+            {
+                var outbox = new OutboxBatch
+                {
+                    BrainId = _brainId.ToProtoUuid(),
+                    TickId = tick.TickId,
+                    DestRegionId = _regionId,
+                    DestShardId = _shardId.ToProtoShardId32()
+                };
+                outbox.Contribs.Add(new Contribution { TargetNeuronId = 0, Value = 1f });
+                context.Send(_router, outbox);
+
+                var done = new TickComputeDone
+                {
+                    TickId = tick.TickId,
+                    BrainId = _brainId.ToProtoUuid(),
+                    RegionId = _regionId,
+                    ShardId = _shardId.ToProtoShardId32(),
+                    ComputeMs = 1,
+                    TickCostTotal = 0,
+                    CostAccum = 0,
+                    CostActivation = 0,
+                    CostReset = 0,
+                    CostDistance = 0,
+                    CostRemote = 0,
+                    FiredCount = 0,
+                    OutBatches = 1,
+                    OutContribs = 1
+                };
+
+                context.Send(context.Sender ?? _router, done);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private static HiveMindOptions CreateOptions(
+        float targetTickHz = 50f,
+        float minTickHz = 10f,
+        int computeTimeoutMs = 500,
+        int deliverTimeoutMs = 500,
+        float backpressureDecay = 0.9f,
+        float backpressureRecovery = 1.1f)
+        => new(
+            BindHost: "127.0.0.1",
+            Port: 0,
+            AdvertisedHost: null,
+            AdvertisedPort: null,
+            TargetTickHz: targetTickHz,
+            MinTickHz: minTickHz,
+            ComputeTimeoutMs: computeTimeoutMs,
+            DeliverTimeoutMs: deliverTimeoutMs,
+            BackpressureDecay: backpressureDecay,
+            BackpressureRecovery: backpressureRecovery,
+            TimeoutRescheduleThreshold: 3,
+            TimeoutPauseThreshold: 6,
+            RescheduleMinTicks: 10,
+            RescheduleMinMinutes: 1,
+            RescheduleQuietMs: 50,
+            RescheduleSimulatedMs: 50,
+            AutoStart: false,
+            EnableOpenTelemetry: false,
+            EnableOtelMetrics: false,
+            EnableOtelTraces: false,
+            EnableOtelConsoleExporter: false,
+            OtlpEndpoint: null,
+            ServiceName: "nbn.hivemind.tests");
 }
