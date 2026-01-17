@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nbn.Shared\Nbn.Shared.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.Brain\Nbn.Runtime.Brain.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,16 +1,21 @@
 using Nbn.Proto.Control;
+using Nbn.Shared.HiveMind;
 using Proto;
 
 namespace Nbn.Runtime.Brain;
 
 public sealed class BrainRootActor : IActor
 {
+    private readonly Guid _brainId;
     private readonly Props? _signalRouterProps;
+    private readonly PID? _hiveMindPid;
     private PID? _signalRouterPid;
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
 
-    public BrainRootActor(Guid brainId, Props? signalRouterProps = null)
+    public BrainRootActor(Guid brainId, PID? hiveMindPid = null, Props? signalRouterProps = null)
     {
+        _brainId = brainId;
+        _hiveMindPid = hiveMindPid;
         _signalRouterProps = signalRouterProps ?? Props.FromProducer(() => new BrainSignalRouterActor(brainId));
     }
 
@@ -20,6 +25,10 @@ public sealed class BrainRootActor : IActor
         {
             case Started:
                 EnsureSignalRouter(context);
+                NotifyHiveMind(context, forceRegister: true);
+                break;
+            case Stopping:
+                UnregisterHiveMind(context);
                 break;
             case SetSignalRouter setSignalRouter:
                 AttachSignalRouter(context, setSignalRouter.SignalRouter);
@@ -40,10 +49,10 @@ public sealed class BrainRootActor : IActor
                 ForwardToSignalRouter(context, tickDeliver);
                 break;
             case TickComputeDone tickComputeDone:
-                ForwardToParent(context, tickComputeDone);
+                ForwardToHiveMind(context, tickComputeDone);
                 break;
             case TickDeliverDone tickDeliverDone:
-                ForwardToParent(context, tickDeliverDone);
+                ForwardToHiveMind(context, tickDeliverDone);
                 break;
             case Terminated terminated:
                 HandleTerminated(terminated);
@@ -67,6 +76,8 @@ public sealed class BrainRootActor : IActor
         {
             context.Send(_signalRouterPid, new SetRoutingTable(_routingSnapshot));
         }
+
+        NotifyHiveMind(context, forceRegister: true);
     }
 
     private void AttachSignalRouter(IContext context, PID? signalRouter)
@@ -88,6 +99,8 @@ public sealed class BrainRootActor : IActor
         {
             context.Send(signalRouter, new SetRoutingTable(_routingSnapshot));
         }
+
+        NotifyHiveMind(context, forceRegister: false);
     }
 
     private void ApplyRoutingTable(IContext context, RoutingTableSnapshot? snapshot)
@@ -102,6 +115,35 @@ public sealed class BrainRootActor : IActor
         context.Send(_signalRouterPid, new SetRoutingTable(_routingSnapshot));
     }
 
+    private void NotifyHiveMind(IContext context, bool forceRegister)
+    {
+        if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        if (forceRegister)
+        {
+            context.Send(_hiveMindPid, new RegisterBrain(_brainId, context.Self, _signalRouterPid));
+            return;
+        }
+
+        if (_signalRouterPid is not null)
+        {
+            context.Send(_hiveMindPid, new UpdateBrainSignalRouter(_brainId, _signalRouterPid));
+        }
+    }
+
+    private void UnregisterHiveMind(IContext context)
+    {
+        if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        context.Send(_hiveMindPid, new UnregisterBrain(_brainId));
+    }
+
     private void ForwardToSignalRouter(IContext context, object message)
     {
         if (_signalRouterPid is null)
@@ -112,14 +154,18 @@ public sealed class BrainRootActor : IActor
         context.Send(_signalRouterPid, message);
     }
 
-    private static void ForwardToParent(IContext context, object message)
+    private void ForwardToHiveMind(IContext context, object message)
     {
-        if (context.Parent is null)
+        if (_hiveMindPid is not null)
         {
+            context.Send(_hiveMindPid, message);
             return;
         }
 
-        context.Send(context.Parent, message);
+        if (context.Parent is not null)
+        {
+            context.Send(context.Parent, message);
+        }
     }
 
     private void HandleTerminated(Terminated terminated)

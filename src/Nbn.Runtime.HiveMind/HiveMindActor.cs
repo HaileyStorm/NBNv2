@@ -1,6 +1,8 @@
 using Nbn.Proto.Control;
+using Nbn.Runtime.Brain;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
+using Nbn.Shared.HiveMind;
 using Proto;
 
 namespace Nbn.Runtime.HiveMind;
@@ -57,10 +59,10 @@ public sealed class HiveMindActor : IActor
                 }
                 break;
             case RegisterBrain message:
-                RegisterBrain(message);
+                RegisterBrain(context, message);
                 break;
             case UpdateBrainSignalRouter message:
-                UpdateBrainSignalRouter(message);
+                UpdateBrainSignalRouter(context, message);
                 break;
             case UnregisterBrain message:
                 UnregisterBrain(context, message.BrainId);
@@ -104,12 +106,15 @@ public sealed class HiveMindActor : IActor
             case RescheduleCompleted message:
                 CompleteReschedule(context, message);
                 break;
+            case GetHiveMindStatus:
+                context.Respond(BuildStatus());
+                break;
         }
 
         return Task.CompletedTask;
     }
 
-    private void RegisterBrain(RegisterBrain message)
+    private void RegisterBrain(IContext context, RegisterBrain message)
     {
         if (!_brains.TryGetValue(message.BrainId, out var brain))
         {
@@ -117,13 +122,20 @@ public sealed class HiveMindActor : IActor
             _brains.Add(message.BrainId, brain);
         }
 
+        if (message.BrainRootPid is not null)
+        {
+            brain.BrainRootPid = message.BrainRootPid;
+        }
+
         if (message.SignalRouterPid is not null)
         {
             brain.SignalRouterPid = message.SignalRouterPid;
         }
+
+        UpdateRoutingTable(context, brain);
     }
 
-    private void UpdateBrainSignalRouter(UpdateBrainSignalRouter message)
+    private void UpdateBrainSignalRouter(IContext context, UpdateBrainSignalRouter message)
     {
         if (!_brains.TryGetValue(message.BrainId, out var brain))
         {
@@ -132,6 +144,7 @@ public sealed class HiveMindActor : IActor
         }
 
         brain.SignalRouterPid = message.SignalRouterPid;
+        UpdateRoutingTable(context, brain);
     }
 
     private void UnregisterBrain(IContext context, Guid brainId)
@@ -169,6 +182,7 @@ public sealed class HiveMindActor : IActor
         }
 
         brain.Shards[message.ShardId] = message.ShardPid;
+        UpdateRoutingTable(context, brain);
 
         if (_phase == TickPhase.Compute && _tick is not null)
         {
@@ -181,6 +195,7 @@ public sealed class HiveMindActor : IActor
         if (_brains.TryGetValue(message.BrainId, out var brain))
         {
             brain.Shards.Remove(message.ShardId);
+            UpdateRoutingTable(context, brain);
         }
 
         if (_phase != TickPhase.Compute || _tick is null)
@@ -242,22 +257,24 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            foreach (var (shardId, shardPid) in brain.Shards)
+            var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
+            if (computeTarget is null)
             {
-                var key = new ShardKey(brain.BrainId, shardId);
-                if (!_pendingCompute.Add(key))
-                {
-                    continue;
-                }
-
-                context.Send(
-                    shardPid,
-                    new TickCompute
-                    {
-                        TickId = _tick.TickId,
-                        TargetTickHz = _backpressure.TargetTickHz
-                    });
+                continue;
             }
+
+            foreach (var shardId in brain.Shards.Keys)
+            {
+                _pendingCompute.Add(new ShardKey(brain.BrainId, shardId));
+            }
+
+            context.Send(
+                computeTarget,
+                new TickCompute
+                {
+                    TickId = _tick.TickId,
+                    TargetTickHz = _backpressure.TargetTickHz
+                });
         }
 
         _tick.ExpectedComputeCount = _pendingCompute.Count;
@@ -374,13 +391,14 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            if (brain.SignalRouterPid is null)
+            var deliverTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
+            if (deliverTarget is null)
             {
                 continue;
             }
 
             _pendingDeliver.Add(brain.BrainId);
-            context.Send(brain.SignalRouterPid, new TickDeliver { TickId = _tick.TickId });
+            context.Send(deliverTarget, new TickDeliver { TickId = _tick.TickId });
         }
 
         _tick.ExpectedDeliverCount = _pendingDeliver.Count;
@@ -431,16 +449,20 @@ public sealed class HiveMindActor : IActor
         _tick = null;
         _lastCompletedTickId = completedTickId;
 
+        HiveMindTelemetry.RecordTickOutcome(outcome, _backpressure.TargetTickHz);
+
         var decision = _backpressure.Evaluate(outcome);
 
         if (decision.RequestReschedule)
         {
             RequestReschedule(context, decision.Reason);
+            HiveMindTelemetry.RecordReschedule(decision.Reason);
         }
 
         if (decision.RequestPause)
         {
             PauseAllBrains(context, decision.Reason);
+            HiveMindTelemetry.RecordPause(decision.Reason);
         }
 
         ScheduleNextTick(context, ComputeTickDelay(elapsed, decision.TargetTickHz));
@@ -609,6 +631,47 @@ public sealed class HiveMindActor : IActor
     private static void Log(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [HiveMind] {message}");
 
+    private HiveMindStatus BuildStatus()
+        => new(
+            _lastCompletedTickId,
+            _tickLoopEnabled,
+            _backpressure.TargetTickHz,
+            _pendingCompute.Count,
+            _pendingDeliver.Count,
+            _rescheduleInProgress,
+            _brains.Count,
+            _brains.Values.Sum(brain => brain.Shards.Count));
+
+    private void UpdateRoutingTable(IContext? context, BrainState brain)
+    {
+        var snapshot = RoutingTableSnapshot.Empty;
+        if (brain.Shards.Count > 0)
+        {
+            var routes = new List<ShardRoute>(brain.Shards.Count);
+            foreach (var entry in brain.Shards)
+            {
+                routes.Add(new ShardRoute(entry.Key, entry.Value));
+            }
+
+            snapshot = new RoutingTableSnapshot(routes);
+        }
+
+        brain.RoutingSnapshot = snapshot;
+
+        if (context is null)
+        {
+            return;
+        }
+
+        var target = brain.BrainRootPid ?? brain.SignalRouterPid;
+        if (target is null)
+        {
+            return;
+        }
+
+        context.Send(target, new SetRoutingTable(brain.RoutingSnapshot));
+    }
+
     private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
     {
         if (delay <= TimeSpan.Zero)
@@ -668,10 +731,12 @@ public sealed class HiveMindActor : IActor
         }
 
         public Guid BrainId { get; }
+        public PID? BrainRootPid { get; set; }
         public PID? SignalRouterPid { get; set; }
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public Dictionary<ShardId32, PID> Shards { get; } = new();
+        public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
     }
 
     private readonly record struct ShardKey(Guid BrainId, ShardId32 ShardId);

@@ -13,6 +13,7 @@ public sealed class BrainSignalRouterActor : IActor
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private readonly RoutingTable _routingTable = new();
     private readonly Dictionary<ulong, TickOutbox> _pendingOutboxes = new();
+    private readonly Dictionary<ulong, PendingDeliver> _pendingDeliveries = new();
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
 
     public BrainSignalRouterActor(Guid brainId)
@@ -39,6 +40,12 @@ public sealed class BrainSignalRouterActor : IActor
                 break;
             case TickDeliver tickDeliver:
                 HandleTickDeliver(context, tickDeliver);
+                break;
+            case SignalBatchAck ack:
+                HandleSignalBatchAck(context, ack);
+                break;
+            case TickComputeDone tickComputeDone:
+                ForwardToParent(context, tickComputeDone);
                 break;
         }
 
@@ -83,9 +90,14 @@ public sealed class BrainSignalRouterActor : IActor
 
     private void HandleTickDeliver(IContext context, TickDeliver tickDeliver)
     {
-        var stopwatch = Stopwatch.StartNew();
+        if (_pendingDeliveries.ContainsKey(tickDeliver.TickId))
+        {
+            return;
+        }
+
         var deliveredBatches = 0u;
         var deliveredContribs = 0u;
+        var expectedAcks = 0;
 
         if (_pendingOutboxes.TryGetValue(tickDeliver.TickId, out var outbox))
         {
@@ -109,23 +121,83 @@ public sealed class BrainSignalRouterActor : IActor
 
                 deliveredBatches++;
                 deliveredContribs += (uint)entry.Value.Contribs.Count;
+                expectedAcks++;
             }
 
             _pendingOutboxes.Remove(tickDeliver.TickId);
         }
 
-        stopwatch.Stop();
+        if (expectedAcks == 0)
+        {
+            var deliverDone = new TickDeliverDone
+            {
+                TickId = tickDeliver.TickId,
+                BrainId = _brainIdProto,
+                DeliverMs = 0,
+                DeliveredBatches = 0,
+                DeliveredContribs = 0
+            };
+
+            context.Respond(deliverDone);
+            return;
+        }
+
+        var pending = new PendingDeliver(
+            tickDeliver.TickId,
+            context.Sender ?? context.Parent,
+            Stopwatch.StartNew(),
+            deliveredBatches,
+            deliveredContribs,
+            expectedAcks);
+
+        _pendingDeliveries[tickDeliver.TickId] = pending;
+    }
+
+    private void HandleSignalBatchAck(IContext context, SignalBatchAck ack)
+    {
+        if (!IsForBrain(ack.BrainId))
+        {
+            return;
+        }
+
+        if (!_pendingDeliveries.TryGetValue(ack.TickId, out var pending))
+        {
+            return;
+        }
+
+        pending.AckCount++;
+        if (pending.AckCount < pending.ExpectedAcks)
+        {
+            return;
+        }
+
+        _pendingDeliveries.Remove(ack.TickId);
+        pending.Stopwatch.Stop();
 
         var deliverDone = new TickDeliverDone
         {
-            TickId = tickDeliver.TickId,
+            TickId = ack.TickId,
             BrainId = _brainIdProto,
-            DeliverMs = (ulong)stopwatch.Elapsed.TotalMilliseconds,
-            DeliveredBatches = deliveredBatches,
-            DeliveredContribs = deliveredContribs
+            DeliverMs = (ulong)pending.Stopwatch.Elapsed.TotalMilliseconds,
+            DeliveredBatches = pending.DeliveredBatches,
+            DeliveredContribs = pending.DeliveredContribs
         };
 
-        context.Respond(deliverDone);
+        var replyTo = pending.ReplyTo ?? context.Parent;
+        if (replyTo is not null)
+        {
+            context.Send(replyTo, deliverDone);
+        }
+    }
+
+    private static void ForwardToParent(IContext context, object message)
+    {
+        if (context.Parent is null)
+        {
+            return;
+        }
+
+        context.Send(context.Parent, message);
     }
 
     private bool IsForBrain(Nbn.Proto.Uuid? brainId)
@@ -175,5 +247,32 @@ public sealed class BrainSignalRouterActor : IActor
                 Contribs.Add(contrib);
             }
         }
+    }
+
+    private sealed class PendingDeliver
+    {
+        public PendingDeliver(
+            ulong tickId,
+            PID? replyTo,
+            Stopwatch stopwatch,
+            uint deliveredBatches,
+            uint deliveredContribs,
+            int expectedAcks)
+        {
+            TickId = tickId;
+            ReplyTo = replyTo;
+            Stopwatch = stopwatch;
+            DeliveredBatches = deliveredBatches;
+            DeliveredContribs = deliveredContribs;
+            ExpectedAcks = expectedAcks;
+        }
+
+        public ulong TickId { get; }
+        public PID? ReplyTo { get; }
+        public Stopwatch Stopwatch { get; }
+        public uint DeliveredBatches { get; }
+        public uint DeliveredContribs { get; }
+        public int ExpectedAcks { get; }
+        public int AckCount { get; set; }
     }
 }
