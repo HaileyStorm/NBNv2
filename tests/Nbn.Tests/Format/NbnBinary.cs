@@ -180,11 +180,53 @@ internal static class NbnBinary
         if (includeEnabledBitset)
         {
             var enabledBytes = (int)((neuronSpan + 7) / 8);
+            if (span.Length < cursor + enabledBytes)
+            {
+                throw new ArgumentException("Data is too small for an NBS enabled bitset.", nameof(data));
+            }
+
             enabledBitset = span.Slice(cursor, enabledBytes).ToArray();
             cursor += enabledBytes;
         }
 
         return new NbsRegionSection(regionId, neuronSpan, bufferCodes, enabledBitset, cursor);
+    }
+
+    public static NbsOverlaySection ReadNbsOverlaySection(ReadOnlySpan<byte> data, int offset)
+    {
+        if (offset < 0 || offset >= data.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Offset is out of range.");
+        }
+
+        if (data.Length < offset + 4)
+        {
+            throw new ArgumentException("Data is too small for an NBS overlay header.", nameof(data));
+        }
+
+        var overlayCount = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
+        if (overlayCount > int.MaxValue)
+        {
+            throw new InvalidOperationException("Overlay count is too large for this parser.");
+        }
+
+        var overlays = new NbsOverlayRecord[overlayCount];
+        var cursor = offset + 4;
+        for (var i = 0; i < overlays.Length; i++)
+        {
+            if (data.Length < cursor + 12)
+            {
+                throw new ArgumentException("Data is too small for NBS overlay records.", nameof(data));
+            }
+
+            var fromAddress = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(cursor, 4));
+            var toAddress = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(cursor + 4, 4));
+            var strengthCode = data[cursor + 8];
+            overlays[i] = new NbsOverlayRecord(fromAddress, toAddress, strengthCode);
+            cursor += 12;
+        }
+
+        return new NbsOverlaySection(overlays, cursor - offset);
     }
 
     private static NbnQuantizationSchema ReadNbnQuantization(ReadOnlySpan<byte> data)
@@ -378,5 +420,31 @@ internal sealed class NbsRegionSection
     public uint NeuronSpan { get; }
     public short[] BufferCodes { get; }
     public byte[]? EnabledBitset { get; }
+    public int ByteLength { get; }
+}
+
+internal readonly struct NbsOverlayRecord
+{
+    public NbsOverlayRecord(uint fromAddress, uint toAddress, byte strengthCode)
+    {
+        FromAddress = fromAddress;
+        ToAddress = toAddress;
+        StrengthCode = strengthCode;
+    }
+
+    public uint FromAddress { get; }
+    public uint ToAddress { get; }
+    public byte StrengthCode { get; }
+}
+
+internal sealed class NbsOverlaySection
+{
+    public NbsOverlaySection(NbsOverlayRecord[] overlays, int byteLength)
+    {
+        Overlays = overlays;
+        ByteLength = byteLength;
+    }
+
+    public NbsOverlayRecord[] Overlays { get; }
     public int ByteLength { get; }
 }
