@@ -122,14 +122,22 @@ public sealed class HiveMindActor : IActor
             _brains.Add(message.BrainId, brain);
         }
 
-        if (message.BrainRootPid is not null)
+        var brainRootPid = NormalizePid(context, message.BrainRootPid);
+        var routerPid = NormalizePid(context, message.SignalRouterPid);
+
+        if (routerPid is null && brainRootPid is not null && message.SignalRouterPid is not null)
         {
-            brain.BrainRootPid = message.BrainRootPid;
+            routerPid = new PID(brainRootPid.Address, message.SignalRouterPid.Id);
         }
 
-        if (message.SignalRouterPid is not null)
+        if (brainRootPid is not null)
         {
-            brain.SignalRouterPid = message.SignalRouterPid;
+            brain.BrainRootPid = brainRootPid;
+        }
+
+        if (routerPid is not null)
+        {
+            brain.SignalRouterPid = routerPid;
         }
 
         UpdateRoutingTable(context, brain);
@@ -143,7 +151,13 @@ public sealed class HiveMindActor : IActor
             _brains.Add(message.BrainId, brain);
         }
 
-        brain.SignalRouterPid = message.SignalRouterPid;
+        var routerPid = NormalizePid(context, message.SignalRouterPid) ?? message.SignalRouterPid;
+        if (routerPid.Address.Length == 0 && brain.BrainRootPid is not null && brain.BrainRootPid.Address.Length > 0)
+        {
+            routerPid = new PID(brain.BrainRootPid.Address, routerPid.Id);
+        }
+
+        brain.SignalRouterPid = routerPid;
         UpdateRoutingTable(context, brain);
     }
 
@@ -182,7 +196,8 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        brain.Shards[shardId] = message.ShardPid;
+        var shardPid = NormalizePid(context, message.ShardPid) ?? message.ShardPid;
+        brain.Shards[shardId] = shardPid;
         UpdateRoutingTable(context, brain);
 
         if (_phase == TickPhase.Compute && _tick is not null)
@@ -265,10 +280,14 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
+            if (brain.RoutingSnapshot.Count == 0)
+            {
+                continue;
+            }
+
             var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
             if (computeTarget is null)
             {
-                Log($"TickCompute skipped: missing router for brain {brain.BrainId}.");
                 continue;
             }
 
@@ -400,12 +419,12 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            var deliverTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
-            if (deliverTarget is null)
+            if (brain.SignalRouterPid is null || brain.RoutingSnapshot.Count == 0)
             {
                 continue;
             }
 
+            var deliverTarget = brain.SignalRouterPid;
             _pendingDeliver.Add(brain.BrainId);
             context.Send(deliverTarget, new TickDeliver { TickId = _tick.TickId });
         }
@@ -639,6 +658,27 @@ public sealed class HiveMindActor : IActor
 
     private static void Log(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [HiveMind] {message}");
+
+    private static PID? NormalizePid(IContext context, PID? pid)
+    {
+        if (pid is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(pid.Address))
+        {
+            return pid;
+        }
+
+        var senderAddress = context.Sender?.Address;
+        if (!string.IsNullOrWhiteSpace(senderAddress))
+        {
+            return new PID(senderAddress, pid.Id);
+        }
+
+        return pid;
+    }
 
     private HiveMindStatus BuildStatus()
         => new(
