@@ -12,6 +12,9 @@ using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
 
+Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+
 if (args.Length == 0)
 {
     PrintHelp();

@@ -10,6 +10,9 @@ using Proto.Remote;
 using Proto.Remote.GrpcNet;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
+Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+
 var options = RegionHostOptions.FromArgs(args);
 ValidateOptions(options);
 

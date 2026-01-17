@@ -26,7 +26,11 @@ $regionAddress = "${BindHost}:${RegionHostPort}"
 Write-Host "Demo root: $runRoot"
 Write-Host "BrainId: $brainId"
 
-$artifactJson = & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -- init-artifacts --artifact-root "$artifactRoot" --json
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj") -c Release | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj") -c Release | Out-Null
+& dotnet build (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost\Nbn.Tools.DemoHost.csproj") -c Release | Out-Null
+
+$artifactJson = & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- init-artifacts --artifact-root "$artifactRoot" --json
 $artifactLine = $artifactJson | Where-Object { $_ -match '^{.*}$' } | Select-Object -Last 1
 if (-not $artifactLine) {
     throw "DemoHost did not return JSON output."
@@ -44,6 +48,8 @@ $regionErr = Join-Path $logRoot "regionhost.err.log"
 $hiveArgs = @(
     "run",
     "--project", (Join-Path $repoRoot "src\Nbn.Runtime.HiveMind"),
+    "-c", "Release",
+    "--no-build",
     "--",
     "--bind-host", $BindHost,
     "--port", $HiveMindPort
@@ -52,6 +58,8 @@ $hiveArgs = @(
 $brainArgs = @(
     "run",
     "--project", (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost"),
+    "-c", "Release",
+    "--no-build",
     "--",
     "run-brain",
     "--bind-host", $BindHost,
@@ -65,6 +73,8 @@ $brainArgs = @(
 $regionArgs = @(
     "run",
     "--project", (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost"),
+    "-c", "Release",
+    "--no-build",
     "--",
     "--bind-host", $BindHost,
     "--port", $RegionHostPort,

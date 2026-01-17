@@ -3,6 +3,9 @@ using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
 
+Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+
 var options = HiveMindOptions.FromArgs(args);
 
 using var telemetry = HiveMindTelemetrySession.Start(options);
