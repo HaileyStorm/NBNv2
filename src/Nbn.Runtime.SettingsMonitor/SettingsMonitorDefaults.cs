@@ -1,0 +1,23 @@
+using System.Globalization;
+
+namespace Nbn.Runtime.SettingsMonitor;
+
+public static class SettingsMonitorDefaults
+{
+    public const string ArtifactChunkCompressionKindKey = "artifact.chunk.compression.kind";
+    public const string ArtifactChunkCompressionLevelKey = "artifact.chunk.compression.level";
+    public const string ArtifactChunkCompressionMinBytesKey = "artifact.chunk.compression.min_bytes";
+    public const string ArtifactChunkCompressionOnlyIfSmallerKey = "artifact.chunk.compression.only_if_smaller";
+
+    public static readonly ArtifactCompressionSettings ArtifactCompressionDefaults =
+        new("none", 3, 64 * 1024, true);
+
+    public static readonly IReadOnlyDictionary<string, string> DefaultSettings =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { ArtifactChunkCompressionKindKey, ArtifactCompressionDefaults.Kind },
+            { ArtifactChunkCompressionLevelKey, ArtifactCompressionDefaults.Level.ToString(CultureInfo.InvariantCulture) },
+            { ArtifactChunkCompressionMinBytesKey, ArtifactCompressionDefaults.MinBytes.ToString(CultureInfo.InvariantCulture) },
+            { ArtifactChunkCompressionOnlyIfSmallerKey, ArtifactCompressionDefaults.OnlyIfSmaller ? "true" : "false" }
+        };
+}

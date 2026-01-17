@@ -34,3 +34,9 @@ public sealed record SettingEntry(
     string Key,
     string Value,
     long UpdatedMs);
+
+public sealed record ArtifactCompressionSettings(
+    string Kind,
+    int Level,
+    int MinBytes,
+    bool OnlyIfSmaller);
