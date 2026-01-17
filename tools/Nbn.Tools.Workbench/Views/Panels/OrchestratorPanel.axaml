@@ -1,0 +1,118 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+             x:Class="Nbn.Tools.Workbench.Views.Panels.OrchestratorPanel"
+             x:DataType="vm:OrchestratorPanelViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="16">
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="16">
+          <StackPanel Grid.Row="0" Grid.Column="0" Spacing="6">
+            <TextBlock Text="Settings Monitor" Classes="card-title" />
+            <TextBlock Text="SQLite registry, defaults, and compression hints." Classes="card-subtitle" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBox Width="360" Text="{Binding Connections.SettingsDbPath}" Watermark="settingsmonitor.db" />
+              <Button Content="Refresh" Command="{Binding RefreshCommand}" Classes="accent" />
+            </StackPanel>
+          </StackPanel>
+          <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4" HorizontalAlignment="Right">
+            <TextBlock Text="Status" Classes="chip" />
+            <TextBlock Text="{Binding StatusMessage}" Classes="muted" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Endpoints" Classes="card-title" />
+          <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <TextBlock Text="IO Host" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding Connections.IoHost}" Width="160" />
+            <TextBlock Grid.Column="2" Text="IO Port" Classes="muted" />
+            <TextBox Grid.Column="3" Text="{Binding Connections.IoPortText}" Width="90" />
+            <TextBlock Grid.Row="1" Text="Gateway" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.IoGateway}" Width="160" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Obs Host" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding Connections.ObsHost}" Width="160" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto" ColumnSpacing="12">
+            <TextBlock Text="Obs Port" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
+            <TextBlock Grid.Column="2" Text="Debug Hub" Classes="muted" />
+            <TextBox Grid.Column="3" Text="{Binding Connections.DebugHub}" Width="140" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <TextBlock Text="Viz Hub" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding Connections.VizHub}" Width="140" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+            <TextBlock Text="Local Bind" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding Connections.LocalBindHost}" Width="160" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Nodes" Classes="card-title" />
+            <ItemsControl ItemsSource="{Binding Nodes}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Classes="row">
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                      <Border Classes="pill">
+                        <TextBlock Text="{Binding Status}" />
+                      </Border>
+                      <StackPanel Grid.Column="1">
+                        <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
+                        <TextBlock Text="{Binding Address}" Classes="muted" />
+                        <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                      </StackPanel>
+                      <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Settings" Classes="card-title" />
+            <ItemsControl ItemsSource="{Binding Settings}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4">
+                    <TextBlock Text="{Binding Key}" Classes="row-title" />
+                    <TextBlock Grid.Column="1" Text="{Binding Value}" Classes="muted" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Terminations" Classes="card-title" />
+          <ItemsControl ItemsSource="{Binding Terminations}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12" Margin="0,4">
+                  <TextBlock Text="{Binding Time}" Classes="muted" />
+                  <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
+                  <Border Grid.Column="2" Classes="pill">
+                    <TextBlock Text="{Binding Reason}" />
+                  </Border>
+                  <TextBlock Grid.Column="3" Text="{Binding EnergyRemaining}" Classes="muted" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

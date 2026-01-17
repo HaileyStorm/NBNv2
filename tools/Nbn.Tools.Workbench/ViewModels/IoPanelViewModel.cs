@@ -1,0 +1,364 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Threading.Tasks;
+using System.Globalization;
+using Nbn.Proto.Io;
+using Nbn.Tools.Workbench.Models;
+using Nbn.Tools.Workbench.Services;
+
+namespace Nbn.Tools.Workbench.ViewModels;
+
+public sealed class IoPanelViewModel : ViewModelBase
+{
+    private const int MaxEvents = 300;
+    private readonly WorkbenchClient _client;
+    private readonly UiDispatcher _dispatcher;
+    private string _brainIdText = string.Empty;
+    private string _inputIndexText = "0";
+    private string _inputValueText = "0";
+    private string _inputVectorText = string.Empty;
+    private string _energyCreditText = "1000";
+    private string _energyRateText = "0";
+    private string _plasticityRateText = "0.001";
+    private bool _costEnabled;
+    private bool _energyEnabled;
+    private bool _plasticityEnabled;
+    private bool _plasticityProbabilistic = true;
+    private string _brainInfoSummary = "No brain selected.";
+
+    public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
+    {
+        _client = client;
+        _dispatcher = dispatcher;
+        OutputEvents = new ObservableCollection<OutputEventItem>();
+        VectorEvents = new ObservableCollection<OutputVectorEventItem>();
+
+        RequestInfoCommand = new AsyncRelayCommand(RequestInfoAsync);
+        SubscribeOutputsCommand = new RelayCommand(() => Subscribe(false));
+        UnsubscribeOutputsCommand = new RelayCommand(() => Unsubscribe(false));
+        SubscribeVectorCommand = new RelayCommand(() => Subscribe(true));
+        UnsubscribeVectorCommand = new RelayCommand(() => Unsubscribe(true));
+        SendInputCommand = new RelayCommand(SendInput);
+        SendVectorCommand = new RelayCommand(SendVector);
+        ApplyEnergyCreditCommand = new RelayCommand(ApplyEnergyCredit);
+        ApplyEnergyRateCommand = new RelayCommand(ApplyEnergyRate);
+        ApplyCostEnergyCommand = new RelayCommand(ApplyCostEnergy);
+        ApplyPlasticityCommand = new RelayCommand(ApplyPlasticity);
+        ClearOutputsCommand = new RelayCommand(ClearOutputs);
+    }
+
+    public ObservableCollection<OutputEventItem> OutputEvents { get; }
+
+    public ObservableCollection<OutputVectorEventItem> VectorEvents { get; }
+
+    public string BrainIdText
+    {
+        get => _brainIdText;
+        set => SetProperty(ref _brainIdText, value);
+    }
+
+    public string InputIndexText
+    {
+        get => _inputIndexText;
+        set => SetProperty(ref _inputIndexText, value);
+    }
+
+    public string InputValueText
+    {
+        get => _inputValueText;
+        set => SetProperty(ref _inputValueText, value);
+    }
+
+    public string InputVectorText
+    {
+        get => _inputVectorText;
+        set => SetProperty(ref _inputVectorText, value);
+    }
+
+    public string EnergyCreditText
+    {
+        get => _energyCreditText;
+        set => SetProperty(ref _energyCreditText, value);
+    }
+
+    public string EnergyRateText
+    {
+        get => _energyRateText;
+        set => SetProperty(ref _energyRateText, value);
+    }
+
+    public bool CostEnabled
+    {
+        get => _costEnabled;
+        set => SetProperty(ref _costEnabled, value);
+    }
+
+    public bool EnergyEnabled
+    {
+        get => _energyEnabled;
+        set => SetProperty(ref _energyEnabled, value);
+    }
+
+    public bool PlasticityEnabled
+    {
+        get => _plasticityEnabled;
+        set => SetProperty(ref _plasticityEnabled, value);
+    }
+
+    public string PlasticityRateText
+    {
+        get => _plasticityRateText;
+        set => SetProperty(ref _plasticityRateText, value);
+    }
+
+    public bool PlasticityProbabilistic
+    {
+        get => _plasticityProbabilistic;
+        set => SetProperty(ref _plasticityProbabilistic, value);
+    }
+
+    public string BrainInfoSummary
+    {
+        get => _brainInfoSummary;
+        set => SetProperty(ref _brainInfoSummary, value);
+    }
+
+    public AsyncRelayCommand RequestInfoCommand { get; }
+
+    public RelayCommand SubscribeOutputsCommand { get; }
+
+    public RelayCommand UnsubscribeOutputsCommand { get; }
+
+    public RelayCommand SubscribeVectorCommand { get; }
+
+    public RelayCommand UnsubscribeVectorCommand { get; }
+
+    public RelayCommand SendInputCommand { get; }
+
+    public RelayCommand SendVectorCommand { get; }
+
+    public RelayCommand ApplyEnergyCreditCommand { get; }
+
+    public RelayCommand ApplyEnergyRateCommand { get; }
+
+    public RelayCommand ApplyCostEnergyCommand { get; }
+
+    public RelayCommand ApplyPlasticityCommand { get; }
+
+    public RelayCommand ClearOutputsCommand { get; }
+
+    public void AddOutputEvent(OutputEventItem item)
+    {
+        _dispatcher.Post(() =>
+        {
+            OutputEvents.Insert(0, item);
+            Trim(OutputEvents);
+        });
+    }
+
+    public void AddVectorEvent(OutputVectorEventItem item)
+    {
+        _dispatcher.Post(() =>
+        {
+            VectorEvents.Insert(0, item);
+            Trim(VectorEvents);
+        });
+    }
+
+    private async Task RequestInfoAsync()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        await _client.RequestBrainInfoAsync(brainId, ApplyBrainInfo);
+    }
+
+    private void ApplyBrainInfo(BrainInfo? info)
+    {
+        if (info is null)
+        {
+            BrainInfoSummary = "Brain not found or IO unavailable.";
+            return;
+        }
+
+        CostEnabled = info.CostEnabled;
+        EnergyEnabled = info.EnergyEnabled;
+        PlasticityEnabled = info.PlasticityEnabled;
+
+        BrainInfoSummary = $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining}";
+    }
+
+    private void Subscribe(bool vector)
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        _client.SubscribeOutputs(brainId, vector);
+    }
+
+    private void Unsubscribe(bool vector)
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        _client.UnsubscribeOutputs(brainId, vector);
+    }
+
+    private void SendInput()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        if (!uint.TryParse(InputIndexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index))
+        {
+            BrainInfoSummary = "Input index invalid.";
+            return;
+        }
+
+        if (!float.TryParse(InputValueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            BrainInfoSummary = "Input value invalid.";
+            return;
+        }
+
+        _client.SendInput(brainId, index, value);
+    }
+
+    private void SendVector()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        var values = ParseVector(InputVectorText);
+        if (values.Count == 0)
+        {
+            BrainInfoSummary = "Vector is empty.";
+            return;
+        }
+
+        _client.SendInputVector(brainId, values);
+    }
+
+    private void ApplyEnergyCredit()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
+        {
+            BrainInfoSummary = "Credit value invalid.";
+            return;
+        }
+
+        _client.SendEnergyCredit(brainId, amount);
+    }
+
+    private void ApplyEnergyRate()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
+        {
+            BrainInfoSummary = "Rate value invalid.";
+            return;
+        }
+
+        _client.SendEnergyRate(brainId, rate);
+    }
+
+    private void ApplyCostEnergy()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        _client.SetCostEnergy(brainId, CostEnabled, EnergyEnabled);
+    }
+
+    private void ApplyPlasticity()
+    {
+        if (!TryGetBrainId(out var brainId))
+        {
+            BrainInfoSummary = "Invalid BrainId.";
+            return;
+        }
+
+        if (!float.TryParse(PlasticityRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
+        {
+            BrainInfoSummary = "Plasticity rate invalid.";
+            return;
+        }
+
+        _client.SetPlasticity(brainId, PlasticityEnabled, rate, PlasticityProbabilistic);
+    }
+
+    private void ClearOutputs()
+    {
+        OutputEvents.Clear();
+        VectorEvents.Clear();
+    }
+
+    private bool TryGetBrainId(out Guid brainId)
+    {
+        if (Guid.TryParse(BrainIdText, out brainId))
+        {
+            return true;
+        }
+
+        brainId = Guid.Empty;
+        return false;
+    }
+
+    private static IReadOnlyList<float> ParseVector(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return Array.Empty<float>();
+        }
+
+        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var values = new List<float>(parts.Length);
+        foreach (var part in parts)
+        {
+            if (float.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
+    private static void Trim<T>(ObservableCollection<T> collection)
+    {
+        while (collection.Count > MaxEvents)
+        {
+            collection.RemoveAt(collection.Count - 1);
+        }
+    }
+}

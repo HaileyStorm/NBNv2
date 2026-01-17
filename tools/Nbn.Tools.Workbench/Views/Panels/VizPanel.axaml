@@ -1,0 +1,41 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+             x:Class="Nbn.Tools.Workbench.Views.Panels.VizPanel"
+             x:DataType="vm:VizPanelViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="16">
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+          <StackPanel>
+            <TextBlock Text="Visualization Stream" Classes="card-title" />
+            <TextBlock Text="Real-time activity snapshots and event pulses." Classes="card-subtitle" />
+          </StackPanel>
+          <StackPanel HorizontalAlignment="Right" Spacing="6">
+            <Button Content="Clear" Command="{Binding ClearCommand}" />
+            <TextBlock Text="{Binding Status}" Classes="muted" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Border Classes="card">
+        <ItemsControl ItemsSource="{Binding VizEvents}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Classes="row">
+                <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10">
+                  <TextBlock Text="{Binding Time}" Classes="muted" />
+                  <Border Grid.Column="1" Classes="pill">
+                    <TextBlock Text="{Binding Type}" />
+                  </Border>
+                  <TextBlock Grid.Column="2" Text="{Binding BrainId}" Classes="row-title" />
+                  <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

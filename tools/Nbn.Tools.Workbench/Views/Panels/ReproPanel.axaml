@@ -1,0 +1,79 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+             x:Class="Nbn.Tools.Workbench.Views.Panels.ReproPanel"
+             x:DataType="vm:ReproPanelViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="16">
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Reproduction" Classes="card-title" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <TextBlock Text="Parent A" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding ParentA}" Watermark="Guid" />
+            <TextBlock Grid.Row="1" Text="Parent B" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ParentB}" Watermark="Guid" />
+            <TextBlock Grid.Row="2" Text="Seed" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding SeedText}" Watermark="auto" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="Strength" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox ItemsSource="{Binding StrengthSources}" SelectedItem="{Binding SelectedStrengthSource}" Width="160">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="Spawn" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox ItemsSource="{Binding SpawnPolicies}" SelectedItem="{Binding SelectedSpawnPolicy}" Width="140">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Similarity + Mutation" Classes="card-title" />
+          <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="12" RowSpacing="6">
+            <TextBlock Text="Max span diff" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding MaxRegionSpanDiffRatio}" Width="100" />
+            <TextBlock Grid.Column="2" Text="Max func dist" Classes="muted" />
+            <TextBox Grid.Column="3" Text="{Binding MaxFunctionHistDistance}" Width="100" />
+            <TextBlock Grid.Row="1" Text="Max conn dist" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxConnectivityHistDistance}" Width="100" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Max avg out" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding MaxAvgOutDegree}" Width="100" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="12" RowSpacing="6">
+            <TextBlock Text="Prob add neuron" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding ProbAddNeuron}" Width="100" />
+            <TextBlock Grid.Column="2" Text="Prob remove neuron" Classes="muted" />
+            <TextBox Grid.Column="3" Text="{Binding ProbRemoveNeuron}" Width="100" />
+            <TextBlock Grid.Row="1" Text="Prob add axon" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ProbAddAxon}" Width="100" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Prob remove axon" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ProbRemoveAxon}" Width="100" />
+            <TextBlock Grid.Row="2" Text="Prob reroute" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbRerouteAxon}" Width="100" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Run Reproduction" Command="{Binding RunCommand}" Classes="accent" />
+            <TextBlock Text="{Binding Status}" Classes="muted" />
+          </StackPanel>
+          <TextBlock Text="{Binding ResultSummary}" Classes="row-title" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

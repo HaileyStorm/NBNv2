@@ -1,0 +1,160 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Styles.Resources>
+    <Color x:Key="NbnInk">#101B22</Color>
+    <Color x:Key="NbnSlate">#1E2A33</Color>
+    <Color x:Key="NbnSurface">#F4F1E9</Color>
+    <Color x:Key="NbnSurfaceAlt">#EDE7D7</Color>
+    <Color x:Key="NbnAccent">#F16D3A</Color>
+    <Color x:Key="NbnTeal">#2F9C8A</Color>
+    <Color x:Key="NbnGold">#E2B548</Color>
+    <Color x:Key="NbnMuted">#6F7D86</Color>
+    <Color x:Key="NbnBorder">#D3C9B6</Color>
+
+    <SolidColorBrush x:Key="NbnInkBrush" Color="{DynamicResource NbnInk}" />
+    <SolidColorBrush x:Key="NbnSurfaceBrush" Color="{DynamicResource NbnSurface}" />
+    <SolidColorBrush x:Key="NbnSurfaceAltBrush" Color="{DynamicResource NbnSurfaceAlt}" />
+    <SolidColorBrush x:Key="NbnAccentBrush" Color="{DynamicResource NbnAccent}" />
+    <SolidColorBrush x:Key="NbnTealBrush" Color="{DynamicResource NbnTeal}" />
+    <SolidColorBrush x:Key="NbnGoldBrush" Color="{DynamicResource NbnGold}" />
+    <SolidColorBrush x:Key="NbnMutedBrush" Color="{DynamicResource NbnMuted}" />
+    <SolidColorBrush x:Key="NbnBorderBrush" Color="{DynamicResource NbnBorder}" />
+
+    <LinearGradientBrush x:Key="NbnWindowGradient" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#F1EEE4" Offset="0" />
+      <GradientStop Color="#E5EEE9" Offset="0.55" />
+      <GradientStop Color="#F8F4EC" Offset="1" />
+    </LinearGradientBrush>
+  </Styles.Resources>
+
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource NbnWindowGradient}" />
+    <Setter Property="FontFamily" Value="Bahnschrift, Noto Sans, sans-serif" />
+    <Setter Property="Foreground" Value="{DynamicResource NbnInkBrush}" />
+  </Style>
+
+  <Style Selector="TextBlock">
+    <Setter Property="FontSize" Value="13" />
+  </Style>
+
+  <Style Selector="TextBlock.card-title">
+    <Setter Property="FontSize" Value="18" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.card-subtitle">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Foreground" Value="{DynamicResource NbnMutedBrush}" />
+  </Style>
+
+  <Style Selector="TextBlock.row-title">
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.muted">
+    <Setter Property="Foreground" Value="{DynamicResource NbnMutedBrush}" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="{DynamicResource NbnBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="14" />
+    <Setter Property="Padding" Value="16" />
+  </Style>
+
+  <Style Selector="Border.row">
+    <Setter Property="Background" Value="{DynamicResource NbnSurfaceAltBrush}" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="8" />
+    <Setter Property="Margin" Value="0,3" />
+  </Style>
+
+  <Style Selector="Border.pill">
+    <Setter Property="Background" Value="{DynamicResource NbnGoldBrush}" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="6,2" />
+  </Style>
+
+  <Style Selector="Border.pill TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource NbnInkBrush}" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="Border.sidebar">
+    <Setter Property="Background" Value="#1E2A33" />
+    <Setter Property="Padding" Value="24" />
+  </Style>
+
+  <Style Selector="Border.topbar">
+    <Setter Property="Background" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="{DynamicResource NbnBorderBrush}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="Padding" Value="16,12" />
+  </Style>
+
+  <Style Selector="TextBlock.brand-title">
+    <Setter Property="FontSize" Value="22" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="#F8F4EC" />
+  </Style>
+
+  <Style Selector="TextBlock.brand-subtitle">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Foreground" Value="#C7D0D6" />
+  </Style>
+
+  <Style Selector="Border.nav-item">
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="10" />
+  </Style>
+
+  <Style Selector="ListBoxItem:selected Border.nav-item">
+    <Setter Property="Background" Value="#2F3E4A" />
+  </Style>
+
+  <Style Selector="TextBlock.nav-title">
+    <Setter Property="Foreground" Value="#F8F4EC" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.nav-subtitle">
+    <Setter Property="Foreground" Value="#C7D0D6" />
+    <Setter Property="FontSize" Value="11" />
+  </Style>
+
+  <Style Selector="Button">
+    <Setter Property="Background" Value="{DynamicResource NbnSurfaceAltBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource NbnBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="12,6" />
+  </Style>
+
+  <Style Selector="Button.accent">
+    <Setter Property="Background" Value="{DynamicResource NbnAccentBrush}" />
+    <Setter Property="Foreground" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="{DynamicResource NbnAccentBrush}" />
+  </Style>
+
+  <Style Selector="TextBox">
+    <Setter Property="Background" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="{DynamicResource NbnBorderBrush}" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="8,4" />
+  </Style>
+
+  <Style Selector="ComboBox">
+    <Setter Property="Background" Value="#FFFFFF" />
+    <Setter Property="BorderBrush" Value="{DynamicResource NbnBorderBrush}" />
+    <Setter Property="CornerRadius" Value="8" />
+  </Style>
+
+  <Style Selector="Border.chip">
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="Padding" Value="8,3" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+</Styles>

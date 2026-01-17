@@ -1,0 +1,354 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Nbn.Proto.Debug;
+using Nbn.Proto.Io;
+using Nbn.Proto.Repro;
+using Nbn.Proto.Viz;
+using Nbn.Shared;
+using Proto;
+using Proto.Remote;
+using Proto.Remote.GrpcNet;
+
+namespace Nbn.Tools.Workbench.Services;
+
+public sealed class WorkbenchClient : IAsyncDisposable
+{
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
+    private readonly IWorkbenchEventSink _sink;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private ActorSystem? _system;
+    private IRootContext? _root;
+    private PID? _receiverPid;
+    private PID? _ioGatewayPid;
+    private PID? _debugHubPid;
+    private PID? _vizHubPid;
+    private string? _bindHost;
+    private int _bindPort;
+
+    public WorkbenchClient(IWorkbenchEventSink sink)
+    {
+        _sink = sink;
+    }
+
+    public bool IsRunning => _system is not null;
+
+    public string ReceiverLabel => _receiverPid is null ? "offline" : PidLabel(_receiverPid);
+
+    public async Task EnsureStartedAsync(string bindHost, int port, string? advertisedHost = null, int? advertisedPort = null)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_system is not null && string.Equals(_bindHost, bindHost, StringComparison.OrdinalIgnoreCase) && _bindPort == port)
+            {
+                return;
+            }
+
+            await StopAsync().ConfigureAwait(false);
+
+            _bindHost = bindHost;
+            _bindPort = port;
+
+            var system = new ActorSystem();
+            var remoteConfig = WorkbenchRemote.BuildConfig(bindHost, port, advertisedHost, advertisedPort);
+            system.WithRemote(remoteConfig);
+            await system.Remote().StartAsync().ConfigureAwait(false);
+
+            var receiverPid = system.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkbenchReceiverActor(_sink)),
+                "workbench-receiver");
+
+            _system = system;
+            _root = system.Root;
+            _receiverPid = receiverPid;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task<ConnectAck?> ConnectIoAsync(string host, int port, string gatewayName, string clientName)
+    {
+        if (_root is null)
+        {
+            return null;
+        }
+
+        var pid = new PID($"{host}:{port}", gatewayName);
+        try
+        {
+            var ack = await _root.RequestAsync<ConnectAck>(pid, new Connect { ClientName = clientName }, DefaultTimeout)
+                .ConfigureAwait(false);
+            _ioGatewayPid = pid;
+            if (_receiverPid is not null)
+            {
+                _root.Send(_receiverPid, new SetIoGatewayPid(pid));
+            }
+
+            _sink.OnIoStatus($"Connected to {host}:{port}", true);
+            return ack;
+        }
+        catch (Exception ex)
+        {
+            _sink.OnIoStatus($"IO connect failed: {ex.Message}", false);
+            return null;
+        }
+    }
+
+    public void DisconnectIo()
+    {
+        _ioGatewayPid = null;
+        if (_receiverPid is not null)
+        {
+            _root?.Send(_receiverPid, new SetIoGatewayPid(null));
+        }
+
+        _sink.OnIoStatus("Disconnected", false);
+    }
+
+    public Task ConnectObservabilityAsync(string host, int port, string debugHub, string vizHub, Nbn.Proto.Severity minSeverity, string contextRegex)
+    {
+        if (_root is null || _receiverPid is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _debugHubPid = new PID($"{host}:{port}", debugHub);
+        _vizHubPid = new PID($"{host}:{port}", vizHub);
+
+        var subscriber = PidLabel(_receiverPid);
+        _root.Send(_debugHubPid, new DebugSubscribe
+        {
+            SubscriberActor = subscriber,
+            MinSeverity = minSeverity,
+            ContextRegex = contextRegex ?? string.Empty
+        });
+
+        _root.Send(_vizHubPid, new VizSubscribe
+        {
+            SubscriberActor = subscriber
+        });
+
+        _sink.OnObsStatus($"Subscribed to {host}:{port}", true);
+        return Task.CompletedTask;
+    }
+
+    public void DisconnectObservability(string? contextRegex = null)
+    {
+        if (_root is null || _receiverPid is null)
+        {
+            return;
+        }
+
+        var subscriber = PidLabel(_receiverPid);
+        if (_debugHubPid is not null)
+        {
+            _root.Send(_debugHubPid, new DebugUnsubscribe { SubscriberActor = subscriber });
+        }
+
+        if (_vizHubPid is not null)
+        {
+            _root.Send(_vizHubPid, new VizUnsubscribe { SubscriberActor = subscriber });
+        }
+
+        _sink.OnObsStatus("Disconnected", false);
+    }
+
+    public Task RefreshDebugFilterAsync(Nbn.Proto.Severity minSeverity, string contextRegex)
+    {
+        if (_root is null || _receiverPid is null || _debugHubPid is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _root.Send(_debugHubPid, new DebugSubscribe
+        {
+            SubscriberActor = PidLabel(_receiverPid),
+            MinSeverity = minSeverity,
+            ContextRegex = contextRegex ?? string.Empty
+        });
+
+        return Task.CompletedTask;
+    }
+
+    public Task RequestBrainInfoAsync(Guid brainId, Action<BrainInfo?> callback)
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            callback(null);
+            return Task.CompletedTask;
+        }
+
+        return RequestBrainInfoInternalAsync(brainId, callback);
+    }
+
+    private async Task RequestBrainInfoInternalAsync(Guid brainId, Action<BrainInfo?> callback)
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            callback(null);
+            return;
+        }
+
+        try
+        {
+            var info = await _root.RequestAsync<BrainInfo>(
+                _ioGatewayPid,
+                new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+                DefaultTimeout);
+            callback(info);
+        }
+        catch (Exception)
+        {
+            callback(null);
+        }
+    }
+
+    public void SubscribeOutputs(Guid brainId, bool vector)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, vector
+            ? new SubscribeOutputsVectorCommand(brainId)
+            : new SubscribeOutputsCommand(brainId));
+    }
+
+    public void UnsubscribeOutputs(Guid brainId, bool vector)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, vector
+            ? new UnsubscribeOutputsVectorCommand(brainId)
+            : new UnsubscribeOutputsCommand(brainId));
+    }
+
+    public void SendInput(Guid brainId, uint index, float value)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new InputWriteCommand(brainId, index, value));
+    }
+
+    public void SendInputVector(Guid brainId, IReadOnlyList<float> values)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new InputVectorCommand(brainId, values));
+    }
+
+    public void SendEnergyCredit(Guid brainId, long amount)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new EnergyCreditCommand(brainId, amount));
+    }
+
+    public void SendEnergyRate(Guid brainId, long unitsPerSecond)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new EnergyRateCommand(brainId, unitsPerSecond));
+    }
+
+    public void SetCostEnergy(Guid brainId, bool costEnabled, bool energyEnabled)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new SetCostEnergyCommand(brainId, costEnabled, energyEnabled));
+    }
+
+    public void SetPlasticity(Guid brainId, bool enabled, float rate, bool probabilistic)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new SetPlasticityCommand(brainId, enabled, rate, probabilistic));
+    }
+
+    public async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByBrainIdsAsync(ReproduceByBrainIdsRequest request)
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await _root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+                    _ioGatewayPid,
+                    new ReproduceByBrainIds { Request = request },
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+            return result?.Result;
+        }
+        catch (Exception ex)
+        {
+            _sink.OnIoStatus($"Repro failed: {ex.Message}", false);
+            return null;
+        }
+    }
+
+    private async Task StopAsync()
+    {
+        if (_system is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_system.Remote() is not null)
+            {
+                await _system.Remote().ShutdownAsync(true).ConfigureAwait(false);
+            }
+
+            await _system.ShutdownAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+        }
+        finally
+        {
+            _system = null;
+            _root = null;
+            _receiverPid = null;
+            _ioGatewayPid = null;
+            _debugHubPid = null;
+            _vizHubPid = null;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await StopAsync().ConfigureAwait(false);
+        _gate.Dispose();
+    }
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+}

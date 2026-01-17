@@ -2,8 +2,96 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+        xmlns:views="clr-namespace:Nbn.Tools.Workbench.Views.Panels"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="720"
         x:Class="Nbn.Tools.Workbench.MainWindow"
-        Title="Nbn.Tools.Workbench">
-    Welcome to Avalonia!
+        x:DataType="vm:ShellViewModel"
+        Title="NothingButNeurons Workbench"
+        MinWidth="1100" MinHeight="700">
+  <Grid ColumnDefinitions="260,*" RowDefinitions="Auto,*">
+    <Border Classes="sidebar" Grid.RowSpan="2">
+      <StackPanel Spacing="20">
+        <StackPanel Spacing="6">
+          <TextBlock Text="NBN Workbench" Classes="brand-title" />
+          <TextBlock Text="Orchestrate ? Observe ? Evolve" Classes="brand-subtitle" />
+        </StackPanel>
+        <ListBox ItemsSource="{Binding Navigation}" SelectedItem="{Binding SelectedNav}" BorderThickness="0">
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="vm:NavItemViewModel">
+              <Border Classes="nav-item">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Text="{Binding Glyph}" FontSize="18" Foreground="#F8F4EC" />
+                  <StackPanel>
+                    <TextBlock Text="{Binding Title}" Classes="nav-title" />
+                    <TextBlock Text="{Binding Subtitle}" Classes="nav-subtitle" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </StackPanel>
+    </Border>
+
+    <Border Classes="topbar" Grid.Column="1">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="24">
+        <StackPanel>
+          <TextBlock Text="Workbench Control Deck" Classes="card-title" />
+          <TextBlock Text="{Binding ReceiverLabel}" Classes="muted" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Right">
+          <StackPanel Spacing="4">
+            <Border Classes="chip"
+                    Background="{Binding Connections.IoChipBackground}"
+                    BorderBrush="{Binding Connections.IoChipBorder}">
+              <TextBlock Text="IO" />
+            </Border>
+            <TextBlock Text="{Binding Connections.IoStatus}" Classes="muted" />
+          </StackPanel>
+          <StackPanel Spacing="4">
+            <Border Classes="chip"
+                    Background="{Binding Connections.ObsChipBackground}"
+                    BorderBrush="{Binding Connections.ObsChipBorder}">
+              <TextBlock Text="OBS" />
+            </Border>
+            <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" />
+          </StackPanel>
+          <StackPanel Spacing="4">
+            <TextBlock Text="Client" Classes="muted" />
+            <TextBox Width="140" Text="{Binding Connections.ClientName}" />
+          </StackPanel>
+          <StackPanel Spacing="4">
+            <TextBlock Text="Local Port" Classes="muted" />
+            <TextBox Width="90" Text="{Binding Connections.LocalPortText}" />
+          </StackPanel>
+          <Button Content="Connect" Command="{Binding ConnectAllCommand}" Classes="accent" />
+          <Button Content="Disconnect" Command="{Binding DisconnectAllCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <ContentControl Grid.Column="1" Grid.Row="1" Content="{Binding CurrentPanel}" Margin="16">
+      <ContentControl.DataTemplates>
+        <DataTemplate DataType="vm:OrchestratorPanelViewModel">
+          <views:OrchestratorPanel />
+        </DataTemplate>
+        <DataTemplate DataType="vm:IoPanelViewModel">
+          <views:IoPanel />
+        </DataTemplate>
+        <DataTemplate DataType="vm:VizPanelViewModel">
+          <views:VizPanel />
+        </DataTemplate>
+        <DataTemplate DataType="vm:DebugPanelViewModel">
+          <views:DebugPanel />
+        </DataTemplate>
+        <DataTemplate DataType="vm:DesignerPanelViewModel">
+          <views:DesignerPanel />
+        </DataTemplate>
+        <DataTemplate DataType="vm:ReproPanelViewModel">
+          <views:ReproPanel />
+        </DataTemplate>
+      </ContentControl.DataTemplates>
+    </ContentControl>
+  </Grid>
 </Window>

@@ -1,0 +1,212 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Nbn.Proto.Control;
+using Nbn.Proto.Debug;
+using Nbn.Proto.Io;
+using Nbn.Proto.Viz;
+using Nbn.Shared;
+using Nbn.Tools.Workbench.Models;
+using Proto;
+
+namespace Nbn.Tools.Workbench.Services;
+
+public sealed class WorkbenchReceiverActor : IActor
+{
+    private readonly IWorkbenchEventSink _sink;
+    private PID? _ioGateway;
+
+    public WorkbenchReceiverActor(IWorkbenchEventSink sink)
+    {
+        _sink = sink;
+    }
+
+    public Task ReceiveAsync(IContext context)
+    {
+        switch (context.Message)
+        {
+            case SetIoGatewayPid setIo:
+                _ioGateway = setIo.Pid;
+                return Task.CompletedTask;
+            case SubscribeOutputsCommand subscribe:
+                SendToIo(context, new SubscribeOutputs { BrainId = subscribe.BrainId.ToProtoUuid() });
+                return Task.CompletedTask;
+            case UnsubscribeOutputsCommand unsubscribe:
+                SendToIo(context, new UnsubscribeOutputs { BrainId = unsubscribe.BrainId.ToProtoUuid() });
+                return Task.CompletedTask;
+            case SubscribeOutputsVectorCommand subscribeVector:
+                SendToIo(context, new SubscribeOutputsVector { BrainId = subscribeVector.BrainId.ToProtoUuid() });
+                return Task.CompletedTask;
+            case UnsubscribeOutputsVectorCommand unsubscribeVector:
+                SendToIo(context, new UnsubscribeOutputsVector { BrainId = unsubscribeVector.BrainId.ToProtoUuid() });
+                return Task.CompletedTask;
+            case InputWriteCommand input:
+                SendToIo(context, new InputWrite
+                {
+                    BrainId = input.BrainId.ToProtoUuid(),
+                    InputIndex = input.InputIndex,
+                    Value = input.Value
+                });
+                return Task.CompletedTask;
+            case InputVectorCommand vector:
+                var message = new InputVector { BrainId = vector.BrainId.ToProtoUuid() };
+                message.Values.Add(vector.Values);
+                SendToIo(context, message);
+                return Task.CompletedTask;
+            case EnergyCreditCommand credit:
+                SendToIo(context, new EnergyCredit
+                {
+                    BrainId = credit.BrainId.ToProtoUuid(),
+                    Amount = credit.Amount
+                });
+                return Task.CompletedTask;
+            case EnergyRateCommand rate:
+                SendToIo(context, new EnergyRate
+                {
+                    BrainId = rate.BrainId.ToProtoUuid(),
+                    UnitsPerSecond = rate.UnitsPerSecond
+                });
+                return Task.CompletedTask;
+            case SetCostEnergyCommand flags:
+                SendToIo(context, new SetCostEnergyEnabled
+                {
+                    BrainId = flags.BrainId.ToProtoUuid(),
+                    CostEnabled = flags.CostEnabled,
+                    EnergyEnabled = flags.EnergyEnabled
+                });
+                return Task.CompletedTask;
+            case SetPlasticityCommand plasticity:
+                SendToIo(context, new SetPlasticityEnabled
+                {
+                    BrainId = plasticity.BrainId.ToProtoUuid(),
+                    PlasticityEnabled = plasticity.PlasticityEnabled,
+                    PlasticityRate = plasticity.PlasticityRate,
+                    ProbabilisticUpdates = plasticity.ProbabilisticUpdates
+                });
+                return Task.CompletedTask;
+            case OutputEvent output:
+                HandleOutput(output);
+                return Task.CompletedTask;
+            case OutputVectorEvent outputVector:
+                HandleVector(outputVector);
+                return Task.CompletedTask;
+            case DebugInbound debug:
+                HandleDebug(debug);
+                return Task.CompletedTask;
+            case VisualizationEvent viz:
+                HandleViz(viz);
+                return Task.CompletedTask;
+            case BrainTerminated terminated:
+                HandleTermination(terminated);
+                return Task.CompletedTask;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void SendToIo(IContext context, object message)
+    {
+        if (_ioGateway is null)
+        {
+            return;
+        }
+
+        context.Send(_ioGateway, message);
+    }
+
+    private void HandleOutput(OutputEvent output)
+    {
+        var brainId = output.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
+        _sink.OnOutputEvent(new OutputEventItem(
+            DateTimeOffset.UtcNow,
+            brainId,
+            output.OutputIndex,
+            output.Value,
+            output.TickId));
+    }
+
+    private void HandleVector(OutputVectorEvent output)
+    {
+        var brainId = output.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
+        _sink.OnOutputVectorEvent(new OutputVectorEventItem(
+            DateTimeOffset.UtcNow,
+            brainId,
+            PreviewValues(output.Values),
+            output.TickId));
+    }
+
+    private void HandleDebug(DebugInbound inbound)
+    {
+        var outbound = inbound.Outbound;
+        if (outbound is null)
+        {
+            return;
+        }
+
+        _sink.OnDebugEvent(new DebugEventItem(
+            DateTimeOffset.UtcNow,
+            outbound.Severity.ToString(),
+            outbound.Context ?? string.Empty,
+            outbound.Summary ?? string.Empty,
+            outbound.Message ?? string.Empty,
+            outbound.SenderActor ?? string.Empty,
+            outbound.SenderNode ?? string.Empty));
+    }
+
+    private void HandleViz(VisualizationEvent viz)
+    {
+        var brainId = viz.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
+        _sink.OnVizEvent(new VizEventItem(
+            DateTimeOffset.UtcNow,
+            viz.Type.ToString(),
+            brainId,
+            viz.TickId,
+            viz.RegionId.ToString(),
+            viz.Source?.Value.ToString() ?? string.Empty,
+            viz.Target?.Value.ToString() ?? string.Empty,
+            viz.Value));
+    }
+
+    private void HandleTermination(BrainTerminated terminated)
+    {
+        var brainId = terminated.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
+        _sink.OnBrainTerminated(new BrainTerminatedItem(
+            DateTimeOffset.UtcNow,
+            brainId,
+            terminated.Reason ?? string.Empty,
+            terminated.LastEnergyRemaining,
+            terminated.LastTickCost));
+    }
+
+    private static string PreviewValues(IReadOnlyList<float> values)
+    {
+        if (values.Count == 0)
+        {
+            return "(empty)";
+        }
+
+        var take = Math.Min(values.Count, 6);
+        var preview = string.Join(", ", values.Take(take).Select(v => v.ToString("0.###")));
+        if (values.Count > take)
+        {
+            preview += $" ? ({values.Count})";
+        }
+
+        return preview;
+    }
+}
+
+public sealed record SetIoGatewayPid(PID? Pid);
+
+public sealed record SubscribeOutputsCommand(Guid BrainId);
+public sealed record UnsubscribeOutputsCommand(Guid BrainId);
+public sealed record SubscribeOutputsVectorCommand(Guid BrainId);
+public sealed record UnsubscribeOutputsVectorCommand(Guid BrainId);
+
+public sealed record InputWriteCommand(Guid BrainId, uint InputIndex, float Value);
+public sealed record InputVectorCommand(Guid BrainId, IReadOnlyList<float> Values);
+
+public sealed record EnergyCreditCommand(Guid BrainId, long Amount);
+public sealed record EnergyRateCommand(Guid BrainId, long UnitsPerSecond);
+public sealed record SetCostEnergyCommand(Guid BrainId, bool CostEnabled, bool EnergyEnabled);
+public sealed record SetPlasticityCommand(Guid BrainId, bool PlasticityEnabled, float PlasticityRate, bool ProbabilisticUpdates);
