@@ -38,7 +38,7 @@ public sealed class LocalArtifactStore : IArtifactStore
             throw new ArgumentException("Media type is required.", nameof(mediaType));
         }
 
-        var chunks = new List<ArtifactChunkRef>();
+        var chunks = new List<ArtifactChunkInfo>();
         var byteLength = 0L;
 
         using var artifactHasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -49,9 +49,25 @@ public sealed class LocalArtifactStore : IArtifactStore
             byteLength += chunk.Length;
 
             var chunkHash = Sha256Hash.Compute(chunk.Span);
-            chunks.Add(new ArtifactChunkRef(chunkHash, chunk.Length));
+            var writeResult = PrepareChunk(chunk);
 
-            await _chunkStore.TryWriteChunkAsync(chunkHash, chunk, cancellationToken);
+            var wrote = await _chunkStore.TryWriteChunkAsync(chunkHash, writeResult.Payload, cancellationToken);
+            var compression = writeResult.Compression;
+            var storedLength = writeResult.StoredLength;
+
+            if (!wrote)
+            {
+                var metadata = await _database.TryGetChunkMetadataAsync(chunkHash, cancellationToken);
+                if (metadata is null)
+                {
+                    throw new InvalidOperationException($"Chunk {chunkHash} exists on disk but metadata is missing.");
+                }
+
+                compression = ChunkCompression.FromLabel(metadata.Compression);
+                storedLength = metadata.StoredLength;
+            }
+
+            chunks.Add(new ArtifactChunkInfo(chunkHash, chunk.Length, storedLength, compression));
         }, cancellationToken);
 
         var artifactId = new Sha256Hash(artifactHasher.GetHashAndReset());
@@ -101,8 +117,6 @@ public sealed class LocalArtifactStore : IArtifactStore
         return new ArtifactChunkStream(_chunkStore, manifest.Chunks);
     }
 
-    internal Stream OpenChunkStream(Sha256Hash chunkHash) => _chunkStore.OpenRead(chunkHash);
-
     internal string GetChunkPath(Sha256Hash chunkHash) => _chunkStore.GetChunkPath(chunkHash);
 
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
@@ -129,5 +143,40 @@ public sealed class LocalArtifactStore : IArtifactStore
         {
             _initLock.Release();
         }
+    }
+
+    private ChunkWriteResult PrepareChunk(ReadOnlyMemory<byte> chunk)
+    {
+        if (_options.ChunkCompression == ChunkCompressionKind.None || chunk.Length < _options.ChunkCompressionMinBytes)
+        {
+            return new ChunkWriteResult(chunk, chunk.Length, ChunkCompressionKind.None);
+        }
+
+        if (_options.ChunkCompression == ChunkCompressionKind.Zstd)
+        {
+            var compressed = ChunkCompression.CompressZstd(chunk.Span, _options.ChunkCompressionLevel);
+            if (_options.ChunkCompressionOnlyIfSmaller && compressed.Length >= chunk.Length)
+            {
+                return new ChunkWriteResult(chunk, chunk.Length, ChunkCompressionKind.None);
+            }
+
+            return new ChunkWriteResult(compressed, compressed.Length, ChunkCompressionKind.Zstd);
+        }
+
+        return new ChunkWriteResult(chunk, chunk.Length, ChunkCompressionKind.None);
+    }
+
+    private readonly struct ChunkWriteResult
+    {
+        public ChunkWriteResult(ReadOnlyMemory<byte> payload, int storedLength, ChunkCompressionKind compression)
+        {
+            Payload = payload;
+            StoredLength = storedLength;
+            Compression = compression;
+        }
+
+        public ReadOnlyMemory<byte> Payload { get; }
+        public int StoredLength { get; }
+        public ChunkCompressionKind Compression { get; }
     }
 }

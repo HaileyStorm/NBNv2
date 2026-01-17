@@ -44,9 +44,26 @@ internal sealed class ChunkStore
         }
     }
 
-    public Stream OpenRead(Sha256Hash hash)
+    public Stream OpenRead(ArtifactChunkInfo chunk)
     {
-        var path = GetChunkPath(hash);
-        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
+        var path = GetChunkPath(chunk.Hash);
+        if (chunk.Compression == ChunkCompressionKind.None)
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
+        }
+
+        var compressed = File.ReadAllBytes(path);
+        var decompressed = chunk.Compression switch
+        {
+            ChunkCompressionKind.Zstd => ChunkCompression.DecompressZstd(compressed, chunk.UncompressedLength),
+            _ => throw new InvalidOperationException($"Unsupported compression kind: {chunk.Compression}.")
+        };
+
+        if (chunk.UncompressedLength > 0 && decompressed.Length != chunk.UncompressedLength)
+        {
+            throw new InvalidOperationException($"Chunk {chunk.Hash} decompressed length {decompressed.Length} did not match expected {chunk.UncompressedLength}.");
+        }
+
+        return new MemoryStream(decompressed, writable: false);
     }
 }

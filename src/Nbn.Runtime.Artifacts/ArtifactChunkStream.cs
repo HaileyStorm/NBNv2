@@ -3,13 +3,13 @@ namespace Nbn.Runtime.Artifacts;
 internal sealed class ArtifactChunkStream : Stream
 {
     private readonly ChunkStore _chunkStore;
-    private readonly IReadOnlyList<ArtifactChunkRef> _chunks;
+    private readonly IReadOnlyList<ArtifactChunkInfo> _chunks;
     private readonly long _length;
     private int _chunkIndex;
     private Stream? _current;
     private long _position;
 
-    public ArtifactChunkStream(ChunkStore chunkStore, IReadOnlyList<ArtifactChunkRef> chunks)
+    public ArtifactChunkStream(ChunkStore chunkStore, IReadOnlyList<ArtifactChunkInfo> chunks)
     {
         _chunkStore = chunkStore ?? throw new ArgumentNullException(nameof(chunkStore));
         _chunks = chunks ?? throw new ArgumentNullException(nameof(chunks));
@@ -109,7 +109,7 @@ internal sealed class ArtifactChunkStream : Stream
             return false;
         }
 
-        _current = _chunkStore.OpenRead(_chunks[_chunkIndex].Hash);
+        _current = _chunkStore.OpenRead(_chunks[_chunkIndex]);
         return true;
     }
 }

@@ -18,4 +18,8 @@ public sealed class ArtifactStoreOptions
     public string DatabasePath { get; }
     public string ChunkRootPath { get; }
     public CdcChunkerOptions Chunking { get; init; } = new();
+    public ChunkCompressionKind ChunkCompression { get; init; } = ChunkCompressionKind.None;
+    public int ChunkCompressionLevel { get; init; } = 3;
+    public int ChunkCompressionMinBytes { get; init; } = 64 * 1024;
+    public bool ChunkCompressionOnlyIfSmaller { get; init; } = true;
 }

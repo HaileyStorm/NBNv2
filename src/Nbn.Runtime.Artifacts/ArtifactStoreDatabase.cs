@@ -90,13 +90,22 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
         }
 
         var chunkRows = (await connection.QueryAsync<ArtifactChunkRow>(
-            "SELECT seq AS Seq, chunk_sha256 AS ChunkSha256, chunk_uncompressed_length AS ChunkUncompressedLength FROM artifact_chunks WHERE artifact_sha256 = @Id ORDER BY seq;",
+            @"SELECT ac.seq AS Seq,
+                     ac.chunk_sha256 AS ChunkSha256,
+                     ac.chunk_uncompressed_length AS ChunkUncompressedLength,
+                     c.stored_length AS StoredLength,
+                     c.compression AS Compression
+              FROM artifact_chunks ac
+              JOIN chunks c ON ac.chunk_sha256 = c.chunk_sha256
+              WHERE ac.artifact_sha256 = @Id
+              ORDER BY ac.seq;",
             new { Id = artifactId.Bytes.ToArray() })).ToList();
 
-        var chunks = new List<ArtifactChunkRef>(chunkRows.Count);
+        var chunks = new List<ArtifactChunkInfo>(chunkRows.Count);
         foreach (var row in chunkRows)
         {
-            chunks.Add(new ArtifactChunkRef(new Sha256Hash(row.ChunkSha256), row.ChunkUncompressedLength));
+            var compression = ChunkCompression.FromLabel(row.Compression);
+            chunks.Add(new ArtifactChunkInfo(new Sha256Hash(row.ChunkSha256), row.ChunkUncompressedLength, row.StoredLength, compression));
         }
 
         var regionRows = (await connection.QueryAsync<ArtifactRegionRow>(
@@ -142,7 +151,11 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
         var chunkUpserts = new List<ChunkUpsertRow>(manifest.Chunks.Count);
         foreach (var chunk in manifest.Chunks)
         {
-            chunkUpserts.Add(new ChunkUpsertRow(chunk.Hash.Bytes.ToArray(), chunk.UncompressedLength, chunk.UncompressedLength, "none"));
+            chunkUpserts.Add(new ChunkUpsertRow(
+                chunk.Hash.Bytes.ToArray(),
+                chunk.UncompressedLength,
+                chunk.StoredLength,
+                ChunkCompression.ToLabel(chunk.Compression)));
         }
 
         const string chunkUpsertSql = @"
@@ -214,7 +227,7 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
 
     private sealed record ArtifactRow(byte[] ArtifactSha256, string MediaType, long ByteLength);
 
-    private sealed record ArtifactChunkRow(int Seq, byte[] ChunkSha256, int ChunkUncompressedLength);
+    private sealed record ArtifactChunkRow(int Seq, byte[] ChunkSha256, int ChunkUncompressedLength, int StoredLength, string Compression);
 
     private sealed record ArtifactRegionRow(int RegionId, long Offset, long Length);
 
@@ -223,4 +236,18 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
     private sealed record ArtifactChunkInsertRow(byte[] ArtifactSha256, int Seq, byte[] ChunkSha256, int ChunkUncompressedLength);
 
     private sealed record ArtifactRegionInsertRow(byte[] ArtifactSha256, int RegionId, long Offset, long Length);
+
+    public async Task<ChunkMetadata?> TryGetChunkMetadataAsync(Sha256Hash chunkHash, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var row = await connection.QuerySingleOrDefaultAsync<ChunkMetadata>(
+            "SELECT byte_length AS ByteLength, stored_length AS StoredLength, compression AS Compression FROM chunks WHERE chunk_sha256 = @Id;",
+            new { Id = chunkHash.Bytes.ToArray() });
+
+        return row;
+    }
+
+    internal sealed record ChunkMetadata(int ByteLength, int StoredLength, string Compression);
 }

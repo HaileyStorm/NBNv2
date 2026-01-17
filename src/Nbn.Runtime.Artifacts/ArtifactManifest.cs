@@ -8,7 +8,7 @@ public sealed class ArtifactManifest
         Sha256Hash artifactId,
         string mediaType,
         long byteLength,
-        IReadOnlyList<ArtifactChunkRef> chunks,
+        IReadOnlyList<ArtifactChunkInfo> chunks,
         IReadOnlyList<ArtifactRegionIndexEntry>? regionIndex = null)
     {
         if (string.IsNullOrWhiteSpace(mediaType))
@@ -36,7 +36,7 @@ public sealed class ArtifactManifest
     public Sha256Hash ArtifactId { get; }
     public string MediaType { get; }
     public long ByteLength { get; }
-    public IReadOnlyList<ArtifactChunkRef> Chunks { get; }
+    public IReadOnlyList<ArtifactChunkInfo> Chunks { get; }
     public IReadOnlyList<ArtifactRegionIndexEntry> RegionIndex { get; }
 
     public Sha256Hash ComputeManifestHash()
