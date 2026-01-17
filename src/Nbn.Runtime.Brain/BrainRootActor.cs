@@ -9,14 +9,18 @@ public sealed class BrainRootActor : IActor
     private readonly Guid _brainId;
     private readonly Props? _signalRouterProps;
     private readonly PID? _hiveMindPid;
+    private readonly bool _autoSpawnSignalRouter;
     private PID? _signalRouterPid;
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
 
-    public BrainRootActor(Guid brainId, PID? hiveMindPid = null, Props? signalRouterProps = null)
+    public BrainRootActor(Guid brainId, PID? hiveMindPid = null, Props? signalRouterProps = null, bool autoSpawnSignalRouter = true)
     {
         _brainId = brainId;
         _hiveMindPid = hiveMindPid;
-        _signalRouterProps = signalRouterProps ?? Props.FromProducer(() => new BrainSignalRouterActor(brainId));
+        _autoSpawnSignalRouter = autoSpawnSignalRouter;
+        _signalRouterProps = signalRouterProps ?? (autoSpawnSignalRouter
+            ? Props.FromProducer(() => new BrainSignalRouterActor(brainId))
+            : null);
     }
 
     public Task ReceiveAsync(IContext context)
@@ -64,7 +68,7 @@ public sealed class BrainRootActor : IActor
 
     private void EnsureSignalRouter(IContext context)
     {
-        if (_signalRouterPid is not null || _signalRouterProps is null)
+        if (!_autoSpawnSignalRouter || _signalRouterPid is not null || _signalRouterProps is null)
         {
             return;
         }

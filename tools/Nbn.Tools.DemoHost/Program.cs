@@ -92,7 +92,7 @@ static async Task RunBrainAsync(string[] args)
         routerId);
 
     var brainRootPid = system.Root.SpawnNamed(
-        Props.FromProducer(() => new BrainRootActor(brainId, hivePid)),
+        Props.FromProducer(() => new BrainRootActor(brainId, hivePid, autoSpawnSignalRouter: false)),
         brainRootId);
 
     system.Root.Send(brainRootPid, new SetSignalRouter(routerPid));

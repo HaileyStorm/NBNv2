@@ -265,7 +265,7 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            var computeTarget = brain.SignalRouterPid ?? brain.BrainRootPid;
+            var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
             if (computeTarget is null)
             {
                 Log($"TickCompute skipped: missing router for brain {brain.BrainId}.");
