@@ -1,12 +1,13 @@
 using Google.Protobuf;
 using Nbn.Proto;
+using Nbn.Runtime.RegionHost;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
-using Nbn.Shared.Addressing;
 using Nbn.Shared.Validation;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
+using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 var options = RegionHostOptions.FromArgs(args);
 ValidateOptions(options);
