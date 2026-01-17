@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Text;
+using Nbn.Shared;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
 
@@ -302,8 +303,7 @@ public static class NbnBinary
         var version = BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(0x004, 2));
         var endianness = data[0x006];
         var headerPow2 = data[0x007];
-        var brainIdBytes = data.Slice(0x008, 16).ToArray();
-        var brainId = new Guid(brainIdBytes);
+        var brainId = UuidEncoding.FromRfc4122Bytes(data.Slice(0x008, 16));
         var snapshotTickId = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(0x018, 8));
         var timestampMs = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(0x020, 8));
         var energyRemaining = BinaryPrimitives.ReadInt64LittleEndian(data.Slice(0x028, 8));
@@ -339,7 +339,7 @@ public static class NbnBinary
         BinaryPrimitives.WriteUInt16LittleEndian(destination.Slice(0x004, 2), header.Version);
         destination[0x006] = header.Endianness;
         destination[0x007] = header.HeaderBytesPow2;
-        header.BrainId.ToByteArray().CopyTo(destination.Slice(0x008, 16));
+        UuidEncoding.WriteRfc4122Bytes(header.BrainId, destination.Slice(0x008, 16));
         BinaryPrimitives.WriteUInt64LittleEndian(destination.Slice(0x018, 8), header.SnapshotTickId);
         BinaryPrimitives.WriteUInt64LittleEndian(destination.Slice(0x020, 8), header.TimestampMs);
         BinaryPrimitives.WriteInt64LittleEndian(destination.Slice(0x028, 8), header.EnergyRemaining);

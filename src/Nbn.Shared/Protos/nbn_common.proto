@@ -4,7 +4,7 @@ package nbn;
 option csharp_namespace = "Nbn.Proto";
 
 message Uuid {
-  bytes value = 1; // 16 bytes
+  bytes value = 1; // 16 bytes, RFC 4122 byte order
 }
 
 message Sha256 {

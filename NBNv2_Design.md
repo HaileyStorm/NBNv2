@@ -195,6 +195,7 @@ For each brain:
 
 * `BrainId`: UUID (16 bytes)
 * `NodeId`: UUID (16 bytes)
+* UUID byte order (on disk / on wire): RFC 4122 network order (big-endian; matches canonical hex string)
 * `ArtifactId`: SHA-256 (32 bytes), computed on canonical bytes of artifact payload
 * `SnapshotId`: SHA-256 of `.nbs` payload or UUID (implementation choice; prefer SHA-256)
 
@@ -1032,6 +1033,7 @@ The store may additionally index `.nbn` region sections:
 ### 17.1 Common conventions
 
 * Endianness: little-endian for all multibyte integers
+* UUID bytes: RFC 4122 network order (big-endian; matches canonical hex string)
 * All bitfields are defined with bit 0 as LSB of their integer container
 * File extensions:
 
@@ -1298,7 +1300,7 @@ Offsets and sizes:
 
 **0x008–0x017 (16 bytes)**
 
-* `brain_id_uuid`
+* `brain_id_uuid` (RFC 4122 byte order)
 
 **0x018–0x01F (8 bytes)**
 
@@ -1479,7 +1481,7 @@ syntax = "proto3";
 package nbn;
 
 message Uuid {
-  bytes value = 1; // 16 bytes
+  bytes value = 1; // 16 bytes, RFC 4122 byte order
 }
 
 message Sha256 {

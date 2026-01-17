@@ -80,7 +80,7 @@ internal static class NbnTestVectors
         BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(0x004, 2), 2);
         span[0x006] = 1;
         span[0x007] = 9;
-        SampleBrainId.ToByteArray().CopyTo(span.Slice(0x008, 16));
+        UuidEncoding.WriteRfc4122Bytes(SampleBrainId, span.Slice(0x008, 16));
         BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x018, 8), SampleTickId);
         BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x020, 8), SampleTimestampMs);
         BinaryPrimitives.WriteInt64LittleEndian(span.Slice(0x028, 8), SampleEnergyRemaining);
@@ -112,7 +112,7 @@ internal static class NbnTestVectors
         BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(0x004, 2), 2);
         span[0x006] = 1;
         span[0x007] = 9;
-        SampleBrainId.ToByteArray().CopyTo(span.Slice(0x008, 16));
+        UuidEncoding.WriteRfc4122Bytes(SampleBrainId, span.Slice(0x008, 16));
         BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x018, 8), SampleTickId);
         BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x020, 8), SampleTimestampMs);
         BinaryPrimitives.WriteInt64LittleEndian(span.Slice(0x028, 8), SampleEnergyRemaining);
@@ -361,7 +361,7 @@ internal static class NbnTestVectors
         BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(0x004, 2), 2);
         span[0x006] = 1;
         span[0x007] = 9;
-        SampleBrainId.ToByteArray().CopyTo(span.Slice(0x008, 16));
+        UuidEncoding.WriteRfc4122Bytes(SampleBrainId, span.Slice(0x008, 16));
         BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x018, 8), SampleTickId);
         BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x020, 8), SampleTimestampMs);
         BinaryPrimitives.WriteInt64LittleEndian(span.Slice(0x028, 8), SampleEnergyRemaining);
