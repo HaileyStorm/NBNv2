@@ -2657,6 +2657,18 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 
 ---
 
+## Multi-agent coordination and workspace boundaries
+
+To prevent cross-agent collisions in multi-project work:
+
+* When you start work in a specific project or directory under the NBN repo root, create a sentinel file named `.working` in that directory (include your name and start time if helpful).
+* Remove the `.working` file when you are finished in that directory.
+* You may edit files in another project/directory ONLY if there is no `.working` file present there.
+* Include creation/removal of `.working` files in the same commit/push as your related changes. Do not touch other agents' changes in other directories.
+* NEVER edit or change files outside the NBN repo root (and its subdirectories). If you believe an external change is required, stop and ask for confirmation first.
+
+---
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
