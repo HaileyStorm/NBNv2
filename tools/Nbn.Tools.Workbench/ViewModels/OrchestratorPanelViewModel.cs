@@ -13,7 +13,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private const int MaxRows = 200;
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
+    private readonly LocalDemoRunner _demoRunner = new();
     private string _statusMessage = "Idle";
+    private string _demoStatus = "Demo not running.";
+    private bool _demoRunning;
 
     public OrchestratorPanelViewModel(UiDispatcher dispatcher, ConnectionViewModel connections)
     {
@@ -23,6 +26,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Settings = new ObservableCollection<SettingItem>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        StartDemoCommand = new AsyncRelayCommand(StartDemoAsync);
+        StopDemoCommand = new AsyncRelayCommand(StopDemoAsync);
     }
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
@@ -39,6 +44,22 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand RefreshCommand { get; }
 
+    public AsyncRelayCommand StartDemoCommand { get; }
+
+    public AsyncRelayCommand StopDemoCommand { get; }
+
+    public string DemoStatus
+    {
+        get => _demoStatus;
+        set => SetProperty(ref _demoStatus, value);
+    }
+
+    public bool DemoRunning
+    {
+        get => _demoRunning;
+        set => SetProperty(ref _demoRunning, value);
+    }
+
     public void AddTermination(BrainTerminatedItem item)
     {
         _dispatcher.Post(() =>
@@ -46,6 +67,41 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Terminations.Insert(0, item);
             Trim(Terminations);
         });
+    }
+
+    public Task StopDemoAsyncForShutdown() => StopDemoAsync();
+
+    private async Task StartDemoAsync()
+    {
+        if (!TryParsePort(Connections.IoPortText, out var ioPort))
+        {
+            DemoStatus = "Invalid IO port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.ObsPortText, out var obsPort))
+        {
+            DemoStatus = "Invalid Obs port.";
+            return;
+        }
+
+        var options = new DemoLaunchOptions(
+            Connections.LocalBindHost,
+            12020,
+            12010,
+            12040,
+            ioPort,
+            obsPort);
+
+        var result = await _demoRunner.StartAsync(options);
+        DemoStatus = result.Message;
+        DemoRunning = _demoRunner.IsRunning;
+    }
+
+    private async Task StopDemoAsync()
+    {
+        DemoStatus = await _demoRunner.StopAsync();
+        DemoRunning = _demoRunner.IsRunning;
     }
 
     private async Task RefreshAsync()
@@ -118,4 +174,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             collection.RemoveAt(collection.Count - 1);
         }
     }
+
+    private static bool TryParsePort(string value, out int port)
+        => int.TryParse(value, out port) && port > 0 && port < 65536;
 }

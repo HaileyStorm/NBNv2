@@ -7,10 +7,10 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _localBindHost = "127.0.0.1";
     private string _localPort = "12090";
     private string _ioHost = "127.0.0.1";
-    private string _ioPort = "12020";
+    private string _ioPort = "12050";
     private string _ioGateway = "io-gateway";
     private string _obsHost = "127.0.0.1";
-    private string _obsPort = "12040";
+    private string _obsPort = "12060";
     private string _debugHub = "DebugHub";
     private string _vizHub = "VisualizationHub";
     private string _clientName = "nbn.workbench";

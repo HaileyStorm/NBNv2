@@ -158,6 +158,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public async ValueTask DisposeAsync()
     {
+        await Orchestrator.StopDemoAsyncForShutdown();
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 
