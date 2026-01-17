@@ -2200,6 +2200,18 @@ message ReproduceResult {
 11. Implement GPU backend with ILGPU kernel-per-function (CUDA first), parity tests, and placement heuristics
 12. Expand Workbench Visualizer and Debug viewer; add orchestration conveniences
 
+### 20.x Local demo script
+
+For a minimal end-to-end smoke test, use the PowerShell demo script at
+`tools/demo/run_local_hivemind_demo.ps1`. The script:
+
+* Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) and stores it in a local artifact store
+* Starts HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), and a RegionHost shard for region 1
+* Logs output to `tools/demo/local-demo/logs`
+
+The demo uses default ports (HiveMind 12020, BrainHost 12010, RegionHost 12040) and can be edited in the script
+parameters if needed.
+
 ---
 
 # Appendix A: Defaults and constants
