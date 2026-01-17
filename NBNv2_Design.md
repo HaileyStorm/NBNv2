@@ -126,6 +126,7 @@ Initialization:
 Usage notes:
 * Use `bd` for task lifecycle updates; keep `.beads/` under version control unless you explicitly use `--stealth`.
 * For automation, use `bv --robot-*` only. The interactive TUI blocks the session.
+* NEVER use git worktrees (they don't work well with Beads).
 
 ---
 
@@ -2652,12 +2653,12 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 3. **Update issue status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
-   git pull --rebase
+   git pull --rebase  # If possible / note other gents may be working in other Projects / directories. Consider using auto-stash.
    bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Clean up** - Clear stashes, prune remote branches
+5. **Clean up** - Clear stashes YOU created, prune remote branches (other agents may be working in other Projects / directories)
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
 
@@ -2666,3 +2667,4 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+- NEVER use git worktrees
