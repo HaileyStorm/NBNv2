@@ -335,6 +335,7 @@ Each tick consists of two global phases:
 
 * HiveMind instructs each brain’s BrainRoot (->BrainSignalRouter) to flush all prepared outgoing contributions for tick `tick_id`.
 * BrainSignalRouter delivers aggregated `SignalBatch` messages to destination RegionShards.
+* Delivery should be sent as a request (sender populated) so RegionShards can reply with `SignalBatchAck` to the router; avoid empty sender PIDs in remoting.
 * Destination RegionShards acknowledge receipt for that tick.
 * BrainSignalRouter reports `TickDeliverDone`
 
@@ -2206,7 +2207,7 @@ For a minimal end-to-end smoke test, use the demo scripts:
 `tools/demo/run_local_hivemind_demo.ps1` (Windows PowerShell) or
 `tools/demo/run_local_hivemind_demo.sh` (Ubuntu/Linux). The scripts:
 
-* Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) and stores it in a local artifact store
+* Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) with a single self-loop axon in region 1 to exercise SignalBatch delivery, and stores it in a local artifact store
 * Starts HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), and a RegionHost shard for region 1
 * Logs output to `tools/demo/local-demo/logs`
 

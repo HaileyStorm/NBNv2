@@ -174,7 +174,8 @@ public sealed class BrainRootActor : IActor
             return;
         }
 
-        context.Send(_signalRouterPid, message);
+        // Use Request so remoting populates Sender for replies (TickDeliverDone, etc.).
+        context.Request(_signalRouterPid, message);
     }
 
     private void ForwardToHiveMind(IContext context, object message)

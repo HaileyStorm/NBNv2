@@ -9,6 +9,7 @@ namespace Nbn.Runtime.Brain;
 
 public sealed class BrainSignalRouterActor : IActor
 {
+    private static readonly bool LogDelivery = IsEnvTrue("NBN_BRAIN_LOG_DELIVERY");
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private readonly RoutingTable _routingTable = new();
@@ -100,12 +101,31 @@ public sealed class BrainSignalRouterActor : IActor
         var deliveredBatches = 0u;
         var deliveredContribs = 0u;
         var expectedAcks = 0;
+        var fallbackRoutes = 0;
+        var missingRouteLogged = false;
 
+        var outboxDestinationCount = 0;
         if (_pendingOutboxes.TryGetValue(tickDeliver.TickId, out var outbox))
         {
+            outboxDestinationCount = outbox.Destinations.Count;
             foreach (var entry in outbox.Destinations)
             {
                 if (!_routingTable.TryGetPid(entry.Key, out var pid) || pid is null)
+                {
+                    if (!TryGetFallbackPid(entry.Value.RegionId, out pid))
+                    {
+                        if (LogDelivery && !missingRouteLogged)
+                        {
+                            Log($"TickDeliver missing route tick={tickDeliver.TickId} destShard={entry.Key} destRegion={entry.Value.RegionId} routes={FormatRoutes()}");
+                            missingRouteLogged = true;
+                        }
+                        continue;
+                    }
+
+                    fallbackRoutes++;
+                }
+
+                if (pid is null)
                 {
                     continue;
                 }
@@ -119,7 +139,8 @@ public sealed class BrainSignalRouterActor : IActor
                 };
 
                 signalBatch.Contribs.AddRange(entry.Value.Contribs);
-                context.Send(pid, signalBatch);
+                // Use Request so RegionShard can reply with SignalBatchAck to this router.
+                context.Request(pid, signalBatch);
 
                 deliveredBatches++;
                 deliveredContribs += (uint)entry.Value.Contribs.Count;
@@ -127,6 +148,11 @@ public sealed class BrainSignalRouterActor : IActor
             }
 
             _pendingOutboxes.Remove(tickDeliver.TickId);
+        }
+
+        if (LogDelivery)
+        {
+            Log($"TickDeliver start tick={tickDeliver.TickId} outboxDestinations={outboxDestinationCount} deliveredBatches={deliveredBatches} deliveredContribs={deliveredContribs} expectedAcks={expectedAcks} routes={_routingTable.Count} fallbackRoutes={fallbackRoutes}");
         }
 
         if (expectedAcks == 0)
@@ -140,7 +166,15 @@ public sealed class BrainSignalRouterActor : IActor
                 DeliveredContribs = 0
             };
 
-            context.Respond(deliverDone);
+            var replyTo = context.Sender ?? context.Parent;
+            if (replyTo is not null)
+            {
+                context.Send(replyTo, deliverDone);
+            }
+            else if (LogDelivery)
+            {
+                Log($"TickDeliver done dropped (no reply target) tick={tickDeliver.TickId}");
+            }
             return;
         }
 
@@ -165,6 +199,11 @@ public sealed class BrainSignalRouterActor : IActor
         if (!_pendingDeliveries.TryGetValue(ack.TickId, out var pending))
         {
             BrainTelemetry.RecordLateAck();
+            if (LogDelivery)
+            {
+                var senderLabel = context.Sender is null ? "(null)" : $"{context.Sender.Address}/{context.Sender.Id}";
+                Log($"SignalBatchAck late or unknown tick={ack.TickId} sender={senderLabel} region={ack.RegionId} shard={ack.ShardId?.Value ?? 0}");
+            }
             return;
         }
 
@@ -221,6 +260,58 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         BrainTelemetry.RecordDeliveryTimeout(expired.Count);
+
+        if (LogDelivery)
+        {
+            Log($"Pending deliveries expired before tick={currentTickId}. expired={string.Join(",", expired)}");
+        }
+    }
+
+    private bool TryGetFallbackPid(uint regionId, out PID? pid)
+    {
+        pid = null;
+        PID? candidate = null;
+
+        foreach (var entry in _routingTable.Entries)
+        {
+            if (entry.ShardId.RegionId != (int)regionId)
+            {
+                continue;
+            }
+
+            if (candidate is not null)
+            {
+                pid = null;
+                return false;
+            }
+
+            candidate = entry.Pid;
+        }
+
+        if (candidate is null)
+        {
+            pid = null;
+            return false;
+        }
+
+        pid = candidate;
+        return true;
+    }
+
+    private string FormatRoutes()
+    {
+        if (_routingTable.Count == 0)
+        {
+            return "(none)";
+        }
+
+        var routes = new string[_routingTable.Entries.Count];
+        for (var i = 0; i < _routingTable.Entries.Count; i++)
+        {
+            routes[i] = _routingTable.Entries[i].ShardId.ToString();
+        }
+
+        return string.Join(",", routes);
     }
 
     private static void ForwardToParent(IContext context, object message)
@@ -307,5 +398,22 @@ public sealed class BrainSignalRouterActor : IActor
         public uint DeliveredContribs { get; }
         public int ExpectedAcks { get; }
         public int AckCount { get; set; }
+    }
+
+    private static void Log(string message)
+        => Console.WriteLine($"[{DateTime.UtcNow:O}] [BrainSignalRouter] {message}");
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("y", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -9,6 +9,7 @@ namespace Nbn.Runtime.RegionHost;
 
 public sealed class RegionShardActor : IActor
 {
+    private static readonly bool LogDelivery = IsEnvTrue("NBN_REGIONHOST_LOG_DELIVERY");
     private readonly RegionShardState _state;
     private readonly RegionShardCpuBackend _cpu;
     private readonly Guid _brainId;
@@ -73,11 +74,30 @@ public sealed class RegionShardActor : IActor
             TickId = batch.TickId
         };
 
-        var target = context.Sender ?? _router;
-        if (target is not null)
+        var target = context.Sender;
+        if (target is null || string.IsNullOrWhiteSpace(target.Address))
         {
-            context.Send(target, ack);
+            if (LogDelivery)
+            {
+                var senderLabel = target is null ? "(null)" : $"{target.Id}";
+                var routerLabel = _router is null ? "(null)" : $"{_router.Address}/{_router.Id}";
+                Console.WriteLine($"[RegionShard] SignalBatch ack fallback to router. tick={batch.TickId} sender={senderLabel} router={routerLabel}");
+            }
+
+            target = _router;
         }
+
+        if (target is null)
+        {
+            if (LogDelivery)
+            {
+                Console.WriteLine($"[RegionShard] SignalBatch ack dropped. tick={batch.TickId} reason=no_target");
+            }
+
+            return;
+        }
+
+        context.Send(target, ack);
     }
 
     private void HandleTickCompute(IContext context, TickCompute tick)
@@ -140,5 +160,19 @@ public sealed class RegionShardActor : IActor
         {
             context.Send(doneTarget, done);
         }
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("y", StringComparison.OrdinalIgnoreCase);
     }
 }

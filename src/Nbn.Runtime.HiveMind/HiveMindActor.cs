@@ -399,11 +399,20 @@ public sealed class HiveMindActor : IActor
         {
             case TickPhase.Compute:
                 _tick.ComputeTimedOut = true;
+                if (_pendingCompute.Count > 0)
+                {
+                    LogError($"TickCompute timeout: tick {_tick.TickId} pending={_pendingCompute.Count}");
+                }
                 _pendingCompute.Clear();
                 CompleteComputePhase(context);
                 break;
             case TickPhase.Deliver:
                 _tick.DeliverTimedOut = true;
+                if (_pendingDeliver.Count > 0)
+                {
+                    var pendingBrains = string.Join(",", _pendingDeliver);
+                    LogError($"TickDeliver timeout: tick {_tick.TickId} pendingBrains={pendingBrains}");
+                }
                 _pendingDeliver.Clear();
                 CompleteTick(context);
                 break;
@@ -760,7 +769,7 @@ public sealed class HiveMindActor : IActor
             var routes = new List<ShardRoute>(brain.Shards.Count);
             foreach (var entry in brain.Shards)
             {
-                routes.Add(new ShardRoute(entry.Key, entry.Value));
+                routes.Add(new ShardRoute(entry.Key.Value, entry.Value));
             }
 
             snapshot = new RoutingTableSnapshot(routes);

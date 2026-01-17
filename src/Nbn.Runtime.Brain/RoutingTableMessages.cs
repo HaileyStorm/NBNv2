@@ -3,7 +3,11 @@ using Proto;
 
 namespace Nbn.Runtime.Brain;
 
-public sealed record ShardRoute(ShardId32 ShardId, PID Pid);
+public sealed record ShardRoute(uint ShardIdValue, PID Pid)
+{
+    // Store the raw value for reliable Proto.Actor serialization across remoting boundaries.
+    public ShardId32 ShardId => new(ShardIdValue);
+}
 
 public sealed record RoutingTableSnapshot
 {
