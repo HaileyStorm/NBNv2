@@ -122,16 +122,35 @@ public sealed class BrainRootActor : IActor
             return;
         }
 
+        var brainRootPid = ToRemotePid(context, context.Self);
+        var routerPid = _signalRouterPid is null ? null : ToRemotePid(context, _signalRouterPid);
+
         if (forceRegister)
         {
-            context.Send(_hiveMindPid, new RegisterBrain(_brainId, context.Self, _signalRouterPid));
+            context.Send(_hiveMindPid, new RegisterBrain(_brainId, brainRootPid, routerPid));
             return;
         }
 
-        if (_signalRouterPid is not null)
+        if (routerPid is not null)
         {
-            context.Send(_hiveMindPid, new UpdateBrainSignalRouter(_brainId, _signalRouterPid));
+            context.Send(_hiveMindPid, new UpdateBrainSignalRouter(_brainId, routerPid));
         }
+    }
+
+    private static PID ToRemotePid(IContext context, PID pid)
+    {
+        if (!string.IsNullOrWhiteSpace(pid.Address))
+        {
+            return pid;
+        }
+
+        var address = context.System.Address;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return pid;
+        }
+
+        return new PID(address, pid.Id);
     }
 
     private void UnregisterHiveMind(IContext context)

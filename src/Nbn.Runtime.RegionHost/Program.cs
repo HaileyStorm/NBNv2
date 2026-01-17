@@ -50,8 +50,9 @@ var routing = RegionShardRoutingTable.CreateSingleShard(load.Header.Regions);
 var config = new RegionShardActorConfig(options.BrainId, shardId, routerPid, outputPid, tickPid, routing);
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
+var shardRemotePid = new PID(GetAdvertisedAddress(remoteConfig), shardPid.Id);
 
-system.Root.Send(tickPid, new RegisterShard(options.BrainId, options.RegionId, options.ShardIndex, shardPid));
+system.Root.Send(tickPid, new RegisterShard(options.BrainId, options.RegionId, options.ShardIndex, shardRemotePid));
 
 Console.WriteLine("NBN RegionHost online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
@@ -185,3 +186,10 @@ static void ValidateOptions(RegionHostOptions options)
 
 static string PidLabel(PID pid)
     => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+static string GetAdvertisedAddress(RemoteConfig config)
+{
+    var host = config.AdvertisedHost ?? config.Host;
+    var port = config.AdvertisedPort ?? config.Port;
+    return $"{host}:{port}";
+}
