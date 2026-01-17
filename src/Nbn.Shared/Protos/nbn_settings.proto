@@ -1,0 +1,60 @@
+syntax = "proto3";
+package nbn.settings;
+
+option csharp_namespace = "Nbn.Proto.Settings";
+
+import "nbn_common.proto";
+
+message NodeOnline {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+  string address = 3;          // host:port
+  string root_actor_name = 4;  // stable
+}
+
+message NodeOffline {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+}
+
+message NodeHeartbeat {
+  nbn.Uuid node_id = 1;
+  fixed64 time_ms = 2;
+  NodeCapabilities caps = 3;
+}
+
+message NodeCapabilities {
+  uint32 cpu_cores = 1;
+  fixed64 ram_free_bytes = 2;
+
+  bool has_gpu = 3;
+  string gpu_name = 4;
+  fixed64 vram_free_bytes = 5;
+
+  float cpu_score = 6;
+  float gpu_score = 7;
+
+  bool ilgpu_cuda_available = 8;
+  bool ilgpu_opencl_available = 9;
+}
+
+message SettingGet {
+  string key = 1;
+}
+
+message SettingValue {
+  string key = 1;
+  string value = 2;
+  fixed64 updated_ms = 3;
+}
+
+message SettingSet {
+  string key = 1;
+  string value = 2;
+}
+
+message SettingChanged {
+  string key = 1;
+  string value = 2;
+  fixed64 updated_ms = 3;
+}

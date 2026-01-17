@@ -1,0 +1,35 @@
+syntax = "proto3";
+package nbn.signal;
+
+option csharp_namespace = "Nbn.Proto.Signal";
+
+import "nbn_common.proto";
+
+message Contribution {
+  uint32 target_neuron_id = 1; // local to destination region
+  float value = 2;
+}
+
+message SignalBatch {
+  nbn.Uuid brain_id = 1;
+  uint32 region_id = 2;
+  nbn.ShardId32 shard_id = 3;
+  fixed64 tick_id = 4; // tick_id whose delivery phase is delivering this batch
+  repeated Contribution contribs = 5;
+}
+
+message SignalBatchAck {
+  nbn.Uuid brain_id = 1;
+  uint32 region_id = 2;
+  nbn.ShardId32 shard_id = 3;
+  fixed64 tick_id = 4;
+}
+
+// Produced by RegionShard during compute phase, sent to BrainSignalRouter:
+message OutboxBatch {
+  nbn.Uuid brain_id = 1;
+  fixed64 tick_id = 2; // compute tick that produced the outbox
+  uint32 dest_region_id = 3;
+  nbn.ShardId32 dest_shard_id = 4;
+  repeated Contribution contribs = 5;
+}

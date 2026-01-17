@@ -1,0 +1,34 @@
+syntax = "proto3";
+package nbn.debug;
+
+option csharp_namespace = "Nbn.Proto.Debug";
+
+import "nbn_common.proto";
+
+message DebugOutbound {
+  nbn.Severity severity = 1;
+  string context = 2;
+  string summary = 3;
+  string message = 4;
+
+  string sender_actor = 5; // string path/id
+  string sender_node = 6;  // logical name or node id string
+  fixed64 time_ms = 7;
+}
+
+message DebugInbound {
+  DebugOutbound outbound = 1;
+  fixed64 server_received_ms = 2;
+}
+
+message DebugSubscribe {
+  string subscriber_actor = 1; // actor name/path
+  nbn.Severity min_severity = 2;
+  string context_regex = 3;
+}
+
+message DebugUnsubscribe {
+  string subscriber_actor = 1;
+}
+
+message DebugFlushAll { }

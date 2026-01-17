@@ -1,0 +1,75 @@
+syntax = "proto3";
+package nbn.control;
+
+option csharp_namespace = "Nbn.Proto.Control";
+
+import "nbn_common.proto";
+
+message SpawnBrain {
+  nbn.ArtifactRef brain_def = 1; // .nbn
+}
+
+message SpawnBrainAck {
+  nbn.Uuid brain_id = 1;
+}
+
+message PauseBrain {
+  nbn.Uuid brain_id = 1;
+  string reason = 2;
+}
+
+message ResumeBrain {
+  nbn.Uuid brain_id = 1;
+}
+
+message KillBrain {
+  nbn.Uuid brain_id = 1;
+  string reason = 2;
+}
+
+message BrainTerminated {
+  nbn.Uuid brain_id = 1;
+  string reason = 2;
+  nbn.ArtifactRef base_def = 3;       // .nbn
+  nbn.ArtifactRef last_snapshot = 4;  // .nbs (optional; may be empty sha)
+  sint64 last_energy_remaining = 5;
+  sint64 last_tick_cost = 6;
+  fixed64 time_ms = 7;
+}
+
+message TickCompute {
+  fixed64 tick_id = 1;
+  float target_tick_hz = 2;
+}
+
+message TickComputeDone {
+  fixed64 tick_id = 1;
+  nbn.Uuid brain_id = 2;
+  uint32 region_id = 3;
+  nbn.ShardId32 shard_id = 4;
+
+  fixed64 compute_ms = 5;
+
+  sint64 tick_cost_total = 6;
+  sint64 cost_accum = 7;
+  sint64 cost_activation = 8;
+  sint64 cost_reset = 9;
+  sint64 cost_distance = 10;
+  sint64 cost_remote = 11;
+
+  uint32 fired_count = 12;
+  uint32 out_batches = 13;
+  uint32 out_contribs = 14;
+}
+
+message TickDeliver {
+  fixed64 tick_id = 1;
+}
+
+message TickDeliverDone {
+  fixed64 tick_id = 1;
+  nbn.Uuid brain_id = 2;
+  fixed64 deliver_ms = 3;
+  uint32 delivered_batches = 4;
+  uint32 delivered_contribs = 5;
+}

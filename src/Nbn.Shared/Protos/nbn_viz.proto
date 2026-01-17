@@ -1,0 +1,43 @@
+syntax = "proto3";
+package nbn.viz;
+
+option csharp_namespace = "Nbn.Proto.Viz";
+
+import "nbn_common.proto";
+
+enum VizEventType {
+  VIZ_UNKNOWN = 0;
+
+  VIZ_BRAIN_SPAWNED = 1;
+  VIZ_BRAIN_ACTIVE = 2;
+  VIZ_BRAIN_PAUSED = 3;
+  VIZ_BRAIN_TERMINATED = 4;
+
+  VIZ_SHARD_SPAWNED = 10;
+  VIZ_SHARD_MOVED = 11;
+
+  VIZ_TICK = 20;
+
+  VIZ_NEURON_BUFFER = 30;
+  VIZ_NEURON_FIRED = 31;
+
+  VIZ_AXON_SENT = 40;
+}
+
+message VisualizationEvent {
+  string event_id = 1;     // uuid string or monotonic id
+  fixed64 time_ms = 2;
+  VizEventType type = 3;
+
+  nbn.Uuid brain_id = 4;
+  fixed64 tick_id = 5;
+
+  uint32 region_id = 6;
+  nbn.ShardId32 shard_id = 7;
+
+  nbn.Address32 source = 8;
+  nbn.Address32 target = 9;
+
+  float value = 10;        // signal or buffer/potential depending on event
+  float strength = 11;     // axon strength if relevant
+}

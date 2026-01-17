@@ -1,0 +1,135 @@
+syntax = "proto3";
+package nbn.io;
+
+option csharp_namespace = "Nbn.Proto.Io";
+
+import "nbn_common.proto";
+import "nbn_control.proto";
+import "nbn_repro.proto";
+
+message Connect {
+  string client_name = 1;
+}
+
+message ConnectAck {
+  string server_name = 1;
+  fixed64 server_time_ms = 2;
+}
+
+message BrainInfoRequest {
+  nbn.Uuid brain_id = 1;
+}
+
+message BrainInfo {
+  nbn.Uuid brain_id = 1;
+  uint32 input_width = 2;
+  uint32 output_width = 3;
+
+  bool cost_enabled = 4;
+  bool energy_enabled = 5;
+  sint64 energy_remaining = 6;
+
+  bool plasticity_enabled = 7;
+}
+
+message SpawnBrainViaIO {
+  nbn.control.SpawnBrain request = 1;
+}
+
+message SpawnBrainViaIOAck {
+  nbn.control.SpawnBrainAck ack = 1;
+}
+
+message InputWrite {
+  nbn.Uuid brain_id = 1;
+  uint32 input_index = 2;
+  float value = 3;
+}
+
+message InputVector {
+  nbn.Uuid brain_id = 1;
+  repeated float values = 2;
+}
+
+message SubscribeOutputs {
+  nbn.Uuid brain_id = 1;
+}
+
+message UnsubscribeOutputs {
+  nbn.Uuid brain_id = 1;
+}
+
+message OutputEvent {
+  nbn.Uuid brain_id = 1;
+  uint32 output_index = 2;
+  float value = 3;
+  fixed64 tick_id = 4;
+}
+
+message SubscribeOutputsVector {
+  nbn.Uuid brain_id = 1;
+}
+
+message UnsubscribeOutputsVector {
+  nbn.Uuid brain_id = 1;
+}
+
+message OutputVectorEvent {
+  nbn.Uuid brain_id = 1;
+  fixed64 tick_id = 2;
+  repeated float values = 3;
+}
+
+message EnergyCredit {
+  nbn.Uuid brain_id = 1;
+  sint64 amount = 2;
+}
+
+message EnergyRate {
+  nbn.Uuid brain_id = 1;
+  sint64 units_per_second = 2;
+}
+
+message SetCostEnergyEnabled {
+  nbn.Uuid brain_id = 1;
+  bool cost_enabled = 2;
+  bool energy_enabled = 3;
+}
+
+message SetPlasticityEnabled {
+  nbn.Uuid brain_id = 1;
+  bool plasticity_enabled = 2;
+  float plasticity_rate = 3;
+  bool probabilistic_updates = 4;
+}
+
+message RequestSnapshot {
+  nbn.Uuid brain_id = 1;
+}
+
+message SnapshotReady {
+  nbn.Uuid brain_id = 1;
+  nbn.ArtifactRef snapshot = 2; // .nbs
+}
+
+message ExportBrainDefinition {
+  nbn.Uuid brain_id = 1;
+  bool rebase_overlays = 2; // if true, incorporate overlays into base .nbn
+}
+
+message BrainDefinitionReady {
+  nbn.Uuid brain_id = 1;
+  nbn.ArtifactRef brain_def = 2; // .nbn
+}
+
+message ReproduceByBrainIds {
+  nbn.repro.ReproduceByBrainIdsRequest request = 1;
+}
+
+message ReproduceByArtifacts {
+  nbn.repro.ReproduceByArtifactsRequest request = 1;
+}
+
+message ReproduceResult {
+  nbn.repro.ReproduceResult result = 1;
+}

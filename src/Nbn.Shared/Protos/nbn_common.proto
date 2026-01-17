@@ -1,0 +1,36 @@
+syntax = "proto3";
+package nbn;
+
+option csharp_namespace = "Nbn.Proto";
+
+message Uuid {
+  bytes value = 1; // 16 bytes
+}
+
+message Sha256 {
+  bytes value = 1; // 32 bytes
+}
+
+message Address32 {
+  fixed32 value = 1;
+}
+
+message ShardId32 {
+  fixed32 value = 1; // region_id in bits 16..20, shard_index in bits 0..15
+}
+
+message ArtifactRef {
+  Sha256 sha256 = 1;
+  string media_type = 2;   // "application/x-nbn", "application/x-nbs"
+  fixed64 size_bytes = 3;
+  string store_uri = 4;    // optional: artifact store base URI or logical name
+}
+
+enum Severity {
+  SEV_TRACE = 0;
+  SEV_DEBUG = 1;
+  SEV_INFO  = 2;
+  SEV_WARN  = 3;
+  SEV_ERROR = 4;
+  SEV_FATAL = 5;
+}
