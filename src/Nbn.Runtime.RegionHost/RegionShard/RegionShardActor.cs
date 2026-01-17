@@ -10,14 +10,18 @@ namespace Nbn.Runtime.RegionHost;
 public sealed class RegionShardActor : IActor
 {
     private static readonly bool LogDelivery = IsEnvTrue("NBN_REGIONHOST_LOG_DELIVERY");
+    private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
     private readonly RegionShardCpuBackend _cpu;
     private readonly Guid _brainId;
     private readonly ShardId32 _shardId;
+    private readonly Dictionary<ulong, TickComputeDone> _recentComputeDone = new();
     private RegionShardRoutingTable _routing;
     private PID? _router;
     private PID? _outputSink;
     private PID? _tickSink;
+    private bool _hasComputed;
+    private ulong _lastComputeTickId;
 
     public RegionShardActor(RegionShardState state, RegionShardActorConfig config)
     {
@@ -61,6 +65,25 @@ public sealed class RegionShardActor : IActor
             return;
         }
 
+        if (!IsBatchForShard(batch, out var rejectReason))
+        {
+            RegionHostTelemetry.RecordSignalBatchRejected();
+            if (LogDelivery)
+            {
+                Console.WriteLine($"[RegionShard] SignalBatch rejected. reason={rejectReason} tick={batch.TickId}");
+            }
+            return;
+        }
+
+        if (_hasComputed && batch.TickId < _lastComputeTickId)
+        {
+            RegionHostTelemetry.RecordSignalBatchLate();
+            if (LogDelivery)
+            {
+                Console.WriteLine($"[RegionShard] SignalBatch late. tick={batch.TickId} lastCompute={_lastComputeTickId}");
+            }
+        }
+
         foreach (var contrib in batch.Contribs)
         {
             _state.ApplyContribution(contrib.TargetNeuronId, contrib.Value);
@@ -102,6 +125,37 @@ public sealed class RegionShardActor : IActor
 
     private void HandleTickCompute(IContext context, TickCompute tick)
     {
+        if (_recentComputeDone.TryGetValue(tick.TickId, out var cachedDone))
+        {
+            RegionHostTelemetry.RecordComputeDuplicate();
+            if (LogDelivery)
+            {
+                Console.WriteLine($"[RegionShard] TickCompute duplicate. tick={tick.TickId}");
+            }
+
+            SendComputeDone(context, cachedDone);
+            return;
+        }
+
+        if (_hasComputed && tick.TickId < _lastComputeTickId)
+        {
+            RegionHostTelemetry.RecordComputeOutOfOrder();
+            if (LogDelivery)
+            {
+                Console.WriteLine($"[RegionShard] TickCompute out-of-order. tick={tick.TickId} lastCompute={_lastComputeTickId}");
+            }
+            return;
+        }
+
+        if (_hasComputed && tick.TickId > _lastComputeTickId + 1)
+        {
+            RegionHostTelemetry.RecordComputeJump();
+            if (LogDelivery)
+            {
+                Console.WriteLine($"[RegionShard] TickCompute jump. tick={tick.TickId} lastCompute={_lastComputeTickId}");
+            }
+        }
+
         var stopwatch = Stopwatch.StartNew();
         var result = _cpu.Compute(tick.TickId, _brainId, _shardId, _routing);
         stopwatch.Stop();
@@ -155,11 +209,72 @@ public sealed class RegionShardActor : IActor
             OutContribs = result.OutContribs
         };
 
+        _hasComputed = true;
+        _lastComputeTickId = tick.TickId;
+        CacheComputeDone(done);
+        SendComputeDone(context, done);
+    }
+
+    private void CacheComputeDone(TickComputeDone done)
+    {
+        _recentComputeDone[done.TickId] = done;
+        while (_recentComputeDone.Count > RecentComputeCacheSize)
+        {
+            var oldest = ulong.MaxValue;
+            foreach (var key in _recentComputeDone.Keys)
+            {
+                if (key < oldest)
+                {
+                    oldest = key;
+                }
+            }
+
+            if (oldest == ulong.MaxValue)
+            {
+                break;
+            }
+
+            _recentComputeDone.Remove(oldest);
+        }
+    }
+
+    private void SendComputeDone(IContext context, TickComputeDone done)
+    {
         var doneTarget = _tickSink ?? context.Sender ?? _router;
         if (doneTarget is not null)
         {
             context.Send(doneTarget, done);
         }
+    }
+
+    private bool IsBatchForShard(SignalBatch batch, out string reason)
+    {
+        reason = "unknown";
+
+        if (batch.BrainId is null || !batch.BrainId.TryToGuid(out var batchBrain) || batchBrain != _brainId)
+        {
+            reason = "brain";
+            return false;
+        }
+
+        if (batch.RegionId != (uint)_state.RegionId)
+        {
+            reason = "region";
+            return false;
+        }
+
+        if (batch.ShardId is not null)
+        {
+            var shardId = batch.ShardId.ToShardId32();
+            if (!shardId.Equals(_shardId))
+            {
+                reason = "shard";
+                return false;
+            }
+        }
+
+        reason = "ok";
+        return true;
     }
 
     private static bool IsEnvTrue(string key)

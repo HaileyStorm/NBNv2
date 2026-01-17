@@ -18,6 +18,8 @@ public static class HiveMindTelemetry
     private static readonly Counter<long> TickDeliverTimeouts = Meter.CreateCounter<long>("nbn.hivemind.tick.deliver.timeouts");
     private static readonly Counter<long> LateCompute = Meter.CreateCounter<long>("nbn.hivemind.tick.compute.late");
     private static readonly Counter<long> LateDeliver = Meter.CreateCounter<long>("nbn.hivemind.tick.deliver.late");
+    private static readonly Counter<long> LateComputeAfterCompletion = Meter.CreateCounter<long>("nbn.hivemind.tick.compute.late.after");
+    private static readonly Counter<long> LateDeliverAfterCompletion = Meter.CreateCounter<long>("nbn.hivemind.tick.deliver.late.after");
     private static readonly Histogram<double> TargetTickHz = Meter.CreateHistogram<double>("nbn.hivemind.tick.target.hz");
     private static readonly Counter<long> RescheduleRequested = Meter.CreateCounter<long>("nbn.hivemind.reschedule.requested");
     private static readonly Counter<long> PauseRequested = Meter.CreateCounter<long>("nbn.hivemind.pause.requested");
@@ -62,5 +64,25 @@ public static class HiveMindTelemetry
         PauseRequested.Add(1);
         using var activity = ActivitySource.StartActivity("hivemind.pause");
         activity?.SetTag("reason", reason);
+    }
+
+    public static void RecordLateComputeAfterCompletion(int count = 1)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        LateComputeAfterCompletion.Add(count);
+    }
+
+    public static void RecordLateDeliverAfterCompletion(int count = 1)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        LateDeliverAfterCompletion.Add(count);
     }
 }

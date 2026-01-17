@@ -44,7 +44,8 @@ var load = await RegionShardArtifactLoader.LoadAsync(
     nbsRef,
     options.RegionId,
     options.NeuronStart,
-    options.NeuronCount);
+    options.NeuronCount,
+    options.BrainId);
 
 var routing = RegionShardRoutingTable.CreateSingleShard(load.Header.Regions);
 var config = new RegionShardActorConfig(options.BrainId, shardId, routerPid, outputPid, tickPid, routing);
@@ -60,6 +61,14 @@ Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Hos
 Console.WriteLine($"Shard: {PidLabel(shardPid)}");
 Console.WriteLine($"Brain: {options.BrainId}");
 Console.WriteLine($"Region: {options.RegionId} ({options.NeuronStart}-{options.NeuronStart + load.State.NeuronCount - 1})");
+if (load.SnapshotHeader is null)
+{
+    Console.WriteLine("Snapshot: none");
+}
+else
+{
+    Console.WriteLine($"Snapshot: tick={load.SnapshotHeader.SnapshotTickId} energy={load.SnapshotHeader.EnergyRemaining} cost={load.SnapshotHeader.CostEnabled} energyEnabled={load.SnapshotHeader.EnergyEnabled} plasticity={load.SnapshotHeader.PlasticityEnabled}");
+}
 Console.WriteLine("Press Ctrl+C to shut down.");
 
 var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

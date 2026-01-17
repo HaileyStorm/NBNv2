@@ -25,6 +25,7 @@ public sealed class BackpressureController
     private readonly HiveMindOptions _options;
     private float _targetTickHz;
     private int _timeoutStreak;
+    private int _lateStreak;
 
     public BackpressureController(HiveMindOptions options)
     {
@@ -38,15 +39,27 @@ public sealed class BackpressureController
     public BackpressureDecision Evaluate(TickOutcome outcome)
     {
         var timedOut = outcome.ComputeTimedOut || outcome.DeliverTimedOut;
+        var lateDetected = outcome.LateComputeCount > 0 || outcome.LateDeliverCount > 0;
 
         if (timedOut)
         {
             _timeoutStreak++;
+            _lateStreak = 0;
             _targetTickHz = MathF.Max(_options.MinTickHz, _targetTickHz * _options.BackpressureDecay);
+        }
+        else if (lateDetected)
+        {
+            _timeoutStreak = 0;
+            _lateStreak++;
+            if (_lateStreak >= _options.LateBackpressureThreshold)
+            {
+                _targetTickHz = MathF.Max(_options.MinTickHz, _targetTickHz * _options.BackpressureDecay);
+            }
         }
         else
         {
             _timeoutStreak = 0;
+            _lateStreak = 0;
             if (_targetTickHz < _options.TargetTickHz)
             {
                 _targetTickHz = MathF.Min(_options.TargetTickHz, _targetTickHz * _options.BackpressureRecovery);
@@ -58,7 +71,9 @@ public sealed class BackpressureController
 
         var reason = timedOut
             ? $"tick {outcome.TickId} timed out"
-            : $"tick {outcome.TickId} healthy";
+            : lateDetected
+                ? $"tick {outcome.TickId} late arrivals (compute={outcome.LateComputeCount}, deliver={outcome.LateDeliverCount})"
+                : $"tick {outcome.TickId} healthy";
 
         if (requestPause)
         {
@@ -67,6 +82,10 @@ public sealed class BackpressureController
         else if (requestReschedule)
         {
             reason += $" (reschedule after {_timeoutStreak} timeouts)";
+        }
+        else if (lateDetected && _lateStreak >= _options.LateBackpressureThreshold)
+        {
+            reason += $" (backpressure after {_lateStreak} late ticks)";
         }
 
         return new BackpressureDecision(_targetTickHz, requestReschedule, requestPause, _timeoutStreak, reason);

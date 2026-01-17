@@ -3,6 +3,7 @@ using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
+using Nbn.Shared.Validation;
 using Nbn.Proto;
 using Proto;
 
@@ -22,6 +23,7 @@ public static class RegionShardArtifactLoader
         int regionId,
         int neuronStart,
         int neuronCount,
+        Guid? expectedBrainId = null,
         CancellationToken cancellationToken = default)
     {
         if (store is null)
@@ -59,6 +61,7 @@ public static class RegionShardArtifactLoader
             var nbsBytes = await ReadArtifactAsync(store, nbsRef, cancellationToken);
             nbsHeader = NbnBinary.ReadNbsHeader(nbsBytes);
             var read = ReadNbsRegions(nbsBytes, header, nbsHeader);
+            ValidateSnapshot(header, nbnRef, nbsHeader, read.Regions, read.Overlays, expectedBrainId);
             if (read.Regions.TryGetValue(regionId, out var region))
             {
                 nbsRegion = region;
@@ -79,9 +82,10 @@ public static class RegionShardArtifactLoader
         int neuronStart,
         int neuronCount,
         RegionShardActorConfig config,
+        Guid? expectedBrainId = null,
         CancellationToken cancellationToken = default)
     {
-        var load = await LoadAsync(store, nbnRef, nbsRef, regionId, neuronStart, neuronCount, cancellationToken);
+        var load = await LoadAsync(store, nbnRef, nbsRef, regionId, neuronStart, neuronCount, expectedBrainId, cancellationToken);
         return Props.FromProducer(() => new RegionShardActor(load.State, config));
     }
 
@@ -217,6 +221,85 @@ public static class RegionShardArtifactLoader
         var axons = new RegionShardAxons(axonTargetRegions, axonTargetNeurons, axonStrengths);
         return new RegionShardState(regionId, neuronStart, neuronCount, regionSpans, buffer, enabled, exists, accum, activation, reset,
             paramA, paramB, preThreshold, activationThreshold, axonCounts, axonStartOffsets, axons);
+    }
+
+    private static void ValidateSnapshot(
+        NbnHeaderV2 nbnHeader,
+        ArtifactRef nbnRef,
+        NbsHeaderV2 nbsHeader,
+        Dictionary<int, NbsRegionSection> regions,
+        NbsOverlaySection? overlays,
+        Guid? expectedBrainId)
+    {
+        var issues = new List<string>();
+
+        var regionList = new List<NbsRegionSection>(regions.Count);
+        foreach (var region in regions.Values)
+        {
+            regionList.Add(region);
+        }
+
+        var validation = NbnBinaryValidator.ValidateNbs(nbsHeader, regionList, overlays);
+        if (!validation.IsValid)
+        {
+            foreach (var issue in validation.Issues)
+            {
+                issues.Add(issue.ToString());
+            }
+        }
+
+        if (expectedBrainId.HasValue && nbsHeader.BrainId != expectedBrainId.Value)
+        {
+            issues.Add($"Snapshot brain id {nbsHeader.BrainId} does not match expected {expectedBrainId.Value}.");
+        }
+
+        var nbnHash = nbnRef.Sha256?.Value?.ToByteArray();
+        if (nbnHash is null || nbnHash.Length != 32)
+        {
+            issues.Add("NBN artifact reference is missing a valid sha256.");
+        }
+        else if (nbsHeader.BaseNbnSha256 is null || nbsHeader.BaseNbnSha256.Length != 32)
+        {
+            issues.Add("NBS header is missing base NBN sha256.");
+        }
+        else if (!nbnHash.AsSpan().SequenceEqual(nbsHeader.BaseNbnSha256))
+        {
+            issues.Add("NBS base hash does not match NBN artifact.");
+        }
+
+        var expectedRegionCount = 0;
+        for (var i = 0; i < nbnHeader.Regions.Length; i++)
+        {
+            if (nbnHeader.Regions[i].NeuronSpan > 0)
+            {
+                expectedRegionCount++;
+            }
+        }
+
+        if (regions.Count != expectedRegionCount)
+        {
+            issues.Add($"NBS region count {regions.Count} does not match NBN region count {expectedRegionCount}.");
+        }
+
+        foreach (var region in regions.Values)
+        {
+            if (region.RegionId >= nbnHeader.Regions.Length)
+            {
+                issues.Add($"NBS region id {region.RegionId} is out of range.");
+                continue;
+            }
+
+            var entry = nbnHeader.Regions[region.RegionId];
+            if (region.NeuronSpan != entry.NeuronSpan)
+            {
+                issues.Add($"NBS region {region.RegionId} span {region.NeuronSpan} does not match NBN span {entry.NeuronSpan}.");
+            }
+        }
+
+        if (issues.Count > 0)
+        {
+            throw new InvalidOperationException($"Snapshot validation failed: {string.Join("; ", issues)}");
+        }
     }
 
     private static Dictionary<(int FromNeuron, byte ToRegion, int ToNeuron), byte> BuildOverlayMap(

@@ -335,9 +335,18 @@ public sealed class HiveMindActor : IActor
 
     private void HandleTickComputeDone(IContext context, TickComputeDone message)
     {
-        if (_tick is null || message.TickId != _tick.TickId || _phase != TickPhase.Compute)
+        if (_tick is null)
         {
-            if (_tick is not null && message.TickId <= _tick.TickId)
+            if (message.TickId <= _lastCompletedTickId)
+            {
+                HiveMindTelemetry.RecordLateComputeAfterCompletion();
+            }
+            return;
+        }
+
+        if (message.TickId != _tick.TickId || _phase != TickPhase.Compute)
+        {
+            if (message.TickId <= _tick.TickId)
             {
                 _tick.LateComputeCount++;
             }
@@ -364,9 +373,18 @@ public sealed class HiveMindActor : IActor
 
     private void HandleTickDeliverDone(IContext context, TickDeliverDone message)
     {
-        if (_tick is null || message.TickId != _tick.TickId || _phase != TickPhase.Deliver)
+        if (_tick is null)
         {
-            if (_tick is not null && message.TickId <= _tick.TickId)
+            if (message.TickId <= _lastCompletedTickId)
+            {
+                HiveMindTelemetry.RecordLateDeliverAfterCompletion();
+            }
+            return;
+        }
+
+        if (message.TickId != _tick.TickId || _phase != TickPhase.Deliver)
+        {
+            if (message.TickId <= _tick.TickId)
             {
                 _tick.LateDeliverCount++;
             }

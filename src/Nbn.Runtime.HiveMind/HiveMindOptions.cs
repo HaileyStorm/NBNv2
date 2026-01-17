@@ -11,6 +11,7 @@ public sealed record HiveMindOptions(
     int DeliverTimeoutMs,
     float BackpressureDecay,
     float BackpressureRecovery,
+    int LateBackpressureThreshold,
     int TimeoutRescheduleThreshold,
     int TimeoutPauseThreshold,
     int RescheduleMinTicks,
@@ -40,6 +41,7 @@ public sealed record HiveMindOptions(
 
         var backpressureDecay = GetEnvFloat("NBN_HIVE_BACKPRESSURE_DECAY") ?? 0.8f;
         var backpressureRecovery = GetEnvFloat("NBN_HIVE_BACKPRESSURE_RECOVERY") ?? 1.05f;
+        var lateBackpressureThreshold = GetEnvInt("NBN_HIVE_LATE_BACKPRESSURE_TICKS") ?? 2;
 
         var rescheduleThreshold = GetEnvInt("NBN_HIVE_RESCHEDULE_TIMEOUTS") ?? 3;
         var pauseThreshold = GetEnvInt("NBN_HIVE_PAUSE_TIMEOUTS") ?? 6;
@@ -129,6 +131,12 @@ public sealed record HiveMindOptions(
                     if (i + 1 < args.Length && float.TryParse(args[++i], out var recoveryValue))
                     {
                         backpressureRecovery = recoveryValue;
+                    }
+                    continue;
+                case "--late-backpressure-ticks":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var lateBackpressureValue))
+                    {
+                        lateBackpressureThreshold = lateBackpressureValue;
                     }
                     continue;
                 case "--reschedule-timeouts":
@@ -276,6 +284,13 @@ public sealed record HiveMindOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--late-backpressure-ticks=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--late-backpressure-ticks=".Length), out var lateBackpressureInline))
+            {
+                lateBackpressureThreshold = lateBackpressureInline;
+                continue;
+            }
+
             if (arg.StartsWith("--reschedule-timeouts=", StringComparison.OrdinalIgnoreCase) && int.TryParse(arg.Substring("--reschedule-timeouts=".Length), out var rescheduleInline))
             {
                 rescheduleThreshold = rescheduleInline;
@@ -334,6 +349,11 @@ public sealed record HiveMindOptions(
             targetTickHz = minTickHz;
         }
 
+        if (lateBackpressureThreshold < 1)
+        {
+            lateBackpressureThreshold = 1;
+        }
+
         computeTimeoutMs ??= (int)Math.Ceiling(1000d / minTickHz);
         deliverTimeoutMs ??= (int)Math.Ceiling(1000d / minTickHz);
 
@@ -356,6 +376,7 @@ public sealed record HiveMindOptions(
             deliverTimeoutMs.Value,
             backpressureDecay,
             backpressureRecovery,
+            lateBackpressureThreshold,
             rescheduleThreshold,
             pauseThreshold,
             rescheduleMinTicks,
@@ -416,6 +437,7 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --deliver-timeout-ms <ms>           Deliver phase timeout (default 1000/min_tick_hz)");
         Console.WriteLine("  --backpressure-decay <ratio>        Target tick decay multiplier (default 0.8)");
         Console.WriteLine("  --backpressure-recovery <ratio>     Target tick recovery multiplier (default 1.05)");
+        Console.WriteLine("  --late-backpressure-ticks <count>   Late ticks before backpressure (default 2)");
         Console.WriteLine("  --reschedule-timeouts <count>       Timeout streak before reschedule (default 3)");
         Console.WriteLine("  --pause-timeouts <count>            Timeout streak before pause (default 6)");
         Console.WriteLine("  --reschedule-min-ticks <count>      Minimum ticks between reschedules (default 10)");
