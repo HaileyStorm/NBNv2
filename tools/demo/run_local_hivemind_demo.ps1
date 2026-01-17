@@ -102,6 +102,20 @@ Write-Host "HiveMind: $hiveAddress (pid $($hiveProc.Id))"
 Write-Host "BrainHost: $brainAddress (pid $($brainProc.Id))"
 Write-Host "RegionHost: $regionAddress (pid $($regionProc.Id))"
 Write-Host "Logs: $logRoot"
+
+$deadline = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $deadline) {
+    $hiveReady = (Test-Path $hiveLog) -and ((Get-Item $hiveLog).Length -gt 0)
+    $brainReady = (Test-Path $brainLog) -and ((Get-Item $brainLog).Length -gt 0)
+    $regionReady = (Test-Path $regionLog) -and ((Get-Item $regionLog).Length -gt 0)
+
+    if ($hiveReady -and $brainReady -and $regionReady) {
+        break
+    }
+
+    Start-Sleep -Milliseconds 250
+}
+
 Write-Host "Press Enter to stop the demo."
 
 try {

@@ -105,7 +105,11 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
         foreach (var row in chunkRows)
         {
             var compression = ChunkCompression.FromLabel(row.Compression);
-            chunks.Add(new ArtifactChunkInfo(new Sha256Hash(row.ChunkSha256), row.ChunkUncompressedLength, row.StoredLength, compression));
+            chunks.Add(new ArtifactChunkInfo(
+                new Sha256Hash(row.ChunkSha256),
+                checked((int)row.ChunkUncompressedLength),
+                checked((int)row.StoredLength),
+                compression));
         }
 
         var regionRows = (await connection.QueryAsync<ArtifactRegionRow>(
@@ -118,7 +122,7 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
             var regionList = new List<ArtifactRegionIndexEntry>(regionRows.Count);
             foreach (var row in regionRows)
             {
-                regionList.Add(new ArtifactRegionIndexEntry(row.RegionId, row.Offset, row.Length));
+                regionList.Add(new ArtifactRegionIndexEntry(checked((int)row.RegionId), row.Offset, row.Length));
             }
 
             regionIndex = regionList;
@@ -227,9 +231,9 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
 
     private sealed record ArtifactRow(byte[] ArtifactSha256, string MediaType, long ByteLength);
 
-    private sealed record ArtifactChunkRow(int Seq, byte[] ChunkSha256, int ChunkUncompressedLength, int StoredLength, string Compression);
+    private sealed record ArtifactChunkRow(long Seq, byte[] ChunkSha256, long ChunkUncompressedLength, long StoredLength, string Compression);
 
-    private sealed record ArtifactRegionRow(int RegionId, long Offset, long Length);
+    private sealed record ArtifactRegionRow(long RegionId, long Offset, long Length);
 
     private sealed record ChunkUpsertRow(byte[] ChunkSha256, int ByteLength, int StoredLength, string Compression);
 
@@ -249,5 +253,5 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
         return row;
     }
 
-    internal sealed record ChunkMetadata(int ByteLength, int StoredLength, string Compression);
+    internal sealed record ChunkMetadata(long ByteLength, long StoredLength, string Compression);
 }

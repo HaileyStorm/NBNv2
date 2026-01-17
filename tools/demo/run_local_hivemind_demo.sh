@@ -110,5 +110,20 @@ printf "HiveMind: %s (pid %s)\n" "$HIVE_ADDR" "$HIVE_PID"
 printf "BrainHost: %s (pid %s)\n" "$BRAIN_ADDR" "$BRAIN_PID"
 printf "RegionHost: %s (pid %s)\n" "$REGION_ADDR" "$REGION_PID"
 printf "Logs: %s\n" "$LOG_ROOT"
+
+deadline=$((SECONDS+20))
+while [[ $SECONDS -lt $deadline ]]; do
+  hive_ready=false
+  brain_ready=false
+  region_ready=false
+  [[ -s "$HIVE_LOG" ]] && hive_ready=true
+  [[ -s "$BRAIN_LOG" ]] && brain_ready=true
+  [[ -s "$REGION_LOG" ]] && region_ready=true
+  if $hive_ready && $brain_ready && $region_ready; then
+    break
+  fi
+  sleep 0.25
+ done
+
 printf "Press Enter to stop the demo.\n"
 read -r

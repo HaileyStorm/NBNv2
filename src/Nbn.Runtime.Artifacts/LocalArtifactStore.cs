@@ -64,7 +64,7 @@ public sealed class LocalArtifactStore : IArtifactStore
                 }
 
                 compression = ChunkCompression.FromLabel(metadata.Compression);
-                storedLength = metadata.StoredLength;
+                storedLength = checked((int)metadata.StoredLength);
             }
 
             chunks.Add(new ArtifactChunkInfo(chunkHash, chunk.Length, storedLength, compression));
