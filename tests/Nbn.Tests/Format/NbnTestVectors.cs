@@ -13,6 +13,7 @@ internal static class NbnTestVectors
 {
     public const uint MinimalNeuronSpan = 2;
     public const uint RichNbsFlags = 0x1F;
+    public const uint OverlayOnlyFlags = 0x2;
     public const ulong SampleBrainSeed = 0x0102030405060708;
     public const ulong SampleTickId = 42;
     public const ulong SampleTimestampMs = 1_700_000_000_000;
@@ -93,6 +94,139 @@ internal static class NbnTestVectors
         WriteNbsRegionSection(span.Slice(region31Offset, regionSectionSize), 31, MinimalNeuronSpan);
 
         return buffer;
+    }
+
+    public static byte[] CreateNbsWithEmptyOverlays(byte[] baseNbn)
+    {
+        var regionSectionSize = 8 + ((int)MinimalNeuronSpan * 2);
+        var region0Offset = NbnBinary.NbsHeaderBytes;
+        var region31Offset = region0Offset + regionSectionSize;
+        var overlayOffset = region31Offset + regionSectionSize;
+        var totalSize = overlayOffset + 4;
+
+        var buffer = new byte[totalSize];
+        var span = buffer.AsSpan();
+
+        Encoding.ASCII.GetBytes("NBS2").CopyTo(span.Slice(0, 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(0x004, 2), 2);
+        span[0x006] = 1;
+        span[0x007] = 9;
+        SampleBrainId.ToByteArray().CopyTo(span.Slice(0x008, 16));
+        BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x018, 8), SampleTickId);
+        BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x020, 8), SampleTimestampMs);
+        BinaryPrimitives.WriteInt64LittleEndian(span.Slice(0x028, 8), SampleEnergyRemaining);
+
+        var hash = SHA256.HashData(baseNbn);
+        hash.CopyTo(span.Slice(0x030, 32));
+
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(0x050, 4), OverlayOnlyFlags);
+        WriteQuantizationMap(span.Slice(0x054, 16), QuantizationSchemas.DefaultBuffer);
+
+        WriteNbsRegionSection(span.Slice(region0Offset, regionSectionSize), 0, MinimalNeuronSpan);
+        WriteNbsRegionSection(span.Slice(region31Offset, regionSectionSize), 31, MinimalNeuronSpan);
+
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(overlayOffset, 4), 0);
+
+        return buffer;
+    }
+
+    public static RichNbnVector CreateCheckpointNbnVector()
+    {
+        const uint stride = 4;
+
+        var region0Neurons = new[]
+        {
+            new NeuronRecord(0, 1, 2, 3, 4, 5, 6, 1, true)
+        };
+        var region0Axons = Array.Empty<AxonRecord>();
+
+        var region2Neurons = new[]
+        {
+            new NeuronRecord(1, 1, 2, 3, 4, 5, 6, 0, true),
+            new NeuronRecord(0, 2, 3, 4, 5, 6, 7, 1, true),
+            new NeuronRecord(2, 3, 4, 5, 6, 7, 8, 2, true),
+            new NeuronRecord(1, 4, 5, 6, 7, 8, 9, 3, true),
+            new NeuronRecord(0, 5, 6, 7, 8, 9, 10, 0, true),
+            new NeuronRecord(1, 6, 7, 8, 9, 10, 11, 1, true),
+            new NeuronRecord(0, 7, 8, 9, 10, 11, 12, 2, true),
+            new NeuronRecord(2, 8, 9, 10, 11, 12, 13, 3, true),
+            new NeuronRecord(1, 9, 10, 11, 12, 13, 14, 0, true),
+            new NeuronRecord(0, 10, 11, 12, 13, 14, 15, 1, true)
+        };
+        var region2Axons = new[]
+        {
+            new AxonRecord(1, 5, 2),
+            new AxonRecord(2, 1, 2),
+            new AxonRecord(3, 0, 31),
+            new AxonRecord(4, 0, 2),
+            new AxonRecord(5, 0, 31),
+            new AxonRecord(6, 2, 2),
+            new AxonRecord(7, 3, 2),
+            new AxonRecord(8, 9, 2)
+        };
+
+        var region31Neurons = new[]
+        {
+            new NeuronRecord(0, 2, 3, 4, 5, 6, 7, 0, true)
+        };
+        var region31Axons = Array.Empty<AxonRecord>();
+
+        var regions = new[]
+        {
+            new RichRegionSpec(0, region0Neurons, region0Axons),
+            new RichRegionSpec(2, region2Neurons, region2Axons),
+            new RichRegionSpec(31, region31Neurons, region31Axons)
+        };
+
+        var region0Size = ComputeRegionSectionSize((uint)region0Neurons.Length, (ulong)region0Axons.Length, stride);
+        var region2Size = ComputeRegionSectionSize((uint)region2Neurons.Length, (ulong)region2Axons.Length, stride);
+        var region31Size = ComputeRegionSectionSize((uint)region31Neurons.Length, (ulong)region31Axons.Length, stride);
+
+        var region0Offset = NbnBinary.NbnHeaderBytes;
+        var region2Offset = region0Offset + region0Size;
+        var region31Offset = region2Offset + region2Size;
+        var totalSize = region31Offset + region31Size;
+
+        var buffer = new byte[totalSize];
+        var span = buffer.AsSpan();
+
+        Encoding.ASCII.GetBytes("NBN2").CopyTo(span.Slice(0, 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(0x004, 2), 2);
+        span[0x006] = 1;
+        span[0x007] = 10;
+        BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x008, 8), SampleBrainSeed);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(0x010, 4), stride);
+        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(0x014, 4), 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(span.Slice(0x018, 8), 0);
+
+        WriteNbnQuantization(span.Slice(0x020, 80), QuantizationSchemas.DefaultNbn);
+
+        WriteRegionDirectoryEntry(
+            span.Slice(0x100 + (0 * 24), 24),
+            (uint)region0Neurons.Length,
+            (ulong)region0Axons.Length,
+            (ulong)region0Offset,
+            0);
+
+        WriteRegionDirectoryEntry(
+            span.Slice(0x100 + (2 * 24), 24),
+            (uint)region2Neurons.Length,
+            (ulong)region2Axons.Length,
+            (ulong)region2Offset,
+            0);
+
+        WriteRegionDirectoryEntry(
+            span.Slice(0x100 + (31 * 24), 24),
+            (uint)region31Neurons.Length,
+            (ulong)region31Axons.Length,
+            (ulong)region31Offset,
+            0);
+
+        WriteRegionSection(span.Slice(region0Offset, region0Size), 0, region0Neurons, region0Axons, stride);
+        WriteRegionSection(span.Slice(region2Offset, region2Size), 2, region2Neurons, region2Axons, stride);
+        WriteRegionSection(span.Slice(region31Offset, region31Size), 31, region31Neurons, region31Axons, stride);
+
+        return new RichNbnVector(buffer, stride, regions);
     }
 
     public static RichNbnVector CreateRichNbnVector()

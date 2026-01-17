@@ -114,6 +114,26 @@ public class NbnFormatTests
     }
 
     [Fact]
+    public void NbnCheckpoints_CrossStrideBoundaries()
+    {
+        var vector = NbnTestVectors.CreateCheckpointNbnVector();
+        var header = NbnBinary.ReadNbnHeader(vector.Bytes);
+
+        Assert.Equal(4u, header.AxonStride);
+
+        var entry = header.Regions[2];
+        var section = NbnBinary.ReadRegionSection(vector.Bytes, entry.Offset);
+        Assert.Equal(2, section.RegionId);
+        Assert.Equal(4u, section.Stride);
+        Assert.Equal(10u, section.NeuronSpan);
+        Assert.Equal(8ul, section.TotalAxons);
+        Assert.Equal(4u, section.CheckpointCount);
+        Assert.Equal(new ulong[] { 0, 4, 7, 8 }, section.Checkpoints);
+
+        AssertAxonOrdering(section);
+    }
+
+    [Fact]
     public void NbsHeader_ConformsToSpec()
     {
         var nbn = NbnTestVectors.CreateMinimalNbn();
@@ -204,6 +224,33 @@ public class NbnFormatTests
 
         Assert.Equal(4 + (richNbs.Overlays.Length * 12), overlaySection.ByteLength);
         Assert.Equal(offset + overlaySection.ByteLength, richNbs.Bytes.Length);
+    }
+
+    [Fact]
+    public void NbsOverlaySection_AllowsZeroOverlays()
+    {
+        var nbn = NbnTestVectors.CreateMinimalNbn();
+        var nbs = NbnTestVectors.CreateNbsWithEmptyOverlays(nbn);
+        var header = NbnBinary.ReadNbsHeader(nbs);
+
+        Assert.Equal(NbnTestVectors.OverlayOnlyFlags, header.Flags);
+        Assert.False(header.EnabledBitsetIncluded);
+        Assert.True(header.AxonOverlayIncluded);
+        Assert.False(header.CostEnabled);
+        Assert.False(header.EnergyEnabled);
+        Assert.False(header.PlasticityEnabled);
+
+        var offset = NbnBinary.NbsHeaderBytes;
+        var region0 = NbnBinary.ReadNbsRegionSection(nbs, offset, header.EnabledBitsetIncluded);
+        offset += region0.ByteLength;
+        var region31 = NbnBinary.ReadNbsRegionSection(nbs, offset, header.EnabledBitsetIncluded);
+        offset += region31.ByteLength;
+
+        var overlaySection = NbnBinary.ReadNbsOverlaySection(nbs, offset);
+        Assert.Empty(overlaySection.Overlays);
+        Assert.Equal(4, overlaySection.ByteLength);
+        Assert.Equal(offset + overlaySection.ByteLength, nbs.Length);
+        Assert.Equal(NbnConstants.OutputRegionId, region31.RegionId);
     }
 
     private static void AssertQuantMap(QuantizationMap expected, QuantizationMap actual)
