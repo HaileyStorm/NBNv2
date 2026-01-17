@@ -265,24 +265,17 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
-            if (computeTarget is null)
-            {
-                continue;
-            }
-
-            foreach (var shardId in brain.Shards.Keys)
+            foreach (var (shardId, shardPid) in brain.Shards)
             {
                 _pendingCompute.Add(new ShardKey(brain.BrainId, shardId));
+                context.Send(
+                    shardPid,
+                    new TickCompute
+                    {
+                        TickId = _tick.TickId,
+                        TargetTickHz = _backpressure.TargetTickHz
+                    });
             }
-
-            context.Send(
-                computeTarget,
-                new TickCompute
-                {
-                    TickId = _tick.TickId,
-                    TargetTickHz = _backpressure.TargetTickHz
-                });
         }
 
         _tick.ExpectedComputeCount = _pendingCompute.Count;
