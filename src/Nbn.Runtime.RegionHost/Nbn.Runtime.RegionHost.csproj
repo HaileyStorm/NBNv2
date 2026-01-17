@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Nbn.Shared\Nbn.Shared.csproj" />
+    <ProjectReference Include="..\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
   </ItemGroup>
 
 </Project>
