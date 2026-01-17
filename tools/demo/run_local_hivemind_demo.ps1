@@ -11,26 +11,35 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$artifactRoot = Join-Path $DemoRoot "artifacts"
-$logRoot = Join-Path $DemoRoot "logs"
+$runRoot = Join-Path $DemoRoot (Get-Date -Format "yyyyMMdd_HHmmss")
+$artifactRoot = Join-Path $runRoot "artifacts"
+$logRoot = Join-Path $runRoot "logs"
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
 $brainId = [guid]::NewGuid().ToString()
-$hiveAddress = "$BindHost:$HiveMindPort"
-$brainAddress = "$BindHost:$BrainHostPort"
-$regionAddress = "$BindHost:$RegionHostPort"
+$hiveAddress = "${BindHost}:${HiveMindPort}"
+$brainAddress = "${BindHost}:${BrainHostPort}"
+$regionAddress = "${BindHost}:${RegionHostPort}"
 
-Write-Host "Demo root: $DemoRoot"
+Write-Host "Demo root: $runRoot"
 Write-Host "BrainId: $brainId"
 
 $artifactJson = & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -- init-artifacts --artifact-root "$artifactRoot" --json
-$artifact = $artifactJson | ConvertFrom-Json
+$artifactLine = $artifactJson | Where-Object { $_ -match '^{.*}$' } | Select-Object -Last 1
+if (-not $artifactLine) {
+    throw "DemoHost did not return JSON output."
+}
+
+$artifact = $artifactLine | ConvertFrom-Json
 
 $hiveLog = Join-Path $logRoot "hivemind.log"
 $brainLog = Join-Path $logRoot "brainhost.log"
 $regionLog = Join-Path $logRoot "regionhost.log"
+$hiveErr = Join-Path $logRoot "hivemind.err.log"
+$brainErr = Join-Path $logRoot "brainhost.err.log"
+$regionErr = Join-Path $logRoot "regionhost.err.log"
 
 $hiveArgs = @(
     "run",
@@ -73,11 +82,11 @@ $regionArgs = @(
     "--artifact-root", $artifactRoot
 )
 
-$hiveProc = Start-Process -FilePath "dotnet" -ArgumentList $hiveArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveLog
+$hiveProc = Start-Process -FilePath "dotnet" -ArgumentList $hiveArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveErr
 Start-Sleep -Seconds 1
-$brainProc = Start-Process -FilePath "dotnet" -ArgumentList $brainArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $brainLog -RedirectStandardError $brainLog
+$brainProc = Start-Process -FilePath "dotnet" -ArgumentList $brainArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $brainLog -RedirectStandardError $brainErr
 Start-Sleep -Seconds 1
-$regionProc = Start-Process -FilePath "dotnet" -ArgumentList $regionArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionLog -RedirectStandardError $regionLog
+$regionProc = Start-Process -FilePath "dotnet" -ArgumentList $regionArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionLog -RedirectStandardError $regionErr
 
 Write-Host "HiveMind: $hiveAddress (pid $($hiveProc.Id))"
 Write-Host "BrainHost: $brainAddress (pid $($brainProc.Id))"

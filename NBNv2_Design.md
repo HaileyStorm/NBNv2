@@ -2202,8 +2202,9 @@ message ReproduceResult {
 
 ### 20.x Local demo script
 
-For a minimal end-to-end smoke test, use the PowerShell demo script at
-`tools/demo/run_local_hivemind_demo.ps1`. The script:
+For a minimal end-to-end smoke test, use the demo scripts:
+`tools/demo/run_local_hivemind_demo.ps1` (Windows PowerShell) or
+`tools/demo/run_local_hivemind_demo.sh` (Ubuntu/Linux). The scripts:
 
 * Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) and stores it in a local artifact store
 * Starts HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), and a RegionHost shard for region 1
