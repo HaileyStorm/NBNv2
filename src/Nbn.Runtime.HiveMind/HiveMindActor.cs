@@ -265,17 +265,25 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            foreach (var (shardId, shardPid) in brain.Shards)
+            var computeTarget = brain.SignalRouterPid ?? brain.BrainRootPid;
+            if (computeTarget is null)
+            {
+                Log($"TickCompute skipped: missing router for brain {brain.BrainId}.");
+                continue;
+            }
+
+            foreach (var shardId in brain.Shards.Keys)
             {
                 _pendingCompute.Add(new ShardKey(brain.BrainId, shardId));
-                context.Send(
-                    shardPid,
-                    new TickCompute
-                    {
-                        TickId = _tick.TickId,
-                        TargetTickHz = _backpressure.TargetTickHz
-                    });
             }
+
+            context.Send(
+                computeTarget,
+                new TickCompute
+                {
+                    TickId = _tick.TickId,
+                    TargetTickHz = _backpressure.TargetTickHz
+                });
         }
 
         _tick.ExpectedComputeCount = _pendingCompute.Count;
@@ -664,13 +672,15 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        var target = brain.BrainRootPid ?? brain.SignalRouterPid;
-        if (target is null)
+        if (brain.SignalRouterPid is not null)
         {
-            return;
+            context.Send(brain.SignalRouterPid, new SetRoutingTable(brain.RoutingSnapshot));
         }
 
-        context.Send(target, new SetRoutingTable(brain.RoutingSnapshot));
+        if (brain.BrainRootPid is not null && brain.BrainRootPid != brain.SignalRouterPid)
+        {
+            context.Send(brain.BrainRootPid, new SetRoutingTable(brain.RoutingSnapshot));
+        }
     }
 
     private static void ScheduleSelf(IContext context, TimeSpan delay, object message)

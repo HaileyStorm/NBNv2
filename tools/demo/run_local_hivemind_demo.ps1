@@ -26,6 +26,10 @@ $regionAddress = "${BindHost}:${RegionHostPort}"
 Write-Host "Demo root: $runRoot"
 Write-Host "BrainId: $brainId"
 
+Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" |
+    Where-Object { $_.CommandLine -match 'Nbn.Runtime.HiveMind|Nbn.Runtime.RegionHost|Nbn.Tools.DemoHost' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost\Nbn.Tools.DemoHost.csproj") -c Release | Out-Null

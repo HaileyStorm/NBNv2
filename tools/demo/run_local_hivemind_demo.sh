@@ -60,11 +60,15 @@ REGION_ADDR="${BIND_HOST}:${REGIONHOST_PORT}"
 printf "Demo root: %s\n" "$RUN_ROOT"
 printf "BrainId: %s\n" "$BRAIN_ID"
 
-dotnet build "$REPO_ROOT/src/Nbn.Runtime.HiveMind/Nbn.Runtime.HiveMind.csproj" -c Release >/dev/null
-dotnet build "$REPO_ROOT/src/Nbn.Runtime.RegionHost/Nbn.Runtime.RegionHost.csproj" -c Release >/dev/null
-dotnet build "$REPO_ROOT/tools/Nbn.Tools.DemoHost/Nbn.Tools.DemoHost.csproj" -c Release >/dev/null
+pkill -f "Nbn.Runtime.HiveMind" 2>/dev/null || true
+pkill -f "Nbn.Runtime.RegionHost" 2>/dev/null || true
+pkill -f "Nbn.Tools.DemoHost" 2>/dev/null || true
 
-artifact_json=$(dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- init-artifacts --artifact-root "$ARTIFACT_ROOT" --json | grep -E '^\{.*\}$' | tail -n 1 || true)
+DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.HiveMind/Nbn.Runtime.HiveMind.csproj" -c Release >/dev/null
+DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.RegionHost/Nbn.Runtime.RegionHost.csproj" -c Release >/dev/null
+DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/tools/Nbn.Tools.DemoHost/Nbn.Tools.DemoHost.csproj" -c Release >/dev/null
+
+artifact_json=$(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- init-artifacts --artifact-root "$ARTIFACT_ROOT" --json | grep -E '^\{.*\}$' | tail -n 1 || true)
 if [[ -z "$artifact_json" ]]; then
   echo "DemoHost did not return JSON output." >&2
   exit 1
@@ -93,17 +97,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.HiveMind" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$HIVEMIND_PORT" >"$HIVE_LOG" 2>"$HIVE_ERR") &
+(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.HiveMind" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$HIVEMIND_PORT" >"$HIVE_LOG" 2>"$HIVE_ERR") &
 HIVE_PID=$!
 
 sleep 1
 
-(dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- run-brain --bind-host "$BIND_HOST" --port "$BRAINHOST_PORT" --brain-id "$BRAIN_ID" --hivemind-address "$HIVE_ADDR" --hivemind-id "HiveMind" --router-id "$ROUTER_ID" >"$BRAIN_LOG" 2>"$BRAIN_ERR") &
+(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- run-brain --bind-host "$BIND_HOST" --port "$BRAINHOST_PORT" --brain-id "$BRAIN_ID" --hivemind-address "$HIVE_ADDR" --hivemind-id "HiveMind" --router-id "$ROUTER_ID" >"$BRAIN_LOG" 2>"$BRAIN_ERR") &
 BRAIN_PID=$!
 
 sleep 1
 
-(dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.RegionHost" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$REGIONHOST_PORT" --brain-id "$BRAIN_ID" --region "$REGION_ID" --neuron-start 0 --neuron-count 1 --shard-index "$SHARD_INDEX" --router-address "$BRAIN_ADDR" --router-id "$ROUTER_ID" --tick-address "$HIVE_ADDR" --tick-id "HiveMind" --nbn-sha256 "$NBN_SHA" --nbn-size "$NBN_SIZE" --artifact-root "$ARTIFACT_ROOT" >"$REGION_LOG" 2>"$REGION_ERR") &
+(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.RegionHost" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$REGIONHOST_PORT" --brain-id "$BRAIN_ID" --region "$REGION_ID" --neuron-start 0 --neuron-count 1 --shard-index "$SHARD_INDEX" --router-address "$BRAIN_ADDR" --router-id "$ROUTER_ID" --tick-address "$HIVE_ADDR" --tick-id "HiveMind" --nbn-sha256 "$NBN_SHA" --nbn-size "$NBN_SIZE" --artifact-root "$ARTIFACT_ROOT" >"$REGION_LOG" 2>"$REGION_ERR") &
 REGION_PID=$!
 
 printf "HiveMind: %s (pid %s)\n" "$HIVE_ADDR" "$HIVE_PID"
