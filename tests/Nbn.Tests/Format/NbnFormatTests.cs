@@ -1,6 +1,7 @@
 using System;
 using System.Security.Cryptography;
 using Nbn.Shared;
+using Nbn.Shared.Format;
 using Nbn.Shared.Quantization;
 using Xunit;
 
@@ -52,7 +53,7 @@ public class NbnFormatTests
         var nbn = NbnTestVectors.CreateMinimalNbn();
         var header = NbnBinary.ReadNbnHeader(nbn);
 
-        var region0 = NbnBinary.ReadRegionSection(nbn, header.Regions[0].Offset);
+        var region0 = NbnBinary.ReadNbnRegionSection(nbn, header.Regions[0].Offset);
         Assert.Equal(0, region0.RegionId);
         Assert.Equal(header.Regions[0].NeuronSpan, region0.NeuronSpan);
         Assert.Equal((uint)NbnConstants.DefaultAxonStride, region0.Stride);
@@ -65,7 +66,7 @@ public class NbnFormatTests
         });
         Assert.Empty(region0.AxonRecords);
 
-        var region31 = NbnBinary.ReadRegionSection(nbn, header.Regions[NbnConstants.OutputRegionId].Offset);
+        var region31 = NbnBinary.ReadNbnRegionSection(nbn, header.Regions[NbnConstants.OutputRegionId].Offset);
         Assert.Equal(NbnConstants.OutputRegionId, region31.RegionId);
         Assert.Equal(header.Regions[NbnConstants.OutputRegionId].NeuronSpan, region31.NeuronSpan);
         Assert.Empty(region31.AxonRecords);
@@ -84,7 +85,7 @@ public class NbnFormatTests
             Assert.Equal((ulong)expected.Axons.Length, entry.TotalAxons);
             Assert.True(entry.Offset > 0);
 
-            var section = NbnBinary.ReadRegionSection(vector.Bytes, entry.Offset);
+            var section = NbnBinary.ReadNbnRegionSection(vector.Bytes, entry.Offset);
             Assert.Equal(expected.RegionId, section.RegionId);
             Assert.Equal(expected.NeuronSpan, section.NeuronSpan);
             Assert.Equal((ulong)expected.Axons.Length, section.TotalAxons);
@@ -122,7 +123,7 @@ public class NbnFormatTests
         Assert.Equal(4u, header.AxonStride);
 
         var entry = header.Regions[2];
-        var section = NbnBinary.ReadRegionSection(vector.Bytes, entry.Offset);
+        var section = NbnBinary.ReadNbnRegionSection(vector.Bytes, entry.Offset);
         Assert.Equal(2, section.RegionId);
         Assert.Equal(4u, section.Stride);
         Assert.Equal(10u, section.NeuronSpan);
@@ -214,12 +215,12 @@ public class NbnFormatTests
         }
 
         var overlaySection = NbnBinary.ReadNbsOverlaySection(richNbs.Bytes, offset);
-        Assert.Equal(richNbs.Overlays.Length, overlaySection.Overlays.Length);
+        Assert.Equal(richNbs.Overlays.Length, overlaySection.Records.Length);
         for (var i = 0; i < richNbs.Overlays.Length; i++)
         {
-            Assert.Equal(richNbs.Overlays[i].FromAddress, overlaySection.Overlays[i].FromAddress);
-            Assert.Equal(richNbs.Overlays[i].ToAddress, overlaySection.Overlays[i].ToAddress);
-            Assert.Equal(richNbs.Overlays[i].StrengthCode, overlaySection.Overlays[i].StrengthCode);
+            Assert.Equal(richNbs.Overlays[i].FromAddress, overlaySection.Records[i].FromAddress);
+            Assert.Equal(richNbs.Overlays[i].ToAddress, overlaySection.Records[i].ToAddress);
+            Assert.Equal(richNbs.Overlays[i].StrengthCode, overlaySection.Records[i].StrengthCode);
         }
 
         Assert.Equal(4 + (richNbs.Overlays.Length * 12), overlaySection.ByteLength);
@@ -247,10 +248,53 @@ public class NbnFormatTests
         offset += region31.ByteLength;
 
         var overlaySection = NbnBinary.ReadNbsOverlaySection(nbs, offset);
-        Assert.Empty(overlaySection.Overlays);
+        Assert.Empty(overlaySection.Records);
         Assert.Equal(4, overlaySection.ByteLength);
         Assert.Equal(offset + overlaySection.ByteLength, nbs.Length);
         Assert.Equal(NbnConstants.OutputRegionId, region31.RegionId);
+    }
+
+    [Fact]
+    public void NbnRoundtrip_MinimalVector_MatchesOriginal()
+    {
+        var nbn = NbnTestVectors.CreateMinimalNbn();
+        var header = NbnBinary.ReadNbnHeader(nbn);
+        var regions = new System.Collections.Generic.List<NbnRegionSection>();
+
+        foreach (var entry in header.Regions)
+        {
+            if (entry.NeuronSpan == 0)
+            {
+                continue;
+            }
+
+            regions.Add(NbnBinary.ReadNbnRegionSection(nbn, entry.Offset));
+        }
+
+        var rebuilt = NbnBinary.WriteNbn(header, regions);
+        Assert.Equal(nbn, rebuilt);
+    }
+
+    [Fact]
+    public void NbsRoundtrip_RichVector_MatchesOriginal()
+    {
+        var richNbn = NbnTestVectors.CreateRichNbnVector();
+        var richNbs = NbnTestVectors.CreateRichNbsVector(richNbn);
+        var header = NbnBinary.ReadNbsHeader(richNbs.Bytes);
+
+        var regions = new System.Collections.Generic.List<NbsRegionSection>();
+        var offset = NbnBinary.NbsHeaderBytes;
+        foreach (var region in richNbs.Regions)
+        {
+            var section = NbnBinary.ReadNbsRegionSection(richNbs.Bytes, offset, header.EnabledBitsetIncluded);
+            regions.Add(section);
+            offset += section.ByteLength;
+        }
+
+        var overlaySection = NbnBinary.ReadNbsOverlaySection(richNbs.Bytes, offset);
+        var rebuilt = NbnBinary.WriteNbs(header, regions, overlaySection.Records);
+
+        Assert.Equal(richNbs.Bytes, rebuilt);
     }
 
     private static void AssertQuantMap(QuantizationMap expected, QuantizationMap actual)

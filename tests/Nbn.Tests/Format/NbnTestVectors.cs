@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
+using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
 
