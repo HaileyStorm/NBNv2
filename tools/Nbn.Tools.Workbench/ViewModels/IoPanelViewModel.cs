@@ -24,7 +24,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _plasticityEnabled;
-    private bool _plasticityProbabilistic = true;
+    private PlasticityModeOption _selectedPlasticityMode;
     private string _brainInfoSummary = "No brain selected.";
 
     public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
@@ -33,6 +33,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         _dispatcher = dispatcher;
         OutputEvents = new ObservableCollection<OutputEventItem>();
         VectorEvents = new ObservableCollection<OutputVectorEventItem>();
+        PlasticityModes = new ObservableCollection<PlasticityModeOption>
+        {
+            new("Probabilistic", true),
+            new("Absolute", false)
+        };
+        _selectedPlasticityMode = PlasticityModes[0];
 
         RequestInfoCommand = new AsyncRelayCommand(RequestInfoAsync);
         SubscribeOutputsCommand = new RelayCommand(() => Subscribe(false));
@@ -112,10 +118,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _plasticityRateText, value);
     }
 
-    public bool PlasticityProbabilistic
+    public ObservableCollection<PlasticityModeOption> PlasticityModes { get; }
+
+    public PlasticityModeOption SelectedPlasticityMode
     {
-        get => _plasticityProbabilistic;
-        set => SetProperty(ref _plasticityProbabilistic, value);
+        get => _selectedPlasticityMode;
+        set => SetProperty(ref _selectedPlasticityMode, value);
     }
 
     public string BrainInfoSummary
@@ -314,7 +322,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        _client.SetPlasticity(brainId, PlasticityEnabled, rate, PlasticityProbabilistic);
+        var probabilistic = SelectedPlasticityMode?.Probabilistic ?? true;
+        _client.SetPlasticity(brainId, PlasticityEnabled, rate, probabilistic);
     }
 
     private void ClearOutputs()
@@ -362,3 +371,5 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
     }
 }
+
+public sealed record PlasticityModeOption(string Label, bool Probabilistic);

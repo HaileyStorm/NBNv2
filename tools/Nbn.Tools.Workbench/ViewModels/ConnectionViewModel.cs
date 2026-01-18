@@ -1,4 +1,5 @@
 using Avalonia.Media;
+using Nbn.Tools.Workbench.Services;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
@@ -14,7 +15,11 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _debugHub = "DebugHub";
     private string _vizHub = "VisualizationHub";
     private string _clientName = "nbn.workbench";
-    private string _settingsDbPath = "settingsmonitor.db";
+    private string _settingsDbPath = RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo", "settingsmonitor.db")
+        ?? "settingsmonitor.db";
+    private string _hiveMindHost = "127.0.0.1";
+    private string _hiveMindPortText = "12020";
+    private string _hiveMindName = "HiveMind";
     private string _ioStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
@@ -87,6 +92,24 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _settingsDbPath, value);
     }
 
+    public string HiveMindHost
+    {
+        get => _hiveMindHost;
+        set => SetProperty(ref _hiveMindHost, value);
+    }
+
+    public string HiveMindPortText
+    {
+        get => _hiveMindPortText;
+        set => SetProperty(ref _hiveMindPortText, value);
+    }
+
+    public string HiveMindName
+    {
+        get => _hiveMindName;
+        set => SetProperty(ref _hiveMindName, value);
+    }
+
     public string IoStatus
     {
         get => _ioStatus;
@@ -114,6 +137,7 @@ public sealed class ConnectionViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(IoChipBackground));
                 OnPropertyChanged(nameof(IoChipBorder));
+                OnPropertyChanged(nameof(IoStatusLabel));
             }
         }
     }
@@ -127,6 +151,7 @@ public sealed class ConnectionViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(ObsChipBackground));
                 OnPropertyChanged(nameof(ObsChipBorder));
+                OnPropertyChanged(nameof(ObsStatusLabel));
             }
         }
     }
@@ -138,4 +163,8 @@ public sealed class ConnectionViewModel : ViewModelBase
     public IBrush ObsChipBackground => ObsConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
     public IBrush ObsChipBorder => ObsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
+    public string IoStatusLabel => IoConnected ? "IO connected" : "IO disconnected";
+
+    public string ObsStatusLabel => ObsConnected ? "Obs connected" : "Obs disconnected";
 }

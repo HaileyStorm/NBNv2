@@ -18,10 +18,10 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Connections = new ConnectionViewModel();
         _client = new WorkbenchClient(this);
 
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections);
         Io = new IoPanelViewModel(_client, _dispatcher);
+        Viz = new VizPanelViewModel(_dispatcher, Io);
+        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, Viz.AddBrainId);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
-        Viz = new VizPanelViewModel(_dispatcher);
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel();
 
@@ -128,9 +128,23 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         _client.DisconnectObservability();
     }
 
-    public void OnOutputEvent(OutputEventItem item) => Io.AddOutputEvent(item);
+    public void OnOutputEvent(OutputEventItem item)
+    {
+        Io.AddOutputEvent(item);
+        if (Guid.TryParse(item.BrainId, out var brainId))
+        {
+            Viz.AddBrainId(brainId);
+        }
+    }
 
-    public void OnOutputVectorEvent(OutputVectorEventItem item) => Io.AddVectorEvent(item);
+    public void OnOutputVectorEvent(OutputVectorEventItem item)
+    {
+        Io.AddVectorEvent(item);
+        if (Guid.TryParse(item.BrainId, out var brainId))
+        {
+            Viz.AddBrainId(brainId);
+        }
+    }
 
     public void OnDebugEvent(DebugEventItem item) => Debug.AddDebugEvent(item);
 

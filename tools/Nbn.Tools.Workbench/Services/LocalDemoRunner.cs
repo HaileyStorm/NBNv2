@@ -12,23 +12,24 @@ public sealed class LocalDemoRunner
 
     public bool IsRunning => _process is { HasExited: false };
 
-    public Task<DemoStartResult> StartAsync(DemoLaunchOptions options)
+    public async Task<DemoStartResult> StartAsync(DemoLaunchOptions options)
     {
         lock (_gate)
         {
             if (IsRunning)
             {
-                return Task.FromResult(new DemoStartResult(false, "Demo already running."));
+                return new DemoStartResult(false, "Demo already running.", null);
             }
         }
 
         var scriptPath = ResolveDemoScript();
         if (string.IsNullOrWhiteSpace(scriptPath))
         {
-            return Task.FromResult(new DemoStartResult(false, "Demo script not found."));
+            return new DemoStartResult(false, "Demo script not found.", null);
         }
 
-        var repoRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(scriptPath)!, "..", ".."));
+        var repoRoot = RepoLocator.FindRepoRoot()?.FullName
+            ?? Path.GetFullPath(Path.Combine(Path.GetDirectoryName(scriptPath)!, "..", ".."));
         var args = BuildArgs(scriptPath, options);
 
         var startInfo = new ProcessStartInfo
@@ -44,7 +45,7 @@ public sealed class LocalDemoRunner
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         if (!process.Start())
         {
-            return Task.FromResult(new DemoStartResult(false, "Failed to start demo process."));
+            return new DemoStartResult(false, "Failed to start demo process.", null);
         }
 
         lock (_gate)
@@ -52,7 +53,8 @@ public sealed class LocalDemoRunner
             _process = process;
         }
 
-        return Task.FromResult(new DemoStartResult(true, $"Demo running (pid {process.Id})."));
+        var brainId = await TryReadBrainIdAsync(options.DemoRoot).ConfigureAwait(false);
+        return new DemoStartResult(true, $"Demo running (pid {process.Id}).", brainId);
     }
 
     public async Task<string> StopAsync()
@@ -100,6 +102,7 @@ public sealed class LocalDemoRunner
     private static string BuildArgs(string scriptPath, DemoLaunchOptions options)
     {
         return $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\" "
+             + $"-DemoRoot \"{options.DemoRoot}\" "
              + $"-BindHost \"{options.BindHost}\" "
              + $"-HiveMindPort {options.HiveMindPort} "
              + $"-BrainHostPort {options.BrainHostPort} "
@@ -110,7 +113,7 @@ public sealed class LocalDemoRunner
 
     private static string? ResolveDemoScript()
     {
-        var repoRoot = FindRepoRoot();
+        var repoRoot = RepoLocator.FindRepoRoot();
         if (repoRoot is not null)
         {
             var candidate = Path.Combine(repoRoot.FullName, "tools", "demo", "run_local_hivemind_demo.ps1");
@@ -135,17 +138,28 @@ public sealed class LocalDemoRunner
         return null;
     }
 
-    private static DirectoryInfo? FindRepoRoot()
+    private static async Task<Guid?> TryReadBrainIdAsync(string demoRoot)
     {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        for (var i = 0; i < 8 && current is not null; i++)
+        var path = Path.Combine(demoRoot, "current_brain_id.txt");
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
         {
-            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+            if (File.Exists(path))
             {
-                return current;
+                try
+                {
+                    var content = await File.ReadAllTextAsync(path).ConfigureAwait(false);
+                    if (Guid.TryParse(content.Trim(), out var guid))
+                    {
+                        return guid;
+                    }
+                }
+                catch
+                {
+                }
             }
 
-            current = current.Parent;
+            await Task.Delay(200).ConfigureAwait(false);
         }
 
         return null;
@@ -153,6 +167,7 @@ public sealed class LocalDemoRunner
 }
 
 public sealed record DemoLaunchOptions(
+    string DemoRoot,
     string BindHost,
     int HiveMindPort,
     int BrainHostPort,
@@ -160,4 +175,4 @@ public sealed record DemoLaunchOptions(
     int IoPort,
     int ObsPort);
 
-public sealed record DemoStartResult(bool Success, string Message);
+public sealed record DemoStartResult(bool Success, string Message, Guid? BrainId);

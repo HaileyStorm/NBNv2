@@ -6,35 +6,131 @@
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
       <Border Classes="card">
-        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-          <StackPanel>
-            <TextBlock Text="Visualization Stream" Classes="card-title" />
-            <TextBlock Text="Real-time activity snapshots and event pulses." Classes="card-subtitle" />
-          </StackPanel>
-          <StackPanel HorizontalAlignment="Right" Spacing="6">
-            <Button Content="Clear" Command="{Binding ClearCommand}" />
-            <TextBlock Text="{Binding Status}" Classes="muted" />
-          </StackPanel>
-        </Grid>
+        <StackPanel Spacing="10">
+          <TextBlock Text="Visualizer" Classes="card-title" />
+          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <TextBlock Text="Known brains" Classes="muted" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding KnownBrains}" SelectedItem="{Binding SelectedBrainId}" Width="260" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+              <TextBox Width="200" Text="{Binding BrainEntryText}" Watermark="Paste BrainId" />
+              <Button Content="Add" Command="{Binding AddBrainCommand}" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="1" Text="Region focus" Classes="muted" />
+            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+              <TextBox Width="80" Text="{Binding RegionFocusText}" />
+              <Button Content="Zoom" Command="{Binding ZoomCommand}" />
+            </StackPanel>
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding Status}" Classes="muted" VerticalAlignment="Center" />
+          </Grid>
+        </StackPanel>
       </Border>
 
+      <Grid ColumnDefinitions="1.05*,1.35*" ColumnSpacing="16">
+        <StackPanel Spacing="16" Grid.Column="0">
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Brain Control" Classes="card-title" />
+              <TextBlock Text="Brain ID" Classes="muted" />
+              <TextBox Text="{Binding Brain.BrainIdText}" Watermark="Guid" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Info" Command="{Binding Brain.RequestInfoCommand}" />
+                <Button Content="Subscribe" Command="{Binding Brain.SubscribeOutputsCommand}" />
+                <Button Content="Unsubscribe" Command="{Binding Brain.UnsubscribeOutputsCommand}" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Subscribe Vector" Command="{Binding Brain.SubscribeVectorCommand}" />
+                <Button Content="Unsubscribe Vector" Command="{Binding Brain.UnsubscribeVectorCommand}" />
+              </StackPanel>
+              <TextBlock Text="{Binding Brain.BrainInfoSummary}" Classes="muted" />
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Inputs" Classes="card-title" />
+              <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" RowDefinitions="Auto,Auto">
+                <TextBlock Text="Index" Classes="muted" />
+                <TextBox Grid.Column="1" Text="{Binding Brain.InputIndexText}" Width="80" />
+                <TextBlock Grid.Column="2" Text="Value" Classes="muted" />
+                <TextBox Grid.Column="3" Text="{Binding Brain.InputValueText}" Width="100" />
+                <TextBlock Grid.Row="1" Text="Vector" Classes="muted" />
+                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Brain.InputVectorText}" Watermark="0.1, 0.2, -0.3" />
+              </Grid>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Send Input" Command="{Binding Brain.SendInputCommand}" />
+                <Button Content="Send Vector" Command="{Binding Brain.SendVectorCommand}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Spacing="16">
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" Spacing="8">
+                <TextBlock Text="Outputs" Classes="card-title" />
+                <Button Content="Clear" Command="{Binding Brain.ClearOutputsCommand}" HorizontalAlignment="Right" />
+              </StackPanel>
+              <ItemsControl ItemsSource="{Binding Brain.OutputEvents}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,4">
+                      <TextBlock Text="{Binding Time}" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
+                      <Border Grid.Column="2" Classes="pill">
+                        <TextBlock Text="{Binding OutputIndex}" />
+                      </Border>
+                      <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Vector Outputs" Classes="card-title" />
+              <ItemsControl ItemsSource="{Binding Brain.VectorEvents}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10" Margin="0,4">
+                      <TextBlock Text="{Binding Time}" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding ValuesPreview}" Classes="row-title" />
+                      <TextBlock Grid.Column="2" Text="{Binding TickId}" Classes="muted" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Grid>
+
       <Border Classes="card">
-        <ItemsControl ItemsSource="{Binding VizEvents}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <Border Classes="row">
-                <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10">
-                  <TextBlock Text="{Binding Time}" Classes="muted" />
-                  <Border Grid.Column="1" Classes="pill">
-                    <TextBlock Text="{Binding Type}" />
-                  </Border>
-                  <TextBlock Grid.Column="2" Text="{Binding BrainId}" Classes="row-title" />
-                  <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
-                </Grid>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+        <StackPanel Spacing="8">
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" Spacing="8">
+            <TextBlock Text="Visualization Stream" Classes="card-title" />
+            <Button Content="Clear" Command="{Binding ClearCommand}" HorizontalAlignment="Right" />
+          </StackPanel>
+          <ItemsControl ItemsSource="{Binding VizEvents}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Classes="row">
+                  <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10">
+                    <TextBlock Text="{Binding Time}" Classes="muted" />
+                    <Border Grid.Column="1" Classes="pill">
+                      <TextBlock Text="{Binding Type}" />
+                    </Border>
+                    <TextBlock Grid.Column="2" Text="{Binding BrainId}" Classes="row-title" />
+                    <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
       </Border>
     </StackPanel>
   </ScrollViewer>

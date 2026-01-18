@@ -16,6 +16,9 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $runRoot = Join-Path $DemoRoot (Get-Date -Format "yyyyMMdd_HHmmss")
 $artifactRoot = Join-Path $runRoot "artifacts"
 $logRoot = Join-Path $runRoot "logs"
+$settingsDbPath = Join-Path $DemoRoot "settingsmonitor.db"
+$brainIdPath = Join-Path $runRoot "brain_id.txt"
+$brainIdPointer = Join-Path $DemoRoot "current_brain_id.txt"
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
@@ -27,17 +30,21 @@ $regionAddress = "${BindHost}:${RegionHostPort}"
 $ioAddress = "${BindHost}:${IoPort}"
 $obsAddress = "${BindHost}:${ObsPort}"
 
+Set-Content -Path $brainIdPath -Value $brainId -Encoding ascii
+Set-Content -Path $brainIdPointer -Value $brainId -Encoding ascii
+
 Write-Host "Demo root: $runRoot"
 Write-Host "BrainId: $brainId"
 
 Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" |
-    Where-Object { $_.CommandLine -match 'Nbn.Runtime.HiveMind|Nbn.Runtime.RegionHost|Nbn.Runtime.IO|Nbn.Runtime.Observability|Nbn.Tools.DemoHost' } |
+    Where-Object { $_.CommandLine -match 'Nbn.Runtime.HiveMind|Nbn.Runtime.RegionHost|Nbn.Runtime.IO|Nbn.Runtime.Observability|Nbn.Runtime.SettingsMonitor|Nbn.Tools.DemoHost' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.Observability\Nbn.Runtime.Observability.csproj") -c Release | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.SettingsMonitor\Nbn.Runtime.SettingsMonitor.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost\Nbn.Tools.DemoHost.csproj") -c Release | Out-Null
 
 $artifactJson = & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- init-artifacts --artifact-root "$artifactRoot" --json
@@ -53,11 +60,13 @@ $brainLog = Join-Path $logRoot "brainhost.log"
 $regionLog = Join-Path $logRoot "regionhost.log"
 $ioLog = Join-Path $logRoot "io.log"
 $obsLog = Join-Path $logRoot "observability.log"
+$settingsLog = Join-Path $logRoot "settingsmonitor.log"
 $hiveErr = Join-Path $logRoot "hivemind.err.log"
 $brainErr = Join-Path $logRoot "brainhost.err.log"
 $regionErr = Join-Path $logRoot "regionhost.err.log"
 $ioErr = Join-Path $logRoot "io.err.log"
 $obsErr = Join-Path $logRoot "observability.err.log"
+$settingsErr = Join-Path $logRoot "settingsmonitor.err.log"
 
 $hiveArgs = @(
     "run",
@@ -130,6 +139,18 @@ $obsArgs = @(
     "--enable-viz"
 )
 
+$settingsArgs = @(
+    "run",
+    "--project", (Join-Path $repoRoot "src\Nbn.Runtime.SettingsMonitor"),
+    "-c", "Release",
+    "--no-build",
+    "--",
+    "--db", $settingsDbPath
+)
+
+$settingsProc = Start-Process -FilePath "dotnet" -ArgumentList $settingsArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $settingsLog -RedirectStandardError $settingsErr
+$settingsProc.WaitForExit()
+
 $hiveProc = Start-Process -FilePath "dotnet" -ArgumentList $hiveArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveErr
 Start-Sleep -Seconds 1
 $brainProc = Start-Process -FilePath "dotnet" -ArgumentList $brainArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $brainLog -RedirectStandardError $brainErr
@@ -145,6 +166,7 @@ Write-Host "BrainHost: $brainAddress (pid $($brainProc.Id))"
 Write-Host "RegionHost: $regionAddress (pid $($regionProc.Id))"
 Write-Host "IO Gateway: $ioAddress (pid $($ioProc.Id))"
 Write-Host "Observability: $obsAddress (pid $($obsProc.Id))"
+Write-Host "Settings DB: $settingsDbPath"
 Write-Host "Logs: $logRoot"
 
 $deadline = (Get-Date).AddSeconds(20)
