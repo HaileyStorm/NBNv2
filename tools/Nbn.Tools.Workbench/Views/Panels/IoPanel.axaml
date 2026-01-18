@@ -10,6 +10,7 @@
           <TextBlock Text="IO + Energy" Classes="card-title" />
           <TextBlock Text="Target brain (selected in Visualizer)" Classes="muted" />
           <TextBox Text="{Binding BrainIdText}" IsReadOnly="True" />
+          <TextBlock Text="{Binding ActiveBrainsSummary}" Classes="muted" />
           <TextBlock Text="Use the Visualizer to switch active brains and manage inputs/outputs." Classes="card-subtitle" />
         </StackPanel>
       </Border>

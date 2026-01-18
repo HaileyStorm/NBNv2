@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Tools.Workbench.Models;
@@ -21,6 +22,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _ioRunner = new();
     private readonly LocalServiceRunner _obsRunner = new();
     private readonly Action<Guid>? _brainDiscovered;
+    private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private string _statusMessage = "Idle";
     private string _demoStatus = "Demo not running.";
     private string _settingsLaunchStatus = "Idle";
@@ -29,11 +31,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _obsLaunchStatus = "Idle";
     private bool _demoRunning;
 
-    public OrchestratorPanelViewModel(UiDispatcher dispatcher, ConnectionViewModel connections, Action<Guid>? brainDiscovered = null)
+    public OrchestratorPanelViewModel(
+        UiDispatcher dispatcher,
+        ConnectionViewModel connections,
+        Action<Guid>? brainDiscovered = null,
+        Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _brainDiscovered = brainDiscovered;
+        _brainsUpdated = brainsUpdated;
         Nodes = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingItem>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
@@ -282,6 +289,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             await store.EnsureDefaultSettingsAsync();
 
             var nodes = await store.ListNodesAsync();
+            var brains = await store.ListBrainsAsync();
+            var controllers = await store.ListBrainControllersAsync();
             var compression = await store.GetArtifactCompressionSettingsAsync();
 
             var settings = new List<SettingItem>
@@ -315,6 +324,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Trim(Nodes);
                 Trim(Settings);
             });
+
+            var controllerMap = controllers.ToDictionary(entry => entry.BrainId, entry => entry);
+            var brainList = brains.Select(entry =>
+            {
+                var alive = controllerMap.TryGetValue(entry.BrainId, out var controller) && controller.IsAlive;
+                return new BrainListItem(entry.BrainId, entry.State, alive);
+            }).ToList();
+
+            _brainsUpdated?.Invoke(brainList);
 
             StatusMessage = "Settings loaded.";
             Connections.SettingsStatus = "Ready";

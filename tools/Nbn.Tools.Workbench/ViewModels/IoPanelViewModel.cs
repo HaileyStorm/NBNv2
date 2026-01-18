@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Globalization;
 using Nbn.Proto.Io;
@@ -26,6 +27,8 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _plasticityEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
     private string _brainInfoSummary = "No brain selected.";
+    private string _activeBrainsSummary = "No active brains loaded.";
+    private List<Guid> _activeBrains = new();
 
     public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
     {
@@ -132,6 +135,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _brainInfoSummary, value);
     }
 
+    public string ActiveBrainsSummary
+    {
+        get => _activeBrainsSummary;
+        set => SetProperty(ref _activeBrainsSummary, value);
+    }
+
     public AsyncRelayCommand RequestInfoCommand { get; }
 
     public RelayCommand SubscribeOutputsCommand { get; }
@@ -172,6 +181,14 @@ public sealed class IoPanelViewModel : ViewModelBase
             VectorEvents.Insert(0, item);
             Trim(VectorEvents);
         });
+    }
+
+    public void UpdateActiveBrains(IReadOnlyList<Guid> brains)
+    {
+        _activeBrains = brains.Distinct().ToList();
+        ActiveBrainsSummary = _activeBrains.Count == 0
+            ? "No active brains loaded."
+            : $"Active brains: {_activeBrains.Count}";
     }
 
     private async Task RequestInfoAsync()
@@ -265,57 +282,31 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void ApplyEnergyCredit()
     {
-        if (!TryGetBrainId(out var brainId))
-        {
-            BrainInfoSummary = "Invalid BrainId.";
-            return;
-        }
-
         if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
         {
             BrainInfoSummary = "Credit value invalid.";
             return;
         }
-
-        _client.SendEnergyCredit(brainId, amount);
+        ForEachTargetBrain(brainId => _client.SendEnergyCredit(brainId, amount));
     }
 
     private void ApplyEnergyRate()
     {
-        if (!TryGetBrainId(out var brainId))
-        {
-            BrainInfoSummary = "Invalid BrainId.";
-            return;
-        }
-
         if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
         {
             BrainInfoSummary = "Rate value invalid.";
             return;
         }
-
-        _client.SendEnergyRate(brainId, rate);
+        ForEachTargetBrain(brainId => _client.SendEnergyRate(brainId, rate));
     }
 
     private void ApplyCostEnergy()
     {
-        if (!TryGetBrainId(out var brainId))
-        {
-            BrainInfoSummary = "Invalid BrainId.";
-            return;
-        }
-
-        _client.SetCostEnergy(brainId, CostEnabled, EnergyEnabled);
+        ForEachTargetBrain(brainId => _client.SetCostEnergy(brainId, CostEnabled, EnergyEnabled));
     }
 
     private void ApplyPlasticity()
     {
-        if (!TryGetBrainId(out var brainId))
-        {
-            BrainInfoSummary = "Invalid BrainId.";
-            return;
-        }
-
         if (!float.TryParse(PlasticityRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
         {
             BrainInfoSummary = "Plasticity rate invalid.";
@@ -323,7 +314,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
 
         var probabilistic = SelectedPlasticityMode?.Probabilistic ?? true;
-        _client.SetPlasticity(brainId, PlasticityEnabled, rate, probabilistic);
+        ForEachTargetBrain(brainId => _client.SetPlasticity(brainId, PlasticityEnabled, rate, probabilistic));
     }
 
     private void ClearOutputs()
@@ -341,6 +332,27 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         brainId = Guid.Empty;
         return false;
+    }
+
+    private void ForEachTargetBrain(Action<Guid> action)
+    {
+        if (_activeBrains.Count > 0)
+        {
+            foreach (var brainId in _activeBrains)
+            {
+                action(brainId);
+            }
+
+            return;
+        }
+
+        if (!TryGetBrainId(out var fallbackBrainId))
+        {
+            BrainInfoSummary = "No active brains available.";
+            return;
+        }
+
+        action(fallbackBrainId);
     }
 
     private static IReadOnlyList<float> ParseVector(string raw)

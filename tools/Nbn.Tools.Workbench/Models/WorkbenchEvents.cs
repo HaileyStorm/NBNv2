@@ -49,3 +49,9 @@ public sealed record NodeStatusItem(
     string Status);
 
 public sealed record SettingItem(string Key, string Value, string Updated);
+
+public sealed record BrainListItem(Guid BrainId, string State, bool ControllerAlive)
+{
+    public string Id => BrainId.ToString("D");
+    public string Display => string.IsNullOrWhiteSpace(State) ? Id : $"{Id} ({State})";
+}

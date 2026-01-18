@@ -10,7 +10,13 @@
           <TextBlock Text="Visualizer" Classes="card-title" />
           <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <TextBlock Text="Known brains" Classes="muted" />
-            <ComboBox Grid.Column="1" ItemsSource="{Binding KnownBrains}" SelectedItem="{Binding SelectedBrainId}" Width="260" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding KnownBrains}" SelectedItem="{Binding SelectedBrain}" Width="320">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Display}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
               <TextBox Width="200" Text="{Binding BrainEntryText}" Watermark="Paste BrainId" />
               <Button Content="Add" Command="{Binding AddBrainCommand}" />

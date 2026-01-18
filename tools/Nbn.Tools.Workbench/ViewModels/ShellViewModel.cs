@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -20,7 +21,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, Viz.AddBrainId);
+        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, Viz.AddBrainId, OnBrainsUpdated);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel();
@@ -174,6 +175,16 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         await Orchestrator.StopDemoAsyncForShutdown();
         await _client.DisposeAsync().ConfigureAwait(false);
+    }
+
+    private void OnBrainsUpdated(IReadOnlyList<BrainListItem> brains)
+    {
+        Viz.SetBrains(brains);
+        var active = brains
+            .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.BrainId)
+            .ToList();
+        Io.UpdateActiveBrains(active);
     }
 
     private static bool TryParsePort(string value, out int port)

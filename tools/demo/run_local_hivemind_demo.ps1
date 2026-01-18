@@ -75,7 +75,8 @@ $hiveArgs = @(
     "--no-build",
     "--",
     "--bind-host", $BindHost,
-    "--port", $HiveMindPort
+    "--port", $HiveMindPort,
+    "--settings-db", $settingsDbPath
 )
 
 $brainArgs = @(

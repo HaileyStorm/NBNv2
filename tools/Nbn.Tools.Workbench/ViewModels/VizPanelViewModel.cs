@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -13,14 +15,14 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _status = "Streaming";
     private string _regionFocusText = "0";
     private string _brainEntryText = string.Empty;
-    private string? _selectedBrainId;
+    private BrainListItem? _selectedBrain;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
         _dispatcher = dispatcher;
         _brain = brain;
         VizEvents = new ObservableCollection<VizEventItem>();
-        KnownBrains = new ObservableCollection<string>();
+        KnownBrains = new ObservableCollection<BrainListItem>();
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
@@ -30,7 +32,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public ObservableCollection<VizEventItem> VizEvents { get; }
 
-    public ObservableCollection<string> KnownBrains { get; }
+    public ObservableCollection<BrainListItem> KnownBrains { get; }
 
     public string BrainEntryText
     {
@@ -38,16 +40,16 @@ public sealed class VizPanelViewModel : ViewModelBase
         set => SetProperty(ref _brainEntryText, value);
     }
 
-    public string? SelectedBrainId
+    public BrainListItem? SelectedBrain
     {
-        get => _selectedBrainId;
+        get => _selectedBrain;
         set
         {
-            if (SetProperty(ref _selectedBrainId, value))
+            if (SetProperty(ref _selectedBrain, value))
             {
-                if (!string.IsNullOrWhiteSpace(value))
+                if (value is not null)
                 {
-                    _brain.BrainIdText = value;
+                    _brain.BrainIdText = value.Id;
                 }
             }
         }
@@ -76,8 +78,28 @@ public sealed class VizPanelViewModel : ViewModelBase
         AddBrainId(id.ToString("D"));
     }
 
+    public void SetBrains(IReadOnlyList<BrainListItem> brains)
+    {
+        var selectedId = SelectedBrain?.Id;
+        KnownBrains.Clear();
+        foreach (var brain in brains)
+        {
+            KnownBrains.Add(brain);
+        }
+
+        if (!string.IsNullOrWhiteSpace(selectedId))
+        {
+            SelectedBrain = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
+        }
+    }
+
     public void AddVizEvent(VizEventItem item)
     {
+        if (SelectedBrain is not null && !string.Equals(item.BrainId, SelectedBrain.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         _dispatcher.Post(() =>
         {
             VizEvents.Insert(0, item);
@@ -105,12 +127,14 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         var id = guid.ToString("D");
-        if (!KnownBrains.Contains(id))
+        var existing = KnownBrains.FirstOrDefault(entry => entry.Id == id);
+        if (existing is null)
         {
-            KnownBrains.Add(id);
+            existing = new BrainListItem(guid, "manual", false);
+            KnownBrains.Add(existing);
         }
 
-        SelectedBrainId = id;
+        SelectedBrain = existing;
         BrainEntryText = id;
         Status = "Brain selected.";
     }
