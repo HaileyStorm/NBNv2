@@ -108,6 +108,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
 
     private Task SendHeartbeatAsync()
     {
+        _system.Root.Send(_settingsPid, _online);
         var heartbeat = new NodeHeartbeat
         {
             NodeId = _online.NodeId,

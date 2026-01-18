@@ -87,6 +87,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(selectedId))
         {
             SelectedBrain = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
+            return;
+        }
+
+        if (KnownBrains.Count > 0)
+        {
+            SelectedBrain = KnownBrains[0];
         }
     }
 

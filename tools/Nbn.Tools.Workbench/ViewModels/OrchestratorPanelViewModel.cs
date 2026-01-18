@@ -32,6 +32,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _ioLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private bool _demoRunning;
+    private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
 
     public OrchestratorPanelViewModel(
         UiDispatcher dispatcher,
@@ -420,6 +421,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 return new BrainListItem(brainId, entry.State ?? string.Empty, alive);
             }).Where(entry => entry.BrainId != Guid.Empty).ToList();
 
+            RecordBrainTerminations(brainList);
             _brainsUpdated?.Invoke(brainList);
 
             StatusMessage = "Settings loaded.";
@@ -557,6 +559,52 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
+
+    private void RecordBrainTerminations(IReadOnlyList<BrainListItem> current)
+    {
+        var seen = new HashSet<Guid>();
+        foreach (var brain in current)
+        {
+            seen.Add(brain.BrainId);
+            if (_lastBrains.TryGetValue(brain.BrainId, out var previous))
+            {
+                if (previous.ControllerAlive && !brain.ControllerAlive)
+                {
+                    AddTermination(new BrainTerminatedItem(
+                        DateTimeOffset.UtcNow,
+                        brain.BrainId.ToString("D"),
+                        "Controller offline",
+                        0,
+                        0));
+                }
+                else if (!string.Equals(previous.State, "Dead", StringComparison.OrdinalIgnoreCase)
+                         && string.Equals(brain.State, "Dead", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddTermination(new BrainTerminatedItem(
+                        DateTimeOffset.UtcNow,
+                        brain.BrainId.ToString("D"),
+                        "State dead",
+                        0,
+                        0));
+                }
+            }
+
+            _lastBrains[brain.BrainId] = brain;
+        }
+
+        var missing = _lastBrains.Keys.Where(id => !seen.Contains(id)).ToList();
+        foreach (var brainId in missing)
+        {
+            var previous = _lastBrains[brainId];
+            AddTermination(new BrainTerminatedItem(
+                DateTimeOffset.UtcNow,
+                brainId.ToString("D"),
+                "Missing from registry",
+                0,
+                0));
+            _lastBrains.Remove(brainId);
+        }
+    }
 
     private static ProcessStartInfo BuildDotnetStartInfo(string args)
     {
