@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# NBN demo artifacts
+tools/demo/local-demo/

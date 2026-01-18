@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Nbn.Runtime.SettingsMonitor;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -16,6 +17,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private const int MaxRows = 200;
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
+    private readonly WorkbenchClient _client;
     private readonly LocalDemoRunner _demoRunner = new();
     private readonly LocalServiceRunner _settingsRunner = new();
     private readonly LocalServiceRunner _hiveMindRunner = new();
@@ -23,7 +25,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _obsRunner = new();
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
-    private readonly Func<string, Task<SettingItem?>>? _settingGetter;
+    private readonly Func<Task>? _connectAll;
     private string _statusMessage = "Idle";
     private string _demoStatus = "Demo not running.";
     private string _settingsLaunchStatus = "Idle";
@@ -35,15 +37,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     public OrchestratorPanelViewModel(
         UiDispatcher dispatcher,
         ConnectionViewModel connections,
+        WorkbenchClient client,
         Action<Guid>? brainDiscovered = null,
         Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null,
-        Func<string, Task<SettingItem?>>? settingGetter = null)
+        Func<Task>? connectAll = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
+        _client = client;
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
-        _settingGetter = settingGetter;
+        _connectAll = connectAll;
         Nodes = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingItem>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
@@ -192,12 +196,27 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var result = await _demoRunner.StartAsync(options);
         DemoStatus = result.Message;
         DemoRunning = _demoRunner.IsRunning;
+        if (DemoRunning)
+        {
+            SettingsLaunchStatus = "Managed by demo.";
+            HiveMindLaunchStatus = "Managed by demo.";
+            IoLaunchStatus = "Managed by demo.";
+            ObsLaunchStatus = "Managed by demo.";
+        }
+        await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
     private async Task StopDemoAsync()
     {
         DemoStatus = await _demoRunner.StopAsync();
         DemoRunning = _demoRunner.IsRunning;
+        if (!DemoRunning)
+        {
+            SettingsLaunchStatus = "Idle";
+            HiveMindLaunchStatus = "Idle";
+            IoLaunchStatus = "Idle";
+            ObsLaunchStatus = "Idle";
+        }
     }
 
     private async Task StartSettingsMonitorAsync()
@@ -226,6 +245,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false);
         SettingsLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
     private async Task StartHiveMindAsync()
@@ -243,10 +263,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.HiveMindHost} --port {port}";
+        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\"";
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false);
         HiveMindLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
     private async Task StartIoAsync()
@@ -275,6 +296,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false);
         IoLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
     private async Task StartObsAsync()
@@ -296,6 +318,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _obsRunner.StartAsync(startInfo, waitForExit: false);
         ObsLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
     private static async Task StopRunnerAsync(LocalServiceRunner runner, Action<string> setStatus)
@@ -303,12 +326,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         setStatus(await runner.StopAsync().ConfigureAwait(false));
     }
 
+    public async Task RefreshSettingsAsync()
+    {
+        await RefreshAsync().ConfigureAwait(false);
+    }
+
     private async Task RefreshAsync()
     {
-        var dbPath = Connections.SettingsDbPath;
-        if (string.IsNullOrWhiteSpace(dbPath))
+        if (!Connections.SettingsConnected)
         {
-            StatusMessage = "Database path required.";
+            StatusMessage = "SettingsMonitor not connected.";
+            Connections.SettingsStatus = "Disconnected";
             return;
         }
 
@@ -317,44 +345,35 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         try
         {
-            var store = new SettingsMonitorStore(dbPath);
-            await store.InitializeAsync();
-            await store.EnsureDefaultSettingsAsync();
+            var nodesResponse = await _client.ListNodesAsync().ConfigureAwait(false);
+            var brainsResponse = await _client.ListBrainsAsync().ConfigureAwait(false);
 
-            var nodes = await store.ListNodesAsync();
-            var brains = await store.ListBrainsAsync();
-            var controllers = await store.ListBrainControllersAsync();
-            var settings = new List<SettingItem>();
-            if (Connections.SettingsConnected && _settingGetter is not null)
-            {
-                var tasks = SettingsMonitorDefaults.DefaultSettings.Keys
-                    .Select(key => _settingGetter(key))
-                    .ToArray();
-                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-                settings.AddRange(results.Where(entry => entry is not null)!);
-            }
-            else
-            {
-                var compression = await store.GetArtifactCompressionSettingsAsync();
-                settings.AddRange(new[]
-                {
-                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionKindKey, compression.Kind, "auto"),
-                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionLevelKey, compression.Level.ToString(), "auto"),
-                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionMinBytesKey, compression.MinBytes.ToString(), "auto"),
-                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionOnlyIfSmallerKey, compression.OnlyIfSmaller.ToString(), "auto")
-                });
-            }
+            var nodes = nodesResponse?.Nodes?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.NodeStatus>();
+            var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
+            var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
+
+            var tasks = SettingsMonitorDefaults.DefaultSettings.Keys
+                .Select(key => _client.GetSettingAsync(key))
+                .ToArray();
+            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+            var settings = results
+                .Where(entry => entry is not null)
+                .Select(entry => new SettingItem(
+                    entry!.Key ?? string.Empty,
+                    entry.Value ?? string.Empty,
+                    entry.UpdatedMs.ToString()))
+                .ToList();
 
             _dispatcher.Post(() =>
             {
                 Nodes.Clear();
                 foreach (var node in nodes)
                 {
-                    var seen = DateTimeOffset.FromUnixTimeMilliseconds(node.LastSeenMs).ToLocalTime();
+                    var seen = DateTimeOffset.FromUnixTimeMilliseconds((long)node.LastSeenMs).ToLocalTime();
                     Nodes.Add(new NodeStatusItem(
-                        node.LogicalName,
-                        node.Address,
-                        node.RootActorName,
+                        node.LogicalName ?? string.Empty,
+                        node.Address ?? string.Empty,
+                        node.RootActorName ?? string.Empty,
                         seen.ToString("g"),
                         node.IsAlive ? "online" : "offline"));
                 }
@@ -369,12 +388,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Trim(Settings);
             });
 
-            var controllerMap = controllers.ToDictionary(entry => entry.BrainId, entry => entry);
+            var controllerMap = controllers
+                .Where(entry => entry.BrainId is not null)
+                .ToDictionary(entry => entry.BrainId!.ToGuid(), entry => entry);
+
             var brainList = brains.Select(entry =>
             {
-                var alive = controllerMap.TryGetValue(entry.BrainId, out var controller) && controller.IsAlive;
-                return new BrainListItem(entry.BrainId, entry.State, alive);
-            }).ToList();
+                var brainId = entry.BrainId?.ToGuid() ?? Guid.Empty;
+                var alive = controllerMap.TryGetValue(brainId, out var controller) && controller.IsAlive;
+                return new BrainListItem(brainId, entry.State ?? string.Empty, alive);
+            }).Where(entry => entry.BrainId != Guid.Empty).ToList();
 
             _brainsUpdated?.Invoke(brainList);
 
@@ -412,4 +435,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private static string ResolveDemoRoot()
         => RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo") ?? Path.Combine(Environment.CurrentDirectory, "tools", "demo", "local-demo");
+
+    private async Task TriggerReconnectAsync()
+    {
+        if (_connectAll is null)
+        {
+            return;
+        }
+
+        await Task.Delay(500).ConfigureAwait(false);
+        await _connectAll().ConfigureAwait(false);
+        await RefreshAsync().ConfigureAwait(false);
+    }
 }

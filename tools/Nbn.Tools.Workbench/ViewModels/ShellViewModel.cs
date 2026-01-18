@@ -21,7 +21,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, Viz.AddBrainId, OnBrainsUpdated, GetSettingItemAsync);
+        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, Viz.AddBrainId, OnBrainsUpdated, ConnectAllAsync);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel();
@@ -126,6 +126,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.VizHub,
             Debug.SelectedSeverity.Severity,
             Debug.ContextRegex);
+
+        await Orchestrator.RefreshSettingsAsync();
     }
 
     private void DisconnectAll()
@@ -209,20 +211,6 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private static int ParsePortOrDefault(string value, int fallback)
         => int.TryParse(value, out var port) && port > 0 && port < 65536 ? port : fallback;
-
-    private async Task<SettingItem?> GetSettingItemAsync(string key)
-    {
-        var value = await _client.GetSettingAsync(key).ConfigureAwait(false);
-        if (value is null)
-        {
-            return null;
-        }
-
-        return new SettingItem(
-            value.Key ?? key,
-            value.Value ?? string.Empty,
-            value.UpdatedMs.ToString());
-    }
 
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;

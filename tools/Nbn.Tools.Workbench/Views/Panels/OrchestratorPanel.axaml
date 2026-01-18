@@ -6,16 +6,15 @@
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
       <Border Classes="card">
-        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="16">
-          <StackPanel Grid.Row="0" Grid.Column="0" Spacing="6">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+          <StackPanel Spacing="6">
             <TextBlock Text="Settings Monitor" Classes="card-title" />
-            <TextBlock Text="SQLite registry, defaults, and compression hints." Classes="card-subtitle" />
+            <TextBlock Text="Remote registry + live settings feed." Classes="card-subtitle" />
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBox Width="360" Text="{Binding Connections.SettingsDbPath}" Watermark="settingsmonitor.db" />
               <Button Content="Refresh" Command="{Binding RefreshCommand}" Classes="accent" />
             </StackPanel>
           </StackPanel>
-          <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4" HorizontalAlignment="Right">
+          <StackPanel Grid.Column="1" Spacing="4" HorizontalAlignment="Right">
             <TextBlock Text="Status" Classes="chip" />
             <TextBlock Text="{Binding StatusMessage}" Classes="muted" />
           </StackPanel>

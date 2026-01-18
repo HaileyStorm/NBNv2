@@ -38,15 +38,9 @@
             <StackPanel Spacing="8">
               <TextBlock Text="Brain Control" Classes="card-title" />
               <TextBlock Text="Brain ID" Classes="muted" />
-              <TextBox Text="{Binding Brain.BrainIdText}" Watermark="Guid" />
+              <TextBox Text="{Binding Brain.BrainIdText}" Watermark="Guid" IsReadOnly="True" />
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="Info" Command="{Binding Brain.RequestInfoCommand}" />
-                <Button Content="Subscribe" Command="{Binding Brain.SubscribeOutputsCommand}" />
-                <Button Content="Unsubscribe" Command="{Binding Brain.UnsubscribeOutputsCommand}" />
-              </StackPanel>
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="Subscribe Vector" Command="{Binding Brain.SubscribeVectorCommand}" />
-                <Button Content="Unsubscribe Vector" Command="{Binding Brain.UnsubscribeVectorCommand}" />
+                <Button Content="Refresh Info" Command="{Binding Brain.RequestInfoCommand}" />
               </StackPanel>
               <TextBlock Text="{Binding Brain.BrainInfoSummary}" Classes="muted" />
             </StackPanel>

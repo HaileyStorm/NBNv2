@@ -47,10 +47,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             if (SetProperty(ref _selectedBrain, value))
             {
-                if (value is not null)
-                {
-                    _brain.BrainIdText = value.Id;
-                }
+                _brain.SelectBrain(value?.BrainId);
             }
         }
     }

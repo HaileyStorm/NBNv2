@@ -162,6 +162,48 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public async Task<NodeListResponse?> ListNodesAsync()
+    {
+        if (_root is null || _settingsPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<NodeListResponse>(
+                _settingsPid,
+                new NodeListRequest(),
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnSettingsStatus($"Node list failed: {ex.Message}", false);
+            return null;
+        }
+    }
+
+    public async Task<BrainListResponse?> ListBrainsAsync()
+    {
+        if (_root is null || _settingsPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<BrainListResponse>(
+                _settingsPid,
+                new BrainListRequest(),
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnSettingsStatus($"Brain list failed: {ex.Message}", false);
+            return null;
+        }
+    }
+
     public Task ConnectObservabilityAsync(string host, int port, string debugHub, string vizHub, Nbn.Proto.Severity minSeverity, string contextRegex)
     {
         if (_root is null || _receiverPid is null)

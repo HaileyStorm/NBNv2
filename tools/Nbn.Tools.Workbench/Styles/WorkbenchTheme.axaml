@@ -109,6 +109,7 @@
   <Style Selector="Border.nav-item">
     <Setter Property="CornerRadius" Value="12" />
     <Setter Property="Padding" Value="10" />
+    <Setter Property="Background" Value="#1E2A33" />
   </Style>
 
   <Style Selector="ListBoxItem">

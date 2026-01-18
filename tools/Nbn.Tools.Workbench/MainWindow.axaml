@@ -36,35 +36,11 @@
 
     <Border Classes="topbar" Grid.Column="1">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="24">
-        <StackPanel>
+        <StackPanel Grid.Column="0">
           <TextBlock Text="Workbench Control Deck" Classes="card-title" />
           <TextBlock Text="{Binding ReceiverLabel}" Classes="muted" />
         </StackPanel>
-        <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Right">
-          <StackPanel Spacing="4">
-            <Border Classes="chip"
-                    Background="{Binding Connections.IoChipBackground}"
-                    BorderBrush="{Binding Connections.IoChipBorder}">
-              <TextBlock Text="IO" />
-            </Border>
-            <TextBlock Text="{Binding Connections.IoStatus}" Classes="muted" />
-          </StackPanel>
-          <StackPanel Spacing="4">
-            <Border Classes="chip"
-                    Background="{Binding Connections.ObsChipBackground}"
-                    BorderBrush="{Binding Connections.ObsChipBorder}">
-              <TextBlock Text="OBS" />
-            </Border>
-            <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" />
-          </StackPanel>
-          <StackPanel Spacing="4">
-            <Border Classes="chip"
-                    Background="{Binding Connections.SettingsChipBackground}"
-                    BorderBrush="{Binding Connections.SettingsChipBorder}">
-              <TextBlock Text="SET" />
-            </Border>
-            <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" />
-          </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" HorizontalAlignment="Right">
           <StackPanel Spacing="4">
             <TextBlock Text="Client" Classes="muted" />
             <TextBox Width="140" Text="{Binding Connections.ClientName}" />

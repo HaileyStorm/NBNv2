@@ -30,11 +30,17 @@ public sealed class SettingsMonitorActor : IActor
             case ProtoSettings.NodeHeartbeat message:
                 HandleNodeHeartbeat(context, message);
                 break;
+            case ProtoSettings.NodeListRequest:
+                HandleNodeList(context);
+                break;
             case ProtoSettings.SettingGet message:
                 HandleSettingGet(context, message);
                 break;
             case ProtoSettings.SettingSet message:
                 HandleSettingSet(context, message);
+                break;
+            case ProtoSettings.BrainListRequest:
+                HandleBrainList(context);
                 break;
             case ProtoSettings.SettingSubscribe subscribe:
                 HandleSettingSubscribe(context, subscribe);
@@ -143,6 +149,30 @@ public sealed class SettingsMonitorActor : IActor
         });
     }
 
+    private void HandleNodeList(IContext context)
+    {
+        var task = _store.ListNodesAsync();
+        context.ReenterAfter(task, completed =>
+        {
+            var response = new ProtoSettings.NodeListResponse();
+            foreach (var node in completed.Result)
+            {
+                response.Nodes.Add(new ProtoSettings.NodeStatus
+                {
+                    NodeId = node.NodeId.ToProtoUuid(),
+                    LogicalName = node.LogicalName ?? string.Empty,
+                    Address = node.Address ?? string.Empty,
+                    RootActorName = node.RootActorName ?? string.Empty,
+                    LastSeenMs = (ulong)node.LastSeenMs,
+                    IsAlive = node.IsAlive
+                });
+            }
+
+            context.Respond(response);
+            return Task.CompletedTask;
+        });
+    }
+
     private void HandleSettingGet(IContext context, ProtoSettings.SettingGet message)
     {
         if (string.IsNullOrWhiteSpace(message.Key))
@@ -196,6 +226,42 @@ public sealed class SettingsMonitorActor : IActor
                 PublishSettingChanged(context, message.Key, message.Value ?? string.Empty, updatedMs);
             }
 
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleBrainList(IContext context)
+    {
+        var brainsTask = _store.ListBrainsAsync();
+        var controllersTask = _store.ListBrainControllersAsync();
+
+        context.ReenterAfter(Task.WhenAll(brainsTask, controllersTask), completed =>
+        {
+            var response = new ProtoSettings.BrainListResponse();
+            foreach (var brain in brainsTask.Result)
+            {
+                response.Brains.Add(new ProtoSettings.BrainStatus
+                {
+                    BrainId = brain.BrainId.ToProtoUuid(),
+                    SpawnedMs = (ulong)brain.SpawnedMs,
+                    LastTickId = (ulong)brain.LastTickId,
+                    State = brain.State ?? string.Empty
+                });
+            }
+
+            foreach (var controller in controllersTask.Result)
+            {
+                response.Controllers.Add(new ProtoSettings.BrainControllerStatus
+                {
+                    BrainId = controller.BrainId.ToProtoUuid(),
+                    NodeId = controller.NodeId.ToProtoUuid(),
+                    ActorName = controller.ActorName ?? string.Empty,
+                    LastSeenMs = (ulong)controller.LastSeenMs,
+                    IsAlive = controller.IsAlive
+                });
+            }
+
+            context.Respond(response);
             return Task.CompletedTask;
         });
     }

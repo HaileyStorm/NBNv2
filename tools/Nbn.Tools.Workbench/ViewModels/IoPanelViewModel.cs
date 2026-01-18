@@ -29,6 +29,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
     private List<Guid> _activeBrains = new();
+    private Guid? _selectedBrainId;
 
     public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
     {
@@ -167,6 +168,11 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     public void AddOutputEvent(OutputEventItem item)
     {
+        if (_selectedBrainId is not null && !string.Equals(item.BrainId, _selectedBrainId.Value.ToString("D"), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         _dispatcher.Post(() =>
         {
             OutputEvents.Insert(0, item);
@@ -176,11 +182,46 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     public void AddVectorEvent(OutputVectorEventItem item)
     {
+        if (_selectedBrainId is not null && !string.Equals(item.BrainId, _selectedBrainId.Value.ToString("D"), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         _dispatcher.Post(() =>
         {
             VectorEvents.Insert(0, item);
             Trim(VectorEvents);
         });
+    }
+
+    public void SelectBrain(Guid? brainId)
+    {
+        if (_selectedBrainId == brainId)
+        {
+            return;
+        }
+
+        if (_selectedBrainId.HasValue)
+        {
+            _client.UnsubscribeOutputs(_selectedBrainId.Value, vector: false);
+            _client.UnsubscribeOutputs(_selectedBrainId.Value, vector: true);
+        }
+
+        _selectedBrainId = brainId;
+        BrainIdText = brainId?.ToString("D") ?? string.Empty;
+        OutputEvents.Clear();
+        VectorEvents.Clear();
+
+        if (brainId.HasValue)
+        {
+            _client.SubscribeOutputs(brainId.Value, vector: false);
+            _client.SubscribeOutputs(brainId.Value, vector: true);
+            _ = _client.RequestBrainInfoAsync(brainId.Value, ApplyBrainInfo);
+        }
+        else
+        {
+            BrainInfoSummary = "No brain selected.";
+        }
     }
 
     public void UpdateActiveBrains(IReadOnlyList<Guid> brains)

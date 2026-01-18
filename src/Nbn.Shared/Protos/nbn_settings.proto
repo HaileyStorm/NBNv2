@@ -38,6 +38,43 @@ message NodeCapabilities {
   bool ilgpu_opencl_available = 9;
 }
 
+message NodeStatus {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+  string address = 3;
+  string root_actor_name = 4;
+  fixed64 last_seen_ms = 5;
+  bool is_alive = 6;
+}
+
+message BrainStatus {
+  nbn.Uuid brain_id = 1;
+  fixed64 spawned_ms = 2;
+  fixed64 last_tick_id = 3;
+  string state = 4;
+}
+
+message BrainControllerStatus {
+  nbn.Uuid brain_id = 1;
+  nbn.Uuid node_id = 2;
+  string actor_name = 3;
+  fixed64 last_seen_ms = 4;
+  bool is_alive = 5;
+}
+
+message NodeListRequest { }
+
+message NodeListResponse {
+  repeated NodeStatus nodes = 1;
+}
+
+message BrainListRequest { }
+
+message BrainListResponse {
+  repeated BrainStatus brains = 1;
+  repeated BrainControllerStatus controllers = 2;
+}
+
 message SettingGet {
   string key = 1;
 }
