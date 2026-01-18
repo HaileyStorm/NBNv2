@@ -22,12 +22,30 @@ public sealed record NodeHeartbeat(
     long TimeMs,
     NodeCapabilities Capabilities);
 
+public sealed record BrainControllerRegistration(
+    Guid BrainId,
+    Guid NodeId,
+    string ActorName);
+
+public sealed record BrainControllerHeartbeat(
+    Guid BrainId,
+    long TimeMs);
+
 public sealed class NodeStatus
 {
     public Guid NodeId { get; set; }
     public string LogicalName { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
     public string RootActorName { get; set; } = string.Empty;
+    public long LastSeenMs { get; set; }
+    public bool IsAlive { get; set; }
+}
+
+public sealed class BrainControllerStatus
+{
+    public Guid BrainId { get; set; }
+    public Guid NodeId { get; set; }
+    public string ActorName { get; set; } = string.Empty;
     public long LastSeenMs { get; set; }
     public bool IsAlive { get; set; }
 }
