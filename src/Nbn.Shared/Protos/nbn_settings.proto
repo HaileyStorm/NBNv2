@@ -58,3 +58,11 @@ message SettingChanged {
   string value = 2;
   fixed64 updated_ms = 3;
 }
+
+message SettingSubscribe {
+  string subscriber_actor = 1; // actor name/path
+}
+
+message SettingUnsubscribe {
+  string subscriber_actor = 1;
+}

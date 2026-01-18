@@ -7,6 +7,7 @@ namespace Nbn.Runtime.SettingsMonitor;
 public sealed class SettingsMonitorActor : IActor
 {
     private readonly SettingsMonitorStore _store;
+    private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
 
     public SettingsMonitorActor(SettingsMonitorStore store)
     {
@@ -34,6 +35,15 @@ public sealed class SettingsMonitorActor : IActor
                 break;
             case ProtoSettings.SettingSet message:
                 HandleSettingSet(context, message);
+                break;
+            case ProtoSettings.SettingSubscribe subscribe:
+                HandleSettingSubscribe(context, subscribe);
+                break;
+            case ProtoSettings.SettingUnsubscribe unsubscribe:
+                HandleSettingUnsubscribe(context, unsubscribe);
+                break;
+            case Terminated terminated:
+                HandleTerminated(terminated);
                 break;
         }
 
@@ -181,8 +191,71 @@ public sealed class SettingsMonitorActor : IActor
                 UpdatedMs = (ulong)updatedMs
             });
 
+            if (!completed.IsFaulted)
+            {
+                PublishSettingChanged(context, message.Key, message.Value ?? string.Empty, updatedMs);
+            }
+
             return Task.CompletedTask;
         });
+    }
+
+    private void HandleSettingSubscribe(IContext context, ProtoSettings.SettingSubscribe subscribe)
+    {
+        if (!TryParsePid(subscribe.SubscriberActor, out var pid))
+        {
+            return;
+        }
+
+        var key = PidKey(pid);
+        if (_subscribers.TryAdd(key, pid))
+        {
+            context.Watch(pid);
+        }
+        else
+        {
+            _subscribers[key] = pid;
+        }
+    }
+
+    private void HandleSettingUnsubscribe(IContext context, ProtoSettings.SettingUnsubscribe unsubscribe)
+    {
+        if (!TryParsePid(unsubscribe.SubscriberActor, out var pid))
+        {
+            return;
+        }
+
+        var key = PidKey(pid);
+        if (_subscribers.Remove(key))
+        {
+            context.Unwatch(pid);
+        }
+    }
+
+    private void PublishSettingChanged(IContext context, string key, string value, long updatedMs)
+    {
+        if (_subscribers.Count == 0)
+        {
+            return;
+        }
+
+        var message = new ProtoSettings.SettingChanged
+        {
+            Key = key,
+            Value = value,
+            UpdatedMs = (ulong)updatedMs
+        };
+
+        foreach (var subscriber in _subscribers.Values)
+        {
+            context.Send(subscriber, message);
+        }
+    }
+
+    private void HandleTerminated(Terminated terminated)
+    {
+        var key = PidKey(terminated.Who);
+        _subscribers.Remove(key);
     }
 
     private static bool TryGetGuid(Nbn.Proto.Uuid? uuid, out Guid guid)
@@ -200,4 +273,36 @@ public sealed class SettingsMonitorActor : IActor
 
     private static void LogError(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [SettingsMonitor][ERROR] {message}");
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
+    }
+
+    private static string PidKey(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 }
