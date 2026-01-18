@@ -21,7 +21,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, Viz.AddBrainId, OnBrainsUpdated);
+        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, Viz.AddBrainId, OnBrainsUpdated, GetSettingItemAsync);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel();
@@ -114,6 +114,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.IoGateway,
             Connections.ClientName);
 
+        await _client.ConnectSettingsAsync(
+            Connections.SettingsHost,
+            ParsePortOrDefault(Connections.SettingsPortText, 12010),
+            Connections.SettingsName);
+
         await _client.ConnectObservabilityAsync(
             Connections.ObsHost,
             obsPort,
@@ -126,6 +131,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private void DisconnectAll()
     {
         _client.DisconnectIo();
+        _client.DisconnectSettings();
         _client.DisconnectObservability();
     }
 
@@ -171,6 +177,20 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         });
     }
 
+    public void OnSettingsStatus(string status, bool connected)
+    {
+        _dispatcher.Post(() =>
+        {
+            Connections.SettingsStatus = status;
+            Connections.SettingsConnected = connected;
+        });
+    }
+
+    public void OnSettingChanged(SettingItem item)
+    {
+        Orchestrator.UpdateSetting(item);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await Orchestrator.StopDemoAsyncForShutdown();
@@ -185,6 +205,23 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             .Select(entry => entry.BrainId)
             .ToList();
         Io.UpdateActiveBrains(active);
+    }
+
+    private static int ParsePortOrDefault(string value, int fallback)
+        => int.TryParse(value, out var port) && port > 0 && port < 65536 ? port : fallback;
+
+    private async Task<SettingItem?> GetSettingItemAsync(string key)
+    {
+        var value = await _client.GetSettingAsync(key).ConfigureAwait(false);
+        if (value is null)
+        {
+            return null;
+        }
+
+        return new SettingItem(
+            value.Key ?? key,
+            value.Value ?? string.Empty,
+            value.UpdatedMs.ToString());
     }
 
     private static bool TryParsePort(string value, out int port)

@@ -4,6 +4,7 @@ using System.Linq;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -99,6 +100,9 @@ public sealed class WorkbenchReceiverActor : IActor
             case BrainTerminated terminated:
                 HandleTermination(terminated);
                 return Task.CompletedTask;
+            case SettingChanged settingChanged:
+                HandleSettingChanged(settingChanged);
+                return Task.CompletedTask;
         }
 
         return Task.CompletedTask;
@@ -176,6 +180,14 @@ public sealed class WorkbenchReceiverActor : IActor
             terminated.Reason ?? string.Empty,
             terminated.LastEnergyRemaining,
             terminated.LastTickCost));
+    }
+
+    private void HandleSettingChanged(SettingChanged changed)
+    {
+        _sink.OnSettingChanged(new SettingItem(
+            changed.Key ?? string.Empty,
+            changed.Value ?? string.Empty,
+            changed.UpdatedMs.ToString()));
     }
 
     private static string PreviewValues(IReadOnlyList<float> values)

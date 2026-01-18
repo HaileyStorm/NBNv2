@@ -58,6 +58,14 @@
             <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" />
           </StackPanel>
           <StackPanel Spacing="4">
+            <Border Classes="chip"
+                    Background="{Binding Connections.SettingsChipBackground}"
+                    BorderBrush="{Binding Connections.SettingsChipBorder}">
+              <TextBlock Text="SET" />
+            </Border>
+            <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" />
+          </StackPanel>
+          <StackPanel Spacing="4">
             <TextBlock Text="Client" Classes="muted" />
             <TextBox Width="140" Text="{Binding Connections.ClientName}" />
           </StackPanel>

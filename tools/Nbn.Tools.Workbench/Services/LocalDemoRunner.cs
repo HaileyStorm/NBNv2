@@ -12,20 +12,20 @@ public sealed class LocalDemoRunner
 
     public bool IsRunning => _process is { HasExited: false };
 
-    public async Task<DemoStartResult> StartAsync(DemoLaunchOptions options)
+    public Task<DemoStartResult> StartAsync(DemoLaunchOptions options)
     {
         lock (_gate)
         {
             if (IsRunning)
             {
-                return new DemoStartResult(false, "Demo already running.", null);
+                return Task.FromResult(new DemoStartResult(false, "Demo already running."));
             }
         }
 
         var scriptPath = ResolveDemoScript();
         if (string.IsNullOrWhiteSpace(scriptPath))
         {
-            return new DemoStartResult(false, "Demo script not found.", null);
+            return Task.FromResult(new DemoStartResult(false, "Demo script not found."));
         }
 
         var repoRoot = RepoLocator.FindRepoRoot()?.FullName
@@ -45,7 +45,7 @@ public sealed class LocalDemoRunner
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         if (!process.Start())
         {
-            return new DemoStartResult(false, "Failed to start demo process.", null);
+            return Task.FromResult(new DemoStartResult(false, "Failed to start demo process."));
         }
 
         lock (_gate)
@@ -53,8 +53,7 @@ public sealed class LocalDemoRunner
             _process = process;
         }
 
-        var brainId = await TryReadBrainIdAsync(options.DemoRoot).ConfigureAwait(false);
-        return new DemoStartResult(true, $"Demo running (pid {process.Id}).", brainId);
+        return Task.FromResult(new DemoStartResult(true, $"Demo running (pid {process.Id})."));
     }
 
     public async Task<string> StopAsync()
@@ -108,7 +107,8 @@ public sealed class LocalDemoRunner
              + $"-BrainHostPort {options.BrainHostPort} "
              + $"-RegionHostPort {options.RegionHostPort} "
              + $"-IoPort {options.IoPort} "
-             + $"-ObsPort {options.ObsPort}";
+             + $"-ObsPort {options.ObsPort} "
+             + $"-SettingsPort {options.SettingsPort}";
     }
 
     private static string? ResolveDemoScript()
@@ -138,32 +138,6 @@ public sealed class LocalDemoRunner
         return null;
     }
 
-    private static async Task<Guid?> TryReadBrainIdAsync(string demoRoot)
-    {
-        var path = Path.Combine(demoRoot, "current_brain_id.txt");
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            if (File.Exists(path))
-            {
-                try
-                {
-                    var content = await File.ReadAllTextAsync(path).ConfigureAwait(false);
-                    if (Guid.TryParse(content.Trim(), out var guid))
-                    {
-                        return guid;
-                    }
-                }
-                catch
-                {
-                }
-            }
-
-            await Task.Delay(200).ConfigureAwait(false);
-        }
-
-        return null;
-    }
 }
 
 public sealed record DemoLaunchOptions(
@@ -173,6 +147,7 @@ public sealed record DemoLaunchOptions(
     int BrainHostPort,
     int RegionHostPort,
     int IoPort,
-    int ObsPort);
+    int ObsPort,
+    int SettingsPort);
 
-public sealed record DemoStartResult(bool Success, string Message, Guid? BrainId);
+public sealed record DemoStartResult(bool Success, string Message);

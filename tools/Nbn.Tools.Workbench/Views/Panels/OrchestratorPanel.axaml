@@ -25,7 +25,7 @@
       <Border Classes="card">
         <StackPanel Spacing="10">
           <TextBlock Text="Endpoints" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <TextBlock Text="IO Host" Classes="muted" />
             <TextBox Grid.Column="1" Text="{Binding Connections.IoHost}" Width="160" />
             <TextBlock Grid.Column="2" Text="IO Port" Classes="muted" />
@@ -47,8 +47,15 @@
             <TextBlock Grid.Row="2" Grid.Column="4" Text="HiveMind Name" Classes="muted" />
             <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding Connections.HiveMindName}" Width="140" />
 
-            <TextBlock Grid.Row="3" Grid.Column="4" Text="Viz Hub" Classes="muted" />
-            <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding Connections.VizHub}" Width="140" />
+            <TextBlock Grid.Row="3" Text="Settings Host" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.SettingsHost}" Width="160" />
+            <TextBlock Grid.Row="3" Grid.Column="2" Text="Settings Port" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding Connections.SettingsPortText}" Width="90" />
+            <TextBlock Grid.Row="3" Grid.Column="4" Text="Settings Name" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding Connections.SettingsName}" Width="140" />
+
+            <TextBlock Grid.Row="4" Grid.Column="4" Text="Viz Hub" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="5" Text="{Binding Connections.VizHub}" Width="140" />
           </Grid>
 
           <StackPanel Orientation="Horizontal" Spacing="10">
@@ -73,7 +80,8 @@
           <TextBlock Text="Local Launch" Classes="card-title" />
           <Grid ColumnDefinitions="Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
             <TextBlock Text="SettingsMonitor" Classes="muted" />
-            <Button Grid.Column="1" Content="Init" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
+            <Button Grid.Column="1" Content="Start" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
+            <Button Grid.Column="2" Content="Stop" Command="{Binding StopSettingsMonitorCommand}" />
             <TextBlock Grid.Column="3" Text="{Binding SettingsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
             <TextBlock Grid.Row="1" Text="HiveMind" Classes="muted" />

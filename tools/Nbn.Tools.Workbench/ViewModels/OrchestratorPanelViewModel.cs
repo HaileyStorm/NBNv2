@@ -23,6 +23,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _obsRunner = new();
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
+    private readonly Func<string, Task<SettingItem?>>? _settingGetter;
     private string _statusMessage = "Idle";
     private string _demoStatus = "Demo not running.";
     private string _settingsLaunchStatus = "Idle";
@@ -35,12 +36,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         UiDispatcher dispatcher,
         ConnectionViewModel connections,
         Action<Guid>? brainDiscovered = null,
-        Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null)
+        Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null,
+        Func<string, Task<SettingItem?>>? settingGetter = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
+        _settingGetter = settingGetter;
         Nodes = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingItem>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
@@ -48,6 +51,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StartDemoCommand = new AsyncRelayCommand(StartDemoAsync);
         StopDemoCommand = new AsyncRelayCommand(StopDemoAsync);
         StartSettingsMonitorCommand = new AsyncRelayCommand(StartSettingsMonitorAsync);
+        StopSettingsMonitorCommand = new AsyncRelayCommand(() => StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value));
         StartHiveMindCommand = new AsyncRelayCommand(StartHiveMindAsync);
         StopHiveMindCommand = new AsyncRelayCommand(() => StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value));
         StartIoCommand = new AsyncRelayCommand(StartIoAsync);
@@ -75,6 +79,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     public AsyncRelayCommand StopDemoCommand { get; }
 
     public AsyncRelayCommand StartSettingsMonitorCommand { get; }
+
+    public AsyncRelayCommand StopSettingsMonitorCommand { get; }
 
     public AsyncRelayCommand StartHiveMindCommand { get; }
 
@@ -118,6 +124,24 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         set => SetProperty(ref _obsLaunchStatus, value);
     }
 
+    public void UpdateSetting(SettingItem item)
+    {
+        _dispatcher.Post(() =>
+        {
+            var index = Settings.Select((entry, idx) => new { entry, idx })
+                .FirstOrDefault(row => string.Equals(row.entry.Key, item.Key, StringComparison.OrdinalIgnoreCase))?.idx ?? -1;
+
+            if (index >= 0)
+            {
+                Settings[index] = item;
+            }
+            else
+            {
+                Settings.Add(item);
+            }
+        });
+    }
+
     public bool DemoRunning
     {
         get => _demoRunning;
@@ -149,22 +173,25 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
+        {
+            DemoStatus = "Invalid Settings port.";
+            return;
+        }
+
         var options = new DemoLaunchOptions(
             ResolveDemoRoot(),
             Connections.LocalBindHost,
             12020,
-            12010,
+            12011,
             12040,
             ioPort,
-            obsPort);
+            obsPort,
+            settingsPort);
 
         var result = await _demoRunner.StartAsync(options);
         DemoStatus = result.Message;
         DemoRunning = _demoRunner.IsRunning;
-        if (result.BrainId.HasValue)
-        {
-            _brainDiscovered?.Invoke(result.BrainId.Value);
-        }
     }
 
     private async Task StopDemoAsync()
@@ -189,10 +216,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --db \"{dbPath}\"";
+        if (!TryParsePort(Connections.SettingsPortText, out var port))
+        {
+            SettingsLaunchStatus = "Invalid Settings port.";
+            return;
+        }
+
+        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --db \"{dbPath}\" --bind-host {Connections.SettingsHost} --port {port}";
         var startInfo = BuildDotnetStartInfo(args);
-        var result = await _settingsRunner.StartAsync(startInfo, waitForExit: true);
-        SettingsLaunchStatus = result.Success ? "Settings DB ready." : result.Message;
+        var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false);
+        SettingsLaunchStatus = result.Message;
     }
 
     private async Task StartHiveMindAsync()
@@ -291,15 +324,26 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var nodes = await store.ListNodesAsync();
             var brains = await store.ListBrainsAsync();
             var controllers = await store.ListBrainControllersAsync();
-            var compression = await store.GetArtifactCompressionSettingsAsync();
-
-            var settings = new List<SettingItem>
+            var settings = new List<SettingItem>();
+            if (Connections.SettingsConnected && _settingGetter is not null)
             {
-                new(SettingsMonitorDefaults.ArtifactChunkCompressionKindKey, compression.Kind, "auto"),
-                new(SettingsMonitorDefaults.ArtifactChunkCompressionLevelKey, compression.Level.ToString(), "auto"),
-                new(SettingsMonitorDefaults.ArtifactChunkCompressionMinBytesKey, compression.MinBytes.ToString(), "auto"),
-                new(SettingsMonitorDefaults.ArtifactChunkCompressionOnlyIfSmallerKey, compression.OnlyIfSmaller.ToString(), "auto")
-            };
+                var tasks = SettingsMonitorDefaults.DefaultSettings.Keys
+                    .Select(key => _settingGetter(key))
+                    .ToArray();
+                var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+                settings.AddRange(results.Where(entry => entry is not null)!);
+            }
+            else
+            {
+                var compression = await store.GetArtifactCompressionSettingsAsync();
+                settings.AddRange(new[]
+                {
+                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionKindKey, compression.Kind, "auto"),
+                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionLevelKey, compression.Level.ToString(), "auto"),
+                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionMinBytesKey, compression.MinBytes.ToString(), "auto"),
+                    new SettingItem(SettingsMonitorDefaults.ArtifactChunkCompressionOnlyIfSmallerKey, compression.OnlyIfSmaller.ToString(), "auto")
+                });
+            }
 
             _dispatcher.Post(() =>
             {

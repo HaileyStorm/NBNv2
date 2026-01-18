@@ -4,6 +4,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
 using Proto.Remote;
@@ -47,7 +48,8 @@ public static class WorkbenchRemote
             NbnReproReflection.Descriptor,
             NbnSignalsReflection.Descriptor,
             NbnDebugReflection.Descriptor,
-            NbnVizReflection.Descriptor);
+            NbnVizReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
     }
 
     private static bool IsLocalhost(string host)

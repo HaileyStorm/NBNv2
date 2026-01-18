@@ -2,10 +2,11 @@ param(
     [string]$DemoRoot = (Join-Path $PSScriptRoot "local-demo"),
     [string]$BindHost = "127.0.0.1",
     [int]$HiveMindPort = 12020,
-    [int]$BrainHostPort = 12010,
+    [int]$BrainHostPort = 12011,
     [int]$RegionHostPort = 12040,
     [int]$IoPort = 12050,
     [int]$ObsPort = 12060,
+    [int]$SettingsPort = 12010,
     [int]$RegionId = 1,
     [int]$ShardIndex = 0,
     [string]$RouterId = "demo-router"
@@ -17,8 +18,6 @@ $runRoot = Join-Path $DemoRoot (Get-Date -Format "yyyyMMdd_HHmmss")
 $artifactRoot = Join-Path $runRoot "artifacts"
 $logRoot = Join-Path $runRoot "logs"
 $settingsDbPath = Join-Path $DemoRoot "settingsmonitor.db"
-$brainIdPath = Join-Path $runRoot "brain_id.txt"
-$brainIdPointer = Join-Path $DemoRoot "current_brain_id.txt"
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
@@ -29,9 +28,7 @@ $brainAddress = "${BindHost}:${BrainHostPort}"
 $regionAddress = "${BindHost}:${RegionHostPort}"
 $ioAddress = "${BindHost}:${IoPort}"
 $obsAddress = "${BindHost}:${ObsPort}"
-
-Set-Content -Path $brainIdPath -Value $brainId -Encoding ascii
-Set-Content -Path $brainIdPointer -Value $brainId -Encoding ascii
+$settingsAddress = "${BindHost}:${SettingsPort}"
 
 Write-Host "Demo root: $runRoot"
 Write-Host "BrainId: $brainId"
@@ -146,11 +143,12 @@ $settingsArgs = @(
     "-c", "Release",
     "--no-build",
     "--",
-    "--db", $settingsDbPath
+    "--db", $settingsDbPath,
+    "--bind-host", $BindHost,
+    "--port", $SettingsPort
 )
 
 $settingsProc = Start-Process -FilePath "dotnet" -ArgumentList $settingsArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $settingsLog -RedirectStandardError $settingsErr
-$settingsProc.WaitForExit()
 
 $hiveProc = Start-Process -FilePath "dotnet" -ArgumentList $hiveArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveErr
 Start-Sleep -Seconds 1
@@ -167,6 +165,7 @@ Write-Host "BrainHost: $brainAddress (pid $($brainProc.Id))"
 Write-Host "RegionHost: $regionAddress (pid $($regionProc.Id))"
 Write-Host "IO Gateway: $ioAddress (pid $($ioProc.Id))"
 Write-Host "Observability: $obsAddress (pid $($obsProc.Id))"
+Write-Host "SettingsMonitor: $settingsAddress (pid $($settingsProc.Id))"
 Write-Host "Settings DB: $settingsDbPath"
 Write-Host "Logs: $logRoot"
 
@@ -191,7 +190,7 @@ try {
     [void](Read-Host)
 }
 finally {
-    foreach ($proc in @($obsProc, $ioProc, $regionProc, $brainProc, $hiveProc)) {
+    foreach ($proc in @($obsProc, $ioProc, $regionProc, $brainProc, $hiveProc, $settingsProc)) {
         if ($proc -and -not $proc.HasExited) {
             Stop-Process -Id $proc.Id -Force
         }

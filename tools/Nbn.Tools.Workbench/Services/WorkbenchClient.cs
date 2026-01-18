@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
 using Proto;
@@ -23,6 +24,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
     private PID? _ioGatewayPid;
     private PID? _debugHubPid;
     private PID? _vizHubPid;
+    private PID? _settingsPid;
     private string? _bindHost;
     private int _bindPort;
 
@@ -106,6 +108,58 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
 
         _sink.OnIoStatus("Disconnected", false);
+    }
+
+    public Task ConnectSettingsAsync(string host, int port, string actorName)
+    {
+        if (_root is null || _receiverPid is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _settingsPid = new PID($"{host}:{port}", actorName);
+        var subscriber = PidLabel(_receiverPid);
+        _root.Send(_settingsPid, new SettingSubscribe { SubscriberActor = subscriber });
+        _sink.OnSettingsStatus($"Subscribed to {host}:{port}", true);
+        return Task.CompletedTask;
+    }
+
+    public void DisconnectSettings()
+    {
+        if (_root is null || _receiverPid is null)
+        {
+            _settingsPid = null;
+            return;
+        }
+
+        if (_settingsPid is not null)
+        {
+            _root.Send(_settingsPid, new SettingUnsubscribe { SubscriberActor = PidLabel(_receiverPid) });
+        }
+
+        _settingsPid = null;
+        _sink.OnSettingsStatus("Disconnected", false);
+    }
+
+    public async Task<SettingValue?> GetSettingAsync(string key)
+    {
+        if (_root is null || _settingsPid is null || string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<SettingValue>(
+                _settingsPid,
+                new SettingGet { Key = key },
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnSettingsStatus($"Setting get failed: {ex.Message}", false);
+            return null;
+        }
     }
 
     public Task ConnectObservabilityAsync(string host, int port, string debugHub, string vizHub, Nbn.Proto.Severity minSeverity, string contextRegex)
@@ -340,6 +394,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
             _ioGatewayPid = null;
             _debugHubPid = null;
             _vizHubPid = null;
+            _settingsPid = null;
         }
     }
 

@@ -11,4 +11,6 @@ public interface IWorkbenchEventSink
     void OnBrainTerminated(BrainTerminatedItem item);
     void OnIoStatus(string status, bool connected);
     void OnObsStatus(string status, bool connected);
+    void OnSettingsStatus(string status, bool connected);
+    void OnSettingChanged(SettingItem item);
 }
