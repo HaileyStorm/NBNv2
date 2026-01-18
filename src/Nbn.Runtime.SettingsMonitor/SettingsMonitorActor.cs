@@ -42,6 +42,9 @@ public sealed class SettingsMonitorActor : IActor
             case ProtoSettings.BrainListRequest:
                 HandleBrainList(context);
                 break;
+            case ProtoSettings.SettingListRequest:
+                HandleSettingList(context);
+                break;
             case ProtoSettings.SettingSubscribe subscribe:
                 HandleSettingSubscribe(context, subscribe);
                 break;
@@ -226,6 +229,27 @@ public sealed class SettingsMonitorActor : IActor
                 PublishSettingChanged(context, message.Key, message.Value ?? string.Empty, updatedMs);
             }
 
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleSettingList(IContext context)
+    {
+        var task = _store.ListSettingsAsync();
+        context.ReenterAfter(task, completed =>
+        {
+            var response = new ProtoSettings.SettingListResponse();
+            foreach (var entry in completed.Result)
+            {
+                response.Settings.Add(new ProtoSettings.SettingValue
+                {
+                    Key = entry.Key,
+                    Value = entry.Value,
+                    UpdatedMs = (ulong)entry.UpdatedMs
+                });
+            }
+
+            context.Respond(response);
             return Task.CompletedTask;
         });
     }

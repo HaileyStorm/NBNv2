@@ -23,12 +23,14 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _hiveMindHost = "127.0.0.1";
     private string _hiveMindPortText = "12020";
     private string _hiveMindName = "HiveMind";
+    private string _hiveMindStatus = "Disconnected";
     private string _ioStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
     private bool _ioConnected;
     private bool _obsConnected;
     private bool _settingsConnected;
+    private bool _hiveMindConnected;
 
     public string LocalBindHost
     {
@@ -132,6 +134,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _hiveMindName, value);
     }
 
+    public string HiveMindStatus
+    {
+        get => _hiveMindStatus;
+        set => SetProperty(ref _hiveMindStatus, value);
+    }
+
     public string IoStatus
     {
         get => _ioStatus;
@@ -160,6 +168,20 @@ public sealed class ConnectionViewModel : ViewModelBase
                 OnPropertyChanged(nameof(SettingsChipBackground));
                 OnPropertyChanged(nameof(SettingsChipBorder));
                 OnPropertyChanged(nameof(SettingsStatusLabel));
+            }
+        }
+    }
+
+    public bool HiveMindConnected
+    {
+        get => _hiveMindConnected;
+        set
+        {
+            if (SetProperty(ref _hiveMindConnected, value))
+            {
+                OnPropertyChanged(nameof(HiveMindChipBackground));
+                OnPropertyChanged(nameof(HiveMindChipBorder));
+                OnPropertyChanged(nameof(HiveMindStatusLabel));
             }
         }
     }
@@ -204,9 +226,15 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public IBrush SettingsChipBorder => SettingsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
+    public IBrush HiveMindChipBackground => HiveMindConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush HiveMindChipBorder => HiveMindConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
     public string IoStatusLabel => IoConnected ? "IO connected" : "IO disconnected";
 
     public string ObsStatusLabel => ObsConnected ? "Obs connected" : "Obs disconnected";
 
     public string SettingsStatusLabel => SettingsConnected ? "Settings connected" : "Settings disconnected";
+
+    public string HiveMindStatusLabel => HiveMindConnected ? "HiveMind connected" : "HiveMind disconnected";
 }

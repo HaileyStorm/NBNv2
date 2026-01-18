@@ -24,6 +24,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _plasticityRateText = "0.001";
     private bool _costEnabled;
     private bool _energyEnabled;
+    private bool _costEnergyEnabled;
     private bool _plasticityEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
     private string _brainInfoSummary = "No brain selected.";
@@ -101,13 +102,47 @@ public sealed class IoPanelViewModel : ViewModelBase
     public bool CostEnabled
     {
         get => _costEnabled;
-        set => SetProperty(ref _costEnabled, value);
+        set
+        {
+            if (SetProperty(ref _costEnabled, value))
+            {
+                UpdateCostEnergyCombined();
+            }
+        }
     }
 
     public bool EnergyEnabled
     {
         get => _energyEnabled;
-        set => SetProperty(ref _energyEnabled, value);
+        set
+        {
+            if (SetProperty(ref _energyEnabled, value))
+            {
+                UpdateCostEnergyCombined();
+            }
+        }
+    }
+
+    public bool CostEnergyEnabled
+    {
+        get => _costEnergyEnabled;
+        set
+        {
+            if (SetProperty(ref _costEnergyEnabled, value))
+            {
+                if (_costEnabled != value)
+                {
+                    _costEnabled = value;
+                    OnPropertyChanged(nameof(CostEnabled));
+                }
+
+                if (_energyEnabled != value)
+                {
+                    _energyEnabled = value;
+                    OnPropertyChanged(nameof(EnergyEnabled));
+                }
+            }
+        }
     }
 
     public bool PlasticityEnabled
@@ -343,7 +378,8 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void ApplyCostEnergy()
     {
-        ForEachTargetBrain(brainId => _client.SetCostEnergy(brainId, CostEnabled, EnergyEnabled));
+        var enabled = CostEnergyEnabled;
+        ForEachTargetBrain(brainId => _client.SetCostEnergy(brainId, enabled, enabled));
     }
 
     private void ApplyPlasticity()
@@ -362,6 +398,18 @@ public sealed class IoPanelViewModel : ViewModelBase
     {
         OutputEvents.Clear();
         VectorEvents.Clear();
+    }
+
+    private void UpdateCostEnergyCombined()
+    {
+        var combined = _costEnabled && _energyEnabled;
+        if (_costEnergyEnabled == combined)
+        {
+            return;
+        }
+
+        _costEnergyEnabled = combined;
+        OnPropertyChanged(nameof(CostEnergyEnabled));
     }
 
     private bool TryGetBrainId(out Guid brainId)

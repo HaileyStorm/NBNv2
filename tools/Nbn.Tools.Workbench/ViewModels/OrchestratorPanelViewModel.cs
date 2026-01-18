@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Nbn.Runtime.SettingsMonitor;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -49,9 +48,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
         Nodes = new ObservableCollection<NodeStatusItem>();
-        Settings = new ObservableCollection<SettingItem>();
+        Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        ApplySettingsCommand = new AsyncRelayCommand(ApplySettingsAsync);
         StartDemoCommand = new AsyncRelayCommand(StartDemoAsync);
         StopDemoCommand = new AsyncRelayCommand(StopDemoAsync);
         StartSettingsMonitorCommand = new AsyncRelayCommand(StartSettingsMonitorAsync);
@@ -65,7 +65,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     }
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
-    public ObservableCollection<SettingItem> Settings { get; }
+    public ObservableCollection<SettingEntryViewModel> Settings { get; }
     public ObservableCollection<BrainTerminatedItem> Terminations { get; }
 
     public ConnectionViewModel Connections => _connections;
@@ -77,6 +77,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     }
 
     public AsyncRelayCommand RefreshCommand { get; }
+
+    public AsyncRelayCommand ApplySettingsCommand { get; }
 
     public AsyncRelayCommand StartDemoCommand { get; }
 
@@ -137,11 +139,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             if (index >= 0)
             {
-                Settings[index] = item;
+                Settings[index].UpdateFromServer(item.Value, item.Updated, preserveEdits: true);
             }
             else
             {
-                Settings.Add(item);
+                Settings.Add(new SettingEntryViewModel(item.Key, item.Value, item.Updated));
             }
         });
     }
@@ -162,6 +164,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     }
 
     public Task StopDemoAsyncForShutdown() => StopDemoAsync();
+
+    public async Task StopAllAsyncForShutdown()
+    {
+        await StopDemoAsync().ConfigureAwait(false);
+        await StopRunnerAsync(_settingsRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_obsRunner, _ => { }).ConfigureAwait(false);
+    }
 
     private async Task StartDemoAsync()
     {
@@ -263,7 +274,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\"";
+        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\""
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false);
         HiveMindLaunchStatus = result.Message;
@@ -292,7 +304,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var hiveAddress = $"{Connections.HiveMindHost}:{hivePort}";
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.IoHost} --port {port} --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}";
+        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.IoHost} --port {port}"
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
+                 + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}";
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false);
         IoLaunchStatus = result.Message;
@@ -314,7 +328,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.ObsHost} --port {port} --enable-debug --enable-viz";
+        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.ObsHost} --port {port}"
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
+                 + " --enable-debug --enable-viz";
         var startInfo = BuildDotnetStartInfo(args);
         var result = await _obsRunner.StartAsync(startInfo, waitForExit: false);
         ObsLaunchStatus = result.Message;
@@ -352,17 +368,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
 
-            var tasks = SettingsMonitorDefaults.DefaultSettings.Keys
-                .Select(key => _client.GetSettingAsync(key))
-                .ToArray();
-            var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-            var settings = results
-                .Where(entry => entry is not null)
+            UpdateHiveMindEndpoint(nodes);
+
+            var settingsResponse = await _client.ListSettingsAsync().ConfigureAwait(false);
+            var settings = settingsResponse?.Settings?
                 .Select(entry => new SettingItem(
-                    entry!.Key ?? string.Empty,
+                    entry.Key ?? string.Empty,
                     entry.Value ?? string.Empty,
                     entry.UpdatedMs.ToString()))
-                .ToList();
+                .ToList() ?? new List<SettingItem>();
 
             _dispatcher.Post(() =>
             {
@@ -378,10 +392,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                         node.IsAlive ? "online" : "offline"));
                 }
 
-                Settings.Clear();
                 foreach (var entry in settings)
                 {
-                    Settings.Add(entry);
+                    var existing = Settings.FirstOrDefault(item => string.Equals(item.Key, entry.Key, StringComparison.OrdinalIgnoreCase));
+                    if (existing is null)
+                    {
+                        Settings.Add(new SettingEntryViewModel(entry.Key, entry.Value, entry.Updated));
+                    }
+                    else
+                    {
+                        existing.UpdateFromServer(entry.Value, entry.Updated, preserveEdits: true);
+                    }
                 }
 
                 Trim(Nodes);
@@ -411,12 +432,98 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
     }
 
+    private async Task ApplySettingsAsync()
+    {
+        if (!Connections.SettingsConnected)
+        {
+            StatusMessage = "SettingsMonitor not connected.";
+            return;
+        }
+
+        var dirty = Settings.Where(entry => entry.IsDirty).ToList();
+        if (dirty.Count == 0)
+        {
+            StatusMessage = "No settings changes.";
+            return;
+        }
+
+        StatusMessage = $"Applying {dirty.Count} setting(s)...";
+        foreach (var entry in dirty)
+        {
+            var result = await _client.SetSettingAsync(entry.Key, entry.Value).ConfigureAwait(false);
+            if (result is null)
+            {
+                continue;
+            }
+
+            _dispatcher.Post(() =>
+            {
+                entry.MarkApplied(result.Value ?? entry.Value, result.UpdatedMs.ToString());
+            });
+        }
+
+        StatusMessage = "Settings updated.";
+    }
+
     private static void Trim<T>(ObservableCollection<T> collection)
     {
         while (collection.Count > MaxRows)
         {
             collection.RemoveAt(collection.Count - 1);
         }
+    }
+
+    private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes)
+    {
+        var match = nodes.FirstOrDefault(node =>
+            string.Equals(node.RootActorName, Connections.HiveMindName, StringComparison.OrdinalIgnoreCase));
+
+        if (match is null)
+        {
+            return;
+        }
+
+        if (!TryParseHostPort(match.Address, out var host, out var port))
+        {
+            return;
+        }
+
+        Connections.HiveMindHost = host;
+        Connections.HiveMindPortText = port.ToString();
+    }
+
+    private static bool TryParseHostPort(string? address, out string host, out int port)
+    {
+        host = string.Empty;
+        port = 0;
+
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return false;
+        }
+
+        var trimmed = address.Trim();
+        var colonIndex = trimmed.LastIndexOf(':');
+        if (colonIndex <= 0 || colonIndex >= trimmed.Length - 1)
+        {
+            return false;
+        }
+
+        var hostPart = trimmed[..colonIndex];
+        var portPart = trimmed[(colonIndex + 1)..];
+
+        if (hostPart.StartsWith("[", StringComparison.Ordinal) && hostPart.EndsWith("]", StringComparison.Ordinal))
+        {
+            hostPart = hostPart[1..^1];
+        }
+
+        if (!int.TryParse(portPart, out port))
+        {
+            return false;
+        }
+
+        host = hostPart;
+        return !string.IsNullOrWhiteSpace(host);
     }
 
     private static bool TryParsePort(string value, out int port)

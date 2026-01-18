@@ -58,18 +58,40 @@
           </Grid>
 
           <StackPanel Orientation="Horizontal" Spacing="10">
-            <Border Classes="chip"
-                    Background="{Binding Connections.IoChipBackground}"
-                    BorderBrush="{Binding Connections.IoChipBorder}">
-              <TextBlock Text="{Binding Connections.IoStatusLabel}" />
-            </Border>
-            <TextBlock Text="{Binding Connections.IoStatus}" Classes="muted" VerticalAlignment="Center" />
-            <Border Classes="chip"
-                    Background="{Binding Connections.ObsChipBackground}"
-                    BorderBrush="{Binding Connections.ObsChipBorder}">
-              <TextBlock Text="{Binding Connections.ObsStatusLabel}" />
-            </Border>
-            <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" VerticalAlignment="Center" />
+            <WrapPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
+                <Border Classes="chip"
+                        Background="{Binding Connections.IoChipBackground}"
+                        BorderBrush="{Binding Connections.IoChipBorder}">
+                  <TextBlock Text="{Binding Connections.IoStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.IoStatus}" Classes="muted" VerticalAlignment="Center" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
+                <Border Classes="chip"
+                        Background="{Binding Connections.ObsChipBackground}"
+                        BorderBrush="{Binding Connections.ObsChipBorder}">
+                  <TextBlock Text="{Binding Connections.ObsStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" VerticalAlignment="Center" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
+                <Border Classes="chip"
+                        Background="{Binding Connections.SettingsChipBackground}"
+                        BorderBrush="{Binding Connections.SettingsChipBorder}">
+                  <TextBlock Text="{Binding Connections.SettingsStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" VerticalAlignment="Center" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
+                <Border Classes="chip"
+                        Background="{Binding Connections.HiveMindChipBackground}"
+                        BorderBrush="{Binding Connections.HiveMindChipBorder}">
+                  <TextBlock Text="{Binding Connections.HiveMindStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.HiveMindStatus}" Classes="muted" VerticalAlignment="Center" />
+              </StackPanel>
+            </WrapPanel>
           </StackPanel>
         </StackPanel>
       </Border>
@@ -140,17 +162,23 @@
         </Border>
         <Border Classes="card" Grid.Column="1">
           <StackPanel Spacing="8">
-            <TextBlock Text="Settings" Classes="card-title" />
-            <ItemsControl ItemsSource="{Binding Settings}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4">
-                    <TextBlock Text="{Binding Key}" Classes="row-title" />
-                    <TextBlock Grid.Column="1" Text="{Binding Value}" Classes="muted" />
-                  </Grid>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <TextBlock Text="Settings" Classes="card-title" />
+              <Button Grid.Column="1" Content="Apply" Command="{Binding ApplySettingsCommand}" Classes="accent" />
+            </Grid>
+            <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Disabled">
+              <ItemsControl ItemsSource="{Binding Settings}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12" Margin="0,4">
+                      <TextBlock Text="{Binding Key}" Classes="row-title" />
+                      <TextBox Grid.Column="1" Text="{Binding Value}" Width="220" />
+                      <TextBlock Grid.Column="2" Text="{Binding Updated}" Classes="muted" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
           </StackPanel>
         </Border>
       </Grid>

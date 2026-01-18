@@ -12,5 +12,6 @@ public interface IWorkbenchEventSink
     void OnIoStatus(string status, bool connected);
     void OnObsStatus(string status, bool connected);
     void OnSettingsStatus(string status, bool connected);
+    void OnHiveMindStatus(string status, bool connected);
     void OnSettingChanged(SettingItem item);
 }

@@ -75,6 +75,9 @@ static async Task RunBrainAsync(string[] args)
     var brainRootId = GetArg(args, "--brain-root-id") ?? "BrainRoot";
     var hiveAddress = GetArg(args, "--hivemind-address");
     var hiveId = GetArg(args, "--hivemind-id");
+    var settingsHost = GetArg(args, "--settings-host") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_HOST") ?? "127.0.0.1";
+    var settingsPort = GetIntArg(args, "--settings-port") ?? GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
+    var settingsName = GetArg(args, "--settings-name") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
 
     PID? hivePid = null;
     if (!string.IsNullOrWhiteSpace(hiveAddress) && !string.IsNullOrWhiteSpace(hiveId))
@@ -97,6 +100,16 @@ static async Task RunBrainAsync(string[] args)
 
     system.Root.Send(brainRootPid, new SetSignalRouter(routerPid));
 
+    var nodeAddress = $"{remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}";
+    var settingsReporter = SettingsMonitorReporter.Start(
+        system,
+        settingsHost,
+        settingsPort,
+        settingsName,
+        nodeAddress,
+        "demo-brainhost",
+        brainRootId);
+
     Console.WriteLine("NBN Demo BrainHost online.");
     Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
     Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");
@@ -115,6 +128,11 @@ static async Task RunBrainAsync(string[] args)
     AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
     await shutdown.Task;
+
+    if (settingsReporter is not null)
+    {
+        await settingsReporter.DisposeAsync();
+    }
 
     await system.Remote().ShutdownAsync(true);
     await system.ShutdownAsync();
@@ -326,6 +344,12 @@ static bool HasFlag(string[] args, string name)
 static int? GetIntArg(string[] args, string name)
 {
     var value = GetArg(args, name);
+    return int.TryParse(value, out var parsed) ? parsed : null;
+}
+
+static int? GetEnvInt(string key)
+{
+    var value = Environment.GetEnvironmentVariable(key);
     return int.TryParse(value, out var parsed) ? parsed : null;
 }
 

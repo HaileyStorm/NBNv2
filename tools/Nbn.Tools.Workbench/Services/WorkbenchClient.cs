@@ -7,6 +7,7 @@ using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -25,6 +26,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
     private PID? _debugHubPid;
     private PID? _vizHubPid;
     private PID? _settingsPid;
+    private PID? _hiveMindPid;
     private string? _bindHost;
     private int _bindPort;
 
@@ -124,6 +126,35 @@ public sealed class WorkbenchClient : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    public async Task<HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
+    {
+        if (_root is null)
+        {
+            return null;
+        }
+
+        var pid = new PID($"{host}:{port}", actorName);
+        try
+        {
+            var status = await _root.RequestAsync<HiveMindStatus>(pid, new GetHiveMindStatus(), DefaultTimeout)
+                .ConfigureAwait(false);
+            _hiveMindPid = pid;
+            _sink.OnHiveMindStatus($"Connected to {host}:{port}", true);
+            return status;
+        }
+        catch (Exception ex)
+        {
+            _sink.OnHiveMindStatus($"HiveMind connect failed: {ex.Message}", false);
+            return null;
+        }
+    }
+
+    public void DisconnectHiveMind()
+    {
+        _hiveMindPid = null;
+        _sink.OnHiveMindStatus("Disconnected", false);
+    }
+
     public void DisconnectSettings()
     {
         if (_root is null || _receiverPid is null)
@@ -157,7 +188,49 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _sink.OnSettingsStatus($"Setting get failed: {ex.Message}", false);
+            _sink.OnSettingsStatus($"Setting get failed: {ex.Message}", true);
+            return null;
+        }
+    }
+
+    public async Task<SettingListResponse?> ListSettingsAsync()
+    {
+        if (_root is null || _settingsPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<SettingListResponse>(
+                _settingsPid,
+                new SettingListRequest(),
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnSettingsStatus($"Setting list failed: {ex.Message}", true);
+            return null;
+        }
+    }
+
+    public async Task<SettingValue?> SetSettingAsync(string key, string value)
+    {
+        if (_root is null || _settingsPid is null || string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<SettingValue>(
+                _settingsPid,
+                new SettingSet { Key = key, Value = value },
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnSettingsStatus($"Setting set failed: {ex.Message}", true);
             return null;
         }
     }
@@ -178,7 +251,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _sink.OnSettingsStatus($"Node list failed: {ex.Message}", false);
+            _sink.OnSettingsStatus($"Node list failed: {ex.Message}", true);
             return null;
         }
     }
@@ -199,7 +272,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _sink.OnSettingsStatus($"Brain list failed: {ex.Message}", false);
+            _sink.OnSettingsStatus($"Brain list failed: {ex.Message}", true);
             return null;
         }
     }
@@ -437,6 +510,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
             _debugHubPid = null;
             _vizHubPid = null;
             _settingsPid = null;
+            _hiveMindPid = null;
         }
     }
 

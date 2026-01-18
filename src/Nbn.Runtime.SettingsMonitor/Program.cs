@@ -1,4 +1,5 @@
 using Nbn.Runtime.SettingsMonitor;
+using Nbn.Shared;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -20,6 +21,18 @@ var monitorPid = system.Root.SpawnNamed(
     Props.FromProducer(() => new SettingsMonitorActor(store)),
     SettingsMonitorNames.SettingsMonitor);
 
+var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
+var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
+var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var settingsReporter = SettingsMonitorReporter.Start(
+    system,
+    advertisedHost,
+    advertisedPort,
+    SettingsMonitorNames.SettingsMonitor,
+    nodeAddress,
+    "nbn.settings",
+    SettingsMonitorNames.SettingsMonitor);
+
 Console.WriteLine("NBN SettingsMonitor node online.");
 Console.WriteLine($"DB: {Path.GetFullPath(options.DatabasePath)}");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
@@ -38,6 +51,11 @@ Console.CancelKeyPress += (_, eventArgs) =>
 AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
+
+if (settingsReporter is not null)
+{
+    await settingsReporter.DisposeAsync();
+}
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();

@@ -7,6 +7,9 @@ public sealed record IoOptions(
     int? AdvertisedPort,
     string GatewayName,
     string ServerName,
+    string? SettingsHost,
+    int SettingsPort,
+    string SettingsName,
     string? HiveMindAddress,
     string? HiveMindName,
     string? ReproAddress,
@@ -20,6 +23,9 @@ public sealed record IoOptions(
         var advertisedPort = GetEnvInt("NBN_IO_ADVERTISE_PORT");
         var gatewayName = GetEnv("NBN_IO_GATEWAY_NAME") ?? IoNames.Gateway;
         var serverName = GetEnv("NBN_IO_SERVER_NAME") ?? "nbn.io";
+        var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
+        var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
+        var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
         var hiveMindAddress = GetEnv("NBN_IO_HIVEMIND_ADDRESS");
         var hiveMindName = GetEnv("NBN_IO_HIVEMIND_NAME");
         var reproAddress = GetEnv("NBN_IO_REPRO_ADDRESS");
@@ -72,6 +78,24 @@ public sealed record IoOptions(
                     if (i + 1 < args.Length)
                     {
                         serverName = args[++i];
+                    }
+                    continue;
+                case "--settings-host":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsHost = args[++i];
+                    }
+                    continue;
+                case "--settings-port":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var settingsPortValue))
+                    {
+                        settingsPort = settingsPortValue;
+                    }
+                    continue;
+                case "--settings-name":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsName = args[++i];
                     }
                     continue;
                 case "--hivemind-address":
@@ -150,6 +174,25 @@ public sealed record IoOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--settings-host=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsHost = arg.Substring("--settings-host=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-port=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--settings-port=".Length), out var settingsPortInline))
+            {
+                settingsPort = settingsPortInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsName = arg.Substring("--settings-name=".Length);
+                continue;
+            }
+
             if (arg.StartsWith("--hivemind-address=", StringComparison.OrdinalIgnoreCase))
             {
                 hiveMindAddress = arg.Substring("--hivemind-address=".Length);
@@ -181,6 +224,9 @@ public sealed record IoOptions(
             advertisedPort,
             gatewayName,
             serverName,
+            string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
+            settingsPort,
+            settingsName,
             hiveMindAddress,
             hiveMindName,
             reproAddress,
@@ -204,6 +250,9 @@ public sealed record IoOptions(
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");
         Console.WriteLine("  --gateway-name <name>            Gateway actor name (default io-gateway)");
         Console.WriteLine("  --server-name <name>             Name returned in ConnectAck (default nbn.io)");
+        Console.WriteLine("  --settings-host <host>           SettingsMonitor host (default 127.0.0.1)");
+        Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
+        Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --hivemind-address <host:port>   HiveMind remote address");
         Console.WriteLine("  --hivemind-name <name>           HiveMind actor name");
         Console.WriteLine("  --repro-address <host:port>      Reproduction manager remote address");

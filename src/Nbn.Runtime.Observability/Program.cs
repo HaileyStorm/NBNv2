@@ -1,4 +1,5 @@
 using Nbn.Runtime.Observability;
+using Nbn.Shared;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -29,6 +30,21 @@ if (options.EnableVizHub)
         ObservabilityNames.VizHub);
 }
 
+var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
+var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
+var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var rootActorName = options.EnableDebugHub
+    ? ObservabilityNames.DebugHub
+    : options.EnableVizHub ? ObservabilityNames.VizHub : "Observability";
+var settingsReporter = SettingsMonitorReporter.Start(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    nodeAddress,
+    options.ServiceName,
+    rootActorName);
+
 Console.WriteLine("NBN Observability node online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");
@@ -47,6 +63,11 @@ Console.CancelKeyPress += (_, eventArgs) =>
 AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
+
+if (settingsReporter is not null)
+{
+    await settingsReporter.DisposeAsync();
+}
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();

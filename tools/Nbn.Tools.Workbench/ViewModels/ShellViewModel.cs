@@ -108,16 +108,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
         ReceiverLabel = _client.ReceiverLabel;
 
-        await _client.ConnectIoAsync(
-            Connections.IoHost,
-            ioPort,
-            Connections.IoGateway,
-            Connections.ClientName);
-
         await _client.ConnectSettingsAsync(
             Connections.SettingsHost,
             ParsePortOrDefault(Connections.SettingsPortText, 12010),
             Connections.SettingsName);
+
+        await Orchestrator.RefreshSettingsAsync();
+
+        await ConnectIoWithRetryAsync(
+            Connections.IoHost,
+            ioPort,
+            Connections.IoGateway,
+            Connections.ClientName);
 
         await _client.ConnectObservabilityAsync(
             Connections.ObsHost,
@@ -127,7 +129,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Debug.SelectedSeverity.Severity,
             Debug.ContextRegex);
 
-        await Orchestrator.RefreshSettingsAsync();
+        await ConnectHiveMindAsync();
     }
 
     private void DisconnectAll()
@@ -135,6 +137,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         _client.DisconnectIo();
         _client.DisconnectSettings();
         _client.DisconnectObservability();
+        _client.DisconnectHiveMind();
     }
 
     public void OnOutputEvent(OutputEventItem item)
@@ -188,6 +191,15 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         });
     }
 
+    public void OnHiveMindStatus(string status, bool connected)
+    {
+        _dispatcher.Post(() =>
+        {
+            Connections.HiveMindStatus = status;
+            Connections.HiveMindConnected = connected;
+        });
+    }
+
     public void OnSettingChanged(SettingItem item)
     {
         Orchestrator.UpdateSetting(item);
@@ -195,7 +207,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public async ValueTask DisposeAsync()
     {
-        await Orchestrator.StopDemoAsyncForShutdown();
+        await Orchestrator.StopAllAsyncForShutdown();
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 
@@ -214,4 +226,34 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
+
+    private async Task ConnectIoWithRetryAsync(string host, int port, string gatewayName, string clientName)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var ack = await _client.ConnectIoAsync(host, port, gatewayName, clientName);
+            if (ack is not null)
+            {
+                return;
+            }
+
+            await Task.Delay(500 * attempt);
+        }
+    }
+
+    private async Task ConnectHiveMindAsync()
+    {
+        if (!TryParsePort(Connections.HiveMindPortText, out var hivePort))
+        {
+            Connections.HiveMindStatus = "HiveMind port invalid.";
+            Connections.HiveMindConnected = false;
+            return;
+        }
+
+        await _client.ConnectHiveMindAsync(
+            Connections.HiveMindHost,
+            hivePort,
+            Connections.HiveMindName);
+    }
 }

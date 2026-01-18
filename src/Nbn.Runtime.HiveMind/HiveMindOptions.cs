@@ -1,3 +1,5 @@
+using Nbn.Runtime.SettingsMonitor;
+
 namespace Nbn.Runtime.HiveMind;
 
 public sealed record HiveMindOptions(
@@ -25,7 +27,10 @@ public sealed record HiveMindOptions(
     bool EnableOtelConsoleExporter,
     string? OtlpEndpoint,
     string ServiceName,
-    string? SettingsDbPath)
+    string? SettingsDbPath,
+    string? SettingsHost,
+    int SettingsPort,
+    string SettingsName)
 {
     public static HiveMindOptions FromArgs(string[] args)
     {
@@ -60,6 +65,11 @@ public sealed record HiveMindOptions(
         var enableOtelConsole = GetEnvBool("NBN_HIVE_OTEL_CONSOLE") ?? false;
         var otlpEndpoint = GetEnv("NBN_HIVE_OTEL_ENDPOINT") ?? GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
         var serviceName = GetEnv("NBN_HIVE_OTEL_SERVICE_NAME") ?? GetEnv("OTEL_SERVICE_NAME") ?? "nbn.hivemind";
+
+        var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
+        var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
+        var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? SettingsMonitorNames.SettingsMonitor;
+
         var settingsDbPath = GetEnv("NBN_SETTINGS_DB");
         if (string.IsNullOrWhiteSpace(settingsDbPath))
         {
@@ -226,6 +236,28 @@ public sealed record HiveMindOptions(
                 case "--no-settings-db":
                     settingsDbPath = null;
                     continue;
+                case "--settings-host":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsHost = args[++i];
+                    }
+                    continue;
+                case "--settings-port":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var settingsPortValue))
+                    {
+                        settingsPort = settingsPortValue;
+                    }
+                    continue;
+                case "--settings-name":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsName = args[++i];
+                    }
+                    continue;
+                case "--no-settings-monitor":
+                    settingsHost = null;
+                    settingsPort = 0;
+                    continue;
             }
 
             if (arg.StartsWith("--bind=", StringComparison.OrdinalIgnoreCase))
@@ -364,6 +396,24 @@ public sealed record HiveMindOptions(
             {
                 settingsDbPath = arg.Substring("--settings-db-path=".Length);
             }
+
+            if (arg.StartsWith("--settings-host=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsHost = arg.Substring("--settings-host=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-port=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--settings-port=".Length), out var settingsPortInline))
+            {
+                settingsPort = settingsPortInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsName = arg.Substring("--settings-name=".Length);
+            }
         }
 
         if (minTickHz <= 0)
@@ -417,7 +467,10 @@ public sealed record HiveMindOptions(
             enableOtelConsole,
             otlpEndpoint,
             serviceName,
-            string.IsNullOrWhiteSpace(settingsDbPath) ? null : settingsDbPath);
+            string.IsNullOrWhiteSpace(settingsDbPath) ? null : settingsDbPath,
+            string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
+            settingsPort,
+            settingsName);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -481,5 +534,9 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --otel-service-name <name>           Service name (env OTEL_SERVICE_NAME)");
         Console.WriteLine("  --settings-db <path>                 SettingsMonitor SQLite DB path (default settingsmonitor.db)");
         Console.WriteLine("  --no-settings-db                     Disable SettingsMonitor DB writes");
+        Console.WriteLine("  --settings-host <host>               SettingsMonitor host (default 127.0.0.1)");
+        Console.WriteLine("  --settings-port <port>               SettingsMonitor port (default 12010)");
+        Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
+        Console.WriteLine("  --no-settings-monitor                Disable SettingsMonitor reporting");
     }
 }

@@ -535,5 +535,9 @@ public class HiveMindTickBarrierTests
             EnableOtelTraces: false,
             EnableOtelConsoleExporter: false,
             OtlpEndpoint: null,
-            ServiceName: "nbn.hivemind.tests");
+            ServiceName: "nbn.hivemind.tests",
+            SettingsDbPath: null,
+            SettingsHost: null,
+            SettingsPort: 0,
+            SettingsName: "SettingsMonitor");
 }

@@ -1,4 +1,5 @@
 using Nbn.Runtime.IO;
+using Nbn.Shared;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -12,6 +13,18 @@ await system.Remote().StartAsync();
 
 var gatewayPid = system.Root.SpawnNamed(
     Props.FromProducer(() => new IoGatewayActor(options)),
+    options.GatewayName);
+
+var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
+var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
+var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var settingsReporter = SettingsMonitorReporter.Start(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    nodeAddress,
+    options.ServerName,
     options.GatewayName);
 
 Console.WriteLine("NBN IO Gateway online.");
@@ -31,6 +44,11 @@ Console.CancelKeyPress += (_, eventArgs) =>
 AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
+
+if (settingsReporter is not null)
+{
+    await settingsReporter.DisposeAsync();
+}
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();

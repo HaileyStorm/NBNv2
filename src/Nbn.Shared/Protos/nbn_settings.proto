@@ -75,6 +75,12 @@ message BrainListResponse {
   repeated BrainControllerStatus controllers = 2;
 }
 
+message SettingListRequest { }
+
+message SettingListResponse {
+  repeated SettingValue settings = 1;
+}
+
 message SettingGet {
   string key = 1;
 }

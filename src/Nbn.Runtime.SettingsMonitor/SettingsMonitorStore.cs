@@ -209,6 +209,12 @@ FROM settings
 WHERE key = @key;
 """;
 
+    private const string ListSettingsSql = """
+SELECT key AS Key, value AS Value, updated_ms AS UpdatedMs
+FROM settings
+ORDER BY key;
+""";
+
     private const string GetBrainSql = """
 SELECT
     brain_id AS BrainId,
@@ -677,6 +683,15 @@ ORDER BY logical_name, node_id;
         await using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QuerySingleOrDefaultAsync<SettingEntry>(
             new CommandDefinition(GetSettingSql, new { key }, cancellationToken: cancellationToken));
+    }
+
+    public async Task<IReadOnlyList<SettingEntry>> ListSettingsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<SettingEntry>(
+            new CommandDefinition(ListSettingsSql, cancellationToken: cancellationToken));
+        return rows.AsList();
     }
 
     public async Task<NodeStatus?> GetNodeAsync(

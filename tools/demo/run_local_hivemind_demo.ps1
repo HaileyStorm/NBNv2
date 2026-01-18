@@ -73,7 +73,10 @@ $hiveArgs = @(
     "--",
     "--bind-host", $BindHost,
     "--port", $HiveMindPort,
-    "--settings-db", $settingsDbPath
+    "--settings-db", $settingsDbPath,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor"
 )
 
 $brainArgs = @(
@@ -88,7 +91,10 @@ $brainArgs = @(
     "--brain-id", $brainId,
     "--hivemind-address", $hiveAddress,
     "--hivemind-id", "HiveMind",
-    "--router-id", $RouterId
+    "--router-id", $RouterId,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor"
 )
 
 $regionArgs = @(
@@ -99,6 +105,9 @@ $regionArgs = @(
     "--",
     "--bind-host", $BindHost,
     "--port", $RegionHostPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
     "--brain-id", $brainId,
     "--region", $RegionId,
     "--neuron-start", 0,
@@ -121,6 +130,9 @@ $ioArgs = @(
     "--",
     "--bind-host", $BindHost,
     "--port", $IoPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
     "--hivemind-address", $hiveAddress,
     "--hivemind-name", "HiveMind"
 )
@@ -133,6 +145,9 @@ $obsArgs = @(
     "--",
     "--bind-host", $BindHost,
     "--port", $ObsPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
     "--enable-debug",
     "--enable-viz"
 )

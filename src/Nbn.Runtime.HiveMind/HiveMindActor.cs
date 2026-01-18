@@ -1028,9 +1028,5 @@ public sealed class HiveMindActor : IActor
     }
 
     private static Guid DeriveNodeId(string address)
-    {
-        var bytes = Encoding.UTF8.GetBytes(address);
-        var hash = MD5.HashData(bytes);
-        return new Guid(hash);
-    }
+        => NodeIdentity.DeriveNodeId(address);
 }

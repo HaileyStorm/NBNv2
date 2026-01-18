@@ -8,6 +8,9 @@ public sealed record RegionHostOptions(
     string? AdvertisedHost,
     int? AdvertisedPort,
     string ArtifactRootPath,
+    string? SettingsHost,
+    int SettingsPort,
+    string SettingsName,
     Guid BrainId,
     int RegionId,
     int NeuronStart,
@@ -34,6 +37,9 @@ public sealed record RegionHostOptions(
         var advertisedPort = GetEnvInt("NBN_REGIONHOST_ADVERTISE_PORT");
         var artifactRoot = GetEnv("NBN_REGIONHOST_ARTIFACT_ROOT")
                            ?? Path.Combine(Environment.CurrentDirectory, "artifacts");
+        var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
+        var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
+        var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
         var brainId = GetEnvGuid("NBN_REGIONHOST_BRAIN_ID") ?? Guid.Empty;
         var regionId = GetEnvInt("NBN_REGIONHOST_REGION") ?? -1;
         var neuronStart = GetEnvInt("NBN_REGIONHOST_NEURON_START") ?? 0;
@@ -93,6 +99,24 @@ public sealed record RegionHostOptions(
                     if (i + 1 < args.Length)
                     {
                         artifactRoot = args[++i];
+                    }
+                    continue;
+                case "--settings-host":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsHost = args[++i];
+                    }
+                    continue;
+                case "--settings-port":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var settingsPortValue))
+                    {
+                        settingsPort = settingsPortValue;
+                    }
+                    continue;
+                case "--settings-name":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsName = args[++i];
                     }
                     continue;
                 case "--brain-id":
@@ -245,6 +269,25 @@ public sealed record RegionHostOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--settings-host=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsHost = arg.Substring("--settings-host=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-port=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--settings-port=".Length), out var settingsPortInline))
+            {
+                settingsPort = settingsPortInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsName = arg.Substring("--settings-name=".Length);
+                continue;
+            }
+
             if (arg.StartsWith("--brain-id=", StringComparison.OrdinalIgnoreCase)
                 && Guid.TryParse(arg.Substring("--brain-id=".Length), out var brainInline))
             {
@@ -377,6 +420,9 @@ public sealed record RegionHostOptions(
             advertisedHost,
             advertisedPort,
             artifactRoot,
+            string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
+            settingsPort,
+            settingsName,
             brainId,
             regionId,
             neuronStart,
@@ -424,6 +470,9 @@ public sealed record RegionHostOptions(
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");
         Console.WriteLine("  --artifact-root <path>           Artifact store root path");
+        Console.WriteLine("  --settings-host <host>           SettingsMonitor host (default 127.0.0.1)");
+        Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
+        Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --brain-id <guid>                BrainId for shard messages");
         Console.WriteLine("  --region <id>                    Region id (0-31)");
         Console.WriteLine("  --neuron-start <index>           Neuron start offset within region");

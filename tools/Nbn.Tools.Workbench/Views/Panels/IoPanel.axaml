@@ -27,8 +27,7 @@
             <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
           </Grid>
           <StackPanel Orientation="Horizontal" Spacing="12">
-            <CheckBox Content="Cost Enabled" IsChecked="{Binding CostEnabled}" />
-            <CheckBox Content="Energy Enabled" IsChecked="{Binding EnergyEnabled}" />
+            <CheckBox Content="Cost + Energy Enabled" IsChecked="{Binding CostEnergyEnabled}" />
             <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
           </StackPanel>
         </StackPanel>
@@ -37,7 +36,7 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Plasticity" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <TextBlock Text="Mode" Classes="muted" />
             <ComboBox Grid.Column="1" ItemsSource="{Binding PlasticityModes}" SelectedItem="{Binding SelectedPlasticityMode}" Width="180">
               <ComboBox.ItemTemplate>

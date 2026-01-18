@@ -12,7 +12,10 @@ public sealed record ObservabilityOptions(
     bool EnableOtelTraces,
     bool EnableOtelConsoleExporter,
     string? OtlpEndpoint,
-    string ServiceName)
+    string ServiceName,
+    string? SettingsHost,
+    int SettingsPort,
+    string SettingsName)
 {
     public static ObservabilityOptions FromArgs(string[] args)
     {
@@ -30,6 +33,10 @@ public sealed record ObservabilityOptions(
 
         var otlpEndpoint = GetEnv("NBN_OBS_OTEL_ENDPOINT") ?? GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
         var serviceName = GetEnv("NBN_OBS_OTEL_SERVICE_NAME") ?? GetEnv("OTEL_SERVICE_NAME") ?? "nbn.observability";
+
+        var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
+        var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
+        var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -113,6 +120,24 @@ public sealed record ObservabilityOptions(
                         serviceName = args[++i];
                     }
                     continue;
+                case "--settings-host":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsHost = args[++i];
+                    }
+                    continue;
+                case "--settings-port":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var settingsPortValue))
+                    {
+                        settingsPort = settingsPortValue;
+                    }
+                    continue;
+                case "--settings-name":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsName = args[++i];
+                    }
+                    continue;
             }
 
             if (arg.StartsWith("--bind=", StringComparison.OrdinalIgnoreCase))
@@ -161,6 +186,24 @@ public sealed record ObservabilityOptions(
             {
                 serviceName = arg.Substring("--otel-service-name=".Length);
             }
+
+            if (arg.StartsWith("--settings-host=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsHost = arg.Substring("--settings-host=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-port=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--settings-port=".Length), out var settingsPortInline))
+            {
+                settingsPort = settingsPortInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsName = arg.Substring("--settings-name=".Length);
+            }
         }
 
         if (enableOtelMetrics == true || enableOtelTraces == true)
@@ -183,7 +226,10 @@ public sealed record ObservabilityOptions(
             enableOtelTraces.Value,
             enableOtelConsole,
             otlpEndpoint,
-            serviceName);
+            serviceName,
+            string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
+            settingsPort,
+            settingsName);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -227,5 +273,8 @@ public sealed record ObservabilityOptions(
         Console.WriteLine("  --otel-console                   Enable OTel console exporter");
         Console.WriteLine("  --otel-endpoint <uri>            OTLP endpoint (env OTEL_EXPORTER_OTLP_ENDPOINT)");
         Console.WriteLine("  --otel-service-name <name>       Service name (env OTEL_SERVICE_NAME)");
+        Console.WriteLine("  --settings-host <host>           SettingsMonitor host (default 127.0.0.1)");
+        Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
+        Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
     }
 }
