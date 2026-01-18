@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Nbn.Runtime.SettingsMonitor;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -369,6 +370,25 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
 
+            if (nodes.Length == 0 || brains.Length == 0 || controllers.Length == 0)
+            {
+                var fallback = await TryLoadLocalRegistryAsync().ConfigureAwait(false);
+                if (nodes.Length == 0 && fallback.Nodes.Length > 0)
+                {
+                    nodes = fallback.Nodes;
+                }
+
+                if (brains.Length == 0 && fallback.Brains.Length > 0)
+                {
+                    brains = fallback.Brains;
+                }
+
+                if (controllers.Length == 0 && fallback.Controllers.Length > 0)
+                {
+                    controllers = fallback.Controllers;
+                }
+            }
+
             UpdateHiveMindEndpoint(nodes);
 
             var settingsResponse = await _client.ListSettingsAsync().ConfigureAwait(false);
@@ -502,6 +522,54 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         return value;
+    }
+
+    private async Task<(Nbn.Proto.Settings.NodeStatus[] Nodes, Nbn.Proto.Settings.BrainStatus[] Brains, Nbn.Proto.Settings.BrainControllerStatus[] Controllers)>
+        TryLoadLocalRegistryAsync()
+    {
+        try
+        {
+            var dbPath = Connections.SettingsDbPath;
+            if (string.IsNullOrWhiteSpace(dbPath) || !File.Exists(dbPath))
+            {
+                return (Array.Empty<Nbn.Proto.Settings.NodeStatus>(), Array.Empty<Nbn.Proto.Settings.BrainStatus>(), Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>());
+            }
+
+            var store = new SettingsMonitorStore(dbPath);
+            var nodes = await store.ListNodesAsync().ConfigureAwait(false);
+            var brains = await store.ListBrainsAsync().ConfigureAwait(false);
+            var controllers = await store.ListBrainControllersAsync().ConfigureAwait(false);
+
+            return (
+                nodes.Select(node => new Nbn.Proto.Settings.NodeStatus
+                {
+                    NodeId = node.NodeId.ToProtoUuid(),
+                    LogicalName = node.LogicalName ?? string.Empty,
+                    Address = node.Address ?? string.Empty,
+                    RootActorName = node.RootActorName ?? string.Empty,
+                    LastSeenMs = (ulong)node.LastSeenMs,
+                    IsAlive = node.IsAlive
+                }).ToArray(),
+                brains.Select(brain => new Nbn.Proto.Settings.BrainStatus
+                {
+                    BrainId = brain.BrainId.ToProtoUuid(),
+                    SpawnedMs = (ulong)brain.SpawnedMs,
+                    LastTickId = (ulong)brain.LastTickId,
+                    State = brain.State ?? string.Empty
+                }).ToArray(),
+                controllers.Select(controller => new Nbn.Proto.Settings.BrainControllerStatus
+                {
+                    BrainId = controller.BrainId.ToProtoUuid(),
+                    NodeId = controller.NodeId.ToProtoUuid(),
+                    ActorName = controller.ActorName ?? string.Empty,
+                    LastSeenMs = (ulong)controller.LastSeenMs,
+                    IsAlive = controller.IsAlive
+                }).ToArray());
+        }
+        catch
+        {
+            return (Array.Empty<Nbn.Proto.Settings.NodeStatus>(), Array.Empty<Nbn.Proto.Settings.BrainStatus>(), Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>());
+        }
     }
 
     private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes)

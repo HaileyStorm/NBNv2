@@ -8,6 +8,7 @@ public sealed class SettingsMonitorActor : IActor
 {
     private readonly SettingsMonitorStore _store;
     private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, NodeStatus> _nodes = new();
 
     public SettingsMonitorActor(SettingsMonitorStore store)
     {
@@ -80,6 +81,8 @@ public sealed class SettingsMonitorActor : IActor
             return;
         }
 
+        UpdateNodeSnapshot(nodeId, message.LogicalName, message.Address, message.RootActorName, NowMs(), true);
+
         var task = _store.UpsertNodeAsync(
             new NodeRegistration(
                 nodeId,
@@ -106,6 +109,8 @@ public sealed class SettingsMonitorActor : IActor
             return;
         }
 
+        UpdateNodeSnapshot(nodeId, message.LogicalName, null, null, NowMs(), false);
+
         var task = _store.MarkNodeOfflineAsync(nodeId, NowMs());
         context.ReenterAfter(task, completed =>
         {
@@ -126,6 +131,7 @@ public sealed class SettingsMonitorActor : IActor
         }
 
         var caps = message.Caps ?? new ProtoSettings.NodeCapabilities();
+        UpdateNodeSnapshot(nodeId, null, null, null, message.TimeMs > 0 ? (long)message.TimeMs : NowMs(), true);
         var heartbeat = new Nbn.Runtime.SettingsMonitor.NodeHeartbeat(
             nodeId,
             message.TimeMs > 0 ? (long)message.TimeMs : NowMs(),
@@ -158,7 +164,40 @@ public sealed class SettingsMonitorActor : IActor
         context.ReenterAfter(task, completed =>
         {
             var response = new ProtoSettings.NodeListResponse();
+            var merged = new Dictionary<Guid, NodeStatus>();
             foreach (var node in completed.Result)
+            {
+                merged[node.NodeId] = node;
+            }
+
+            foreach (var snapshot in _nodes.Values)
+            {
+                if (merged.TryGetValue(snapshot.NodeId, out var existing))
+                {
+                    existing.LastSeenMs = Math.Max(existing.LastSeenMs, snapshot.LastSeenMs);
+                    existing.IsAlive = snapshot.IsAlive;
+                    if (!string.IsNullOrWhiteSpace(snapshot.LogicalName))
+                    {
+                        existing.LogicalName = snapshot.LogicalName;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(snapshot.Address))
+                    {
+                        existing.Address = snapshot.Address;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(snapshot.RootActorName))
+                    {
+                        existing.RootActorName = snapshot.RootActorName;
+                    }
+
+                    continue;
+                }
+
+                merged[snapshot.NodeId] = snapshot;
+            }
+
+            foreach (var node in merged.Values)
             {
                 response.Nodes.Add(new ProtoSettings.NodeStatus
                 {
@@ -363,6 +402,49 @@ public sealed class SettingsMonitorActor : IActor
 
     private static void LogError(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [SettingsMonitor][ERROR] {message}");
+
+    private void UpdateNodeSnapshot(
+        Guid nodeId,
+        string? logicalName,
+        string? address,
+        string? rootActorName,
+        long timeMs,
+        bool isAlive)
+    {
+        if (!_nodes.TryGetValue(nodeId, out var snapshot))
+        {
+            snapshot = new NodeStatus
+            {
+                NodeId = nodeId,
+                LogicalName = logicalName ?? string.Empty,
+                Address = address ?? string.Empty,
+                RootActorName = rootActorName ?? string.Empty,
+                LastSeenMs = timeMs,
+                IsAlive = isAlive
+            };
+
+            _nodes[nodeId] = snapshot;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(logicalName))
+        {
+            snapshot.LogicalName = logicalName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(address))
+        {
+            snapshot.Address = address;
+        }
+
+        if (!string.IsNullOrWhiteSpace(rootActorName))
+        {
+            snapshot.RootActorName = rootActorName;
+        }
+
+        snapshot.LastSeenMs = Math.Max(snapshot.LastSeenMs, timeMs);
+        snapshot.IsAlive = isAlive;
+    }
 
     private static bool TryParsePid(string? value, out PID pid)
     {

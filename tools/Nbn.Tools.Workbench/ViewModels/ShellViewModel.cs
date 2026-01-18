@@ -13,6 +13,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private readonly WorkbenchClient _client;
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
+    private CancellationTokenSource? _ioReconnectCts;
 
     public ShellViewModel()
     {
@@ -87,53 +88,65 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private async Task ConnectAllAsync()
     {
-        if (!TryParsePort(Connections.LocalPortText, out var localPort))
+        try
         {
-            Connections.IoStatus = "Local port invalid.";
-            return;
-        }
+            if (!TryParsePort(Connections.LocalPortText, out var localPort))
+            {
+                Connections.IoStatus = "Local port invalid.";
+                return;
+            }
 
-        if (!TryParsePort(Connections.IoPortText, out var ioPort))
+            if (!TryParsePort(Connections.IoPortText, out var ioPort))
+            {
+                Connections.IoStatus = "IO port invalid.";
+                return;
+            }
+
+            if (!TryParsePort(Connections.ObsPortText, out var obsPort))
+            {
+                Connections.ObsStatus = "Obs port invalid.";
+                return;
+            }
+
+            _ioReconnectCts?.Cancel();
+            _ioReconnectCts = new CancellationTokenSource();
+
+            await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
+            ReceiverLabel = _client.ReceiverLabel;
+
+            await _client.ConnectSettingsAsync(
+                Connections.SettingsHost,
+                ParsePortOrDefault(Connections.SettingsPortText, 12010),
+                Connections.SettingsName);
+
+            await Orchestrator.RefreshSettingsAsync();
+
+            _ = ConnectIoWithRetryAsync(
+                Connections.IoHost,
+                ioPort,
+                Connections.IoGateway,
+                Connections.ClientName,
+                _ioReconnectCts.Token);
+
+            await _client.ConnectObservabilityAsync(
+                Connections.ObsHost,
+                obsPort,
+                Connections.DebugHub,
+                Connections.VizHub,
+                Debug.SelectedSeverity.Severity,
+                Debug.ContextRegex);
+
+            await ConnectHiveMindAsync();
+        }
+        catch (Exception ex)
         {
-            Connections.IoStatus = "IO port invalid.";
-            return;
+            Connections.IoStatus = $"Connect failed: {ex.Message}";
         }
-
-        if (!TryParsePort(Connections.ObsPortText, out var obsPort))
-        {
-            Connections.ObsStatus = "Obs port invalid.";
-            return;
-        }
-
-        await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
-        ReceiverLabel = _client.ReceiverLabel;
-
-        await _client.ConnectSettingsAsync(
-            Connections.SettingsHost,
-            ParsePortOrDefault(Connections.SettingsPortText, 12010),
-            Connections.SettingsName);
-
-        await Orchestrator.RefreshSettingsAsync();
-
-        await ConnectIoWithRetryAsync(
-            Connections.IoHost,
-            ioPort,
-            Connections.IoGateway,
-            Connections.ClientName);
-
-        await _client.ConnectObservabilityAsync(
-            Connections.ObsHost,
-            obsPort,
-            Connections.DebugHub,
-            Connections.VizHub,
-            Debug.SelectedSeverity.Severity,
-            Debug.ContextRegex);
-
-        await ConnectHiveMindAsync();
     }
 
     private void DisconnectAll()
     {
+        _ioReconnectCts?.Cancel();
         _client.DisconnectIo();
         _client.DisconnectSettings();
         _client.DisconnectObservability();
@@ -208,6 +221,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public async ValueTask DisposeAsync()
     {
         await Orchestrator.StopAllAsyncForShutdown();
+        _ioReconnectCts?.Cancel();
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 
@@ -227,12 +241,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
 
-    private async Task ConnectIoWithRetryAsync(string host, int port, string gatewayName, string clientName)
+    private async Task ConnectIoWithRetryAsync(string host, int port, string gatewayName, string clientName, CancellationToken token)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(35);
         var attempt = 0;
 
-        while (DateTime.UtcNow < deadline)
+        while (!token.IsCancellationRequested)
         {
             attempt++;
             var ack = await _client.ConnectIoAsync(host, port, gatewayName, clientName);
@@ -241,7 +254,14 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            await Task.Delay(Math.Min(3000, 500 + attempt * 250));
+            try
+            {
+                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
     }
 
