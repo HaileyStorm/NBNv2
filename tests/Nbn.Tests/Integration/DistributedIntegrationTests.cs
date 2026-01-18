@@ -55,7 +55,13 @@ public class DistributedIntegrationTests
             Props.FromProducer(() => new RemoteShardActor(brainId, shardId, routerRemote, sink, hiveMindRemote)));
         var shardRemote = EnsureAddress(shardActor, shardNode.Address);
 
-        shardNode.Root.Send(hiveMindRemote, new RegisterShard(brainId, shardId.RegionId, shardId.ShardIndex, shardRemote));
+        shardNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardRemote)
+        });
 
         await WaitForStatus(hiveNode.Root, hiveMindLocal, s => s.RegisteredBrains == 1, TimeSpan.FromSeconds(5));
         await WaitForRoutingTable(brainNode.Root, router, table => table.Count == 1, TimeSpan.FromSeconds(5));
@@ -131,6 +137,9 @@ public class DistributedIntegrationTests
 
     private static PID EnsureAddress(PID pid, string address)
         => string.IsNullOrWhiteSpace(pid.Address) ? new PID(address, pid.Id) : pid;
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
     private static async Task<PID> WaitForSignalRouter(IRootContext root, PID brainRoot, TimeSpan timeout)
     {

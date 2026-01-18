@@ -1,12 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
-using Nbn.Proto.Control;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Shared.HiveMind;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.HiveMind;
 
@@ -84,28 +84,43 @@ public sealed class HiveMindActor : IActor
             case UnregisterShard message:
                 UnregisterShard(context, message);
                 break;
+            case ProtoControl.RegisterBrain message:
+                HandleRegisterBrain(context, message);
+                break;
+            case ProtoControl.UpdateBrainSignalRouter message:
+                HandleUpdateBrainSignalRouter(context, message);
+                break;
+            case ProtoControl.UnregisterBrain message:
+                HandleUnregisterBrain(context, message);
+                break;
+            case ProtoControl.RegisterShard message:
+                HandleRegisterShard(context, message);
+                break;
+            case ProtoControl.UnregisterShard message:
+                HandleUnregisterShard(context, message);
+                break;
             case PauseBrainRequest message:
                 PauseBrain(context, message.BrainId, message.Reason);
                 break;
             case ResumeBrainRequest message:
                 ResumeBrain(context, message.BrainId);
                 break;
-            case PauseBrain message:
+            case ProtoControl.PauseBrain message:
                 if (message.BrainId.TryToGuid(out var pauseId))
                 {
                     PauseBrain(context, pauseId, message.Reason);
                 }
                 break;
-            case ResumeBrain message:
+            case ProtoControl.ResumeBrain message:
                 if (message.BrainId.TryToGuid(out var resumeId))
                 {
                     ResumeBrain(context, resumeId);
                 }
                 break;
-            case TickComputeDone message:
+            case ProtoControl.TickComputeDone message:
                 HandleTickComputeDone(context, message);
                 break;
-            case TickDeliverDone message:
+            case ProtoControl.TickDeliverDone message:
                 HandleTickDeliverDone(context, message);
                 break;
             case TickPhaseTimeout message:
@@ -129,19 +144,22 @@ public sealed class HiveMindActor : IActor
     }
 
     private void RegisterBrain(IContext context, RegisterBrain message)
+        => RegisterBrainInternal(context, message.BrainId, message.BrainRootPid, message.SignalRouterPid);
+
+    private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid)
     {
-        var isNew = !_brains.TryGetValue(message.BrainId, out var brain) || brain is null;
+        var isNew = !_brains.TryGetValue(brainId, out var brain) || brain is null;
         if (isNew)
         {
-            brain = new BrainState(message.BrainId)
+            brain = new BrainState(brainId)
             {
                 SpawnedMs = NowMs()
             };
-            _brains[message.BrainId] = brain;
+            _brains[brainId] = brain;
         }
 
-        var brainRootPid = NormalizePid(context, message.BrainRootPid);
-        var routerPid = NormalizePid(context, message.SignalRouterPid);
+        brainRootPid = NormalizePid(context, brainRootPid);
+        routerPid = NormalizePid(context, routerPid);
 
         if (routerPid is not null && string.IsNullOrWhiteSpace(routerPid.Address))
         {
@@ -180,13 +198,18 @@ public sealed class HiveMindActor : IActor
 
     private void UpdateBrainSignalRouter(IContext context, UpdateBrainSignalRouter message)
     {
-        if (!_brains.TryGetValue(message.BrainId, out var brain))
+        UpdateBrainSignalRouter(context, message.BrainId, message.SignalRouterPid);
+    }
+
+    private void UpdateBrainSignalRouter(IContext context, Guid brainId, PID routerPid)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
         {
-            brain = new BrainState(message.BrainId);
-            _brains.Add(message.BrainId, brain);
+            brain = new BrainState(brainId);
+            _brains.Add(brainId, brain);
         }
 
-        var routerPid = NormalizePid(context, message.SignalRouterPid) ?? message.SignalRouterPid;
+        routerPid = NormalizePid(context, routerPid) ?? routerPid;
         if (routerPid.Address.Length == 0 && brain.BrainRootPid is not null && brain.BrainRootPid.Address.Length > 0)
         {
             routerPid = new PID(brain.BrainRootPid.Address, routerPid.Id);
@@ -221,35 +244,45 @@ public sealed class HiveMindActor : IActor
 
     private void RegisterShard(IContext context, RegisterShard message)
     {
-        if (!_brains.TryGetValue(message.BrainId, out var brain))
-        {
-            brain = new BrainState(message.BrainId);
-            _brains.Add(message.BrainId, brain);
-        }
-
-        if (!ShardId32.TryFrom(message.RegionId, message.ShardIndex, out var shardId))
-        {
-            Log($"RegisterShard invalid shard index: brain {message.BrainId} region {message.RegionId} shardIndex {message.ShardIndex}.");
-            return;
-        }
-
-        var shardPid = NormalizePid(context, message.ShardPid) ?? message.ShardPid;
-        brain.Shards[shardId] = shardPid;
-        UpdateRoutingTable(context, brain);
-
-        if (_phase == TickPhase.Compute && _tick is not null)
-        {
-            Log($"Shard registered mid-compute for brain {message.BrainId}; will start next tick.");
-        }
+        RegisterShardInternal(context, message.BrainId, message.RegionId, message.ShardIndex, message.ShardPid);
     }
 
     private void UnregisterShard(IContext context, UnregisterShard message)
     {
-        if (_brains.TryGetValue(message.BrainId, out var brain))
+        UnregisterShardInternal(context, message.BrainId, message.RegionId, message.ShardIndex);
+    }
+
+    private void RegisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex, PID shardPid)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
         {
-            if (!ShardId32.TryFrom(message.RegionId, message.ShardIndex, out var shardId))
+            brain = new BrainState(brainId);
+            _brains.Add(brainId, brain);
+        }
+
+        if (!ShardId32.TryFrom(regionId, shardIndex, out var shardId))
+        {
+            Log($"RegisterShard invalid shard index: brain {brainId} region {regionId} shardIndex {shardIndex}.");
+            return;
+        }
+
+        var normalized = NormalizePid(context, shardPid) ?? shardPid;
+        brain.Shards[shardId] = normalized;
+        UpdateRoutingTable(context, brain);
+
+        if (_phase == TickPhase.Compute && _tick is not null)
+        {
+            Log($"Shard registered mid-compute for brain {brainId}; will start next tick.");
+        }
+    }
+
+    private void UnregisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex)
+    {
+        if (_brains.TryGetValue(brainId, out var brain))
+        {
+            if (!ShardId32.TryFrom(regionId, shardIndex, out var shardId))
             {
-                Log($"UnregisterShard invalid shard index: brain {message.BrainId} region {message.RegionId} shardIndex {message.ShardIndex}.");
+                Log($"UnregisterShard invalid shard index: brain {brainId} region {regionId} shardIndex {shardIndex}.");
                 return;
             }
 
@@ -262,12 +295,74 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (ShardId32.TryFrom(message.RegionId, message.ShardIndex, out var pendingShardId)
-            && _pendingCompute.Remove(new ShardKey(message.BrainId, pendingShardId)))
+        if (ShardId32.TryFrom(regionId, shardIndex, out var pendingShardId)
+            && _pendingCompute.Remove(new ShardKey(brainId, pendingShardId)))
         {
             _tick.ExpectedComputeCount = Math.Max(_tick.CompletedComputeCount, _tick.ExpectedComputeCount - 1);
             MaybeCompleteCompute(context);
         }
+    }
+
+    private void HandleRegisterBrain(IContext context, ProtoControl.RegisterBrain message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var brainRootPid = ParsePid(message.BrainRootPid);
+        var routerPid = ParsePid(message.SignalRouterPid);
+        RegisterBrainInternal(context, brainId, brainRootPid, routerPid);
+    }
+
+    private void HandleUpdateBrainSignalRouter(IContext context, ProtoControl.UpdateBrainSignalRouter message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var routerPid = ParsePid(message.SignalRouterPid);
+        if (routerPid is null)
+        {
+            return;
+        }
+
+        UpdateBrainSignalRouter(context, brainId, routerPid);
+    }
+
+    private void HandleUnregisterBrain(IContext context, ProtoControl.UnregisterBrain message)
+    {
+        if (TryGetGuid(message.BrainId, out var brainId))
+        {
+            UnregisterBrain(context, brainId);
+        }
+    }
+
+    private void HandleRegisterShard(IContext context, ProtoControl.RegisterShard message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var shardPid = ParsePid(message.ShardPid);
+        if (shardPid is null)
+        {
+            return;
+        }
+
+        RegisterShardInternal(context, brainId, (int)message.RegionId, (int)message.ShardIndex, shardPid);
+    }
+
+    private void HandleUnregisterShard(IContext context, ProtoControl.UnregisterShard message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        UnregisterShardInternal(context, brainId, (int)message.RegionId, (int)message.ShardIndex);
     }
 
     private void PauseBrain(IContext context, Guid brainId, string? reason)
@@ -339,7 +434,7 @@ public sealed class HiveMindActor : IActor
 
             context.Send(
                 computeTarget,
-                new TickCompute
+                new ProtoControl.TickCompute
                 {
                     TickId = _tick.TickId,
                     TargetTickHz = _backpressure.TargetTickHz
@@ -357,7 +452,7 @@ public sealed class HiveMindActor : IActor
         SchedulePhaseTimeout(context, TickPhase.Compute, _tick.TickId, _options.ComputeTimeoutMs);
     }
 
-    private void HandleTickComputeDone(IContext context, TickComputeDone message)
+    private void HandleTickComputeDone(IContext context, ProtoControl.TickComputeDone message)
     {
         if (_tick is null)
         {
@@ -395,7 +490,7 @@ public sealed class HiveMindActor : IActor
         MaybeCompleteCompute(context);
     }
 
-    private void HandleTickDeliverDone(IContext context, TickDeliverDone message)
+    private void HandleTickDeliverDone(IContext context, ProtoControl.TickDeliverDone message)
     {
         if (_tick is null)
         {
@@ -500,7 +595,7 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
             _pendingDeliver.Add(brain.BrainId);
-            context.Send(deliverTarget, new TickDeliver { TickId = _tick.TickId });
+            context.Send(deliverTarget, new ProtoControl.TickDeliver { TickId = _tick.TickId });
         }
 
         _tick.ExpectedDeliverCount = _pendingDeliver.Count;
@@ -781,6 +876,49 @@ public sealed class HiveMindActor : IActor
         }
 
         return pid;
+    }
+
+    private static bool TryGetGuid(Nbn.Proto.Uuid? uuid, out Guid guid)
+    {
+        if (uuid is null)
+        {
+            guid = Guid.Empty;
+            return false;
+        }
+
+        return uuid.TryToGuid(out guid);
+    }
+
+    private static PID? ParsePid(string? value)
+        => TryParsePid(value, out var pid) ? pid : null;
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
     }
 
     private HiveMindStatus BuildStatus()

@@ -1,6 +1,7 @@
-using Nbn.Proto.Control;
 using Nbn.Shared.HiveMind;
+using Nbn.Shared;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.Brain;
 
@@ -46,16 +47,16 @@ public sealed class BrainRootActor : IActor
             case GetRoutingTable:
                 context.Respond(_routingSnapshot);
                 break;
-            case TickCompute tickCompute:
+            case ProtoControl.TickCompute tickCompute:
                 ForwardToSignalRouter(context, tickCompute);
                 break;
-            case TickDeliver tickDeliver:
+            case ProtoControl.TickDeliver tickDeliver:
                 ForwardToSignalRouter(context, tickDeliver);
                 break;
-            case TickComputeDone tickComputeDone:
+            case ProtoControl.TickComputeDone tickComputeDone:
                 ForwardToHiveMind(context, tickComputeDone);
                 break;
-            case TickDeliverDone tickDeliverDone:
+            case ProtoControl.TickDeliverDone tickDeliverDone:
                 ForwardToHiveMind(context, tickDeliverDone);
                 break;
             case Terminated terminated:
@@ -129,6 +130,31 @@ public sealed class BrainRootActor : IActor
         var brainRootPid = ToRemotePid(context, context.Self);
         var routerPid = _signalRouterPid is null ? null : ToRemotePid(context, _signalRouterPid);
 
+        if (!string.IsNullOrWhiteSpace(_hiveMindPid.Address))
+        {
+            if (forceRegister)
+            {
+                context.Send(_hiveMindPid, new ProtoControl.RegisterBrain
+                {
+                    BrainId = _brainId.ToProtoUuid(),
+                    BrainRootPid = PidToString(brainRootPid),
+                    SignalRouterPid = routerPid is null ? string.Empty : PidToString(routerPid)
+                });
+                return;
+            }
+
+            if (routerPid is not null)
+            {
+                context.Send(_hiveMindPid, new ProtoControl.UpdateBrainSignalRouter
+                {
+                    BrainId = _brainId.ToProtoUuid(),
+                    SignalRouterPid = PidToString(routerPid)
+                });
+            }
+
+            return;
+        }
+
         if (forceRegister)
         {
             context.Send(_hiveMindPid, new RegisterBrain(_brainId, brainRootPid, routerPid));
@@ -157,10 +183,22 @@ public sealed class BrainRootActor : IActor
         return new PID(address, pid.Id);
     }
 
+    private static string PidToString(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
     private void UnregisterHiveMind(IContext context)
     {
         if (_hiveMindPid is null)
         {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_hiveMindPid.Address))
+        {
+            context.Send(_hiveMindPid, new ProtoControl.UnregisterBrain
+            {
+                BrainId = _brainId.ToProtoUuid()
+            });
             return;
         }
 

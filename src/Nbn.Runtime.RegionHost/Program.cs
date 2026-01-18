@@ -9,6 +9,7 @@ using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
+using ProtoControl = Nbn.Proto.Control;
 
 Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
 Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
@@ -65,7 +66,13 @@ var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, confi
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 var shardRemotePid = new PID(GetAdvertisedAddress(remoteConfig), shardPid.Id);
 
-system.Root.Send(tickPid, new RegisterShard(options.BrainId, options.RegionId, options.ShardIndex, shardRemotePid));
+system.Root.Send(tickPid, new ProtoControl.RegisterShard
+{
+    BrainId = options.BrainId.ToProtoUuid(),
+    RegionId = (uint)options.RegionId,
+    ShardIndex = (uint)options.ShardIndex,
+    ShardPid = PidLabel(shardRemotePid)
+});
 
 Console.WriteLine("NBN RegionHost online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
@@ -95,7 +102,12 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
 
-system.Root.Send(tickPid, new UnregisterShard(options.BrainId, options.RegionId, options.ShardIndex));
+system.Root.Send(tickPid, new ProtoControl.UnregisterShard
+{
+    BrainId = options.BrainId.ToProtoUuid(),
+    RegionId = (uint)options.RegionId,
+    ShardIndex = (uint)options.ShardIndex
+});
 
 if (settingsReporter is not null)
 {

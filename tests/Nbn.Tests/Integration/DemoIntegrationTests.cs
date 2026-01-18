@@ -111,8 +111,20 @@ public class DemoIntegrationTests
             var region1Remote = EnsureAddress(region1Pid, regionNode.Address);
             var region31Remote = EnsureAddress(region31Pid, regionNode.Address);
 
-            regionNode.Root.Send(hiveMindRemote, new RegisterShard(brainId, 1, 0, region1Remote));
-            regionNode.Root.Send(hiveMindRemote, new RegisterShard(brainId, NbnConstants.OutputRegionId, 0, region31Remote));
+            regionNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 1,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region1Remote)
+            });
+            regionNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = (uint)NbnConstants.OutputRegionId,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region31Remote)
+            });
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -325,6 +337,9 @@ public class DemoIntegrationTests
 
     private static PID EnsureAddress(PID pid, string address)
         => string.IsNullOrWhiteSpace(pid.Address) ? new PID(address, pid.Id) : pid;
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
     private static async Task<PID> WaitForSignalRouter(IRootContext root, PID brainRoot, TimeSpan timeout)
     {
