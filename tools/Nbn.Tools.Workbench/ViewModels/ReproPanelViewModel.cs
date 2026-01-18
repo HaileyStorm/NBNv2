@@ -38,9 +38,8 @@ public sealed class ReproPanelViewModel : ViewModelBase
         };
         SpawnPolicies = new List<SpawnPolicyOption>
         {
-            new("Default", SpawnChildPolicy.SpawnChildDefaultOn),
-            new("Never", SpawnChildPolicy.SpawnChildNever),
-            new("Always", SpawnChildPolicy.SpawnChildAlways)
+            new("Yes", SpawnChildPolicy.SpawnChildAlways),
+            new("No", SpawnChildPolicy.SpawnChildNever)
         };
         _selectedStrengthSource = StrengthSources[0];
         _selectedSpawnPolicy = SpawnPolicies[0];

@@ -27,12 +27,12 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Navigation = new ObservableCollection<NavItemViewModel>
         {
-            new("Orchestrator", "Nodes + Settings", "?", Orchestrator),
-            new("IO + Energy", "Brain inputs & outputs", "?", Io),
-            new("Visualizer", "Activity stream", "?", Viz),
-            new("Debug", "Logs & filters", "?", Debug),
-            new("Designer", "Build + import", "?", Designer),
-            new("Reproduction", "Spawn variants", "?", Repro)
+            new("Orchestrator", "Nodes + Settings", "O", Orchestrator),
+            new("IO + Energy", "Brain inputs & outputs", "I", Io),
+            new("Visualizer", "Activity stream", "V", Viz),
+            new("Debug", "Logs & filters", "D", Debug),
+            new("Designer", "Build + import", "S", Designer),
+            new("Reproduction", "Spawn variants", "R", Repro)
         };
 
         SelectedNav = Navigation[0];

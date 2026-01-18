@@ -14,7 +14,7 @@
       <StackPanel Spacing="20">
         <StackPanel Spacing="6">
           <TextBlock Text="NBN Workbench" Classes="brand-title" />
-          <TextBlock Text="Orchestrate ? Observe ? Evolve" Classes="brand-subtitle" />
+          <TextBlock Text="Orchestrate / Observe / Evolve" Classes="brand-subtitle" />
         </StackPanel>
         <ListBox ItemsSource="{Binding Navigation}" SelectedItem="{Binding SelectedNav}" BorderThickness="0">
           <ListBox.ItemTemplate>

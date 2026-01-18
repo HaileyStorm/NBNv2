@@ -25,29 +25,23 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Endpoints" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <TextBlock Text="IO Host" Classes="muted" />
             <TextBox Grid.Column="1" Text="{Binding Connections.IoHost}" Width="160" />
             <TextBlock Grid.Column="2" Text="IO Port" Classes="muted" />
             <TextBox Grid.Column="3" Text="{Binding Connections.IoPortText}" Width="90" />
-            <TextBlock Grid.Row="1" Text="Gateway" Classes="muted" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.IoGateway}" Width="160" />
-            <TextBlock Grid.Row="1" Grid.Column="2" Text="Obs Host" Classes="muted" />
-            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding Connections.ObsHost}" Width="160" />
-          </Grid>
-          <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto" ColumnSpacing="12">
-            <TextBlock Text="Obs Port" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
-            <TextBlock Grid.Column="2" Text="Debug Hub" Classes="muted" />
-            <TextBox Grid.Column="3" Text="{Binding Connections.DebugHub}" Width="140" />
-          </Grid>
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-            <TextBlock Text="Viz Hub" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding Connections.VizHub}" Width="140" />
-          </Grid>
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-            <TextBlock Text="Local Bind" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding Connections.LocalBindHost}" Width="160" />
+            <TextBlock Grid.Column="4" Text="Gateway" Classes="muted" />
+            <TextBox Grid.Column="5" Text="{Binding Connections.IoGateway}" Width="140" />
+
+            <TextBlock Grid.Row="1" Text="Obs Host" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.ObsHost}" Width="160" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Obs Port" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding Connections.ObsPortText}" Width="90" />
+            <TextBlock Grid.Row="1" Grid.Column="4" Text="Debug Hub" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding Connections.DebugHub}" Width="140" />
+
+            <TextBlock Grid.Row="2" Text="Viz Hub" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding Connections.VizHub}" Width="140" />
           </Grid>
         </StackPanel>
       </Border>

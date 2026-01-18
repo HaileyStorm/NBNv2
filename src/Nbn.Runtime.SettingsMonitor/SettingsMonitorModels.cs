@@ -22,13 +22,15 @@ public sealed record NodeHeartbeat(
     long TimeMs,
     NodeCapabilities Capabilities);
 
-public sealed record NodeStatus(
-    Guid NodeId,
-    string LogicalName,
-    string Address,
-    string RootActorName,
-    long LastSeenMs,
-    bool IsAlive);
+public sealed class NodeStatus
+{
+    public Guid NodeId { get; set; }
+    public string LogicalName { get; set; } = string.Empty;
+    public string Address { get; set; } = string.Empty;
+    public string RootActorName { get; set; } = string.Empty;
+    public long LastSeenMs { get; set; }
+    public bool IsAlive { get; set; }
+}
 
 public sealed record SettingEntry(
     string Key,
