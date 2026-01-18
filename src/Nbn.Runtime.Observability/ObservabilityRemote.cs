@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Nbn.Proto.Debug;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Proto.Remote;
 
@@ -39,6 +40,7 @@ public static class ObservabilityRemote
         config = config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
             NbnDebugReflection.Descriptor,
+            NbnSettingsReflection.Descriptor,
             NbnVizReflection.Descriptor);
 
         return config;

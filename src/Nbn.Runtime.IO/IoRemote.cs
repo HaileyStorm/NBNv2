@@ -2,6 +2,7 @@ using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Proto.Remote;
 
@@ -43,6 +44,7 @@ public static class IoRemote
             NbnControlReflection.Descriptor,
             NbnIoReflection.Descriptor,
             NbnReproReflection.Descriptor,
+            NbnSettingsReflection.Descriptor,
             NbnSignalsReflection.Descriptor);
 
         return config;

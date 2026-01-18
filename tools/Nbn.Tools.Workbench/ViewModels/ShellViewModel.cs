@@ -229,16 +229,19 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private async Task ConnectIoWithRetryAsync(string host, int port, string gatewayName, string clientName)
     {
-        const int maxAttempts = 3;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        var deadline = DateTime.UtcNow.AddSeconds(35);
+        var attempt = 0;
+
+        while (DateTime.UtcNow < deadline)
         {
+            attempt++;
             var ack = await _client.ConnectIoAsync(host, port, gatewayName, clientName);
             if (ack is not null)
             {
                 return;
             }
 
-            await Task.Delay(500 * attempt);
+            await Task.Delay(Math.Min(3000, 500 + attempt * 250));
         }
     }
 

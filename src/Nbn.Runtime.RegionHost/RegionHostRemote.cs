@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Proto.Remote;
 
@@ -40,6 +41,7 @@ public static class RegionHostRemote
         config = config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
             NbnControlReflection.Descriptor,
+            NbnSettingsReflection.Descriptor,
             NbnSignalsReflection.Descriptor,
             NbnIoReflection.Descriptor);
 

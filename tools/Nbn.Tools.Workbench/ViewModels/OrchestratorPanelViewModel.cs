@@ -139,11 +139,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             if (index >= 0)
             {
-                Settings[index].UpdateFromServer(item.Value, item.Updated, preserveEdits: true);
+                Settings[index].UpdateFromServer(item.Value, FormatUpdated(item.Updated), preserveEdits: true);
             }
             else
             {
-                Settings.Add(new SettingEntryViewModel(item.Key, item.Value, item.Updated));
+                Settings.Add(new SettingEntryViewModel(item.Key, item.Value, FormatUpdated(item.Updated)));
             }
         });
     }
@@ -375,7 +375,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
                     entry.Value ?? string.Empty,
-                    entry.UpdatedMs.ToString()))
+                    FormatUpdated(entry.UpdatedMs)))
                 .ToList() ?? new List<SettingItem>();
 
             _dispatcher.Post(() =>
@@ -397,11 +397,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     var existing = Settings.FirstOrDefault(item => string.Equals(item.Key, entry.Key, StringComparison.OrdinalIgnoreCase));
                     if (existing is null)
                     {
-                        Settings.Add(new SettingEntryViewModel(entry.Key, entry.Value, entry.Updated));
+                        Settings.Add(new SettingEntryViewModel(entry.Key, entry.Value, FormatUpdated(entry.Updated)));
                     }
                     else
                     {
-                        existing.UpdateFromServer(entry.Value, entry.Updated, preserveEdits: true);
+                        existing.UpdateFromServer(entry.Value, FormatUpdated(entry.Updated), preserveEdits: true);
                     }
                 }
 
@@ -458,7 +458,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             _dispatcher.Post(() =>
             {
-                entry.MarkApplied(result.Value ?? entry.Value, result.UpdatedMs.ToString());
+                entry.MarkApplied(result.Value ?? entry.Value, FormatUpdated(result.UpdatedMs));
             });
         }
 
@@ -471,6 +471,35 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         {
             collection.RemoveAt(collection.Count - 1);
         }
+    }
+
+    private static string FormatUpdated(long updatedMs)
+    {
+        if (updatedMs <= 0)
+        {
+            return string.Empty;
+        }
+
+        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(updatedMs).ToLocalTime();
+        return timestamp.ToString("g");
+    }
+
+    private static string FormatUpdated(ulong updatedMs)
+        => FormatUpdated((long)updatedMs);
+
+    private static string FormatUpdated(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        if (long.TryParse(value, out var parsed))
+        {
+            return FormatUpdated(parsed);
+        }
+
+        return value;
     }
 
     private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes)

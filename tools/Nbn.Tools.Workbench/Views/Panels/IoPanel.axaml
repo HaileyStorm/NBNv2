@@ -9,49 +9,52 @@
         <StackPanel Spacing="8">
           <TextBlock Text="IO + Energy" Classes="card-title" />
           <TextBlock Text="Applies to all active brains (selection lives in Visualizer)." Classes="muted" />
+          <TextBlock Text="Selected Brain" Classes="muted" />
           <TextBox Text="{Binding BrainIdText}" IsReadOnly="True" />
           <TextBlock Text="{Binding ActiveBrainsSummary}" Classes="muted" />
           <TextBlock Text="Use Visualizer for per-brain inputs, outputs, and focus." Classes="card-subtitle" />
         </StackPanel>
       </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="8">
-          <TextBlock Text="Energy + Cost" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
-            <TextBlock Text="Credit" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding EnergyCreditText}" Width="120" />
-            <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyCreditCommand}" />
-            <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding EnergyRateText}" Width="120" />
-            <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
-          </Grid>
-          <StackPanel Orientation="Horizontal" Spacing="12">
-            <CheckBox Content="Cost + Energy Enabled" IsChecked="{Binding CostEnergyEnabled}" />
-            <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Energy + Cost" Classes="card-title" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <TextBlock Text="Credit" Classes="muted" />
+              <TextBox Grid.Column="1" Text="{Binding EnergyCreditText}" Width="100" />
+              <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyCreditCommand}" />
+              <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding EnergyRateText}" Width="100" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
+            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <CheckBox Content="Cost + Energy Enabled" IsChecked="{Binding CostEnergyEnabled}" />
+              <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
+            </StackPanel>
           </StackPanel>
-        </StackPanel>
-      </Border>
+        </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="8">
-          <TextBlock Text="Plasticity" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
-            <TextBlock Text="Mode" Classes="muted" />
-            <ComboBox Grid.Column="1" ItemsSource="{Binding PlasticityModes}" SelectedItem="{Binding SelectedPlasticityMode}" Width="180">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}" />
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-            <CheckBox Grid.Column="2" Content="Enabled" IsChecked="{Binding PlasticityEnabled}" />
-            <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PlasticityRateText}" Width="100" />
-            <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyPlasticityCommand}" />
-          </Grid>
-        </StackPanel>
-      </Border>
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Plasticity" Classes="card-title" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+              <TextBlock Text="Mode" Classes="muted" />
+              <ComboBox Grid.Column="1" ItemsSource="{Binding PlasticityModes}" SelectedItem="{Binding SelectedPlasticityMode}" Width="160">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <CheckBox Grid.Column="2" Content="Enabled" IsChecked="{Binding PlasticityEnabled}" />
+              <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PlasticityRateText}" Width="90" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyPlasticityCommand}" />
+            </Grid>
+          </StackPanel>
+        </Border>
+      </Grid>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

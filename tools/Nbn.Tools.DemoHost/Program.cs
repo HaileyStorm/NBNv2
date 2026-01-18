@@ -2,6 +2,7 @@ using JsonSerializer = System.Text.Json.JsonSerializer;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Signal;
+using Nbn.Proto.Settings;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Brain;
 using Nbn.Shared;
@@ -286,6 +287,7 @@ static RemoteConfig BuildRemoteConfig(string bindHost, int port, string? adverti
     config = config.WithProtoMessages(
         NbnCommonReflection.Descriptor,
         NbnControlReflection.Descriptor,
+        NbnSettingsReflection.Descriptor,
         NbnSignalsReflection.Descriptor);
 
     return config;

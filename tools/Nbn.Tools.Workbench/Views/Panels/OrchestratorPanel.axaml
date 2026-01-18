@@ -170,11 +170,11 @@
               <ItemsControl ItemsSource="{Binding Settings}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12" Margin="0,4">
-                      <TextBlock Text="{Binding Key}" Classes="row-title" />
-                      <TextBox Grid.Column="1" Text="{Binding Value}" Width="220" />
-                      <TextBlock Grid.Column="2" Text="{Binding Updated}" Classes="muted" />
-                    </Grid>
+                  <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12" Margin="0,4">
+                      <TextBlock Text="{Binding Key}" Classes="row-title" TextWrapping="Wrap" />
+                      <TextBox Grid.Column="1" Text="{Binding Value}" Width="160" />
+                      <TextBlock Grid.Column="2" Text="{Binding Updated}" Classes="muted" VerticalAlignment="Center" />
+                  </Grid>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
