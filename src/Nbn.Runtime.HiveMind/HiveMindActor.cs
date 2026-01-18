@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using Nbn.Proto.Control;
 using Nbn.Runtime.Brain;
+using Nbn.Runtime.SettingsMonitor;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Shared.HiveMind;
@@ -11,6 +14,8 @@ public sealed class HiveMindActor : IActor
 {
     private readonly HiveMindOptions _options;
     private readonly BackpressureController _backpressure;
+    private readonly SettingsMonitorStore? _settingsStore;
+    private readonly Task? _settingsInitTask;
     private readonly Dictionary<Guid, BrainState> _brains = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
@@ -30,6 +35,12 @@ public sealed class HiveMindActor : IActor
         _options = options;
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
+
+        if (!string.IsNullOrWhiteSpace(options.SettingsDbPath))
+        {
+            _settingsStore = new SettingsMonitorStore(options.SettingsDbPath);
+            _settingsInitTask = _settingsStore.InitializeAsync();
+        }
     }
 
     public Task ReceiveAsync(IContext context)
@@ -77,7 +88,7 @@ public sealed class HiveMindActor : IActor
                 PauseBrain(context, message.BrainId, message.Reason);
                 break;
             case ResumeBrainRequest message:
-                ResumeBrain(message.BrainId);
+                ResumeBrain(context, message.BrainId);
                 break;
             case PauseBrain message:
                 if (message.BrainId.TryToGuid(out var pauseId))
@@ -88,7 +99,7 @@ public sealed class HiveMindActor : IActor
             case ResumeBrain message:
                 if (message.BrainId.TryToGuid(out var resumeId))
                 {
-                    ResumeBrain(resumeId);
+                    ResumeBrain(context, resumeId);
                 }
                 break;
             case TickComputeDone message:
@@ -119,10 +130,14 @@ public sealed class HiveMindActor : IActor
 
     private void RegisterBrain(IContext context, RegisterBrain message)
     {
-        if (!_brains.TryGetValue(message.BrainId, out var brain))
+        var isNew = !_brains.TryGetValue(message.BrainId, out var brain) || brain is null;
+        if (isNew)
         {
-            brain = new BrainState(message.BrainId);
-            _brains.Add(message.BrainId, brain);
+            brain = new BrainState(message.BrainId)
+            {
+                SpawnedMs = NowMs()
+            };
+            _brains[message.BrainId] = brain;
         }
 
         var brainRootPid = NormalizePid(context, message.BrainRootPid);
@@ -146,17 +161,21 @@ public sealed class HiveMindActor : IActor
             }
         }
 
+        var brainState = brain ?? throw new InvalidOperationException("Brain state was not initialized.");
+
         if (brainRootPid is not null)
         {
-            brain.BrainRootPid = brainRootPid;
+            brainState.BrainRootPid = brainRootPid;
         }
 
         if (routerPid is not null)
         {
-            brain.SignalRouterPid = routerPid;
+            brainState.SignalRouterPid = routerPid;
         }
 
-        UpdateRoutingTable(context, brain);
+        UpdateRoutingTable(context, brainState);
+
+        ReportBrainRegistration(context, brainState);
     }
 
     private void UpdateBrainSignalRouter(IContext context, UpdateBrainSignalRouter message)
@@ -183,6 +202,8 @@ public sealed class HiveMindActor : IActor
         {
             return;
         }
+
+        ReportBrainUnregistered(context, brainId);
 
         if (_phase == TickPhase.Compute)
         {
@@ -269,14 +290,17 @@ public sealed class HiveMindActor : IActor
         {
             MaybeCompleteDeliver(context);
         }
+
+        ReportBrainState(context, brainId, "Paused", reason);
     }
 
-    private void ResumeBrain(Guid brainId)
+    private void ResumeBrain(IContext context, Guid brainId)
     {
         if (_brains.TryGetValue(brainId, out var brain))
         {
             brain.Paused = false;
             brain.PausedReason = null;
+            ReportBrainState(context, brainId, "Active", null);
         }
     }
 
@@ -403,6 +427,7 @@ public sealed class HiveMindActor : IActor
         }
 
         _tick.CompletedDeliverCount++;
+        ReportBrainTick(context, brainId, message.TickId);
         MaybeCompleteDeliver(context);
     }
 
@@ -621,6 +646,11 @@ public sealed class HiveMindActor : IActor
         }
 
         Log($"Paused all brains: {reason}");
+
+        foreach (var brain in _brains.Values)
+        {
+            ReportBrainState(context, brain.BrainId, "Paused", reason);
+        }
     }
 
     private void RequestReschedule(IContext context, string reason)
@@ -874,9 +904,133 @@ public sealed class HiveMindActor : IActor
         public PID? SignalRouterPid { get; set; }
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
+        public long SpawnedMs { get; set; }
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
     }
 
     private readonly record struct ShardKey(Guid BrainId, ShardId32 ShardId);
+
+    private void ReportBrainRegistration(IContext context, BrainState brain)
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        var controllerPid = brain.BrainRootPid ?? brain.SignalRouterPid;
+        RunSettingsTask(
+            context,
+            async store =>
+            {
+                await store.UpsertBrainAsync(
+                    brain.BrainId,
+                    brain.Paused ? "Paused" : "Active",
+                    brain.SpawnedMs,
+                    (long)_lastCompletedTickId);
+
+                if (controllerPid is null)
+                {
+                    return;
+                }
+
+                var nodeAddress = ResolveNodeAddress(context, controllerPid);
+                var nodeId = DeriveNodeId(nodeAddress);
+
+                await store.UpsertNodeAsync(
+                    new NodeRegistration(nodeId, nodeAddress, nodeAddress, controllerPid.Id),
+                    NowMs());
+
+                await store.UpsertBrainControllerAsync(
+                    new BrainControllerRegistration(brain.BrainId, nodeId, PidLabel(controllerPid)),
+                    NowMs());
+            });
+    }
+
+    private void ReportBrainUnregistered(IContext context, Guid brainId)
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        RunSettingsTask(
+            context,
+            async store =>
+            {
+                await store.UpdateBrainStateAsync(brainId, "Dead");
+                await store.MarkBrainControllerOfflineAsync(brainId, NowMs());
+            });
+    }
+
+    private void ReportBrainState(IContext context, Guid brainId, string state, string? notes)
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        RunSettingsTask(
+            context,
+            store => store.UpdateBrainStateAsync(brainId, state, notes));
+    }
+
+    private void ReportBrainTick(IContext context, Guid brainId, ulong tickId)
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        RunSettingsTask(
+            context,
+            async store =>
+            {
+                await store.UpdateBrainTickAsync(brainId, (long)tickId);
+                await store.RecordBrainControllerHeartbeatAsync(
+                    new Nbn.Runtime.SettingsMonitor.BrainControllerHeartbeat(brainId, NowMs()));
+            });
+    }
+
+    private void RunSettingsTask(IContext context, Func<SettingsMonitorStore, Task> action)
+    {
+        if (_settingsStore is null)
+        {
+            return;
+        }
+
+        var initTask = _settingsInitTask ?? Task.CompletedTask;
+        var store = _settingsStore;
+        var task = initTask.ContinueWith(_ => action(store)).Unwrap();
+
+        context.ReenterAfter(task, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"SettingsMonitor update failed: {completed.Exception?.GetBaseException().Message}");
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private static string ResolveNodeAddress(IContext context, PID pid)
+    {
+        if (!string.IsNullOrWhiteSpace(pid.Address))
+        {
+            return pid.Address;
+        }
+
+        var systemAddress = context.System.Address;
+        return string.IsNullOrWhiteSpace(systemAddress) ? "local" : systemAddress;
+    }
+
+    private static Guid DeriveNodeId(string address)
+    {
+        var bytes = Encoding.UTF8.GetBytes(address);
+        var hash = MD5.HashData(bytes);
+        return new Guid(hash);
+    }
 }

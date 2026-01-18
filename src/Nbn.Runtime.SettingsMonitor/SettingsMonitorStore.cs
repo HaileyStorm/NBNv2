@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS brain_controllers (
     FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS brains (
+    brain_id TEXT PRIMARY KEY,
+    base_nbn_sha256 BLOB NULL,
+    last_snapshot_sha256 BLOB NULL,
+    spawned_ms INTEGER NOT NULL,
+    last_tick_id INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    notes TEXT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -58,6 +68,8 @@ CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen_ms);
 CREATE INDEX IF NOT EXISTS idx_node_caps_node_time ON node_capabilities(node_id, time_ms);
 CREATE INDEX IF NOT EXISTS idx_brain_controllers_last_seen ON brain_controllers(last_seen_ms);
 CREATE INDEX IF NOT EXISTS idx_brain_controllers_node ON brain_controllers(node_id);
+CREATE INDEX IF NOT EXISTS idx_brains_state ON brains(state);
+CREATE INDEX IF NOT EXISTS idx_brains_last_tick ON brains(last_tick_id);
 """;
 
     private const string UpsertNodeSql = """
@@ -123,6 +135,46 @@ SET last_seen_ms = @last_seen_ms,
 WHERE brain_id = @brain_id;
 """;
 
+    private const string UpsertBrainSql = """
+INSERT INTO brains (
+    brain_id,
+    base_nbn_sha256,
+    last_snapshot_sha256,
+    spawned_ms,
+    last_tick_id,
+    state,
+    notes
+) VALUES (
+    @brain_id,
+    @base_nbn_sha256,
+    @last_snapshot_sha256,
+    @spawned_ms,
+    @last_tick_id,
+    @state,
+    @notes
+)
+ON CONFLICT(brain_id) DO UPDATE SET
+    base_nbn_sha256 = COALESCE(excluded.base_nbn_sha256, brains.base_nbn_sha256),
+    last_snapshot_sha256 = COALESCE(excluded.last_snapshot_sha256, brains.last_snapshot_sha256),
+    spawned_ms = excluded.spawned_ms,
+    last_tick_id = excluded.last_tick_id,
+    state = excluded.state,
+    notes = COALESCE(excluded.notes, brains.notes);
+""";
+
+    private const string UpdateBrainStateSql = """
+UPDATE brains
+SET state = @state,
+    notes = COALESCE(@notes, notes)
+WHERE brain_id = @brain_id;
+""";
+
+    private const string UpdateBrainTickSql = """
+UPDATE brains
+SET last_tick_id = @last_tick_id
+WHERE brain_id = @brain_id;
+""";
+
     private const string MarkOfflineSql = """
 UPDATE nodes
 SET is_alive = 0,
@@ -157,6 +209,19 @@ FROM settings
 WHERE key = @key;
 """;
 
+    private const string GetBrainSql = """
+SELECT
+    brain_id AS BrainId,
+    base_nbn_sha256 AS BaseNbnSha256,
+    last_snapshot_sha256 AS LastSnapshotSha256,
+    spawned_ms AS SpawnedMs,
+    last_tick_id AS LastTickId,
+    state AS State,
+    notes AS Notes
+FROM brains
+WHERE brain_id = @brain_id;
+""";
+
     private const string GetBrainControllerSql = """
 SELECT
     brain_id AS BrainId,
@@ -188,6 +253,19 @@ SELECT
     last_seen_ms AS LastSeenMs,
     is_alive AS IsAlive
 FROM brain_controllers
+ORDER BY brain_id;
+""";
+
+    private const string ListBrainsSql = """
+SELECT
+    brain_id AS BrainId,
+    base_nbn_sha256 AS BaseNbnSha256,
+    last_snapshot_sha256 AS LastSnapshotSha256,
+    spawned_ms AS SpawnedMs,
+    last_tick_id AS LastTickId,
+    state AS State,
+    notes AS Notes
+FROM brains
 ORDER BY brain_id;
 """;
 
@@ -411,6 +489,88 @@ ORDER BY logical_name, node_id;
         return updateCount > 0;
     }
 
+    public async Task UpsertBrainAsync(
+        Guid brainId,
+        string state,
+        long spawnedMs,
+        long lastTickId = 0,
+        byte[]? baseNbnSha256 = null,
+        byte[]? lastSnapshotSha256 = null,
+        string? notes = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (brainId == Guid.Empty)
+        {
+            throw new ArgumentException("BrainId is required.", nameof(brainId));
+        }
+
+        if (string.IsNullOrWhiteSpace(state))
+        {
+            throw new ArgumentException("State is required.", nameof(state));
+        }
+
+        var parameters = new
+        {
+            brain_id = brainId.ToString("D"),
+            base_nbn_sha256 = baseNbnSha256,
+            last_snapshot_sha256 = lastSnapshotSha256,
+            spawned_ms = spawnedMs,
+            last_tick_id = lastTickId,
+            state,
+            notes
+        };
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition(UpsertBrainSql, parameters, cancellationToken: cancellationToken));
+    }
+
+    public async Task UpdateBrainStateAsync(
+        Guid brainId,
+        string state,
+        string? notes = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (brainId == Guid.Empty)
+        {
+            throw new ArgumentException("BrainId is required.", nameof(brainId));
+        }
+
+        if (string.IsNullOrWhiteSpace(state))
+        {
+            throw new ArgumentException("State is required.", nameof(state));
+        }
+
+        var parameters = new
+        {
+            brain_id = brainId.ToString("D"),
+            state,
+            notes
+        };
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition(UpdateBrainStateSql, parameters, cancellationToken: cancellationToken));
+    }
+
+    public async Task UpdateBrainTickAsync(
+        Guid brainId,
+        long lastTickId,
+        CancellationToken cancellationToken = default)
+    {
+        if (brainId == Guid.Empty)
+        {
+            throw new ArgumentException("BrainId is required.", nameof(brainId));
+        }
+
+        var parameters = new
+        {
+            brain_id = brainId.ToString("D"),
+            last_tick_id = lastTickId
+        };
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition(UpdateBrainTickSql, parameters, cancellationToken: cancellationToken));
+    }
+
     public async Task MarkBrainControllerOfflineAsync(
         Guid brainId,
         long? timeMs = null,
@@ -553,12 +713,38 @@ ORDER BY logical_name, node_id;
                 cancellationToken: cancellationToken));
     }
 
+    public async Task<BrainStatus?> GetBrainAsync(
+        Guid brainId,
+        CancellationToken cancellationToken = default)
+    {
+        if (brainId == Guid.Empty)
+        {
+            throw new ArgumentException("BrainId is required.", nameof(brainId));
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QuerySingleOrDefaultAsync<BrainStatus>(
+            new CommandDefinition(
+                GetBrainSql,
+                new { brain_id = brainId.ToString("D") },
+                cancellationToken: cancellationToken));
+    }
+
     public async Task<IReadOnlyList<BrainControllerStatus>> ListBrainControllersAsync(
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
         var rows = await connection.QueryAsync<BrainControllerStatus>(
             new CommandDefinition(ListBrainControllersSql, cancellationToken: cancellationToken));
+        return rows.AsList();
+    }
+
+    public async Task<IReadOnlyList<BrainStatus>> ListBrainsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<BrainStatus>(
+            new CommandDefinition(ListBrainsSql, cancellationToken: cancellationToken));
         return rows.AsList();
     }
 

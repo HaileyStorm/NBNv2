@@ -50,6 +50,17 @@ public sealed class BrainControllerStatus
     public bool IsAlive { get; set; }
 }
 
+public sealed class BrainStatus
+{
+    public Guid BrainId { get; set; }
+    public byte[]? BaseNbnSha256 { get; set; }
+    public byte[]? LastSnapshotSha256 { get; set; }
+    public long SpawnedMs { get; set; }
+    public long LastTickId { get; set; }
+    public string State { get; set; } = string.Empty;
+    public string? Notes { get; set; }
+}
+
 public sealed record SettingEntry(
     string Key,
     string Value,

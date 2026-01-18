@@ -24,7 +24,8 @@ public sealed record HiveMindOptions(
     bool EnableOtelTraces,
     bool EnableOtelConsoleExporter,
     string? OtlpEndpoint,
-    string ServiceName)
+    string ServiceName,
+    string? SettingsDbPath)
 {
     public static HiveMindOptions FromArgs(string[] args)
     {
@@ -59,6 +60,11 @@ public sealed record HiveMindOptions(
         var enableOtelConsole = GetEnvBool("NBN_HIVE_OTEL_CONSOLE") ?? false;
         var otlpEndpoint = GetEnv("NBN_HIVE_OTEL_ENDPOINT") ?? GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
         var serviceName = GetEnv("NBN_HIVE_OTEL_SERVICE_NAME") ?? GetEnv("OTEL_SERVICE_NAME") ?? "nbn.hivemind";
+        var settingsDbPath = GetEnv("NBN_SETTINGS_DB");
+        if (string.IsNullOrWhiteSpace(settingsDbPath))
+        {
+            settingsDbPath = "settingsmonitor.db";
+        }
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -210,6 +216,16 @@ public sealed record HiveMindOptions(
                         serviceName = args[++i];
                     }
                     continue;
+                case "--settings-db":
+                case "--settings-db-path":
+                    if (i + 1 < args.Length)
+                    {
+                        settingsDbPath = args[++i];
+                    }
+                    continue;
+                case "--no-settings-db":
+                    settingsDbPath = null;
+                    continue;
             }
 
             if (arg.StartsWith("--bind=", StringComparison.OrdinalIgnoreCase))
@@ -337,6 +353,17 @@ public sealed record HiveMindOptions(
             {
                 serviceName = arg.Substring("--otel-service-name=".Length);
             }
+
+            if (arg.StartsWith("--settings-db=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsDbPath = arg.Substring("--settings-db=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--settings-db-path=", StringComparison.OrdinalIgnoreCase))
+            {
+                settingsDbPath = arg.Substring("--settings-db-path=".Length);
+            }
         }
 
         if (minTickHz <= 0)
@@ -389,7 +416,8 @@ public sealed record HiveMindOptions(
             enableOtelTraces.Value,
             enableOtelConsole,
             otlpEndpoint,
-            serviceName);
+            serviceName,
+            string.IsNullOrWhiteSpace(settingsDbPath) ? null : settingsDbPath);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -451,5 +479,7 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --otel-console                       Enable OTel console exporter");
         Console.WriteLine("  --otel-endpoint <uri>                OTLP endpoint (env OTEL_EXPORTER_OTLP_ENDPOINT)");
         Console.WriteLine("  --otel-service-name <name>           Service name (env OTEL_SERVICE_NAME)");
+        Console.WriteLine("  --settings-db <path>                 SettingsMonitor SQLite DB path (default settingsmonitor.db)");
+        Console.WriteLine("  --no-settings-db                     Disable SettingsMonitor DB writes");
     }
 }
