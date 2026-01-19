@@ -14,6 +14,7 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class OrchestratorPanelViewModel : ViewModelBase
 {
     private const int MaxRows = 200;
+    private const long StaleNodeMs = 15000;
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
@@ -369,7 +370,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
 
-            UpdateHiveMindEndpoint(nodes);
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            UpdateHiveMindEndpoint(nodes, nowMs);
 
             var settingsResponse = await _client.ListSettingsAsync().ConfigureAwait(false);
             var settings = settingsResponse?.Settings?
@@ -384,13 +386,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Nodes.Clear();
                 foreach (var node in nodes)
                 {
+                    var isFresh = IsFresh(node.LastSeenMs, nowMs);
+                    var isAlive = node.IsAlive && isFresh;
                     var seen = DateTimeOffset.FromUnixTimeMilliseconds((long)node.LastSeenMs).ToLocalTime();
                     Nodes.Add(new NodeStatusItem(
                         node.LogicalName ?? string.Empty,
                         node.Address ?? string.Empty,
                         node.RootActorName ?? string.Empty,
                         seen.ToString("g"),
-                        node.IsAlive ? "online" : "offline"));
+                        isAlive ? "online" : "offline"));
                 }
 
                 foreach (var entry in settings)
@@ -410,18 +414,42 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Trim(Settings);
             });
 
-            var controllerMap = controllers
-                .Where(entry => entry.BrainId is not null)
-                .ToDictionary(entry => entry.BrainId!.ToGuid(), entry => entry);
+            UpdateConnectionStatusesFromNodes(nodes, nowMs);
 
-            var brainList = brains.Select(entry =>
+            var nodeAliveMap = new Dictionary<Guid, bool>();
+            foreach (var node in nodes)
+            {
+                if (node.NodeId is null || !node.NodeId.TryToGuid(out var nodeId))
+                {
+                    continue;
+                }
+
+                nodeAliveMap[nodeId] = node.IsAlive && IsFresh(node.LastSeenMs, nowMs);
+            }
+
+            var controllerMap = controllers
+                .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
+                .ToDictionary(
+                    entry => entry.BrainId!.ToGuid(),
+                    entry =>
+                    {
+                        var controllerAlive = entry.IsAlive && IsFresh(entry.LastSeenMs, nowMs);
+                        var nodeAlive = entry.NodeId is not null
+                            && entry.NodeId.TryToGuid(out var nodeId)
+                            && nodeAliveMap.TryGetValue(nodeId, out var alive)
+                            && alive;
+                        return (entry, controllerAlive && nodeAlive);
+                    });
+
+            var brainListAll = brains.Select(entry =>
             {
                 var brainId = entry.BrainId?.ToGuid() ?? Guid.Empty;
-                var alive = controllerMap.TryGetValue(brainId, out var controller) && controller.IsAlive;
+                var alive = controllerMap.TryGetValue(brainId, out var controller) && controller.Item2;
                 return new BrainListItem(brainId, entry.State ?? string.Empty, alive);
             }).Where(entry => entry.BrainId != Guid.Empty).ToList();
 
-            RecordBrainTerminations(brainList);
+            RecordBrainTerminations(brainListAll);
+            var brainList = brainListAll.Where(entry => entry.ControllerAlive).ToList();
             _brainsUpdated?.Invoke(brainList);
 
             StatusMessage = "Settings loaded.";
@@ -523,6 +551,28 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Connections.HiveMindPortText = port.ToString();
     }
 
+    private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)
+    {
+        var match = nodes
+            .Where(node => string.Equals(node.RootActorName, Connections.HiveMindName, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(node => IsFresh(node.LastSeenMs, nowMs))
+            .ThenByDescending(node => node.LastSeenMs)
+            .FirstOrDefault();
+
+        if (match is null)
+        {
+            return;
+        }
+
+        if (!TryParseHostPort(match.Address, out var host, out var port))
+        {
+            return;
+        }
+
+        Connections.HiveMindHost = host;
+        Connections.HiveMindPortText = port.ToString();
+    }
+
     private static bool TryParseHostPort(string? address, out string host, out int port)
     {
         host = string.Empty;
@@ -559,6 +609,74 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
+
+    private static bool IsFresh(ulong lastSeenMs, long nowMs)
+    {
+        if (lastSeenMs == 0)
+        {
+            return false;
+        }
+
+        var delta = nowMs - (long)lastSeenMs;
+        if (delta < 0)
+        {
+            return false;
+        }
+
+        return delta <= StaleNodeMs;
+    }
+
+    private void UpdateConnectionStatusesFromNodes(IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)
+    {
+        var hiveAlive = false;
+        var ioAlive = false;
+        var obsAlive = false;
+        foreach (var node in nodes)
+        {
+            if (string.IsNullOrWhiteSpace(node.RootActorName))
+            {
+                continue;
+            }
+
+            var fresh = node.IsAlive && IsFresh(node.LastSeenMs, nowMs);
+            if (string.Equals(node.RootActorName, Connections.HiveMindName, StringComparison.OrdinalIgnoreCase))
+            {
+                hiveAlive = hiveAlive || fresh;
+            }
+
+            if (string.Equals(node.RootActorName, Connections.IoGateway, StringComparison.OrdinalIgnoreCase))
+            {
+                ioAlive = ioAlive || fresh;
+            }
+
+            if (string.Equals(node.RootActorName, Connections.DebugHub, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(node.RootActorName, Connections.VizHub, StringComparison.OrdinalIgnoreCase))
+            {
+                obsAlive = obsAlive || fresh;
+            }
+        }
+
+        _dispatcher.Post(() =>
+        {
+            Connections.HiveMindConnected = hiveAlive;
+            if (!hiveAlive)
+            {
+                Connections.HiveMindStatus = "Offline";
+            }
+
+            Connections.IoConnected = ioAlive;
+            if (!ioAlive)
+            {
+                Connections.IoStatus = "Offline";
+            }
+
+            Connections.ObsConnected = obsAlive;
+            if (!obsAlive)
+            {
+                Connections.ObsStatus = "Offline";
+            }
+        });
+    }
 
     private void RecordBrainTerminations(IReadOnlyList<BrainListItem> current)
     {
