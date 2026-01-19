@@ -254,8 +254,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --db \"{dbPath}\" --bind-host {Connections.SettingsHost} --port {port}";
-        var startInfo = BuildDotnetStartInfo(args);
+        var args = $"--db \"{dbPath}\" --bind-host {Connections.SettingsHost} --port {port}";
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.SettingsMonitor", args);
         var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false, label: "SettingsMonitor");
         SettingsLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -276,9 +276,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\""
+        var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
-        var startInfo = BuildDotnetStartInfo(args);
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.HiveMind", args);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
         HiveMindLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -306,10 +306,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var hiveAddress = $"{Connections.HiveMindHost}:{hivePort}";
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.IoHost} --port {port}"
+        var args = $"--bind-host {Connections.IoHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}";
-        var startInfo = BuildDotnetStartInfo(args);
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.IO", args);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
         IoLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -330,10 +330,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.ObsHost} --port {port}"
+        var args = $"--bind-host {Connections.ObsHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
-        var startInfo = BuildDotnetStartInfo(args);
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Observability", args);
         var result = await _obsRunner.StartAsync(startInfo, waitForExit: false, label: "Observability");
         ObsLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -733,6 +733,40 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             UseShellExecute = false,
             CreateNoWindow = true
         };
+    }
+
+    private static ProcessStartInfo BuildServiceStartInfo(string projectPath, string exeName, string serviceArgs)
+    {
+        var exePath = ResolveExecutable(projectPath, exeName);
+        if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+        {
+            return new ProcessStartInfo
+            {
+                FileName = exePath,
+                Arguments = serviceArgs,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        var dotnetArgs = $"run --project \"{projectPath}\" -c Release --no-build -- {serviceArgs}";
+        return BuildDotnetStartInfo(dotnetArgs);
+    }
+
+    private static string? ResolveExecutable(string projectPath, string exeName)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return null;
+        }
+
+        var output = Path.Combine(projectPath, "bin", "Release", "net8.0");
+        if (OperatingSystem.IsWindows())
+        {
+            return Path.Combine(output, exeName + ".exe");
+        }
+
+        return Path.Combine(output, exeName);
     }
 
     private static string ResolveDemoRoot()

@@ -45,7 +45,22 @@ Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" |
 & dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.SettingsMonitor\Nbn.Runtime.SettingsMonitor.csproj") -c Release | Out-Null
 & dotnet build (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost\Nbn.Tools.DemoHost.csproj") -c Release | Out-Null
 
-$artifactJson = & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- init-artifacts --artifact-root "$artifactRoot" --json
+function Get-ExePath([string]$projectFolder, [string]$exeName) {
+    return Join-Path $repoRoot (Join-Path $projectFolder ("bin\Release\net8.0\" + $exeName + ".exe"))
+}
+
+$demoExe = Get-ExePath "tools\Nbn.Tools.DemoHost" "Nbn.Tools.DemoHost"
+$hiveExe = Get-ExePath "src\Nbn.Runtime.HiveMind" "Nbn.Runtime.HiveMind"
+$regionExe = Get-ExePath "src\Nbn.Runtime.RegionHost" "Nbn.Runtime.RegionHost"
+$ioExe = Get-ExePath "src\Nbn.Runtime.IO" "Nbn.Runtime.IO"
+$obsExe = Get-ExePath "src\Nbn.Runtime.Observability" "Nbn.Runtime.Observability"
+$settingsExe = Get-ExePath "src\Nbn.Runtime.SettingsMonitor" "Nbn.Runtime.SettingsMonitor"
+
+$artifactJson = if (Test-Path $demoExe) {
+    & $demoExe init-artifacts --artifact-root "$artifactRoot" --json
+} else {
+    & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- init-artifacts --artifact-root "$artifactRoot" --json
+}
 $artifactLine = $artifactJson | Where-Object { $_ -match '^{.*}$' } | Select-Object -Last 1
 if (-not $artifactLine) {
     throw "DemoHost did not return JSON output."
@@ -80,12 +95,34 @@ $hiveArgs = @(
     "--settings-name", "SettingsMonitor"
 )
 
+$hiveServiceArgs = @(
+    "--bind-host", $BindHost,
+    "--port", $HiveMindPort,
+    "--settings-db", $settingsDbPath,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor"
+)
+
 $brainArgs = @(
     "run",
     "--project", (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost"),
     "-c", "Release",
     "--no-build",
     "--",
+    "run-brain",
+    "--bind-host", $BindHost,
+    "--port", $BrainHostPort,
+    "--brain-id", $brainId,
+    "--hivemind-address", $hiveAddress,
+    "--hivemind-id", "HiveMind",
+    "--router-id", $RouterId,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor"
+)
+
+$brainServiceArgs = @(
     "run-brain",
     "--bind-host", $BindHost,
     "--port", $BrainHostPort,
@@ -123,12 +160,42 @@ $regionArgs = @(
     "--artifact-root", $artifactRoot
 )
 
+$regionServiceArgs = @(
+    "--bind-host", $BindHost,
+    "--port", $RegionHostPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--brain-id", $brainId,
+    "--region", $RegionId,
+    "--neuron-start", 0,
+    "--neuron-count", 1,
+    "--shard-index", $ShardIndex,
+    "--router-address", $brainAddress,
+    "--router-id", $RouterId,
+    "--tick-address", $hiveAddress,
+    "--tick-id", "HiveMind",
+    "--nbn-sha256", $artifact.nbn_sha256,
+    "--nbn-size", $artifact.nbn_size,
+    "--artifact-root", $artifactRoot
+)
+
 $ioArgs = @(
     "run",
     "--project", (Join-Path $repoRoot "src\Nbn.Runtime.IO"),
     "-c", "Release",
     "--no-build",
     "--",
+    "--bind-host", $BindHost,
+    "--port", $IoPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--hivemind-address", $hiveAddress,
+    "--hivemind-name", "HiveMind"
+)
+
+$ioServiceArgs = @(
     "--bind-host", $BindHost,
     "--port", $IoPort,
     "--settings-host", $BindHost,
@@ -153,6 +220,16 @@ $obsArgs = @(
     "--enable-viz"
 )
 
+$obsServiceArgs = @(
+    "--bind-host", $BindHost,
+    "--port", $ObsPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--enable-debug",
+    "--enable-viz"
+)
+
 $settingsArgs = @(
     "run",
     "--project", (Join-Path $repoRoot "src\Nbn.Runtime.SettingsMonitor"),
@@ -164,17 +241,41 @@ $settingsArgs = @(
     "--port", $SettingsPort
 )
 
-$settingsProc = Start-Process -FilePath "dotnet" -ArgumentList $settingsArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $settingsLog -RedirectStandardError $settingsErr
+$settingsProc = if (Test-Path $settingsExe) {
+    Start-Process -FilePath $settingsExe -ArgumentList @("--db", $settingsDbPath, "--bind-host", $BindHost, "--port", $SettingsPort) -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $settingsLog -RedirectStandardError $settingsErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $settingsArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $settingsLog -RedirectStandardError $settingsErr
+}
 
-$hiveProc = Start-Process -FilePath "dotnet" -ArgumentList $hiveArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveErr
+$hiveProc = if (Test-Path $hiveExe) {
+    Start-Process -FilePath $hiveExe -ArgumentList $hiveServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $hiveArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $hiveLog -RedirectStandardError $hiveErr
+}
 Start-Sleep -Seconds 1
-$brainProc = Start-Process -FilePath "dotnet" -ArgumentList $brainArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $brainLog -RedirectStandardError $brainErr
+$brainProc = if (Test-Path $demoExe) {
+    Start-Process -FilePath $demoExe -ArgumentList $brainServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $brainLog -RedirectStandardError $brainErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $brainArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $brainLog -RedirectStandardError $brainErr
+}
 Start-Sleep -Seconds 1
-$regionProc = Start-Process -FilePath "dotnet" -ArgumentList $regionArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionLog -RedirectStandardError $regionErr
+$regionProc = if (Test-Path $regionExe) {
+    Start-Process -FilePath $regionExe -ArgumentList $regionServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionLog -RedirectStandardError $regionErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $regionArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionLog -RedirectStandardError $regionErr
+}
 Start-Sleep -Seconds 1
-$ioProc = Start-Process -FilePath "dotnet" -ArgumentList $ioArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $ioLog -RedirectStandardError $ioErr
+$ioProc = if (Test-Path $ioExe) {
+    Start-Process -FilePath $ioExe -ArgumentList $ioServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $ioLog -RedirectStandardError $ioErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $ioArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $ioLog -RedirectStandardError $ioErr
+}
 Start-Sleep -Seconds 1
-$obsProc = Start-Process -FilePath "dotnet" -ArgumentList $obsArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $obsLog -RedirectStandardError $obsErr
+$obsProc = if (Test-Path $obsExe) {
+    Start-Process -FilePath $obsExe -ArgumentList $obsServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $obsLog -RedirectStandardError $obsErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $obsArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $obsLog -RedirectStandardError $obsErr
+}
 
 Write-Host "HiveMind: $hiveAddress (pid $($hiveProc.Id))"
 Write-Host "BrainHost: $brainAddress (pid $($brainProc.Id))"

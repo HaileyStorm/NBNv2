@@ -68,7 +68,15 @@ DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.HiveMind/Nbn.Runtime.Hi
 DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.RegionHost/Nbn.Runtime.RegionHost.csproj" -c Release >/dev/null
 DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/tools/Nbn.Tools.DemoHost/Nbn.Tools.DemoHost.csproj" -c Release >/dev/null
 
-artifact_json=$(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- init-artifacts --artifact-root "$ARTIFACT_ROOT" --json | grep -E '^\{.*\}$' | tail -n 1 || true)
+HIVE_EXE="$REPO_ROOT/src/Nbn.Runtime.HiveMind/bin/Release/net8.0/Nbn.Runtime.HiveMind"
+REGION_EXE="$REPO_ROOT/src/Nbn.Runtime.RegionHost/bin/Release/net8.0/Nbn.Runtime.RegionHost"
+DEMO_EXE="$REPO_ROOT/tools/Nbn.Tools.DemoHost/bin/Release/net8.0/Nbn.Tools.DemoHost"
+
+if [[ -x "$DEMO_EXE" ]]; then
+  artifact_json=$("$DEMO_EXE" init-artifacts --artifact-root "$ARTIFACT_ROOT" --json | grep -E '^\{.*\}$' | tail -n 1 || true)
+else
+  artifact_json=$(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- init-artifacts --artifact-root "$ARTIFACT_ROOT" --json | grep -E '^\{.*\}$' | tail -n 1 || true)
+fi
 if [[ -z "$artifact_json" ]]; then
   echo "DemoHost did not return JSON output." >&2
   exit 1
@@ -97,17 +105,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.HiveMind" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$HIVEMIND_PORT" >"$HIVE_LOG" 2>"$HIVE_ERR") &
+if [[ -x "$HIVE_EXE" ]]; then
+  ("$HIVE_EXE" --bind-host "$BIND_HOST" --port "$HIVEMIND_PORT" >"$HIVE_LOG" 2>"$HIVE_ERR") &
+else
+  (DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.HiveMind" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$HIVEMIND_PORT" >"$HIVE_LOG" 2>"$HIVE_ERR") &
+fi
 HIVE_PID=$!
 
 sleep 1
 
-(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- run-brain --bind-host "$BIND_HOST" --port "$BRAINHOST_PORT" --brain-id "$BRAIN_ID" --hivemind-address "$HIVE_ADDR" --hivemind-id "HiveMind" --router-id "$ROUTER_ID" >"$BRAIN_LOG" 2>"$BRAIN_ERR") &
+if [[ -x "$DEMO_EXE" ]]; then
+  ("$DEMO_EXE" run-brain --bind-host "$BIND_HOST" --port "$BRAINHOST_PORT" --brain-id "$BRAIN_ID" --hivemind-address "$HIVE_ADDR" --hivemind-id "HiveMind" --router-id "$ROUTER_ID" >"$BRAIN_LOG" 2>"$BRAIN_ERR") &
+else
+  (DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- run-brain --bind-host "$BIND_HOST" --port "$BRAINHOST_PORT" --brain-id "$BRAIN_ID" --hivemind-address "$HIVE_ADDR" --hivemind-id "HiveMind" --router-id "$ROUTER_ID" >"$BRAIN_LOG" 2>"$BRAIN_ERR") &
+fi
 BRAIN_PID=$!
 
 sleep 1
 
-(DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.RegionHost" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$REGIONHOST_PORT" --brain-id "$BRAIN_ID" --region "$REGION_ID" --neuron-start 0 --neuron-count 1 --shard-index "$SHARD_INDEX" --router-address "$BRAIN_ADDR" --router-id "$ROUTER_ID" --tick-address "$HIVE_ADDR" --tick-id "HiveMind" --nbn-sha256 "$NBN_SHA" --nbn-size "$NBN_SIZE" --artifact-root "$ARTIFACT_ROOT" >"$REGION_LOG" 2>"$REGION_ERR") &
+if [[ -x "$REGION_EXE" ]]; then
+  ("$REGION_EXE" --bind-host "$BIND_HOST" --port "$REGIONHOST_PORT" --brain-id "$BRAIN_ID" --region "$REGION_ID" --neuron-start 0 --neuron-count 1 --shard-index "$SHARD_INDEX" --router-address "$BRAIN_ADDR" --router-id "$ROUTER_ID" --tick-address "$HIVE_ADDR" --tick-id "HiveMind" --nbn-sha256 "$NBN_SHA" --nbn-size "$NBN_SIZE" --artifact-root "$ARTIFACT_ROOT" >"$REGION_LOG" 2>"$REGION_ERR") &
+else
+  (DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/src/Nbn.Runtime.RegionHost" -c Release --no-build -- --bind-host "$BIND_HOST" --port "$REGIONHOST_PORT" --brain-id "$BRAIN_ID" --region "$REGION_ID" --neuron-start 0 --neuron-count 1 --shard-index "$SHARD_INDEX" --router-address "$BRAIN_ADDR" --router-id "$ROUTER_ID" --tick-address "$HIVE_ADDR" --tick-id "HiveMind" --nbn-sha256 "$NBN_SHA" --nbn-size "$NBN_SIZE" --artifact-root "$ARTIFACT_ROOT" >"$REGION_LOG" 2>"$REGION_ERR") &
+fi
 REGION_PID=$!
 
 printf "HiveMind: %s (pid %s)\n" "$HIVE_ADDR" "$HIVE_PID"
