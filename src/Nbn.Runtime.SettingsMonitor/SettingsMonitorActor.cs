@@ -179,50 +179,64 @@ public sealed class SettingsMonitorActor : IActor
         context.ReenterAfter(task, completed =>
         {
             var response = new ProtoSettings.NodeListResponse();
-            var merged = new Dictionary<Guid, NodeStatus>();
-            foreach (var node in completed.Result)
+            try
             {
-                merged[node.NodeId] = node;
-            }
-
-            foreach (var snapshot in _nodes.Values)
-            {
-                if (merged.TryGetValue(snapshot.NodeId, out var existing))
+                if (completed.IsFaulted)
                 {
-                    existing.LastSeenMs = Math.Max(existing.LastSeenMs, snapshot.LastSeenMs);
-                    existing.IsAlive = snapshot.IsAlive;
-                    if (!string.IsNullOrWhiteSpace(snapshot.LogicalName))
-                    {
-                        existing.LogicalName = snapshot.LogicalName;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(snapshot.Address))
-                    {
-                        existing.Address = snapshot.Address;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(snapshot.RootActorName))
-                    {
-                        existing.RootActorName = snapshot.RootActorName;
-                    }
-
-                    continue;
+                    LogError($"NodeList failed: {completed.Exception?.GetBaseException().Message}");
                 }
-
-                merged[snapshot.NodeId] = snapshot;
-            }
-
-            foreach (var node in merged.Values)
-            {
-                response.Nodes.Add(new ProtoSettings.NodeStatus
+                else
                 {
-                    NodeId = node.NodeId.ToProtoUuid(),
-                    LogicalName = node.LogicalName ?? string.Empty,
-                    Address = node.Address ?? string.Empty,
-                    RootActorName = node.RootActorName ?? string.Empty,
-                    LastSeenMs = (ulong)node.LastSeenMs,
-                    IsAlive = node.IsAlive
-                });
+                    var merged = new Dictionary<Guid, NodeStatus>();
+                    foreach (var node in completed.Result)
+                    {
+                        merged[node.NodeId] = node;
+                    }
+
+                    foreach (var snapshot in _nodes.Values)
+                    {
+                        if (merged.TryGetValue(snapshot.NodeId, out var existing))
+                        {
+                            existing.LastSeenMs = Math.Max(existing.LastSeenMs, snapshot.LastSeenMs);
+                            existing.IsAlive = snapshot.IsAlive;
+                            if (!string.IsNullOrWhiteSpace(snapshot.LogicalName))
+                            {
+                                existing.LogicalName = snapshot.LogicalName;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(snapshot.Address))
+                            {
+                                existing.Address = snapshot.Address;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(snapshot.RootActorName))
+                            {
+                                existing.RootActorName = snapshot.RootActorName;
+                            }
+
+                            continue;
+                        }
+
+                        merged[snapshot.NodeId] = snapshot;
+                    }
+
+                    foreach (var node in merged.Values)
+                    {
+                        response.Nodes.Add(new ProtoSettings.NodeStatus
+                        {
+                            NodeId = node.NodeId.ToProtoUuid(),
+                            LogicalName = node.LogicalName ?? string.Empty,
+                            Address = node.Address ?? string.Empty,
+                            RootActorName = node.RootActorName ?? string.Empty,
+                            LastSeenMs = (ulong)node.LastSeenMs,
+                            IsAlive = node.IsAlive
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"NodeList response failed: {ex.GetBaseException().Message}");
             }
 
             context.Respond(response);
@@ -293,14 +307,28 @@ public sealed class SettingsMonitorActor : IActor
         context.ReenterAfter(task, completed =>
         {
             var response = new ProtoSettings.SettingListResponse();
-            foreach (var entry in completed.Result)
+            try
             {
-                response.Settings.Add(new ProtoSettings.SettingValue
+                if (completed.IsFaulted)
                 {
-                    Key = entry.Key,
-                    Value = entry.Value,
-                    UpdatedMs = (ulong)entry.UpdatedMs
-                });
+                    LogError($"SettingList failed: {completed.Exception?.GetBaseException().Message}");
+                }
+                else
+                {
+                    foreach (var entry in completed.Result)
+                    {
+                        response.Settings.Add(new ProtoSettings.SettingValue
+                        {
+                            Key = entry.Key,
+                            Value = entry.Value,
+                            UpdatedMs = (ulong)entry.UpdatedMs
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"SettingList response failed: {ex.GetBaseException().Message}");
             }
 
             context.Respond(response);
@@ -316,27 +344,41 @@ public sealed class SettingsMonitorActor : IActor
         context.ReenterAfter(Task.WhenAll(brainsTask, controllersTask), completed =>
         {
             var response = new ProtoSettings.BrainListResponse();
-            foreach (var brain in brainsTask.Result)
+            try
             {
-                response.Brains.Add(new ProtoSettings.BrainStatus
+                if (completed.IsFaulted)
                 {
-                    BrainId = brain.BrainId.ToProtoUuid(),
-                    SpawnedMs = (ulong)brain.SpawnedMs,
-                    LastTickId = (ulong)brain.LastTickId,
-                    State = brain.State ?? string.Empty
-                });
-            }
+                    LogError($"BrainList failed: {completed.Exception?.GetBaseException().Message}");
+                }
+                else
+                {
+                    foreach (var brain in brainsTask.Result)
+                    {
+                        response.Brains.Add(new ProtoSettings.BrainStatus
+                        {
+                            BrainId = brain.BrainId.ToProtoUuid(),
+                            SpawnedMs = (ulong)brain.SpawnedMs,
+                            LastTickId = (ulong)brain.LastTickId,
+                            State = brain.State ?? string.Empty
+                        });
+                    }
 
-            foreach (var controller in controllersTask.Result)
+                    foreach (var controller in controllersTask.Result)
+                    {
+                        response.Controllers.Add(new ProtoSettings.BrainControllerStatus
+                        {
+                            BrainId = controller.BrainId.ToProtoUuid(),
+                            NodeId = controller.NodeId.ToProtoUuid(),
+                            ActorName = controller.ActorName ?? string.Empty,
+                            LastSeenMs = (ulong)controller.LastSeenMs,
+                            IsAlive = controller.IsAlive
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
             {
-                response.Controllers.Add(new ProtoSettings.BrainControllerStatus
-                {
-                    BrainId = controller.BrainId.ToProtoUuid(),
-                    NodeId = controller.NodeId.ToProtoUuid(),
-                    ActorName = controller.ActorName ?? string.Empty,
-                    LastSeenMs = (ulong)controller.LastSeenMs,
-                    IsAlive = controller.IsAlive
-                });
+                LogError($"BrainList response failed: {ex.GetBaseException().Message}");
             }
 
             context.Respond(response);
