@@ -14,6 +14,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
     private CancellationTokenSource? _connectCts;
+    private bool IsConnectionActive => _connectCts is not null && !_connectCts.IsCancellationRequested;
 
     public ShellViewModel()
     {
@@ -113,32 +114,27 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             _connectCts?.Cancel();
             _connectCts = new CancellationTokenSource();
+            var token = _connectCts.Token;
 
             await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
             ReceiverLabel = _client.ReceiverLabel;
 
-            var settingsConnected = await ConnectSettingsWithRetryAsync(_connectCts.Token);
-            if (settingsConnected)
-            {
-                await Orchestrator.RefreshSettingsAsync();
-            }
+            Connections.SettingsStatus = "Connecting...";
+            Connections.IoStatus = "Connecting...";
+            Connections.ObsStatus = "Connecting...";
+            Connections.HiveMindStatus = "Connecting...";
 
+            _ = ConnectSettingsWithRetryAsync(token);
             _ = ConnectIoWithRetryAsync(
                 Connections.IoHost,
                 ioPort,
                 Connections.IoGateway,
                 Connections.ClientName,
-                _connectCts.Token);
+                token);
 
-            await _client.ConnectObservabilityAsync(
-                Connections.ObsHost,
-                obsPort,
-                Connections.DebugHub,
-                Connections.VizHub,
-                Debug.SelectedSeverity.Severity,
-                Debug.ContextRegex);
+            _ = ConnectObservabilityWithRetryAsync(token);
 
-            _ = ConnectHiveMindWithRetryAsync(_connectCts.Token);
+            _ = ConnectHiveMindWithRetryAsync(token);
         }
         catch (Exception ex)
         {
@@ -149,6 +145,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private void DisconnectAll()
     {
         _connectCts?.Cancel();
+        _connectCts = null;
+        SetDisconnectedStatuses();
         _client.DisconnectIo();
         _client.DisconnectSettings();
         _client.DisconnectObservability();
@@ -183,6 +181,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         _dispatcher.Post(() =>
         {
+            if (!IsConnectionActive)
+            {
+                return;
+            }
+
             Connections.IoStatus = status;
             Connections.IoConnected = connected;
         });
@@ -192,6 +195,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         _dispatcher.Post(() =>
         {
+            if (!IsConnectionActive)
+            {
+                return;
+            }
+
             Connections.ObsStatus = status;
             Connections.ObsConnected = connected;
         });
@@ -201,6 +209,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         _dispatcher.Post(() =>
         {
+            if (!IsConnectionActive)
+            {
+                return;
+            }
+
             Connections.SettingsStatus = status;
             Connections.SettingsConnected = connected;
         });
@@ -210,6 +223,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         _dispatcher.Post(() =>
         {
+            if (!IsConnectionActive)
+            {
+                return;
+            }
+
             Connections.HiveMindStatus = status;
             Connections.HiveMindConnected = connected;
         });
@@ -224,6 +242,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         await Orchestrator.StopAllAsyncForShutdown();
         _connectCts?.Cancel();
+        _connectCts = null;
+        SetDisconnectedStatuses();
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 
@@ -267,7 +287,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         }
     }
 
-    private async Task<bool> ConnectSettingsWithRetryAsync(CancellationToken token)
+    private async Task ConnectSettingsWithRetryAsync(CancellationToken token)
     {
         var attempt = 0;
 
@@ -284,7 +304,12 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             if (connected)
             {
-                return true;
+                if (!token.IsCancellationRequested)
+                {
+                    await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
+                }
+
+                return;
             }
 
             try
@@ -293,14 +318,12 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             }
             catch (OperationCanceledException)
             {
-                return false;
+                return;
             }
         }
-
-        return false;
     }
 
-    private async Task<bool> ConnectHiveMindWithRetryAsync(CancellationToken token)
+    private async Task ConnectHiveMindWithRetryAsync(CancellationToken token)
     {
         var attempt = 0;
 
@@ -310,7 +333,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             {
                 Connections.HiveMindStatus = "HiveMind port invalid.";
                 Connections.HiveMindConnected = false;
-                return false;
+                return;
             }
 
             attempt++;
@@ -322,7 +345,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             if (status is not null)
             {
-                return true;
+                return;
             }
 
             try
@@ -331,10 +354,51 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             }
             catch (OperationCanceledException)
             {
-                return false;
+                return;
             }
         }
+    }
 
-        return false;
+    private async Task ConnectObservabilityWithRetryAsync(CancellationToken token)
+    {
+        if (!TryParsePort(Connections.ObsPortText, out var obsPort))
+        {
+            Connections.ObsStatus = "Obs port invalid.";
+            Connections.ObsConnected = false;
+            return;
+        }
+
+        while (!token.IsCancellationRequested)
+        {
+            await _client.ConnectObservabilityAsync(
+                Connections.ObsHost,
+                obsPort,
+                Connections.DebugHub,
+                Connections.VizHub,
+                Debug.SelectedSeverity.Severity,
+                Debug.ContextRegex).ConfigureAwait(false);
+
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            return;
+        }
+    }
+
+    private void SetDisconnectedStatuses()
+    {
+        _dispatcher.Post(() =>
+        {
+            Connections.IoStatus = "Disconnected";
+            Connections.IoConnected = false;
+            Connections.ObsStatus = "Disconnected";
+            Connections.ObsConnected = false;
+            Connections.SettingsStatus = "Disconnected";
+            Connections.SettingsConnected = false;
+            Connections.HiveMindStatus = "Disconnected";
+            Connections.HiveMindConnected = false;
+        });
     }
 }

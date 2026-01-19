@@ -539,6 +539,19 @@ public sealed class WorkbenchClient : IAsyncDisposable
         _gate.Dispose();
     }
 
-    private static string PidLabel(PID pid)
-        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+    private string PidLabel(PID pid)
+    {
+        var address = pid.Address;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            address = _system?.Address ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(address) && !string.IsNullOrWhiteSpace(_bindHost) && _bindPort > 0)
+        {
+            address = $"{_bindHost}:{_bindPort}";
+        }
+
+        return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
+    }
 }

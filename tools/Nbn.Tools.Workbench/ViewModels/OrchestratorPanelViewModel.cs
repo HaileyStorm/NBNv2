@@ -629,6 +629,5 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         await Task.Delay(500).ConfigureAwait(false);
         await _connectAll().ConfigureAwait(false);
-        await RefreshAsync().ConfigureAwait(false);
     }
 }
