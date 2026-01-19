@@ -11,7 +11,7 @@ public sealed class LocalServiceRunner
 
     public bool IsRunning => _process is { HasExited: false };
 
-    public async Task<ServiceStartResult> StartAsync(ProcessStartInfo startInfo, bool waitForExit)
+    public async Task<ServiceStartResult> StartAsync(ProcessStartInfo startInfo, bool waitForExit, string? label = null)
     {
         lock (_gate)
         {
@@ -38,6 +38,7 @@ public sealed class LocalServiceRunner
             _process = process;
         }
 
+        WorkbenchProcessRegistry.Default.Record(process, label ?? startInfo.FileName ?? "process");
         return new ServiceStartResult(true, $"Running (pid {process.Id}).");
     }
 
@@ -64,6 +65,7 @@ public sealed class LocalServiceRunner
         }
 
         _process = null;
+        WorkbenchProcessRegistry.Default.Remove(process.Id);
         return Task.FromResult("Stopped.");
     }
 }

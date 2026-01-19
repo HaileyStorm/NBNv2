@@ -9,7 +9,8 @@ param(
     [int]$SettingsPort = 12010,
     [int]$RegionId = 1,
     [int]$ShardIndex = 0,
-    [string]$RouterId = "demo-router"
+    [string]$RouterId = "demo-router",
+    [string]$PidFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -184,6 +185,20 @@ Write-Host "SettingsMonitor: $settingsAddress (pid $($settingsProc.Id))"
 Write-Host "Settings DB: $settingsDbPath"
 Write-Host "Logs: $logRoot"
 
+if ($PidFile) {
+    $processes = @(
+        @{ pid = $settingsProc.Id; name = $settingsProc.ProcessName; startTicksUtc = $settingsProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $hiveProc.Id; name = $hiveProc.ProcessName; startTicksUtc = $hiveProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $brainProc.Id; name = $brainProc.ProcessName; startTicksUtc = $brainProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $regionProc.Id; name = $regionProc.ProcessName; startTicksUtc = $regionProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $ioProc.Id; name = $ioProc.ProcessName; startTicksUtc = $ioProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $obsProc.Id; name = $obsProc.ProcessName; startTicksUtc = $obsProc.StartTime.ToUniversalTime().Ticks }
+    )
+
+    $payload = @{ processes = $processes }
+    $payload | ConvertTo-Json | Set-Content -Path $PidFile
+}
+
 $deadline = (Get-Date).AddSeconds(20)
 while ((Get-Date) -lt $deadline) {
     $hiveReady = (Test-Path $hiveLog) -and ((Get-Item $hiveLog).Length -gt 0)
@@ -209,5 +224,9 @@ finally {
         if ($proc -and -not $proc.HasExited) {
             Stop-Process -Id $proc.Id -Force
         }
+    }
+
+    if ($PidFile -and (Test-Path $PidFile)) {
+        Remove-Item -Path $PidFile -Force
     }
 }

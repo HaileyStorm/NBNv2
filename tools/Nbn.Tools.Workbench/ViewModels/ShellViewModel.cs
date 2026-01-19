@@ -17,6 +17,9 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public ShellViewModel()
     {
+        WorkbenchProcessRegistry.Default.CleanupStale();
+        LocalDemoRunner.CleanupStaleProcesses();
+
         Connections = new ConnectionViewModel();
         _client = new WorkbenchClient(this);
 

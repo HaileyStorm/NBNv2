@@ -69,21 +69,6 @@ public sealed class HiveMindActor : IActor
                     StartTick(context);
                 }
                 break;
-            case RegisterBrain message:
-                RegisterBrain(context, message);
-                break;
-            case UpdateBrainSignalRouter message:
-                UpdateBrainSignalRouter(context, message);
-                break;
-            case UnregisterBrain message:
-                UnregisterBrain(context, message.BrainId);
-                break;
-            case RegisterShard message:
-                RegisterShard(context, message);
-                break;
-            case UnregisterShard message:
-                UnregisterShard(context, message);
-                break;
             case ProtoControl.RegisterBrain message:
                 HandleRegisterBrain(context, message);
                 break;
@@ -143,9 +128,6 @@ public sealed class HiveMindActor : IActor
         return Task.CompletedTask;
     }
 
-    private void RegisterBrain(IContext context, RegisterBrain message)
-        => RegisterBrainInternal(context, message.BrainId, message.BrainRootPid, message.SignalRouterPid);
-
     private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid)
     {
         var isNew = !_brains.TryGetValue(brainId, out var brain) || brain is null;
@@ -196,11 +178,6 @@ public sealed class HiveMindActor : IActor
         ReportBrainRegistration(context, brainState);
     }
 
-    private void UpdateBrainSignalRouter(IContext context, UpdateBrainSignalRouter message)
-    {
-        UpdateBrainSignalRouter(context, message.BrainId, message.SignalRouterPid);
-    }
-
     private void UpdateBrainSignalRouter(IContext context, Guid brainId, PID routerPid)
     {
         if (!_brains.TryGetValue(brainId, out var brain))
@@ -240,16 +217,6 @@ public sealed class HiveMindActor : IActor
                 MaybeCompleteDeliver(context);
             }
         }
-    }
-
-    private void RegisterShard(IContext context, RegisterShard message)
-    {
-        RegisterShardInternal(context, message.BrainId, message.RegionId, message.ShardIndex, message.ShardPid);
-    }
-
-    private void UnregisterShard(IContext context, UnregisterShard message)
-    {
-        UnregisterShardInternal(context, message.BrainId, message.RegionId, message.ShardIndex);
     }
 
     private void RegisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex, PID shardPid)

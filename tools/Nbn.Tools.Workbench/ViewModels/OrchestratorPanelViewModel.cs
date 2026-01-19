@@ -256,7 +256,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var args = $"run --project \"{projectPath}\" -c Release --no-build -- --db \"{dbPath}\" --bind-host {Connections.SettingsHost} --port {port}";
         var startInfo = BuildDotnetStartInfo(args);
-        var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false);
+        var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false, label: "SettingsMonitor");
         SettingsLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
@@ -279,7 +279,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"run --project \"{projectPath}\" -c Release --no-build -- --bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var startInfo = BuildDotnetStartInfo(args);
-        var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false);
+        var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
         HiveMindLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
@@ -310,7 +310,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}";
         var startInfo = BuildDotnetStartInfo(args);
-        var result = await _ioRunner.StartAsync(startInfo, waitForExit: false);
+        var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
         IoLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
@@ -334,7 +334,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
         var startInfo = BuildDotnetStartInfo(args);
-        var result = await _obsRunner.StartAsync(startInfo, waitForExit: false);
+        var result = await _obsRunner.StartAsync(startInfo, waitForExit: false, label: "Observability");
         ObsLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }

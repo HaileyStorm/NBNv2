@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Nbn.Tools.Workbench.Services;
@@ -9,6 +10,7 @@ public sealed class LocalDemoRunner
 {
     private readonly object _gate = new();
     private Process? _process;
+    private string? _pidFile;
 
     public bool IsRunning => _process is { HasExited: false };
 
@@ -22,6 +24,8 @@ public sealed class LocalDemoRunner
             }
         }
 
+        CleanupStaleProcesses();
+
         var scriptPath = ResolveDemoScript();
         if (string.IsNullOrWhiteSpace(scriptPath))
         {
@@ -30,7 +34,8 @@ public sealed class LocalDemoRunner
 
         var repoRoot = RepoLocator.FindRepoRoot()?.FullName
             ?? Path.GetFullPath(Path.Combine(Path.GetDirectoryName(scriptPath)!, "..", ".."));
-        var args = BuildArgs(scriptPath, options);
+        _pidFile = GetPidFilePath();
+        var args = BuildArgs(scriptPath, options, _pidFile);
 
         var startInfo = new ProcessStartInfo
         {
@@ -53,6 +58,7 @@ public sealed class LocalDemoRunner
             _process = process;
         }
 
+        WorkbenchProcessRegistry.Default.Record(process, "demo-script");
         return Task.FromResult(new DemoStartResult(true, $"Demo running (pid {process.Id})."));
     }
 
@@ -95,12 +101,46 @@ public sealed class LocalDemoRunner
             _process = null;
         }
 
+        WorkbenchProcessRegistry.Default.Remove(process.Id);
+        CleanupStaleProcesses();
         return "Demo stopped.";
     }
 
-    private static string BuildArgs(string scriptPath, DemoLaunchOptions options)
+    public static void CleanupStaleProcesses()
     {
-        return $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\" "
+        var pidFile = GetPidFilePath();
+        if (!File.Exists(pidFile))
+        {
+            return;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(pidFile);
+            var payload = JsonSerializer.Deserialize<DemoProcessPayload>(json);
+            if (payload?.Processes is null)
+            {
+                return;
+            }
+
+            foreach (var entry in payload.Processes)
+            {
+                TryKill(entry);
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
+            TryDelete(pidFile);
+        }
+    }
+
+    private static string BuildArgs(string scriptPath, DemoLaunchOptions options, string? pidFile)
+    {
+        var pidArg = string.IsNullOrWhiteSpace(pidFile) ? string.Empty : $" -PidFile \"{pidFile}\"";
+        return $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"{pidArg} "
              + $"-DemoRoot \"{options.DemoRoot}\" "
              + $"-BindHost \"{options.BindHost}\" "
              + $"-HiveMindPort {options.HiveMindPort} "
@@ -138,6 +178,65 @@ public sealed class LocalDemoRunner
         return null;
     }
 
+    private static string GetPidFilePath()
+    {
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Nbn.Workbench");
+        Directory.CreateDirectory(baseDir);
+        return Path.Combine(baseDir, "demo-pids.json");
+    }
+
+    private static void TryKill(DemoProcessEntry entry)
+    {
+        if (entry.Pid <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var process = Process.GetProcessById(entry.Pid);
+            if (!string.IsNullOrWhiteSpace(entry.Name)
+                && !string.Equals(process.ProcessName, entry.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (entry.StartTicksUtc > 0)
+            {
+                var startUtc = process.StartTime.ToUniversalTime();
+                var delta = Math.Abs((startUtc - new DateTime(entry.StartTicksUtc, DateTimeKind.Utc)).TotalSeconds);
+                if (delta > 2)
+                {
+                    return;
+                }
+            }
+
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
 }
 
 public sealed record DemoLaunchOptions(
@@ -151,3 +250,7 @@ public sealed record DemoLaunchOptions(
     int SettingsPort);
 
 public sealed record DemoStartResult(bool Success, string Message);
+
+internal sealed record DemoProcessPayload(List<DemoProcessEntry> Processes);
+
+internal sealed record DemoProcessEntry(int Pid, string? Name, long StartTicksUtc);
