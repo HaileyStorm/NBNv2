@@ -13,7 +13,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private readonly WorkbenchClient _client;
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
-    private CancellationTokenSource? _ioReconnectCts;
+    private CancellationTokenSource? _connectCts;
 
     public ShellViewModel()
     {
@@ -111,25 +111,24 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            _ioReconnectCts?.Cancel();
-            _ioReconnectCts = new CancellationTokenSource();
+            _connectCts?.Cancel();
+            _connectCts = new CancellationTokenSource();
 
             await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
             ReceiverLabel = _client.ReceiverLabel;
 
-            await _client.ConnectSettingsAsync(
-                Connections.SettingsHost,
-                ParsePortOrDefault(Connections.SettingsPortText, 12010),
-                Connections.SettingsName);
-
-            await Orchestrator.RefreshSettingsAsync();
+            var settingsConnected = await ConnectSettingsWithRetryAsync(_connectCts.Token);
+            if (settingsConnected)
+            {
+                await Orchestrator.RefreshSettingsAsync();
+            }
 
             _ = ConnectIoWithRetryAsync(
                 Connections.IoHost,
                 ioPort,
                 Connections.IoGateway,
                 Connections.ClientName,
-                _ioReconnectCts.Token);
+                _connectCts.Token);
 
             await _client.ConnectObservabilityAsync(
                 Connections.ObsHost,
@@ -139,7 +138,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 Debug.SelectedSeverity.Severity,
                 Debug.ContextRegex);
 
-            await ConnectHiveMindAsync();
+            _ = ConnectHiveMindWithRetryAsync(_connectCts.Token);
         }
         catch (Exception ex)
         {
@@ -149,7 +148,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private void DisconnectAll()
     {
-        _ioReconnectCts?.Cancel();
+        _connectCts?.Cancel();
         _client.DisconnectIo();
         _client.DisconnectSettings();
         _client.DisconnectObservability();
@@ -224,7 +223,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public async ValueTask DisposeAsync()
     {
         await Orchestrator.StopAllAsyncForShutdown();
-        _ioReconnectCts?.Cancel();
+        _connectCts?.Cancel();
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 
@@ -268,18 +267,74 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         }
     }
 
-    private async Task ConnectHiveMindAsync()
+    private async Task<bool> ConnectSettingsWithRetryAsync(CancellationToken token)
     {
-        if (!TryParsePort(Connections.HiveMindPortText, out var hivePort))
+        var attempt = 0;
+
+        while (!token.IsCancellationRequested)
         {
-            Connections.HiveMindStatus = "HiveMind port invalid.";
-            Connections.HiveMindConnected = false;
-            return;
+            attempt++;
+            var settingsPort = ParsePortOrDefault(Connections.SettingsPortText, 12010);
+            var connected = await _client.ConnectSettingsAsync(
+                    Connections.SettingsHost,
+                    settingsPort,
+                    Connections.SettingsName,
+                    verify: true)
+                .ConfigureAwait(false);
+
+            if (connected)
+            {
+                return true;
+            }
+
+            try
+            {
+                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
         }
 
-        await _client.ConnectHiveMindAsync(
-            Connections.HiveMindHost,
-            hivePort,
-            Connections.HiveMindName);
+        return false;
+    }
+
+    private async Task<bool> ConnectHiveMindWithRetryAsync(CancellationToken token)
+    {
+        var attempt = 0;
+
+        while (!token.IsCancellationRequested)
+        {
+            if (!TryParsePort(Connections.HiveMindPortText, out var hivePort))
+            {
+                Connections.HiveMindStatus = "HiveMind port invalid.";
+                Connections.HiveMindConnected = false;
+                return false;
+            }
+
+            attempt++;
+            var status = await _client.ConnectHiveMindAsync(
+                    Connections.HiveMindHost,
+                    hivePort,
+                    Connections.HiveMindName)
+                .ConfigureAwait(false);
+
+            if (status is not null)
+            {
+                return true;
+            }
+
+            try
+            {
+                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 }

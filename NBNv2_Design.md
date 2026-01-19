@@ -153,6 +153,7 @@ NBN treats placement as a runtime concern:
 * Registry: nodes, addresses, root actor names, leases/heartbeats
 * Settings store: global configuration and mutable runtime settings
 * Capability store: node CPU/GPU characteristics and benchmark scores
+* All other services report via SettingsMonitor proto messages (no direct DB access); HiveMind publishes brain lifecycle/tick/controller updates
 
 **HiveMind**
 
@@ -1641,6 +1642,8 @@ enum ResetFunction {
 syntax = "proto3";
 package nbn.settings;
 
+option csharp_namespace = "Nbn.Proto.Settings";
+
 import "nbn_common.proto";
 
 message NodeOnline {
@@ -1676,6 +1679,49 @@ message NodeCapabilities {
   bool ilgpu_opencl_available = 9;
 }
 
+message NodeStatus {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+  string address = 3;
+  string root_actor_name = 4;
+  fixed64 last_seen_ms = 5;
+  bool is_alive = 6;
+}
+
+message BrainStatus {
+  nbn.Uuid brain_id = 1;
+  fixed64 spawned_ms = 2;
+  fixed64 last_tick_id = 3;
+  string state = 4;
+}
+
+message BrainControllerStatus {
+  nbn.Uuid brain_id = 1;
+  nbn.Uuid node_id = 2;
+  string actor_name = 3;
+  fixed64 last_seen_ms = 4;
+  bool is_alive = 5;
+}
+
+message NodeListRequest { }
+
+message NodeListResponse {
+  repeated NodeStatus nodes = 1;
+}
+
+message BrainListRequest { }
+
+message BrainListResponse {
+  repeated BrainStatus brains = 1;
+  repeated BrainControllerStatus controllers = 2;
+}
+
+message SettingListRequest { }
+
+message SettingListResponse {
+  repeated SettingValue settings = 1;
+}
+
 message SettingGet {
   string key = 1;
 }
@@ -1695,6 +1741,48 @@ message SettingChanged {
   string key = 1;
   string value = 2;
   fixed64 updated_ms = 3;
+}
+
+message SettingSubscribe {
+  string subscriber_actor = 1; // actor name/path
+}
+
+message SettingUnsubscribe {
+  string subscriber_actor = 1;
+}
+
+message BrainRegistered {
+  nbn.Uuid brain_id = 1;
+  fixed64 spawned_ms = 2;
+  fixed64 last_tick_id = 3;
+  string state = 4;
+
+  nbn.Uuid controller_node_id = 5;
+  string controller_node_address = 6;
+  string controller_node_logical_name = 7;
+  string controller_root_actor_name = 8;
+  string controller_actor_name = 9;
+}
+
+message BrainStateChanged {
+  nbn.Uuid brain_id = 1;
+  string state = 2;
+  string notes = 3;
+}
+
+message BrainTick {
+  nbn.Uuid brain_id = 1;
+  fixed64 last_tick_id = 2;
+}
+
+message BrainControllerHeartbeat {
+  nbn.Uuid brain_id = 1;
+  fixed64 time_ms = 2;
+}
+
+message BrainUnregistered {
+  nbn.Uuid brain_id = 1;
+  fixed64 time_ms = 2;
 }
 ```
 
@@ -2208,10 +2296,10 @@ For a minimal end-to-end smoke test, use the demo scripts:
 `tools/demo/run_local_hivemind_demo.sh` (Ubuntu/Linux). The scripts:
 
 * Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) with a single self-loop axon in region 1 to exercise SignalBatch delivery, and stores it in a local artifact store
-* Starts HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), and a RegionHost shard for region 1
+* Starts SettingsMonitor, HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), a RegionHost shard for region 1, IO Gateway, and Observability
 * Logs output to `tools/demo/local-demo/logs`
 
-The demo uses default ports (HiveMind 12020, BrainHost 12010, RegionHost 12040) and can be edited in the script
+The demo uses default ports (SettingsMonitor 12010, HiveMind 12020, BrainHost 12011, RegionHost 12040, IO 12050, Observability 12060) and can be edited in the script
 parameters if needed.
 
 ---

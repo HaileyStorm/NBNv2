@@ -109,3 +109,37 @@ message SettingSubscribe {
 message SettingUnsubscribe {
   string subscriber_actor = 1;
 }
+
+message BrainRegistered {
+  nbn.Uuid brain_id = 1;
+  fixed64 spawned_ms = 2;
+  fixed64 last_tick_id = 3;
+  string state = 4;
+
+  nbn.Uuid controller_node_id = 5;
+  string controller_node_address = 6;
+  string controller_node_logical_name = 7;
+  string controller_root_actor_name = 8;
+  string controller_actor_name = 9;
+}
+
+message BrainStateChanged {
+  nbn.Uuid brain_id = 1;
+  string state = 2;
+  string notes = 3;
+}
+
+message BrainTick {
+  nbn.Uuid brain_id = 1;
+  fixed64 last_tick_id = 2;
+}
+
+message BrainControllerHeartbeat {
+  nbn.Uuid brain_id = 1;
+  fixed64 time_ms = 2;
+}
+
+message BrainUnregistered {
+  nbn.Uuid brain_id = 1;
+  fixed64 time_ms = 2;
+}

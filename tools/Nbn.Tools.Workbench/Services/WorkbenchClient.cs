@@ -112,18 +112,37 @@ public sealed class WorkbenchClient : IAsyncDisposable
         _sink.OnIoStatus("Disconnected", false);
     }
 
-    public Task ConnectSettingsAsync(string host, int port, string actorName)
+    public async Task<bool> ConnectSettingsAsync(string host, int port, string actorName, bool verify = false)
     {
         if (_root is null || _receiverPid is null)
         {
-            return Task.CompletedTask;
+            _sink.OnSettingsStatus("Settings client not initialized.", false);
+            return false;
         }
 
         _settingsPid = new PID($"{host}:{port}", actorName);
         var subscriber = PidLabel(_receiverPid);
         _root.Send(_settingsPid, new SettingSubscribe { SubscriberActor = subscriber });
-        _sink.OnSettingsStatus($"Subscribed to {host}:{port}", true);
-        return Task.CompletedTask;
+
+        if (!verify)
+        {
+            _sink.OnSettingsStatus($"Subscribed to {host}:{port}", true);
+            return true;
+        }
+
+        try
+        {
+            await _root.RequestAsync<NodeListResponse>(_settingsPid, new NodeListRequest(), DefaultTimeout)
+                .ConfigureAwait(false);
+            _sink.OnSettingsStatus($"Connected to {host}:{port}", true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _settingsPid = null;
+            _sink.OnSettingsStatus($"Settings connect failed: {ex.Message}", false);
+            return false;
+        }
     }
 
     public async Task<HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)

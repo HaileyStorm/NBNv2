@@ -21,6 +21,5 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nbn.Shared\Nbn.Shared.csproj" />
-    <ProjectReference Include="..\..\src\Nbn.Runtime.SettingsMonitor\Nbn.Runtime.SettingsMonitor.csproj" />
   </ItemGroup>
 </Project>

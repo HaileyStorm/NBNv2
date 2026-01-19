@@ -46,6 +46,21 @@ public sealed class SettingsMonitorActor : IActor
             case ProtoSettings.SettingListRequest:
                 HandleSettingList(context);
                 break;
+            case ProtoSettings.BrainRegistered message:
+                HandleBrainRegistered(context, message);
+                break;
+            case ProtoSettings.BrainStateChanged message:
+                HandleBrainStateChanged(context, message);
+                break;
+            case ProtoSettings.BrainTick message:
+                HandleBrainTick(context, message);
+                break;
+            case ProtoSettings.BrainControllerHeartbeat message:
+                HandleBrainControllerHeartbeat(context, message);
+                break;
+            case ProtoSettings.BrainUnregistered message:
+                HandleBrainUnregistered(context, message);
+                break;
             case ProtoSettings.SettingSubscribe subscribe:
                 HandleSettingSubscribe(context, subscribe);
                 break;
@@ -325,6 +340,151 @@ public sealed class SettingsMonitorActor : IActor
             }
 
             context.Respond(response);
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleBrainRegistered(IContext context, ProtoSettings.BrainRegistered message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var state = string.IsNullOrWhiteSpace(message.State) ? "Active" : message.State!;
+        var spawnedMs = message.SpawnedMs > 0 ? (long)message.SpawnedMs : NowMs();
+        var lastTickId = message.LastTickId > 0 ? (long)message.LastTickId : 0;
+
+        var nodeId = Guid.Empty;
+        if (TryGetGuid(message.ControllerNodeId, out var parsedNodeId))
+        {
+            nodeId = parsedNodeId;
+        }
+        else if (!string.IsNullOrWhiteSpace(message.ControllerNodeAddress))
+        {
+            nodeId = NodeIdentity.DeriveNodeId(message.ControllerNodeAddress);
+        }
+
+        var nodeAddress = message.ControllerNodeAddress ?? string.Empty;
+        var nodeLogicalName = !string.IsNullOrWhiteSpace(message.ControllerNodeLogicalName)
+            ? message.ControllerNodeLogicalName!
+            : nodeAddress;
+        var rootActorName = !string.IsNullOrWhiteSpace(message.ControllerRootActorName)
+            ? message.ControllerRootActorName!
+            : message.ControllerActorName ?? string.Empty;
+        var actorName = message.ControllerActorName ?? string.Empty;
+
+        var tasks = new List<Task>(3)
+        {
+            _store.UpsertBrainAsync(brainId, state, spawnedMs, lastTickId)
+        };
+
+        if (nodeId != Guid.Empty && !string.IsNullOrWhiteSpace(nodeAddress))
+        {
+            tasks.Add(_store.UpsertNodeAsync(new NodeRegistration(nodeId, nodeLogicalName, nodeAddress, rootActorName), NowMs()));
+            UpdateNodeSnapshot(nodeId, nodeLogicalName, nodeAddress, rootActorName, NowMs(), true);
+        }
+
+        if (nodeId != Guid.Empty && !string.IsNullOrWhiteSpace(actorName))
+        {
+            tasks.Add(_store.UpsertBrainControllerAsync(
+                new BrainControllerRegistration(brainId, nodeId, actorName),
+                NowMs()));
+        }
+
+        context.ReenterAfter(Task.WhenAll(tasks), completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"BrainRegistered update failed: {completed.Exception?.GetBaseException().Message}");
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleBrainStateChanged(IContext context, ProtoSettings.BrainStateChanged message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(message.State))
+        {
+            return;
+        }
+
+        var task = _store.UpdateBrainStateAsync(brainId, message.State!, message.Notes);
+        context.ReenterAfter(task, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"BrainStateChanged update failed: {completed.Exception?.GetBaseException().Message}");
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleBrainTick(IContext context, ProtoSettings.BrainTick message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var task = _store.UpdateBrainTickAsync(brainId, (long)message.LastTickId);
+        context.ReenterAfter(task, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"BrainTick update failed: {completed.Exception?.GetBaseException().Message}");
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleBrainControllerHeartbeat(IContext context, ProtoSettings.BrainControllerHeartbeat message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var timeMs = message.TimeMs > 0 ? (long)message.TimeMs : NowMs();
+        var task = _store.RecordBrainControllerHeartbeatAsync(
+            new Nbn.Runtime.SettingsMonitor.BrainControllerHeartbeat(brainId, timeMs));
+        context.ReenterAfter(task, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"BrainControllerHeartbeat update failed: {completed.Exception?.GetBaseException().Message}");
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleBrainUnregistered(IContext context, ProtoSettings.BrainUnregistered message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var timeMs = message.TimeMs > 0 ? (long)message.TimeMs : NowMs();
+        var updateTask = _store.UpdateBrainStateAsync(brainId, "Dead");
+        var controllerTask = _store.MarkBrainControllerOfflineAsync(brainId, timeMs);
+
+        context.ReenterAfter(Task.WhenAll(updateTask, controllerTask), completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"BrainUnregistered update failed: {completed.Exception?.GetBaseException().Message}");
+            }
+
             return Task.CompletedTask;
         });
     }

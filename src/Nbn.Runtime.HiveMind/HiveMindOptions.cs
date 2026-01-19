@@ -532,8 +532,8 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --otel-console                       Enable OTel console exporter");
         Console.WriteLine("  --otel-endpoint <uri>                OTLP endpoint (env OTEL_EXPORTER_OTLP_ENDPOINT)");
         Console.WriteLine("  --otel-service-name <name>           Service name (env OTEL_SERVICE_NAME)");
-        Console.WriteLine("  --settings-db <path>                 SettingsMonitor SQLite DB path (default settingsmonitor.db)");
-        Console.WriteLine("  --no-settings-db                     Disable SettingsMonitor DB writes");
+        Console.WriteLine("  --settings-db <path>                 Deprecated (HiveMind no longer writes SettingsMonitor DB)");
+        Console.WriteLine("  --no-settings-db                     Deprecated (no-op; use --no-settings-monitor)");
         Console.WriteLine("  --settings-host <host>               SettingsMonitor host (default 127.0.0.1)");
         Console.WriteLine("  --settings-port <port>               SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
