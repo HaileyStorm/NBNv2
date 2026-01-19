@@ -1,3 +1,4 @@
+using System.Data;
 using System.Globalization;
 using Dapper;
 using Microsoft.Data.Sqlite;
@@ -6,6 +7,11 @@ namespace Nbn.Runtime.SettingsMonitor;
 
 public sealed class SettingsMonitorStore
 {
+    static SettingsMonitorStore()
+    {
+        RegisterTypeHandlers();
+    }
+
     private const string PragmaSql = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -290,6 +296,8 @@ ORDER BY logical_name, node_id;
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
+    private static bool _handlersRegistered;
+    private static readonly object _handlerLock = new();
 
     public SettingsMonitorStore(string databasePath, TimeProvider? timeProvider = null)
     {
@@ -306,6 +314,82 @@ ORDER BY logical_name, node_id;
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared
         }.ToString();
+    }
+
+    private static void RegisterTypeHandlers()
+    {
+        lock (_handlerLock)
+        {
+            if (_handlersRegistered)
+            {
+                return;
+            }
+
+            SqlMapper.AddTypeHandler(new GuidTextHandler());
+            SqlMapper.AddTypeHandler(new NullableGuidTextHandler());
+            _handlersRegistered = true;
+        }
+    }
+
+    private sealed class GuidTextHandler : SqlMapper.TypeHandler<Guid>
+    {
+        public override void SetValue(IDbDataParameter parameter, Guid value)
+        {
+            parameter.Value = value.ToString("D");
+        }
+
+        public override Guid Parse(object value)
+        {
+            if (value is Guid guid)
+            {
+                return guid;
+            }
+
+            if (value is byte[] bytes && bytes.Length == 16)
+            {
+                return new Guid(bytes);
+            }
+
+            if (value is string text && Guid.TryParse(text, out var parsed))
+            {
+                return parsed;
+            }
+
+            throw new DataException($"Unable to parse Guid from '{value}'.");
+        }
+    }
+
+    private sealed class NullableGuidTextHandler : SqlMapper.TypeHandler<Guid?>
+    {
+        public override void SetValue(IDbDataParameter parameter, Guid? value)
+        {
+            parameter.Value = value?.ToString("D");
+        }
+
+        public override Guid? Parse(object value)
+        {
+            if (value is null || value is DBNull)
+            {
+                return null;
+            }
+
+            if (value is Guid guid)
+            {
+                return guid;
+            }
+
+            if (value is byte[] bytes && bytes.Length == 16)
+            {
+                return new Guid(bytes);
+            }
+
+            if (value is string text && Guid.TryParse(text, out var parsed))
+            {
+                return parsed;
+            }
+
+            throw new DataException($"Unable to parse Guid? from '{value}'.");
+        }
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
