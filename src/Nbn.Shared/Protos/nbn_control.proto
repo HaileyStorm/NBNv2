@@ -101,3 +101,16 @@ message TickDeliverDone {
   uint32 delivered_batches = 4;
   uint32 delivered_contribs = 5;
 }
+
+message GetHiveMindStatus { }
+
+message HiveMindStatus {
+  fixed64 last_completed_tick_id = 1;
+  bool tick_loop_enabled = 2;
+  float target_tick_hz = 3;
+  uint32 pending_compute = 4;
+  uint32 pending_deliver = 5;
+  bool reschedule_in_progress = 6;
+  uint32 registered_brains = 7;
+  uint32 registered_shards = 8;
+}

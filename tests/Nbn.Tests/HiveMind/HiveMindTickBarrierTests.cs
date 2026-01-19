@@ -6,6 +6,7 @@ using Nbn.Runtime.HiveMind;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Shared.HiveMind;
+using ProtoControl = Nbn.Proto.Control;
 using Proto;
 using Xunit;
 
@@ -294,17 +295,19 @@ public class HiveMindTickBarrierTests
         throw new TimeoutException("Routing table did not reach expected state.");
     }
 
-    private static async Task<HiveMindStatus> WaitForStatus(
+    private static async Task<ProtoControl.HiveMindStatus> WaitForStatus(
         IRootContext root,
         PID hiveMind,
-        Func<HiveMindStatus, bool> predicate,
+        Func<ProtoControl.HiveMindStatus, bool> predicate,
         TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
-        HiveMindStatus? lastStatus = null;
+        ProtoControl.HiveMindStatus? lastStatus = null;
         while (sw.Elapsed < timeout)
         {
-            var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+            var status = await root.RequestAsync<ProtoControl.HiveMindStatus>(
+                hiveMind,
+                new ProtoControl.GetHiveMindStatus());
             lastStatus = status;
             if (predicate(status))
             {

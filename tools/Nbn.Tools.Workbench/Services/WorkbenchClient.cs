@@ -7,7 +7,6 @@ using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
-using Nbn.Shared.HiveMind;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -145,7 +144,7 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
+    public async Task<Nbn.Proto.Control.HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
     {
         if (_root is null)
         {
@@ -155,7 +154,10 @@ public sealed class WorkbenchClient : IAsyncDisposable
         var pid = new PID($"{host}:{port}", actorName);
         try
         {
-            var status = await _root.RequestAsync<HiveMindStatus>(pid, new GetHiveMindStatus(), DefaultTimeout)
+            var status = await _root.RequestAsync<Nbn.Proto.Control.HiveMindStatus>(
+                    pid,
+                    new Nbn.Proto.Control.GetHiveMindStatus(),
+                    DefaultTimeout)
                 .ConfigureAwait(false);
             _hiveMindPid = pid;
             _sink.OnHiveMindStatus($"Connected to {host}:{port}", true);

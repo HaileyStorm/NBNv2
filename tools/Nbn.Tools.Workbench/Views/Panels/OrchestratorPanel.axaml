@@ -65,7 +65,7 @@
                         BorderBrush="{Binding Connections.IoChipBorder}">
                   <TextBlock Text="{Binding Connections.IoStatusLabel}" />
                 </Border>
-                <TextBlock Text="{Binding Connections.IoStatus}" Classes="muted" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Connections.IoStatus}" Classes="muted" VerticalAlignment="Center" MaxWidth="220" TextTrimming="CharacterEllipsis" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
                 <Border Classes="chip"
@@ -73,7 +73,7 @@
                         BorderBrush="{Binding Connections.ObsChipBorder}">
                   <TextBlock Text="{Binding Connections.ObsStatusLabel}" />
                 </Border>
-                <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Connections.ObsStatus}" Classes="muted" VerticalAlignment="Center" MaxWidth="220" TextTrimming="CharacterEllipsis" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
                 <Border Classes="chip"
@@ -81,7 +81,7 @@
                         BorderBrush="{Binding Connections.SettingsChipBorder}">
                   <TextBlock Text="{Binding Connections.SettingsStatusLabel}" />
                 </Border>
-                <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" VerticalAlignment="Center" MaxWidth="220" TextTrimming="CharacterEllipsis" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,12,8">
                 <Border Classes="chip"
@@ -89,7 +89,7 @@
                         BorderBrush="{Binding Connections.HiveMindChipBorder}">
                   <TextBlock Text="{Binding Connections.HiveMindStatusLabel}" />
                 </Border>
-                <TextBlock Text="{Binding Connections.HiveMindStatus}" Classes="muted" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Connections.HiveMindStatus}" Classes="muted" VerticalAlignment="Center" MaxWidth="220" TextTrimming="CharacterEllipsis" />
               </StackPanel>
             </WrapPanel>
           </StackPanel>

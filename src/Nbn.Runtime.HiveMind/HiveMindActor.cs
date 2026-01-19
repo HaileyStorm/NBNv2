@@ -111,7 +111,7 @@ public sealed class HiveMindActor : IActor
             case RescheduleCompleted message:
                 CompleteReschedule(context, message);
                 break;
-            case GetHiveMindStatus:
+            case ProtoControl.GetHiveMindStatus:
                 context.Respond(BuildStatus());
                 break;
             case GetBrainRouting message:
@@ -882,16 +882,18 @@ public sealed class HiveMindActor : IActor
         return true;
     }
 
-    private HiveMindStatus BuildStatus()
-        => new(
-            _lastCompletedTickId,
-            _tickLoopEnabled,
-            _backpressure.TargetTickHz,
-            _pendingCompute.Count,
-            _pendingDeliver.Count,
-            _rescheduleInProgress,
-            _brains.Count,
-            _brains.Values.Sum(brain => brain.Shards.Count));
+    private ProtoControl.HiveMindStatus BuildStatus()
+        => new()
+        {
+            LastCompletedTickId = _lastCompletedTickId,
+            TickLoopEnabled = _tickLoopEnabled,
+            TargetTickHz = _backpressure.TargetTickHz,
+            PendingCompute = (uint)_pendingCompute.Count,
+            PendingDeliver = (uint)_pendingDeliver.Count,
+            RescheduleInProgress = _rescheduleInProgress,
+            RegisteredBrains = (uint)_brains.Count,
+            RegisteredShards = (uint)_brains.Values.Sum(brain => brain.Shards.Count)
+        };
 
     private BrainRoutingInfo BuildRoutingInfo(Guid brainId)
     {
