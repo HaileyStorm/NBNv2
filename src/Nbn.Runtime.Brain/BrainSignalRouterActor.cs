@@ -16,7 +16,8 @@ public sealed class BrainSignalRouterActor : IActor
     private readonly RoutingTable _routingTable = new();
     private readonly Dictionary<ulong, TickOutbox> _pendingOutboxes = new();
     private readonly Dictionary<ulong, PendingDeliver> _pendingDeliveries = new();
-    private readonly Dictionary<uint, float> _pendingInputs = new();
+    private readonly Dictionary<ulong, PendingInputDrain> _pendingInputDrains = new();
+    private PID? _ioGatewayPid;
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
 
     public BrainSignalRouterActor(Guid brainId)
@@ -45,10 +46,13 @@ public sealed class BrainSignalRouterActor : IActor
                 HandleTickDeliver(context, tickDeliver);
                 break;
             case InputWrite inputWrite:
-                HandleInputWrite(inputWrite);
+                HandleInputWrite(context, inputWrite);
                 break;
             case InputVector inputVector:
-                HandleInputVector(inputVector);
+                HandleInputVector(context, inputVector);
+                break;
+            case InputDrain inputDrain:
+                HandleInputDrain(context, inputDrain);
                 break;
             case SignalBatchAck ack:
                 HandleSignalBatchAck(context, ack);
@@ -99,144 +103,31 @@ public sealed class BrainSignalRouterActor : IActor
 
     private void HandleTickDeliver(IContext context, TickDeliver tickDeliver)
     {
+        ExpirePendingInputDrains(tickDeliver.TickId);
         ExpirePendingDeliveries(tickDeliver.TickId);
 
-        if (_pendingDeliveries.ContainsKey(tickDeliver.TickId))
+        if (_pendingDeliveries.ContainsKey(tickDeliver.TickId) || _pendingInputDrains.ContainsKey(tickDeliver.TickId))
         {
             return;
         }
 
-        var deliveredBatches = 0u;
-        var deliveredContribs = 0u;
-        var expectedAcks = 0;
-        var fallbackRoutes = 0;
-        var missingRouteLogged = false;
-        var inputRoutes = Array.Empty<ShardRoute>();
-        List<Contribution>? inputContribs = null;
-
-        var outboxDestinationCount = 0;
-        if (_pendingOutboxes.TryGetValue(tickDeliver.TickId, out var outbox))
+        if (ShouldDrainInputs())
         {
-            outboxDestinationCount = outbox.Destinations.Count;
-            foreach (var entry in outbox.Destinations)
-            {
-                if (!_routingTable.TryGetPid(entry.Key, out var pid) || pid is null)
-                {
-                    if (!TryGetFallbackPid(entry.Value.RegionId, out pid))
-                    {
-                        if (LogDelivery && !missingRouteLogged)
-                        {
-                            Log($"TickDeliver missing route tick={tickDeliver.TickId} destShard={entry.Key} destRegion={entry.Value.RegionId} routes={FormatRoutes()}");
-                            missingRouteLogged = true;
-                        }
-                        continue;
-                    }
-
-                    fallbackRoutes++;
-                }
-
-                if (pid is null)
-                {
-                    continue;
-                }
-
-                var signalBatch = new SignalBatch
-                {
-                    BrainId = _brainIdProto,
-                    RegionId = entry.Value.RegionId,
-                    ShardId = entry.Key.ToProtoShardId32(),
-                    TickId = tickDeliver.TickId
-                };
-
-                signalBatch.Contribs.AddRange(entry.Value.Contribs);
-                // Use Request so RegionShard can reply with SignalBatchAck to this router.
-                context.Request(pid, signalBatch);
-
-                deliveredBatches++;
-                deliveredContribs += (uint)entry.Value.Contribs.Count;
-                expectedAcks++;
-            }
-
-            _pendingOutboxes.Remove(tickDeliver.TickId);
-        }
-
-        if (_pendingInputs.Count > 0)
-        {
-            inputRoutes = _routingTable.Entries
-                .Where(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId)
-                .ToArray();
-
-            if (inputRoutes.Length > 0)
-            {
-                inputContribs = new List<Contribution>(_pendingInputs.Count);
-                foreach (var entry in _pendingInputs)
-                {
-                    inputContribs.Add(new Contribution
-                    {
-                        TargetNeuronId = entry.Key,
-                        Value = entry.Value
-                    });
-                }
-
-                foreach (var route in inputRoutes)
-                {
-                    var signalBatch = new SignalBatch
-                    {
-                        BrainId = _brainIdProto,
-                        RegionId = (uint)NbnConstants.InputRegionId,
-                        ShardId = route.ShardId.ToProtoShardId32(),
-                        TickId = tickDeliver.TickId
-                    };
-
-                    signalBatch.Contribs.AddRange(inputContribs);
-                    context.Request(route.Pid, signalBatch);
-
-                    deliveredBatches++;
-                    deliveredContribs += (uint)inputContribs.Count;
-                    expectedAcks++;
-                }
-
-                _pendingInputs.Clear();
-            }
-        }
-
-        if (LogDelivery)
-        {
-            Log($"TickDeliver start tick={tickDeliver.TickId} outboxDestinations={outboxDestinationCount} inputRoutes={inputRoutes.Length} deliveredBatches={deliveredBatches} deliveredContribs={deliveredContribs} expectedAcks={expectedAcks} routes={_routingTable.Count} fallbackRoutes={fallbackRoutes}");
-        }
-
-        if (expectedAcks == 0)
-        {
-            var deliverDone = new TickDeliverDone
-            {
-                TickId = tickDeliver.TickId,
-                BrainId = _brainIdProto,
-                DeliverMs = 0,
-                DeliveredBatches = 0,
-                DeliveredContribs = 0
-            };
-
             var replyTo = context.Sender ?? context.Parent;
-            if (replyTo is not null)
+            _pendingInputDrains[tickDeliver.TickId] = new PendingInputDrain(
+                tickDeliver.TickId,
+                replyTo,
+                Stopwatch.StartNew());
+
+            context.Request(_ioGatewayPid!, new DrainInputs
             {
-                context.Send(replyTo, deliverDone);
-            }
-            else if (LogDelivery)
-            {
-                Log($"TickDeliver done dropped (no reply target) tick={tickDeliver.TickId}");
-            }
+                BrainId = _brainIdProto,
+                TickId = tickDeliver.TickId
+            });
             return;
         }
 
-        var pending = new PendingDeliver(
-            tickDeliver.TickId,
-            context.Sender ?? context.Parent,
-            Stopwatch.StartNew(),
-            deliveredBatches,
-            deliveredContribs,
-            expectedAcks);
-
-        _pendingDeliveries[tickDeliver.TickId] = pending;
+        ProcessTickDeliver(context, tickDeliver.TickId, context.Sender ?? context.Parent, null, Stopwatch.StartNew());
     }
 
     private void HandleSignalBatchAck(IContext context, SignalBatchAck ack)
@@ -282,31 +173,202 @@ public sealed class BrainSignalRouterActor : IActor
         }
     }
 
-    private void HandleInputWrite(InputWrite message)
+    private void HandleInputWrite(IContext context, InputWrite message)
     {
         if (!IsForBrain(message.BrainId))
         {
             return;
         }
 
-        _pendingInputs[message.InputIndex] = message.Value;
+        CaptureIoGateway(context.Sender);
     }
 
-    private void HandleInputVector(InputVector message)
+    private void HandleInputVector(IContext context, InputVector message)
     {
         if (!IsForBrain(message.BrainId))
         {
             return;
         }
 
-        if (message.Values.Count == 0)
+        CaptureIoGateway(context.Sender);
+    }
+
+    private void HandleInputDrain(IContext context, InputDrain message)
+    {
+        if (!IsForBrain(message.BrainId))
         {
             return;
         }
 
-        for (var i = 0; i < message.Values.Count; i++)
+        CaptureIoGateway(context.Sender);
+
+        if (!_pendingInputDrains.TryGetValue(message.TickId, out var pending))
         {
-            _pendingInputs[(uint)i] = message.Values[i];
+            return;
+        }
+
+        _pendingInputDrains.Remove(message.TickId);
+        ProcessTickDeliver(context, message.TickId, pending.ReplyTo, message.Contribs, pending.Stopwatch);
+    }
+
+    private void ProcessTickDeliver(
+        IContext context,
+        ulong tickId,
+        PID? replyTo,
+        IReadOnlyList<Contribution>? inputContribs,
+        Stopwatch? stopwatch)
+    {
+        var deliveredBatches = 0u;
+        var deliveredContribs = 0u;
+        var expectedAcks = 0;
+        var fallbackRoutes = 0;
+        var missingRouteLogged = false;
+        var inputRoutes = Array.Empty<ShardRoute>();
+
+        var outboxDestinationCount = 0;
+        if (_pendingOutboxes.TryGetValue(tickId, out var outbox))
+        {
+            outboxDestinationCount = outbox.Destinations.Count;
+            foreach (var entry in outbox.Destinations)
+            {
+                if (!_routingTable.TryGetPid(entry.Key, out var pid) || pid is null)
+                {
+                    if (!TryGetFallbackPid(entry.Value.RegionId, out pid))
+                    {
+                        if (LogDelivery && !missingRouteLogged)
+                        {
+                            Log($"TickDeliver missing route tick={tickId} destShard={entry.Key} destRegion={entry.Value.RegionId} routes={FormatRoutes()}");
+                            missingRouteLogged = true;
+                        }
+                        continue;
+                    }
+
+                    fallbackRoutes++;
+                }
+
+                if (pid is null)
+                {
+                    continue;
+                }
+
+                var signalBatch = new SignalBatch
+                {
+                    BrainId = _brainIdProto,
+                    RegionId = entry.Value.RegionId,
+                    ShardId = entry.Key.ToProtoShardId32(),
+                    TickId = tickId
+                };
+
+                signalBatch.Contribs.AddRange(entry.Value.Contribs);
+                // Use Request so RegionShard can reply with SignalBatchAck to this router.
+                context.Request(pid, signalBatch);
+
+                deliveredBatches++;
+                deliveredContribs += (uint)entry.Value.Contribs.Count;
+                expectedAcks++;
+            }
+
+            _pendingOutboxes.Remove(tickId);
+        }
+
+        if (inputContribs is not null && inputContribs.Count > 0)
+        {
+            inputRoutes = _routingTable.Entries
+                .Where(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId)
+                .ToArray();
+
+            if (inputRoutes.Length > 0)
+            {
+                foreach (var route in inputRoutes)
+                {
+                    var signalBatch = new SignalBatch
+                    {
+                        BrainId = _brainIdProto,
+                        RegionId = (uint)NbnConstants.InputRegionId,
+                        ShardId = route.ShardId.ToProtoShardId32(),
+                        TickId = tickId
+                    };
+
+                    signalBatch.Contribs.AddRange(inputContribs);
+                    context.Request(route.Pid, signalBatch);
+
+                    deliveredBatches++;
+                    deliveredContribs += (uint)inputContribs.Count;
+                    expectedAcks++;
+                }
+            }
+        }
+
+        if (LogDelivery)
+        {
+            Log($"TickDeliver start tick={tickId} outboxDestinations={outboxDestinationCount} inputRoutes={inputRoutes.Length} deliveredBatches={deliveredBatches} deliveredContribs={deliveredContribs} expectedAcks={expectedAcks} routes={_routingTable.Count} fallbackRoutes={fallbackRoutes}");
+        }
+
+        if (expectedAcks == 0)
+        {
+            var deliverDone = new TickDeliverDone
+            {
+                TickId = tickId,
+                BrainId = _brainIdProto,
+                DeliverMs = 0,
+                DeliveredBatches = 0,
+                DeliveredContribs = 0
+            };
+
+            if (replyTo is not null)
+            {
+                context.Send(replyTo, deliverDone);
+            }
+            else if (LogDelivery)
+            {
+                Log($"TickDeliver done dropped (no reply target) tick={tickId}");
+            }
+            return;
+        }
+
+        stopwatch ??= Stopwatch.StartNew();
+        var pending = new PendingDeliver(
+            tickId,
+            replyTo,
+            stopwatch,
+            deliveredBatches,
+            deliveredContribs,
+            expectedAcks);
+
+        _pendingDeliveries[tickId] = pending;
+    }
+
+    private void ExpirePendingInputDrains(ulong currentTickId)
+    {
+        if (_pendingInputDrains.Count == 0)
+        {
+            return;
+        }
+
+        List<ulong>? expired = null;
+        foreach (var entry in _pendingInputDrains)
+        {
+            if (entry.Key < currentTickId)
+            {
+                expired ??= new List<ulong>();
+                expired.Add(entry.Key);
+            }
+        }
+
+        if (expired is null)
+        {
+            return;
+        }
+
+        foreach (var tickId in expired)
+        {
+            _pendingInputDrains.Remove(tickId);
+            _pendingOutboxes.Remove(tickId);
+        }
+
+        if (LogDelivery)
+        {
+            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)}");
         }
     }
 
@@ -343,6 +405,20 @@ public sealed class BrainSignalRouterActor : IActor
         {
             Log($"Pending deliveries expired before tick={currentTickId}. expired={string.Join(",", expired)}");
         }
+    }
+
+    private bool ShouldDrainInputs()
+        => _ioGatewayPid is not null
+           && _routingTable.Entries.Any(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId);
+
+    private void CaptureIoGateway(PID? sender)
+    {
+        if (sender is null)
+        {
+            return;
+        }
+
+        _ioGatewayPid = sender;
     }
 
     private bool TryGetFallbackPid(uint regionId, out PID? pid)
@@ -476,6 +552,20 @@ public sealed class BrainSignalRouterActor : IActor
         public uint DeliveredContribs { get; }
         public int ExpectedAcks { get; }
         public int AckCount { get; set; }
+    }
+
+    private sealed class PendingInputDrain
+    {
+        public PendingInputDrain(ulong tickId, PID? replyTo, Stopwatch stopwatch)
+        {
+            TickId = tickId;
+            ReplyTo = replyTo;
+            Stopwatch = stopwatch;
+        }
+
+        public ulong TickId { get; }
+        public PID? ReplyTo { get; }
+        public Stopwatch Stopwatch { get; }
     }
 
     private static void Log(string message)

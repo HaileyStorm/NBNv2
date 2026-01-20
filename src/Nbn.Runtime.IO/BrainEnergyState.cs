@@ -85,6 +85,25 @@ public sealed class BrainEnergyState
         _lastUpdate = DateTimeOffset.UtcNow;
     }
 
+    public void ResetFrom(Nbn.Proto.Io.BrainEnergyState state)
+    {
+        if (state is null)
+        {
+            return;
+        }
+
+        EnergyRemaining = state.EnergyRemaining;
+        EnergyRateUnitsPerSecond = state.EnergyRateUnitsPerSecond;
+        CostEnabled = state.CostEnabled;
+        EnergyEnabled = state.EnergyEnabled;
+        PlasticityEnabled = state.PlasticityEnabled;
+        PlasticityRate = state.PlasticityRate;
+        PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;
+        LastTickCost = state.LastTickCost;
+        _carry = 0;
+        _lastUpdate = DateTimeOffset.UtcNow;
+    }
+
     public void Accrue()
     {
         var now = DateTimeOffset.UtcNow;

@@ -6,6 +6,7 @@ option csharp_namespace = "Nbn.Proto.Io";
 import "nbn_common.proto";
 import "nbn_control.proto";
 import "nbn_repro.proto";
+import "nbn_signals.proto";
 
 message Connect {
   string client_name = 1;
@@ -32,6 +33,31 @@ message BrainInfo {
   bool plasticity_enabled = 7;
 }
 
+message BrainEnergyState {
+  sint64 energy_remaining = 1;
+  sint64 energy_rate_units_per_second = 2;
+  bool cost_enabled = 3;
+  bool energy_enabled = 4;
+  bool plasticity_enabled = 5;
+  float plasticity_rate = 6;
+  bool plasticity_probabilistic_updates = 7;
+  sint64 last_tick_cost = 8;
+}
+
+message RegisterBrain {
+  nbn.Uuid brain_id = 1;
+  uint32 input_width = 2;
+  uint32 output_width = 3;
+  nbn.ArtifactRef base_definition = 4;
+  nbn.ArtifactRef last_snapshot = 5;
+  BrainEnergyState energy_state = 6;
+}
+
+message UnregisterBrain {
+  nbn.Uuid brain_id = 1;
+  string reason = 2;
+}
+
 message SpawnBrainViaIO {
   nbn.control.SpawnBrain request = 1;
 }
@@ -49,6 +75,17 @@ message InputWrite {
 message InputVector {
   nbn.Uuid brain_id = 1;
   repeated float values = 2;
+}
+
+message DrainInputs {
+  nbn.Uuid brain_id = 1;
+  fixed64 tick_id = 2;
+}
+
+message InputDrain {
+  nbn.Uuid brain_id = 1;
+  fixed64 tick_id = 2;
+  repeated nbn.signal.Contribution contribs = 3;
 }
 
 message SubscribeOutputs {

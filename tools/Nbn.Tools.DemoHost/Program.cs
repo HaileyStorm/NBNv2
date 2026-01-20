@@ -1,11 +1,11 @@
 using JsonSerializer = System.Text.Json.JsonSerializer;
 using Nbn.Proto;
 using Nbn.Proto.Control;
+using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Proto.Settings;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Brain;
-using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
@@ -107,10 +107,12 @@ static async Task RunBrainAsync(string[] args)
     if (!string.IsNullOrWhiteSpace(ioAddress) && !string.IsNullOrWhiteSpace(ioId))
     {
         var ioPid = new PID(ioAddress, ioId);
-        system.Root.Send(ioPid, new RegisterBrain(
-            brainId,
-            inputWidth: 1,
-            outputWidth: 1));
+        system.Root.Send(ioPid, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
     }
 
     var nodeAddress = $"{remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}";

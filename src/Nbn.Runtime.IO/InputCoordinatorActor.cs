@@ -5,10 +5,6 @@ using Proto;
 
 namespace Nbn.Runtime.IO;
 
-public sealed record DrainInputs(ulong TickId);
-
-public sealed record InputDrain(Guid BrainId, ulong TickId, IReadOnlyList<Contribution> Contributions);
-
 public sealed class InputCoordinatorActor : IActor
 {
     private readonly Guid _brainId;
@@ -81,9 +77,23 @@ public sealed class InputCoordinatorActor : IActor
 
     private void Drain(IContext context, DrainInputs message)
     {
+        if (!TryMatchBrain(message.BrainId))
+        {
+            context.Respond(new InputDrain
+            {
+                BrainId = _brainId.ToProtoUuid(),
+                TickId = message.TickId
+            });
+            return;
+        }
+
         if (_dirtyIndices.Count == 0)
         {
-            context.Respond(new InputDrain(_brainId, message.TickId, Array.Empty<Contribution>()));
+            context.Respond(new InputDrain
+            {
+                BrainId = _brainId.ToProtoUuid(),
+                TickId = message.TickId
+            });
             return;
         }
 
@@ -99,7 +109,13 @@ public sealed class InputCoordinatorActor : IActor
         }
 
         _dirtyIndices.Clear();
-        context.Respond(new InputDrain(_brainId, message.TickId, contribs));
+        var drain = new InputDrain
+        {
+            BrainId = _brainId.ToProtoUuid(),
+            TickId = message.TickId
+        };
+        drain.Contribs.AddRange(contribs);
+        context.Respond(drain);
     }
 
     private bool TryMatchBrain(Nbn.Proto.Uuid? brainId)

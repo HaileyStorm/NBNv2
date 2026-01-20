@@ -1,5 +1,4 @@
 using Nbn.Proto;
-using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
 using Nbn.Shared;
@@ -81,10 +80,13 @@ public sealed class IoGatewayActor : IActor
             case UnregisterBrain message:
                 UnregisterBrain(context, message);
                 break;
+            case DrainInputs message:
+                await HandleDrainInputsAsync(context, message);
+                break;
             case UpdateBrainSnapshot message:
                 UpdateSnapshot(message);
                 break;
-            case BrainTerminated message:
+            case ProtoControl.BrainTerminated message:
                 HandleBrainTerminated(context, message);
                 break;
             case RequestSnapshot:
@@ -123,14 +125,14 @@ public sealed class IoGatewayActor : IActor
         {
             context.Respond(new SpawnBrainViaIOAck
             {
-                Ack = new SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
+                Ack = new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
             });
             return;
         }
 
         try
         {
-            var ack = await context.RequestAsync<SpawnBrainAck>(_hiveMindPid, message.Request, DefaultRequestTimeout);
+            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, DefaultRequestTimeout);
             context.Respond(new SpawnBrainViaIOAck { Ack = ack });
         }
         catch (Exception ex)
@@ -138,7 +140,7 @@ public sealed class IoGatewayActor : IActor
             Console.WriteLine($"SpawnBrainViaIO failed: {ex.Message}");
             context.Respond(new SpawnBrainViaIOAck
             {
-                Ack = new SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
+                Ack = new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
             });
         }
     }
@@ -212,6 +214,44 @@ public sealed class IoGatewayActor : IActor
         }
 
         context.Forward(entry.OutputPid);
+    }
+
+    private async Task HandleDrainInputsAsync(IContext context, DrainInputs message)
+    {
+        if (!TryGetBrainId(message.BrainId, out var brainId))
+        {
+            context.Respond(new InputDrain
+            {
+                BrainId = message.BrainId,
+                TickId = message.TickId
+            });
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var entry))
+        {
+            context.Respond(new InputDrain
+            {
+                BrainId = message.BrainId,
+                TickId = message.TickId
+            });
+            return;
+        }
+
+        try
+        {
+            var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, DefaultRequestTimeout);
+            context.Respond(drain);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"DrainInputs failed for {brainId}: {ex.Message}");
+            context.Respond(new InputDrain
+            {
+                BrainId = message.BrainId,
+                TickId = message.TickId
+            });
+        }
     }
 
     private void ApplyEnergyCredit(EnergyCredit message)
@@ -291,7 +331,7 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        context.Send(_hiveMindPid, new KillBrain
+        context.Send(_hiveMindPid, new ProtoControl.KillBrain
         {
             BrainId = entry.BrainId.ToProtoUuid(),
             Reason = "energy_exhausted"
@@ -300,11 +340,16 @@ public sealed class IoGatewayActor : IActor
 
     private void RegisterBrain(IContext context, RegisterBrain message)
     {
-        if (_brains.TryGetValue(message.BrainId, out var existing))
+        if (!TryGetBrainId(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (_brains.TryGetValue(brainId, out var existing))
         {
             if (existing.InputWidth != message.InputWidth || existing.OutputWidth != message.OutputWidth)
             {
-                Console.WriteLine($"RegisterBrain width mismatch for {message.BrainId}. Keeping existing widths.");
+                Console.WriteLine($"RegisterBrain width mismatch for {brainId}. Keeping existing widths.");
             }
 
             if (message.BaseDefinition is not null)
@@ -325,42 +370,52 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        var inputName = IoNames.InputCoordinatorPrefix + message.BrainId.ToString("N");
-        var outputName = IoNames.OutputCoordinatorPrefix + message.BrainId.ToString("N");
+        var inputName = IoNames.InputCoordinatorPrefix + brainId.ToString("N");
+        var outputName = IoNames.OutputCoordinatorPrefix + brainId.ToString("N");
 
         PID inputPid;
         PID outputPid;
         try
         {
-            inputPid = context.SpawnNamed(Props.FromProducer(() => new InputCoordinatorActor(message.BrainId, message.InputWidth)), inputName);
+            inputPid = context.SpawnNamed(Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth)), inputName);
         }
         catch
         {
-            inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(message.BrainId, message.InputWidth)));
+            inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth)));
         }
 
         try
         {
-            outputPid = context.SpawnNamed(Props.FromProducer(() => new OutputCoordinatorActor(message.BrainId, message.OutputWidth)), outputName);
+            outputPid = context.SpawnNamed(Props.FromProducer(() => new OutputCoordinatorActor(brainId, message.OutputWidth)), outputName);
         }
         catch
         {
-            outputPid = context.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(message.BrainId, message.OutputWidth)));
+            outputPid = context.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, message.OutputWidth)));
         }
 
-        var energy = message.EnergyState ?? new BrainEnergyState();
-        var entry = new BrainIoEntry(message.BrainId, inputPid, outputPid, message.InputWidth, message.OutputWidth, energy)
+        var energy = new BrainEnergyState();
+        if (message.EnergyState is not null)
+        {
+            energy.ResetFrom(message.EnergyState);
+        }
+
+        var entry = new BrainIoEntry(brainId, inputPid, outputPid, message.InputWidth, message.OutputWidth, energy)
         {
             BaseDefinition = message.BaseDefinition,
             LastSnapshot = message.LastSnapshot
         };
 
-        _brains.Add(message.BrainId, entry);
+        _brains.Add(brainId, entry);
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)
     {
-        if (!_brains.TryGetValue(message.BrainId, out var entry))
+        if (!TryGetBrainId(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var entry))
         {
             return;
         }
@@ -378,7 +433,7 @@ public sealed class IoGatewayActor : IActor
         entry.LastSnapshot = message.Snapshot;
     }
 
-    private void HandleBrainTerminated(IContext context, BrainTerminated message)
+    private void HandleBrainTerminated(IContext context, ProtoControl.BrainTerminated message)
     {
         if (!TryGetBrainId(message.BrainId, out var brainId))
         {
@@ -518,9 +573,9 @@ public sealed class IoGatewayActor : IActor
         return brainId.TryToGuid(out guid);
     }
 
-    private BrainTerminated BuildEnergyTerminated(BrainIoEntry entry, long lastTickCost)
+    private ProtoControl.BrainTerminated BuildEnergyTerminated(BrainIoEntry entry, long lastTickCost)
     {
-        return new BrainTerminated
+        return new ProtoControl.BrainTerminated
         {
             BrainId = entry.BrainId.ToProtoUuid(),
             Reason = "energy_exhausted",
