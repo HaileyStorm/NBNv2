@@ -78,6 +78,9 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.UnregisterShard message:
                 HandleUnregisterShard(context, message);
                 break;
+            case ProtoControl.RegisterOutputSink message:
+                HandleRegisterOutputSink(context, message);
+                break;
             case PauseBrainRequest message:
                 PauseBrain(context, message.BrainId, message.Reason);
                 break;
@@ -241,6 +244,11 @@ public sealed class HiveMindActor : IActor
         brain.Shards[shardId] = normalized;
         UpdateRoutingTable(context, brain);
 
+        if (regionId == NbnConstants.OutputRegionId && brain.OutputSinkPid is not null)
+        {
+            SendOutputSinkUpdate(context, brainId, shardId, normalized, brain.OutputSinkPid);
+        }
+
         if (_phase == TickPhase.Compute && _tick is not null)
         {
             Log($"Shard registered mid-compute for brain {brainId}; will start next tick.");
@@ -334,6 +342,27 @@ public sealed class HiveMindActor : IActor
         }
 
         UnregisterShardInternal(context, brainId, (int)message.RegionId, (int)message.ShardIndex);
+    }
+
+    private void HandleRegisterOutputSink(IContext context, ProtoControl.RegisterOutputSink message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        if (!TryParsePid(message.OutputPid, out var outputPid))
+        {
+            return;
+        }
+
+        brain.OutputSinkPid = outputPid;
+        UpdateOutputSinks(context, brain);
     }
 
     private void PauseBrain(IContext context, Guid brainId, string? reason)
@@ -972,6 +1001,42 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private void UpdateOutputSinks(IContext context, BrainState brain)
+    {
+        if (brain.OutputSinkPid is null)
+        {
+            return;
+        }
+
+        foreach (var entry in brain.Shards)
+        {
+            if (entry.Key.RegionId != NbnConstants.OutputRegionId)
+            {
+                continue;
+            }
+
+            SendOutputSinkUpdate(context, brain.BrainId, entry.Key, entry.Value, brain.OutputSinkPid);
+        }
+    }
+
+    private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID outputSink)
+    {
+        try
+        {
+            context.Send(shardPid, new ProtoControl.UpdateShardOutputSink
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = (uint)shardId.RegionId,
+                ShardIndex = (uint)shardId.ShardIndex,
+                OutputPid = PidLabel(outputSink)
+            });
+        }
+        catch (Exception ex)
+        {
+            LogError($"Failed to update output sink for shard {shardId}: {ex.Message}");
+        }
+    }
+
     private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
     {
         if (delay <= TimeSpan.Zero)
@@ -1033,6 +1098,7 @@ public sealed class HiveMindActor : IActor
         public Guid BrainId { get; }
         public PID? BrainRootPid { get; set; }
         public PID? SignalRouterPid { get; set; }
+        public PID? OutputSinkPid { get; set; }
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }

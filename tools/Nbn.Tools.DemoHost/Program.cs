@@ -226,6 +226,7 @@ static byte[] BuildMinimalNbn()
     return NbnBinary.WriteNbn(header, sections);
 }
 
+
 static ulong AddRegionSection(
     int regionId,
     uint neuronSpan,

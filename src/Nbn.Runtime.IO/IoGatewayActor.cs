@@ -369,6 +369,7 @@ public sealed class IoGatewayActor : IActor
             }
 
             await EnsureIoGatewayRegisteredAsync(context, brainId);
+            await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid);
             return;
         }
 
@@ -410,6 +411,7 @@ public sealed class IoGatewayActor : IActor
         _brains.Add(brainId, entry);
 
         await EnsureIoGatewayRegisteredAsync(context, brainId);
+        await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid);
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)
@@ -518,6 +520,30 @@ public sealed class IoGatewayActor : IActor
         catch (Exception ex)
         {
             Console.WriteLine($"RegisterIoGateway failed for {brainId}: {ex.Message}");
+        }
+    }
+
+    private async Task EnsureOutputSinkRegisteredAsync(IContext context, Guid brainId, PID outputPid)
+    {
+        if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var outputLabel = PidLabel(ToRemotePid(context, outputPid));
+            context.Send(_hiveMindPid, new ProtoControl.RegisterOutputSink
+            {
+                BrainId = brainId.ToProtoUuid(),
+                OutputPid = outputLabel
+            });
+
+            await Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"RegisterOutputSink failed for {brainId}: {ex.Message}");
         }
     }
 

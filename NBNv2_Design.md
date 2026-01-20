@@ -1887,6 +1887,18 @@ message BrainRoutingInfo {
   uint32 shard_count = 4;
   uint32 routing_count = 5;
 }
+
+message RegisterOutputSink {
+  nbn.Uuid brain_id = 1;
+  string output_pid = 2;
+}
+
+message UpdateShardOutputSink {
+  nbn.Uuid brain_id = 1;
+  uint32 region_id = 2;
+  uint32 shard_index = 3;
+  string output_pid = 4; // empty clears
+}
 ```
 
 ### 19.5 `nbn_signals.proto`

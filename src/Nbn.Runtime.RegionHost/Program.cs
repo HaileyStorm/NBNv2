@@ -47,7 +47,7 @@ var tickPid = RequirePid(options.TickAddress, options.TickId, "tick");
 var outputPid = TryCreatePid(options.OutputAddress, options.OutputId);
 if (options.RegionId == NbnConstants.OutputRegionId && outputPid is null)
 {
-    throw new InvalidOperationException("Output sink PID is required for output region shards.");
+    Console.WriteLine("Warning: output sink PID not provided for output region shard; awaiting control-plane update.");
 }
 
 var shardId = ShardId32.From(options.RegionId, options.ShardIndex);

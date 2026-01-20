@@ -53,9 +53,36 @@ public sealed class RegionShardActor : IActor
             case TickCompute tick:
                 HandleTickCompute(context, tick);
                 break;
+            case UpdateShardOutputSink message:
+                HandleUpdateOutputSink(message);
+                break;
         }
 
         return Task.CompletedTask;
+    }
+
+    private void HandleUpdateOutputSink(UpdateShardOutputSink message)
+    {
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var guid) || guid != _brainId)
+        {
+            return;
+        }
+
+        if (message.RegionId != (uint)_state.RegionId || message.ShardIndex != (uint)_shardId.ShardIndex)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(message.OutputPid))
+        {
+            _outputSink = null;
+            return;
+        }
+
+        if (TryParsePid(message.OutputPid, out var pid))
+        {
+            _outputSink = pid;
+        }
     }
 
     private void HandleSignalBatch(IContext context, SignalBatch batch)
@@ -289,5 +316,33 @@ public sealed class RegionShardActor : IActor
                || value.Equals("true", StringComparison.OrdinalIgnoreCase)
                || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
                || value.Equals("y", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
     }
 }
