@@ -766,6 +766,9 @@ Output width equals the number of neurons in region 31.
 
 Output events are emitted per tick and delivered to subscribed clients.
 
+* **OutputEvent (single):** emitted when an output neuron fires (abs(potential) > ActivationThreshold).
+* **OutputVectorEvent (vector):** emitted every tick for output region shards; values are activation potentials for each output neuron (0 if gated by pre-activation/disabled).
+
 External World may subscribe, per Brain, to individual and/or vector outputs.
 
 ### 13.5 Energy controls
@@ -1888,6 +1891,15 @@ message BrainRoutingInfo {
   uint32 routing_count = 5;
 }
 
+message RegisterShard {
+  nbn.Uuid brain_id = 1;
+  uint32 region_id = 2;
+  uint32 shard_index = 3;
+  string shard_pid = 4;
+  uint32 neuron_start = 5;
+  uint32 neuron_count = 6;
+}
+
 message RegisterOutputSink {
   nbn.Uuid brain_id = 1;
   string output_pid = 2;
@@ -1898,6 +1910,16 @@ message UpdateShardOutputSink {
   uint32 region_id = 2;
   uint32 shard_index = 3;
   string output_pid = 4; // empty clears
+}
+
+message GetBrainIoInfo {
+  nbn.Uuid brain_id = 1;
+}
+
+message BrainIoInfo {
+  nbn.Uuid brain_id = 1;
+  uint32 input_width = 2;
+  uint32 output_width = 3;
 }
 ```
 

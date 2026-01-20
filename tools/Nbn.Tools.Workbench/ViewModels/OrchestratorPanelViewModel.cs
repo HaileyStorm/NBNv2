@@ -18,7 +18,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
-    private readonly LocalDemoRunner _demoRunner = new();
     private readonly LocalServiceRunner _settingsRunner = new();
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
@@ -27,13 +26,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private readonly Func<Task>? _connectAll;
     private string _statusMessage = "Idle";
-    private string _demoStatus = "Demo not running.";
     private string _settingsLaunchStatus = "Idle";
     private string _hiveMindLaunchStatus = "Idle";
     private string _ioLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
-    private bool _demoRunning;
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
+    private readonly CancellationTokenSource _refreshCts = new();
+    private readonly TimeSpan _autoRefreshInterval = TimeSpan.FromSeconds(3);
 
     public OrchestratorPanelViewModel(
         UiDispatcher dispatcher,
@@ -52,10 +51,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Nodes = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
-        RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(force: true));
         ApplySettingsCommand = new AsyncRelayCommand(ApplySettingsAsync);
-        StartDemoCommand = new AsyncRelayCommand(StartDemoAsync);
-        StopDemoCommand = new AsyncRelayCommand(StopDemoAsync);
         StartSettingsMonitorCommand = new AsyncRelayCommand(StartSettingsMonitorAsync);
         StopSettingsMonitorCommand = new AsyncRelayCommand(() => StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value));
         StartHiveMindCommand = new AsyncRelayCommand(StartHiveMindAsync);
@@ -64,6 +61,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopIoCommand = new AsyncRelayCommand(() => StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value));
         StartObsCommand = new AsyncRelayCommand(StartObsAsync);
         StopObsCommand = new AsyncRelayCommand(() => StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value));
+        StartAllCommand = new AsyncRelayCommand(StartAllAsync);
+        StopAllCommand = new AsyncRelayCommand(StopAllAsync);
+        _ = StartAutoRefreshAsync();
     }
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
@@ -82,10 +82,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand ApplySettingsCommand { get; }
 
-    public AsyncRelayCommand StartDemoCommand { get; }
-
-    public AsyncRelayCommand StopDemoCommand { get; }
-
     public AsyncRelayCommand StartSettingsMonitorCommand { get; }
 
     public AsyncRelayCommand StopSettingsMonitorCommand { get; }
@@ -101,12 +97,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     public AsyncRelayCommand StartObsCommand { get; }
 
     public AsyncRelayCommand StopObsCommand { get; }
+    public AsyncRelayCommand StartAllCommand { get; }
 
-    public string DemoStatus
-    {
-        get => _demoStatus;
-        set => SetProperty(ref _demoStatus, value);
-    }
+    public AsyncRelayCommand StopAllCommand { get; }
 
     public string SettingsLaunchStatus
     {
@@ -150,12 +143,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         });
     }
 
-    public bool DemoRunning
-    {
-        get => _demoRunning;
-        set => SetProperty(ref _demoRunning, value);
-    }
-
     public void AddTermination(BrainTerminatedItem item)
     {
         _dispatcher.Post(() =>
@@ -165,71 +152,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         });
     }
 
-    public Task StopDemoAsyncForShutdown() => StopDemoAsync();
-
     public async Task StopAllAsyncForShutdown()
     {
-        await StopDemoAsync().ConfigureAwait(false);
+        _refreshCts.Cancel();
         await StopRunnerAsync(_settingsRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_obsRunner, _ => { }).ConfigureAwait(false);
-    }
-
-    private async Task StartDemoAsync()
-    {
-        if (!TryParsePort(Connections.IoPortText, out var ioPort))
-        {
-            DemoStatus = "Invalid IO port.";
-            return;
-        }
-
-        if (!TryParsePort(Connections.ObsPortText, out var obsPort))
-        {
-            DemoStatus = "Invalid Obs port.";
-            return;
-        }
-
-        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
-        {
-            DemoStatus = "Invalid Settings port.";
-            return;
-        }
-
-        var options = new DemoLaunchOptions(
-            ResolveDemoRoot(),
-            Connections.LocalBindHost,
-            12020,
-            12011,
-            12040,
-            ioPort,
-            obsPort,
-            settingsPort);
-
-        var result = await _demoRunner.StartAsync(options);
-        DemoStatus = result.Message;
-        DemoRunning = _demoRunner.IsRunning;
-        if (DemoRunning)
-        {
-            SettingsLaunchStatus = "Managed by demo.";
-            HiveMindLaunchStatus = "Managed by demo.";
-            IoLaunchStatus = "Managed by demo.";
-            ObsLaunchStatus = "Managed by demo.";
-        }
-        await TriggerReconnectAsync().ConfigureAwait(false);
-    }
-
-    private async Task StopDemoAsync()
-    {
-        DemoStatus = await _demoRunner.StopAsync();
-        DemoRunning = _demoRunner.IsRunning;
-        if (!DemoRunning)
-        {
-            SettingsLaunchStatus = "Idle";
-            HiveMindLaunchStatus = "Idle";
-            IoLaunchStatus = "Idle";
-            ObsLaunchStatus = "Idle";
-        }
     }
 
     private async Task StartSettingsMonitorAsync()
@@ -346,20 +275,26 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public async Task RefreshSettingsAsync()
     {
-        await RefreshAsync().ConfigureAwait(false);
+        await RefreshAsync(force: true).ConfigureAwait(false);
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(bool force)
     {
         if (!Connections.SettingsConnected)
         {
-            StatusMessage = "SettingsMonitor not connected.";
-            Connections.SettingsStatus = "Disconnected";
+            if (force)
+            {
+                StatusMessage = "SettingsMonitor not connected.";
+                Connections.SettingsStatus = "Disconnected";
+            }
             return;
         }
 
-        StatusMessage = "Loading settings...";
-        Connections.SettingsStatus = "Loading";
+        if (force)
+        {
+            StatusMessage = "Loading settings...";
+            Connections.SettingsStatus = "Loading";
+        }
 
         try
         {
@@ -452,13 +387,49 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var brainList = brainListAll.Where(entry => entry.ControllerAlive).ToList();
             _brainsUpdated?.Invoke(brainList);
 
-            StatusMessage = "Settings loaded.";
-            Connections.SettingsStatus = "Ready";
+            if (force)
+            {
+                StatusMessage = "Settings loaded.";
+                Connections.SettingsStatus = "Ready";
+            }
         }
         catch (Exception ex)
         {
             StatusMessage = $"Settings load failed: {ex.Message}";
             Connections.SettingsStatus = "Error";
+            WorkbenchLog.Warn($"Settings refresh failed: {ex.Message}");
+        }
+    }
+
+    private async Task StartAllAsync()
+    {
+        await StartSettingsMonitorAsync().ConfigureAwait(false);
+        await StartHiveMindAsync().ConfigureAwait(false);
+        await StartIoAsync().ConfigureAwait(false);
+        await StartObsAsync().ConfigureAwait(false);
+    }
+
+    private async Task StopAllAsync()
+    {
+        await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
+    }
+
+    private async Task StartAutoRefreshAsync()
+    {
+        while (!_refreshCts.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(_autoRefreshInterval, _refreshCts.Token).ConfigureAwait(false);
+                await RefreshAsync(force: false).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
     }
 
@@ -768,9 +739,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         return Path.Combine(output, exeName);
     }
-
-    private static string ResolveDemoRoot()
-        => RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo") ?? Path.Combine(Environment.CurrentDirectory, "tools", "demo", "local-demo");
 
     private async Task TriggerReconnectAsync()
     {

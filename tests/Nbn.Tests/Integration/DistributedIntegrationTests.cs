@@ -61,7 +61,9 @@ public class DistributedIntegrationTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(shardRemote)
+            ShardPid = PidLabel(shardRemote),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         await WaitForStatus(hiveNode.Root, hiveMindLocal, s => s.RegisteredBrains == 1, TimeSpan.FromSeconds(5));

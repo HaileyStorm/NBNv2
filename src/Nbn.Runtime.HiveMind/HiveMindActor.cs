@@ -81,6 +81,16 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.RegisterOutputSink message:
                 HandleRegisterOutputSink(context, message);
                 break;
+            case ProtoControl.GetBrainIoInfo message:
+                if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
+                {
+                    context.Respond(BuildBrainIoInfo(ioBrainId));
+                }
+                else
+                {
+                    context.Respond(new ProtoControl.BrainIoInfo());
+                }
+                break;
             case PauseBrainRequest message:
                 PauseBrain(context, message.BrainId, message.Reason);
                 break;
@@ -226,7 +236,7 @@ public sealed class HiveMindActor : IActor
         }
     }
 
-    private void RegisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex, PID shardPid)
+    private void RegisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex, PID shardPid, int neuronStart, int neuronCount)
     {
         if (!_brains.TryGetValue(brainId, out var brain))
         {
@@ -243,6 +253,20 @@ public sealed class HiveMindActor : IActor
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
         UpdateRoutingTable(context, brain);
+
+        if (neuronCount > 0)
+        {
+            var span = neuronStart + neuronCount;
+            if (regionId == NbnConstants.InputRegionId && span > brain.InputWidth)
+            {
+                brain.InputWidth = span;
+            }
+
+            if (regionId == NbnConstants.OutputRegionId && span > brain.OutputWidth)
+            {
+                brain.OutputWidth = span;
+            }
+        }
 
         if (regionId == NbnConstants.OutputRegionId && brain.OutputSinkPid is not null)
         {
@@ -332,7 +356,14 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        RegisterShardInternal(context, brainId, (int)message.RegionId, (int)message.ShardIndex, shardPid);
+        RegisterShardInternal(
+            context,
+            brainId,
+            (int)message.RegionId,
+            (int)message.ShardIndex,
+            shardPid,
+            (int)message.NeuronStart,
+            (int)message.NeuronCount);
     }
 
     private void HandleUnregisterShard(IContext context, ProtoControl.UnregisterShard message)
@@ -971,6 +1002,24 @@ public sealed class HiveMindActor : IActor
         };
     }
 
+    private ProtoControl.BrainIoInfo BuildBrainIoInfo(Guid brainId)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return new ProtoControl.BrainIoInfo
+            {
+                BrainId = brainId.ToProtoUuid()
+            };
+        }
+
+        return new ProtoControl.BrainIoInfo
+        {
+            BrainId = brain.BrainId.ToProtoUuid(),
+            InputWidth = (uint)Math.Max(0, brain.InputWidth),
+            OutputWidth = (uint)Math.Max(0, brain.OutputWidth)
+        };
+    }
+
     private void UpdateRoutingTable(IContext? context, BrainState brain)
     {
         var snapshot = RoutingTableSnapshot.Empty;
@@ -1102,6 +1151,8 @@ public sealed class HiveMindActor : IActor
         public PID? BrainRootPid { get; set; }
         public PID? SignalRouterPid { get; set; }
         public PID? OutputSinkPid { get; set; }
+        public int InputWidth { get; set; }
+        public int OutputWidth { get; set; }
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }

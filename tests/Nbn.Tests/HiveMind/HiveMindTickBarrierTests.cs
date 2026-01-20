@@ -42,14 +42,18 @@ public class HiveMindTickBarrierTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardA.RegionId,
             ShardIndex = (uint)shardA.ShardIndex,
-            ShardPid = PidLabel(shardPidA)
+            ShardPid = PidLabel(shardPidA),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
         root.Send(hiveMind, new Nbn.Proto.Control.RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardB.RegionId,
             ShardIndex = (uint)shardB.ShardIndex,
-            ShardPid = PidLabel(shardPidB)
+            ShardPid = PidLabel(shardPidB),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         await WaitForRoutingTable(root, router, table => table.Count == 2, TimeSpan.FromSeconds(2));
@@ -107,14 +111,18 @@ public class HiveMindTickBarrierTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardA.RegionId,
             ShardIndex = (uint)shardA.ShardIndex,
-            ShardPid = PidLabel(shardPidA)
+            ShardPid = PidLabel(shardPidA),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
         root.Send(hiveMind, new Nbn.Proto.Control.RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardB.RegionId,
             ShardIndex = (uint)shardB.ShardIndex,
-            ShardPid = PidLabel(shardPidB)
+            ShardPid = PidLabel(shardPidB),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         await WaitForRoutingTable(root, router, table => table.Count == 2, TimeSpan.FromSeconds(2));
@@ -163,7 +171,9 @@ public class HiveMindTickBarrierTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(shardPid)
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
@@ -237,7 +247,9 @@ public class HiveMindTickBarrierTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(shardPid)
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));

@@ -9,10 +9,7 @@
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
           <StackPanel Spacing="6">
             <TextBlock Text="Settings Monitor" Classes="card-title" />
-            <TextBlock Text="Remote registry + live settings feed." Classes="card-subtitle" />
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="Refresh" Command="{Binding RefreshCommand}" Classes="accent" />
-            </StackPanel>
+            <TextBlock Text="Remote registry + live settings feed. Auto-refreshes every 3 seconds while connected." Classes="card-subtitle" />
           </StackPanel>
           <StackPanel Grid.Column="1" Spacing="4" HorizontalAlignment="Right">
             <TextBlock Text="Status" Classes="chip" />
@@ -99,6 +96,10 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Local Launch" Classes="card-title" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Start All" Command="{Binding StartAllCommand}" Classes="accent" />
+            <Button Content="Stop All" Command="{Binding StopAllCommand}" />
+          </StackPanel>
           <Grid ColumnDefinitions="Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
             <TextBlock Text="SettingsMonitor" Classes="muted" />
             <Button Grid.Column="1" Content="Start" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
@@ -120,17 +121,9 @@
             <Button Grid.Row="3" Grid.Column="2" Content="Stop" Command="{Binding StopObsCommand}" />
             <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
           </Grid>
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card">
-        <StackPanel Spacing="8">
-          <TextBlock Text="Local Demo" Classes="card-title" />
-          <TextBlock Text="Launch HiveMind, DemoBrainHost, RegionHost, IO Gateway, and Observability for quick validation." Classes="card-subtitle" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="Start Demo" Command="{Binding StartDemoCommand}" Classes="accent" />
-            <Button Content="Stop Demo" Command="{Binding StopDemoCommand}" />
-            <TextBlock Text="{Binding DemoStatus}" Classes="muted" VerticalAlignment="Center" />
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <CheckBox Content="Workbench logging" IsChecked="{Binding Connections.WorkbenchLoggingEnabled}" />
+            <TextBlock Text="{Binding Connections.WorkbenchLogPath}" Classes="muted" VerticalAlignment="Center" />
           </StackPanel>
         </StackPanel>
       </Border>

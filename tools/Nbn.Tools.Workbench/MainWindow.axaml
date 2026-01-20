@@ -49,8 +49,6 @@
             <TextBlock Text="Local Port" Classes="muted" />
             <TextBox Width="90" Text="{Binding Connections.LocalPortText}" />
           </StackPanel>
-          <Button Content="Connect" Command="{Binding ConnectAllCommand}" Classes="accent" />
-          <Button Content="Disconnect" Command="{Binding DisconnectAllCommand}" />
         </StackPanel>
       </Grid>
     </Border>

@@ -49,16 +49,16 @@ public sealed class IoGatewayActor : IActor
                 await ForwardInputAsync(context, message);
                 break;
             case SubscribeOutputs message:
-                ForwardOutput(context, message);
+                await ForwardOutputAsync(context, message);
                 break;
             case UnsubscribeOutputs message:
-                ForwardOutput(context, message);
+                await ForwardOutputAsync(context, message);
                 break;
             case SubscribeOutputsVector message:
-                ForwardOutput(context, message);
+                await ForwardOutputAsync(context, message);
                 break;
             case UnsubscribeOutputsVector message:
-                ForwardOutput(context, message);
+                await ForwardOutputAsync(context, message);
                 break;
             case EnergyCredit message:
                 ApplyEnergyCredit(message);
@@ -188,7 +188,12 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        if (TryGetBrainEntry(message, out var entry))
+        if (!TryGetBrainEntry(message, out var entry))
+        {
+            entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
+        }
+
+        if (entry is not null)
         {
             context.Send(entry.InputPid, message);
         }
@@ -207,9 +212,17 @@ public sealed class IoGatewayActor : IActor
         context.Send(routerPid, message);
     }
 
-    private void ForwardOutput(IContext context, object message)
+    private async Task ForwardOutputAsync(IContext context, object message)
     {
         if (!TryGetBrainEntry(message, out var entry))
+        {
+            if (TryGetBrainId(message, out var brainId))
+            {
+                entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
+            }
+        }
+
+        if (entry is null)
         {
             return;
         }
@@ -231,12 +244,16 @@ public sealed class IoGatewayActor : IActor
 
         if (!_brains.TryGetValue(brainId, out var entry))
         {
-            context.Respond(new InputDrain
+            entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
+            if (entry is null)
             {
-                BrainId = message.BrainId,
-                TickId = message.TickId
-            });
-            return;
+                context.Respond(new InputDrain
+                {
+                    BrainId = message.BrainId,
+                    TickId = message.TickId
+                });
+                return;
+            }
         }
 
         try
@@ -350,7 +367,14 @@ public sealed class IoGatewayActor : IActor
         {
             if (existing.InputWidth != message.InputWidth || existing.OutputWidth != message.OutputWidth)
             {
-                Console.WriteLine($"RegisterBrain width mismatch for {brainId}. Keeping existing widths.");
+                if (message.OutputWidth > existing.OutputWidth && message.OutputWidth > 0)
+                {
+                    existing.OutputWidth = message.OutputWidth;
+                }
+                else
+                {
+                    Console.WriteLine($"RegisterBrain width mismatch for {brainId}. Keeping existing widths.");
+                }
             }
 
             if (message.BaseDefinition is not null)
@@ -521,6 +545,52 @@ public sealed class IoGatewayActor : IActor
         {
             Console.WriteLine($"RegisterIoGateway failed for {brainId}: {ex.Message}");
         }
+    }
+
+    private async Task<BrainIoEntry?> EnsureBrainEntryAsync(IContext context, Guid brainId)
+    {
+        if (_brains.TryGetValue(brainId, out var existing))
+        {
+            return existing;
+        }
+
+        if (_hiveMindPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var info = await context.RequestAsync<ProtoControl.BrainIoInfo>(
+                    _hiveMindPid,
+                    new ProtoControl.GetBrainIoInfo { BrainId = brainId.ToProtoUuid() },
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+
+            if (info is null || info.InputWidth == 0)
+            {
+                return null;
+            }
+
+            var register = new RegisterBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = info.InputWidth,
+                OutputWidth = info.OutputWidth
+            };
+            RegisterBrain(context, register);
+
+            if (_brains.TryGetValue(brainId, out var entry))
+            {
+                return entry;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"EnsureBrainEntry failed for {brainId}: {ex.Message}");
+        }
+
+        return null;
     }
 
     private async Task EnsureOutputSinkRegisteredAsync(IContext context, Guid brainId, PID outputPid)

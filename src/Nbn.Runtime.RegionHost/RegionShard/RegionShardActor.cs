@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Nbn.Proto.Control;
+using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
@@ -210,11 +211,25 @@ public sealed class RegionShardActor : IActor
             }
         }
 
-        if (_outputSink is not null && result.OutputEvents.Count > 0)
+        if (_outputSink is not null)
         {
-            foreach (var output in result.OutputEvents)
+            if (result.OutputEvents.Count > 0)
             {
-                context.Send(_outputSink, output);
+                foreach (var output in result.OutputEvents)
+                {
+                    context.Send(_outputSink, output);
+                }
+            }
+
+            if (result.OutputVector.Count > 0)
+            {
+                var vector = new OutputVectorEvent
+                {
+                    BrainId = _brainId.ToProtoUuid(),
+                    TickId = tick.TickId
+                };
+                vector.Values.Add(result.OutputVector);
+                context.Send(_outputSink, vector);
             }
         }
 

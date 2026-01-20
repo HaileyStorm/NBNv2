@@ -71,7 +71,9 @@ system.Root.Send(tickPid, new ProtoControl.RegisterShard
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,
     ShardIndex = (uint)options.ShardIndex,
-    ShardPid = PidLabel(shardRemotePid)
+    ShardPid = PidLabel(shardRemotePid),
+    NeuronStart = (uint)options.NeuronStart,
+    NeuronCount = (uint)options.NeuronCount
 });
 
 Console.WriteLine("NBN RegionHost online.");

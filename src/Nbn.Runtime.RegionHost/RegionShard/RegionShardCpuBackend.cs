@@ -23,6 +23,7 @@ public sealed class RegionShardCpuBackend
 
         var outbox = new Dictionary<ShardId32, List<Contribution>>();
         List<OutputEvent>? outputs = _state.IsOutputRegion ? new List<OutputEvent>() : null;
+        float[]? outputVector = _state.IsOutputRegion ? new float[_state.NeuronCount] : null;
         var brainProto = brainId.ToProtoUuid();
 
         var regionDistanceCache = new int?[NbnConstants.RegionCount];
@@ -62,6 +63,11 @@ public sealed class RegionShardCpuBackend
             var potential = Activate((ActivationFunction)_state.ActivationFunctions[i], buffer, _state.ParamA[i], _state.ParamB[i]);
             _state.Buffer[i] = Reset((ResetFunction)_state.ResetFunctions[i], buffer, potential, _state.ActivationThreshold[i], _state.AxonCounts[i]);
             costReset++;
+
+            if (outputVector is not null)
+            {
+                outputVector[i] = potential;
+            }
 
             if (MathF.Abs(potential) <= _state.ActivationThreshold[i])
             {
@@ -123,7 +129,8 @@ public sealed class RegionShardCpuBackend
         var costSummary = new RegionShardCostSummary(tickCostTotal, costAccum, costActivation, costReset, costDistance, costRemote);
 
         IReadOnlyList<OutputEvent> outputList = outputs ?? (IReadOnlyList<OutputEvent>)Array.Empty<OutputEvent>();
-        return new RegionShardComputeResult(outbox, outputList, firedCount, outContribs, costSummary);
+        IReadOnlyList<float> outputVectorList = outputVector ?? Array.Empty<float>();
+        return new RegionShardComputeResult(outbox, outputList, outputVectorList, firedCount, outContribs, costSummary);
     }
 
     private void MergeInbox(int index)
@@ -368,6 +375,7 @@ public readonly record struct RegionShardCostSummary(
 public sealed record RegionShardComputeResult(
     Dictionary<ShardId32, List<Contribution>> Outbox,
     IReadOnlyList<OutputEvent> OutputEvents,
+    IReadOnlyList<float> OutputVector,
     uint FiredCount,
     uint OutContribs,
     RegionShardCostSummary Cost);

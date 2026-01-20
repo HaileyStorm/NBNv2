@@ -11,7 +11,7 @@ public sealed record EmitOutputVector(IReadOnlyList<float> Values, ulong TickId)
 public sealed class OutputCoordinatorActor : IActor
 {
     private readonly Nbn.Proto.Uuid _brainIdProto;
-    private readonly int _outputWidth;
+    private int _outputWidth;
     private readonly Dictionary<string, PID> _outputSubscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PID> _vectorSubscribers = new(StringComparer.Ordinal);
 
@@ -40,6 +40,9 @@ public sealed class OutputCoordinatorActor : IActor
             case OutputEvent outputEvent:
                 EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
                 break;
+            case OutputVectorEvent outputVector:
+                EmitVector(context, new EmitOutputVector(outputVector.Values, outputVector.TickId));
+                break;
             case EmitOutput message:
                 EmitSingle(context, message);
                 break;
@@ -53,6 +56,8 @@ public sealed class OutputCoordinatorActor : IActor
 
     private void EmitSingle(IContext context, EmitOutput message)
     {
+        EnsureOutputWidth((int)message.OutputIndex + 1);
+
         if (message.OutputIndex >= (uint)_outputWidth)
         {
             return;
@@ -79,6 +84,8 @@ public sealed class OutputCoordinatorActor : IActor
 
     private void EmitVector(IContext context, EmitOutputVector message)
     {
+        EnsureOutputWidth(message.Values.Count);
+
         if (message.Values.Count != _outputWidth)
         {
             return;
@@ -99,6 +106,25 @@ public sealed class OutputCoordinatorActor : IActor
         foreach (var subscriber in _vectorSubscribers.Values)
         {
             context.Send(subscriber, evt);
+        }
+    }
+
+    private void EnsureOutputWidth(int candidate)
+    {
+        if (candidate <= 0)
+        {
+            return;
+        }
+
+        if (_outputWidth <= 0)
+        {
+            _outputWidth = candidate;
+            return;
+        }
+
+        if (candidate > _outputWidth)
+        {
+            _outputWidth = candidate;
         }
     }
 

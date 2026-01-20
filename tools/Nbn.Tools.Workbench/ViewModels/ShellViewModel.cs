@@ -46,6 +46,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         ConnectAllCommand = new AsyncRelayCommand(ConnectAllAsync);
         DisconnectAllCommand = new RelayCommand(DisconnectAll);
         RefreshSettingsCommand = Orchestrator.RefreshCommand;
+
+        _ = ConnectAllAsync();
     }
 
     public ConnectionViewModel Connections { get; }
@@ -94,6 +96,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         try
         {
+            WorkbenchLog.Info("ConnectAll started.");
             if (!TryParsePort(Connections.LocalPortText, out var localPort))
             {
                 Connections.IoStatus = "Local port invalid.";
@@ -125,12 +128,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.HiveMindStatus = "Connecting...";
 
             _ = ConnectSettingsWithRetryAsync(token);
-            _ = ConnectIoWithRetryAsync(
-                Connections.IoHost,
-                ioPort,
-                Connections.IoGateway,
-                Connections.ClientName,
-                token);
+            _ = ConnectIoWithRetryAsync(token);
 
             _ = ConnectObservabilityWithRetryAsync(token);
 
@@ -139,6 +137,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         catch (Exception ex)
         {
             Connections.IoStatus = $"Connect failed: {ex.Message}";
+            WorkbenchLog.Warn($"ConnectAll failed: {ex.Message}");
         }
     }
 
@@ -151,6 +150,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         _client.DisconnectSettings();
         _client.DisconnectObservability();
         _client.DisconnectHiveMind();
+        WorkbenchLog.Info("Disconnected all services.");
     }
 
     public void OnOutputEvent(OutputEventItem item)
@@ -263,16 +263,28 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
 
-    private async Task ConnectIoWithRetryAsync(string host, int port, string gatewayName, string clientName, CancellationToken token)
+    private async Task ConnectIoWithRetryAsync(CancellationToken token)
     {
         var attempt = 0;
 
         while (!token.IsCancellationRequested)
         {
             attempt++;
-            var ack = await _client.ConnectIoAsync(host, port, gatewayName, clientName);
+            if (!TryParsePort(Connections.IoPortText, out var ioPort))
+            {
+                Connections.IoStatus = "IO port invalid.";
+                Connections.IoConnected = false;
+                return;
+            }
+
+            var ack = await _client.ConnectIoAsync(
+                Connections.IoHost,
+                ioPort,
+                Connections.IoGateway,
+                Connections.ClientName);
             if (ack is not null)
             {
+                WorkbenchLog.Info($"IO connected to {Connections.IoHost}:{ioPort}/{Connections.IoGateway}");
                 return;
             }
 
@@ -309,6 +321,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                     await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
                 }
 
+                WorkbenchLog.Info($"Settings connected to {Connections.SettingsHost}:{settingsPort}/{Connections.SettingsName}");
                 return;
             }
 
@@ -345,6 +358,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             if (status is not null)
             {
+                WorkbenchLog.Info($"HiveMind connected to {Connections.HiveMindHost}:{hivePort}/{Connections.HiveMindName}");
                 return;
             }
 
@@ -361,15 +375,15 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private async Task ConnectObservabilityWithRetryAsync(CancellationToken token)
     {
-        if (!TryParsePort(Connections.ObsPortText, out var obsPort))
-        {
-            Connections.ObsStatus = "Obs port invalid.";
-            Connections.ObsConnected = false;
-            return;
-        }
-
         while (!token.IsCancellationRequested)
         {
+            if (!TryParsePort(Connections.ObsPortText, out var obsPort))
+            {
+                Connections.ObsStatus = "Obs port invalid.";
+                Connections.ObsConnected = false;
+                return;
+            }
+
             await _client.ConnectObservabilityAsync(
                 Connections.ObsHost,
                 obsPort,
@@ -383,6 +397,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
+            WorkbenchLog.Info($"Observability subscribed to {Connections.ObsHost}:{obsPort}");
             return;
         }
     }

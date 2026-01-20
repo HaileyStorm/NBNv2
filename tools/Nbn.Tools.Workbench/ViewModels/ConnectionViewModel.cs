@@ -27,6 +27,7 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _ioStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
+    private bool _workbenchLoggingEnabled;
     private bool _ioConnected;
     private bool _obsConnected;
     private bool _settingsConnected;
@@ -133,6 +134,23 @@ public sealed class ConnectionViewModel : ViewModelBase
         get => _hiveMindName;
         set => SetProperty(ref _hiveMindName, value);
     }
+
+    public bool WorkbenchLoggingEnabled
+    {
+        get => _workbenchLoggingEnabled;
+        set
+        {
+            if (SetProperty(ref _workbenchLoggingEnabled, value))
+            {
+                WorkbenchLog.SetEnabled(value);
+                OnPropertyChanged(nameof(WorkbenchLogPath));
+            }
+        }
+    }
+
+    public string WorkbenchLogPath => string.IsNullOrWhiteSpace(WorkbenchLog.SessionDirectory)
+        ? "(disabled)"
+        : WorkbenchLog.SessionDirectory;
 
     public string HiveMindStatus
     {

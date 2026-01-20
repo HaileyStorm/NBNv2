@@ -35,7 +35,9 @@ public class HiveMindOutputSinkTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(shardPid)
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         root.Send(hiveMind, new RegisterOutputSink
@@ -85,7 +87,9 @@ public class HiveMindOutputSinkTests
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(shardPid)
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
         });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));

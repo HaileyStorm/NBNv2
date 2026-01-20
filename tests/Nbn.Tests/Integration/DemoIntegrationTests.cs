@@ -117,14 +117,18 @@ public class DemoIntegrationTests
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 1,
                 ShardIndex = 0,
-                ShardPid = PidLabel(region1Remote)
+                ShardPid = PidLabel(region1Remote),
+                NeuronStart = 0,
+                NeuronCount = 1
             });
             regionNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = (uint)NbnConstants.OutputRegionId,
                 ShardIndex = 0,
-                ShardPid = PidLabel(region31Remote)
+                ShardPid = PidLabel(region31Remote),
+                NeuronStart = 0,
+                NeuronCount = 1
             });
 
             await WaitForStatus(
