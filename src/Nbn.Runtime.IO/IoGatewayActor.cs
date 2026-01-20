@@ -76,7 +76,7 @@ public sealed class IoGatewayActor : IActor
                 ApplyTickCost(context, message);
                 break;
             case RegisterBrain message:
-                RegisterBrain(context, message);
+                await RegisterBrainAsync(context, message);
                 break;
             case UnregisterBrain message:
                 UnregisterBrain(context, message);
@@ -339,7 +339,7 @@ public sealed class IoGatewayActor : IActor
         });
     }
 
-    private void RegisterBrain(IContext context, RegisterBrain message)
+    private async Task RegisterBrainAsync(IContext context, RegisterBrain message)
     {
         if (!TryGetBrainId(message.BrainId, out var brainId))
         {
@@ -368,6 +368,7 @@ public sealed class IoGatewayActor : IActor
                 existing.Energy.ResetFrom(message.EnergyState);
             }
 
+            await EnsureIoGatewayRegisteredAsync(context, brainId);
             return;
         }
 
@@ -407,6 +408,8 @@ public sealed class IoGatewayActor : IActor
         };
 
         _brains.Add(brainId, entry);
+
+        await EnsureIoGatewayRegisteredAsync(context, brainId);
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)
@@ -498,6 +501,23 @@ public sealed class IoGatewayActor : IActor
         {
             Console.WriteLine($"ReproduceByArtifacts failed: {ex.Message}");
             context.Respond(new Nbn.Proto.Io.ReproduceResult());
+        }
+    }
+
+    private async Task EnsureIoGatewayRegisteredAsync(IContext context, Guid brainId)
+    {
+        if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await ResolveRouterPidAsync(context, brainId).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"RegisterIoGateway failed for {brainId}: {ex.Message}");
         }
     }
 
