@@ -26,7 +26,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, Viz.AddBrainId, OnBrainsUpdated, ConnectAllAsync);
+        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, Viz.AddBrainId, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel();
@@ -188,6 +188,10 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             Connections.IoStatus = status;
             Connections.IoConnected = connected;
+            if (connected)
+            {
+                Io.RefreshSubscriptions();
+            }
         });
     }
 

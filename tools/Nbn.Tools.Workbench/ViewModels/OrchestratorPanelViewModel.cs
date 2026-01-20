@@ -4,6 +4,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -15,6 +17,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 {
     private const int MaxRows = 200;
     private const long StaleNodeMs = 15000;
+    private const string SampleRouterId = "demo-router";
+    private const string SampleOutputPrefix = "io-output-";
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
@@ -22,17 +26,24 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
     private readonly LocalServiceRunner _obsRunner = new();
+    private readonly LocalServiceRunner _sampleBrainRunner = new();
+    private readonly LocalServiceRunner _sampleRegionRunner = new();
+    private readonly LocalServiceRunner _sampleInputRunner = new();
+    private readonly LocalServiceRunner _sampleOutputRunner = new();
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private readonly Func<Task>? _connectAll;
+    private readonly Action? _disconnectAll;
     private string _statusMessage = "Idle";
     private string _settingsLaunchStatus = "Idle";
     private string _hiveMindLaunchStatus = "Idle";
     private string _ioLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
+    private string _sampleBrainStatus = "Not running.";
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
     private readonly CancellationTokenSource _refreshCts = new();
     private readonly TimeSpan _autoRefreshInterval = TimeSpan.FromSeconds(3);
+    private Guid? _sampleBrainId;
 
     public OrchestratorPanelViewModel(
         UiDispatcher dispatcher,
@@ -40,7 +51,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         WorkbenchClient client,
         Action<Guid>? brainDiscovered = null,
         Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null,
-        Func<Task>? connectAll = null)
+        Func<Task>? connectAll = null,
+        Action? disconnectAll = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
@@ -48,6 +60,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
+        _disconnectAll = disconnectAll;
         Nodes = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
@@ -63,6 +76,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopObsCommand = new AsyncRelayCommand(() => StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value));
         StartAllCommand = new AsyncRelayCommand(StartAllAsync);
         StopAllCommand = new AsyncRelayCommand(StopAllAsync);
+        SpawnSampleBrainCommand = new AsyncRelayCommand(SpawnSampleBrainAsync);
+        StopSampleBrainCommand = new AsyncRelayCommand(StopSampleBrainAsync);
         _ = StartAutoRefreshAsync();
     }
 
@@ -101,6 +116,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand StopAllCommand { get; }
 
+    public AsyncRelayCommand SpawnSampleBrainCommand { get; }
+
+    public AsyncRelayCommand StopSampleBrainCommand { get; }
+
     public string SettingsLaunchStatus
     {
         get => _settingsLaunchStatus;
@@ -123,6 +142,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _obsLaunchStatus;
         set => SetProperty(ref _obsLaunchStatus, value);
+    }
+
+    public string SampleBrainStatus
+    {
+        get => _sampleBrainStatus;
+        set => SetProperty(ref _sampleBrainStatus, value);
     }
 
     public void UpdateSetting(SettingItem item)
@@ -155,6 +180,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     public async Task StopAllAsyncForShutdown()
     {
         _refreshCts.Cancel();
+        _disconnectAll?.Invoke();
+        await StopSampleBrainAsync().ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
@@ -384,7 +411,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             }).Where(entry => entry.BrainId != Guid.Empty).ToList();
 
             RecordBrainTerminations(brainListAll);
-            var brainList = brainListAll.Where(entry => entry.ControllerAlive).ToList();
+            var brainList = brainListAll
+                .Where(entry => entry.ControllerAlive && !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+                .ToList();
             _brainsUpdated?.Invoke(brainList);
 
             if (force)
@@ -411,11 +440,204 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private async Task StopAllAsync()
     {
+        _disconnectAll?.Invoke();
+        await StopSampleBrainAsync().ConfigureAwait(false);
         await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
     }
+
+    private async Task SpawnSampleBrainAsync()
+    {
+        if (!Connections.SettingsConnected || !Connections.HiveMindConnected || !Connections.IoConnected)
+        {
+            SampleBrainStatus = "Connect Settings, HiveMind, and IO first.";
+            return;
+        }
+
+        if (IsSampleBrainRunning())
+        {
+            SampleBrainStatus = "Sample brain already running.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
+        {
+            SampleBrainStatus = "Invalid Settings port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.HiveMindPortText, out var hivePort))
+        {
+            SampleBrainStatus = "Invalid HiveMind port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.IoPortText, out var ioPort))
+        {
+            SampleBrainStatus = "Invalid IO port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SampleBrainPortText, out var sampleBrainPort))
+        {
+            SampleBrainStatus = "Invalid sample brain port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SampleRegionPortText, out var sampleRegionPort))
+        {
+            SampleBrainStatus = "Invalid sample region port.";
+            return;
+        }
+
+        var demoProjectPath = RepoLocator.ResolvePathFromRepo("tools", "Nbn.Tools.DemoHost");
+        if (string.IsNullOrWhiteSpace(demoProjectPath))
+        {
+            SampleBrainStatus = "DemoHost project not found.";
+            return;
+        }
+
+        var regionProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.RegionHost");
+        if (string.IsNullOrWhiteSpace(regionProjectPath))
+        {
+            SampleBrainStatus = "RegionHost project not found.";
+            return;
+        }
+
+        var bindHost = string.IsNullOrWhiteSpace(Connections.LocalBindHost) ? "127.0.0.1" : Connections.LocalBindHost;
+        var settingsHost = string.IsNullOrWhiteSpace(Connections.SettingsHost) ? "127.0.0.1" : Connections.SettingsHost;
+        var hiveAddress = $"{Connections.HiveMindHost}:{hivePort}";
+        var ioAddress = $"{Connections.IoHost}:{ioPort}";
+        var brainAddress = $"{bindHost}:{sampleBrainPort}";
+
+        var runRoot = BuildSampleRunRoot();
+        var artifactRoot = Path.Combine(runRoot, "artifacts");
+        ResetDirectory(artifactRoot);
+
+        SampleBrainStatus = "Creating sample artifacts...";
+        var artifact = await CreateSampleArtifactsAsync(artifactRoot, demoProjectPath).ConfigureAwait(false);
+        if (artifact is null)
+        {
+            return;
+        }
+
+        var brainId = Guid.NewGuid();
+        _sampleBrainId = brainId;
+        _brainDiscovered?.Invoke(brainId);
+
+        SampleBrainStatus = "Starting sample brain host...";
+        var brainArgs = "run-brain"
+                        + $" --bind-host {bindHost}"
+                        + $" --port {sampleBrainPort}"
+                        + $" --brain-id {brainId:D}"
+                        + $" --hivemind-address {hiveAddress}"
+                        + $" --hivemind-id {Connections.HiveMindName}"
+                        + $" --router-id {SampleRouterId}"
+                        + $" --io-address {ioAddress}"
+                        + $" --io-id {Connections.IoGateway}"
+                        + $" --settings-host {settingsHost}"
+                        + $" --settings-port {settingsPort}"
+                        + $" --settings-name {Connections.SettingsName}";
+        var brainStartInfo = BuildServiceStartInfo(demoProjectPath, "Nbn.Tools.DemoHost", brainArgs);
+        var brainResult = await _sampleBrainRunner.StartAsync(brainStartInfo, waitForExit: false, label: "SampleBrainHost").ConfigureAwait(false);
+        if (!brainResult.Success)
+        {
+            SampleBrainStatus = $"Sample brain host failed: {brainResult.Message}";
+            await CleanupSampleBrainAsync().ConfigureAwait(false);
+            return;
+        }
+
+        var artifactPath = string.IsNullOrWhiteSpace(artifact.ArtifactRoot) ? artifactRoot : artifact.ArtifactRoot;
+        var regionArgsBase = $"--bind-host {bindHost}"
+                             + $" --settings-host {settingsHost}"
+                             + $" --settings-port {settingsPort}"
+                             + $" --settings-name {Connections.SettingsName}"
+                             + $" --brain-id {brainId:D}"
+                             + " --neuron-start 0"
+                             + " --neuron-count 1"
+                             + " --shard-index 0"
+                             + $" --router-address {brainAddress}"
+                             + $" --router-id {SampleRouterId}"
+                             + $" --tick-address {hiveAddress}"
+                             + $" --tick-id {Connections.HiveMindName}"
+                             + $" --nbn-sha256 {artifact.Sha256}"
+                             + $" --nbn-size {artifact.Size}"
+                             + $" --artifact-root \"{artifactPath}\"";
+
+        SampleBrainStatus = "Starting sample region host...";
+        var regionArgs = $"{regionArgsBase} --port {sampleRegionPort} --region 1";
+        var regionStartInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", regionArgs);
+        var regionResult = await _sampleRegionRunner.StartAsync(regionStartInfo, waitForExit: false, label: "SampleRegionHost").ConfigureAwait(false);
+        if (!regionResult.Success)
+        {
+            SampleBrainStatus = $"Sample region host failed: {regionResult.Message}";
+            await CleanupSampleBrainAsync().ConfigureAwait(false);
+            return;
+        }
+
+        SampleBrainStatus = "Starting sample input region...";
+        var inputArgs = $"{regionArgsBase} --port {sampleRegionPort + 1} --region 0";
+        var inputStartInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", inputArgs);
+        var inputResult = await _sampleInputRunner.StartAsync(inputStartInfo, waitForExit: false, label: "SampleRegionInput").ConfigureAwait(false);
+        if (!inputResult.Success)
+        {
+            SampleBrainStatus = $"Sample input region failed: {inputResult.Message}";
+            await CleanupSampleBrainAsync().ConfigureAwait(false);
+            return;
+        }
+
+        SampleBrainStatus = "Starting sample output region...";
+        var outputId = SampleOutputPrefix + brainId.ToString("N");
+        var outputArgs = $"{regionArgsBase} --port {sampleRegionPort + 2} --region 31 --output-address {ioAddress} --output-id {outputId}";
+        var outputStartInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", outputArgs);
+        var outputResult = await _sampleOutputRunner.StartAsync(outputStartInfo, waitForExit: false, label: "SampleRegionOutput").ConfigureAwait(false);
+        if (!outputResult.Success)
+        {
+            SampleBrainStatus = $"Sample output region failed: {outputResult.Message}";
+            await CleanupSampleBrainAsync().ConfigureAwait(false);
+            return;
+        }
+
+        SampleBrainStatus = $"Sample brain running ({brainId:D}).";
+        await Task.Delay(500).ConfigureAwait(false);
+        await RefreshAsync(force: true).ConfigureAwait(false);
+    }
+
+    private async Task StopSampleBrainAsync()
+    {
+        if (!IsSampleBrainRunning())
+        {
+            var stoppedId = _sampleBrainId;
+            _sampleBrainId = null;
+            SampleBrainStatus = stoppedId.HasValue
+                ? $"Sample brain not running ({stoppedId:D})."
+                : "Sample brain not running.";
+            return;
+        }
+
+        var brainId = _sampleBrainId;
+        await CleanupSampleBrainAsync().ConfigureAwait(false);
+        SampleBrainStatus = brainId.HasValue
+            ? $"Sample brain stopped ({brainId:D})."
+            : "Sample brain stopped.";
+    }
+
+    private async Task CleanupSampleBrainAsync()
+    {
+        await _sampleOutputRunner.StopAsync().ConfigureAwait(false);
+        await _sampleInputRunner.StopAsync().ConfigureAwait(false);
+        await _sampleRegionRunner.StopAsync().ConfigureAwait(false);
+        await _sampleBrainRunner.StopAsync().ConfigureAwait(false);
+        _sampleBrainId = null;
+    }
+
+    private bool IsSampleBrainRunning()
+        => _sampleBrainRunner.IsRunning
+           || _sampleRegionRunner.IsRunning
+           || _sampleInputRunner.IsRunning
+           || _sampleOutputRunner.IsRunning;
 
     private async Task StartAutoRefreshAsync()
     {
@@ -750,4 +972,133 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await Task.Delay(500).ConfigureAwait(false);
         await _connectAll().ConfigureAwait(false);
     }
+
+    private static string BuildSampleRunRoot()
+    {
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Nbn.Workbench",
+            "sample-brain");
+        Directory.CreateDirectory(baseDir);
+        return baseDir;
+    }
+
+    private static void ResetDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+        }
+
+        Directory.CreateDirectory(path);
+    }
+
+    private async Task<SampleArtifact?> CreateSampleArtifactsAsync(string artifactRoot, string demoProjectPath)
+    {
+        Directory.CreateDirectory(artifactRoot);
+
+        var args = $"init-artifacts --artifact-root \"{artifactRoot}\" --json";
+        var startInfo = BuildServiceStartInfo(demoProjectPath, "Nbn.Tools.DemoHost", args);
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+        startInfo.StandardOutputEncoding = Encoding.UTF8;
+        startInfo.StandardErrorEncoding = Encoding.UTF8;
+
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start())
+        {
+            SampleBrainStatus = "Failed to start DemoHost.";
+            return null;
+        }
+
+        var stdOutTask = process.StandardOutput.ReadToEndAsync();
+        var stdErrTask = process.StandardError.ReadToEndAsync();
+        await Task.WhenAll(stdOutTask, stdErrTask, process.WaitForExitAsync()).ConfigureAwait(false);
+
+        if (process.ExitCode != 0)
+        {
+            var error = stdErrTask.Result;
+            SampleBrainStatus = string.IsNullOrWhiteSpace(error) ? "DemoHost failed." : $"DemoHost failed: {error}";
+            return null;
+        }
+
+        var artifact = ParseSampleArtifact(stdOutTask.Result);
+        if (artifact is null)
+        {
+            SampleBrainStatus = "DemoHost did not return artifact metadata.";
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(artifact.ArtifactRoot))
+        {
+            artifact = artifact with { ArtifactRoot = artifactRoot };
+        }
+
+        return artifact;
+    }
+
+    private static SampleArtifact? ParseSampleArtifact(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return null;
+        }
+
+        var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var jsonLine = lines.LastOrDefault(line =>
+            line.TrimStart().StartsWith("{", StringComparison.Ordinal)
+            && line.TrimEnd().EndsWith("}", StringComparison.Ordinal));
+
+        if (string.IsNullOrWhiteSpace(jsonLine))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonLine);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("nbn_sha256", out var shaProp))
+            {
+                return null;
+            }
+
+            if (!root.TryGetProperty("nbn_size", out var sizeProp))
+            {
+                return null;
+            }
+
+            var sha = shaProp.GetString();
+            if (string.IsNullOrWhiteSpace(sha))
+            {
+                return null;
+            }
+
+            var size = 0L;
+            if (sizeProp.ValueKind == JsonValueKind.Number && sizeProp.TryGetInt64(out var sizeValue))
+            {
+                size = sizeValue;
+            }
+
+            var artifactRoot = string.Empty;
+            if (root.TryGetProperty("artifact_root", out var rootProp))
+            {
+                artifactRoot = rootProp.GetString() ?? string.Empty;
+            }
+
+            return new SampleArtifact(sha, size, artifactRoot);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record SampleArtifact(string Sha256, long Size, string ArtifactRoot);
 }

@@ -23,6 +23,8 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _hiveMindHost = "127.0.0.1";
     private string _hiveMindPortText = "12020";
     private string _hiveMindName = "HiveMind";
+    private string _sampleBrainPortText = "12011";
+    private string _sampleRegionPortText = "12040";
     private string _hiveMindStatus = "Disconnected";
     private string _ioStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
@@ -133,6 +135,18 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _hiveMindName;
         set => SetProperty(ref _hiveMindName, value);
+    }
+
+    public string SampleBrainPortText
+    {
+        get => _sampleBrainPortText;
+        set => SetProperty(ref _sampleBrainPortText, value);
+    }
+
+    public string SampleRegionPortText
+    {
+        get => _sampleRegionPortText;
+        set => SetProperty(ref _sampleRegionPortText, value);
     }
 
     public bool WorkbenchLoggingEnabled

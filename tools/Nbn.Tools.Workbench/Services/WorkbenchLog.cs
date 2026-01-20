@@ -30,6 +30,12 @@ public static class WorkbenchLog
             {
                 _sessionDirectory = CreateSessionDirectory();
             }
+            else
+            {
+                EnsureDirectory(_sessionDirectory);
+            }
+
+            ClearLogs(_sessionDirectory);
 
             WriteLine("workbench.log", "Workbench logging enabled.");
         }
@@ -101,9 +107,42 @@ public static class WorkbenchLog
             "Nbn.Workbench",
             "logs");
         Directory.CreateDirectory(baseDir);
-        var sessionDir = Path.Combine(baseDir, DateTimeOffset.UtcNow.ToString("yyyyMMdd_HHmmss"));
-        Directory.CreateDirectory(sessionDir);
-        return sessionDir;
+        return baseDir;
+    }
+
+    private static void EnsureDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void ClearLogs(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(directory, "*.log"))
+            {
+                File.Delete(file);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private static string Sanitize(string? value)

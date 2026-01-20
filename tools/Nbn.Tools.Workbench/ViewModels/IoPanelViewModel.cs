@@ -277,6 +277,18 @@ public sealed class IoPanelViewModel : ViewModelBase
             : $"Active brains: {_activeBrains.Count}";
     }
 
+    public void RefreshSubscriptions()
+    {
+        if (!_selectedBrainId.HasValue)
+        {
+            return;
+        }
+
+        _client.SubscribeOutputs(_selectedBrainId.Value, vector: false);
+        _client.SubscribeOutputs(_selectedBrainId.Value, vector: true);
+        _ = _client.RequestBrainInfoAsync(_selectedBrainId.Value, ApplyBrainInfo);
+    }
+
     public void ApplyEnergyCreditSelected()
     {
         if (!TryGetSelectedBrain(out var brainId))
