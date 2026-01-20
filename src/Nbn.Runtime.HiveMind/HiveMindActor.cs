@@ -117,6 +117,16 @@ public sealed class HiveMindActor : IActor
             case GetBrainRouting message:
                 context.Respond(BuildRoutingInfo(message.BrainId));
                 break;
+            case ProtoControl.GetBrainRouting message:
+                if (message.BrainId is not null && message.BrainId.TryToGuid(out var routingBrainId))
+                {
+                    context.Respond(BuildRoutingInfoProto(routingBrainId));
+                }
+                else
+                {
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                }
+                break;
         }
 
         return Task.CompletedTask;
@@ -908,6 +918,26 @@ public sealed class HiveMindActor : IActor
             brain.SignalRouterPid,
             brain.Shards.Count,
             brain.RoutingSnapshot.Count);
+    }
+
+    private ProtoControl.BrainRoutingInfo BuildRoutingInfoProto(Guid brainId)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return new ProtoControl.BrainRoutingInfo
+            {
+                BrainId = brainId.ToProtoUuid()
+            };
+        }
+
+        return new ProtoControl.BrainRoutingInfo
+        {
+            BrainId = brain.BrainId.ToProtoUuid(),
+            BrainRootPid = brain.BrainRootPid is null ? string.Empty : PidLabel(brain.BrainRootPid),
+            SignalRouterPid = brain.SignalRouterPid is null ? string.Empty : PidLabel(brain.SignalRouterPid),
+            ShardCount = (uint)brain.Shards.Count,
+            RoutingCount = (uint)brain.RoutingSnapshot.Count
+        };
     }
 
     private void UpdateRoutingTable(IContext? context, BrainState brain)

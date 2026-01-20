@@ -63,6 +63,25 @@
               </StackPanel>
             </StackPanel>
           </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Energy + Cost (Selected Brain)" Classes="card-title" />
+              <TextBlock Text="Applies only to the selected brain above." Classes="muted" />
+              <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+                <TextBlock Text="Credit" Classes="muted" />
+                <TextBox Grid.Column="1" Text="{Binding Brain.EnergyCreditText}" Width="100" />
+                <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyCreditCommand}" />
+                <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Brain.EnergyRateText}" Width="100" />
+                <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
+              </Grid>
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <CheckBox Content="Cost + Energy Enabled" IsChecked="{Binding Brain.CostEnergyEnabled}" />
+                <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
         </StackPanel>
 
         <StackPanel Grid.Column="1" Spacing="16">

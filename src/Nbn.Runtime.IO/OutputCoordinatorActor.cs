@@ -37,6 +37,9 @@ public sealed class OutputCoordinatorActor : IActor
             case UnsubscribeOutputsVector:
                 RemoveSubscriber(context.Sender, _vectorSubscribers);
                 break;
+            case OutputEvent outputEvent:
+                EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
+                break;
             case EmitOutput message:
                 EmitSingle(context, message);
                 break;

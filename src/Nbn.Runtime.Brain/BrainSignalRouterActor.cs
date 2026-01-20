@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Nbn.Proto.Control;
+using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
@@ -15,6 +16,7 @@ public sealed class BrainSignalRouterActor : IActor
     private readonly RoutingTable _routingTable = new();
     private readonly Dictionary<ulong, TickOutbox> _pendingOutboxes = new();
     private readonly Dictionary<ulong, PendingDeliver> _pendingDeliveries = new();
+    private readonly Dictionary<uint, float> _pendingInputs = new();
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
 
     public BrainSignalRouterActor(Guid brainId)
@@ -41,6 +43,12 @@ public sealed class BrainSignalRouterActor : IActor
                 break;
             case TickDeliver tickDeliver:
                 HandleTickDeliver(context, tickDeliver);
+                break;
+            case InputWrite inputWrite:
+                HandleInputWrite(inputWrite);
+                break;
+            case InputVector inputVector:
+                HandleInputVector(inputVector);
                 break;
             case SignalBatchAck ack:
                 HandleSignalBatchAck(context, ack);
@@ -103,6 +111,8 @@ public sealed class BrainSignalRouterActor : IActor
         var expectedAcks = 0;
         var fallbackRoutes = 0;
         var missingRouteLogged = false;
+        var inputRoutes = Array.Empty<ShardRoute>();
+        List<Contribution>? inputContribs = null;
 
         var outboxDestinationCount = 0;
         if (_pendingOutboxes.TryGetValue(tickDeliver.TickId, out var outbox))
@@ -150,9 +160,49 @@ public sealed class BrainSignalRouterActor : IActor
             _pendingOutboxes.Remove(tickDeliver.TickId);
         }
 
+        if (_pendingInputs.Count > 0)
+        {
+            inputRoutes = _routingTable.Entries
+                .Where(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId)
+                .ToArray();
+
+            if (inputRoutes.Length > 0)
+            {
+                inputContribs = new List<Contribution>(_pendingInputs.Count);
+                foreach (var entry in _pendingInputs)
+                {
+                    inputContribs.Add(new Contribution
+                    {
+                        TargetNeuronId = entry.Key,
+                        Value = entry.Value
+                    });
+                }
+
+                foreach (var route in inputRoutes)
+                {
+                    var signalBatch = new SignalBatch
+                    {
+                        BrainId = _brainIdProto,
+                        RegionId = (uint)NbnConstants.InputRegionId,
+                        ShardId = route.ShardId.ToProtoShardId32(),
+                        TickId = tickDeliver.TickId
+                    };
+
+                    signalBatch.Contribs.AddRange(inputContribs);
+                    context.Request(route.Pid, signalBatch);
+
+                    deliveredBatches++;
+                    deliveredContribs += (uint)inputContribs.Count;
+                    expectedAcks++;
+                }
+
+                _pendingInputs.Clear();
+            }
+        }
+
         if (LogDelivery)
         {
-            Log($"TickDeliver start tick={tickDeliver.TickId} outboxDestinations={outboxDestinationCount} deliveredBatches={deliveredBatches} deliveredContribs={deliveredContribs} expectedAcks={expectedAcks} routes={_routingTable.Count} fallbackRoutes={fallbackRoutes}");
+            Log($"TickDeliver start tick={tickDeliver.TickId} outboxDestinations={outboxDestinationCount} inputRoutes={inputRoutes.Length} deliveredBatches={deliveredBatches} deliveredContribs={deliveredContribs} expectedAcks={expectedAcks} routes={_routingTable.Count} fallbackRoutes={fallbackRoutes}");
         }
 
         if (expectedAcks == 0)
@@ -229,6 +279,34 @@ public sealed class BrainSignalRouterActor : IActor
         if (replyTo is not null)
         {
             context.Send(replyTo, deliverDone);
+        }
+    }
+
+    private void HandleInputWrite(InputWrite message)
+    {
+        if (!IsForBrain(message.BrainId))
+        {
+            return;
+        }
+
+        _pendingInputs[message.InputIndex] = message.Value;
+    }
+
+    private void HandleInputVector(InputVector message)
+    {
+        if (!IsForBrain(message.BrainId))
+        {
+            return;
+        }
+
+        if (message.Values.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < message.Values.Count; i++)
+        {
+            _pendingInputs[(uint)i] = message.Values[i];
         }
     }
 

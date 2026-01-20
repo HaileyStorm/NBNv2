@@ -3,12 +3,12 @@ using System.Net;
 using System.Net.Sockets;
 using Nbn.Proto;
 using Nbn.Proto.Control;
+using ProtoControl = Nbn.Proto.Control;
 using Nbn.Proto.Signal;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.HiveMind;
 using Nbn.Shared;
 using Nbn.Shared.HiveMind;
-using ProtoControl = Nbn.Proto.Control;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -105,10 +105,10 @@ public class DistributedIntegrationTests
 
         var info = await WaitForRoutingInfo(hiveNode.Root, hiveMindLocal, brainId, TimeSpan.FromSeconds(5));
 
-        Assert.NotNull(info.BrainRootPid);
-        Assert.NotNull(info.SignalRouterPid);
-        Assert.Equal(brainNode.Address, info.BrainRootPid!.Address);
-        Assert.Equal(brainNode.Address, info.SignalRouterPid!.Address);
+        Assert.False(string.IsNullOrWhiteSpace(info.BrainRootPid));
+        Assert.False(string.IsNullOrWhiteSpace(info.SignalRouterPid));
+        Assert.StartsWith(brainNode.Address + "/", info.BrainRootPid);
+        Assert.StartsWith(brainNode.Address + "/", info.SignalRouterPid);
     }
 
     private static RemoteConfig BuildHiveMindConfig(int port)
@@ -205,19 +205,21 @@ public class DistributedIntegrationTests
         throw new TimeoutException($"HiveMind status did not reach expected state. Last: brains={lastStatus?.RegisteredBrains}, shards={lastStatus?.RegisteredShards}, pendingCompute={lastStatus?.PendingCompute}, pendingDeliver={lastStatus?.PendingDeliver}.");
     }
 
-    private static async Task<BrainRoutingInfo> WaitForRoutingInfo(
+    private static async Task<ProtoControl.BrainRoutingInfo> WaitForRoutingInfo(
         IRootContext root,
         PID hiveMind,
         Guid brainId,
         TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
-        BrainRoutingInfo? lastInfo = null;
+        ProtoControl.BrainRoutingInfo? lastInfo = null;
         while (sw.Elapsed < timeout)
         {
-            var info = await root.RequestAsync<BrainRoutingInfo>(hiveMind, new GetBrainRouting(brainId));
+            var info = await root.RequestAsync<ProtoControl.BrainRoutingInfo>(
+                hiveMind,
+                new ProtoControl.GetBrainRouting { BrainId = brainId.ToProtoUuid() });
             lastInfo = info;
-            if (info.BrainRootPid is not null || info.SignalRouterPid is not null)
+            if (!string.IsNullOrWhiteSpace(info.BrainRootPid) || !string.IsNullOrWhiteSpace(info.SignalRouterPid))
             {
                 return info;
             }

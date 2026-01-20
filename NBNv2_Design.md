@@ -1875,6 +1875,18 @@ message HiveMindStatus {
   uint32 registered_brains = 7;
   uint32 registered_shards = 8;
 }
+
+message GetBrainRouting {
+  nbn.Uuid brain_id = 1;
+}
+
+message BrainRoutingInfo {
+  nbn.Uuid brain_id = 1;
+  string brain_root_pid = 2;
+  string signal_router_pid = 3;
+  uint32 shard_count = 4;
+  uint32 routing_count = 5;
+}
 ```
 
 ### 19.5 `nbn_signals.proto`

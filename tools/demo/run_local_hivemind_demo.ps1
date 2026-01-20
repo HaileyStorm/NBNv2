@@ -19,6 +19,14 @@ $runRoot = Join-Path $DemoRoot (Get-Date -Format "yyyyMMdd_HHmmss")
 $artifactRoot = Join-Path $runRoot "artifacts"
 $logRoot = Join-Path $runRoot "logs"
 $settingsDbPath = Join-Path $DemoRoot "settingsmonitor.db"
+$settingsDbWal = "$settingsDbPath-wal"
+$settingsDbShm = "$settingsDbPath-shm"
+
+foreach ($path in @($settingsDbPath, $settingsDbWal, $settingsDbShm)) {
+    if (Test-Path $path) {
+        Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+    }
+}
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
@@ -71,12 +79,16 @@ $artifact = $artifactLine | ConvertFrom-Json
 $hiveLog = Join-Path $logRoot "hivemind.log"
 $brainLog = Join-Path $logRoot "brainhost.log"
 $regionLog = Join-Path $logRoot "regionhost.log"
+$regionInputLog = Join-Path $logRoot "regionhost-input.log"
+$regionOutputLog = Join-Path $logRoot "regionhost-output.log"
 $ioLog = Join-Path $logRoot "io.log"
 $obsLog = Join-Path $logRoot "observability.log"
 $settingsLog = Join-Path $logRoot "settingsmonitor.log"
 $hiveErr = Join-Path $logRoot "hivemind.err.log"
 $brainErr = Join-Path $logRoot "brainhost.err.log"
 $regionErr = Join-Path $logRoot "regionhost.err.log"
+$regionInputErr = Join-Path $logRoot "regionhost-input.err.log"
+$regionOutputErr = Join-Path $logRoot "regionhost-output.err.log"
 $ioErr = Join-Path $logRoot "io.err.log"
 $obsErr = Join-Path $logRoot "observability.err.log"
 $settingsErr = Join-Path $logRoot "settingsmonitor.err.log"
@@ -117,6 +129,8 @@ $brainArgs = @(
     "--hivemind-address", $hiveAddress,
     "--hivemind-id", "HiveMind",
     "--router-id", $RouterId,
+    "--io-address", $ioAddress,
+    "--io-id", "io-gateway",
     "--settings-host", $BindHost,
     "--settings-port", $SettingsPort,
     "--settings-name", "SettingsMonitor"
@@ -130,10 +144,14 @@ $brainServiceArgs = @(
     "--hivemind-address", $hiveAddress,
     "--hivemind-id", "HiveMind",
     "--router-id", $RouterId,
+    "--io-address", $ioAddress,
+    "--io-id", "io-gateway",
     "--settings-host", $BindHost,
     "--settings-port", $SettingsPort,
     "--settings-name", "SettingsMonitor"
 )
+
+$ioOutputId = "io-output-" + ($brainId -replace '-', '')
 
 $regionArgs = @(
     "run",
@@ -175,6 +193,100 @@ $regionServiceArgs = @(
     "--router-id", $RouterId,
     "--tick-address", $hiveAddress,
     "--tick-id", "HiveMind",
+    "--nbn-sha256", $artifact.nbn_sha256,
+    "--nbn-size", $artifact.nbn_size,
+    "--artifact-root", $artifactRoot
+)
+
+$regionInputArgs = @(
+    "run",
+    "--project", (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost"),
+    "-c", "Release",
+    "--no-build",
+    "--",
+    "--bind-host", $BindHost,
+    "--port", ($RegionHostPort + 1),
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--brain-id", $brainId,
+    "--region", 0,
+    "--neuron-start", 0,
+    "--neuron-count", 1,
+    "--shard-index", 0,
+    "--router-address", $brainAddress,
+    "--router-id", $RouterId,
+    "--tick-address", $hiveAddress,
+    "--tick-id", "HiveMind",
+    "--nbn-sha256", $artifact.nbn_sha256,
+    "--nbn-size", $artifact.nbn_size,
+    "--artifact-root", $artifactRoot
+)
+
+$regionInputServiceArgs = @(
+    "--bind-host", $BindHost,
+    "--port", ($RegionHostPort + 1),
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--brain-id", $brainId,
+    "--region", 0,
+    "--neuron-start", 0,
+    "--neuron-count", 1,
+    "--shard-index", 0,
+    "--router-address", $brainAddress,
+    "--router-id", $RouterId,
+    "--tick-address", $hiveAddress,
+    "--tick-id", "HiveMind",
+    "--nbn-sha256", $artifact.nbn_sha256,
+    "--nbn-size", $artifact.nbn_size,
+    "--artifact-root", $artifactRoot
+)
+
+$regionOutputArgs = @(
+    "run",
+    "--project", (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost"),
+    "-c", "Release",
+    "--no-build",
+    "--",
+    "--bind-host", $BindHost,
+    "--port", ($RegionHostPort + 2),
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--brain-id", $brainId,
+    "--region", 31,
+    "--neuron-start", 0,
+    "--neuron-count", 1,
+    "--shard-index", 0,
+    "--router-address", $brainAddress,
+    "--router-id", $RouterId,
+    "--tick-address", $hiveAddress,
+    "--tick-id", "HiveMind",
+    "--output-address", $ioAddress,
+    "--output-id", $ioOutputId,
+    "--nbn-sha256", $artifact.nbn_sha256,
+    "--nbn-size", $artifact.nbn_size,
+    "--artifact-root", $artifactRoot
+)
+
+$regionOutputServiceArgs = @(
+    "--bind-host", $BindHost,
+    "--port", ($RegionHostPort + 2),
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--brain-id", $brainId,
+    "--region", 31,
+    "--neuron-start", 0,
+    "--neuron-count", 1,
+    "--shard-index", 0,
+    "--router-address", $brainAddress,
+    "--router-id", $RouterId,
+    "--tick-address", $hiveAddress,
+    "--tick-id", "HiveMind",
+    "--output-address", $ioAddress,
+    "--output-id", $ioOutputId,
     "--nbn-sha256", $artifact.nbn_sha256,
     "--nbn-size", $artifact.nbn_size,
     "--artifact-root", $artifactRoot
@@ -265,6 +377,18 @@ $regionProc = if (Test-Path $regionExe) {
     Start-Process -FilePath "dotnet" -ArgumentList $regionArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionLog -RedirectStandardError $regionErr
 }
 Start-Sleep -Seconds 1
+$regionInputProc = if (Test-Path $regionExe) {
+    Start-Process -FilePath $regionExe -ArgumentList $regionInputServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionInputLog -RedirectStandardError $regionInputErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $regionInputArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionInputLog -RedirectStandardError $regionInputErr
+}
+Start-Sleep -Seconds 1
+$regionOutputProc = if (Test-Path $regionExe) {
+    Start-Process -FilePath $regionExe -ArgumentList $regionOutputServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionOutputLog -RedirectStandardError $regionOutputErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $regionOutputArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $regionOutputLog -RedirectStandardError $regionOutputErr
+}
+Start-Sleep -Seconds 1
 $ioProc = if (Test-Path $ioExe) {
     Start-Process -FilePath $ioExe -ArgumentList $ioServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $ioLog -RedirectStandardError $ioErr
 } else {
@@ -280,6 +404,8 @@ $obsProc = if (Test-Path $obsExe) {
 Write-Host "HiveMind: $hiveAddress (pid $($hiveProc.Id))"
 Write-Host "BrainHost: $brainAddress (pid $($brainProc.Id))"
 Write-Host "RegionHost: $regionAddress (pid $($regionProc.Id))"
+Write-Host "RegionHost Input: ${BindHost}:$($RegionHostPort + 1) (pid $($regionInputProc.Id))"
+Write-Host "RegionHost Output: ${BindHost}:$($RegionHostPort + 2) (pid $($regionOutputProc.Id))"
 Write-Host "IO Gateway: $ioAddress (pid $($ioProc.Id))"
 Write-Host "Observability: $obsAddress (pid $($obsProc.Id))"
 Write-Host "SettingsMonitor: $settingsAddress (pid $($settingsProc.Id))"
@@ -292,6 +418,8 @@ if ($PidFile) {
         @{ pid = $hiveProc.Id; name = $hiveProc.ProcessName; startTicksUtc = $hiveProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $brainProc.Id; name = $brainProc.ProcessName; startTicksUtc = $brainProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $regionProc.Id; name = $regionProc.ProcessName; startTicksUtc = $regionProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $regionInputProc.Id; name = $regionInputProc.ProcessName; startTicksUtc = $regionInputProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $regionOutputProc.Id; name = $regionOutputProc.ProcessName; startTicksUtc = $regionOutputProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $ioProc.Id; name = $ioProc.ProcessName; startTicksUtc = $ioProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $obsProc.Id; name = $obsProc.ProcessName; startTicksUtc = $obsProc.StartTime.ToUniversalTime().Ticks }
     )
@@ -305,10 +433,12 @@ while ((Get-Date) -lt $deadline) {
     $hiveReady = (Test-Path $hiveLog) -and ((Get-Item $hiveLog).Length -gt 0)
     $brainReady = (Test-Path $brainLog) -and ((Get-Item $brainLog).Length -gt 0)
     $regionReady = (Test-Path $regionLog) -and ((Get-Item $regionLog).Length -gt 0)
+    $regionInputReady = (Test-Path $regionInputLog) -and ((Get-Item $regionInputLog).Length -gt 0)
+    $regionOutputReady = (Test-Path $regionOutputLog) -and ((Get-Item $regionOutputLog).Length -gt 0)
     $ioReady = (Test-Path $ioLog) -and ((Get-Item $ioLog).Length -gt 0)
     $obsReady = (Test-Path $obsLog) -and ((Get-Item $obsLog).Length -gt 0)
 
-    if ($hiveReady -and $brainReady -and $regionReady -and $ioReady -and $obsReady) {
+    if ($hiveReady -and $brainReady -and $regionReady -and $regionInputReady -and $regionOutputReady -and $ioReady -and $obsReady) {
         break
     }
 
@@ -321,7 +451,7 @@ try {
     [void](Read-Host)
 }
 finally {
-    foreach ($proc in @($obsProc, $ioProc, $regionProc, $brainProc, $hiveProc, $settingsProc)) {
+    foreach ($proc in @($obsProc, $ioProc, $regionOutputProc, $regionInputProc, $regionProc, $brainProc, $hiveProc, $settingsProc)) {
         if ($proc -and -not $proc.HasExited) {
             Stop-Process -Id $proc.Id -Force
         }

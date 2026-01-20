@@ -5,6 +5,7 @@ using Nbn.Proto.Signal;
 using Nbn.Proto.Settings;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Brain;
+using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
@@ -76,6 +77,8 @@ static async Task RunBrainAsync(string[] args)
     var brainRootId = GetArg(args, "--brain-root-id") ?? "BrainRoot";
     var hiveAddress = GetArg(args, "--hivemind-address");
     var hiveId = GetArg(args, "--hivemind-id");
+    var ioAddress = GetArg(args, "--io-address");
+    var ioId = GetArg(args, "--io-id") ?? GetArg(args, "--io-gateway");
     var settingsHost = GetArg(args, "--settings-host") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_HOST") ?? "127.0.0.1";
     var settingsPort = GetIntArg(args, "--settings-port") ?? GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
     var settingsName = GetArg(args, "--settings-name") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
@@ -101,6 +104,15 @@ static async Task RunBrainAsync(string[] args)
 
     system.Root.Send(brainRootPid, new SetSignalRouter(routerPid));
 
+    if (!string.IsNullOrWhiteSpace(ioAddress) && !string.IsNullOrWhiteSpace(ioId))
+    {
+        var ioPid = new PID(ioAddress, ioId);
+        system.Root.Send(ioPid, new RegisterBrain(
+            brainId,
+            inputWidth: 1,
+            outputWidth: 1));
+    }
+
     var nodeAddress = $"{remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}";
     var settingsReporter = SettingsMonitorReporter.Start(
         system,
@@ -118,6 +130,7 @@ static async Task RunBrainAsync(string[] args)
     Console.WriteLine($"BrainRoot: {PidLabel(brainRootPid)}");
     Console.WriteLine($"Router: {PidLabel(routerPid)}");
     Console.WriteLine($"HiveMind: {(hivePid is null ? "(none)" : PidLabel(hivePid))}");
+    Console.WriteLine($"IO Gateway: {(string.IsNullOrWhiteSpace(ioAddress) ? "(none)" : $"{ioAddress}/{ioId}")}");
     Console.WriteLine("Press Ctrl+C to shut down.");
 
     var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -146,11 +159,34 @@ static byte[] BuildMinimalNbn()
     var directory = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
     ulong offset = NbnBinary.NbnHeaderBytes;
 
-    offset = AddRegionSection(0, 1, stride, ref directory, sections, offset);
+    var inputAxons = new[]
+    {
+        new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: 1)
+    };
+
+    offset = AddRegionSection(
+        0,
+        1,
+        stride,
+        ref directory,
+        sections,
+        offset,
+        neuronFactory: _ => new NeuronRecord(
+            axonCount: 1,
+            paramBCode: 0,
+            paramACode: 0,
+            activationThresholdCode: 0,
+            preActivationThresholdCode: 0,
+            resetFunctionId: 0,
+            activationFunctionId: 1,
+            accumulationFunctionId: 0,
+            exists: true),
+        axons: inputAxons);
 
     var demoAxons = new[]
     {
-        new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: 1)
+        new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: 1),
+        new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: NbnConstants.OutputRegionId)
     };
 
     offset = AddRegionSection(
@@ -161,7 +197,7 @@ static byte[] BuildMinimalNbn()
         sections,
         offset,
         neuronFactory: _ => new NeuronRecord(
-            axonCount: 1,
+            axonCount: 2,
             paramBCode: 0,
             paramACode: 40,
             activationThresholdCode: 0,
@@ -371,4 +407,5 @@ static void PrintHelp()
     Console.WriteLine("  run-brain --bind-host <host> --port <port> --brain-id <guid>");
     Console.WriteLine("            --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("            [--router-id <name>] [--brain-root-id <name>]");
+    Console.WriteLine("            [--io-address <host:port>] [--io-id <name>]");
 }

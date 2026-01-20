@@ -267,6 +267,49 @@ public sealed class IoPanelViewModel : ViewModelBase
             : $"Active brains: {_activeBrains.Count}";
     }
 
+    public void ApplyEnergyCreditSelected()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
+        {
+            BrainInfoSummary = "Credit value invalid.";
+            return;
+        }
+
+        _client.SendEnergyCredit(brainId, amount);
+    }
+
+    public void ApplyEnergyRateSelected()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
+        {
+            BrainInfoSummary = "Rate value invalid.";
+            return;
+        }
+
+        _client.SendEnergyRate(brainId, rate);
+    }
+
+    public void ApplyCostEnergySelected()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        var enabled = CostEnergyEnabled;
+        _client.SetCostEnergy(brainId, enabled, enabled);
+    }
+
     private async Task RequestInfoAsync()
     {
         if (!TryGetBrainId(out var brainId))
@@ -419,6 +462,19 @@ public sealed class IoPanelViewModel : ViewModelBase
             return true;
         }
 
+        brainId = Guid.Empty;
+        return false;
+    }
+
+    private bool TryGetSelectedBrain(out Guid brainId)
+    {
+        if (_selectedBrainId.HasValue)
+        {
+            brainId = _selectedBrainId.Value;
+            return true;
+        }
+
+        BrainInfoSummary = "No brain selected.";
         brainId = Guid.Empty;
         return false;
     }

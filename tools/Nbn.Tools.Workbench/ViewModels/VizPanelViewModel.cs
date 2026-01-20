@@ -26,6 +26,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
+        ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
+        ApplyEnergyRateCommand = new RelayCommand(() => _brain.ApplyEnergyRateSelected());
+        ApplyCostEnergyCommand = new RelayCommand(() => _brain.ApplyCostEnergySelected());
     }
 
     public IoPanelViewModel Brain => _brain;
@@ -69,6 +72,12 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand AddBrainCommand { get; }
 
     public RelayCommand ZoomCommand { get; }
+
+    public RelayCommand ApplyEnergyCreditCommand { get; }
+
+    public RelayCommand ApplyEnergyRateCommand { get; }
+
+    public RelayCommand ApplyCostEnergyCommand { get; }
 
     public void AddBrainId(Guid id)
     {

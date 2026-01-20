@@ -204,8 +204,8 @@ public class HiveMindTickBarrierTests
         });
 
         var info = await WaitForRoutingInfo(root, hiveMind, brainId, TimeSpan.FromSeconds(2));
-        Assert.NotNull(info.SignalRouterPid);
-        Assert.Equal(brainRootPid.Address, info.SignalRouterPid!.Address);
+        Assert.False(string.IsNullOrWhiteSpace(info.SignalRouterPid));
+        Assert.StartsWith(brainRootPid.Address + "/", info.SignalRouterPid);
 
         await system.ShutdownAsync();
     }
@@ -320,19 +320,21 @@ public class HiveMindTickBarrierTests
         throw new TimeoutException($"HiveMind status did not reach expected state. Last: brains={lastStatus?.RegisteredBrains}, shards={lastStatus?.RegisteredShards}, pendingCompute={lastStatus?.PendingCompute}, pendingDeliver={lastStatus?.PendingDeliver}.");
     }
 
-    private static async Task<BrainRoutingInfo> WaitForRoutingInfo(
+    private static async Task<ProtoControl.BrainRoutingInfo> WaitForRoutingInfo(
         IRootContext root,
         PID hiveMind,
         Guid brainId,
         TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
-        BrainRoutingInfo? lastInfo = null;
+        ProtoControl.BrainRoutingInfo? lastInfo = null;
         while (sw.Elapsed < timeout)
         {
-            var info = await root.RequestAsync<BrainRoutingInfo>(hiveMind, new GetBrainRouting(brainId));
+            var info = await root.RequestAsync<ProtoControl.BrainRoutingInfo>(
+                hiveMind,
+                new ProtoControl.GetBrainRouting { BrainId = brainId.ToProtoUuid() });
             lastInfo = info;
-            if (info.BrainRootPid is not null || info.SignalRouterPid is not null)
+            if (!string.IsNullOrWhiteSpace(info.BrainRootPid) || !string.IsNullOrWhiteSpace(info.SignalRouterPid))
             {
                 return info;
             }

@@ -4,6 +4,7 @@ using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
 using Nbn.Shared;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.IO;
 
@@ -14,6 +15,7 @@ public sealed class IoGatewayActor : IActor
     private readonly IoOptions _options;
     private readonly Dictionary<Guid, BrainIoEntry> _brains = new();
     private readonly Dictionary<string, ClientInfo> _clients = new(StringComparer.Ordinal);
+    private readonly Dictionary<Guid, PID> _routerCache = new();
     private readonly PID? _hiveMindPid;
     private readonly PID? _reproPid;
 
@@ -41,10 +43,10 @@ public sealed class IoGatewayActor : IActor
                 HandleBrainInfo(context, message);
                 break;
             case InputWrite message:
-                ForwardInput(context, message);
+                await ForwardInputAsync(context, message);
                 break;
             case InputVector message:
-                ForwardInput(context, message);
+                await ForwardInputAsync(context, message);
                 break;
             case SubscribeOutputs message:
                 ForwardOutput(context, message);
@@ -176,14 +178,30 @@ public sealed class IoGatewayActor : IActor
         });
     }
 
-    private void ForwardInput(IContext context, object message)
+    private async Task ForwardInputAsync(IContext context, object message)
     {
-        if (!TryGetBrainEntry(message, out var entry))
+        if (!TryGetBrainId(message, out var brainId))
         {
             return;
         }
 
-        context.Send(entry.InputPid, message);
+        if (TryGetBrainEntry(message, out var entry))
+        {
+            context.Send(entry.InputPid, message);
+        }
+
+        if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        var routerPid = await ResolveRouterPidAsync(context, brainId).ConfigureAwait(false);
+        if (routerPid is null)
+        {
+            return;
+        }
+
+        context.Send(routerPid, message);
     }
 
     private void ForwardOutput(IContext context, object message)
@@ -307,8 +325,28 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        var inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(message.BrainId, message.InputWidth)));
-        var outputPid = context.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(message.BrainId, message.OutputWidth)));
+        var inputName = IoNames.InputCoordinatorPrefix + message.BrainId.ToString("N");
+        var outputName = IoNames.OutputCoordinatorPrefix + message.BrainId.ToString("N");
+
+        PID inputPid;
+        PID outputPid;
+        try
+        {
+            inputPid = context.SpawnNamed(Props.FromProducer(() => new InputCoordinatorActor(message.BrainId, message.InputWidth)), inputName);
+        }
+        catch
+        {
+            inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(message.BrainId, message.InputWidth)));
+        }
+
+        try
+        {
+            outputPid = context.SpawnNamed(Props.FromProducer(() => new OutputCoordinatorActor(message.BrainId, message.OutputWidth)), outputName);
+        }
+        catch
+        {
+            outputPid = context.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(message.BrainId, message.OutputWidth)));
+        }
 
         var energy = message.EnergyState ?? new BrainEnergyState();
         var entry = new BrainIoEntry(message.BrainId, inputPid, outputPid, message.InputWidth, message.OutputWidth, energy)
@@ -438,6 +476,37 @@ public sealed class IoGatewayActor : IActor
         return false;
     }
 
+    private static bool TryGetBrainId(object message, out Guid guid)
+    {
+        guid = Guid.Empty;
+
+        switch (message)
+        {
+            case InputWrite inputWrite:
+                return TryGetBrainId(inputWrite.BrainId, out guid);
+            case InputVector inputVector:
+                return TryGetBrainId(inputVector.BrainId, out guid);
+            case SubscribeOutputs subscribe:
+                return TryGetBrainId(subscribe.BrainId, out guid);
+            case UnsubscribeOutputs unsubscribe:
+                return TryGetBrainId(unsubscribe.BrainId, out guid);
+            case SubscribeOutputsVector subscribeVector:
+                return TryGetBrainId(subscribeVector.BrainId, out guid);
+            case UnsubscribeOutputsVector unsubscribeVector:
+                return TryGetBrainId(unsubscribeVector.BrainId, out guid);
+            case EnergyCredit energyCredit:
+                return TryGetBrainId(energyCredit.BrainId, out guid);
+            case EnergyRate energyRate:
+                return TryGetBrainId(energyRate.BrainId, out guid);
+            case SetCostEnergyEnabled costEnergy:
+                return TryGetBrainId(costEnergy.BrainId, out guid);
+            case SetPlasticityEnabled plasticity:
+                return TryGetBrainId(plasticity.BrainId, out guid);
+        }
+
+        return false;
+    }
+
     private static bool TryGetBrainId(Uuid? brainId, out Guid guid)
     {
         if (brainId is null)
@@ -481,6 +550,7 @@ public sealed class IoGatewayActor : IActor
         context.Stop(entry.InputPid);
         context.Stop(entry.OutputPid);
         _brains.Remove(entry.BrainId);
+        _routerCache.Remove(entry.BrainId);
     }
 
     private static PID? TryCreatePid(string? address, string? name)
@@ -498,6 +568,78 @@ public sealed class IoGatewayActor : IActor
 
     private static string PidLabel(PID? pid)
         => pid is null ? "unknown" : PidKey(pid);
+
+    private async Task<PID?> ResolveRouterPidAsync(IContext context, Guid brainId)
+    {
+        if (_routerCache.TryGetValue(brainId, out var cached))
+        {
+            return cached;
+        }
+
+        if (_hiveMindPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var info = await context.RequestAsync<ProtoControl.BrainRoutingInfo>(
+                    _hiveMindPid,
+                    new ProtoControl.GetBrainRouting { BrainId = brainId.ToProtoUuid() },
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+
+            if (info is null)
+            {
+                return null;
+            }
+
+            if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
+            {
+                _routerCache[brainId] = routerPid;
+                return routerPid;
+            }
+
+            if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
+            {
+                _routerCache[brainId] = rootPid;
+                return rootPid;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Resolve router failed: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private static bool TryParsePid(string? value, out PID? pid)
+    {
+        pid = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid = new PID(string.Empty, trimmed);
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid = new PID(address, id);
+        return true;
+    }
 
     private sealed record ClientInfo(PID Pid, string Name);
 }
