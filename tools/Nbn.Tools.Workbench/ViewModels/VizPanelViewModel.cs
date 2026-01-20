@@ -95,13 +95,17 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         if (!string.IsNullOrWhiteSpace(selectedId))
         {
-            SelectedBrain = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
-            return;
+            var match = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
+            if (match is not null)
+            {
+                SelectedBrain = match;
+                return;
+            }
         }
 
         if (KnownBrains.Count > 0)
         {
-            SelectedBrain = KnownBrains[0];
+            SelectedBrain = KnownBrains.Count == 1 ? KnownBrains[0] : KnownBrains[0];
         }
     }
 

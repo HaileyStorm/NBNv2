@@ -89,6 +89,7 @@
             <StackPanel Spacing="8">
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" Spacing="8">
                 <TextBlock Text="Outputs" Classes="card-title" />
+                <TextBlock Text="{Binding Brain.LastOutputTickLabel, StringFormat='Last tick: {0}'}" Classes="muted" VerticalAlignment="Center" />
                 <Button Content="Clear" Command="{Binding Brain.ClearOutputsCommand}" HorizontalAlignment="Right" />
               </StackPanel>
               <ItemsControl ItemsSource="{Binding Brain.OutputEvents}">

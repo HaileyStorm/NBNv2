@@ -29,6 +29,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private PlasticityModeOption _selectedPlasticityMode;
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
+    private string _lastOutputTickLabel = "—";
     private List<Guid> _activeBrains = new();
     private Guid? _selectedBrainId;
 
@@ -171,6 +172,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _brainInfoSummary, value);
     }
 
+    public string LastOutputTickLabel
+    {
+        get => _lastOutputTickLabel;
+        set => SetProperty(ref _lastOutputTickLabel, value);
+    }
+
     public string ActiveBrainsSummary
     {
         get => _activeBrainsSummary;
@@ -212,6 +219,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             OutputEvents.Insert(0, item);
             Trim(OutputEvents);
+            LastOutputTickLabel = item.TickId.ToString();
         });
     }
 
@@ -226,6 +234,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             VectorEvents.Insert(0, item);
             Trim(VectorEvents);
+            LastOutputTickLabel = item.TickId.ToString();
         });
     }
 
@@ -246,6 +255,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
         OutputEvents.Clear();
         VectorEvents.Clear();
+        LastOutputTickLabel = "—";
 
         if (brainId.HasValue)
         {
