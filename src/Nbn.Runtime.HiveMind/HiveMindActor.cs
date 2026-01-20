@@ -247,6 +247,7 @@ public sealed class HiveMindActor : IActor
         if (regionId == NbnConstants.OutputRegionId && brain.OutputSinkPid is not null)
         {
             SendOutputSinkUpdate(context, brainId, shardId, normalized, brain.OutputSinkPid);
+            Log($"Output shard registered; pushed sink for brain {brainId} shard {shardId}");
         }
 
         if (_phase == TickPhase.Compute && _tick is not null)
@@ -363,6 +364,7 @@ public sealed class HiveMindActor : IActor
 
         brain.OutputSinkPid = outputPid;
         UpdateOutputSinks(context, brain);
+        Log($"Output sink registered for brain {brainId}: {PidLabel(outputPid)}");
     }
 
     private void PauseBrain(IContext context, Guid brainId, string? reason)
@@ -1005,6 +1007,7 @@ public sealed class HiveMindActor : IActor
     {
         if (brain.OutputSinkPid is null)
         {
+            Log($"Output sink missing for brain {brain.BrainId}; output shards will not emit until registered.");
             return;
         }
 

@@ -527,6 +527,7 @@ public sealed class IoGatewayActor : IActor
     {
         if (_hiveMindPid is null)
         {
+            Console.WriteLine($"RegisterOutputSink skipped (no HiveMind PID) for {brainId}");
             return;
         }
 
@@ -539,6 +540,7 @@ public sealed class IoGatewayActor : IActor
                 OutputPid = outputLabel
             });
 
+            Console.WriteLine($"RegisterOutputSink sent for {brainId} -> {outputLabel}");
             await Task.CompletedTask;
         }
         catch (Exception ex)
