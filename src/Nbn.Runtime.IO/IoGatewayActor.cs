@@ -578,7 +578,7 @@ public sealed class IoGatewayActor : IActor
                 InputWidth = info.InputWidth,
                 OutputWidth = info.OutputWidth
             };
-            RegisterBrain(context, register);
+            await RegisterBrainAsync(context, register);
 
             if (_brains.TryGetValue(brainId, out var entry))
             {
