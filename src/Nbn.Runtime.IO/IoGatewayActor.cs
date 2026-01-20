@@ -15,6 +15,7 @@ public sealed class IoGatewayActor : IActor
     private readonly Dictionary<Guid, BrainIoEntry> _brains = new();
     private readonly Dictionary<string, ClientInfo> _clients = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, PID> _routerCache = new();
+    private readonly Dictionary<Guid, string> _routerRegistration = new();
     private readonly PID? _hiveMindPid;
     private readonly PID? _reproPid;
 
@@ -606,6 +607,7 @@ public sealed class IoGatewayActor : IActor
         context.Stop(entry.OutputPid);
         _brains.Remove(entry.BrainId);
         _routerCache.Remove(entry.BrainId);
+        _routerRegistration.Remove(entry.BrainId);
     }
 
     private static PID? TryCreatePid(string? address, string? name)
@@ -652,12 +654,14 @@ public sealed class IoGatewayActor : IActor
             if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
             {
                 _routerCache[brainId] = routerPid;
+                RegisterIoGatewayPid(context, brainId, routerPid);
                 return routerPid;
             }
 
             if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
             {
                 _routerCache[brainId] = rootPid;
+                RegisterIoGatewayPid(context, brainId, rootPid);
                 return rootPid;
             }
         }
@@ -694,6 +698,40 @@ public sealed class IoGatewayActor : IActor
 
         pid = new PID(address, id);
         return true;
+    }
+
+    private void RegisterIoGatewayPid(IContext context, Guid brainId, PID routerPid)
+    {
+        var routerLabel = PidLabel(routerPid);
+        if (_routerRegistration.TryGetValue(brainId, out var registered) && registered == routerLabel)
+        {
+            return;
+        }
+
+        var selfPid = ToRemotePid(context, context.Self);
+        context.Send(routerPid, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(selfPid)
+        });
+
+        _routerRegistration[brainId] = routerLabel;
+    }
+
+    private static PID ToRemotePid(IContext context, PID pid)
+    {
+        if (!string.IsNullOrWhiteSpace(pid.Address))
+        {
+            return pid;
+        }
+
+        var address = context.System.Address;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return pid;
+        }
+
+        return new PID(address, pid.Id);
     }
 
     private sealed record ClientInfo(PID Pid, string Name);

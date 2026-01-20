@@ -1,3 +1,4 @@
+using Nbn.Proto.Io;
 using Nbn.Shared.HiveMind;
 using Nbn.Shared;
 using Proto;
@@ -13,6 +14,7 @@ public sealed class BrainRootActor : IActor
     private readonly bool _autoSpawnSignalRouter;
     private PID? _signalRouterPid;
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
+    private RegisterIoGateway? _pendingIoGateway;
 
     public BrainRootActor(Guid brainId, PID? hiveMindPid = null, Props? signalRouterProps = null, bool autoSpawnSignalRouter = true)
     {
@@ -59,6 +61,9 @@ public sealed class BrainRootActor : IActor
             case ProtoControl.TickDeliverDone tickDeliverDone:
                 ForwardToHiveMind(context, tickDeliverDone);
                 break;
+            case RegisterIoGateway registerIoGateway:
+                HandleRegisterIoGateway(context, registerIoGateway);
+                break;
             case Terminated terminated:
                 HandleTerminated(terminated);
                 break;
@@ -82,6 +87,11 @@ public sealed class BrainRootActor : IActor
             context.Send(_signalRouterPid, new SetRoutingTable(_routingSnapshot));
         }
 
+        if (_pendingIoGateway is not null)
+        {
+            context.Send(_signalRouterPid, _pendingIoGateway);
+        }
+
         NotifyHiveMind(context, forceRegister: true);
     }
 
@@ -103,6 +113,11 @@ public sealed class BrainRootActor : IActor
         if (_routingSnapshot.Count > 0)
         {
             context.Send(signalRouter, new SetRoutingTable(_routingSnapshot));
+        }
+
+        if (_pendingIoGateway is not null)
+        {
+            context.Send(signalRouter, _pendingIoGateway);
         }
 
         NotifyHiveMind(context, forceRegister: false);
@@ -205,6 +220,20 @@ public sealed class BrainRootActor : IActor
         if (context.Parent is not null)
         {
             context.Send(context.Parent, message);
+        }
+    }
+
+    private void HandleRegisterIoGateway(IContext context, RegisterIoGateway message)
+    {
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var guid) || guid != _brainId)
+        {
+            return;
+        }
+
+        _pendingIoGateway = message;
+        if (_signalRouterPid is not null)
+        {
+            context.Send(_signalRouterPid, message);
         }
     }
 

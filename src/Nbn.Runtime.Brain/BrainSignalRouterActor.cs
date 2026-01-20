@@ -54,6 +54,9 @@ public sealed class BrainSignalRouterActor : IActor
             case InputDrain inputDrain:
                 HandleInputDrain(context, inputDrain);
                 break;
+            case RegisterIoGateway registerIoGateway:
+                HandleRegisterIoGateway(context, registerIoGateway);
+                break;
             case SignalBatchAck ack:
                 HandleSignalBatchAck(context, ack);
                 break;
@@ -209,6 +212,23 @@ public sealed class BrainSignalRouterActor : IActor
 
         _pendingInputDrains.Remove(message.TickId);
         ProcessTickDeliver(context, message.TickId, pending.ReplyTo, message.Contribs, pending.Stopwatch);
+    }
+
+    private void HandleRegisterIoGateway(IContext context, RegisterIoGateway message)
+    {
+        if (!IsForBrain(message.BrainId))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(message.IoGatewayPid)
+            && TryParsePid(message.IoGatewayPid, out var parsed))
+        {
+            _ioGatewayPid = parsed;
+            return;
+        }
+
+        CaptureIoGateway(context.Sender);
     }
 
     private void ProcessTickDeliver(
@@ -419,6 +439,35 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         _ioGatewayPid = sender;
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
     }
 
     private bool TryGetFallbackPid(uint regionId, out PID? pid)

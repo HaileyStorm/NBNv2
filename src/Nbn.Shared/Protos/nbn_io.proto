@@ -58,6 +58,11 @@ message UnregisterBrain {
   string reason = 2;
 }
 
+message RegisterIoGateway {
+  nbn.Uuid brain_id = 1;
+  string io_gateway_pid = 2; // "address/id" or "id" if local
+}
+
 message SpawnBrainViaIO {
   nbn.control.SpawnBrain request = 1;
 }
