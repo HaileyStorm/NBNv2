@@ -160,6 +160,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         {
             Viz.AddBrainId(brainId);
         }
+
+        Viz.AddVizEvent(new VizEventItem(
+            item.Time,
+            "VIZ_OUTPUT",
+            item.BrainId,
+            item.TickId,
+            "31",
+            item.OutputIndex.ToString(),
+            string.Empty,
+            item.Value,
+            0f,
+            $"out-{item.TickId}-{item.OutputIndex}"));
     }
 
     public void OnOutputVectorEvent(OutputVectorEventItem item)
@@ -169,6 +181,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         {
             Viz.AddBrainId(brainId);
         }
+
+        Viz.AddVizEvent(new VizEventItem(
+            item.Time,
+            "VIZ_OUTPUT_VECTOR",
+            item.BrainId,
+            item.TickId,
+            "31",
+            "vector",
+            string.Empty,
+            0f,
+            0f,
+            $"outv-{item.TickId}"));
     }
 
     public void OnDebugEvent(DebugEventItem item) => Debug.AddDebugEvent(item);

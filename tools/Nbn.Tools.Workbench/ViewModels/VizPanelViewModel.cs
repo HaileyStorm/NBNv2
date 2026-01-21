@@ -169,15 +169,19 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public void SetBrains(IReadOnlyList<BrainListItem> brains)
     {
-        if (brains.Count == 0 && KnownBrains.Count > 0)
+        if (brains.Count == 0)
         {
-            Status = "No brains reported; keeping last selection.";
+            if (KnownBrains.Count == 0)
+            {
+                Status = "No brains reported.";
+            }
+
+            RefreshFilteredEvents();
             return;
         }
 
         var previousSelection = SelectedBrain;
         var selectedId = previousSelection?.Id;
-        var hadSelection = previousSelection is not null;
         _suspendSelection = true;
         KnownBrains.Clear();
         foreach (var brain in brains)
@@ -202,9 +206,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
         SelectedBrain = match;
         _suspendSelection = false;
-        if (!hadSelection && match is not null)
+        if (match is not null)
         {
-            _brain.SelectBrain(match.BrainId);
+            _brain.EnsureSelectedBrain(match.BrainId);
         }
         RefreshFilteredEvents();
     }

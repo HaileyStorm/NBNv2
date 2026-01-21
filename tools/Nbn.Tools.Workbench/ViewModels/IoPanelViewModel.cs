@@ -262,7 +262,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         });
     }
 
-    public void SelectBrain(Guid? brainId)
+    public void SelectBrain(Guid? brainId, bool preserveOutputs = false)
     {
         if (_selectedBrainId == brainId)
         {
@@ -277,8 +277,11 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         _selectedBrainId = brainId;
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
-        OutputEvents.Clear();
-        VectorEvents.Clear();
+        if (!preserveOutputs)
+        {
+            OutputEvents.Clear();
+            VectorEvents.Clear();
+        }
         LastOutputTickLabel = "—";
 
         if (brainId.HasValue)
@@ -291,6 +294,17 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             BrainInfoSummary = "No brain selected.";
         }
+    }
+
+    public void EnsureSelectedBrain(Guid brainId)
+    {
+        if (_selectedBrainId.HasValue && _selectedBrainId.Value == brainId)
+        {
+            RefreshSubscriptions();
+            return;
+        }
+
+        SelectBrain(brainId, preserveOutputs: true);
     }
 
     public void UpdateActiveBrains(IReadOnlyList<Guid> brains)
