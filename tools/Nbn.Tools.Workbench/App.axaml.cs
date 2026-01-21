@@ -16,6 +16,34 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.MainWindow = new MainWindow();
+            desktop.MainWindow.Closing += (_, _) =>
+            {
+                try
+                {
+                    desktop.Shutdown();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    Environment.Exit(0);
+                }
+                catch
+                {
+                }
+            };
+            desktop.MainWindow.Closed += (_, _) =>
+            {
+                try
+                {
+                    Environment.Exit(0);
+                }
+                catch
+                {
+                }
+            };
             desktop.Exit += (_, _) =>
             {
                 try
