@@ -128,6 +128,18 @@ Usage notes:
 * For automation, use `bv --robot-*` only. The interactive TUI blocks the session.
 * NEVER use git worktrees (they don't work well with Beads).
 
+### 2.4 Build/test defaults (required)
+
+Always use these flags for local and CI builds/tests:
+
+* **Configuration:** `-c Release`
+* **Disable build servers:** `--disable-build-servers` for both `dotnet build` and `dotnet test`
+
+Preferred commands:
+
+* `dotnet build -c Release --disable-build-servers`
+* `dotnet test -c Release --disable-build-servers` (add `--no-build` only if you already built with the same config)
+
 ---
 
 ## 3. Distributed architecture and service topology
