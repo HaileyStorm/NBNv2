@@ -171,7 +171,9 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        var selectedId = SelectedBrain?.Id;
+        var previousSelection = SelectedBrain;
+        var selectedId = previousSelection?.Id;
+        var hadSelection = previousSelection is not null;
         _suspendSelection = true;
         KnownBrains.Clear();
         foreach (var brain in brains)
@@ -183,12 +185,10 @@ public sealed class VizPanelViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(selectedId))
         {
             match = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
-            if (match is not null)
+            if (match is null && previousSelection is not null)
             {
-                SelectedBrain = match;
-                _suspendSelection = false;
-                _brain.SelectBrain(match.BrainId);
-                return;
+                match = new BrainListItem(previousSelection.BrainId, "stale", false);
+                KnownBrains.Add(match);
             }
         }
 
@@ -198,7 +198,10 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
         SelectedBrain = match;
         _suspendSelection = false;
-        _brain.SelectBrain(match?.BrainId);
+        if (!hadSelection && match is not null)
+        {
+            _brain.SelectBrain(match.BrainId);
+        }
         RefreshFilteredEvents();
     }
 
@@ -209,6 +212,10 @@ public sealed class VizPanelViewModel : ViewModelBase
             _allEvents.Insert(0, item);
             Trim(_allEvents);
             RefreshFilteredEvents();
+            if (SelectedEvent is null && MatchesFilter(item))
+            {
+                SelectedEvent = item;
+            }
         });
     }
 
@@ -315,6 +322,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             SelectedEvent = VizEvents.FirstOrDefault();
         }
 
+        SelectedPayload = BuildPayload(SelectedEvent);
         ExportCommand.RaiseCanExecuteChanged();
     }
 
