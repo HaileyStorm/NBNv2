@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Nbn.Tools.Workbench.Services;
@@ -9,6 +10,7 @@ namespace Nbn.Tools.Workbench;
 public partial class MainWindow : Window
 {
     private readonly ShellViewModel _viewModel = new();
+    private bool _shutdownStarted;
 
     public MainWindow()
     {
@@ -16,11 +18,25 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
     }
 
-    protected override void OnClosed(EventArgs e)
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (_shutdownStarted)
+        {
+            base.OnClosing(e);
+            return;
+        }
+
+        _shutdownStarted = true;
+        e.Cancel = true;
+        _ = ShutdownAsync();
+        base.OnClosing(e);
+    }
+
+    private async Task ShutdownAsync()
     {
         try
         {
-            _viewModel.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            await _viewModel.DisposeAsync().ConfigureAwait(false);
         }
         catch
         {
@@ -45,7 +61,17 @@ public partial class MainWindow : Window
         catch
         {
         }
-        Environment.Exit(0);
-        base.OnClosed(e);
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(1500).ConfigureAwait(false);
+            try
+            {
+                Environment.Exit(0);
+            }
+            catch
+            {
+            }
+        });
     }
 }
