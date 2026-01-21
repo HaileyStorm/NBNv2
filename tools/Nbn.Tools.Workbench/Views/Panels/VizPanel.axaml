@@ -97,13 +97,12 @@
                 <ItemsControl ItemsSource="{Binding Brain.OutputEvents}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,4">
+                      <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="10" Margin="0,4">
                         <TextBlock Text="{Binding TimeLabel}" Classes="muted" />
-                        <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
-                        <Border Grid.Column="2" Classes="pill">
-                          <TextBlock Text="{Binding OutputIndex}" />
+                        <Border Grid.Column="1" Classes="pill">
+                          <TextBlock Text="{Binding OutputIndex, StringFormat='Out {0}'}" />
                         </Border>
-                        <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
+                        <TextBlock Grid.Column="2" Text="{Binding Value}" Classes="muted" />
                       </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>

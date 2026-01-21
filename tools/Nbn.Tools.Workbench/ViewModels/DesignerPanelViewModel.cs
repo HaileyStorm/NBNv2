@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
 using Nbn.Shared.Format;
 using Nbn.Shared.Validation;
 
@@ -75,8 +76,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private async Task ImportNbnAsync()
     {
-        var path = await PickOpenFileAsync("Import .nbn", "NBN files", "nbn");
-        if (string.IsNullOrWhiteSpace(path))
+        var file = await PickOpenFileAsync("Import .nbn", "NBN files", "nbn");
+        if (file is null)
         {
             Status = "Import canceled.";
             return;
@@ -84,20 +85,20 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         try
         {
-            var bytes = await File.ReadAllBytesAsync(path);
+            var bytes = await ReadAllBytesAsync(file);
             var header = NbnBinary.ReadNbnHeader(bytes);
             var regions = ReadNbnRegions(bytes, header);
 
             _documentType = DesignerDocumentType.Nbn;
             _documentBytes = bytes;
-            _documentPath = path;
+            _documentPath = FormatPath(file);
             _nbnHeader = header;
             _nbnRegions = regions;
             _nbsHeader = null;
             _nbsRegions = null;
             _nbsOverlay = null;
 
-            LoadedSummary = BuildNbnSummary(path, header, regions);
+            LoadedSummary = BuildNbnSummary(file.Name, header, regions);
             Status = "NBN imported.";
             ResetValidation();
             ExportCommand.RaiseCanExecuteChanged();
@@ -110,8 +111,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private async Task ImportNbsAsync()
     {
-        var path = await PickOpenFileAsync("Import .nbs", "NBS files", "nbs");
-        if (string.IsNullOrWhiteSpace(path))
+        var file = await PickOpenFileAsync("Import .nbs", "NBS files", "nbs");
+        if (file is null)
         {
             Status = "Import canceled.";
             return;
@@ -119,20 +120,20 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         try
         {
-            var bytes = await File.ReadAllBytesAsync(path);
+            var bytes = await ReadAllBytesAsync(file);
             var header = NbnBinary.ReadNbsHeader(bytes);
             ReadNbsSections(bytes, header, out var regions, out var overlay);
 
             _documentType = DesignerDocumentType.Nbs;
             _documentBytes = bytes;
-            _documentPath = path;
+            _documentPath = FormatPath(file);
             _nbsHeader = header;
             _nbsRegions = regions;
             _nbsOverlay = overlay;
             _nbnHeader = null;
             _nbnRegions = null;
 
-            LoadedSummary = BuildNbsSummary(path, header, regions, overlay);
+            LoadedSummary = BuildNbsSummary(file.Name, header, regions, overlay);
             Status = "NBS imported.";
             ResetValidation();
             ExportCommand.RaiseCanExecuteChanged();
@@ -157,8 +158,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             ? Path.GetFileName(_documentPath)
             : $"brain.{extension}";
 
-        var savePath = await PickSaveFileAsync(title, $"{extension.ToUpperInvariant()} files", extension, suggestedName);
-        if (string.IsNullOrWhiteSpace(savePath))
+        var file = await PickSaveFileAsync(title, $"{extension.ToUpperInvariant()} files", extension, suggestedName);
+        if (file is null)
         {
             Status = "Export canceled.";
             return;
@@ -166,8 +167,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         try
         {
-            await File.WriteAllBytesAsync(savePath, _documentBytes);
-            Status = $"Exported to {savePath}.";
+            await WriteAllBytesAsync(file, _documentBytes);
+            Status = $"Exported to {FormatPath(file)}.";
         }
         catch (Exception ex)
         {
@@ -272,72 +273,92 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         regions = list;
     }
 
-    private static string BuildNbnSummary(string path, NbnHeaderV2 header, IReadOnlyList<NbnRegionSection> regions)
+    private static string BuildNbnSummary(string fileName, NbnHeaderV2 header, IReadOnlyList<NbnRegionSection> regions)
     {
         var regionCount = regions.Count;
         var neuronTotal = regions.Sum(region => (long)region.NeuronSpan);
-        return $"Loaded NBN: {Path.GetFileName(path)} • regions {regionCount} • neurons {neuronTotal} • stride {header.AxonStride}";
+        return $"Loaded NBN: {fileName} • regions {regionCount} • neurons {neuronTotal} • stride {header.AxonStride}";
     }
 
-    private static string BuildNbsSummary(string path, NbsHeaderV2 header, IReadOnlyList<NbsRegionSection> regions, NbsOverlaySection? overlay)
+    private static string BuildNbsSummary(string fileName, NbsHeaderV2 header, IReadOnlyList<NbsRegionSection> regions, NbsOverlaySection? overlay)
     {
         var overlayCount = overlay?.Records.Length ?? 0;
-        return $"Loaded NBS: {Path.GetFileName(path)} • regions {regions.Count} • overlay {overlayCount} • tick {header.SnapshotTickId}";
+        return $"Loaded NBS: {fileName} • regions {regions.Count} • overlay {overlayCount} • tick {header.SnapshotTickId}";
     }
 
-    private static async Task<string?> PickOpenFileAsync(string title, string filterName, string extension)
+    private static async Task<IStorageFile?> PickOpenFileAsync(string title, string filterName, string extension)
     {
-        var window = GetMainWindow();
-        if (window is null)
+        var provider = GetStorageProvider();
+        if (provider is null)
         {
             return null;
         }
 
-        var dialog = new OpenFileDialog
+        var options = new FilePickerOpenOptions
         {
             Title = title,
             AllowMultiple = false,
-            Filters = new List<FileDialogFilter>
+            FileTypeFilter = new List<FilePickerFileType>
             {
-                new() { Name = filterName, Extensions = new List<string> { extension } }
+                new(filterName) { Patterns = new List<string> { $"*.{extension}" } }
             }
         };
 
-        var results = await dialog.ShowAsync(window);
-        return results?.FirstOrDefault();
+        var results = await provider.OpenFilePickerAsync(options);
+        return results.FirstOrDefault();
     }
 
-    private static async Task<string?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
+    private static async Task<IStorageFile?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
     {
-        var window = GetMainWindow();
-        if (window is null)
+        var provider = GetStorageProvider();
+        if (provider is null)
         {
             return null;
         }
 
-        var dialog = new SaveFileDialog
+        var options = new FilePickerSaveOptions
         {
             Title = title,
             DefaultExtension = extension,
-            InitialFileName = suggestedName,
-            Filters = new List<FileDialogFilter>
+            SuggestedFileName = suggestedName,
+            FileTypeChoices = new List<FilePickerFileType>
             {
-                new() { Name = filterName, Extensions = new List<string> { extension } }
+                new(filterName) { Patterns = new List<string> { $"*.{extension}" } }
             }
         };
 
-        return await dialog.ShowAsync(window);
+        return await provider.SaveFilePickerAsync(options);
+    }
+
+    private static IStorageProvider? GetStorageProvider()
+    {
+        var window = GetMainWindow();
+        return window?.StorageProvider;
     }
 
     private static Window? GetMainWindow()
-    {
-        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            return desktop.MainWindow;
-        }
+        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
 
-        return null;
+    private static async Task<byte[]> ReadAllBytesAsync(IStorageFile file)
+    {
+        await using var stream = await file.OpenReadAsync();
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        return buffer.ToArray();
     }
+
+    private static async Task WriteAllBytesAsync(IStorageFile file, byte[] bytes)
+    {
+        await using var stream = await file.OpenWriteAsync();
+        stream.SetLength(0);
+        await stream.WriteAsync(bytes);
+        await stream.FlushAsync();
+    }
+
+    private static string FormatPath(IStorageItem item)
+        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 }
 
 public enum DesignerDocumentType

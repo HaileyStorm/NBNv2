@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -131,8 +133,8 @@ public sealed class DebugPanelViewModel : ViewModelBase
             return;
         }
 
-        var path = await PickSaveFileAsync("Export debug events", "JSON files", "json", "debug-events.json");
-        if (string.IsNullOrWhiteSpace(path))
+        var file = await PickSaveFileAsync("Export debug events", "JSON files", "json", "debug-events.json");
+        if (file is null)
         {
             Status = "Export canceled.";
             return;
@@ -142,8 +144,8 @@ public sealed class DebugPanelViewModel : ViewModelBase
         {
             var payload = DebugEvents.Select(DebugExportItem.From).ToList();
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(path, json);
-            Status = $"Exported {payload.Count} events.";
+            await WriteAllTextAsync(file, json);
+            Status = $"Exported {payload.Count} events to {FormatPath(file)}.";
         }
         catch (Exception ex)
         {
@@ -212,37 +214,51 @@ public sealed class DebugPanelViewModel : ViewModelBase
         return $"[{item.Severity}] {item.Context}\n{item.Summary}\n\n{item.Message}\n\nSender: {item.SenderActor}\nNode: {item.SenderNode}";
     }
 
-    private static async Task<string?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
+    private static async Task<IStorageFile?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
     {
-        var window = GetMainWindow();
-        if (window is null)
+        var provider = GetStorageProvider();
+        if (provider is null)
         {
             return null;
         }
 
-        var dialog = new SaveFileDialog
+        var options = new FilePickerSaveOptions
         {
             Title = title,
             DefaultExtension = extension,
-            InitialFileName = suggestedName,
-            Filters = new List<FileDialogFilter>
+            SuggestedFileName = suggestedName,
+            FileTypeChoices = new List<FilePickerFileType>
             {
-                new() { Name = filterName, Extensions = new List<string> { extension } }
+                new(filterName) { Patterns = new List<string> { $"*.{extension}" } }
             }
         };
 
-        return await dialog.ShowAsync(window);
+        return await provider.SaveFilePickerAsync(options);
+    }
+
+    private static IStorageProvider? GetStorageProvider()
+    {
+        var window = GetMainWindow();
+        return window?.StorageProvider;
     }
 
     private static Window? GetMainWindow()
-    {
-        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            return desktop.MainWindow;
-        }
+        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
 
-        return null;
+    private static async Task WriteAllTextAsync(IStorageFile file, string content)
+    {
+        await using var stream = await file.OpenWriteAsync();
+        stream.SetLength(0);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        await writer.WriteAsync(content);
+        await writer.FlushAsync();
+        await stream.FlushAsync();
     }
+
+    private static string FormatPath(IStorageItem item)
+        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
     private static void Trim<T>(ICollection<T> collection)
     {
