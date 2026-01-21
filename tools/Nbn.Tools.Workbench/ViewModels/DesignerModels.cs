@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using Avalonia;
 using Avalonia.Media;
 
 namespace Nbn.Tools.Workbench.ViewModels;
@@ -8,6 +9,8 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class DesignerBrainViewModel : ViewModelBase
 {
     private string _name;
+    private Guid _brainId;
+    private string _brainIdText;
     private ulong _brainSeed;
     private string _brainSeedText;
     private uint _axonStride;
@@ -15,9 +18,11 @@ public sealed class DesignerBrainViewModel : ViewModelBase
     private int _totalNeurons;
     private int _totalAxons;
 
-    public DesignerBrainViewModel(string name, ulong brainSeed, uint axonStride)
+    public DesignerBrainViewModel(string name, Guid brainId, ulong brainSeed, uint axonStride)
     {
         _name = name;
+        _brainId = brainId;
+        _brainIdText = brainId.ToString();
         _brainSeed = brainSeed;
         _brainSeedText = brainSeed.ToString();
         _axonStride = axonStride;
@@ -31,6 +36,24 @@ public sealed class DesignerBrainViewModel : ViewModelBase
     {
         get => _name;
         set => SetProperty(ref _name, value);
+    }
+
+    public Guid BrainId
+    {
+        get => _brainId;
+        private set => SetProperty(ref _brainId, value);
+    }
+
+    public string BrainIdText
+    {
+        get => _brainIdText;
+        set
+        {
+            if (SetProperty(ref _brainIdText, value) && Guid.TryParse(value, out var parsed))
+            {
+                BrainId = parsed;
+            }
+        }
     }
 
     public ulong BrainSeed
@@ -85,6 +108,12 @@ public sealed class DesignerBrainViewModel : ViewModelBase
     {
         BrainSeed = seed;
         BrainSeedText = seed.ToString();
+    }
+
+    public void SetBrainId(Guid brainId)
+    {
+        BrainId = brainId;
+        BrainIdText = brainId.ToString();
     }
 
     public void SetStride(uint stride)
@@ -184,6 +213,7 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
 {
     private bool _isSelected;
     private bool _isPendingSource;
+    private bool _isHovered;
     private bool _exists;
     private int _activationFunctionId;
     private int _resetFunctionId;
@@ -193,6 +223,8 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
     private int _activationThresholdCode;
     private int _preActivationThresholdCode;
     private int _axonCount;
+    private double _canvasX;
+    private double _canvasY;
 
     public DesignerNeuronViewModel(int regionId, int neuronId, bool exists, bool isRequired)
     {
@@ -304,6 +336,32 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
         }
     }
 
+    public bool IsHovered
+    {
+        get => _isHovered;
+        set
+        {
+            if (SetProperty(ref _isHovered, value))
+            {
+                OnPropertyChanged(nameof(TileBackground));
+                OnPropertyChanged(nameof(TileForeground));
+                OnPropertyChanged(nameof(TileBorder));
+            }
+        }
+    }
+
+    public double CanvasX
+    {
+        get => _canvasX;
+        set => SetProperty(ref _canvasX, value);
+    }
+
+    public double CanvasY
+    {
+        get => _canvasY;
+        set => SetProperty(ref _canvasY, value);
+    }
+
     public string TileLabel => $"N{NeuronId}";
 
     public string TileDetail => AxonCount > 0 ? $"{AxonCount} axons" : "No axons";
@@ -322,7 +380,12 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
                 return DesignerBrushes.Teal;
             }
 
-            return IsSelected ? DesignerBrushes.Accent : DesignerBrushes.Surface;
+            if (IsSelected)
+            {
+                return DesignerBrushes.Accent;
+            }
+
+            return IsHovered ? DesignerBrushes.SurfaceAlt : DesignerBrushes.Surface;
         }
     }
 
@@ -339,7 +402,18 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
         }
     }
 
-    public IBrush TileBorder => IsSelected || IsPendingSource ? DesignerBrushes.Accent : DesignerBrushes.Border;
+    public IBrush TileBorder
+    {
+        get
+        {
+            if (IsSelected || IsPendingSource)
+            {
+                return DesignerBrushes.Accent;
+            }
+
+            return IsHovered ? DesignerBrushes.Teal : DesignerBrushes.Border;
+        }
+    }
 
     public double TileOpacity => Exists ? 1 : 0.6;
 
@@ -401,6 +475,94 @@ public sealed class DesignerAxonViewModel : ViewModelBase
 
     private static int Clamp(int value, int min, int max)
         => value < min ? min : value > max ? max : value;
+}
+
+public sealed class DesignerEdgeViewModel : ViewModelBase
+{
+    private Point _start;
+    private Point _end;
+    private bool _isPreview;
+    private bool _isSelected;
+    private IBrush _stroke;
+    private double _thickness;
+
+    public DesignerEdgeViewModel(Point start, Point end, bool isPreview, bool isSelected)
+    {
+        _start = start;
+        _end = end;
+        _isPreview = isPreview;
+        _isSelected = isSelected;
+        _stroke = DesignerBrushes.Border;
+        _thickness = 1;
+        UpdateAppearance();
+    }
+
+    public Point Start
+    {
+        get => _start;
+        set => SetProperty(ref _start, value);
+    }
+
+    public Point End
+    {
+        get => _end;
+        set => SetProperty(ref _end, value);
+    }
+
+    public bool IsPreview
+    {
+        get => _isPreview;
+        set
+        {
+            if (SetProperty(ref _isPreview, value))
+            {
+                UpdateAppearance();
+            }
+        }
+    }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                UpdateAppearance();
+            }
+        }
+    }
+
+    public IBrush Stroke
+    {
+        get => _stroke;
+        private set => SetProperty(ref _stroke, value);
+    }
+
+    public double Thickness
+    {
+        get => _thickness;
+        private set => SetProperty(ref _thickness, value);
+    }
+
+    private void UpdateAppearance()
+    {
+        if (_isPreview)
+        {
+            Stroke = DesignerBrushes.Teal;
+            Thickness = 2;
+        }
+        else if (_isSelected)
+        {
+            Stroke = DesignerBrushes.Accent;
+            Thickness = 2;
+        }
+        else
+        {
+            Stroke = DesignerBrushes.Border;
+            Thickness = 1;
+        }
+    }
 }
 
 public sealed class DesignerFunctionOption
