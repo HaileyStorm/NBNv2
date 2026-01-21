@@ -30,7 +30,9 @@ public sealed record HiveMindOptions(
     string? SettingsDbPath,
     string? SettingsHost,
     int SettingsPort,
-    string SettingsName)
+    string SettingsName,
+    string? IoAddress,
+    string? IoName)
 {
     public static HiveMindOptions FromArgs(string[] args)
     {
@@ -69,6 +71,8 @@ public sealed record HiveMindOptions(
         var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? SettingsMonitorNames.SettingsMonitor;
+        var ioAddress = GetEnv("NBN_HIVE_IO_ADDRESS");
+        var ioName = GetEnv("NBN_HIVE_IO_NAME") ?? "io-gateway";
 
         var settingsDbPath = GetEnv("NBN_SETTINGS_DB");
         if (string.IsNullOrWhiteSpace(settingsDbPath))
@@ -254,6 +258,19 @@ public sealed record HiveMindOptions(
                         settingsName = args[++i];
                     }
                     continue;
+                case "--io-address":
+                    if (i + 1 < args.Length)
+                    {
+                        ioAddress = args[++i];
+                    }
+                    continue;
+                case "--io-name":
+                case "--io-gateway":
+                    if (i + 1 < args.Length)
+                    {
+                        ioName = args[++i];
+                    }
+                    continue;
                 case "--no-settings-monitor":
                     settingsHost = null;
                     settingsPort = 0;
@@ -414,6 +431,23 @@ public sealed record HiveMindOptions(
             {
                 settingsName = arg.Substring("--settings-name=".Length);
             }
+
+            if (arg.StartsWith("--io-address=", StringComparison.OrdinalIgnoreCase))
+            {
+                ioAddress = arg.Substring("--io-address=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--io-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                ioName = arg.Substring("--io-name=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--io-gateway=", StringComparison.OrdinalIgnoreCase))
+            {
+                ioName = arg.Substring("--io-gateway=".Length);
+            }
         }
 
         if (minTickHz <= 0)
@@ -470,7 +504,9 @@ public sealed record HiveMindOptions(
             string.IsNullOrWhiteSpace(settingsDbPath) ? null : settingsDbPath,
             string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
             settingsPort,
-            settingsName);
+            settingsName,
+            string.IsNullOrWhiteSpace(ioAddress) ? null : ioAddress,
+            ioName);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -538,5 +574,7 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --settings-port <port>               SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --no-settings-monitor                Disable SettingsMonitor reporting");
+        Console.WriteLine("  --io-address <host:port>             IO Gateway remote address");
+        Console.WriteLine("  --io-name <name>                     IO Gateway actor name (default io-gateway)");
     }
 }

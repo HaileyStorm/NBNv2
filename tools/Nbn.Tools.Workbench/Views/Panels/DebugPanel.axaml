@@ -20,10 +20,13 @@
               </ComboBox>
               <TextBlock Text="Context regex" Classes="muted" VerticalAlignment="Center" />
               <TextBox Width="220" Text="{Binding ContextRegex}" Watermark="tick|io|brain" />
+              <TextBlock Text="Search" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Width="220" Text="{Binding TextFilter}" Watermark="message or context" />
             </StackPanel>
           </StackPanel>
           <StackPanel Spacing="8" HorizontalAlignment="Right">
             <Button Content="Apply" Command="{Binding ApplyFilterCommand}" Classes="accent" />
+            <Button Content="Export" Command="{Binding ExportCommand}" />
             <Button Content="Clear" Command="{Binding ClearCommand}" />
             <TextBlock Text="{Binding Status}" Classes="muted" />
           </StackPanel>
@@ -31,25 +34,33 @@
       </Border>
 
       <Border Classes="card">
-        <StackPanel Spacing="8">
-          <TextBlock Text="Debug Stream" Classes="card-title" />
-          <ItemsControl ItemsSource="{Binding DebugEvents}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Classes="row">
-                  <Grid ColumnDefinitions="Auto,Auto,*,*" ColumnSpacing="10">
-                    <TextBlock Text="{Binding Time}" Classes="muted" />
-                    <Border Grid.Column="1" Classes="pill">
-                      <TextBlock Text="{Binding Severity}" />
-                    </Border>
-                    <TextBlock Grid.Column="2" Text="{Binding Context}" Classes="row-title" />
-                    <TextBlock Grid.Column="3" Text="{Binding Summary}" Classes="muted" />
-                  </Grid>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
+        <Grid ColumnDefinitions="1.4*,1*" ColumnSpacing="16">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Debug Stream" Classes="card-title" />
+            <ListBox ItemsSource="{Binding DebugEvents}" SelectedItem="{Binding SelectedEvent}" MaxHeight="360">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Classes="row">
+                    <Grid ColumnDefinitions="Auto,Auto,*,*" ColumnSpacing="10">
+                      <TextBlock Text="{Binding Time}" Classes="muted" />
+                      <Border Grid.Column="1" Classes="pill">
+                        <TextBlock Text="{Binding Severity}" />
+                      </Border>
+                      <TextBlock Grid.Column="2" Text="{Binding Context}" Classes="row-title" />
+                      <TextBlock Grid.Column="3" Text="{Binding Summary}" Classes="muted" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Spacing="8">
+            <TextBlock Text="Event Details" Classes="card-title" />
+            <TextBlock Text="{Binding SelectedEvent.Context}" Classes="row-title" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding SelectedEvent.Summary}" Classes="muted" TextWrapping="Wrap" />
+            <TextBox Text="{Binding SelectedPayload}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="160" />
+          </StackPanel>
+        </Grid>
       </Border>
     </StackPanel>
   </ScrollViewer>

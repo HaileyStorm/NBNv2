@@ -4,6 +4,7 @@ using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Nbn.Runtime.Brain;
+using Nbn.Runtime.BrainHost;
 using Nbn.Shared;
 using Proto;
 using Proto.Remote;
@@ -34,12 +35,58 @@ var settingsPort = GetIntArg(args, "--settings-port") ?? GetEnvInt("NBN_SETTINGS
 var settingsName = GetArg(args, "--settings-name") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
 var inputWidth = GetIntArg(args, "--input-width") ?? 1;
 var outputWidth = GetIntArg(args, "--output-width") ?? 1;
+var enableOtel = GetEnvBool("NBN_BRAIN_OTEL_ENABLED") ?? false;
+var enableOtelMetrics = GetEnvBool("NBN_BRAIN_OTEL_METRICS_ENABLED");
+var enableOtelConsole = GetEnvBool("NBN_BRAIN_OTEL_CONSOLE") ?? false;
+var otlpEndpoint = GetEnv("NBN_BRAIN_OTEL_ENDPOINT") ?? GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+var otelServiceName = GetEnv("NBN_BRAIN_OTEL_SERVICE_NAME") ?? GetEnv("OTEL_SERVICE_NAME") ?? "nbn.brainhost";
+
+if (HasFlag(args, "--enable-otel") || HasFlag(args, "--otel"))
+{
+    enableOtel = true;
+}
+
+if (HasFlag(args, "--disable-otel") || HasFlag(args, "--no-otel"))
+{
+    enableOtel = false;
+}
+
+if (HasFlag(args, "--otel-metrics"))
+{
+    enableOtelMetrics = true;
+}
+
+if (HasFlag(args, "--otel-console"))
+{
+    enableOtelConsole = true;
+}
+
+var otlpArg = GetArg(args, "--otel-endpoint");
+if (!string.IsNullOrWhiteSpace(otlpArg))
+{
+    otlpEndpoint = otlpArg;
+}
+
+var serviceArg = GetArg(args, "--otel-service-name");
+if (!string.IsNullOrWhiteSpace(serviceArg))
+{
+    otelServiceName = serviceArg;
+}
+
+if (enableOtelMetrics == true)
+{
+    enableOtel = true;
+}
+
+enableOtelMetrics ??= enableOtel;
 
 PID? hivePid = null;
 if (!string.IsNullOrWhiteSpace(hiveAddress) && !string.IsNullOrWhiteSpace(hiveId))
 {
     hivePid = new PID(hiveAddress, hiveId);
 }
+
+using var telemetry = BrainTelemetrySession.Start(enableOtel, enableOtelMetrics.Value, enableOtelConsole, otlpEndpoint, otelServiceName);
 
 var system = new ActorSystem();
 var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
@@ -200,8 +247,29 @@ static int? GetIntArg(string[] args, string name)
 
 static int? GetEnvInt(string key)
 {
-    var value = Environment.GetEnvironmentVariable(key);
+    var value = GetEnv(key);
     return int.TryParse(value, out var parsed) ? parsed : null;
+}
+
+static string? GetEnv(string key)
+    => Environment.GetEnvironmentVariable(key);
+
+static bool? GetEnvBool(string key)
+{
+    var value = GetEnv(key);
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+
+    if (bool.TryParse(value, out var parsed))
+    {
+        return parsed;
+    }
+
+    return value.Equals("1", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("y", StringComparison.OrdinalIgnoreCase);
 }
 
 static Guid? GetGuidArg(string[] args, string name)
@@ -220,6 +288,8 @@ static void PrintHelp()
     Console.WriteLine("  --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("  [--router-id <name>] [--brain-root-id <name>]");
     Console.WriteLine("  [--io-address <host:port>] [--io-id <name>] [--input-width <n>] [--output-width <n>]");
+    Console.WriteLine("  [--enable-otel|--disable-otel] [--otel-metrics] [--otel-console]");
+    Console.WriteLine("  [--otel-endpoint <uri>] [--otel-service-name <name>]");
     Console.WriteLine("  [--settings-host <host>] [--settings-port <port>] [--settings-name <name>]");
     Console.WriteLine("  [--advertise-host <host>] [--advertise-port <port>]");
 }

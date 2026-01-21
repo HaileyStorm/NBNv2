@@ -728,7 +728,9 @@ public class DemoIntegrationTests
             SettingsDbPath: null,
             SettingsHost: null,
             SettingsPort: 0,
-            SettingsName: "SettingsMonitor");
+            SettingsName: "SettingsMonitor",
+            IoAddress: null,
+            IoName: null);
 
     private sealed class OutputSinkActor : IActor
     {

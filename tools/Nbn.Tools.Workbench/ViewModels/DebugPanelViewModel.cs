@@ -1,6 +1,13 @@
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -11,9 +18,13 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private const int MaxEvents = 400;
     private readonly UiDispatcher _dispatcher;
     private readonly WorkbenchClient _client;
+    private readonly List<DebugEventItem> _allEvents = new();
     private SeverityOption _selectedSeverity;
     private string _contextRegex = string.Empty;
+    private string _textFilter = string.Empty;
     private string _status = "Idle";
+    private DebugEventItem? _selectedEvent;
+    private string _selectedPayload = string.Empty;
 
     public DebugPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
     {
@@ -24,6 +35,7 @@ public sealed class DebugPanelViewModel : ViewModelBase
         _selectedSeverity = SeverityOptions[2];
 
         ApplyFilterCommand = new AsyncRelayCommand(ApplyFilterAsync);
+        ExportCommand = new AsyncRelayCommand(ExportAsync, () => DebugEvents.Count > 0);
         ClearCommand = new RelayCommand(Clear);
     }
 
@@ -43,13 +55,45 @@ public sealed class DebugPanelViewModel : ViewModelBase
         set => SetProperty(ref _contextRegex, value);
     }
 
+    public string TextFilter
+    {
+        get => _textFilter;
+        set
+        {
+            if (SetProperty(ref _textFilter, value))
+            {
+                RefreshFilteredEvents();
+            }
+        }
+    }
+
     public string Status
     {
         get => _status;
         set => SetProperty(ref _status, value);
     }
 
+    public DebugEventItem? SelectedEvent
+    {
+        get => _selectedEvent;
+        set
+        {
+            if (SetProperty(ref _selectedEvent, value))
+            {
+                SelectedPayload = BuildPayload(value);
+            }
+        }
+    }
+
+    public string SelectedPayload
+    {
+        get => _selectedPayload;
+        set => SetProperty(ref _selectedPayload, value);
+    }
+
     public AsyncRelayCommand ApplyFilterCommand { get; }
+
+    public AsyncRelayCommand ExportCommand { get; }
 
     public RelayCommand ClearCommand { get; }
 
@@ -57,8 +101,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
     {
         _dispatcher.Post(() =>
         {
-            DebugEvents.Insert(0, item);
-            Trim(DebugEvents);
+            _allEvents.Insert(0, item);
+            Trim(_allEvents);
+            RefreshFilteredEvents();
         });
     }
 
@@ -71,15 +116,139 @@ public sealed class DebugPanelViewModel : ViewModelBase
 
     private void Clear()
     {
+        _allEvents.Clear();
         DebugEvents.Clear();
+        SelectedEvent = null;
+        ExportCommand.RaiseCanExecuteChanged();
         Status = "Cleared.";
     }
 
-    private static void Trim<T>(ObservableCollection<T> collection)
+    private async Task ExportAsync()
     {
-        while (collection.Count > MaxEvents)
+        if (DebugEvents.Count == 0)
         {
-            collection.RemoveAt(collection.Count - 1);
+            Status = "Nothing to export.";
+            return;
+        }
+
+        var path = await PickSaveFileAsync("Export debug events", "JSON files", "json", "debug-events.json");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            Status = "Export canceled.";
+            return;
+        }
+
+        try
+        {
+            var payload = DebugEvents.Select(DebugExportItem.From).ToList();
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(path, json);
+            Status = $"Exported {payload.Count} events.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Export failed: {ex.Message}";
+        }
+    }
+
+    private void RefreshFilteredEvents()
+    {
+        var selected = SelectedEvent;
+        DebugEvents.Clear();
+
+        foreach (var item in _allEvents)
+        {
+            if (MatchesFilter(item))
+            {
+                DebugEvents.Add(item);
+            }
+        }
+
+        if (selected is not null && DebugEvents.Contains(selected))
+        {
+            SelectedEvent = selected;
+        }
+        else
+        {
+            SelectedEvent = DebugEvents.FirstOrDefault();
+        }
+
+        ExportCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool MatchesFilter(DebugEventItem item)
+    {
+        if (string.IsNullOrWhiteSpace(TextFilter))
+        {
+            return true;
+        }
+
+        var needle = TextFilter.Trim();
+        return ContainsIgnoreCase(item.Context, needle)
+            || ContainsIgnoreCase(item.Summary, needle)
+            || ContainsIgnoreCase(item.Message, needle)
+            || ContainsIgnoreCase(item.Severity, needle)
+            || ContainsIgnoreCase(item.SenderActor, needle)
+            || ContainsIgnoreCase(item.SenderNode, needle);
+    }
+
+    private static bool ContainsIgnoreCase(string? haystack, string needle)
+    {
+        if (string.IsNullOrEmpty(haystack))
+        {
+            return false;
+        }
+
+        return haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static string BuildPayload(DebugEventItem? item)
+    {
+        if (item is null)
+        {
+            return string.Empty;
+        }
+
+        return $"[{item.Severity}] {item.Context}\n{item.Summary}\n\n{item.Message}\n\nSender: {item.SenderActor}\nNode: {item.SenderNode}";
+    }
+
+    private static async Task<string?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
+    {
+        var window = GetMainWindow();
+        if (window is null)
+        {
+            return null;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Title = title,
+            DefaultExtension = extension,
+            InitialFileName = suggestedName,
+            Filters = new List<FileDialogFilter>
+            {
+                new() { Name = filterName, Extensions = new List<string> { extension } }
+            }
+        };
+
+        return await dialog.ShowAsync(window);
+    }
+
+    private static Window? GetMainWindow()
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            return desktop.MainWindow;
+        }
+
+        return null;
+    }
+
+    private static void Trim<T>(ICollection<T> collection)
+    {
+        while (collection.Count > MaxEvents && collection is IList<T> list)
+        {
+            list.RemoveAt(list.Count - 1);
         }
     }
 }
@@ -96,4 +265,24 @@ public sealed record SeverityOption(string Label, Nbn.Proto.Severity Severity)
             new("Error", Nbn.Proto.Severity.SevError),
             new("Fatal", Nbn.Proto.Severity.SevFatal)
         };
+}
+
+public sealed record DebugExportItem(
+    string Time,
+    string Severity,
+    string Context,
+    string Summary,
+    string Message,
+    string SenderActor,
+    string SenderNode)
+{
+    public static DebugExportItem From(DebugEventItem item)
+        => new(
+            item.Time.ToString("O"),
+            item.Severity,
+            item.Context,
+            item.Summary,
+            item.Message,
+            item.SenderActor,
+            item.SenderNode);
 }

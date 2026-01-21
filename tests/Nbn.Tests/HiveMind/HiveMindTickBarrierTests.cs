@@ -605,5 +605,7 @@ public class HiveMindTickBarrierTests
             SettingsDbPath: null,
             SettingsHost: null,
             SettingsPort: 0,
-            SettingsName: "SettingsMonitor");
+            SettingsName: "SettingsMonitor",
+            IoAddress: null,
+            IoName: null);
 }

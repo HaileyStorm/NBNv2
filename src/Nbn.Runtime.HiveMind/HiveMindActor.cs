@@ -1,10 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
 using Nbn.Runtime.Brain;
+using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Shared.HiveMind;
 using Proto;
+using ProtoIo = Nbn.Proto.Io;
 using ProtoSettings = Nbn.Proto.Settings;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -15,6 +17,7 @@ public sealed class HiveMindActor : IActor
     private readonly HiveMindOptions _options;
     private readonly BackpressureController _backpressure;
     private readonly PID? _settingsPid;
+    private readonly PID? _ioPid;
     private readonly Dictionary<Guid, BrainState> _brains = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
@@ -35,6 +38,7 @@ public sealed class HiveMindActor : IActor
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
         _settingsPid = BuildSettingsPid(options);
+        _ioPid = BuildIoPid(options);
     }
 
     public Task ReceiveAsync(IContext context)
@@ -191,6 +195,7 @@ public sealed class HiveMindActor : IActor
         }
 
         UpdateRoutingTable(context, brainState);
+        RegisterBrainWithIo(context, brainState);
 
         ReportBrainRegistration(context, brainState);
     }
@@ -218,6 +223,15 @@ public sealed class HiveMindActor : IActor
         if (!_brains.Remove(brainId))
         {
             return;
+        }
+
+        if (_ioPid is not null)
+        {
+            context.Send(_ioPid, new ProtoIo.UnregisterBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = "unregistered"
+            });
         }
 
         ReportBrainUnregistered(context, brainId);
@@ -273,6 +287,8 @@ public sealed class HiveMindActor : IActor
             SendOutputSinkUpdate(context, brainId, shardId, normalized, brain.OutputSinkPid);
             Log($"Output shard registered; pushed sink for brain {brainId} shard {shardId}");
         }
+
+        RegisterBrainWithIo(context, brain);
 
         if (_phase == TickPhase.Compute && _tick is not null)
         {
@@ -519,6 +535,17 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (message.TickCostTotal != 0)
+        {
+            var updated = message.TickCostTotal;
+            if (_tick.BrainTickCosts.TryGetValue(brainId, out var existing))
+            {
+                updated += existing;
+            }
+
+            _tick.BrainTickCosts[brainId] = updated;
+        }
+
         _tick.CompletedComputeCount++;
         MaybeCompleteCompute(context);
     }
@@ -676,10 +703,12 @@ public sealed class HiveMindActor : IActor
 
         var elapsed = DateTime.UtcNow - _tick.StartedUtc;
         var completedTickId = _tick.TickId;
+        var tickCosts = _tick.BrainTickCosts;
         _tick = null;
         _lastCompletedTickId = completedTickId;
 
         HiveMindTelemetry.RecordTickOutcome(outcome, _backpressure.TargetTickHz);
+        ApplyTickCosts(context, completedTickId, tickCosts);
 
         var decision = _backpressure.Evaluate(outcome);
 
@@ -696,6 +725,30 @@ public sealed class HiveMindActor : IActor
         }
 
         ScheduleNextTick(context, ComputeTickDelay(elapsed, decision.TargetTickHz));
+    }
+
+    private void ApplyTickCosts(IContext context, ulong tickId, Dictionary<Guid, long> costs)
+    {
+        if (_ioPid is null || costs.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in costs)
+        {
+            var cost = entry.Value;
+            if (cost == 0)
+            {
+                continue;
+            }
+
+            if (_brains.TryGetValue(entry.Key, out var brain))
+            {
+                brain.LastTickCost = cost;
+            }
+
+            context.Send(_ioPid, new ApplyTickCost(entry.Key, tickId, cost));
+        }
     }
 
     private void ScheduleNextTick(IContext context, TimeSpan delay)
@@ -1071,6 +1124,49 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private void RegisterBrainWithIo(IContext context, BrainState brain, bool force = false)
+    {
+        if (_ioPid is null)
+        {
+            return;
+        }
+
+        var inputWidth = (uint)Math.Max(0, brain.InputWidth);
+        var outputWidth = (uint)Math.Max(0, brain.OutputWidth);
+        if (inputWidth == 0 || outputWidth == 0)
+        {
+            return;
+        }
+
+        if (!force && brain.IoRegistered && brain.IoRegisteredInputWidth == inputWidth && brain.IoRegisteredOutputWidth == outputWidth)
+        {
+            return;
+        }
+
+        var register = new ProtoIo.RegisterBrain
+        {
+            BrainId = brain.BrainId.ToProtoUuid(),
+            InputWidth = inputWidth,
+            OutputWidth = outputWidth
+        };
+
+        if (brain.BaseDefinition is not null)
+        {
+            register.BaseDefinition = brain.BaseDefinition;
+        }
+
+        if (brain.LastSnapshot is not null)
+        {
+            register.LastSnapshot = brain.LastSnapshot;
+        }
+
+        context.Send(_ioPid, register);
+
+        brain.IoRegistered = true;
+        brain.IoRegisteredInputWidth = inputWidth;
+        brain.IoRegisteredOutputWidth = outputWidth;
+    }
+
     private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID outputSink)
     {
         try
@@ -1138,6 +1234,7 @@ public sealed class HiveMindActor : IActor
         public int CompletedDeliverCount { get; set; }
         public int LateComputeCount { get; set; }
         public int LateDeliverCount { get; set; }
+        public Dictionary<Guid, long> BrainTickCosts { get; } = new();
     }
 
     private sealed class BrainState
@@ -1153,6 +1250,12 @@ public sealed class HiveMindActor : IActor
         public PID? OutputSinkPid { get; set; }
         public int InputWidth { get; set; }
         public int OutputWidth { get; set; }
+        public uint IoRegisteredInputWidth { get; set; }
+        public uint IoRegisteredOutputWidth { get; set; }
+        public bool IoRegistered { get; set; }
+        public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
+        public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
+        public long LastTickCost { get; set; }
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }
@@ -1276,5 +1379,20 @@ public sealed class HiveMindActor : IActor
         }
 
         return new PID($"{options.SettingsHost}:{options.SettingsPort}", options.SettingsName);
+    }
+
+    private static PID? BuildIoPid(HiveMindOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.IoAddress))
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.IoName))
+        {
+            return null;
+        }
+
+        return new PID(options.IoAddress, options.IoName);
     }
 }

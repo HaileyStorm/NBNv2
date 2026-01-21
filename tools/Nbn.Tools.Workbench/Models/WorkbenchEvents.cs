@@ -38,7 +38,9 @@ public sealed record VizEventItem(
     string Region,
     string Source,
     string Target,
-    float Value);
+    float Value,
+    float Strength,
+    string EventId);
 
 public sealed record BrainTerminatedItem(
     DateTimeOffset Time,

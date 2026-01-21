@@ -49,4 +49,88 @@ public static class ProtoSha256Extensions
 
         return new Sha256 { Value = ByteString.CopyFrom(bytes) };
     }
+
+    public static string ToHex(this Sha256 sha256, bool lowerCase = true)
+    {
+        if (sha256 is null)
+        {
+            throw new ArgumentNullException(nameof(sha256));
+        }
+
+        var bytes = sha256.ToByteArray();
+        var hex = Convert.ToHexString(bytes);
+        return lowerCase ? hex.ToLowerInvariant() : hex;
+    }
+
+    public static bool TryToHex(this Sha256 sha256, out string hex, bool lowerCase = true)
+    {
+        if (sha256 is null)
+        {
+            hex = string.Empty;
+            return false;
+        }
+
+        if (!sha256.TryToByteArray(out var bytes))
+        {
+            hex = string.Empty;
+            return false;
+        }
+
+        var value = Convert.ToHexString(bytes);
+        hex = lowerCase ? value.ToLowerInvariant() : value;
+        return true;
+    }
+
+    public static Sha256 FromHex(string hex)
+    {
+        if (!TryParseHexBytes(hex, out var bytes))
+        {
+            throw new ArgumentException("Sha256 hex must be a 64-character hex string.", nameof(hex));
+        }
+
+        return bytes.ToProtoSha256();
+    }
+
+    public static bool TryFromHex(string? hex, out Sha256 sha256)
+    {
+        if (!TryParseHexBytes(hex, out var bytes))
+        {
+            sha256 = new Sha256();
+            return false;
+        }
+
+        sha256 = bytes.ToProtoSha256();
+        return true;
+    }
+
+    public static bool TryParseHexBytes(string? hex, out byte[] bytes)
+    {
+        bytes = Array.Empty<byte>();
+        if (string.IsNullOrWhiteSpace(hex))
+        {
+            return false;
+        }
+
+        var trimmed = hex.Trim();
+        if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed.Substring(2);
+        }
+
+        if (trimmed.Length != Sha256Length * 2)
+        {
+            return false;
+        }
+
+        try
+        {
+            bytes = Convert.FromHexString(trimmed);
+            return bytes.Length == Sha256Length;
+        }
+        catch (FormatException)
+        {
+            bytes = Array.Empty<byte>();
+            return false;
+        }
+    }
 }

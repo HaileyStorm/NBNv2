@@ -194,7 +194,9 @@ public sealed class WorkbenchReceiverActor : IActor
             viz.RegionId.ToString(),
             viz.Source?.Value.ToString() ?? string.Empty,
             viz.Target?.Value.ToString() ?? string.Empty,
-            viz.Value));
+            viz.Value,
+            viz.Strength,
+            viz.EventId ?? string.Empty));
     }
 
     private void HandleTermination(BrainTerminated terminated)

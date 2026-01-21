@@ -1,4 +1,5 @@
 using System.Reflection;
+using Nbn.Runtime.Brain;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -44,7 +45,8 @@ public sealed class HiveMindTelemetrySession : IDisposable
         {
             var meterBuilder = Sdk.CreateMeterProviderBuilder()
                 .SetResourceBuilder(resource)
-                .AddMeter(HiveMindTelemetry.MeterNameValue);
+                .AddMeter(HiveMindTelemetry.MeterNameValue)
+                .AddMeter(BrainTelemetry.MeterNameValue);
 
             ConfigureExporters(meterBuilder, options);
             meterProvider = meterBuilder.Build();
