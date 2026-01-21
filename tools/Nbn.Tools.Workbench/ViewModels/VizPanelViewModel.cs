@@ -16,6 +16,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _regionFocusText = "0";
     private string _brainEntryText = string.Empty;
     private BrainListItem? _selectedBrain;
+    private bool _suspendSelection;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -50,7 +51,10 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             if (SetProperty(ref _selectedBrain, value))
             {
-                _brain.SelectBrain(value?.BrainId);
+                if (!_suspendSelection)
+                {
+                    _brain.SelectBrain(value?.BrainId);
+                }
             }
         }
     }
@@ -87,26 +91,33 @@ public sealed class VizPanelViewModel : ViewModelBase
     public void SetBrains(IReadOnlyList<BrainListItem> brains)
     {
         var selectedId = SelectedBrain?.Id;
+        _suspendSelection = true;
         KnownBrains.Clear();
         foreach (var brain in brains)
         {
             KnownBrains.Add(brain);
         }
 
+        BrainListItem? match = null;
         if (!string.IsNullOrWhiteSpace(selectedId))
         {
-            var match = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
+            match = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
             if (match is not null)
             {
                 SelectedBrain = match;
+                _suspendSelection = false;
+                _brain.SelectBrain(match.BrainId);
                 return;
             }
         }
 
         if (KnownBrains.Count > 0)
         {
-            SelectedBrain = KnownBrains.Count == 1 ? KnownBrains[0] : KnownBrains[0];
+            match = KnownBrains[0];
         }
+        SelectedBrain = match;
+        _suspendSelection = false;
+        _brain.SelectBrain(match?.BrainId);
     }
 
     public void AddVizEvent(VizEventItem item)

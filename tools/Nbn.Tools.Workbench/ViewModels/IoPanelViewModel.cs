@@ -22,6 +22,8 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _energyCreditText = "1000";
     private string _energyRateText = "0";
     private string _plasticityRateText = "0.001";
+    private bool _filterZeroOutputs = true;
+    private bool _filterZeroVectorOutputs = true;
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
@@ -152,6 +154,18 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _plasticityEnabled, value);
     }
 
+    public bool FilterZeroOutputs
+    {
+        get => _filterZeroOutputs;
+        set => SetProperty(ref _filterZeroOutputs, value);
+    }
+
+    public bool FilterZeroVectorOutputs
+    {
+        get => _filterZeroVectorOutputs;
+        set => SetProperty(ref _filterZeroVectorOutputs, value);
+    }
+
     public string PlasticityRateText
     {
         get => _plasticityRateText;
@@ -215,6 +229,11 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
+        if (FilterZeroOutputs && item.IsZero)
+        {
+            return;
+        }
+
         _dispatcher.Post(() =>
         {
             OutputEvents.Insert(0, item);
@@ -226,6 +245,11 @@ public sealed class IoPanelViewModel : ViewModelBase
     public void AddVectorEvent(OutputVectorEventItem item)
     {
         if (_selectedBrainId is not null && !string.Equals(item.BrainId, _selectedBrainId.Value.ToString("D"), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (FilterZeroVectorOutputs && item.AllZero)
         {
             return;
         }

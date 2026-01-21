@@ -45,6 +45,7 @@ public partial class MainWindow : Window
         catch
         {
         }
+        Environment.Exit(0);
         base.OnClosed(e);
     }
 }

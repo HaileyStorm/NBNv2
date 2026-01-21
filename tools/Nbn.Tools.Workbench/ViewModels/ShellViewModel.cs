@@ -186,7 +186,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            Connections.IoStatus = status;
+            Connections.IoStatus = NormalizeStatus(status, connected);
             Connections.IoConnected = connected;
             if (connected)
             {
@@ -204,7 +204,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            Connections.ObsStatus = status;
+            Connections.ObsStatus = NormalizeStatus(status, connected);
             Connections.ObsConnected = connected;
         });
     }
@@ -218,7 +218,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            Connections.SettingsStatus = status;
+            Connections.SettingsStatus = NormalizeStatus(status, connected);
             Connections.SettingsConnected = connected;
         });
     }
@@ -232,7 +232,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            Connections.HiveMindStatus = status;
+            Connections.HiveMindStatus = NormalizeStatus(status, connected);
             Connections.HiveMindConnected = connected;
         });
     }
@@ -419,5 +419,51 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.HiveMindStatus = "Disconnected";
             Connections.HiveMindConnected = false;
         });
+    }
+
+    private static string NormalizeStatus(string status, bool connected)
+    {
+        if (connected)
+        {
+            return "Connected";
+        }
+
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return "Disconnected";
+        }
+
+        var lower = status.Trim().ToLowerInvariant();
+        if (lower.Contains("connecting"))
+        {
+            return "Connecting...";
+        }
+
+        if (lower.Contains("invalid"))
+        {
+            return "Invalid port";
+        }
+
+        if (lower.Contains("failed"))
+        {
+            return "Connect failed";
+        }
+
+        if (lower.Contains("offline"))
+        {
+            return "Offline";
+        }
+
+        if (lower.Contains("error"))
+        {
+            return "Error";
+        }
+
+        if (lower.Contains("disconnected"))
+        {
+            return "Disconnected";
+        }
+
+        return status.Length > 24 ? status.Substring(0, 24) + "…" : status;
     }
 }

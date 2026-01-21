@@ -852,22 +852,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _dispatcher.Post(() =>
         {
             Connections.HiveMindConnected = hiveAlive;
-            if (!hiveAlive)
-            {
-                Connections.HiveMindStatus = "Offline";
-            }
+            Connections.HiveMindStatus = hiveAlive ? "Connected" : "Offline";
 
             Connections.IoConnected = ioAlive;
-            if (!ioAlive)
-            {
-                Connections.IoStatus = "Offline";
-            }
+            Connections.IoStatus = ioAlive ? "Connected" : "Offline";
 
             Connections.ObsConnected = obsAlive;
-            if (!obsAlive)
-            {
-                Connections.ObsStatus = "Offline";
-            }
+            Connections.ObsStatus = obsAlive ? "Connected" : "Offline";
         });
     }
 

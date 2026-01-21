@@ -92,37 +92,43 @@
                 <TextBlock Text="{Binding Brain.LastOutputTickLabel, StringFormat='Last tick: {0}'}" Classes="muted" VerticalAlignment="Center" />
                 <Button Content="Clear" Command="{Binding Brain.ClearOutputsCommand}" HorizontalAlignment="Right" />
               </StackPanel>
-              <ItemsControl ItemsSource="{Binding Brain.OutputEvents}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,4">
-                      <TextBlock Text="{Binding Time}" Classes="muted" />
-                      <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
-                      <Border Grid.Column="2" Classes="pill">
-                        <TextBlock Text="{Binding OutputIndex}" />
-                      </Border>
-                      <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
+              <CheckBox Content="Hide zero outputs" IsChecked="{Binding Brain.FilterZeroOutputs}" />
+              <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Brain.OutputEvents}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,4">
+                        <TextBlock Text="{Binding Time}" Classes="muted" />
+                        <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
+                        <Border Grid.Column="2" Classes="pill">
+                          <TextBlock Text="{Binding OutputIndex}" />
+                        </Border>
+                        <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
             </StackPanel>
           </Border>
 
           <Border Classes="card">
             <StackPanel Spacing="8">
               <TextBlock Text="Vector Outputs" Classes="card-title" />
-              <ItemsControl ItemsSource="{Binding Brain.VectorEvents}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10" Margin="0,4">
-                      <TextBlock Text="{Binding Time}" Classes="muted" />
-                      <TextBlock Grid.Column="1" Text="{Binding ValuesPreview}" Classes="row-title" />
-                      <TextBlock Grid.Column="2" Text="{Binding TickId}" Classes="muted" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
+              <CheckBox Content="Hide zero vectors" IsChecked="{Binding Brain.FilterZeroVectorOutputs}" />
+              <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Brain.VectorEvents}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10" Margin="0,4">
+                        <TextBlock Text="{Binding Time}" Classes="muted" />
+                        <TextBlock Grid.Column="1" Text="{Binding ValuesPreview}" Classes="row-title" />
+                        <TextBlock Grid.Column="2" Text="{Binding TickId}" Classes="muted" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
             </StackPanel>
           </Border>
         </StackPanel>

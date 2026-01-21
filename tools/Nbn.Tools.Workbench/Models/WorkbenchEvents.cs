@@ -7,12 +7,16 @@ public sealed record OutputEventItem(
     string BrainId,
     uint OutputIndex,
     float Value,
-    ulong TickId);
+    ulong TickId)
+{
+    public bool IsZero => Math.Abs(Value) <= 1e-6f;
+}
 
 public sealed record OutputVectorEventItem(
     DateTimeOffset Time,
     string BrainId,
     string ValuesPreview,
+    bool AllZero,
     ulong TickId);
 
 public sealed record DebugEventItem(

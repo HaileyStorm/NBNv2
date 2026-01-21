@@ -133,7 +133,7 @@ public sealed class WorkbenchReceiverActor : IActor
     {
         var brainId = output.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
         _sink.OnOutputEvent(new OutputEventItem(
-            DateTimeOffset.UtcNow,
+            DateTimeOffset.Now,
             brainId,
             output.OutputIndex,
             output.Value,
@@ -143,10 +143,21 @@ public sealed class WorkbenchReceiverActor : IActor
     private void HandleVector(OutputVectorEvent output)
     {
         var brainId = output.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
+        var allZero = true;
+        foreach (var value in output.Values)
+        {
+            if (Math.Abs(value) > 1e-6f)
+            {
+                allZero = false;
+                break;
+            }
+        }
+
         _sink.OnOutputVectorEvent(new OutputVectorEventItem(
-            DateTimeOffset.UtcNow,
+            DateTimeOffset.Now,
             brainId,
             PreviewValues(output.Values),
+            allZero,
             output.TickId));
     }
 
