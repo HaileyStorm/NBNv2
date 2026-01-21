@@ -32,20 +32,25 @@
         </StackPanel>
       </Border>
 
-      <Grid ColumnDefinitions="1.05*,1.35*" ColumnSpacing="16">
-        <StackPanel Spacing="16" Grid.Column="0">
-          <Border Classes="card">
-            <StackPanel Spacing="8">
-              <TextBlock Text="Brain Control" Classes="card-title" />
-              <TextBlock Text="Brain ID" Classes="muted" />
-              <TextBox Text="{Binding Brain.BrainIdText}" Watermark="Guid" IsReadOnly="True" />
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="Refresh Info" Command="{Binding Brain.RequestInfoCommand}" />
-              </StackPanel>
-              <TextBlock Text="{Binding Brain.BrainInfoSummary}" Classes="muted" />
-            </StackPanel>
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Neural Activity View" Classes="card-title" />
+          <TextBlock Text="Visualization placeholder for region activity and wiring." Classes="card-subtitle" />
+          <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="12"
+                  Background="{DynamicResource NbnSurfaceAltBrush}"
+                  MinHeight="260"
+                  MaxHeight="420">
+            <Grid>
+              <TextBlock Text="Visualization canvas coming soon" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
           </Border>
+        </StackPanel>
+      </Border>
 
+      <Grid ColumnDefinitions="1.1*,1.1*,0.9*" ColumnSpacing="16">
+        <StackPanel Spacing="16" Grid.Column="0">
           <Border Classes="card">
             <StackPanel Spacing="8">
               <TextBlock Text="Inputs" Classes="card-title" />
@@ -63,7 +68,9 @@
               </StackPanel>
             </StackPanel>
           </Border>
+        </StackPanel>
 
+        <StackPanel Spacing="16" Grid.Column="1">
           <Border Classes="card">
             <StackPanel Spacing="8">
               <TextBlock Text="Energy + Cost (Selected Brain)" Classes="card-title" />
@@ -84,7 +91,23 @@
           </Border>
         </StackPanel>
 
-        <StackPanel Grid.Column="1" Spacing="16">
+        <StackPanel Spacing="16" Grid.Column="2">
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Brain Control" Classes="card-title" />
+              <TextBlock Text="Brain ID" Classes="muted" />
+              <TextBox Text="{Binding Brain.BrainIdText}" Watermark="Guid" IsReadOnly="True" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Refresh Info" Command="{Binding Brain.RequestInfoCommand}" />
+              </StackPanel>
+              <TextBlock Text="{Binding Brain.BrainInfoSummary}" Classes="muted" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Grid>
+
+      <Grid ColumnDefinitions="1*,1*" ColumnSpacing="16">
+        <StackPanel Grid.Column="0" Spacing="16">
           <Border Classes="card">
             <StackPanel Spacing="8">
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" Spacing="8">
@@ -110,7 +133,9 @@
               </ScrollViewer>
             </StackPanel>
           </Border>
+        </StackPanel>
 
+        <StackPanel Grid.Column="1" Spacing="16">
           <Border Classes="card">
             <StackPanel Spacing="8">
               <TextBlock Text="Vector Outputs" Classes="card-title" />
@@ -132,54 +157,6 @@
           </Border>
         </StackPanel>
       </Grid>
-
-      <Border Classes="card">
-        <StackPanel Spacing="8">
-          <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="8" RowDefinitions="Auto,Auto" RowSpacing="6">
-            <TextBlock Text="Visualization Stream" Classes="card-title" />
-            <ComboBox Grid.Column="1" ItemsSource="{Binding VizTypeOptions}" SelectedItem="{Binding SelectedVizType}" Width="180">
-              <ComboBox.ItemTemplate>
-                <DataTemplate>
-                  <TextBlock Text="{Binding Label}" />
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-            <TextBox Grid.Column="2" Width="80" Text="{Binding RegionFilterText}" Watermark="Region" />
-            <TextBox Grid.Column="3" Text="{Binding SearchFilterText}" Watermark="Search type, addr, id" />
-            <Button Grid.Column="4" Content="Export" Command="{Binding ExportCommand}" />
-            <Button Grid.Column="5" Content="Clear" Command="{Binding ClearCommand}" />
-            <TextBlock Grid.Row="1" Grid.ColumnSpan="6" Text="{Binding Status}" Classes="muted" />
-          </Grid>
-
-          <Grid ColumnDefinitions="1.3*,1*" ColumnSpacing="16">
-            <StackPanel Spacing="8">
-              <ListBox ItemsSource="{Binding VizEvents}" SelectedItem="{Binding SelectedEvent}" MaxHeight="320">
-                <ListBox.ItemTemplate>
-                  <DataTemplate>
-                    <Border Classes="row">
-                      <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="10">
-                        <TextBlock Text="{Binding Time}" Classes="muted" />
-                        <Border Grid.Column="1" Classes="pill">
-                          <TextBlock Text="{Binding Type}" />
-                        </Border>
-                        <TextBlock Grid.Column="2" Text="{Binding BrainId}" Classes="row-title" />
-                        <TextBlock Grid.Column="3" Text="{Binding Value}" Classes="muted" />
-                      </Grid>
-                    </Border>
-                  </DataTemplate>
-                </ListBox.ItemTemplate>
-              </ListBox>
-            </StackPanel>
-            <StackPanel Grid.Column="1" Spacing="8">
-              <TextBlock Text="Event Details" Classes="card-title" />
-              <TextBlock Text="{Binding SelectedEvent.Type}" Classes="row-title" />
-              <TextBlock Text="{Binding SelectedEvent.BrainId}" Classes="muted" />
-              <TextBlock Text="{Binding SelectedEvent.Region, StringFormat='Region {0}'}" Classes="muted" />
-              <TextBox Text="{Binding SelectedPayload}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="160" />
-            </StackPanel>
-          </Grid>
-        </StackPanel>
-      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

@@ -10,6 +10,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
+using Nbn.Proto.Viz;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -21,12 +22,19 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private readonly UiDispatcher _dispatcher;
     private readonly WorkbenchClient _client;
     private readonly List<DebugEventItem> _allEvents = new();
+    private readonly List<VizEventItem> _allVizEvents = new();
     private SeverityOption _selectedSeverity;
     private string _contextRegex = string.Empty;
     private string _textFilter = string.Empty;
     private string _status = "Idle";
     private DebugEventItem? _selectedEvent;
     private string _selectedPayload = string.Empty;
+    private VizTypeOption _selectedVizType;
+    private string _vizRegionFilterText = string.Empty;
+    private string _vizSearchFilterText = string.Empty;
+    private string _vizStatus = "Streaming";
+    private VizEventItem? _selectedVizEvent;
+    private string _selectedVizPayload = string.Empty;
 
     public DebugPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
     {
@@ -35,15 +43,24 @@ public sealed class DebugPanelViewModel : ViewModelBase
         DebugEvents = new ObservableCollection<DebugEventItem>();
         SeverityOptions = new ObservableCollection<SeverityOption>(SeverityOption.CreateDefaults());
         _selectedSeverity = SeverityOptions[2];
+        VizEvents = new ObservableCollection<VizEventItem>();
+        VizTypeOptions = new ObservableCollection<VizTypeOption>(VizTypeOption.CreateDefaults());
+        _selectedVizType = VizTypeOptions[0];
 
         ApplyFilterCommand = new AsyncRelayCommand(ApplyFilterAsync);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => DebugEvents.Count > 0);
         ClearCommand = new RelayCommand(Clear);
+        ExportVizCommand = new AsyncRelayCommand(ExportVizAsync, () => VizEvents.Count > 0);
+        ClearVizCommand = new RelayCommand(ClearViz);
     }
 
     public ObservableCollection<DebugEventItem> DebugEvents { get; }
 
     public ObservableCollection<SeverityOption> SeverityOptions { get; }
+
+    public ObservableCollection<VizEventItem> VizEvents { get; }
+
+    public ObservableCollection<VizTypeOption> VizTypeOptions { get; }
 
     public SeverityOption SelectedSeverity
     {
@@ -75,6 +92,12 @@ public sealed class DebugPanelViewModel : ViewModelBase
         set => SetProperty(ref _status, value);
     }
 
+    public string VizStatus
+    {
+        get => _vizStatus;
+        set => SetProperty(ref _vizStatus, value);
+    }
+
     public DebugEventItem? SelectedEvent
     {
         get => _selectedEvent;
@@ -93,11 +116,69 @@ public sealed class DebugPanelViewModel : ViewModelBase
         set => SetProperty(ref _selectedPayload, value);
     }
 
+    public VizTypeOption SelectedVizType
+    {
+        get => _selectedVizType;
+        set
+        {
+            if (SetProperty(ref _selectedVizType, value))
+            {
+                RefreshFilteredVizEvents();
+            }
+        }
+    }
+
+    public string VizRegionFilterText
+    {
+        get => _vizRegionFilterText;
+        set
+        {
+            if (SetProperty(ref _vizRegionFilterText, value))
+            {
+                RefreshFilteredVizEvents();
+            }
+        }
+    }
+
+    public string VizSearchFilterText
+    {
+        get => _vizSearchFilterText;
+        set
+        {
+            if (SetProperty(ref _vizSearchFilterText, value))
+            {
+                RefreshFilteredVizEvents();
+            }
+        }
+    }
+
+    public VizEventItem? SelectedVizEvent
+    {
+        get => _selectedVizEvent;
+        set
+        {
+            if (SetProperty(ref _selectedVizEvent, value))
+            {
+                SelectedVizPayload = BuildVizPayload(value);
+            }
+        }
+    }
+
+    public string SelectedVizPayload
+    {
+        get => _selectedVizPayload;
+        set => SetProperty(ref _selectedVizPayload, value);
+    }
+
     public AsyncRelayCommand ApplyFilterCommand { get; }
 
     public AsyncRelayCommand ExportCommand { get; }
 
     public RelayCommand ClearCommand { get; }
+
+    public AsyncRelayCommand ExportVizCommand { get; }
+
+    public RelayCommand ClearVizCommand { get; }
 
     public void AddDebugEvent(DebugEventItem item)
     {
@@ -106,6 +187,16 @@ public sealed class DebugPanelViewModel : ViewModelBase
             _allEvents.Insert(0, item);
             Trim(_allEvents);
             RefreshFilteredEvents();
+        });
+    }
+
+    public void AddVizEvent(VizEventItem item)
+    {
+        _dispatcher.Post(() =>
+        {
+            _allVizEvents.Insert(0, item);
+            Trim(_allVizEvents);
+            RefreshFilteredVizEvents();
         });
     }
 
@@ -123,6 +214,16 @@ public sealed class DebugPanelViewModel : ViewModelBase
         SelectedEvent = null;
         ExportCommand.RaiseCanExecuteChanged();
         Status = "Cleared.";
+    }
+
+    private void ClearViz()
+    {
+        _allVizEvents.Clear();
+        VizEvents.Clear();
+        SelectedVizEvent = null;
+        SelectedVizPayload = string.Empty;
+        ExportVizCommand.RaiseCanExecuteChanged();
+        VizStatus = "Cleared.";
     }
 
     private async Task ExportAsync()
@@ -153,6 +254,34 @@ public sealed class DebugPanelViewModel : ViewModelBase
         }
     }
 
+    private async Task ExportVizAsync()
+    {
+        if (VizEvents.Count == 0)
+        {
+            VizStatus = "Nothing to export.";
+            return;
+        }
+
+        var file = await PickSaveFileAsync("Export viz events", "JSON files", "json", "viz-events.json");
+        if (file is null)
+        {
+            VizStatus = "Export canceled.";
+            return;
+        }
+
+        try
+        {
+            var payload = VizEvents.Select(VizExportItem.From).ToList();
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+            await WriteAllTextAsync(file, json);
+            VizStatus = $"Exported {payload.Count} events to {FormatPath(file)}.";
+        }
+        catch (Exception ex)
+        {
+            VizStatus = $"Export failed: {ex.Message}";
+        }
+    }
+
     private void RefreshFilteredEvents()
     {
         var selected = SelectedEvent;
@@ -178,6 +307,32 @@ public sealed class DebugPanelViewModel : ViewModelBase
         ExportCommand.RaiseCanExecuteChanged();
     }
 
+    private void RefreshFilteredVizEvents()
+    {
+        var selected = SelectedVizEvent;
+        VizEvents.Clear();
+        VizStatus = "Streaming";
+
+        foreach (var item in _allVizEvents)
+        {
+            if (MatchesVizFilter(item))
+            {
+                VizEvents.Add(item);
+            }
+        }
+
+        if (selected is not null && VizEvents.Contains(selected))
+        {
+            SelectedVizEvent = selected;
+        }
+        else
+        {
+            SelectedVizEvent = null;
+        }
+
+        ExportVizCommand.RaiseCanExecuteChanged();
+    }
+
     private bool MatchesFilter(DebugEventItem item)
     {
         if (string.IsNullOrWhiteSpace(TextFilter))
@@ -192,6 +347,38 @@ public sealed class DebugPanelViewModel : ViewModelBase
             || ContainsIgnoreCase(item.Severity, needle)
             || ContainsIgnoreCase(item.SenderActor, needle)
             || ContainsIgnoreCase(item.SenderNode, needle);
+    }
+
+    private bool MatchesVizFilter(VizEventItem item)
+    {
+        if (SelectedVizType.TypeFilter is not null && !string.Equals(item.Type, SelectedVizType.TypeFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(VizRegionFilterText))
+        {
+            if (!string.Equals(item.Region, VizRegionFilterText.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(VizSearchFilterText))
+        {
+            var needle = VizSearchFilterText.Trim();
+            if (!ContainsIgnoreCase(item.Type, needle)
+                && !ContainsIgnoreCase(item.BrainId, needle)
+                && !ContainsIgnoreCase(item.Region, needle)
+                && !ContainsIgnoreCase(item.Source, needle)
+                && !ContainsIgnoreCase(item.Target, needle)
+                && !ContainsIgnoreCase(item.EventId, needle))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool ContainsIgnoreCase(string? haystack, string needle)
@@ -212,6 +399,16 @@ public sealed class DebugPanelViewModel : ViewModelBase
         }
 
         return $"[{item.Severity}] {item.Context}\n{item.Summary}\n\n{item.Message}\n\nSender: {item.SenderActor}\nNode: {item.SenderNode}";
+    }
+
+    private static string BuildVizPayload(VizEventItem? item)
+    {
+        if (item is null)
+        {
+            return string.Empty;
+        }
+
+        return $"[{item.Type}] brain={item.BrainId} tick={item.TickId}\nregion={item.Region} source={item.Source} target={item.Target}\nvalue={item.Value} strength={item.Strength}\nEventId={item.EventId}";
     }
 
     private static async Task<IStorageFile?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
@@ -301,4 +498,49 @@ public sealed record DebugExportItem(
             item.Message,
             item.SenderActor,
             item.SenderNode);
+}
+
+public sealed record VizTypeOption(string Label, string? TypeFilter)
+{
+    public static IReadOnlyList<VizTypeOption> CreateDefaults()
+    {
+        var options = new List<VizTypeOption> { new("All types", null) };
+        foreach (var value in Enum.GetValues<VizEventType>())
+        {
+            if (value == VizEventType.VizUnknown)
+            {
+                continue;
+            }
+
+            options.Add(new VizTypeOption(value.ToString(), value.ToString()));
+        }
+
+        return options;
+    }
+}
+
+public sealed record VizExportItem(
+    string Time,
+    string Type,
+    string BrainId,
+    ulong TickId,
+    string Region,
+    string Source,
+    string Target,
+    float Value,
+    float Strength,
+    string EventId)
+{
+    public static VizExportItem From(VizEventItem item)
+        => new(
+            item.Time.ToString("O"),
+            item.Type,
+            item.BrainId,
+            item.TickId,
+            item.Region,
+            item.Source,
+            item.Target,
+            item.Value,
+            item.Strength,
+            item.EventId);
 }

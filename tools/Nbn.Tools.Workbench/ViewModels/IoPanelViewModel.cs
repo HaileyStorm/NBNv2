@@ -31,7 +31,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private PlasticityModeOption _selectedPlasticityMode;
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
-    private string _lastOutputTickLabel = "—";
+    private string _lastOutputTickLabel = "-";
     private List<Guid> _activeBrains = new();
     private Guid? _selectedBrainId;
 
@@ -281,8 +281,8 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             OutputEvents.Clear();
             VectorEvents.Clear();
+            LastOutputTickLabel = "-";
         }
-        LastOutputTickLabel = "—";
 
         if (brainId.HasValue)
         {
@@ -590,3 +590,4 @@ public sealed class IoPanelViewModel : ViewModelBase
 }
 
 public sealed record PlasticityModeOption(string Label, bool Probabilistic);
+

@@ -26,7 +26,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _searchFilterText = string.Empty;
     private string _brainEntryText = string.Empty;
     private BrainListItem? _selectedBrain;
-    private VizTypeOption _selectedVizType;
+    private VizPanelTypeOption _selectedVizType;
     private bool _suspendSelection;
     private VizEventItem? _selectedEvent;
     private string _selectedPayload = string.Empty;
@@ -37,8 +37,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         _brain = brain;
         VizEvents = new ObservableCollection<VizEventItem>();
         KnownBrains = new ObservableCollection<BrainListItem>();
-        VizTypeOptions = new ObservableCollection<VizTypeOption>(VizTypeOption.CreateDefaults());
-        _selectedVizType = VizTypeOptions[0];
+        VizPanelTypeOptions = new ObservableCollection<VizPanelTypeOption>(VizPanelTypeOption.CreateDefaults());
+        _selectedVizType = VizPanelTypeOptions[0];
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
@@ -54,7 +54,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public ObservableCollection<BrainListItem> KnownBrains { get; }
 
-    public ObservableCollection<VizTypeOption> VizTypeOptions { get; }
+    public ObservableCollection<VizPanelTypeOption> VizPanelTypeOptions { get; }
 
     public string BrainEntryText
     {
@@ -74,7 +74,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 {
                     if (value is not null && (previous?.BrainId != value.BrainId))
                     {
-                        _brain.SelectBrain(value.BrainId);
+                        _brain.SelectBrain(value.BrainId, preserveOutputs: true);
                     }
                     RefreshFilteredEvents();
                 }
@@ -82,7 +82,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
-    public VizTypeOption SelectedVizType
+    public VizPanelTypeOption SelectedVizType
     {
         get => _selectedVizType;
         set
@@ -188,6 +188,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             KnownBrains.Add(brain);
         }
+        Status = "Streaming";
 
         BrainListItem? match = null;
         if (!string.IsNullOrWhiteSpace(selectedId))
@@ -220,10 +221,6 @@ public sealed class VizPanelViewModel : ViewModelBase
             _allEvents.Insert(0, item);
             Trim(_allEvents);
             RefreshFilteredEvents();
-            if (SelectedEvent is null && MatchesFilter(item))
-            {
-                SelectedEvent = item;
-            }
         });
     }
 
@@ -297,7 +294,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         try
         {
-            var payload = VizEvents.Select(VizExportItem.From).ToList();
+            var payload = VizEvents.Select(VizPanelExportItem.From).ToList();
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
             await WriteAllTextAsync(file, json);
             Status = $"Exported {payload.Count} events to {FormatPath(file)}.";
@@ -313,6 +310,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         var selected = SelectedEvent;
         VizEvents.Clear();
         var matched = 0;
+        Status = "Streaming";
 
         foreach (var item in _allEvents)
         {
@@ -341,7 +339,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
         else
         {
-            SelectedEvent = VizEvents.FirstOrDefault();
+            SelectedEvent = null;
         }
 
         SelectedPayload = BuildPayload(SelectedEvent);
@@ -461,11 +459,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     }
 }
 
-public sealed record VizTypeOption(string Label, string? TypeFilter)
+public sealed record VizPanelTypeOption(string Label, string? TypeFilter)
 {
-    public static IReadOnlyList<VizTypeOption> CreateDefaults()
+    public static IReadOnlyList<VizPanelTypeOption> CreateDefaults()
     {
-        var options = new List<VizTypeOption> { new("All types", null) };
+        var options = new List<VizPanelTypeOption> { new("All types", null) };
         foreach (var value in Enum.GetValues<Nbn.Proto.Viz.VizEventType>())
         {
             if (value == Nbn.Proto.Viz.VizEventType.VizUnknown)
@@ -473,14 +471,14 @@ public sealed record VizTypeOption(string Label, string? TypeFilter)
                 continue;
             }
 
-            options.Add(new VizTypeOption(value.ToString(), value.ToString()));
+            options.Add(new VizPanelTypeOption(value.ToString(), value.ToString()));
         }
 
         return options;
     }
 }
 
-public sealed record VizExportItem(
+public sealed record VizPanelExportItem(
     string Time,
     string Type,
     string BrainId,
@@ -492,7 +490,7 @@ public sealed record VizExportItem(
     float Strength,
     string EventId)
 {
-    public static VizExportItem From(VizEventItem item)
+    public static VizPanelExportItem From(VizEventItem item)
         => new(
             item.Time.ToString("O"),
             item.Type,
