@@ -4,31 +4,238 @@
              x:Class="Nbn.Tools.Workbench.Views.Panels.DesignerPanel"
              x:DataType="vm:DesignerPanelViewModel">
   <Border Classes="card">
-    <StackPanel Spacing="10">
-      <TextBlock Text="Designer" Classes="card-title" />
-      <TextBlock Text="Draft new brain definitions, import/export .nbn, and validate constraints." Classes="card-subtitle" />
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <Button Content="New Brain" Command="{Binding NewBrainCommand}" />
-        <Button Content="Import .nbn" Command="{Binding ImportNbnCommand}" />
-        <Button Content="Import .nbs" Command="{Binding ImportNbsCommand}" />
-        <Button Content="Export" Command="{Binding ExportCommand}" />
-        <Button Content="Validate" Command="{Binding ValidateCommand}" />
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="14">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Designer" Classes="card-title" />
+          <TextBlock Text="Sketch brain definitions, import/export .nbn, and validate constraints." Classes="card-subtitle" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="New Brain" Command="{Binding NewBrainCommand}" Classes="accent" />
+            <Button Content="Import .nbn" Command="{Binding ImportNbnCommand}" />
+            <Button Content="Import .nbs" Command="{Binding ImportNbsCommand}" />
+            <Button Content="Export" Command="{Binding ExportCommand}" />
+            <Button Content="Validate" Command="{Binding ValidateCommand}" />
+          </StackPanel>
+          <StackPanel Spacing="2">
+            <TextBlock Text="{Binding LoadedSummary}" Classes="muted" />
+            <TextBlock Text="{Binding Status}" Classes="muted" />
+          </StackPanel>
+        </StackPanel>
+
+        <Grid ColumnDefinitions="240,*,320" ColumnSpacing="14">
+          <StackPanel Grid.Column="0" Spacing="12">
+            <Border Classes="row">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Brain Setup" Classes="row-title" />
+                <TextBlock Text="{Binding DesignHint}" Classes="muted" />
+                <StackPanel IsVisible="{Binding IsDesignVisible}" Spacing="8">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Name" Classes="muted" />
+                    <TextBox Text="{Binding Brain.Name}" />
+                  </StackPanel>
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                      <TextBlock Text="Brain Seed" Classes="muted" />
+                      <TextBox Text="{Binding Brain.BrainSeedText}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" VerticalAlignment="Bottom" Content="Randomize" Command="{Binding RandomizeSeedCommand}" />
+                  </Grid>
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Axon Stride" Classes="muted" />
+                    <TextBox Text="{Binding Brain.AxonStrideText}" />
+                  </StackPanel>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="row">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Regions" Classes="row-title" />
+                <TextBlock Text="Click a region to focus edits." Classes="muted" />
+                <ItemsControl ItemsSource="{Binding Brain.Regions}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:DesignerRegionViewModel" x:CompileBindings="False">
+                      <Button Command="{Binding DataContext.SelectRegionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              CommandParameter="{Binding}"
+                              Background="{Binding SelectionBackground}"
+                              BorderBrush="{Binding SelectionBorder}"
+                              Foreground="{Binding SelectionForeground}"
+                              BorderThickness="1"
+                              CornerRadius="8"
+                              Margin="4"
+                              Opacity="{Binding TileOpacity}">
+                        <StackPanel Spacing="2">
+                          <TextBlock Text="{Binding Label}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Detail}" Classes="muted" />
+                        </StackPanel>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <Border Grid.Column="1" Classes="row" IsVisible="{Binding IsDesignVisible}">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+                <StackPanel Grid.Column="0">
+                  <TextBlock Text="Workspace" Classes="row-title" />
+                  <TextBlock Text="{Binding SelectedRegionLabel}" Classes="muted" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Add Neuron" Command="{Binding AddNeuronCommand}" />
+                <Button Grid.Column="2" Content="Link Axon" Command="{Binding ToggleAxonLinkModeCommand}" />
+                <Button Grid.Column="3" Content="Clear" Command="{Binding ClearSelectionCommand}" />
+              </Grid>
+              <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}">
+                <TextBlock Text="{Binding AxonLinkStatus}" />
+              </Border>
+              <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8">
+                <TextBlock Text="Link Strength" VerticalAlignment="Center" />
+                <Slider Grid.Column="1" Minimum="0" Maximum="31" Value="{Binding DefaultAxonStrength}" />
+                <TextBox Grid.Column="2" Text="{Binding DefaultAxonStrength}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding SelectedRegion.Neurons}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal" ItemWidth="110" ItemHeight="70" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate DataType="vm:DesignerNeuronViewModel" x:CompileBindings="False">
+                    <Button Command="{Binding DataContext.SelectNeuronCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            CommandParameter="{Binding}"
+                            Background="{Binding TileBackground}"
+                            BorderBrush="{Binding TileBorder}"
+                            Foreground="{Binding TileForeground}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Margin="4"
+                            Padding="6"
+                            Opacity="{Binding TileOpacity}">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding TileLabel}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding TileDetail}" Classes="muted" />
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Column="2" Classes="row" IsVisible="{Binding IsDesignVisible}">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Inspector" Classes="row-title" />
+              <TextBlock Text="{Binding SelectedNeuronLabel}" Classes="muted" />
+
+              <StackPanel IsVisible="{Binding HasNeuronSelection}" Spacing="10">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="Functions" Classes="row-title" />
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Activation" Classes="muted" />
+                    <ComboBox ItemsSource="{Binding ActivationFunctions}" SelectedIndex="{Binding SelectedNeuron.ActivationFunctionId}" />
+                  </StackPanel>
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Reset" Classes="muted" />
+                    <ComboBox ItemsSource="{Binding ResetFunctions}" SelectedIndex="{Binding SelectedNeuron.ResetFunctionId}" />
+                  </StackPanel>
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="Accumulation" Classes="muted" />
+                    <ComboBox ItemsSource="{Binding AccumulationFunctions}" SelectedIndex="{Binding SelectedNeuron.AccumulationFunctionId}" />
+                  </StackPanel>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="Parameters" Classes="row-title" />
+                  <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
+                    <TextBlock Grid.Row="0" Text="Param A" VerticalAlignment="Center" />
+                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ParamACode}" />
+                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding SelectedNeuron.ParamACode}" />
+
+                    <TextBlock Grid.Row="1" Text="Param B" VerticalAlignment="Center" />
+                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ParamBCode}" />
+                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding SelectedNeuron.ParamBCode}" />
+
+                    <TextBlock Grid.Row="2" Text="Pre-Act Thresh" VerticalAlignment="Center" />
+                    <Slider Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.PreActivationThresholdCode}" />
+                    <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding SelectedNeuron.PreActivationThresholdCode}" />
+
+                    <TextBlock Grid.Row="3" Text="Act Thresh" VerticalAlignment="Center" />
+                    <Slider Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ActivationThresholdCode}" />
+                    <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding SelectedNeuron.ActivationThresholdCode}" />
+                  </Grid>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="Neuron State" Classes="row-title" />
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBlock Text="{Binding SelectedNeuron.TileDetail}" Classes="muted" />
+                    <Button Content="Toggle Enabled" Command="{Binding ToggleNeuronEnabledCommand}" />
+                  </Grid>
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                  <TextBlock Text="Outgoing Axons" Classes="row-title" />
+                  <TextBlock Text="{Binding SelectedNeuron.TileDetail}" Classes="muted" />
+                  <ItemsControl ItemsSource="{Binding SelectedNeuron.Axons}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate DataType="vm:DesignerAxonViewModel" x:CompileBindings="False">
+                        <Button Command="{Binding DataContext.SelectAxonCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                CommandParameter="{Binding}"
+                                Background="{Binding RowBackground}"
+                                Foreground="{Binding RowForeground}"
+                                BorderBrush="{DynamicResource NbnBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="6"
+                                Margin="0,4">
+                          <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="{Binding TargetLabel}" />
+                            <TextBlock Grid.Column="1" Text="{Binding StrengthLabel}" />
+                          </Grid>
+                        </Button>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Button Content="Remove Selected Axon" Command="{Binding RemoveAxonCommand}" />
+                </StackPanel>
+              </StackPanel>
+
+              <StackPanel IsVisible="{Binding HasAxonSelection}" Spacing="6">
+                <TextBlock Text="Axon Tuning" Classes="row-title" />
+                <TextBlock Text="{Binding SelectedAxon.TargetLabel}" Classes="muted" />
+                <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8">
+                  <TextBlock Text="Strength" VerticalAlignment="Center" />
+                  <Slider Grid.Column="1" Minimum="0" Maximum="31" Value="{Binding SelectedAxon.StrengthCode}" />
+                  <TextBox Grid.Column="2" Text="{Binding SelectedAxon.StrengthCode}" />
+                </Grid>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </Grid>
+
+        <Border Classes="row">
+          <StackPanel Spacing="6">
+            <TextBlock Text="Validation" Classes="card-subtitle" />
+            <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
+            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding ValidationIssues}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding}" TextWrapping="Wrap" Classes="row-title" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Border>
       </StackPanel>
-      <TextBlock Text="{Binding LoadedSummary}" Classes="muted" />
-      <StackPanel Spacing="6">
-        <TextBlock Text="Validation" Classes="card-subtitle" />
-        <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
-        <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding ValidationIssues}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <TextBlock Text="{Binding}" TextWrapping="Wrap" Classes="row-title" />
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </ScrollViewer>
-      </StackPanel>
-      <TextBlock Text="{Binding Status}" Classes="muted" />
-    </StackPanel>
+    </ScrollViewer>
   </Border>
 </UserControl>
