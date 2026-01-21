@@ -229,16 +229,16 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        if (FilterZeroOutputs && item.IsZero)
-        {
-            return;
-        }
-
         _dispatcher.Post(() =>
         {
+            LastOutputTickLabel = item.TickId.ToString();
+            if (FilterZeroOutputs && item.IsZero)
+            {
+                return;
+            }
+
             OutputEvents.Insert(0, item);
             Trim(OutputEvents);
-            LastOutputTickLabel = item.TickId.ToString();
         });
     }
 
@@ -249,16 +249,16 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        if (FilterZeroVectorOutputs && item.AllZero)
-        {
-            return;
-        }
-
         _dispatcher.Post(() =>
         {
+            LastOutputTickLabel = item.TickId.ToString();
+            if (FilterZeroVectorOutputs && item.AllZero)
+            {
+                return;
+            }
+
             VectorEvents.Insert(0, item);
             Trim(VectorEvents);
-            LastOutputTickLabel = item.TickId.ToString();
         });
     }
 

@@ -132,8 +132,10 @@ public sealed class WorkbenchReceiverActor : IActor
     private void HandleOutput(OutputEvent output)
     {
         var brainId = output.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
+        var now = DateTimeOffset.Now;
         _sink.OnOutputEvent(new OutputEventItem(
-            DateTimeOffset.Now,
+            now,
+            now.ToString("g"),
             brainId,
             output.OutputIndex,
             output.Value,
@@ -153,8 +155,10 @@ public sealed class WorkbenchReceiverActor : IActor
             }
         }
 
+        var now = DateTimeOffset.Now;
         _sink.OnOutputVectorEvent(new OutputVectorEventItem(
-            DateTimeOffset.Now,
+            now,
+            now.ToString("g"),
             brainId,
             PreviewValues(output.Values),
             allZero,

@@ -4,6 +4,7 @@ namespace Nbn.Tools.Workbench.Models;
 
 public sealed record OutputEventItem(
     DateTimeOffset Time,
+    string TimeLabel,
     string BrainId,
     uint OutputIndex,
     float Value,
@@ -14,6 +15,7 @@ public sealed record OutputEventItem(
 
 public sealed record OutputVectorEventItem(
     DateTimeOffset Time,
+    string TimeLabel,
     string BrainId,
     string ValuesPreview,
     bool AllZero,

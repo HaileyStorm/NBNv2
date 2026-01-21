@@ -98,7 +98,7 @@
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10" Margin="0,4">
-                        <TextBlock Text="{Binding Time}" Classes="muted" />
+                        <TextBlock Text="{Binding TimeLabel}" Classes="muted" />
                         <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
                         <Border Grid.Column="2" Classes="pill">
                           <TextBlock Text="{Binding OutputIndex}" />
@@ -121,7 +121,7 @@
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10" Margin="0,4">
-                        <TextBlock Text="{Binding Time}" Classes="muted" />
+                        <TextBlock Text="{Binding TimeLabel}" Classes="muted" />
                         <TextBlock Grid.Column="1" Text="{Binding ValuesPreview}" Classes="row-title" />
                         <TextBlock Grid.Column="2" Text="{Binding TickId}" Classes="muted" />
                       </Grid>
