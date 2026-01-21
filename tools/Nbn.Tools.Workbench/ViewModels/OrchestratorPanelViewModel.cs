@@ -4,10 +4,10 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
+using Nbn.Shared.Format;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -492,10 +492,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var demoProjectPath = RepoLocator.ResolvePathFromRepo("tools", "Nbn.Tools.DemoHost");
-        if (string.IsNullOrWhiteSpace(demoProjectPath))
+        var brainHostProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.BrainHost");
+        if (string.IsNullOrWhiteSpace(brainHostProjectPath))
         {
-            SampleBrainStatus = "DemoHost project not found.";
+            SampleBrainStatus = "BrainHost project not found.";
             return;
         }
 
@@ -517,7 +517,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         ResetDirectory(artifactRoot);
 
         SampleBrainStatus = "Creating sample artifacts...";
-        var artifact = await CreateSampleArtifactsAsync(artifactRoot, demoProjectPath).ConfigureAwait(false);
+        var artifact = await CreateSampleArtifactsAsync(artifactRoot).ConfigureAwait(false);
         if (artifact is null)
         {
             return;
@@ -540,7 +540,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                         + $" --settings-host {settingsHost}"
                         + $" --settings-port {settingsPort}"
                         + $" --settings-name {Connections.SettingsName}";
-        var brainStartInfo = BuildServiceStartInfo(demoProjectPath, "Nbn.Tools.DemoHost", brainArgs);
+        var brainStartInfo = BuildServiceStartInfo(brainHostProjectPath, "Nbn.Runtime.BrainHost", brainArgs);
         var brainResult = await _sampleBrainRunner.StartAsync(brainStartInfo, waitForExit: false, label: "SampleBrainHost").ConfigureAwait(false);
         if (!brainResult.Success)
         {
@@ -990,103 +990,19 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Directory.CreateDirectory(path);
     }
 
-    private async Task<SampleArtifact?> CreateSampleArtifactsAsync(string artifactRoot, string demoProjectPath)
+    private async Task<SampleArtifact?> CreateSampleArtifactsAsync(string artifactRoot)
     {
-        Directory.CreateDirectory(artifactRoot);
-
-        var args = $"init-artifacts --artifact-root \"{artifactRoot}\" --json";
-        var startInfo = BuildServiceStartInfo(demoProjectPath, "Nbn.Tools.DemoHost", args);
-        startInfo.RedirectStandardOutput = true;
-        startInfo.RedirectStandardError = true;
-        startInfo.StandardOutputEncoding = Encoding.UTF8;
-        startInfo.StandardErrorEncoding = Encoding.UTF8;
-
-        using var process = new Process { StartInfo = startInfo };
-        if (!process.Start())
-        {
-            SampleBrainStatus = "Failed to start DemoHost.";
-            return null;
-        }
-
-        var stdOutTask = process.StandardOutput.ReadToEndAsync();
-        var stdErrTask = process.StandardError.ReadToEndAsync();
-        await Task.WhenAll(stdOutTask, stdErrTask, process.WaitForExitAsync()).ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-        {
-            var error = stdErrTask.Result;
-            SampleBrainStatus = string.IsNullOrWhiteSpace(error) ? "DemoHost failed." : $"DemoHost failed: {error}";
-            return null;
-        }
-
-        var artifact = ParseSampleArtifact(stdOutTask.Result);
-        if (artifact is null)
-        {
-            SampleBrainStatus = "DemoHost did not return artifact metadata.";
-            return null;
-        }
-
-        if (string.IsNullOrWhiteSpace(artifact.ArtifactRoot))
-        {
-            artifact = artifact with { ArtifactRoot = artifactRoot };
-        }
-
-        return artifact;
-    }
-
-    private static SampleArtifact? ParseSampleArtifact(string output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            return null;
-        }
-
-        var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-        var jsonLine = lines.LastOrDefault(line =>
-            line.TrimStart().StartsWith("{", StringComparison.Ordinal)
-            && line.TrimEnd().EndsWith("}", StringComparison.Ordinal));
-
-        if (string.IsNullOrWhiteSpace(jsonLine))
-        {
-            return null;
-        }
-
         try
         {
-            using var doc = JsonDocument.Parse(jsonLine);
-            var root = doc.RootElement;
-            if (!root.TryGetProperty("nbn_sha256", out var shaProp))
-            {
-                return null;
-            }
-
-            if (!root.TryGetProperty("nbn_size", out var sizeProp))
-            {
-                return null;
-            }
-
-            var sha = shaProp.GetString();
-            if (string.IsNullOrWhiteSpace(sha))
-            {
-                return null;
-            }
-
-            var size = 0L;
-            if (sizeProp.ValueKind == JsonValueKind.Number && sizeProp.TryGetInt64(out var sizeValue))
-            {
-                size = sizeValue;
-            }
-
-            var artifactRoot = string.Empty;
-            if (root.TryGetProperty("artifact_root", out var rootProp))
-            {
-                artifactRoot = rootProp.GetString() ?? string.Empty;
-            }
-
-            return new SampleArtifact(sha, size, artifactRoot);
+            Directory.CreateDirectory(artifactRoot);
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var nbnBytes = DemoNbnBuilder.BuildSampleNbn();
+            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn").ConfigureAwait(false);
+            return new SampleArtifact(manifest.ArtifactId.ToHex(), manifest.ByteLength, artifactRoot);
         }
-        catch (JsonException)
+        catch (Exception ex)
         {
+            SampleBrainStatus = $"Sample artifact failed: {ex.Message}";
             return null;
         }
     }
