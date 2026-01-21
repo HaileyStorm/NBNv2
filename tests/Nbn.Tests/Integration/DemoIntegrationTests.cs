@@ -9,6 +9,7 @@ using Nbn.Proto.Signal;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.HiveMind;
+using Nbn.Runtime.IO;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -169,6 +170,162 @@ public class DemoIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task DemoStyle_Input_To_Output_Produces_Output()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-demo-input-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var hiveNode = await RemoteTestNode.StartAsync(BuildHiveMindConfig(GetFreePort()));
+            await using var brainNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+            await using var regionNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+            await using var ioNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var nbnBytes = BuildDemoNbnWithInput();
+            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
+            var nbnRef = BuildArtifactRef(manifest);
+
+            var options = CreateOptions(hiveNode.Port);
+            var hiveMindLocal = hiveNode.Root.SpawnNamed(
+                Props.FromProducer(() => new HiveMindActor(options)),
+                HiveMindNames.HiveMind);
+            var hiveMindRemote = new PID(hiveNode.Address, hiveMindLocal.Id);
+
+            var brainId = Guid.NewGuid();
+            var routerPid = brainNode.Root.SpawnNamed(
+                Props.FromProducer(() => new BrainSignalRouterActor(brainId)),
+                "demo-router");
+            var brainRootPid = brainNode.Root.SpawnNamed(
+                Props.FromProducer(() => new BrainRootActor(brainId, hiveMindRemote, autoSpawnSignalRouter: false)),
+                "BrainRoot");
+            brainNode.Root.Send(brainRootPid, new SetSignalRouter(routerPid));
+
+            var router = await WaitForSignalRouter(brainNode.Root, brainRootPid, TimeSpan.FromSeconds(5));
+            var routerRemote = EnsureAddress(router, brainNode.Address);
+
+            var routing = await BuildRoutingTable(store, nbnRef, brainId);
+
+            var region0Load = await RegionShardArtifactLoader.LoadAsync(
+                store,
+                nbnRef,
+                nbsRef: null,
+                regionId: 0,
+                neuronStart: 0,
+                neuronCount: 1,
+                expectedBrainId: brainId);
+
+            var region0Config = new RegionShardActorConfig(
+                brainId,
+                ShardId32.From(0, 0),
+                routerRemote,
+                OutputSink: null,
+                TickSink: hiveMindRemote,
+                routing);
+            var region0Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region0Load.State, region0Config)));
+
+            var region1Load = await RegionShardArtifactLoader.LoadAsync(
+                store,
+                nbnRef,
+                nbsRef: null,
+                regionId: 1,
+                neuronStart: 0,
+                neuronCount: 1,
+                expectedBrainId: brainId);
+
+            var region1Config = new RegionShardActorConfig(
+                brainId,
+                ShardId32.From(1, 0),
+                routerRemote,
+                OutputSink: null,
+                TickSink: hiveMindRemote,
+                routing);
+            var region1Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region1Load.State, region1Config)));
+
+            var region31Load = await RegionShardArtifactLoader.LoadAsync(
+                store,
+                nbnRef,
+                nbsRef: null,
+                regionId: NbnConstants.OutputRegionId,
+                neuronStart: 0,
+                neuronCount: 1,
+                expectedBrainId: brainId);
+
+            var region31Config = new RegionShardActorConfig(
+                brainId,
+                ShardId32.From(NbnConstants.OutputRegionId, 0),
+                routerRemote,
+                OutputSink: null,
+                TickSink: hiveMindRemote,
+                routing);
+            var region31Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region31Load.State, region31Config)));
+
+            RegisterShard(regionNode, hiveMindRemote, region0Pid, regionNode.Address, brainId, 0);
+            RegisterShard(regionNode, hiveMindRemote, region1Pid, regionNode.Address, brainId, 1);
+            RegisterShard(regionNode, hiveMindRemote, region31Pid, regionNode.Address, brainId, NbnConstants.OutputRegionId);
+
+            await WaitForStatus(
+                hiveNode.Root,
+                hiveMindLocal,
+                status => status.RegisteredBrains == 1 && status.RegisteredShards >= 3,
+                TimeSpan.FromSeconds(5));
+
+            await WaitForRoutingTable(brainNode.Root, router, table => table.Count >= 3, TimeSpan.FromSeconds(5));
+
+            var ioOptions = new IoOptions(
+                BindHost: "127.0.0.1",
+                Port: ioNode.Port,
+                AdvertisedHost: null,
+                AdvertisedPort: null,
+                GatewayName: IoNames.Gateway,
+                ServerName: "nbn.io.tests",
+                SettingsHost: null,
+                SettingsPort: 0,
+                SettingsName: "SettingsMonitor",
+                HiveMindAddress: hiveNode.Address,
+                HiveMindName: HiveMindNames.HiveMind,
+                ReproAddress: null,
+                ReproName: null);
+
+            var ioGateway = ioNode.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
+                IoNames.Gateway);
+            var ioPid = new PID(ioNode.Address, ioGateway.Id);
+
+            var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ioNode.Root.Spawn(Props.FromProducer(() => new IoOutputSubscriberActor(brainId, ioPid, outputTcs)));
+
+            ioNode.Root.Send(ioPid, new InputWrite
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputIndex = 0,
+                Value = 1f
+            });
+
+            hiveNode.Root.Send(hiveMindLocal, new StartTickLoop());
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var output = await outputTcs.Task.WaitAsync(timeoutCts.Token);
+
+            hiveNode.Root.Send(hiveMindLocal, new StopTickLoop());
+
+            Assert.True(output.BrainId.TryToGuid(out var outputBrain) && outputBrain == brainId);
+            Assert.Equal(0u, output.OutputIndex);
+            Assert.True(output.TickId >= 1);
+            Assert.True(output.Value > 0f);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
     private static ArtifactRef BuildArtifactRef(ArtifactManifest manifest)
     {
         return new ArtifactRef
@@ -243,6 +400,131 @@ public class DemoIntegrationTests
             regions: directory);
 
         return NbnBinary.WriteNbn(header, sections);
+    }
+
+    private static byte[] BuildDemoNbnWithInput()
+    {
+        var stride = 1024u;
+        var sections = new List<NbnRegionSection>();
+        var directory = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
+        ulong offset = NbnBinary.NbnHeaderBytes;
+
+        var inputAxons = new[]
+        {
+            new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: 1)
+        };
+
+        offset = AddRegionSection(
+            0,
+            1,
+            stride,
+            ref directory,
+            sections,
+            offset,
+            neuronFactory: _ => new NeuronRecord(
+                axonCount: 1,
+                paramBCode: 0,
+                paramACode: 0,
+                activationThresholdCode: 0,
+                preActivationThresholdCode: 0,
+                resetFunctionId: 0,
+                activationFunctionId: 1,
+                accumulationFunctionId: 0,
+                exists: true),
+            axons: inputAxons);
+
+        var demoAxons = new[]
+        {
+            new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: 1),
+            new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: NbnConstants.OutputRegionId)
+        };
+
+        offset = AddRegionSection(
+            1,
+            1,
+            stride,
+            ref directory,
+            sections,
+            offset,
+            neuronFactory: _ => new NeuronRecord(
+                axonCount: 2,
+                paramBCode: 0,
+                paramACode: 40,
+                activationThresholdCode: 0,
+                preActivationThresholdCode: 0,
+                resetFunctionId: 0,
+                activationFunctionId: 17,
+                accumulationFunctionId: 0,
+                exists: true),
+            axons: demoAxons);
+
+        offset = AddRegionSection(
+            NbnConstants.OutputRegionId,
+            1,
+            stride,
+            ref directory,
+            sections,
+            offset,
+            neuronFactory: _ => new NeuronRecord(
+                axonCount: 0,
+                paramBCode: 0,
+                paramACode: 0,
+                activationThresholdCode: 0,
+                preActivationThresholdCode: 0,
+                resetFunctionId: 0,
+                activationFunctionId: 1,
+                accumulationFunctionId: 0,
+                exists: true));
+
+        var header = new NbnHeaderV2(
+            "NBN2",
+            2,
+            1,
+            10,
+            brainSeed: 1,
+            axonStride: stride,
+            flags: 0,
+            quantization: QuantizationSchemas.DefaultNbn,
+            regions: directory);
+
+        return NbnBinary.WriteNbn(header, sections);
+    }
+
+    private static async Task<RegionShardRoutingTable> BuildRoutingTable(
+        LocalArtifactStore store,
+        ArtifactRef nbnRef,
+        Guid brainId)
+    {
+        var load = await RegionShardArtifactLoader.LoadAsync(
+            store,
+            nbnRef,
+            nbsRef: null,
+            regionId: 1,
+            neuronStart: 0,
+            neuronCount: 1,
+            expectedBrainId: brainId);
+
+        return RegionShardRoutingTable.CreateSingleShard(load.Header.Regions);
+    }
+
+    private static void RegisterShard(
+        RemoteTestNode node,
+        PID hiveMind,
+        PID shardPid,
+        string address,
+        Guid brainId,
+        int regionId)
+    {
+        var remote = EnsureAddress(shardPid, address);
+        node.Root.Send(hiveMind, new Nbn.Proto.Control.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)regionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(remote),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
     }
 
     private static ulong AddRegionSection(
@@ -466,6 +748,35 @@ public class DemoIntegrationTests
                 && brainId == _brainId)
             {
                 _tcs.TrySetResult(output);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class IoOutputSubscriberActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly PID _ioGateway;
+        private readonly TaskCompletionSource<OutputEvent> _tcs;
+
+        public IoOutputSubscriberActor(Guid brainId, PID ioGateway, TaskCompletionSource<OutputEvent> tcs)
+        {
+            _brainId = brainId;
+            _ioGateway = ioGateway;
+            _tcs = tcs;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_ioGateway, new SubscribeOutputs { BrainId = _brainId.ToProtoUuid() });
+                    break;
+                case OutputEvent output when output.BrainId.TryToGuid(out var brain) && brain == _brainId:
+                    _tcs.TrySetResult(output);
+                    break;
             }
 
             return Task.CompletedTask;

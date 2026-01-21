@@ -1,4 +1,5 @@
 using System;
+using Avalonia;
 using Avalonia.Controls;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -29,6 +30,17 @@ public partial class MainWindow : Window
         {
             WorkbenchProcessRegistry.Default.CleanupStale();
             LocalDemoRunner.CleanupStaleProcesses();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                desktop.Shutdown();
+            }
         }
         catch
         {

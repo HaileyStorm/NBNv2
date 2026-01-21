@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.Brain\Nbn.Runtime.Brain.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
   </ItemGroup>
 

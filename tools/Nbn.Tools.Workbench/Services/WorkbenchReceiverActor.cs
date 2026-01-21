@@ -30,16 +30,16 @@ public sealed class WorkbenchReceiverActor : IActor
                 _ioGateway = setIo.Pid;
                 return Task.CompletedTask;
             case SubscribeOutputsCommand subscribe:
-                SendToIo(context, new SubscribeOutputs { BrainId = subscribe.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new SubscribeOutputs { BrainId = subscribe.BrainId.ToProtoUuid() });
                 return Task.CompletedTask;
             case UnsubscribeOutputsCommand unsubscribe:
-                SendToIo(context, new UnsubscribeOutputs { BrainId = unsubscribe.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new UnsubscribeOutputs { BrainId = unsubscribe.BrainId.ToProtoUuid() });
                 return Task.CompletedTask;
             case SubscribeOutputsVectorCommand subscribeVector:
-                SendToIo(context, new SubscribeOutputsVector { BrainId = subscribeVector.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new SubscribeOutputsVector { BrainId = subscribeVector.BrainId.ToProtoUuid() });
                 return Task.CompletedTask;
             case UnsubscribeOutputsVectorCommand unsubscribeVector:
-                SendToIo(context, new UnsubscribeOutputsVector { BrainId = unsubscribeVector.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new UnsubscribeOutputsVector { BrainId = unsubscribeVector.BrainId.ToProtoUuid() });
                 return Task.CompletedTask;
             case InputWriteCommand input:
                 SendToIo(context, new InputWrite
@@ -116,6 +116,17 @@ public sealed class WorkbenchReceiverActor : IActor
         }
 
         context.Send(_ioGateway, message);
+    }
+
+    private void SendToIoRequest(IContext context, object message)
+    {
+        if (_ioGateway is null)
+        {
+            return;
+        }
+
+        // Use Request so the IO gateway sees the sender and can register subscriptions.
+        context.Request(_ioGateway, message);
     }
 
     private void HandleOutput(OutputEvent output)

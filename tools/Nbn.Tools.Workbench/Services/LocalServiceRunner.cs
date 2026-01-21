@@ -81,10 +81,39 @@ public sealed class LocalServiceRunner
 
         try
         {
-            process.Kill(true);
+            if (!process.HasExited)
+            {
+                process.CloseMainWindow();
+            }
         }
         catch
         {
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+            }
+        }
+        catch
+        {
+        }
+
+        var exited = false;
+        try
+        {
+            exited = process.WaitForExit(2000);
+        }
+        catch
+        {
+        }
+
+        if (!exited && !process.HasExited)
+        {
+            WorkbenchLog.Warn($"Local launch stop requested but process still running: {process.ProcessName} (pid {process.Id})");
+            return Task.FromResult("Stop requested; process still running.");
         }
 
         _process = null;
