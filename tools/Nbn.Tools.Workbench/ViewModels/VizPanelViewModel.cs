@@ -67,11 +67,15 @@ public sealed class VizPanelViewModel : ViewModelBase
         get => _selectedBrain;
         set
         {
+            var previous = _selectedBrain;
             if (SetProperty(ref _selectedBrain, value))
             {
                 if (!_suspendSelection)
                 {
-                    _brain.SelectBrain(value?.BrainId);
+                    if (value is not null && (previous?.BrainId != value.BrainId))
+                    {
+                        _brain.SelectBrain(value.BrainId);
+                    }
                     RefreshFilteredEvents();
                 }
             }
@@ -304,12 +308,26 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         var selected = SelectedEvent;
         VizEvents.Clear();
+        var matched = 0;
 
         foreach (var item in _allEvents)
         {
             if (MatchesFilter(item))
             {
                 VizEvents.Add(item);
+                matched++;
+            }
+        }
+
+        if (matched == 0 && _allEvents.Count > 0 && SelectedBrain is not null)
+        {
+            Status = "No events for selected brain; showing all.";
+            foreach (var item in _allEvents)
+            {
+                if (MatchesFilter(item, ignoreBrain: true))
+                {
+                    VizEvents.Add(item);
+                }
             }
         }
 
@@ -326,9 +344,10 @@ public sealed class VizPanelViewModel : ViewModelBase
         ExportCommand.RaiseCanExecuteChanged();
     }
 
-    private bool MatchesFilter(VizEventItem item)
+    private bool MatchesFilter(VizEventItem item, bool ignoreBrain = false)
     {
-        if (SelectedBrain is not null && !string.Equals(item.BrainId, SelectedBrain.Id, StringComparison.OrdinalIgnoreCase))
+        if (!ignoreBrain && SelectedBrain is not null
+            && !string.Equals(item.BrainId, SelectedBrain.Id, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
