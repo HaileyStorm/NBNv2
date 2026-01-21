@@ -1212,6 +1212,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         if (TryAddAxon(SelectedNeuron, targetNeuron, out var message))
         {
             Status = message ?? "Axon added.";
+            if (IsAxonLinkMode)
+            {
+                IsAxonLinkMode = false;
+            }
         }
         else
         {
