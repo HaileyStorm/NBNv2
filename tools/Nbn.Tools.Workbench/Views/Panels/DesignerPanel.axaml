@@ -93,21 +93,206 @@
             <Border Classes="row">
               <StackPanel Spacing="8">
                 <TextBlock Text="Random Brain" Classes="row-title" />
-                <TextBlock Text="Generate randomized non-input/output regions." Classes="muted" />
+                <TextBlock Text="Generate randomized brain definitions (advanced options are staged below)." Classes="muted" TextWrapping="Wrap" />
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Regions" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomRegionCountText}" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.RegionCountText}" />
                   <TextBlock Grid.Column="2" Text="(non-IO)" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Neurons" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomNeuronCountText}" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.NeuronCountText}" />
                   <TextBlock Grid.Column="2" Text="per region" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Axons" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomAxonCountText}" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.AxonCountText}" />
                   <TextBlock Grid.Column="2" Text="per neuron" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Input" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.InputNeuronCountText}" />
+                  <TextBlock Grid.Column="2" Text="Output" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.OutputNeuronCountText}" />
+                  <TextBlock Grid.Column="4" Text="neurons" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Seed" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.SeedModes}" SelectedItem="{Binding RandomOptions.SelectedSeedMode}" Width="140">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.SeedText}" Width="140" IsEnabled="{Binding RandomOptions.IsSeedTextEnabled}" />
+                </Grid>
+                <WrapPanel Orientation="Horizontal">
+                  <CheckBox Content="Allow self loops" IsChecked="{Binding RandomOptions.AllowSelfLoops}" Margin="0,0,12,0" />
+                  <CheckBox Content="Allow intra-region" IsChecked="{Binding RandomOptions.AllowIntraRegion}" Margin="0,0,12,0" />
+                  <CheckBox Content="Allow inter-region" IsChecked="{Binding RandomOptions.AllowInterRegion}" />
+                </WrapPanel>
+                <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Strength" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.StrengthMinText}" />
+                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.StrengthMaxText}" />
+                  <TextBlock Grid.Column="4" Text="(code)" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <TextBlock Text="Advanced options (planned; not yet wired)." Classes="muted" />
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Region mode" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.RegionSelectionModes}" SelectedItem="{Binding RandomOptions.SelectedRegionSelectionMode}" Width="160">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.RegionListText}" Width="140"
+                           IsEnabled="{Binding RandomOptions.IsRegionListEnabled}" Watermark="1,2,3" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Neuron mode" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.NeuronCountModes}" SelectedItem="{Binding RandomOptions.SelectedNeuronCountMode}" Width="110">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.NeuronCountMinText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsNeuronRangeEnabled}" />
+                  <TextBlock Grid.Column="3" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="4" Text="{Binding RandomOptions.NeuronCountMaxText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsNeuronRangeEnabled}" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Axon mode" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.AxonCountModes}" SelectedItem="{Binding RandomOptions.SelectedAxonCountMode}" Width="110">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.AxonCountMinText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsAxonRangeEnabled}" />
+                  <TextBlock Grid.Column="3" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="4" Text="{Binding RandomOptions.AxonCountMaxText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsAxonRangeEnabled}" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Target bias" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.TargetBiasModes}" SelectedItem="{Binding RandomOptions.SelectedTargetBiasMode}" Width="160">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Strength dist" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.StrengthDistributions}" SelectedItem="{Binding RandomOptions.SelectedStrengthDistribution}" Width="160">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Activation" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ActivationModes}" SelectedItem="{Binding RandomOptions.SelectedActivationMode}" Width="130">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.ActivationFixedIdText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsActivationFixedEnabled}" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Reset" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ResetModes}" SelectedItem="{Binding RandomOptions.SelectedResetMode}" Width="130">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.ResetFixedIdText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsResetFixedEnabled}" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Accumulation" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.AccumulationModes}" SelectedItem="{Binding RandomOptions.SelectedAccumulationMode}" Width="130">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.AccumulationFixedIdText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsAccumulationFixedEnabled}" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Threshold mode" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ThresholdModes}" SelectedItem="{Binding RandomOptions.SelectedThresholdMode}" Width="130">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Pre-act" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.PreActivationMinText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.PreActivationMaxText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Act thresh" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.ActivationThresholdMinText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.ActivationThresholdMaxText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Param mode" VerticalAlignment="Center" />
+                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ParamModes}" SelectedItem="{Binding RandomOptions.SelectedParamMode}" Width="130">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Param A" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.ParamAMinText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.ParamAMaxText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Param B" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.ParamBMinText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.ParamBMaxText}" Width="70"
+                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
                 <Button Content="Generate Random Brain" Command="{Binding NewRandomBrainCommand}" />
               </StackPanel>

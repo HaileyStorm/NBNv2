@@ -86,9 +86,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _spawnRegionPortText = "12040";
     private string _spawnArtifactRoot = BuildDefaultArtifactRoot();
     private bool _spawnStartRegionHosts = true;
-    private string _randomRegionCountText = "3";
-    private string _randomNeuronCountText = "64";
-    private string _randomAxonCountText = "8";
+    private readonly RandomBrainOptionsViewModel _randomOptions;
 
     public DesignerPanelViewModel(ConnectionViewModel connections)
     {
@@ -97,6 +95,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         _spawnBrainPortText = connections.SampleBrainPortText;
         _spawnRegionPortText = connections.SampleRegionPortText;
         _spawnArtifactRoot = BuildDefaultArtifactRoot();
+        _randomOptions = new RandomBrainOptionsViewModel();
         ValidationIssues = new ObservableCollection<string>();
         VisibleNeurons = new ObservableCollection<DesignerNeuronViewModel>();
         VisibleEdges = new ObservableCollection<DesignerEdgeViewModel>();
@@ -141,6 +140,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     public ObservableCollection<DesignerFunctionOption> AccumulationFunctions { get; }
     public ObservableCollection<DesignerNeuronViewModel> VisibleNeurons { get; }
     public ObservableCollection<DesignerEdgeViewModel> VisibleEdges { get; }
+    public RandomBrainOptionsViewModel RandomOptions => _randomOptions;
 
     public string Status
     {
@@ -509,23 +509,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         set => SetProperty(ref _spawnStartRegionHosts, value);
     }
 
-    public string RandomRegionCountText
-    {
-        get => _randomRegionCountText;
-        set => SetProperty(ref _randomRegionCountText, value);
-    }
-
-    public string RandomNeuronCountText
-    {
-        get => _randomNeuronCountText;
-        set => SetProperty(ref _randomNeuronCountText, value);
-    }
-
-    public string RandomAxonCountText
-    {
-        get => _randomAxonCountText;
-        set => SetProperty(ref _randomAxonCountText, value);
-    }
 
     public bool IsDesignLoaded => _documentType == DesignerDocumentType.Nbn && Brain is not null;
     public bool IsSnapshotLoaded => _documentType == DesignerDocumentType.Nbs;
@@ -668,29 +651,28 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private void NewRandomBrain()
     {
         ClearResetConfirmation();
-        if (!int.TryParse(RandomRegionCountText, out var regionCount) || regionCount < 0)
+        if (!RandomOptions.TryBuildBasicOptions(GenerateSeed, out var options, out var error))
         {
-            Status = "Random region count must be a non-negative integer.";
+            Status = error ?? "Random brain options invalid.";
             return;
         }
 
-        if (!int.TryParse(RandomNeuronCountText, out var neuronsPerRegion) || neuronsPerRegion < 1)
+        var pending = RandomOptions.GetUnsupportedOptionMessages();
+        if (pending.Count > 0)
         {
-            Status = "Random neurons per region must be a positive integer.";
+            Status = $"Random brain options not wired yet: {string.Join(", ", pending)}.";
             return;
         }
 
-        if (!int.TryParse(RandomAxonCountText, out var axonsPerNeuron) || axonsPerNeuron < 0)
-        {
-            Status = "Random axons per neuron must be a non-negative integer.";
-            return;
-        }
+        var regionCount = Math.Clamp(options.RegionCount, 0, NbnConstants.RegionCount - 2);
+        var neuronsPerRegion = Math.Min(options.NeuronsPerRegion, NbnConstants.MaxAxonTargetNeuronId);
+        var axonsPerNeuron = Math.Min(options.AxonsPerNeuron, NbnConstants.MaxAxonsPerNeuron);
+        var inputNeurons = Math.Clamp(options.InputNeurons, 1, NbnConstants.MaxAxonTargetNeuronId);
+        var outputNeurons = Math.Clamp(options.OutputNeurons, 1, NbnConstants.MaxAxonTargetNeuronId);
+        var strengthMin = Math.Clamp(options.StrengthMinCode, 0, 31);
+        var strengthMax = Math.Clamp(options.StrengthMaxCode, 0, 31);
 
-        regionCount = Math.Clamp(regionCount, 0, NbnConstants.RegionCount - 2);
-        neuronsPerRegion = Math.Min(neuronsPerRegion, NbnConstants.MaxAxonTargetNeuronId);
-        axonsPerNeuron = Math.Min(axonsPerNeuron, NbnConstants.MaxAxonsPerNeuron);
-
-        var seed = GenerateSeed();
+        var seed = options.Seed;
         var brainId = Guid.NewGuid();
         var brain = new DesignerBrainViewModel("Random Brain", brainId, seed, 1024);
 
@@ -706,7 +688,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var targetCount = 0;
             if (i == NbnConstants.InputRegionId || i == NbnConstants.OutputRegionId)
             {
-                targetCount = 1;
+                targetCount = i == NbnConstants.InputRegionId ? inputNeurons : outputNeurons;
             }
             else if (randomRegions.Contains(i))
             {
@@ -728,6 +710,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var validTargets = regionsWithNeurons
                 .Where(target => target.RegionId != NbnConstants.InputRegionId
                                  && !(region.RegionId == NbnConstants.OutputRegionId && target.RegionId == NbnConstants.OutputRegionId))
+                .Where(target => options.AllowInterRegion || target.RegionId == region.RegionId)
+                .Where(target => options.AllowIntraRegion || target.RegionId != region.RegionId)
                 .ToList();
             if (validTargets.Count == 0)
             {
@@ -759,12 +743,19 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     }
 
                     var targetNeuronId = rng.Next(targetRegion.NeuronCount);
+                    if (!options.AllowSelfLoops
+                        && targetRegion.RegionId == region.RegionId
+                        && targetNeuronId == neuron.NeuronId)
+                    {
+                        continue;
+                    }
+
                     if (!seen.Add((targetRegion.RegionId, targetNeuronId)))
                     {
                         continue;
                     }
 
-                    var strength = rng.Next(0, 32);
+                    var strength = rng.Next(strengthMin, strengthMax + 1);
                     neuron.Axons.Add(new DesignerAxonViewModel(targetRegion.RegionId, targetNeuronId, strength));
                 }
 
