@@ -106,9 +106,9 @@
                 </Grid>
                 <Grid ColumnDefinitions="Auto,*,Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Input" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.InputNeuronCountText}" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.InputNeuronCountText}" Watermark="1-10" />
                   <TextBlock Grid.Column="2" Text="Output" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.OutputNeuronCountText}" />
+                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.OutputNeuronCountText}" Watermark="1-10" />
                   <TextBlock Grid.Column="4" Text="neurons" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
                 <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">

@@ -43,12 +43,19 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const double CanvasPadding = 16;
     private const int RegionIntrasliceUnit = 3;
     private const int RegionAxialUnit = 5;
+    private const double InterRegionWeight = 1.25;
+    private const double IntraRegionWeight = 0.85;
+    private const double ForwardRegionWeight = 1.2;
+    private const double BackwardRegionWeight = 0.85;
+    private const double OutputRegionWeight = 1.2;
+    private const double AxonCountLowBiasPower = 1.7;
+    private const double OutputAxonCountLowBiasPower = 2.6;
     private static readonly int[] ActivationFunctionIds = Enumerable.Range(0, 30).ToArray();
     private static readonly int[] ResetFunctionIds = Enumerable.Range(0, 61).ToArray();
     private static readonly int[] AccumulationFunctionIds = { 0, 1, 2, 3 };
     private static readonly double[] ActivationFunctionWeights = BuildActivationFunctionWeights();
     private static readonly double[] ResetFunctionWeights = BuildResetFunctionWeights();
-    private static readonly double[] AccumulationFunctionWeights = { 1.0, 0.8, 1.0, 0.3 };
+    private static readonly double[] AccumulationFunctionWeights = BuildAccumulationFunctionWeights();
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
     private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
@@ -731,10 +738,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         var activationPicker = CreateFunctionPicker(rng, options.ActivationMode, options.ActivationFixedId, ActivationFunctionIds, ActivationFunctionWeights);
         var resetPicker = CreateFunctionPicker(rng, options.ResetMode, options.ResetFixedId, ResetFunctionIds, ResetFunctionWeights);
         var accumulationPicker = CreateFunctionPicker(rng, options.AccumulationMode, options.AccumulationFixedId, AccumulationFunctionIds, AccumulationFunctionWeights);
-        var preActivationPicker = CreateCodePicker(rng, options.ThresholdMode, options.PreActivationMin, options.PreActivationMin, options.PreActivationMax);
-        var activationThresholdPicker = CreateCodePicker(rng, options.ThresholdMode, options.ActivationThresholdMin, options.ActivationThresholdMin, options.ActivationThresholdMax);
-        var paramAPicker = CreateCodePicker(rng, options.ParamMode, options.ParamAMin, options.ParamAMin, options.ParamAMax);
-        var paramBPicker = CreateCodePicker(rng, options.ParamMode, options.ParamBMin, options.ParamBMin, options.ParamBMax);
+        var preActivationPicker = CreateCenteredCodePicker(rng, options.ThresholdMode, options.PreActivationMin, options.PreActivationMin, options.PreActivationMax);
+        var activationThresholdPicker = CreateLowBiasedCodePicker(rng, options.ThresholdMode, options.ActivationThresholdMin, options.ActivationThresholdMin, options.ActivationThresholdMax);
+        var paramAPicker = CreateCenteredCodePicker(rng, options.ParamMode, options.ParamAMin, options.ParamAMin, options.ParamAMax);
+        var paramBPicker = CreateCenteredCodePicker(rng, options.ParamMode, options.ParamBMin, options.ParamBMin, options.ParamBMax);
 
         for (var i = 0; i < NbnConstants.RegionCount; i++)
         {
@@ -742,7 +749,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var targetCount = 0;
             if (i == NbnConstants.InputRegionId || i == NbnConstants.OutputRegionId)
             {
-                targetCount = i == NbnConstants.InputRegionId ? options.InputNeurons : options.OutputNeurons;
+                targetCount = i == NbnConstants.InputRegionId
+                    ? PickRangeCount(rng, options.InputNeuronMin, options.InputNeuronMax)
+                    : PickRangeCount(rng, options.OutputNeuronMin, options.OutputNeuronMax);
             }
             else if (selectedRegions.Contains(i))
             {
@@ -752,13 +761,14 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             for (var n = 0; n < targetCount; n++)
             {
                 var neuron = CreateDefaultNeuron(region, n);
-                neuron.ActivationFunctionId = activationPicker();
+                var activationId = activationPicker();
+                neuron.ActivationFunctionId = activationId;
                 neuron.ResetFunctionId = resetPicker();
                 neuron.AccumulationFunctionId = accumulationPicker();
                 neuron.PreActivationThresholdCode = preActivationPicker();
                 neuron.ActivationThresholdCode = activationThresholdPicker();
-                neuron.ParamACode = paramAPicker();
-                neuron.ParamBCode = paramBPicker();
+                neuron.ParamACode = UsesParamA(activationId) ? paramAPicker() : 0;
+                neuron.ParamBCode = UsesParamB(activationId) ? paramBPicker() : 0;
                 region.Neurons.Add(neuron);
             }
 
@@ -788,7 +798,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     continue;
                 }
 
-                var targetAxons = PickCount(rng, options.AxonCountMode, options.AxonsPerNeuron, options.AxonCountMin, options.AxonCountMax);
+                var axonMin = options.AxonCountMin;
+                var axonMax = options.AxonCountMax;
+                var biasPower = AxonCountLowBiasPower;
+                if (region.RegionId == NbnConstants.OutputRegionId)
+                {
+                    axonMin = 0;
+                    axonMax = Math.Min(axonMax, 10);
+                    if (axonMax < axonMin)
+                    {
+                        axonMin = axonMax;
+                    }
+
+                    biasPower = OutputAxonCountLowBiasPower;
+                }
+
+                var targetAxons = PickBiasedCount(rng, options.AxonCountMode, options.AxonsPerNeuron, axonMin, axonMax, biasPower);
                 var maxTargets = MaxDistinctTargets(region.RegionId, validTargets, options.AllowSelfLoops);
                 if (maxTargets == 0)
                 {
@@ -840,6 +865,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             region.UpdateCounts();
         }
 
+        EnsureOutputInbound(rng, brain, options);
         brain.UpdateTotals();
 
         SetDocumentType(DesignerDocumentType.Nbn);
@@ -3089,6 +3115,26 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return () => rng.Next(min, max + 1);
     }
 
+    private static Func<int> CreateCenteredCodePicker(Random rng, RandomRangeMode mode, int fixedValue, int min, int max)
+    {
+        if (mode == RandomRangeMode.Fixed || min == max)
+        {
+            return () => fixedValue;
+        }
+
+        return () => PickCenteredInt(rng, min, max);
+    }
+
+    private static Func<int> CreateLowBiasedCodePicker(Random rng, RandomRangeMode mode, int fixedValue, int min, int max)
+    {
+        if (mode == RandomRangeMode.Fixed || min == max)
+        {
+            return () => fixedValue;
+        }
+
+        return () => PickLowBiasedInt(rng, min, max, 1.8);
+    }
+
     private static int PickCount(Random rng, RandomCountMode mode, int fixedValue, int min, int max)
     {
         if (mode == RandomCountMode.Fixed || min == max)
@@ -3098,6 +3144,50 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         return rng.Next(min, max + 1);
     }
+
+    private static int PickRangeCount(Random rng, int min, int max)
+    {
+        if (min == max)
+        {
+            return min;
+        }
+
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        return rng.Next(min, max + 1);
+    }
+
+    private static int PickBiasedCount(Random rng, RandomCountMode mode, int fixedValue, int min, int max, double biasPower)
+    {
+        if (mode == RandomCountMode.Fixed || min == max)
+        {
+            return fixedValue;
+        }
+
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        var range = max - min;
+        var sample = Math.Pow(rng.NextDouble(), biasPower);
+        var value = min + (int)Math.Round(sample * range);
+        if (value < min)
+        {
+            return min;
+        }
+
+        if (value > max)
+        {
+            return max;
+        }
+
+        return value;
+    }
+
 
     private static int PickTargetNeuronId(Random rng, int sourceNeuronId, int sourceRegionId, DesignerRegionViewModel targetRegion, RandomTargetBiasMode bias)
     {
@@ -3127,6 +3217,62 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         }
 
         return rng.Next(targetRegion.NeuronCount);
+    }
+
+    private static int PickCenteredInt(Random rng, int min, int max)
+    {
+        if (min == max)
+        {
+            return min;
+        }
+
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        var sample = (rng.NextDouble() + rng.NextDouble() + rng.NextDouble()) / 3.0;
+        var range = max - min;
+        var value = min + (int)Math.Round(sample * range);
+        if (value < min)
+        {
+            return min;
+        }
+
+        if (value > max)
+        {
+            return max;
+        }
+
+        return value;
+    }
+
+    private static int PickLowBiasedInt(Random rng, int min, int max, double biasPower)
+    {
+        if (min == max)
+        {
+            return min;
+        }
+
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        var range = max - min;
+        var sample = Math.Pow(rng.NextDouble(), biasPower);
+        var value = min + (int)Math.Round(sample * range);
+        if (value < min)
+        {
+            return min;
+        }
+
+        if (value > max)
+        {
+            return max;
+        }
+
+        return value;
     }
 
     private static int PickStrengthCode(Random rng, RandomStrengthDistribution distribution, int min, int max)
@@ -3175,15 +3321,42 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static double[] BuildTargetWeights(int sourceRegionId, IReadOnlyList<DesignerRegionViewModel> targets, RandomTargetBiasMode bias)
     {
         var weights = new double[targets.Count];
+        var sourceZ = RegionZ(sourceRegionId);
         for (var i = 0; i < targets.Count; i++)
         {
             var target = targets[i];
-            weights[i] = bias switch
+            var weight = bias switch
             {
                 RandomTargetBiasMode.RegionWeighted => Math.Max(1, target.NeuronCount),
                 RandomTargetBiasMode.DistanceWeighted => 1.0 / (1.0 + ComputeRegionDistance(sourceRegionId, target.RegionId)),
                 _ => 1.0
             };
+
+            if (target.RegionId == sourceRegionId)
+            {
+                weight *= IntraRegionWeight;
+            }
+            else
+            {
+                weight *= InterRegionWeight;
+            }
+
+            var targetZ = RegionZ(target.RegionId);
+            if (targetZ > sourceZ)
+            {
+                weight *= ForwardRegionWeight;
+            }
+            else if (targetZ < sourceZ)
+            {
+                weight *= BackwardRegionWeight;
+            }
+
+            if (target.RegionId == NbnConstants.OutputRegionId)
+            {
+                weight *= OutputRegionWeight;
+            }
+
+            weights[i] = weight;
         }
 
         return weights;
@@ -3264,6 +3437,67 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return maxTargets;
     }
 
+    private static void EnsureOutputInbound(Random rng, DesignerBrainViewModel brain, RandomBrainGenerationOptions options)
+    {
+        var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+        if (outputRegion.NeuronCount == 0)
+        {
+            return;
+        }
+
+        var hasInbound = brain.Regions
+            .Where(region => region.RegionId != NbnConstants.OutputRegionId)
+            .SelectMany(region => region.Neurons)
+            .Any(neuron => neuron.Axons.Any(axon => axon.TargetRegionId == NbnConstants.OutputRegionId));
+
+        if (hasInbound)
+        {
+            return;
+        }
+
+        var sourceRegions = brain.Regions
+            .Where(region => region.RegionId != NbnConstants.OutputRegionId && region.NeuronCount > 0)
+            .ToList();
+
+        if (sourceRegions.Count == 0)
+        {
+            return;
+        }
+
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var sourceRegion = sourceRegions[rng.Next(sourceRegions.Count)];
+            if (sourceRegion.NeuronCount == 0)
+            {
+                continue;
+            }
+
+            var sourceNeuron = sourceRegion.Neurons[rng.Next(sourceRegion.NeuronCount)];
+            if (!sourceNeuron.Exists)
+            {
+                continue;
+            }
+
+            if (sourceNeuron.Axons.Count >= NbnConstants.MaxAxonsPerNeuron)
+            {
+                continue;
+            }
+
+            var targetNeuronId = rng.Next(outputRegion.NeuronCount);
+            if (sourceNeuron.Axons.Any(axon => axon.TargetRegionId == NbnConstants.OutputRegionId
+                                               && axon.TargetNeuronId == targetNeuronId))
+            {
+                continue;
+            }
+
+            var strength = PickStrengthCode(rng, options.StrengthDistribution, options.StrengthMinCode, options.StrengthMaxCode);
+            sourceNeuron.Axons.Add(new DesignerAxonViewModel(NbnConstants.OutputRegionId, targetNeuronId, strength));
+            sourceNeuron.UpdateAxonCount();
+            sourceRegion.UpdateCounts();
+            return;
+        }
+    }
+
     private static int PickWeightedIndex(Random rng, IReadOnlyList<double> weights)
     {
         var total = 0.0;
@@ -3293,38 +3527,136 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private static double[] BuildActivationFunctionWeights()
     {
-        var weights = Enumerable.Repeat(1.0, 30).ToArray();
-        weights[0] = 0.15;
-
-        var tierB = new[] { 9, 10, 11, 12, 13, 14, 15, 18, 19 };
-        foreach (var id in tierB)
+        var costs = new[]
         {
-            weights[id] = 0.6;
-        }
+            0.0, // ACT_NONE
+            1.0, // ACT_IDENTITY
+            1.0, // ACT_STEP_UP
+            1.0, // ACT_STEP_MID
+            1.0, // ACT_STEP_DOWN
+            1.1, // ACT_ABS
+            1.1, // ACT_CLAMP
+            1.1, // ACT_RELU
+            1.1, // ACT_NRELU
+            1.4, // ACT_SIN
+            1.6, // ACT_TAN
+            1.6, // ACT_TANH
+            1.8, // ACT_ELU
+            1.8, // ACT_EXP
+            1.4, // ACT_PRELU
+            1.9, // ACT_LOG
+            1.2, // ACT_MULT
+            1.2, // ACT_ADD
+            2.0, // ACT_SIG
+            2.0, // ACT_SILU
+            1.3, // ACT_PCLAMP
+            2.6, // ACT_MODL
+            2.6, // ACT_MODR
+            2.8, // ACT_SOFTP
+            2.8, // ACT_SELU
+            1.4, // ACT_LIN
+            3.0, // ACT_LOGB
+            3.5, // ACT_POW
+            5.0, // ACT_GAUSS
+            6.0  // ACT_QUAD
+        };
 
-        var tierC = new[] { 21, 22, 23, 24, 26, 27, 28, 29 };
-        foreach (var id in tierC)
-        {
-            weights[id] = 0.25;
-        }
-
-        return weights;
+        return BuildInverseCostWeights(costs, minWeight: 0.1, maxWeight: 2.4);
     }
 
     private static double[] BuildResetFunctionWeights()
     {
-        var weights = Enumerable.Repeat(1.0, 61).ToArray();
-
-        var tierB = new[] { 9, 10, 14, 15, 22, 23, 27, 28, 35, 36, 40, 41, 50, 51, 52, 53, 54, 55, 56, 57 };
-        foreach (var id in tierB)
+        var costs = new[]
         {
-            weights[id] = 0.6;
-        }
+            0.2, // RESET_ZERO
+            1.0, // RESET_HOLD
+            1.0, // RESET_CLAMP_POTENTIAL
+            1.0, // RESET_CLAMP1
+            1.0, // RESET_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_NEG_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_HUNDREDTHS_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_TENTH_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_HALF_POTENTIAL_CLAMP_BUFFER
+            1.2, // RESET_DOUBLE_POTENTIAL_CLAMP_BUFFER
+            1.3, // RESET_FIVEX_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_NEG_HUNDREDTHS_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_NEG_TENTH_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_NEG_HALF_POTENTIAL_CLAMP_BUFFER
+            1.2, // RESET_NEG_DOUBLE_POTENTIAL_CLAMP_BUFFER
+            1.3, // RESET_NEG_FIVEX_POTENTIAL_CLAMP_BUFFER
+            1.8, // RESET_INVERSE_POTENTIAL_CLAMP_BUFFER
+            1.0, // RESET_POTENTIAL_CLAMP1
+            1.0, // RESET_NEG_POTENTIAL_CLAMP1
+            1.0, // RESET_HUNDREDTHS_POTENTIAL_CLAMP1
+            1.0, // RESET_TENTH_POTENTIAL_CLAMP1
+            1.0, // RESET_HALF_POTENTIAL_CLAMP1
+            1.2, // RESET_DOUBLE_POTENTIAL_CLAMP1
+            1.3, // RESET_FIVEX_POTENTIAL_CLAMP1
+            1.0, // RESET_NEG_HUNDREDTHS_POTENTIAL_CLAMP1
+            1.0, // RESET_NEG_TENTH_POTENTIAL_CLAMP1
+            1.0, // RESET_NEG_HALF_POTENTIAL_CLAMP1
+            1.2, // RESET_NEG_DOUBLE_POTENTIAL_CLAMP1
+            1.3, // RESET_NEG_FIVEX_POTENTIAL_CLAMP1
+            1.8, // RESET_INVERSE_POTENTIAL_CLAMP1
+            1.0, // RESET_POTENTIAL
+            1.0, // RESET_NEG_POTENTIAL
+            1.0, // RESET_HUNDREDTHS_POTENTIAL
+            1.0, // RESET_TENTH_POTENTIAL
+            1.0, // RESET_HALF_POTENTIAL
+            1.2, // RESET_DOUBLE_POTENTIAL
+            1.3, // RESET_FIVEX_POTENTIAL
+            1.0, // RESET_NEG_HUNDREDTHS_POTENTIAL
+            1.0, // RESET_NEG_TENTH_POTENTIAL
+            1.0, // RESET_NEG_HALF_POTENTIAL
+            1.2, // RESET_NEG_DOUBLE_POTENTIAL
+            1.3, // RESET_NEG_FIVEX_POTENTIAL
+            1.8, // RESET_INVERSE_POTENTIAL
+            1.0, // RESET_HALF
+            1.0, // RESET_TENTH
+            1.0, // RESET_HUNDREDTH
+            1.0, // RESET_NEGATIVE
+            1.0, // RESET_NEG_HALF
+            1.0, // RESET_NEG_TENTH
+            1.0, // RESET_NEG_HUNDREDTH
+            1.2, // RESET_DOUBLE_CLAMP1
+            1.3, // RESET_FIVEX_CLAMP1
+            1.2, // RESET_NEG_DOUBLE_CLAMP1
+            1.3, // RESET_NEG_FIVEX_CLAMP1
+            1.2, // RESET_DOUBLE
+            1.3, // RESET_FIVEX
+            1.2, // RESET_NEG_DOUBLE
+            1.3, // RESET_NEG_FIVEX
+            1.1, // RESET_DIVIDE_AXON_CT
+            1.8, // RESET_INVERSE_CLAMP1
+            1.8  // RESET_INVERSE
+        };
 
-        var tierC = new[] { 16, 29, 42, 59, 60 };
-        foreach (var id in tierC)
+        return BuildInverseCostWeights(costs, minWeight: 0.1, maxWeight: 2.4);
+    }
+
+    private static double[] BuildAccumulationFunctionWeights()
+    {
+        var costs = new[] { 1.0, 1.2, 1.0, 0.1 };
+        return BuildInverseCostWeights(costs, minWeight: 0.2, maxWeight: 3.0);
+    }
+
+    private static double[] BuildInverseCostWeights(IReadOnlyList<double> costs, double minWeight, double maxWeight)
+    {
+        var weights = new double[costs.Count];
+        for (var i = 0; i < costs.Count; i++)
         {
-            weights[id] = 0.25;
+            var cost = costs[i];
+            var weight = cost <= 0.0 ? minWeight : 1.0 / cost;
+            if (weight < minWeight)
+            {
+                weight = minWeight;
+            }
+            else if (weight > maxWeight)
+            {
+                weight = maxWeight;
+            }
+
+            weights[i] = weight;
         }
 
         return weights;

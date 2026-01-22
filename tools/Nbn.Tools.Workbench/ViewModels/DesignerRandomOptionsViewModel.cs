@@ -10,20 +10,20 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class RandomBrainOptionsViewModel : ViewModelBase
 {
     private string _regionCountText = "3";
-    private string _neuronCountText = "64";
+    private string _neuronCountText = "16";
     private string _axonCountText = "8";
-    private string _inputNeuronCountText = "1";
-    private string _outputNeuronCountText = "1";
+    private string _inputNeuronCountText = "1-10";
+    private string _outputNeuronCountText = "1-10";
     private string _seedText = string.Empty;
     private RandomOptionChoice<RandomSeedMode> _selectedSeedMode;
     private RandomOptionChoice<RandomRegionSelectionMode> _selectedRegionSelectionMode;
     private string _regionListText = string.Empty;
     private RandomOptionChoice<RandomCountMode> _selectedNeuronCountMode;
-    private string _neuronCountMinText = "64";
-    private string _neuronCountMaxText = "64";
+    private string _neuronCountMinText = "2";
+    private string _neuronCountMaxText = "50";
     private RandomOptionChoice<RandomCountMode> _selectedAxonCountMode;
-    private string _axonCountMinText = "8";
-    private string _axonCountMaxText = "8";
+    private string _axonCountMinText = "1";
+    private string _axonCountMaxText = "25";
     private bool _allowSelfLoops = true;
     private bool _allowIntraRegion = true;
     private bool _allowInterRegion = true;
@@ -39,14 +39,14 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     private string _accumulationFixedIdText = "0";
     private RandomOptionChoice<RandomRangeMode> _selectedThresholdMode;
     private string _preActivationMinText = "0";
-    private string _preActivationMaxText = "0";
+    private string _preActivationMaxText = "63";
     private string _activationThresholdMinText = "0";
-    private string _activationThresholdMaxText = "0";
+    private string _activationThresholdMaxText = "63";
     private RandomOptionChoice<RandomRangeMode> _selectedParamMode;
     private string _paramAMinText = "0";
-    private string _paramAMaxText = "0";
+    private string _paramAMaxText = "63";
     private string _paramBMinText = "0";
-    private string _paramBMaxText = "0";
+    private string _paramBMaxText = "63";
 
     public RandomBrainOptionsViewModel()
     {
@@ -55,23 +55,23 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         RegionSelectionModes = new ObservableCollection<RandomOptionChoice<RandomRegionSelectionMode>>(BuildRegionModes());
         _selectedRegionSelectionMode = RegionSelectionModes[0];
         NeuronCountModes = new ObservableCollection<RandomOptionChoice<RandomCountMode>>(BuildCountModes());
-        _selectedNeuronCountMode = NeuronCountModes[0];
+        _selectedNeuronCountMode = NeuronCountModes[1];
         AxonCountModes = new ObservableCollection<RandomOptionChoice<RandomCountMode>>(BuildCountModes());
-        _selectedAxonCountMode = AxonCountModes[0];
+        _selectedAxonCountMode = AxonCountModes[1];
         TargetBiasModes = new ObservableCollection<RandomOptionChoice<RandomTargetBiasMode>>(BuildTargetBiasModes());
-        _selectedTargetBiasMode = TargetBiasModes[0];
+        _selectedTargetBiasMode = TargetBiasModes[1];
         StrengthDistributions = new ObservableCollection<RandomOptionChoice<RandomStrengthDistribution>>(BuildStrengthDistributions());
         _selectedStrengthDistribution = StrengthDistributions[0];
         ActivationModes = new ObservableCollection<RandomOptionChoice<RandomFunctionSelectionMode>>(BuildFunctionModes());
-        _selectedActivationMode = ActivationModes[0];
+        _selectedActivationMode = ActivationModes[2];
         ResetModes = new ObservableCollection<RandomOptionChoice<RandomFunctionSelectionMode>>(BuildFunctionModes());
-        _selectedResetMode = ResetModes[0];
+        _selectedResetMode = ResetModes[2];
         AccumulationModes = new ObservableCollection<RandomOptionChoice<RandomFunctionSelectionMode>>(BuildFunctionModes());
-        _selectedAccumulationMode = AccumulationModes[0];
+        _selectedAccumulationMode = AccumulationModes[2];
         ThresholdModes = new ObservableCollection<RandomOptionChoice<RandomRangeMode>>(BuildRangeModes());
-        _selectedThresholdMode = ThresholdModes[0];
+        _selectedThresholdMode = ThresholdModes[1];
         ParamModes = new ObservableCollection<RandomOptionChoice<RandomRangeMode>>(BuildRangeModes());
-        _selectedParamMode = ParamModes[0];
+        _selectedParamMode = ParamModes[1];
     }
 
     public ObservableCollection<RandomOptionChoice<RandomSeedMode>> SeedModes { get; }
@@ -515,27 +515,13 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
             }
         }
 
-        if (!TryParseInt(InputNeuronCountText, out var inputNeurons) || inputNeurons < 1)
+        if (!TryParseCountRange(InputNeuronCountText, 1, maxNeuronId, "Input neuron count", out var inputNeuronMin, out var inputNeuronMax, out error))
         {
-            error = "Input neuron count must be a positive integer.";
             return false;
         }
 
-        if (inputNeurons > maxNeuronId)
+        if (!TryParseCountRange(OutputNeuronCountText, 1, maxNeuronId, "Output neuron count", out var outputNeuronMin, out var outputNeuronMax, out error))
         {
-            error = $"Input neuron count must be <= {maxNeuronId}.";
-            return false;
-        }
-
-        if (!TryParseInt(OutputNeuronCountText, out var outputNeurons) || outputNeurons < 1)
-        {
-            error = "Output neuron count must be a positive integer.";
-            return false;
-        }
-
-        if (outputNeurons > maxNeuronId)
-        {
-            error = $"Output neuron count must be <= {maxNeuronId}.";
             return false;
         }
 
@@ -686,8 +672,10 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
             axonFixed,
             axonMin,
             axonMax,
-            inputNeurons,
-            outputNeurons,
+            inputNeuronMin,
+            inputNeuronMax,
+            outputNeuronMin,
+            outputNeuronMax,
             seed,
             AllowSelfLoops,
             AllowIntraRegion,
@@ -753,6 +741,77 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
 
     private static bool TryParseInt(string value, out int parsed)
         => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed);
+
+    private static bool TryParseCountRange(string value, int minAllowed, int maxAllowed, string label, out int min, out int max, out string? error)
+    {
+        error = null;
+        min = 0;
+        max = 0;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            error = $"{label} must be provided.";
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        string[] parts;
+        if (trimmed.Contains("..", StringComparison.Ordinal))
+        {
+            parts = trimmed.Split(new[] { ".." }, 2, StringSplitOptions.RemoveEmptyEntries);
+        }
+        else if (trimmed.Contains('-', StringComparison.Ordinal))
+        {
+            parts = trimmed.Split('-', 2, StringSplitOptions.RemoveEmptyEntries);
+        }
+        else
+        {
+            parts = new[] { trimmed };
+        }
+
+        if (parts.Length == 1)
+        {
+            if (!TryParseInt(parts[0], out min))
+            {
+                error = $"{label} must be an integer or range (e.g. 1-10).";
+                return false;
+            }
+
+            max = min;
+        }
+        else if (parts.Length == 2)
+        {
+            if (!TryParseInt(parts[0], out min) || !TryParseInt(parts[1], out max))
+            {
+                error = $"{label} must be an integer or range (e.g. 1-10).";
+                return false;
+            }
+        }
+        else
+        {
+            error = $"{label} must be an integer or range (e.g. 1-10).";
+            return false;
+        }
+
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        if (min < minAllowed || max < minAllowed)
+        {
+            error = $"{label} must be at least {minAllowed}.";
+            return false;
+        }
+
+        if (min > maxAllowed || max > maxAllowed)
+        {
+            error = $"{label} must be <= {maxAllowed}.";
+            return false;
+        }
+
+        return true;
+    }
 
     private static bool TryParseRegionList(string value, out int[] regionIds, out string? error)
     {
@@ -942,8 +1001,10 @@ public readonly record struct RandomBrainGenerationOptions(
     int AxonsPerNeuron,
     int AxonCountMin,
     int AxonCountMax,
-    int InputNeurons,
-    int OutputNeurons,
+    int InputNeuronMin,
+    int InputNeuronMax,
+    int OutputNeuronMin,
+    int OutputNeuronMax,
     ulong Seed,
     bool AllowSelfLoops,
     bool AllowIntraRegion,
