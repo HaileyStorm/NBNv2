@@ -21,11 +21,6 @@
                     BorderBrush="{Binding ResetBrainButtonBorder}"
                     ToolTip.Tip="Resets the design (keeps input/output). If changes are not exported, confirmation is required."
                     Margin="0,0,8,8" />
-            <Button Content="Spawn Brain"
-                    Command="{Binding SpawnBrainCommand}"
-                    IsEnabled="{Binding CanSpawnBrain}"
-                    Classes="accent"
-                    Margin="0,0,8,8" />
           </WrapPanel>
           <WrapPanel Orientation="Horizontal">
             <Button Content="Import .nbn" Command="{Binding ImportNbnCommand}" Margin="0,0,8,8" />

@@ -211,6 +211,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsSnapshotVisible));
                 OnPropertyChanged(nameof(DesignHint));
                 OnPropertyChanged(nameof(CanExportSnapshot));
+                OnPropertyChanged(nameof(CanSpawnBrain));
+                OnPropertyChanged(nameof(CanResetBrain));
                 UpdateCommandStates();
             }
         }
