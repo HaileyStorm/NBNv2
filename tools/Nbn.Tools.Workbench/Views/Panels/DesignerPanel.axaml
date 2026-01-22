@@ -514,6 +514,12 @@
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <ItemsControl ItemsSource="{Binding VisibleNeurons}">
+                      <ItemsControl.ItemContainerTheme>
+                        <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
+                          <Setter Property="Canvas.Left" Value="{Binding CanvasX}" />
+                          <Setter Property="Canvas.Top" Value="{Binding CanvasY}" />
+                        </ControlTheme>
+                      </ItemsControl.ItemContainerTheme>
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <Canvas />
@@ -521,9 +527,7 @@
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="vm:DesignerNeuronViewModel" x:CompileBindings="False">
-                          <Button Canvas.Left="{Binding CanvasX}"
-                                  Canvas.Top="{Binding CanvasY}"
-                                  Width="{Binding DataContext.CanvasNodeSize, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                          <Button Width="{Binding DataContext.CanvasNodeSize, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   Height="{Binding DataContext.CanvasNodeSize, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   Command="{Binding DataContext.SelectNeuronCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                   CommandParameter="{Binding}"
@@ -542,6 +546,12 @@
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <ItemsControl ItemsSource="{Binding VisibleEdges}">
+                      <ItemsControl.ItemContainerTheme>
+                        <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
+                          <Setter Property="Canvas.Left" Value="{Binding LabelPosition.X}" />
+                          <Setter Property="Canvas.Top" Value="{Binding LabelPosition.Y}" />
+                        </ControlTheme>
+                      </ItemsControl.ItemContainerTheme>
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <Canvas />
@@ -551,8 +561,6 @@
                         <DataTemplate DataType="vm:DesignerEdgeViewModel" x:CompileBindings="False">
                           <TextBlock Text="{Binding Label}"
                                      IsVisible="{Binding HasLabel}"
-                                     Canvas.Left="{Binding LabelPosition.X}"
-                                     Canvas.Top="{Binding LabelPosition.Y}"
                                      Classes="muted"
                                      FontSize="10" />
                         </DataTemplate>
