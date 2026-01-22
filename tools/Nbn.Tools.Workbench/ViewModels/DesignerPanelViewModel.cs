@@ -46,6 +46,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static readonly double[] ResetFunctionWeights = BuildResetFunctionWeights();
     private static readonly double[] AccumulationFunctionWeights = { 1.0, 0.8, 1.0, 0.3 };
     private readonly ConnectionViewModel _connections;
+    private readonly WorkbenchClient _client;
     private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
     private string _status = "Designer ready.";
     private string _loadedSummary = NoDocumentStatus;
@@ -89,21 +90,36 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private bool _snapshotIncludeEnabledBitset = true;
     private bool _snapshotCostEnergyEnabled;
     private bool _snapshotPlasticityEnabled;
+    private readonly IReadOnlyList<SpawnPlacementOption> _spawnPlacementOptions;
+    private SpawnPlacementOption _selectedSpawnPlacement;
+    private readonly IReadOnlyList<RegionHostStartPolicyOption> _regionHostPolicies;
+    private RegionHostStartPolicyOption _selectedRegionHostPolicy;
+    private readonly IReadOnlyList<ShardPlanOption> _shardPlanOptions;
+    private ShardPlanOption _selectedShardPlan;
     private string _spawnBindHost = "127.0.0.1";
     private string _spawnBrainPortText = "12011";
     private string _spawnRegionPortText = "12040";
     private string _spawnArtifactRoot = BuildDefaultArtifactRoot();
-    private bool _spawnStartRegionHosts = true;
+    private string _spawnRegionHostCountText = "0";
+    private string _spawnShardCountText = "1";
+    private string _spawnShardTargetNeuronsText = "0";
     private readonly RandomBrainOptionsViewModel _randomOptions;
 
-    public DesignerPanelViewModel(ConnectionViewModel connections)
+    public DesignerPanelViewModel(ConnectionViewModel connections, WorkbenchClient client)
     {
         _connections = connections;
+        _client = client;
         _spawnBindHost = string.IsNullOrWhiteSpace(connections.LocalBindHost) ? "127.0.0.1" : connections.LocalBindHost;
         _spawnBrainPortText = connections.SampleBrainPortText;
         _spawnRegionPortText = connections.SampleRegionPortText;
         _spawnArtifactRoot = BuildDefaultArtifactRoot();
         _randomOptions = new RandomBrainOptionsViewModel();
+        _spawnPlacementOptions = BuildSpawnPlacementOptions();
+        _regionHostPolicies = BuildRegionHostPolicies();
+        _shardPlanOptions = BuildShardPlanOptions();
+        _selectedSpawnPlacement = _spawnPlacementOptions[0];
+        _selectedRegionHostPolicy = _regionHostPolicies[0];
+        _selectedShardPlan = _shardPlanOptions[0];
         ValidationIssues = new ObservableCollection<string>();
         VisibleNeurons = new ObservableCollection<DesignerNeuronViewModel>();
         VisibleEdges = new ObservableCollection<DesignerEdgeViewModel>();
@@ -487,6 +503,30 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         set => SetProperty(ref _snapshotPlasticityEnabled, value);
     }
 
+    public IReadOnlyList<SpawnPlacementOption> SpawnPlacementOptions => _spawnPlacementOptions;
+
+    public SpawnPlacementOption SelectedSpawnPlacement
+    {
+        get => _selectedSpawnPlacement;
+        set => SetProperty(ref _selectedSpawnPlacement, value);
+    }
+
+    public IReadOnlyList<RegionHostStartPolicyOption> RegionHostPolicies => _regionHostPolicies;
+
+    public RegionHostStartPolicyOption SelectedRegionHostPolicy
+    {
+        get => _selectedRegionHostPolicy;
+        set => SetProperty(ref _selectedRegionHostPolicy, value);
+    }
+
+    public IReadOnlyList<ShardPlanOption> ShardPlanOptions => _shardPlanOptions;
+
+    public ShardPlanOption SelectedShardPlan
+    {
+        get => _selectedShardPlan;
+        set => SetProperty(ref _selectedShardPlan, value);
+    }
+
     public string SpawnBindHost
     {
         get => _spawnBindHost;
@@ -511,12 +551,23 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         set => SetProperty(ref _spawnArtifactRoot, value);
     }
 
-    public bool SpawnStartRegionHosts
+    public string SpawnRegionHostCountText
     {
-        get => _spawnStartRegionHosts;
-        set => SetProperty(ref _spawnStartRegionHosts, value);
+        get => _spawnRegionHostCountText;
+        set => SetProperty(ref _spawnRegionHostCountText, value);
     }
 
+    public string SpawnShardCountText
+    {
+        get => _spawnShardCountText;
+        set => SetProperty(ref _spawnShardCountText, value);
+    }
+
+    public string SpawnShardTargetNeuronsText
+    {
+        get => _spawnShardTargetNeuronsText;
+        set => SetProperty(ref _spawnShardTargetNeuronsText, value);
+    }
 
     public bool IsDesignLoaded => _documentType == DesignerDocumentType.Nbn && Brain is not null;
     public bool IsSnapshotLoaded => _documentType == DesignerDocumentType.Nbs;
@@ -1058,6 +1109,53 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         try
         {
+            var placementMode = SelectedSpawnPlacement.Value;
+            var shardPlanMode = SelectedShardPlan.Value;
+            if (shardPlanMode != ShardPlanMode.SingleShardPerRegion)
+            {
+                Status = "Spawn canceled: shard plan not implemented yet.";
+                return;
+            }
+
+            if (!TryParseOptionalNonNegativeInt(SpawnRegionHostCountText, out var regionHostCount))
+            {
+                Status = "Invalid RegionHost count.";
+                return;
+            }
+
+            if (!TryParseOptionalNonNegativeInt(SpawnShardCountText, out var shardCount))
+            {
+                Status = "Invalid shard count.";
+                return;
+            }
+
+            if (!TryParseOptionalNonNegativeInt(SpawnShardTargetNeuronsText, out var maxNeuronsPerShard))
+            {
+                Status = "Invalid shard target size.";
+                return;
+            }
+
+            if (shardPlanMode == ShardPlanMode.SingleShardPerRegion && shardCount is { } count && count != 1)
+            {
+                Status = "Single-shard plan requires shard count = 1.";
+                return;
+            }
+
+            var spawnPlan = new DesignerSpawnPlan(
+                placementMode,
+                shardPlanMode,
+                regionHostCount,
+                shardCount,
+                maxNeuronsPerShard);
+
+            var regionHostDecision = await ResolveRegionHostStartAsync();
+            if (!regionHostDecision.Success)
+            {
+                Status = regionHostDecision.Error ?? "Spawn canceled.";
+                return;
+            }
+
+            var startRegionHosts = regionHostDecision.ShouldStart;
             if (!TryBuildNbn(out var header, out var sections, out var error))
             {
                 Status = error ?? "Spawn failed.";
@@ -1071,7 +1169,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             }
 
             var regionPortBase = 0;
-            if (SpawnStartRegionHosts && !TryParsePort(SpawnRegionPortText, out regionPortBase))
+            if (startRegionHosts && !TryParsePort(SpawnRegionPortText, out regionPortBase))
             {
                 Status = "Invalid RegionHost port.";
                 return;
@@ -1154,7 +1252,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             }
 
             var regionRunners = new List<LocalServiceRunner>();
-            if (SpawnStartRegionHosts)
+            if (startRegionHosts)
             {
                 var regionProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.RegionHost");
                 if (string.IsNullOrWhiteSpace(regionProjectPath))
@@ -1166,8 +1264,14 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
                 var routerAddress = $"{bindHost}:{brainPort}";
                 var regionPort = regionPortBase;
+                var regionCountRemaining = spawnPlan.RegionHostCount ?? int.MaxValue;
                 foreach (var region in Brain.Regions.Where(r => r.NeuronCount > 0))
                 {
+                    if (regionCountRemaining <= 0)
+                    {
+                        break;
+                    }
+
                     var outputArgs = string.Empty;
                     if (region.RegionId == NbnConstants.OutputRegionId)
                     {
@@ -1205,13 +1309,17 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
                     regionRunners.Add(regionRunner);
                     regionPort++;
+                    regionCountRemaining--;
                 }
             }
 
             _spawnedBrains[brainId] = new DesignerSpawnState(brainHostRunner, regionRunners, brainArtifactRoot);
-            Status = SpawnStartRegionHosts
-                ? $"Brain spawned ({brainId:D})."
-                : $"Brain spawned ({brainId:D}). Region hosts not started.";
+            var hostSummary = startRegionHosts ? "Region hosts started." : "Region hosts not started.";
+            Status = $"Brain spawned ({brainId:D}). {hostSummary}";
+            if (!string.IsNullOrWhiteSpace(regionHostDecision.Summary))
+            {
+                Status = $"{Status} {regionHostDecision.Summary}";
+            }
         }
         catch (Exception ex)
         {
@@ -3289,6 +3397,107 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         await stream.FlushAsync();
     }
 
+    private async Task<RegionHostStartDecision> ResolveRegionHostStartAsync()
+    {
+        var policy = SelectedRegionHostPolicy.Value;
+        if (policy == RegionHostStartPolicy.Never)
+        {
+            return RegionHostStartDecision.Create(false, "Policy: never start region hosts.");
+        }
+
+        if (policy == RegionHostStartPolicy.Always)
+        {
+            return RegionHostStartDecision.Create(true, "Policy: start region hosts.");
+        }
+
+        var nodes = await _client.ListNodesAsync();
+        if (nodes?.Nodes is null)
+        {
+            return RegionHostStartDecision.Create(true, "Region host status unknown; starting local region hosts.");
+        }
+
+        var anyRegionHosts = nodes.Nodes.Any(IsRegionHostNode);
+        return anyRegionHosts
+            ? RegionHostStartDecision.Create(false, "Region hosts detected; skipping local start.")
+            : RegionHostStartDecision.Create(true, "No region hosts detected; starting local region hosts.");
+    }
+
+    private static bool IsRegionHostNode(Nbn.Proto.Settings.NodeStatus node)
+    {
+        if (!node.IsAlive)
+        {
+            return false;
+        }
+
+        var label = $"{node.LogicalName} {node.RootActorName}".Trim();
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return false;
+        }
+
+        return label.Contains("RegionHost", StringComparison.OrdinalIgnoreCase)
+               || label.Contains("Region-Host", StringComparison.OrdinalIgnoreCase)
+               || label.Contains("RegionShard", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<SpawnPlacementOption> BuildSpawnPlacementOptions()
+        => new List<SpawnPlacementOption>
+        {
+            new("HiveMind placement", SpawnPlacementMode.HiveMindManaged, "Let HiveMind schedule shards across available RegionHosts."),
+            new("Direct (per-region)", SpawnPlacementMode.DirectPerRegion, "Start one local shard per region (no placement).")
+        };
+
+    private static IReadOnlyList<RegionHostStartPolicyOption> BuildRegionHostPolicies()
+        => new List<RegionHostStartPolicyOption>
+        {
+            new("Start if none running", RegionHostStartPolicy.IfNoneRunning, "Launch local RegionHosts only if none are registered."),
+            new("Always start", RegionHostStartPolicy.Always, "Always launch local RegionHosts before spawning."),
+            new("Never start", RegionHostStartPolicy.Never, "Assume RegionHosts already exist.")
+        };
+
+    private static IReadOnlyList<ShardPlanOption> BuildShardPlanOptions()
+        => new List<ShardPlanOption>
+        {
+            new("Single shard per region", ShardPlanMode.SingleShardPerRegion, "Matches current single-shard RegionHost behavior."),
+            new("Fixed shard count (future)", ShardPlanMode.FixedShardCount, "Split regions into N shards (not implemented)."),
+            new("Max neurons per shard (future)", ShardPlanMode.MaxNeuronsPerShard, "Auto-split by target size (not implemented).")
+        };
+
+    private static bool TryParseOptionalNonNegativeInt(string value, out int? result)
+    {
+        result = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        if (!int.TryParse(value, out var parsed) || parsed < 0)
+        {
+            return false;
+        }
+
+        if (parsed == 0)
+        {
+            return true;
+        }
+
+        result = parsed;
+        return true;
+    }
+
+    private sealed record DesignerSpawnPlan(
+        SpawnPlacementMode PlacementMode,
+        ShardPlanMode ShardPlanMode,
+        int? RegionHostCount,
+        int? ShardCount,
+        int? MaxNeuronsPerShard);
+
+    private sealed record RegionHostStartDecision(bool Success, bool ShouldStart, string? Summary, string? Error)
+    {
+        public static RegionHostStartDecision Create(bool shouldStart, string? summary)
+            => new(true, shouldStart, summary, null);
+    }
+
     private sealed class DesignerSpawnState
     {
         public DesignerSpawnState(LocalServiceRunner brainHostRunner, List<LocalServiceRunner> regionHostRunners, string artifactRoot)
@@ -3321,3 +3530,29 @@ public enum DesignerDocumentType
     Nbn,
     Nbs
 }
+
+public enum SpawnPlacementMode
+{
+    HiveMindManaged,
+    DirectPerRegion
+}
+
+public enum RegionHostStartPolicy
+{
+    IfNoneRunning,
+    Always,
+    Never
+}
+
+public enum ShardPlanMode
+{
+    SingleShardPerRegion,
+    FixedShardCount,
+    MaxNeuronsPerShard
+}
+
+public sealed record SpawnPlacementOption(string Label, SpawnPlacementMode Value, string Description);
+
+public sealed record RegionHostStartPolicyOption(string Label, RegionHostStartPolicy Value, string Description);
+
+public sealed record ShardPlanOption(string Label, ShardPlanMode Value, string Description);

@@ -29,7 +29,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, Viz.AddBrainId, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
-        Designer = new DesignerPanelViewModel(Connections);
+        Designer = new DesignerPanelViewModel(Connections, _client);
 
         Navigation = new ObservableCollection<NavItemViewModel>
         {
