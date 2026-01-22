@@ -375,6 +375,11 @@
               <StackPanel Spacing="8">
                 <TextBlock Text="Spawn Options" Classes="row-title" />
                 <TextBlock Text="Requires Settings, HiveMind, and IO connections." Classes="muted" />
+                <Button Content="Spawn Brain"
+                        Command="{Binding SpawnBrainCommand}"
+                        IsEnabled="{Binding CanSpawnBrain}"
+                        Classes="accent"
+                        HorizontalAlignment="Left" />
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Bind host" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding SpawnBindHost}" />
