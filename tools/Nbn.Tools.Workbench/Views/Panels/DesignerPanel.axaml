@@ -19,6 +19,7 @@
                     Background="{Binding ResetBrainButtonBackground}"
                     Foreground="{Binding ResetBrainButtonForeground}"
                     BorderBrush="{Binding ResetBrainButtonBorder}"
+                    ToolTip.Tip="Resets the design (keeps input/output). If changes are not exported, confirmation is required."
                     Margin="0,0,8,8" />
             <Button Content="Spawn Brain"
                     Command="{Binding SpawnBrainCommand}"
@@ -366,6 +367,7 @@
               <StackPanel IsVisible="{Binding HasNeuronSelection}" Spacing="10">
                 <StackPanel Spacing="6">
                   <TextBlock Text="Functions" Classes="row-title" />
+                  <TextBlock Text="{Binding FunctionLegend}" Classes="muted" TextWrapping="Wrap" />
                   <StackPanel Spacing="4">
                     <TextBlock Text="Activation" Classes="muted"
                                ToolTip.Tip="Activation computes potential from buffer B (and params)." />
@@ -416,7 +418,7 @@
                     <Grid Grid.Row="0" Grid.ColumnSpan="3" ColumnDefinitions="Auto,*,60" ColumnSpacing="8"
                           IsEnabled="{Binding SelectedNeuronUsesParamA}">
                       <TextBlock Text="Param A" VerticalAlignment="Center"
-                                 ToolTip.Tip="Param A is used by some activation functions." />
+                                 ToolTip.Tip="Param A is used by some activation functions (see Activation description)." />
                       <Slider Grid.Column="1" Minimum="0" Maximum="63"
                               Value="{Binding SelectedNeuron.ParamACode}" />
                       <TextBox Grid.Column="2" Text="{Binding SelectedNeuron.ParamACode}" />
@@ -425,7 +427,7 @@
                     <Grid Grid.Row="1" Grid.ColumnSpan="3" ColumnDefinitions="Auto,*,60" ColumnSpacing="8"
                           IsEnabled="{Binding SelectedNeuronUsesParamB}">
                       <TextBlock Text="Param B" VerticalAlignment="Center"
-                                 ToolTip.Tip="Param B is used by some activation functions." />
+                                 ToolTip.Tip="Param B is used by some activation functions (see Activation description)." />
                       <Slider Grid.Column="1" Minimum="0" Maximum="63"
                               Value="{Binding SelectedNeuron.ParamBCode}" />
                       <TextBox Grid.Column="2" Text="{Binding SelectedNeuron.ParamBCode}" />
@@ -441,7 +443,7 @@
                     <Slider Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ActivationThresholdCode}" />
                     <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding SelectedNeuron.ActivationThresholdCode}" />
                   </Grid>
-                  <TextBlock Text="Param A/B meaning depends on the activation function; thresholds gate activation and firing." Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding ParameterHelp}" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
 
                 <StackPanel Spacing="6">

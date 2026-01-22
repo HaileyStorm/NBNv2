@@ -31,6 +31,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
     private const string OutputCoordinatorPrefix = "io-output-";
     private const int DefaultActivationFunctionId = 11; // ACT_TANH
+    private const string FunctionLegendText = "Legend: B=buffer, I=inbox, P=potential, T=activation threshold, A=Param A, Bp=Param B, K=out-degree.";
+    private const string ParameterHelpText = "Param A/B are per-neuron parameters used by some activation functions. Pre-Act Thresh gates activation (B must exceed it). Act Thresh gates firing (|P| must exceed it).";
+    private const string ResetPendingText = "Reset pending: changes not exported. Click again to confirm.";
     private const double BaseCanvasNodeSize = 36;
     private const double BaseCanvasGap = 14;
     private const double CanvasPadding = 16;
@@ -557,6 +560,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     public string SelectedAccumulationDescription => DescribeAccumulation(SelectedNeuron?.AccumulationFunctionId ?? 0);
 
+    public string FunctionLegend => FunctionLegendText;
+
+    public string ParameterHelp => ParameterHelpText;
+
     public string AxonLinkButtonLabel => IsAxonLinkMode ? "Exit Link Mode" : "Link Axon";
 
     public IBrush AxonLinkButtonBackground => IsAxonLinkMode ? DesignerBrushes.Accent : DesignerBrushes.SurfaceAlt;
@@ -806,7 +813,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             OnPropertyChanged(nameof(ResetBrainButtonBackground));
             OnPropertyChanged(nameof(ResetBrainButtonForeground));
             OnPropertyChanged(nameof(ResetBrainButtonBorder));
-            Status = "Reset pending: click again to confirm.";
+            Status = ResetPendingText;
             return;
         }
 
