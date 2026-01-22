@@ -37,6 +37,14 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const double BaseCanvasNodeSize = 36;
     private const double BaseCanvasGap = 14;
     private const double CanvasPadding = 16;
+    private const int RegionIntrasliceUnit = 3;
+    private const int RegionAxialUnit = 5;
+    private static readonly int[] ActivationFunctionIds = Enumerable.Range(0, 30).ToArray();
+    private static readonly int[] ResetFunctionIds = Enumerable.Range(0, 61).ToArray();
+    private static readonly int[] AccumulationFunctionIds = { 0, 1, 2, 3 };
+    private static readonly double[] ActivationFunctionWeights = BuildActivationFunctionWeights();
+    private static readonly double[] ResetFunctionWeights = BuildResetFunctionWeights();
+    private static readonly double[] AccumulationFunctionWeights = { 1.0, 0.8, 1.0, 0.3 };
     private readonly ConnectionViewModel _connections;
     private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
     private string _status = "Designer ready.";
@@ -651,36 +659,25 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private void NewRandomBrain()
     {
         ClearResetConfirmation();
-        if (!RandomOptions.TryBuildBasicOptions(GenerateSeed, out var options, out var error))
+        if (!RandomOptions.TryBuildOptions(GenerateSeed, out var options, out var error))
         {
             Status = error ?? "Random brain options invalid.";
             return;
         }
-
-        var pending = RandomOptions.GetUnsupportedOptionMessages();
-        if (pending.Count > 0)
-        {
-            Status = $"Random brain options not wired yet: {string.Join(", ", pending)}.";
-            return;
-        }
-
-        var regionCount = Math.Clamp(options.RegionCount, 0, NbnConstants.RegionCount - 2);
-        var neuronsPerRegion = Math.Min(options.NeuronsPerRegion, NbnConstants.MaxAxonTargetNeuronId);
-        var axonsPerNeuron = Math.Min(options.AxonsPerNeuron, NbnConstants.MaxAxonsPerNeuron);
-        var inputNeurons = Math.Clamp(options.InputNeurons, 1, NbnConstants.MaxAxonTargetNeuronId);
-        var outputNeurons = Math.Clamp(options.OutputNeurons, 1, NbnConstants.MaxAxonTargetNeuronId);
-        var strengthMin = Math.Clamp(options.StrengthMinCode, 0, 31);
-        var strengthMax = Math.Clamp(options.StrengthMaxCode, 0, 31);
-
         var seed = options.Seed;
         var brainId = Guid.NewGuid();
-        var brain = new DesignerBrainViewModel("Random Brain", brainId, seed, 1024);
+        var brain = new DesignerBrainViewModel("Random Brain", brainId, seed, NbnConstants.DefaultAxonStride);
 
         var rng = new Random(unchecked((int)seed));
-        var randomRegions = Enumerable.Range(1, NbnConstants.RegionCount - 2)
-            .OrderBy(_ => rng.Next())
-            .Take(regionCount)
-            .ToHashSet();
+        var selectedRegions = SelectRegions(rng, options);
+
+        var activationPicker = CreateFunctionPicker(rng, options.ActivationMode, options.ActivationFixedId, ActivationFunctionIds, ActivationFunctionWeights);
+        var resetPicker = CreateFunctionPicker(rng, options.ResetMode, options.ResetFixedId, ResetFunctionIds, ResetFunctionWeights);
+        var accumulationPicker = CreateFunctionPicker(rng, options.AccumulationMode, options.AccumulationFixedId, AccumulationFunctionIds, AccumulationFunctionWeights);
+        var preActivationPicker = CreateCodePicker(rng, options.ThresholdMode, options.PreActivationMin, options.PreActivationMin, options.PreActivationMax);
+        var activationThresholdPicker = CreateCodePicker(rng, options.ThresholdMode, options.ActivationThresholdMin, options.ActivationThresholdMin, options.ActivationThresholdMax);
+        var paramAPicker = CreateCodePicker(rng, options.ParamMode, options.ParamAMin, options.ParamAMin, options.ParamAMax);
+        var paramBPicker = CreateCodePicker(rng, options.ParamMode, options.ParamBMin, options.ParamBMin, options.ParamBMax);
 
         for (var i = 0; i < NbnConstants.RegionCount; i++)
         {
@@ -688,16 +685,24 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var targetCount = 0;
             if (i == NbnConstants.InputRegionId || i == NbnConstants.OutputRegionId)
             {
-                targetCount = i == NbnConstants.InputRegionId ? inputNeurons : outputNeurons;
+                targetCount = i == NbnConstants.InputRegionId ? options.InputNeurons : options.OutputNeurons;
             }
-            else if (randomRegions.Contains(i))
+            else if (selectedRegions.Contains(i))
             {
-                targetCount = neuronsPerRegion;
+                targetCount = PickCount(rng, options.NeuronCountMode, options.NeuronsPerRegion, options.NeuronCountMin, options.NeuronCountMax);
             }
 
             for (var n = 0; n < targetCount; n++)
             {
-                region.Neurons.Add(CreateDefaultNeuron(region, n));
+                var neuron = CreateDefaultNeuron(region, n);
+                neuron.ActivationFunctionId = activationPicker();
+                neuron.ResetFunctionId = resetPicker();
+                neuron.AccumulationFunctionId = accumulationPicker();
+                neuron.PreActivationThresholdCode = preActivationPicker();
+                neuron.ActivationThresholdCode = activationThresholdPicker();
+                neuron.ParamACode = paramAPicker();
+                neuron.ParamBCode = paramBPicker();
+                region.Neurons.Add(neuron);
             }
 
             region.UpdateCounts();
@@ -718,6 +723,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 continue;
             }
 
+            var targetWeights = BuildTargetWeights(region.RegionId, validTargets, options.TargetBiasMode);
             foreach (var neuron in region.Neurons)
             {
                 if (!neuron.Exists)
@@ -725,7 +731,18 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     continue;
                 }
 
-                var targetAxons = Math.Clamp((int)Math.Round(axonsPerNeuron * (0.5 + rng.NextDouble())), 0, axonsPerNeuron);
+                var targetAxons = PickCount(rng, options.AxonCountMode, options.AxonsPerNeuron, options.AxonCountMin, options.AxonCountMax);
+                var maxTargets = MaxDistinctTargets(region.RegionId, validTargets, options.AllowSelfLoops);
+                if (maxTargets == 0)
+                {
+                    continue;
+                }
+
+                if (targetAxons > maxTargets)
+                {
+                    targetAxons = maxTargets;
+                }
+
                 if (targetAxons == 0)
                 {
                     continue;
@@ -733,16 +750,17 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
                 var seen = new HashSet<(int regionId, int neuronId)>();
                 var attempts = 0;
-                while (seen.Count < targetAxons && attempts < targetAxons * 6)
+                var maxAttempts = Math.Max(targetAxons * 6, maxTargets * 3);
+                while (seen.Count < targetAxons && attempts < maxAttempts)
                 {
                     attempts++;
-                    var targetRegion = validTargets[rng.Next(validTargets.Count)];
+                    var targetRegion = validTargets[PickWeightedIndex(rng, targetWeights)];
                     if (targetRegion.NeuronCount == 0)
                     {
                         continue;
                     }
 
-                    var targetNeuronId = rng.Next(targetRegion.NeuronCount);
+                    var targetNeuronId = PickTargetNeuronId(rng, neuron.NeuronId, region.RegionId, targetRegion, options.TargetBiasMode);
                     if (!options.AllowSelfLoops
                         && targetRegion.RegionId == region.RegionId
                         && targetNeuronId == neuron.NeuronId)
@@ -755,7 +773,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                         continue;
                     }
 
-                    var strength = rng.Next(strengthMin, strengthMax + 1);
+                    var strength = PickStrengthCode(rng, options.StrengthDistribution, options.StrengthMinCode, options.StrengthMaxCode);
                     neuron.Axons.Add(new DesignerAxonViewModel(targetRegion.RegionId, targetNeuronId, strength));
                 }
 
@@ -2823,6 +2841,307 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         Span<byte> buffer = stackalloc byte[8];
         RandomNumberGenerator.Fill(buffer);
         return BinaryPrimitives.ReadUInt64LittleEndian(buffer);
+    }
+
+    private static HashSet<int> SelectRegions(Random rng, RandomBrainGenerationOptions options)
+    {
+        if (options.RegionSelectionMode == RandomRegionSelectionMode.ExplicitList)
+        {
+            return options.ExplicitRegions.ToHashSet();
+        }
+
+        var total = NbnConstants.RegionCount - 2;
+        if (options.RegionCount <= 0 || total <= 0)
+        {
+            return new HashSet<int>();
+        }
+
+        if (options.RegionSelectionMode == RandomRegionSelectionMode.Contiguous)
+        {
+            var startMax = total - options.RegionCount + 1;
+            var start = rng.Next(1, Math.Max(2, startMax + 1));
+            var list = new HashSet<int>();
+            for (var id = start; id < start + options.RegionCount; id++)
+            {
+                list.Add(id);
+            }
+
+            return list;
+        }
+
+        var available = Enumerable.Range(1, total).ToList();
+        var selected = new HashSet<int>();
+        var picks = Math.Min(options.RegionCount, available.Count);
+        for (var i = 0; i < picks; i++)
+        {
+            var index = rng.Next(available.Count);
+            selected.Add(available[index]);
+            available.RemoveAt(index);
+        }
+
+        return selected;
+    }
+
+    private static Func<int> CreateFunctionPicker(Random rng, RandomFunctionSelectionMode mode, int fixedId, IReadOnlyList<int> ids, IReadOnlyList<double> weights)
+    {
+        return mode switch
+        {
+            RandomFunctionSelectionMode.Fixed => () => fixedId,
+            RandomFunctionSelectionMode.Random => () => ids[rng.Next(ids.Count)],
+            RandomFunctionSelectionMode.Weighted => () => ids[PickWeightedIndex(rng, weights)],
+            _ => () => fixedId
+        };
+    }
+
+    private static Func<int> CreateCodePicker(Random rng, RandomRangeMode mode, int fixedValue, int min, int max)
+    {
+        if (mode == RandomRangeMode.Fixed || min == max)
+        {
+            return () => fixedValue;
+        }
+
+        return () => rng.Next(min, max + 1);
+    }
+
+    private static int PickCount(Random rng, RandomCountMode mode, int fixedValue, int min, int max)
+    {
+        if (mode == RandomCountMode.Fixed || min == max)
+        {
+            return fixedValue;
+        }
+
+        return rng.Next(min, max + 1);
+    }
+
+    private static int PickTargetNeuronId(Random rng, int sourceNeuronId, int sourceRegionId, DesignerRegionViewModel targetRegion, RandomTargetBiasMode bias)
+    {
+        if (targetRegion.NeuronCount <= 1)
+        {
+            return 0;
+        }
+
+        if (bias == RandomTargetBiasMode.DistanceWeighted && targetRegion.RegionId == sourceRegionId)
+        {
+            var maxDistance = targetRegion.NeuronCount / 2;
+            if (maxDistance == 0)
+            {
+                return 0;
+            }
+
+            var distance = (int)Math.Round(Math.Pow(rng.NextDouble(), 2) * maxDistance);
+            var direction = rng.Next(2) == 0 ? -1 : 1;
+            var candidate = sourceNeuronId + (direction * distance);
+            var wrapped = candidate % targetRegion.NeuronCount;
+            if (wrapped < 0)
+            {
+                wrapped += targetRegion.NeuronCount;
+            }
+
+            return wrapped;
+        }
+
+        return rng.Next(targetRegion.NeuronCount);
+    }
+
+    private static int PickStrengthCode(Random rng, RandomStrengthDistribution distribution, int min, int max)
+    {
+        if (min == max)
+        {
+            return min;
+        }
+
+        var range = max - min;
+        return distribution switch
+        {
+            RandomStrengthDistribution.Centered => min + (int)Math.Round(((rng.NextDouble() + rng.NextDouble()) * 0.5) * range),
+            RandomStrengthDistribution.Normal => PickNormal(rng, min, max),
+            _ => rng.Next(min, max + 1)
+        };
+    }
+
+    private static int PickNormal(Random rng, int min, int max)
+    {
+        if (min == max)
+        {
+            return min;
+        }
+
+        var mean = (min + max) / 2.0;
+        var stdDev = Math.Max(0.5, (max - min) / 6.0);
+        var u1 = Math.Max(double.Epsilon, rng.NextDouble());
+        var u2 = rng.NextDouble();
+        var standard = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
+        var sample = mean + (standard * stdDev);
+        var rounded = (int)Math.Round(sample);
+        if (rounded < min)
+        {
+            return min;
+        }
+
+        if (rounded > max)
+        {
+            return max;
+        }
+
+        return rounded;
+    }
+
+    private static double[] BuildTargetWeights(int sourceRegionId, IReadOnlyList<DesignerRegionViewModel> targets, RandomTargetBiasMode bias)
+    {
+        var weights = new double[targets.Count];
+        for (var i = 0; i < targets.Count; i++)
+        {
+            var target = targets[i];
+            weights[i] = bias switch
+            {
+                RandomTargetBiasMode.RegionWeighted => Math.Max(1, target.NeuronCount),
+                RandomTargetBiasMode.DistanceWeighted => 1.0 / (1.0 + ComputeRegionDistance(sourceRegionId, target.RegionId)),
+                _ => 1.0
+            };
+        }
+
+        return weights;
+    }
+
+    private static int ComputeRegionDistance(int sourceRegionId, int destRegionId)
+    {
+        if (sourceRegionId == destRegionId)
+        {
+            return 0;
+        }
+
+        var sourceZ = RegionZ(sourceRegionId);
+        var destZ = RegionZ(destRegionId);
+        if (sourceZ == destZ)
+        {
+            return RegionIntrasliceUnit;
+        }
+
+        return RegionAxialUnit * Math.Abs(destZ - sourceZ);
+    }
+
+    private static int RegionZ(int regionId)
+    {
+        if (regionId == 0)
+        {
+            return -3;
+        }
+
+        if (regionId <= 3)
+        {
+            return -2;
+        }
+
+        if (regionId <= 8)
+        {
+            return -1;
+        }
+
+        if (regionId <= 22)
+        {
+            return 0;
+        }
+
+        if (regionId <= 27)
+        {
+            return 1;
+        }
+
+        if (regionId <= 30)
+        {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static int MaxDistinctTargets(int sourceRegionId, IReadOnlyList<DesignerRegionViewModel> targets, bool allowSelfLoops)
+    {
+        var maxTargets = 0;
+        foreach (var target in targets)
+        {
+            if (target.NeuronCount == 0)
+            {
+                continue;
+            }
+
+            if (!allowSelfLoops && target.RegionId == sourceRegionId)
+            {
+                maxTargets += Math.Max(0, target.NeuronCount - 1);
+            }
+            else
+            {
+                maxTargets += target.NeuronCount;
+            }
+        }
+
+        return maxTargets;
+    }
+
+    private static int PickWeightedIndex(Random rng, IReadOnlyList<double> weights)
+    {
+        var total = 0.0;
+        for (var i = 0; i < weights.Count; i++)
+        {
+            total += Math.Max(0.0, weights[i]);
+        }
+
+        if (total <= 0)
+        {
+            return rng.Next(weights.Count);
+        }
+
+        var roll = rng.NextDouble() * total;
+        var cumulative = 0.0;
+        for (var i = 0; i < weights.Count; i++)
+        {
+            cumulative += Math.Max(0.0, weights[i]);
+            if (roll <= cumulative)
+            {
+                return i;
+            }
+        }
+
+        return weights.Count - 1;
+    }
+
+    private static double[] BuildActivationFunctionWeights()
+    {
+        var weights = Enumerable.Repeat(1.0, 30).ToArray();
+        weights[0] = 0.15;
+
+        var tierB = new[] { 9, 10, 11, 12, 13, 14, 15, 18, 19 };
+        foreach (var id in tierB)
+        {
+            weights[id] = 0.6;
+        }
+
+        var tierC = new[] { 21, 22, 23, 24, 26, 27, 28, 29 };
+        foreach (var id in tierC)
+        {
+            weights[id] = 0.25;
+        }
+
+        return weights;
+    }
+
+    private static double[] BuildResetFunctionWeights()
+    {
+        var weights = Enumerable.Repeat(1.0, 61).ToArray();
+
+        var tierB = new[] { 9, 10, 14, 15, 22, 23, 27, 28, 35, 36, 40, 41, 50, 51, 52, 53, 54, 55, 56, 57 };
+        foreach (var id in tierB)
+        {
+            weights[id] = 0.6;
+        }
+
+        var tierC = new[] { 16, 29, 42, 59, 60 };
+        foreach (var id in tierC)
+        {
+            weights[id] = 0.25;
+        }
+
+        return weights;
     }
 
     private static string BuildDefaultArtifactRoot()

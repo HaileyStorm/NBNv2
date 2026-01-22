@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Linq;
+using Nbn.Shared;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
@@ -376,48 +378,182 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public bool IsThresholdRangeEnabled => SelectedThresholdMode.Value == RandomRangeMode.Range;
     public bool IsParamRangeEnabled => SelectedParamMode.Value == RandomRangeMode.Range;
 
-    public bool TryBuildBasicOptions(Func<ulong> seedFactory, out RandomBrainBasicOptions options, out string? error)
+    public bool TryBuildOptions(Func<ulong> seedFactory, out RandomBrainGenerationOptions options, out string? error)
     {
         options = default;
-        if (!int.TryParse(RegionCountText, out var regionCount) || regionCount < 0)
+        error = null;
+
+        var nonIoMax = NbnConstants.RegionCount - 2;
+        var maxNeuronId = NbnConstants.MaxAxonTargetNeuronId;
+
+        var regionSelectionMode = SelectedRegionSelectionMode.Value;
+        var regionCount = 0;
+        var explicitRegions = Array.Empty<int>();
+        if (regionSelectionMode == RandomRegionSelectionMode.ExplicitList)
         {
-            error = "Random region count must be a non-negative integer.";
-            return false;
+            if (!TryParseRegionList(RegionListText, out explicitRegions, out error))
+            {
+                return false;
+            }
+
+            if (explicitRegions.Length > nonIoMax)
+            {
+                error = $"Region list must include at most {nonIoMax} non-IO regions.";
+                return false;
+            }
+
+            regionCount = explicitRegions.Length;
+        }
+        else
+        {
+            if (!TryParseInt(RegionCountText, out regionCount) || regionCount < 0)
+            {
+                error = "Random region count must be a non-negative integer.";
+                return false;
+            }
+
+            if (regionCount > nonIoMax)
+            {
+                error = $"Random region count must be between 0 and {nonIoMax}.";
+                return false;
+            }
         }
 
-        if (!int.TryParse(NeuronCountText, out var neuronsPerRegion) || neuronsPerRegion < 1)
+        var neuronMode = SelectedNeuronCountMode.Value;
+        var neuronFixed = 0;
+        var neuronMin = 0;
+        var neuronMax = 0;
+        if (neuronMode == RandomCountMode.Fixed)
         {
-            error = "Random neurons per region must be a positive integer.";
-            return false;
+            if (!TryParseInt(NeuronCountText, out neuronFixed) || neuronFixed < 1)
+            {
+                error = "Random neurons per region must be a positive integer.";
+                return false;
+            }
+
+            if (neuronFixed > maxNeuronId)
+            {
+                error = $"Random neurons per region must be <= {maxNeuronId}.";
+                return false;
+            }
+
+            neuronMin = neuronFixed;
+            neuronMax = neuronFixed;
+        }
+        else
+        {
+            if (!TryParseInt(NeuronCountMinText, out neuronMin) || neuronMin < 1)
+            {
+                error = "Neuron range minimum must be a positive integer.";
+                return false;
+            }
+
+            if (!TryParseInt(NeuronCountMaxText, out neuronMax) || neuronMax < 1)
+            {
+                error = "Neuron range maximum must be a positive integer.";
+                return false;
+            }
+
+            if (neuronMin > neuronMax)
+            {
+                error = "Neuron range maximum must be >= minimum.";
+                return false;
+            }
+
+            if (neuronMax > maxNeuronId)
+            {
+                error = $"Neuron range maximum must be <= {maxNeuronId}.";
+                return false;
+            }
         }
 
-        if (!int.TryParse(AxonCountText, out var axonsPerNeuron) || axonsPerNeuron < 0)
+        var axonMode = SelectedAxonCountMode.Value;
+        var axonFixed = 0;
+        var axonMin = 0;
+        var axonMax = 0;
+        if (axonMode == RandomCountMode.Fixed)
         {
-            error = "Random axons per neuron must be a non-negative integer.";
-            return false;
+            if (!TryParseInt(AxonCountText, out axonFixed) || axonFixed < 0)
+            {
+                error = "Random axons per neuron must be a non-negative integer.";
+                return false;
+            }
+
+            if (axonFixed > NbnConstants.MaxAxonsPerNeuron)
+            {
+                error = $"Random axons per neuron must be <= {NbnConstants.MaxAxonsPerNeuron}.";
+                return false;
+            }
+
+            axonMin = axonFixed;
+            axonMax = axonFixed;
+        }
+        else
+        {
+            if (!TryParseInt(AxonCountMinText, out axonMin) || axonMin < 0)
+            {
+                error = "Axon range minimum must be a non-negative integer.";
+                return false;
+            }
+
+            if (!TryParseInt(AxonCountMaxText, out axonMax) || axonMax < 0)
+            {
+                error = "Axon range maximum must be a non-negative integer.";
+                return false;
+            }
+
+            if (axonMin > axonMax)
+            {
+                error = "Axon range maximum must be >= minimum.";
+                return false;
+            }
+
+            if (axonMax > NbnConstants.MaxAxonsPerNeuron)
+            {
+                error = $"Axon range maximum must be <= {NbnConstants.MaxAxonsPerNeuron}.";
+                return false;
+            }
         }
 
-        if (!int.TryParse(InputNeuronCountText, out var inputNeurons) || inputNeurons < 1)
+        if (!TryParseInt(InputNeuronCountText, out var inputNeurons) || inputNeurons < 1)
         {
             error = "Input neuron count must be a positive integer.";
             return false;
         }
 
-        if (!int.TryParse(OutputNeuronCountText, out var outputNeurons) || outputNeurons < 1)
+        if (inputNeurons > maxNeuronId)
+        {
+            error = $"Input neuron count must be <= {maxNeuronId}.";
+            return false;
+        }
+
+        if (!TryParseInt(OutputNeuronCountText, out var outputNeurons) || outputNeurons < 1)
         {
             error = "Output neuron count must be a positive integer.";
             return false;
         }
 
-        if (!int.TryParse(StrengthMinText, out var strengthMin) || strengthMin < 0)
+        if (outputNeurons > maxNeuronId)
+        {
+            error = $"Output neuron count must be <= {maxNeuronId}.";
+            return false;
+        }
+
+        if (!TryParseInt(StrengthMinText, out var strengthMin) || strengthMin < 0)
         {
             error = "Strength minimum must be a non-negative integer.";
             return false;
         }
 
-        if (!int.TryParse(StrengthMaxText, out var strengthMax) || strengthMax < 0)
+        if (!TryParseInt(StrengthMaxText, out var strengthMax) || strengthMax < 0)
         {
             error = "Strength maximum must be a non-negative integer.";
+            return false;
+        }
+
+        if (strengthMin > 31 || strengthMax > 31)
+        {
+            error = "Strength codes must be between 0 and 31.";
             return false;
         }
 
@@ -427,81 +563,156 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
             return false;
         }
 
+        var activationFixedId = 0;
+        if (SelectedActivationMode.Value == RandomFunctionSelectionMode.Fixed)
+        {
+            if (!TryParseInt(ActivationFixedIdText, out activationFixedId) || activationFixedId < 0 || activationFixedId > 63)
+            {
+                error = "Activation function id must be between 0 and 63.";
+                return false;
+            }
+        }
+        else
+        {
+            _ = TryParseInt(ActivationFixedIdText, out activationFixedId);
+        }
+
+        var resetFixedId = 0;
+        if (SelectedResetMode.Value == RandomFunctionSelectionMode.Fixed)
+        {
+            if (!TryParseInt(ResetFixedIdText, out resetFixedId) || resetFixedId < 0 || resetFixedId > 63)
+            {
+                error = "Reset function id must be between 0 and 63.";
+                return false;
+            }
+        }
+        else
+        {
+            _ = TryParseInt(ResetFixedIdText, out resetFixedId);
+        }
+
+        var accumulationFixedId = 0;
+        if (SelectedAccumulationMode.Value == RandomFunctionSelectionMode.Fixed)
+        {
+            if (!TryParseInt(AccumulationFixedIdText, out accumulationFixedId) || accumulationFixedId < 0 || accumulationFixedId > 3)
+            {
+                error = "Accumulation function id must be between 0 and 3.";
+                return false;
+            }
+        }
+        else
+        {
+            _ = TryParseInt(AccumulationFixedIdText, out accumulationFixedId);
+        }
+
+        var thresholdMode = SelectedThresholdMode.Value;
+        var preActMin = 0;
+        var preActMax = 0;
+        var actThreshMin = 0;
+        var actThreshMax = 0;
+        if (thresholdMode == RandomRangeMode.Fixed)
+        {
+            if (!TryParseCode(PreActivationMinText, "Pre-activation threshold", out preActMin, out error)
+                || !TryParseCode(ActivationThresholdMinText, "Activation threshold", out actThreshMin, out error))
+            {
+                return false;
+            }
+
+            preActMax = preActMin;
+            actThreshMax = actThreshMin;
+        }
+        else
+        {
+            if (!TryParseCodeRange(PreActivationMinText, PreActivationMaxText, "Pre-activation threshold", out preActMin, out preActMax, out error))
+            {
+                return false;
+            }
+
+            if (!TryParseCodeRange(ActivationThresholdMinText, ActivationThresholdMaxText, "Activation threshold", out actThreshMin, out actThreshMax, out error))
+            {
+                return false;
+            }
+        }
+
+        var paramMode = SelectedParamMode.Value;
+        var paramAMin = 0;
+        var paramAMax = 0;
+        var paramBMin = 0;
+        var paramBMax = 0;
+        if (paramMode == RandomRangeMode.Fixed)
+        {
+            if (!TryParseCode(ParamAMinText, "Param A", out paramAMin, out error)
+                || !TryParseCode(ParamBMinText, "Param B", out paramBMin, out error))
+            {
+                return false;
+            }
+
+            paramAMax = paramAMin;
+            paramBMax = paramBMin;
+        }
+        else
+        {
+            if (!TryParseCodeRange(ParamAMinText, ParamAMaxText, "Param A", out paramAMin, out paramAMax, out error))
+            {
+                return false;
+            }
+
+            if (!TryParseCodeRange(ParamBMinText, ParamBMaxText, "Param B", out paramBMin, out paramBMax, out error))
+            {
+                return false;
+            }
+        }
+
+        if (!AllowIntraRegion && !AllowInterRegion && axonMax > 0)
+        {
+            error = "Enable intra-region and/or inter-region targets when axons per neuron is above zero.";
+            return false;
+        }
+
         if (!TryResolveSeed(seedFactory, out var seed, out error))
         {
             return false;
         }
 
-        options = new RandomBrainBasicOptions(
+        options = new RandomBrainGenerationOptions(
             regionCount,
-            neuronsPerRegion,
-            axonsPerNeuron,
+            explicitRegions,
+            regionSelectionMode,
+            neuronMode,
+            neuronFixed,
+            neuronMin,
+            neuronMax,
+            axonMode,
+            axonFixed,
+            axonMin,
+            axonMax,
             inputNeurons,
             outputNeurons,
             seed,
             AllowSelfLoops,
             AllowIntraRegion,
             AllowInterRegion,
+            SelectedTargetBiasMode.Value,
             strengthMin,
-            strengthMax);
+            strengthMax,
+            SelectedStrengthDistribution.Value,
+            SelectedActivationMode.Value,
+            activationFixedId,
+            SelectedResetMode.Value,
+            resetFixedId,
+            SelectedAccumulationMode.Value,
+            accumulationFixedId,
+            thresholdMode,
+            preActMin,
+            preActMax,
+            actThreshMin,
+            actThreshMax,
+            paramMode,
+            paramAMin,
+            paramAMax,
+            paramBMin,
+            paramBMax);
         return true;
-    }
-
-    public IReadOnlyList<string> GetUnsupportedOptionMessages()
-    {
-        var pending = new List<string>();
-
-        if (SelectedRegionSelectionMode.Value != RandomRegionSelectionMode.Random)
-        {
-            pending.Add("region selection");
-        }
-
-        if (SelectedNeuronCountMode.Value != RandomCountMode.Fixed)
-        {
-            pending.Add("neuron count range");
-        }
-
-        if (SelectedAxonCountMode.Value != RandomCountMode.Fixed)
-        {
-            pending.Add("axon count range");
-        }
-
-        if (SelectedTargetBiasMode.Value != RandomTargetBiasMode.Uniform)
-        {
-            pending.Add("target bias");
-        }
-
-        if (SelectedStrengthDistribution.Value != RandomStrengthDistribution.Uniform)
-        {
-            pending.Add("strength distribution");
-        }
-
-        if (SelectedActivationMode.Value != RandomFunctionSelectionMode.Fixed)
-        {
-            pending.Add("activation mix");
-        }
-
-        if (SelectedResetMode.Value != RandomFunctionSelectionMode.Fixed)
-        {
-            pending.Add("reset mix");
-        }
-
-        if (SelectedAccumulationMode.Value != RandomFunctionSelectionMode.Fixed)
-        {
-            pending.Add("accumulation mix");
-        }
-
-        if (SelectedThresholdMode.Value != RandomRangeMode.Fixed)
-        {
-            pending.Add("threshold ranges");
-        }
-
-        if (SelectedParamMode.Value != RandomRangeMode.Fixed)
-        {
-            pending.Add("parameter ranges");
-        }
-
-        return pending;
     }
 
     private bool TryResolveSeed(Func<ulong> seedFactory, out ulong seed, out string? error)
@@ -538,6 +749,131 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         }
 
         return ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out seed);
+    }
+
+    private static bool TryParseInt(string value, out int parsed)
+        => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed);
+
+    private static bool TryParseRegionList(string value, out int[] regionIds, out string? error)
+    {
+        error = null;
+        regionIds = Array.Empty<int>();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var tokens = value
+            .Split(new[] { ',', ';', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        var results = new HashSet<int>();
+        foreach (var token in tokens)
+        {
+            var trimmed = token.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                continue;
+            }
+
+            if (trimmed.Contains('-', StringComparison.Ordinal))
+            {
+                var parts = trimmed.Split('-', 2);
+                if (parts.Length != 2 || !TryParseInt(parts[0], out var start) || !TryParseInt(parts[1], out var end))
+                {
+                    error = "Region list entries must be ids or ranges like 4-7.";
+                    return false;
+                }
+
+                if (end < start)
+                {
+                    (start, end) = (end, start);
+                }
+
+                for (var id = start; id <= end; id++)
+                {
+                    if (!IsValidExplicitRegionId(id, out error))
+                    {
+                        return false;
+                    }
+
+                    results.Add(id);
+                }
+            }
+            else
+            {
+                if (!TryParseInt(trimmed, out var id))
+                {
+                    error = "Region list entries must be ids or ranges like 4-7.";
+                    return false;
+                }
+
+                if (!IsValidExplicitRegionId(id, out error))
+                {
+                    return false;
+                }
+
+                results.Add(id);
+            }
+        }
+
+        regionIds = results.OrderBy(id => id).ToArray();
+        return true;
+    }
+
+    private static bool IsValidExplicitRegionId(int id, out string? error)
+    {
+        error = null;
+        if (id == NbnConstants.InputRegionId || id == NbnConstants.OutputRegionId)
+        {
+            error = "Region list must include only non-IO region ids (1-30).";
+            return false;
+        }
+
+        if (id < NbnConstants.RegionMinId || id > NbnConstants.RegionMaxId)
+        {
+            error = $"Region list entries must be between {NbnConstants.RegionMinId} and {NbnConstants.RegionMaxId}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseCode(string value, string label, out int parsed, out string? error)
+    {
+        error = null;
+        parsed = 0;
+        if (!TryParseInt(value, out parsed) || parsed < 0 || parsed > 63)
+        {
+            error = $"{label} code must be between 0 and 63.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseCodeRange(string minText, string maxText, string label, out int min, out int max, out string? error)
+    {
+        error = null;
+        min = 0;
+        max = 0;
+
+        if (!TryParseCode(minText, label, out min, out error))
+        {
+            return false;
+        }
+
+        if (!TryParseCode(maxText, label, out max, out error))
+        {
+            return false;
+        }
+
+        if (max < min)
+        {
+            error = $"{label} maximum must be >= minimum.";
+            return false;
+        }
+
+        return true;
     }
 
     private static IReadOnlyList<RandomOptionChoice<RandomSeedMode>> BuildSeedModes()
@@ -594,18 +930,44 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         };
 }
 
-public readonly record struct RandomBrainBasicOptions(
+public readonly record struct RandomBrainGenerationOptions(
     int RegionCount,
+    IReadOnlyList<int> ExplicitRegions,
+    RandomRegionSelectionMode RegionSelectionMode,
+    RandomCountMode NeuronCountMode,
     int NeuronsPerRegion,
+    int NeuronCountMin,
+    int NeuronCountMax,
+    RandomCountMode AxonCountMode,
     int AxonsPerNeuron,
+    int AxonCountMin,
+    int AxonCountMax,
     int InputNeurons,
     int OutputNeurons,
     ulong Seed,
     bool AllowSelfLoops,
     bool AllowIntraRegion,
     bool AllowInterRegion,
+    RandomTargetBiasMode TargetBiasMode,
     int StrengthMinCode,
-    int StrengthMaxCode);
+    int StrengthMaxCode,
+    RandomStrengthDistribution StrengthDistribution,
+    RandomFunctionSelectionMode ActivationMode,
+    int ActivationFixedId,
+    RandomFunctionSelectionMode ResetMode,
+    int ResetFixedId,
+    RandomFunctionSelectionMode AccumulationMode,
+    int AccumulationFixedId,
+    RandomRangeMode ThresholdMode,
+    int PreActivationMin,
+    int PreActivationMax,
+    int ActivationThresholdMin,
+    int ActivationThresholdMax,
+    RandomRangeMode ParamMode,
+    int ParamAMin,
+    int ParamAMax,
+    int ParamBMin,
+    int ParamBMax);
 
 public sealed record RandomOptionChoice<T>(string Label, T Value);
 
