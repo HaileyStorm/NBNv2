@@ -404,7 +404,11 @@ public sealed class HiveMindActor : IActor
 
         if (!_brains.TryGetValue(brainId, out var brain))
         {
-            return;
+            brain = new BrainState(brainId)
+            {
+                SpawnedMs = NowMs()
+            };
+            _brains[brainId] = brain;
         }
 
         if (!TryParsePid(message.OutputPid, out var outputPid))
