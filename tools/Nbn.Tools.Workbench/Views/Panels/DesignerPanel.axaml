@@ -10,19 +10,51 @@
         <StackPanel Spacing="6">
           <TextBlock Text="Designer" Classes="card-title" />
           <TextBlock Text="Sketch brain definitions, import/export .nbn, and validate constraints." Classes="card-subtitle" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="New Brain" Command="{Binding NewBrainCommand}" Classes="accent" />
-            <Button Content="Import .nbn" Command="{Binding ImportNbnCommand}" />
-            <Button Content="Import .nbs" Command="{Binding ImportNbsCommand}" />
-            <Button Content="Export" Command="{Binding ExportCommand}" />
-            <Button Content="Export Snapshot" Command="{Binding ExportSnapshotCommand}" IsEnabled="{Binding CanExportSnapshot}" />
-            <Button Content="Validate" Command="{Binding ValidateCommand}" />
-          </StackPanel>
+          <WrapPanel Orientation="Horizontal">
+            <Button Content="New Brain" Command="{Binding NewBrainCommand}" Margin="0,0,8,8" />
+            <Button Content="New Random Brain" Command="{Binding NewRandomBrainCommand}" Margin="0,0,8,8" />
+            <Button Content="{Binding ResetBrainButtonLabel}"
+                    Command="{Binding ResetBrainCommand}"
+                    IsEnabled="{Binding CanResetBrain}"
+                    Background="{Binding ResetBrainButtonBackground}"
+                    Foreground="{Binding ResetBrainButtonForeground}"
+                    BorderBrush="{Binding ResetBrainButtonBorder}"
+                    Margin="0,0,8,8" />
+            <Button Content="Spawn Brain"
+                    Command="{Binding SpawnBrainCommand}"
+                    IsEnabled="{Binding CanSpawnBrain}"
+                    Classes="accent"
+                    Margin="0,0,8,8" />
+          </WrapPanel>
+          <WrapPanel Orientation="Horizontal">
+            <Button Content="Import .nbn" Command="{Binding ImportNbnCommand}" Margin="0,0,8,8" />
+            <Button Content="Import .nbs" Command="{Binding ImportNbsCommand}" Margin="0,0,8,8" />
+            <Button Content="Export" Command="{Binding ExportCommand}" Margin="0,0,8,8" />
+            <Button Content="Export Snapshot" Command="{Binding ExportSnapshotCommand}" IsEnabled="{Binding CanExportSnapshot}" Margin="0,0,8,8" />
+            <Button Content="Validate" Command="{Binding ValidateCommand}" Margin="0,0,8,8" />
+          </WrapPanel>
           <StackPanel Spacing="2">
             <TextBlock Text="{Binding LoadedSummary}" Classes="muted" />
             <TextBlock Text="{Binding Status}" Classes="muted" />
+            <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
           </StackPanel>
         </StackPanel>
+
+        <Border Classes="row">
+          <StackPanel Spacing="6">
+            <TextBlock Text="Validation" Classes="card-subtitle" />
+            <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
+            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding ValidationIssues}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding}" TextWrapping="Wrap" Classes="row-title" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Border>
 
         <Grid ColumnDefinitions="240,*,320" ColumnSpacing="14">
           <StackPanel Grid.Column="0" Spacing="12">
@@ -44,16 +76,41 @@
                   </Grid>
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                     <StackPanel Grid.Column="0" Spacing="4">
-                      <TextBlock Text="Brain Seed" Classes="muted" />
+                      <TextBlock Text="Brain Seed" Classes="muted"
+                                 ToolTip.Tip="Seed used for deterministic randomness (repro/plasticity/random generation)." />
                       <TextBox Text="{Binding Brain.BrainSeedText}" />
                     </StackPanel>
                     <Button Grid.Column="1" VerticalAlignment="Bottom" Content="Randomize" Command="{Binding RandomizeSeedCommand}" />
                   </Grid>
+                  <TextBlock Text="Seed drives deterministic randomness across sim/repro and random generation." Classes="muted" />
                   <StackPanel Spacing="4">
                     <TextBlock Text="Axon Stride" Classes="muted" />
                     <TextBox Text="{Binding Brain.AxonStrideText}" />
                   </StackPanel>
                 </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="row">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Random Brain" Classes="row-title" />
+                <TextBlock Text="Generate randomized non-input/output regions." Classes="muted" />
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Regions" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomRegionCountText}" />
+                  <TextBlock Grid.Column="2" Text="(non-IO)" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Neurons" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomNeuronCountText}" />
+                  <TextBlock Grid.Column="2" Text="per region" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Axons" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding RandomAxonCountText}" />
+                  <TextBlock Grid.Column="2" Text="per neuron" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Button Content="Generate Random Brain" Command="{Binding NewRandomBrainCommand}" />
               </StackPanel>
             </Border>
 
@@ -111,7 +168,8 @@
                 <TextBlock Text="Snapshot Defaults" Classes="row-title" />
                 <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                   <StackPanel Grid.Column="0" Spacing="4">
-                    <TextBlock Text="Tick" Classes="muted" />
+                    <TextBlock Text="Tick (header)" Classes="muted"
+                               ToolTip.Tip="Snapshot tick id stored in the header; use 0 if unknown." />
                     <TextBox Text="{Binding SnapshotTickText}" />
                   </StackPanel>
                   <StackPanel Grid.Column="1" Spacing="4">
@@ -119,12 +177,38 @@
                     <TextBox Text="{Binding SnapshotEnergyText}" />
                   </StackPanel>
                 </Grid>
+                <TextBlock Text="Tick is stored in the snapshot header only; it does not advance the sim." Classes="muted" TextWrapping="Wrap" />
                 <CheckBox Content="Include enabled bitset" IsChecked="{Binding SnapshotIncludeEnabledBitset}" />
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                  <CheckBox Content="Cost" IsChecked="{Binding SnapshotCostEnabled}" />
-                  <CheckBox Content="Energy" IsChecked="{Binding SnapshotEnergyEnabled}" />
+                  <CheckBox Content="Cost + Energy" IsChecked="{Binding SnapshotCostEnergyEnabled}" />
                   <CheckBox Content="Plasticity" IsChecked="{Binding SnapshotPlasticityEnabled}" />
                 </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Classes="row" IsVisible="{Binding IsDesignVisible}">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Spawn Options" Classes="row-title" />
+                <TextBlock Text="Requires Settings, HiveMind, and IO connections." Classes="muted" />
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="Bind host" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding SpawnBindHost}" />
+                  <TextBlock Grid.Column="2" Text="local" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="BrainHost port" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding SpawnBrainPortText}" />
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                  <TextBlock Text="RegionHost base" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="1" Text="{Binding SpawnRegionPortText}" />
+                  <TextBlock Grid.Column="2" Text="port" Classes="muted" VerticalAlignment="Center" />
+                </Grid>
+                <StackPanel Spacing="4">
+                  <TextBlock Text="Artifact root" Classes="muted" />
+                  <TextBox Text="{Binding SpawnArtifactRoot}" />
+                </StackPanel>
+                <CheckBox Content="Start region hosts (1 per region)" IsChecked="{Binding SpawnStartRegionHosts}" />
               </StackPanel>
             </Border>
           </StackPanel>
@@ -137,7 +221,12 @@
                   <TextBlock Text="{Binding SelectedRegionLabel}" Classes="muted" />
                 </StackPanel>
                 <Button Grid.Column="1" Content="Add Neuron" Command="{Binding AddNeuronCommand}" />
-                <Button Grid.Column="2" Content="Link Axon" Command="{Binding ToggleAxonLinkModeCommand}" />
+                <Button Grid.Column="2"
+                        Content="{Binding AxonLinkButtonLabel}"
+                        Command="{Binding ToggleAxonLinkModeCommand}"
+                        Background="{Binding AxonLinkButtonBackground}"
+                        Foreground="{Binding AxonLinkButtonForeground}"
+                        BorderBrush="{Binding AxonLinkButtonBorder}" />
                 <Button Grid.Column="3" Content="Clear" Command="{Binding ClearSelectionCommand}" />
               </Grid>
               <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}">
@@ -163,11 +252,11 @@
                   <TextBlock Grid.Column="3" Text="{Binding RegionPageCount}" VerticalAlignment="Center" />
                   <TextBlock Grid.Column="4" Text="Size" VerticalAlignment="Center" />
                   <TextBox Grid.Column="5" Text="{Binding RegionPageSizeText}" />
-                  <Grid Grid.Column="6" ColumnDefinitions="Auto,120,Auto" ColumnSpacing="6">
-                    <TextBlock Text="Zoom" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="0.5" Maximum="2.5" Value="{Binding CanvasZoom}" />
-                    <TextBlock Grid.Column="2" Text="{Binding CanvasZoom}" VerticalAlignment="Center" />
-                  </Grid>
+                </Grid>
+                <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8">
+                  <TextBlock Text="Zoom" VerticalAlignment="Center" />
+                  <Slider Grid.Column="1" Minimum="0.5" Maximum="2.5" Value="{Binding CanvasZoom}" />
+                  <TextBlock Grid.Column="2" Text="{Binding CanvasZoom}" VerticalAlignment="Center" />
                 </Grid>
               </StackPanel>
 
@@ -186,6 +275,23 @@
                                        EndPoint="{Binding End}"
                                        Stroke="{Binding Stroke}"
                                        StrokeThickness="{Binding Thickness}" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl ItemsSource="{Binding VisibleEdges}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <Canvas />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:DesignerEdgeViewModel" x:CompileBindings="False">
+                          <TextBlock Text="{Binding Label}"
+                                     IsVisible="{Binding HasLabel}"
+                                     Canvas.Left="{Binding LabelPosition.X}"
+                                     Canvas.Top="{Binding LabelPosition.Y}"
+                                     Classes="muted"
+                                     FontSize="10" />
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -262,38 +368,81 @@
                 <StackPanel Spacing="6">
                   <TextBlock Text="Functions" Classes="row-title" />
                   <StackPanel Spacing="4">
-                    <TextBlock Text="Activation" Classes="muted" />
-                    <ComboBox ItemsSource="{Binding ActivationFunctions}" SelectedIndex="{Binding SelectedNeuron.ActivationFunctionId}" />
+                    <TextBlock Text="Activation" Classes="muted"
+                               ToolTip.Tip="Activation computes potential from buffer B (and params)." />
+                    <ComboBox ItemsSource="{Binding ActivationFunctions}"
+                              SelectedIndex="{Binding SelectedNeuron.ActivationFunctionId}"
+                              ToolTip.Tip="{Binding SelectedActivationDescription}">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:CompileBindings="False">
+                          <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="{Binding SelectedActivationDescription}" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
                   <StackPanel Spacing="4">
-                    <TextBlock Text="Reset" Classes="muted" />
-                    <ComboBox ItemsSource="{Binding ResetFunctions}" SelectedIndex="{Binding SelectedNeuron.ResetFunctionId}" />
+                    <TextBlock Text="Reset" Classes="muted"
+                               ToolTip.Tip="Reset updates buffer after activation using potential P and threshold T." />
+                    <ComboBox ItemsSource="{Binding ResetFunctions}"
+                              SelectedIndex="{Binding SelectedNeuron.ResetFunctionId}"
+                              ToolTip.Tip="{Binding SelectedResetDescription}">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:CompileBindings="False">
+                          <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="{Binding SelectedResetDescription}" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
                   <StackPanel Spacing="4">
-                    <TextBlock Text="Accumulation" Classes="muted" />
-                    <ComboBox ItemsSource="{Binding AccumulationFunctions}" SelectedIndex="{Binding SelectedNeuron.AccumulationFunctionId}" />
+                    <TextBlock Text="Accumulation" Classes="muted"
+                               ToolTip.Tip="Accumulation merges inbox I into buffer B at tick start." />
+                    <ComboBox ItemsSource="{Binding AccumulationFunctions}"
+                              SelectedIndex="{Binding SelectedNeuron.AccumulationFunctionId}"
+                              ToolTip.Tip="{Binding SelectedAccumulationDescription}">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:CompileBindings="False">
+                          <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="{Binding SelectedAccumulationDescription}" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
                 </StackPanel>
 
                 <StackPanel Spacing="6">
                   <TextBlock Text="Parameters" Classes="row-title" />
                   <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
-                    <TextBlock Grid.Row="0" Text="Param A" VerticalAlignment="Center" />
-                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ParamACode}" />
-                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding SelectedNeuron.ParamACode}" />
+                    <TextBlock Grid.Row="0" Text="Param A" VerticalAlignment="Center"
+                               ToolTip.Tip="Param A is used by some activation functions."
+                               IsEnabled="{Binding SelectedNeuronUsesParamA}" />
+                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="63"
+                            Value="{Binding SelectedNeuron.ParamACode}"
+                            IsEnabled="{Binding SelectedNeuronUsesParamA}" />
+                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding SelectedNeuron.ParamACode}"
+                             IsEnabled="{Binding SelectedNeuronUsesParamA}" />
 
-                    <TextBlock Grid.Row="1" Text="Param B" VerticalAlignment="Center" />
-                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ParamBCode}" />
-                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding SelectedNeuron.ParamBCode}" />
+                    <TextBlock Grid.Row="1" Text="Param B" VerticalAlignment="Center"
+                               ToolTip.Tip="Param B is used by some activation functions."
+                               IsEnabled="{Binding SelectedNeuronUsesParamB}" />
+                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="63"
+                            Value="{Binding SelectedNeuron.ParamBCode}"
+                            IsEnabled="{Binding SelectedNeuronUsesParamB}" />
+                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding SelectedNeuron.ParamBCode}"
+                             IsEnabled="{Binding SelectedNeuronUsesParamB}" />
 
-                    <TextBlock Grid.Row="2" Text="Pre-Act Thresh" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="2" Text="Pre-Act Thresh" VerticalAlignment="Center"
+                               ToolTip.Tip="Neuron activates only if buffer B exceeds this threshold." />
                     <Slider Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.PreActivationThresholdCode}" />
                     <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding SelectedNeuron.PreActivationThresholdCode}" />
 
-                    <TextBlock Grid.Row="3" Text="Act Thresh" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="3" Text="Act Thresh" VerticalAlignment="Center"
+                               ToolTip.Tip="Neuron fires when |potential| exceeds this threshold." />
                     <Slider Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="63" Value="{Binding SelectedNeuron.ActivationThresholdCode}" />
                     <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding SelectedNeuron.ActivationThresholdCode}" />
                   </Grid>
+                  <TextBlock Text="Param A/B meaning depends on the activation function; thresholds gate activation and firing." Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
 
                 <StackPanel Spacing="6">
@@ -351,21 +500,6 @@
           </Border>
         </Grid>
 
-        <Border Classes="row">
-          <StackPanel Spacing="6">
-            <TextBlock Text="Validation" Classes="card-subtitle" />
-            <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
-            <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
-              <ItemsControl ItemsSource="{Binding ValidationIssues}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding}" TextWrapping="Wrap" Classes="row-title" />
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </ScrollViewer>
-          </StackPanel>
-        </Border>
       </StackPanel>
     </ScrollViewer>
   </Border>

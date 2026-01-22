@@ -485,13 +485,17 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
     private bool _isSelected;
     private IBrush _stroke;
     private double _thickness;
+    private string? _label;
+    private Point _labelPosition;
 
-    public DesignerEdgeViewModel(Point start, Point end, bool isPreview, bool isSelected)
+    public DesignerEdgeViewModel(Point start, Point end, bool isPreview, bool isSelected, string? label = null, Point? labelPosition = null)
     {
         _start = start;
         _end = end;
         _isPreview = isPreview;
         _isSelected = isSelected;
+        _label = label;
+        _labelPosition = labelPosition ?? default;
         _stroke = DesignerBrushes.Border;
         _thickness = 1;
         UpdateAppearance();
@@ -545,6 +549,26 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         private set => SetProperty(ref _thickness, value);
     }
 
+    public string? Label
+    {
+        get => _label;
+        set
+        {
+            if (SetProperty(ref _label, value))
+            {
+                OnPropertyChanged(nameof(HasLabel));
+            }
+        }
+    }
+
+    public bool HasLabel => !string.IsNullOrWhiteSpace(_label);
+
+    public Point LabelPosition
+    {
+        get => _labelPosition;
+        set => SetProperty(ref _labelPosition, value);
+    }
+
     private void UpdateAppearance()
     {
         if (_isPreview)
@@ -567,14 +591,20 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
 
 public sealed class DesignerFunctionOption
 {
-    public DesignerFunctionOption(int id, string label)
+    public DesignerFunctionOption(int id, string label, string description = "", bool usesParamA = false, bool usesParamB = false)
     {
         Id = id;
         Label = label;
+        Description = description;
+        UsesParamA = usesParamA;
+        UsesParamB = usesParamB;
     }
 
     public int Id { get; }
     public string Label { get; }
+    public string Description { get; }
+    public bool UsesParamA { get; }
+    public bool UsesParamB { get; }
 
     public override string ToString() => Label;
 }

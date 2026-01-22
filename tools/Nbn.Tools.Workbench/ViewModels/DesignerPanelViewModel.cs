@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -10,12 +11,15 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
 using Nbn.Shared.Validation;
+using Nbn.Tools.Workbench.Services;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
@@ -23,12 +27,19 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 {
     private const string NoDocumentStatus = "No file loaded.";
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
+    private const string OutputCoordinatorPrefix = "io-output-";
     private const double BaseCanvasNodeSize = 36;
     private const double BaseCanvasGap = 14;
     private const double CanvasPadding = 16;
+    private readonly ConnectionViewModel _connections;
+    private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
     private string _status = "Designer ready.";
     private string _loadedSummary = NoDocumentStatus;
     private string _validationSummary = "Validation not run.";
+    private bool _validationHasRun;
+    private bool _validationPassed;
+    private bool _designDirty;
+    private bool _resetPending;
     private DesignerDocumentType _documentType = DesignerDocumentType.None;
     private byte[]? _snapshotBytes;
     private string? _documentPath;
@@ -43,8 +54,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private DesignerNeuronViewModel? _hoveredNeuron;
     private bool _isAxonLinkMode;
     private int _defaultAxonStrength = 24;
-    private int _regionPageSize = 64;
-    private string _regionPageSizeText = "64";
+    private int _regionPageSize = 256;
+    private string _regionPageSizeText = "256";
     private int _regionPageIndex;
     private string _regionPageIndexText = "1";
     private int _regionPageCount = 1;
@@ -60,12 +71,24 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _snapshotTickText = "0";
     private string _snapshotEnergyText = "0";
     private bool _snapshotIncludeEnabledBitset = true;
-    private bool _snapshotCostEnabled;
-    private bool _snapshotEnergyEnabled;
+    private bool _snapshotCostEnergyEnabled;
     private bool _snapshotPlasticityEnabled;
+    private string _spawnBindHost = "127.0.0.1";
+    private string _spawnBrainPortText = "12011";
+    private string _spawnRegionPortText = "12040";
+    private string _spawnArtifactRoot = BuildDefaultArtifactRoot();
+    private bool _spawnStartRegionHosts = true;
+    private string _randomRegionCountText = "3";
+    private string _randomNeuronCountText = "64";
+    private string _randomAxonCountText = "8";
 
-    public DesignerPanelViewModel()
+    public DesignerPanelViewModel(ConnectionViewModel connections)
     {
+        _connections = connections;
+        _spawnBindHost = string.IsNullOrWhiteSpace(connections.LocalBindHost) ? "127.0.0.1" : connections.LocalBindHost;
+        _spawnBrainPortText = connections.SampleBrainPortText;
+        _spawnRegionPortText = connections.SampleRegionPortText;
+        _spawnArtifactRoot = BuildDefaultArtifactRoot();
         ValidationIssues = new ObservableCollection<string>();
         VisibleNeurons = new ObservableCollection<DesignerNeuronViewModel>();
         VisibleEdges = new ObservableCollection<DesignerEdgeViewModel>();
@@ -75,11 +98,14 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         AccumulationFunctions = new ObservableCollection<DesignerFunctionOption>(BuildAccumulationFunctions());
 
         NewBrainCommand = new RelayCommand(NewBrain);
+        NewRandomBrainCommand = new RelayCommand(NewRandomBrain);
+        ResetBrainCommand = new RelayCommand(ResetBrain, () => CanResetBrain);
         ImportNbnCommand = new AsyncRelayCommand(ImportNbnAsync);
         ImportNbsCommand = new AsyncRelayCommand(ImportNbsAsync);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => _documentType != DesignerDocumentType.None);
         ExportSnapshotCommand = new AsyncRelayCommand(ExportSnapshotAsync, () => CanExportSnapshot);
         ValidateCommand = new RelayCommand(Validate, () => _documentType != DesignerDocumentType.None);
+        SpawnBrainCommand = new AsyncRelayCommand(SpawnBrainAsync, () => CanSpawnBrain);
 
         SelectRegionCommand = new RelayCommand<DesignerRegionViewModel>(SelectRegion);
         SelectNeuronCommand = new RelayCommand<DesignerNeuronViewModel>(HandleNeuronSelection);
@@ -196,6 +222,11 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
                 OnPropertyChanged(nameof(SelectedNeuronLabel));
                 OnPropertyChanged(nameof(HasNeuronSelection));
+                OnPropertyChanged(nameof(SelectedNeuronUsesParamA));
+                OnPropertyChanged(nameof(SelectedNeuronUsesParamB));
+                OnPropertyChanged(nameof(SelectedActivationDescription));
+                OnPropertyChanged(nameof(SelectedResetDescription));
+                OnPropertyChanged(nameof(SelectedAccumulationDescription));
                 UpdateJumpNeuronText();
                 RefreshEdges();
                 UpdateCommandStates();
@@ -240,6 +271,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 }
 
                 OnPropertyChanged(nameof(AxonLinkStatus));
+                OnPropertyChanged(nameof(AxonLinkButtonLabel));
+                OnPropertyChanged(nameof(AxonLinkButtonBackground));
+                OnPropertyChanged(nameof(AxonLinkButtonForeground));
+                OnPropertyChanged(nameof(AxonLinkButtonBorder));
             }
         }
     }
@@ -395,22 +430,64 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         set => SetProperty(ref _snapshotIncludeEnabledBitset, value);
     }
 
-    public bool SnapshotCostEnabled
+    public bool SnapshotCostEnergyEnabled
     {
-        get => _snapshotCostEnabled;
-        set => SetProperty(ref _snapshotCostEnabled, value);
-    }
-
-    public bool SnapshotEnergyEnabled
-    {
-        get => _snapshotEnergyEnabled;
-        set => SetProperty(ref _snapshotEnergyEnabled, value);
+        get => _snapshotCostEnergyEnabled;
+        set => SetProperty(ref _snapshotCostEnergyEnabled, value);
     }
 
     public bool SnapshotPlasticityEnabled
     {
         get => _snapshotPlasticityEnabled;
         set => SetProperty(ref _snapshotPlasticityEnabled, value);
+    }
+
+    public string SpawnBindHost
+    {
+        get => _spawnBindHost;
+        set => SetProperty(ref _spawnBindHost, value);
+    }
+
+    public string SpawnBrainPortText
+    {
+        get => _spawnBrainPortText;
+        set => SetProperty(ref _spawnBrainPortText, value);
+    }
+
+    public string SpawnRegionPortText
+    {
+        get => _spawnRegionPortText;
+        set => SetProperty(ref _spawnRegionPortText, value);
+    }
+
+    public string SpawnArtifactRoot
+    {
+        get => _spawnArtifactRoot;
+        set => SetProperty(ref _spawnArtifactRoot, value);
+    }
+
+    public bool SpawnStartRegionHosts
+    {
+        get => _spawnStartRegionHosts;
+        set => SetProperty(ref _spawnStartRegionHosts, value);
+    }
+
+    public string RandomRegionCountText
+    {
+        get => _randomRegionCountText;
+        set => SetProperty(ref _randomRegionCountText, value);
+    }
+
+    public string RandomNeuronCountText
+    {
+        get => _randomNeuronCountText;
+        set => SetProperty(ref _randomNeuronCountText, value);
+    }
+
+    public string RandomAxonCountText
+    {
+        get => _randomAxonCountText;
+        set => SetProperty(ref _randomAxonCountText, value);
     }
 
     public bool IsDesignLoaded => _documentType == DesignerDocumentType.Nbn && Brain is not null;
@@ -420,6 +497,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     public bool CanToggleNeuron => CanEditDesign && SelectedNeuron is not null && !SelectedNeuron.IsRequired;
     public bool CanRemoveAxon => CanEditDesign && SelectedAxon is not null && SelectedNeuron is not null;
     public bool CanExportSnapshot => IsDesignLoaded;
+    public bool CanSpawnBrain => IsDesignLoaded;
+    public bool CanResetBrain => IsDesignLoaded;
+    public bool IsDesignDirty => _designDirty;
 
     public bool IsDesignVisible => IsDesignLoaded;
     public bool IsSnapshotVisible => IsSnapshotLoaded;
@@ -433,6 +513,32 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         ? "No neuron selected"
         : $"Region {SelectedNeuron.RegionId} / Neuron {SelectedNeuron.NeuronId}";
 
+    public bool SelectedNeuronUsesParamA => SelectedNeuron is not null && UsesParamA(SelectedNeuron.ActivationFunctionId);
+
+    public bool SelectedNeuronUsesParamB => SelectedNeuron is not null && UsesParamB(SelectedNeuron.ActivationFunctionId);
+
+    public string SelectedActivationDescription => DescribeActivation(SelectedNeuron?.ActivationFunctionId ?? 0);
+
+    public string SelectedResetDescription => DescribeReset(SelectedNeuron?.ResetFunctionId ?? 0);
+
+    public string SelectedAccumulationDescription => DescribeAccumulation(SelectedNeuron?.AccumulationFunctionId ?? 0);
+
+    public string AxonLinkButtonLabel => IsAxonLinkMode ? "Exit Link Mode" : "Link Axon";
+
+    public IBrush AxonLinkButtonBackground => IsAxonLinkMode ? DesignerBrushes.Accent : DesignerBrushes.SurfaceAlt;
+
+    public IBrush AxonLinkButtonForeground => IsAxonLinkMode ? DesignerBrushes.OnAccent : DesignerBrushes.Ink;
+
+    public IBrush AxonLinkButtonBorder => IsAxonLinkMode ? DesignerBrushes.Accent : DesignerBrushes.Border;
+
+    public string ResetBrainButtonLabel => _resetPending ? "Confirm Reset" : "Reset Brain";
+
+    public IBrush ResetBrainButtonBackground => _resetPending ? DesignerBrushes.Accent : DesignerBrushes.SurfaceAlt;
+
+    public IBrush ResetBrainButtonForeground => _resetPending ? DesignerBrushes.OnAccent : DesignerBrushes.Ink;
+
+    public IBrush ResetBrainButtonBorder => _resetPending ? DesignerBrushes.Accent : DesignerBrushes.Border;
+
     public string AxonLinkStatus
     {
         get
@@ -444,19 +550,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
             if (_pendingAxonSource is null)
             {
-                return "Axon link mode: click a source neuron.";
+                return "Axon link mode: click a source neuron (click Link Axon again to exit).";
             }
 
-            return $"Axon link mode: source N{_pendingAxonSource.NeuronId} set. Click a target neuron.";
+            return $"Axon link mode: source N{_pendingAxonSource.NeuronId} set. Click a target neuron or click Link Axon again to exit.";
         }
     }
 
     public RelayCommand NewBrainCommand { get; }
+    public RelayCommand NewRandomBrainCommand { get; }
+    public RelayCommand ResetBrainCommand { get; }
     public AsyncRelayCommand ImportNbnCommand { get; }
     public AsyncRelayCommand ImportNbsCommand { get; }
     public AsyncRelayCommand ExportCommand { get; }
     public AsyncRelayCommand ExportSnapshotCommand { get; }
     public RelayCommand ValidateCommand { get; }
+    public AsyncRelayCommand SpawnBrainCommand { get; }
     public RelayCommand<DesignerRegionViewModel> SelectRegionCommand { get; }
     public RelayCommand<DesignerNeuronViewModel> SelectNeuronCommand { get; }
     public RelayCommand<DesignerAxonViewModel> SelectAxonCommand { get; }
@@ -477,6 +586,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private void NewBrain()
     {
+        ClearResetConfirmation();
         var seed = GenerateSeed();
         var brainId = Guid.NewGuid();
         var brain = new DesignerBrainViewModel("Untitled Brain", brainId, seed, 1024);
@@ -503,12 +613,190 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         SelectRegion(inputRegion);
         SelectNeuron(inputRegion.Neurons.FirstOrDefault());
+        SetDesignDirty(true);
         ResetValidation();
         UpdateLoadedSummary();
         Status = "New brain created.";
         RefreshRegionView();
         ExportCommand.RaiseCanExecuteChanged();
         ValidateCommand.RaiseCanExecuteChanged();
+        SpawnBrainCommand.RaiseCanExecuteChanged();
+        ResetBrainCommand.RaiseCanExecuteChanged();
+    }
+
+    private void NewRandomBrain()
+    {
+        ClearResetConfirmation();
+        if (!int.TryParse(RandomRegionCountText, out var regionCount) || regionCount < 0)
+        {
+            Status = "Random region count must be a non-negative integer.";
+            return;
+        }
+
+        if (!int.TryParse(RandomNeuronCountText, out var neuronsPerRegion) || neuronsPerRegion < 1)
+        {
+            Status = "Random neurons per region must be a positive integer.";
+            return;
+        }
+
+        if (!int.TryParse(RandomAxonCountText, out var axonsPerNeuron) || axonsPerNeuron < 0)
+        {
+            Status = "Random axons per neuron must be a non-negative integer.";
+            return;
+        }
+
+        regionCount = Math.Clamp(regionCount, 0, NbnConstants.RegionCount - 2);
+        neuronsPerRegion = Math.Min(neuronsPerRegion, NbnConstants.MaxAxonTargetNeuronId);
+        axonsPerNeuron = Math.Min(axonsPerNeuron, NbnConstants.MaxAxonsPerNeuron);
+
+        var seed = GenerateSeed();
+        var brainId = Guid.NewGuid();
+        var brain = new DesignerBrainViewModel("Random Brain", brainId, seed, 1024);
+
+        var rng = new Random(unchecked((int)seed));
+        var randomRegions = Enumerable.Range(1, NbnConstants.RegionCount - 2)
+            .OrderBy(_ => rng.Next())
+            .Take(regionCount)
+            .ToHashSet();
+
+        for (var i = 0; i < NbnConstants.RegionCount; i++)
+        {
+            var region = new DesignerRegionViewModel(i);
+            var targetCount = 0;
+            if (i == NbnConstants.InputRegionId || i == NbnConstants.OutputRegionId)
+            {
+                targetCount = 1;
+            }
+            else if (randomRegions.Contains(i))
+            {
+                targetCount = neuronsPerRegion;
+            }
+
+            for (var n = 0; n < targetCount; n++)
+            {
+                region.Neurons.Add(CreateDefaultNeuron(region, n));
+            }
+
+            region.UpdateCounts();
+            brain.Regions.Add(region);
+        }
+
+        var regionsWithNeurons = brain.Regions.Where(r => r.NeuronCount > 0).ToList();
+        foreach (var region in regionsWithNeurons)
+        {
+            var validTargets = regionsWithNeurons
+                .Where(target => target.RegionId != NbnConstants.InputRegionId
+                                 && !(region.RegionId == NbnConstants.OutputRegionId && target.RegionId == NbnConstants.OutputRegionId))
+                .ToList();
+            if (validTargets.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var neuron in region.Neurons)
+            {
+                if (!neuron.Exists)
+                {
+                    continue;
+                }
+
+                var targetAxons = Math.Clamp((int)Math.Round(axonsPerNeuron * (0.5 + rng.NextDouble())), 0, axonsPerNeuron);
+                if (targetAxons == 0)
+                {
+                    continue;
+                }
+
+                var seen = new HashSet<(int regionId, int neuronId)>();
+                var attempts = 0;
+                while (seen.Count < targetAxons && attempts < targetAxons * 6)
+                {
+                    attempts++;
+                    var targetRegion = validTargets[rng.Next(validTargets.Count)];
+                    if (targetRegion.NeuronCount == 0)
+                    {
+                        continue;
+                    }
+
+                    var targetNeuronId = rng.Next(targetRegion.NeuronCount);
+                    if (!seen.Add((targetRegion.RegionId, targetNeuronId)))
+                    {
+                        continue;
+                    }
+
+                    var strength = rng.Next(0, 32);
+                    neuron.Axons.Add(new DesignerAxonViewModel(targetRegion.RegionId, targetNeuronId, strength));
+                }
+
+                neuron.UpdateAxonCount();
+            }
+
+            region.UpdateCounts();
+        }
+
+        brain.UpdateTotals();
+
+        SetDocumentType(DesignerDocumentType.Nbn);
+        Brain = brain;
+        _snapshotBytes = null;
+        _documentPath = null;
+        _nbsHeader = null;
+        _nbsRegions = null;
+        _nbsOverlay = null;
+
+        var inputRegion = brain.Regions[NbnConstants.InputRegionId];
+        SelectRegion(inputRegion);
+        SelectNeuron(inputRegion.Neurons.FirstOrDefault());
+        SetDesignDirty(true);
+        ResetValidation();
+        UpdateLoadedSummary();
+        Status = "Random brain created.";
+        RefreshRegionView();
+        ExportCommand.RaiseCanExecuteChanged();
+        ValidateCommand.RaiseCanExecuteChanged();
+        SpawnBrainCommand.RaiseCanExecuteChanged();
+        ResetBrainCommand.RaiseCanExecuteChanged();
+    }
+
+    private void ResetBrain()
+    {
+        if (Brain is null)
+        {
+            Status = "No design loaded.";
+            return;
+        }
+
+        if (IsDesignDirty && !_resetPending)
+        {
+            _resetPending = true;
+            OnPropertyChanged(nameof(ResetBrainButtonLabel));
+            OnPropertyChanged(nameof(ResetBrainButtonBackground));
+            OnPropertyChanged(nameof(ResetBrainButtonForeground));
+            OnPropertyChanged(nameof(ResetBrainButtonBorder));
+            Status = "Reset pending: click again to confirm.";
+            return;
+        }
+
+        ClearResetConfirmation();
+
+        foreach (var region in Brain.Regions)
+        {
+            region.Neurons.Clear();
+            if (region.IsInput || region.IsOutput)
+            {
+                region.Neurons.Add(CreateDefaultNeuron(region, 0));
+            }
+
+            region.UpdateCounts();
+        }
+
+        Brain.UpdateTotals();
+        SelectRegion(Brain.Regions[NbnConstants.InputRegionId]);
+        SelectNeuron(Brain.Regions[NbnConstants.InputRegionId].Neurons.FirstOrDefault());
+        SetDesignDirty(true);
+        ResetValidation();
+        UpdateLoadedSummary();
+        RefreshRegionView();
+        Status = "Brain reset.";
     }
 
     private async Task ImportNbnAsync()
@@ -541,10 +829,13 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
             LoadedSummary = BuildDesignSummary(brain, file.Name);
             Status = "NBN imported.";
+            SetDesignDirty(false);
             ResetValidation();
             RefreshRegionView();
             ExportCommand.RaiseCanExecuteChanged();
             ValidateCommand.RaiseCanExecuteChanged();
+            SpawnBrainCommand.RaiseCanExecuteChanged();
+            ResetBrainCommand.RaiseCanExecuteChanged();
         }
         catch (Exception ex)
         {
@@ -579,9 +870,12 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
             LoadedSummary = BuildNbsSummary(file.Name, header, regions, overlay);
             Status = "NBS imported.";
+            SetDesignDirty(false);
             ResetValidation();
             ExportCommand.RaiseCanExecuteChanged();
             ValidateCommand.RaiseCanExecuteChanged();
+            SpawnBrainCommand.RaiseCanExecuteChanged();
+            ResetBrainCommand.RaiseCanExecuteChanged();
         }
         catch (Exception ex)
         {
@@ -643,6 +937,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         {
             var bytes = NbnBinary.WriteNbn(header, sections);
             await WriteAllBytesAsync(saveFile, bytes);
+            SetDesignDirty(false);
             Status = $"Exported to {FormatPath(saveFile)}.";
         }
         catch (Exception ex)
@@ -680,6 +975,197 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         catch (Exception ex)
         {
             Status = $"Export failed: {ex.Message}";
+        }
+    }
+
+    private async Task SpawnBrainAsync()
+    {
+        ClearResetConfirmation();
+        if (Brain is null || !IsDesignLoaded)
+        {
+            Status = "No design loaded.";
+            return;
+        }
+
+        if (!_connections.SettingsConnected || !_connections.HiveMindConnected || !_connections.IoConnected)
+        {
+            Status = "Connect Settings, HiveMind, and IO first.";
+            return;
+        }
+
+        if (!_validationHasRun)
+        {
+            Validate();
+        }
+
+        if (!_validationPassed)
+        {
+            Status = "Spawn canceled: validation failed.";
+            return;
+        }
+
+        Status = "Spawning brain...";
+
+        try
+        {
+            if (!TryBuildNbn(out var header, out var sections, out var error))
+            {
+                Status = error ?? "Spawn failed.";
+                return;
+            }
+
+            if (!TryParsePort(SpawnBrainPortText, out var brainPort))
+            {
+                Status = "Invalid BrainHost port.";
+                return;
+            }
+
+            var regionPortBase = 0;
+            if (SpawnStartRegionHosts && !TryParsePort(SpawnRegionPortText, out regionPortBase))
+            {
+                Status = "Invalid RegionHost port.";
+                return;
+            }
+
+            if (!TryParsePort(_connections.SettingsPortText, out var settingsPort))
+            {
+                Status = "Invalid Settings port.";
+                return;
+            }
+
+            if (!TryParsePort(_connections.HiveMindPortText, out var hivePort))
+            {
+                Status = "Invalid HiveMind port.";
+                return;
+            }
+
+            if (!TryParsePort(_connections.IoPortText, out var ioPort))
+            {
+                Status = "Invalid IO port.";
+                return;
+            }
+
+            var brainId = Brain.BrainId;
+            if (_spawnedBrains.TryGetValue(brainId, out var existing))
+            {
+                if (existing.IsRunning)
+                {
+                    Status = $"Brain already spawned ({brainId:D}).";
+                    return;
+                }
+
+                _spawnedBrains.Remove(brainId);
+            }
+
+            var bindHost = string.IsNullOrWhiteSpace(SpawnBindHost) ? "127.0.0.1" : SpawnBindHost;
+            var artifactRoot = string.IsNullOrWhiteSpace(SpawnArtifactRoot) ? BuildDefaultArtifactRoot() : SpawnArtifactRoot;
+            var brainArtifactRoot = Path.Combine(artifactRoot, brainId.ToString("N"));
+            Directory.CreateDirectory(brainArtifactRoot);
+
+            var nbnBytes = NbnBinary.WriteNbn(header, sections);
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(brainArtifactRoot));
+            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
+            var artifactSha = manifest.ArtifactId.ToHex();
+            var artifactSize = manifest.ByteLength;
+
+            var brainHostProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.BrainHost");
+            if (string.IsNullOrWhiteSpace(brainHostProjectPath))
+            {
+                Status = "BrainHost project not found.";
+                return;
+            }
+
+            var inputWidth = Brain.Regions[NbnConstants.InputRegionId].NeuronCount;
+            var outputWidth = Brain.Regions[NbnConstants.OutputRegionId].NeuronCount;
+            var hiveAddress = $"{_connections.HiveMindHost}:{hivePort}";
+            var ioAddress = $"{_connections.IoHost}:{ioPort}";
+            var routerId = $"designer-router-{brainId:N}";
+            var brainRootId = $"designer-root-{brainId:N}";
+            var brainHostArgs = $"--bind-host {bindHost} --port {brainPort}"
+                                + $" --brain-id {brainId:D}"
+                                + $" --router-id {routerId}"
+                                + $" --brain-root-id {brainRootId}"
+                                + $" --hivemind-address {hiveAddress}"
+                                + $" --hivemind-id {_connections.HiveMindName}"
+                                + $" --io-address {ioAddress}"
+                                + $" --io-id {_connections.IoGateway}"
+                                + $" --settings-host {_connections.SettingsHost}"
+                                + $" --settings-port {settingsPort}"
+                                + $" --settings-name {_connections.SettingsName}"
+                                + $" --input-width {inputWidth}"
+                                + $" --output-width {outputWidth}";
+            var brainHostInfo = BuildServiceStartInfo(brainHostProjectPath, "Nbn.Runtime.BrainHost", brainHostArgs);
+            var brainHostRunner = new LocalServiceRunner();
+            var brainResult = await brainHostRunner.StartAsync(brainHostInfo, waitForExit: false, label: $"DesignerBrainHost-{brainId:N}");
+            if (!brainResult.Success)
+            {
+                Status = $"BrainHost failed: {brainResult.Message}";
+                return;
+            }
+
+            var regionRunners = new List<LocalServiceRunner>();
+            if (SpawnStartRegionHosts)
+            {
+                var regionProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.RegionHost");
+                if (string.IsNullOrWhiteSpace(regionProjectPath))
+                {
+                    Status = "RegionHost project not found.";
+                    await brainHostRunner.StopAsync();
+                    return;
+                }
+
+                var routerAddress = $"{bindHost}:{brainPort}";
+                var regionPort = regionPortBase;
+                foreach (var region in Brain.Regions.Where(r => r.NeuronCount > 0))
+                {
+                    var outputArgs = string.Empty;
+                    if (region.RegionId == NbnConstants.OutputRegionId)
+                    {
+                        var outputId = OutputCoordinatorPrefix + brainId.ToString("N");
+                        outputArgs = $" --output-address {ioAddress} --output-id {outputId}";
+                    }
+
+                    var regionArgs = $"--bind-host {bindHost} --port {regionPort}"
+                                     + $" --settings-host {_connections.SettingsHost}"
+                                     + $" --settings-port {settingsPort}"
+                                     + $" --settings-name {_connections.SettingsName}"
+                                     + $" --brain-id {brainId:D}"
+                                     + $" --region {region.RegionId}"
+                                     + $" --neuron-start 0"
+                                     + $" --neuron-count {region.NeuronCount}"
+                                     + " --shard-index 0"
+                                     + $" --router-address {routerAddress}"
+                                     + $" --router-id {routerId}"
+                                     + $" --tick-address {hiveAddress}"
+                                     + $" --tick-id {_connections.HiveMindName}"
+                                     + $" --nbn-sha256 {artifactSha}"
+                                     + $" --nbn-size {artifactSize}"
+                                     + $" --artifact-root \"{brainArtifactRoot}\""
+                                     + outputArgs;
+
+                    var regionInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", regionArgs);
+                    var regionRunner = new LocalServiceRunner();
+                    var regionResult = await regionRunner.StartAsync(regionInfo, waitForExit: false, label: $"DesignerRegion{region.RegionId}-{brainId:N}");
+                    if (!regionResult.Success)
+                    {
+                        Status = $"RegionHost {region.RegionId} failed: {regionResult.Message}";
+                        await StopSpawnedAsync(brainHostRunner, regionRunners);
+                        return;
+                    }
+
+                    regionRunners.Add(regionRunner);
+                    regionPort++;
+                }
+            }
+
+            _spawnedBrains[brainId] = new DesignerSpawnState(brainHostRunner, regionRunners, brainArtifactRoot);
+            Status = SpawnStartRegionHosts
+                ? $"Brain spawned ({brainId:D})."
+                : $"Brain spawned ({brainId:D}). Region hosts not started.";
+        }
+        catch (Exception ex)
+        {
+            Status = $"Spawn failed: {ex.Message}";
         }
     }
 
@@ -723,6 +1209,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             ValidationIssues.Add(issue.ToString());
         }
 
+        _validationHasRun = true;
+        _validationPassed = result.IsValid;
         ValidationSummary = result.IsValid
             ? "Validation passed."
             : $"Validation found {result.Issues.Count} issue(s).";
@@ -745,6 +1233,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         SelectNeuron(neuron);
         UpdateLoadedSummary();
         MarkDesignDirty();
+        RefreshRegionView();
         Status = $"Neuron {neuron.NeuronId} added to region {SelectedRegion.RegionId}.";
     }
 
@@ -938,6 +1427,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             if (TryAddAxon(_pendingAxonSource, neuron, out var message))
             {
                 Status = message ?? "Axon added.";
+                IsAxonLinkMode = false;
             }
             else
             {
@@ -1225,8 +1715,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private void MarkDesignDirty()
     {
-        ValidationSummary = "Validation not run.";
-        ValidationIssues.Clear();
+        ClearResetConfirmation();
+        SetDesignDirty(true);
+        ResetValidation();
     }
 
     private void SetRegionPageIndex(int index)
@@ -1357,18 +1848,25 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         var visible = 0;
         var offPage = 0;
+        var offPageAxons = new List<(DesignerAxonViewModel Axon, bool IsSelected)>();
 
         foreach (var axon in source.Axons)
         {
             if (axon.TargetRegionId != SelectedRegion.RegionId)
             {
                 offPage++;
+                offPageAxons.Add((axon, SelectedAxon is not null
+                    && SelectedAxon.TargetRegionId == axon.TargetRegionId
+                    && SelectedAxon.TargetNeuronId == axon.TargetNeuronId));
                 continue;
             }
 
             if (!positions.TryGetValue(axon.TargetNeuronId, out var end))
             {
                 offPage++;
+                offPageAxons.Add((axon, SelectedAxon is not null
+                    && SelectedAxon.TargetRegionId == axon.TargetRegionId
+                    && SelectedAxon.TargetNeuronId == axon.TargetNeuronId));
                 continue;
             }
 
@@ -1378,6 +1876,23 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
             VisibleEdges.Add(new DesignerEdgeViewModel(start, end, false, isSelected));
             visible++;
+        }
+
+        if (offPageAxons.Count > 0)
+        {
+            var radius = CanvasNodeRadius + 26;
+            for (var i = 0; i < offPageAxons.Count; i++)
+            {
+                var entry = offPageAxons[i];
+                var angle = (Math.PI * 2d * i) / offPageAxons.Count;
+                var endX = start.X + Math.Cos(angle) * radius;
+                var endY = start.Y + Math.Sin(angle) * radius;
+                var endPoint = new Point(endX, endY);
+                var labelText = BuildOffPageLabel(entry.Axon);
+                var labelPoint = new Point(endPoint.X + 4, endPoint.Y - 6);
+                labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight);
+                VisibleEdges.Add(new DesignerEdgeViewModel(start, endPoint, false, entry.IsSelected, labelText, labelPoint));
+            }
         }
 
         if (IsAxonLinkMode && _pendingAxonSource is not null && _hoveredNeuron is not null && _hoveredNeuron != _pendingAxonSource)
@@ -1391,6 +1906,26 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         EdgeSummary = source.Axons.Count == 0
             ? "No outgoing axons."
             : $"Edges shown: {visible} (off-page {offPage})";
+    }
+
+    private string BuildOffPageLabel(DesignerAxonViewModel axon)
+    {
+        if (SelectedRegion is null || axon.TargetRegionId != SelectedRegion.RegionId)
+        {
+            return $"R{axon.TargetRegionId} N{axon.TargetNeuronId}";
+        }
+
+        var page = _regionPageSize == 0 ? 0 : axon.TargetNeuronId / _regionPageSize;
+        return $"P{page + 1} N{axon.TargetNeuronId}";
+    }
+
+    private static Point ClampToCanvas(Point point, double width, double height)
+    {
+        var maxX = Math.Max(0, width - 10);
+        var maxY = Math.Max(0, height - 10);
+        return new Point(
+            Clamp(point.X, 0, maxX),
+            Clamp(point.Y, 0, maxY));
     }
 
     private void EnsureNeuronVisible(DesignerNeuronViewModel neuron)
@@ -1514,13 +2049,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             flags |= 0x1u;
         }
 
-        if (SnapshotCostEnabled)
+        if (SnapshotCostEnergyEnabled)
         {
             flags |= 0x4u;
-        }
-
-        if (SnapshotEnergyEnabled)
-        {
             flags |= 0x8u;
         }
 
@@ -1598,6 +2129,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             or nameof(DesignerNeuronViewModel.Exists))
         {
             MarkDesignDirty();
+            if (e.PropertyName == nameof(DesignerNeuronViewModel.ActivationFunctionId))
+            {
+                OnPropertyChanged(nameof(SelectedNeuronUsesParamA));
+                OnPropertyChanged(nameof(SelectedNeuronUsesParamB));
+                OnPropertyChanged(nameof(SelectedActivationDescription));
+            }
+
+            if (e.PropertyName == nameof(DesignerNeuronViewModel.ResetFunctionId))
+            {
+                OnPropertyChanged(nameof(SelectedResetDescription));
+            }
+
+            if (e.PropertyName == nameof(DesignerNeuronViewModel.AccumulationFunctionId))
+            {
+                OnPropertyChanged(nameof(SelectedAccumulationDescription));
+            }
         }
     }
 
@@ -1627,6 +2174,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         JumpToNeuronCommand.RaiseCanExecuteChanged();
         AddAxonByIdCommand.RaiseCanExecuteChanged();
         ExportSnapshotCommand.RaiseCanExecuteChanged();
+        ResetBrainCommand.RaiseCanExecuteChanged();
+        SpawnBrainCommand.RaiseCanExecuteChanged();
     }
 
     private void SetDocumentType(DesignerDocumentType documentType)
@@ -1643,12 +2192,41 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsSnapshotVisible));
         OnPropertyChanged(nameof(DesignHint));
         OnPropertyChanged(nameof(CanExportSnapshot));
+        OnPropertyChanged(nameof(CanSpawnBrain));
+        OnPropertyChanged(nameof(CanResetBrain));
     }
 
     private void ResetValidation()
     {
         ValidationIssues.Clear();
         ValidationSummary = "Validation not run.";
+        _validationHasRun = false;
+        _validationPassed = false;
+    }
+
+    private void SetDesignDirty(bool isDirty)
+    {
+        if (SetProperty(ref _designDirty, isDirty, nameof(IsDesignDirty)))
+        {
+            if (!isDirty)
+            {
+                ClearResetConfirmation();
+            }
+        }
+    }
+
+    private void ClearResetConfirmation()
+    {
+        if (!_resetPending)
+        {
+            return;
+        }
+
+        _resetPending = false;
+        OnPropertyChanged(nameof(ResetBrainButtonLabel));
+        OnPropertyChanged(nameof(ResetBrainButtonBackground));
+        OnPropertyChanged(nameof(ResetBrainButtonForeground));
+        OnPropertyChanged(nameof(ResetBrainButtonBorder));
     }
 
     private void UpdateLoadedSummary()
@@ -1888,7 +2466,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         var isRequired = region.IsInput || region.IsOutput;
         return new DesignerNeuronViewModel(region.RegionId, neuronId, true, isRequired)
         {
-            ActivationFunctionId = 1,
+            ActivationFunctionId = 11,
             ResetFunctionId = 0,
             AccumulationFunctionId = 0,
             ParamACode = 0,
@@ -1967,41 +2545,41 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         var list = new List<DesignerFunctionOption>
         {
-            new(0, "ACT_NONE (0)"),
-            new(1, "ACT_IDENTITY (1)"),
-            new(2, "ACT_STEP_UP (2)"),
-            new(3, "ACT_STEP_MID (3)"),
-            new(4, "ACT_STEP_DOWN (4)"),
-            new(5, "ACT_ABS (5)"),
-            new(6, "ACT_CLAMP (6)"),
-            new(7, "ACT_RELU (7)"),
-            new(8, "ACT_NRELU (8)"),
-            new(9, "ACT_SIN (9)"),
-            new(10, "ACT_TAN (10)"),
-            new(11, "ACT_TANH (11)"),
-            new(12, "ACT_ELU (12)"),
-            new(13, "ACT_EXP (13)"),
-            new(14, "ACT_PRELU (14)"),
-            new(15, "ACT_LOG (15)"),
-            new(16, "ACT_MULT (16)"),
-            new(17, "ACT_ADD (17)"),
-            new(18, "ACT_SIG (18)"),
-            new(19, "ACT_SILU (19)"),
-            new(20, "ACT_PCLAMP (20)"),
-            new(21, "ACT_MODL (21)"),
-            new(22, "ACT_MODR (22)"),
-            new(23, "ACT_SOFTP (23)"),
-            new(24, "ACT_SELU (24)"),
-            new(25, "ACT_LIN (25)"),
-            new(26, "ACT_LOGB (26)"),
-            new(27, "ACT_POW (27)"),
-            new(28, "ACT_GAUSS (28)"),
-            new(29, "ACT_QUAD (29)")
+            new(0, "ACT_NONE (0)", "potential = 0"),
+            new(1, "ACT_IDENTITY (1)", "potential = B"),
+            new(2, "ACT_STEP_UP (2)", "potential = (B <= 0) ? 0 : 1"),
+            new(3, "ACT_STEP_MID (3)", "potential = (B < 0) ? -1 : (B == 0 ? 0 : 1)"),
+            new(4, "ACT_STEP_DOWN (4)", "potential = (B < 0) ? -1 : 0"),
+            new(5, "ACT_ABS (5)", "potential = abs(B)"),
+            new(6, "ACT_CLAMP (6)", "potential = clamp(B, -1, +1)"),
+            new(7, "ACT_RELU (7)", "potential = max(0, B)"),
+            new(8, "ACT_NRELU (8)", "potential = min(B, 0)"),
+            new(9, "ACT_SIN (9)", "potential = sin(B)"),
+            new(10, "ACT_TAN (10)", "potential = clamp(tan(B), -1, +1)"),
+            new(11, "ACT_TANH (11)", "potential = tanh(B)"),
+            new(12, "ACT_ELU (12)", "potential = (B > 0) ? B : A*(exp(B)-1)", usesParamA: true),
+            new(13, "ACT_EXP (13)", "potential = exp(B)"),
+            new(14, "ACT_PRELU (14)", "potential = (B >= 0) ? B : A*B", usesParamA: true),
+            new(15, "ACT_LOG (15)", "potential = (B == 0) ? 0 : log(B)"),
+            new(16, "ACT_MULT (16)", "potential = B * A", usesParamA: true),
+            new(17, "ACT_ADD (17)", "potential = B + A", usesParamA: true),
+            new(18, "ACT_SIG (18)", "potential = 1 / (1 + exp(-B))"),
+            new(19, "ACT_SILU (19)", "potential = B / (1 + exp(-B))"),
+            new(20, "ACT_PCLAMP (20)", "potential = (Bp <= A) ? 0 : clamp(B, A, Bp)", usesParamA: true, usesParamB: true),
+            new(21, "ACT_MODL (21)", "potential = B % A", usesParamA: true),
+            new(22, "ACT_MODR (22)", "potential = A % B", usesParamA: true),
+            new(23, "ACT_SOFTP (23)", "potential = log(1 + exp(B))"),
+            new(24, "ACT_SELU (24)", "potential = Bp * (B >= 0 ? B : A*(exp(B)-1))", usesParamA: true, usesParamB: true),
+            new(25, "ACT_LIN (25)", "potential = A*B + Bp", usesParamA: true, usesParamB: true),
+            new(26, "ACT_LOGB (26)", "potential = (A == 0) ? 0 : log(B, A)", usesParamA: true),
+            new(27, "ACT_POW (27)", "potential = pow(B, A)", usesParamA: true),
+            new(28, "ACT_GAUSS (28)", "potential = exp((-B)^2)"),
+            new(29, "ACT_QUAD (29)", "potential = A*(B^2) + Bp*B", usesParamA: true, usesParamB: true)
         };
 
         for (var i = 30; i < 64; i++)
         {
-            list.Add(new DesignerFunctionOption(i, $"RESERVED ({i})"));
+            list.Add(new DesignerFunctionOption(i, $"RESERVED ({i})", "Reserved"));
         }
 
         return list;
@@ -2074,16 +2652,82 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             { 60, "RESET_INVERSE" }
         };
 
+        var descriptions = new Dictionary<int, string>
+        {
+            { 0, "new = 0" },
+            { 1, "new = clamp(B, -T, +T)" },
+            { 2, "new = clamp(B, -|P|, +|P|)" },
+            { 3, "new = clamp(B, -1, +1)" },
+            { 4, "new = clamp(P, -|B|, +|B|)" },
+            { 5, "new = clamp(-P, -|B|, +|B|)" },
+            { 6, "new = clamp(0.01*P, -|B|, +|B|)" },
+            { 7, "new = clamp(0.1*P, -|B|, +|B|)" },
+            { 8, "new = clamp(0.5*P, -|B|, +|B|)" },
+            { 9, "new = clamp(2*P, -|B|, +|B|)" },
+            { 10, "new = clamp(5*P, -|B|, +|B|)" },
+            { 11, "new = clamp(-0.01*P, -|B|, +|B|)" },
+            { 12, "new = clamp(-0.1*P, -|B|, +|B|)" },
+            { 13, "new = clamp(-0.5*P, -|B|, +|B|)" },
+            { 14, "new = clamp(-2*P, -|B|, +|B|)" },
+            { 15, "new = clamp(-5*P, -|B|, +|B|)" },
+            { 16, "new = clamp(1/P, -|B|, +|B|)" },
+            { 17, "new = clamp(P, -1, +1)" },
+            { 18, "new = clamp(-P, -1, +1)" },
+            { 19, "new = clamp(0.01*P, -1, +1)" },
+            { 20, "new = clamp(0.1*P, -1, +1)" },
+            { 21, "new = clamp(0.5*P, -1, +1)" },
+            { 22, "new = clamp(2*P, -1, +1)" },
+            { 23, "new = clamp(5*P, -1, +1)" },
+            { 24, "new = clamp(-0.01*P, -1, +1)" },
+            { 25, "new = clamp(-0.1*P, -1, +1)" },
+            { 26, "new = clamp(-0.5*P, -1, +1)" },
+            { 27, "new = clamp(-2*P, -1, +1)" },
+            { 28, "new = clamp(-5*P, -1, +1)" },
+            { 29, "new = clamp(1/P, -1, +1)" },
+            { 30, "new = clamp(P, -T, +T)" },
+            { 31, "new = clamp(-P, -T, +T)" },
+            { 32, "new = clamp(0.01*P, -T, +T)" },
+            { 33, "new = clamp(0.1*P, -T, +T)" },
+            { 34, "new = clamp(0.5*P, -T, +T)" },
+            { 35, "new = clamp(2*P, -T, +T)" },
+            { 36, "new = clamp(5*P, -T, +T)" },
+            { 37, "new = clamp(-0.01*P, -T, +T)" },
+            { 38, "new = clamp(-0.1*P, -T, +T)" },
+            { 39, "new = clamp(-0.5*P, -T, +T)" },
+            { 40, "new = clamp(-2*P, -T, +T)" },
+            { 41, "new = clamp(-5*P, -T, +T)" },
+            { 42, "new = clamp(1/P, -T, +T)" },
+            { 43, "new = clamp(0.5*B, -T, +T)" },
+            { 44, "new = clamp(0.1*B, -T, +T)" },
+            { 45, "new = clamp(0.01*B, -T, +T)" },
+            { 46, "new = clamp(-B, -T, +T)" },
+            { 47, "new = clamp(-0.5*B, -T, +T)" },
+            { 48, "new = clamp(-0.1*B, -T, +T)" },
+            { 49, "new = clamp(-0.01*B, -T, +T)" },
+            { 50, "new = clamp(2*B, -1, +1)" },
+            { 51, "new = clamp(5*B, -1, +1)" },
+            { 52, "new = clamp(-2*B, -1, +1)" },
+            { 53, "new = clamp(-5*B, -1, +1)" },
+            { 54, "new = clamp(2*B, -T, +T)" },
+            { 55, "new = clamp(5*B, -T, +T)" },
+            { 56, "new = clamp(-2*B, -T, +T)" },
+            { 57, "new = clamp(-5*B, -T, +T)" },
+            { 58, "new = clamp(B / max(1,K), -T, +T)" },
+            { 59, "new = clamp(-1/B, -1, +1)" },
+            { 60, "new = clamp(-1/B, -T, +T)" }
+        };
+
         var list = new List<DesignerFunctionOption>();
         for (var i = 0; i < 64; i++)
         {
             if (names.TryGetValue(i, out var name))
             {
-                list.Add(new DesignerFunctionOption(i, $"{name} ({i})"));
+                var description = descriptions.TryGetValue(i, out var detail) ? detail : string.Empty;
+                list.Add(new DesignerFunctionOption(i, $"{name} ({i})", description));
             }
             else
             {
-                list.Add(new DesignerFunctionOption(i, $"RESERVED ({i})"));
+                list.Add(new DesignerFunctionOption(i, $"RESERVED ({i})", "Reserved"));
             }
         }
 
@@ -2094,18 +2738,102 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         return new List<DesignerFunctionOption>
         {
-            new(0, "ACCUM_SUM (0)"),
-            new(1, "ACCUM_PRODUCT (1)"),
-            new(2, "ACCUM_MAX (2)"),
-            new(3, "ACCUM_NONE (3)")
+            new(0, "ACCUM_SUM (0)", "B = B + I"),
+            new(1, "ACCUM_PRODUCT (1)", "B = B * I (if any input)"),
+            new(2, "ACCUM_MAX (2)", "B = max(B, I)"),
+            new(3, "ACCUM_NONE (3)", "No merge")
         };
     }
+
+    private bool UsesParamA(int id)
+    {
+        var option = ActivationFunctions.FirstOrDefault(entry => entry.Id == id);
+        return option?.UsesParamA ?? false;
+    }
+
+    private bool UsesParamB(int id)
+    {
+        var option = ActivationFunctions.FirstOrDefault(entry => entry.Id == id);
+        return option?.UsesParamB ?? false;
+    }
+
+    private string DescribeActivation(int id)
+        => ActivationFunctions.FirstOrDefault(entry => entry.Id == id)?.Description ?? "Reserved";
+
+    private string DescribeReset(int id)
+        => ResetFunctions.FirstOrDefault(entry => entry.Id == id)?.Description ?? "Reserved";
+
+    private string DescribeAccumulation(int id)
+        => AccumulationFunctions.FirstOrDefault(entry => entry.Id == id)?.Description ?? "Reserved";
 
     private static ulong GenerateSeed()
     {
         Span<byte> buffer = stackalloc byte[8];
         RandomNumberGenerator.Fill(buffer);
         return BinaryPrimitives.ReadUInt64LittleEndian(buffer);
+    }
+
+    private static string BuildDefaultArtifactRoot()
+    {
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Nbn.Workbench",
+            "designer-artifacts");
+        Directory.CreateDirectory(baseDir);
+        return baseDir;
+    }
+
+    private static bool TryParsePort(string value, out int port)
+        => int.TryParse(value, out port) && port > 0 && port < 65536;
+
+    private static ProcessStartInfo BuildServiceStartInfo(string projectPath, string exeName, string serviceArgs)
+    {
+        var exePath = ResolveExecutable(projectPath, exeName);
+        if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+        {
+            return new ProcessStartInfo
+            {
+                FileName = exePath,
+                Arguments = serviceArgs,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        var dotnetArgs = $"run --project \"{projectPath}\" -c Release --no-build -- {serviceArgs}";
+        return new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = dotnetArgs,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+    }
+
+    private static string? ResolveExecutable(string projectPath, string exeName)
+    {
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return null;
+        }
+
+        var output = Path.Combine(projectPath, "bin", "Release", "net8.0");
+        if (OperatingSystem.IsWindows())
+        {
+            return Path.Combine(output, exeName + ".exe");
+        }
+
+        return Path.Combine(output, exeName);
+    }
+
+    private static async Task StopSpawnedAsync(LocalServiceRunner brainHostRunner, List<LocalServiceRunner> regionRunners)
+    {
+        foreach (var runner in regionRunners)
+        {
+            await runner.StopAsync().ConfigureAwait(false);
+        }
+
+        await brainHostRunner.StopAsync().ConfigureAwait(false);
     }
 
     private string SuggestedName(string extension)
@@ -2188,6 +2916,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         stream.SetLength(0);
         await stream.WriteAsync(bytes);
         await stream.FlushAsync();
+    }
+
+    private sealed class DesignerSpawnState
+    {
+        public DesignerSpawnState(LocalServiceRunner brainHostRunner, List<LocalServiceRunner> regionHostRunners, string artifactRoot)
+        {
+            BrainHostRunner = brainHostRunner;
+            RegionHostRunners = regionHostRunners;
+            ArtifactRoot = artifactRoot;
+        }
+
+        public LocalServiceRunner BrainHostRunner { get; }
+        public List<LocalServiceRunner> RegionHostRunners { get; }
+        public string ArtifactRoot { get; }
+
+        public bool IsRunning => BrainHostRunner.IsRunning || RegionHostRunners.Any(runner => runner.IsRunning);
     }
 
     private static string FormatPath(IStorageItem item)
