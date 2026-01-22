@@ -168,8 +168,8 @@
                 <TextBlock Text="Snapshot Defaults" Classes="row-title" />
                 <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
                   <StackPanel Grid.Column="0" Spacing="4">
-                    <TextBlock Text="Tick (header)" Classes="muted"
-                               ToolTip.Tip="Snapshot tick id stored in the header; use 0 if unknown." />
+                    <TextBlock Text="Snapshot tick id (header only)" Classes="muted"
+                               ToolTip.Tip="Stored in the .nbs header for reference; use 0 if unknown." />
                     <TextBox Text="{Binding SnapshotTickText}" />
                   </StackPanel>
                   <StackPanel Grid.Column="1" Spacing="4">
@@ -177,7 +177,7 @@
                     <TextBox Text="{Binding SnapshotEnergyText}" />
                   </StackPanel>
                 </Grid>
-                <TextBlock Text="Tick is stored in the snapshot header only; it does not advance the sim." Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="Header tick is informational only and does not advance the sim." Classes="muted" TextWrapping="Wrap" />
                 <CheckBox Content="Include enabled bitset" IsChecked="{Binding SnapshotIncludeEnabledBitset}" />
                 <StackPanel Orientation="Horizontal" Spacing="6">
                   <CheckBox Content="Cost + Energy" IsChecked="{Binding SnapshotCostEnergyEnabled}" />
@@ -414,23 +414,23 @@
                 <StackPanel Spacing="6">
                   <TextBlock Text="Parameters" Classes="row-title" />
                   <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
-                    <TextBlock Grid.Row="0" Text="Param A" VerticalAlignment="Center"
-                               ToolTip.Tip="Param A is used by some activation functions."
-                               IsEnabled="{Binding SelectedNeuronUsesParamA}" />
-                    <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="63"
-                            Value="{Binding SelectedNeuron.ParamACode}"
-                            IsEnabled="{Binding SelectedNeuronUsesParamA}" />
-                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding SelectedNeuron.ParamACode}"
-                             IsEnabled="{Binding SelectedNeuronUsesParamA}" />
+                    <Grid Grid.Row="0" Grid.ColumnSpan="3" ColumnDefinitions="Auto,*,60" ColumnSpacing="8"
+                          IsEnabled="{Binding SelectedNeuronUsesParamA}">
+                      <TextBlock Text="Param A" VerticalAlignment="Center"
+                                 ToolTip.Tip="Param A is used by some activation functions." />
+                      <Slider Grid.Column="1" Minimum="0" Maximum="63"
+                              Value="{Binding SelectedNeuron.ParamACode}" />
+                      <TextBox Grid.Column="2" Text="{Binding SelectedNeuron.ParamACode}" />
+                    </Grid>
 
-                    <TextBlock Grid.Row="1" Text="Param B" VerticalAlignment="Center"
-                               ToolTip.Tip="Param B is used by some activation functions."
-                               IsEnabled="{Binding SelectedNeuronUsesParamB}" />
-                    <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="63"
-                            Value="{Binding SelectedNeuron.ParamBCode}"
-                            IsEnabled="{Binding SelectedNeuronUsesParamB}" />
-                    <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding SelectedNeuron.ParamBCode}"
-                             IsEnabled="{Binding SelectedNeuronUsesParamB}" />
+                    <Grid Grid.Row="1" Grid.ColumnSpan="3" ColumnDefinitions="Auto,*,60" ColumnSpacing="8"
+                          IsEnabled="{Binding SelectedNeuronUsesParamB}">
+                      <TextBlock Text="Param B" VerticalAlignment="Center"
+                                 ToolTip.Tip="Param B is used by some activation functions." />
+                      <Slider Grid.Column="1" Minimum="0" Maximum="63"
+                              Value="{Binding SelectedNeuron.ParamBCode}" />
+                      <TextBox Grid.Column="2" Text="{Binding SelectedNeuron.ParamBCode}" />
+                    </Grid>
 
                     <TextBlock Grid.Row="2" Text="Pre-Act Thresh" VerticalAlignment="Center"
                                ToolTip.Tip="Neuron activates only if buffer B exceeds this threshold." />

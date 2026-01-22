@@ -30,6 +30,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const string NoDocumentStatus = "No file loaded.";
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
     private const string OutputCoordinatorPrefix = "io-output-";
+    private const int DefaultActivationFunctionId = 11; // ACT_TANH
     private const double BaseCanvasNodeSize = 36;
     private const double BaseCanvasGap = 14;
     private const double CanvasPadding = 16;
@@ -2519,7 +2520,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         var isRequired = region.IsInput || region.IsOutput;
         return new DesignerNeuronViewModel(region.RegionId, neuronId, true, isRequired)
         {
-            ActivationFunctionId = 11,
+            ActivationFunctionId = DefaultActivationFunctionId,
             ResetFunctionId = 0,
             AccumulationFunctionId = 0,
             ParamACode = 0,
