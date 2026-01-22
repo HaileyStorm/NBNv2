@@ -256,7 +256,7 @@
                 <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8">
                   <TextBlock Text="Zoom" VerticalAlignment="Center" />
                   <Slider Grid.Column="1" Minimum="0.5" Maximum="2.5" Value="{Binding CanvasZoom}" />
-                  <TextBlock Grid.Column="2" Text="{Binding CanvasZoom}" VerticalAlignment="Center" />
+                  <TextBox Grid.Column="2" Text="{Binding CanvasZoomText}" />
                 </Grid>
               </StackPanel>
 
@@ -275,23 +275,6 @@
                                        EndPoint="{Binding End}"
                                        Stroke="{Binding Stroke}"
                                        StrokeThickness="{Binding Thickness}" />
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <ItemsControl ItemsSource="{Binding VisibleEdges}">
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <Canvas />
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:DesignerEdgeViewModel" x:CompileBindings="False">
-                          <TextBlock Text="{Binding Label}"
-                                     IsVisible="{Binding HasLabel}"
-                                     Canvas.Left="{Binding LabelPosition.X}"
-                                     Canvas.Top="{Binding LabelPosition.Y}"
-                                     Classes="muted"
-                                     FontSize="10" />
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -320,6 +303,23 @@
                                   PointerExited="NeuronPointerExited">
                             <TextBlock Text="{Binding TileLabel}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                           </Button>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl ItemsSource="{Binding VisibleEdges}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <Canvas />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:DesignerEdgeViewModel" x:CompileBindings="False">
+                          <TextBlock Text="{Binding Label}"
+                                     IsVisible="{Binding HasLabel}"
+                                     Canvas.Left="{Binding LabelPosition.X}"
+                                     Canvas.Top="{Binding LabelPosition.Y}"
+                                     Classes="muted"
+                                     FontSize="10" />
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>

@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -13,6 +14,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -65,8 +67,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _axonTargetRegionText = "1";
     private string _axonTargetNeuronText = "0";
     private double _canvasZoom = 1;
+    private string _canvasZoomText = "1";
     private double _canvasWidth;
     private double _canvasHeight;
+    private bool _regionRefreshPending;
     private string _edgeSummary = string.Empty;
     private string _snapshotTickText = "0";
     private string _snapshotEnergyText = "0";
@@ -185,8 +189,19 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         get => _selectedRegion;
         private set
         {
+            var previousRegion = _selectedRegion;
             if (SetProperty(ref _selectedRegion, value))
             {
+                if (previousRegion is not null)
+                {
+                    previousRegion.Neurons.CollectionChanged -= OnSelectedRegionNeuronsChanged;
+                }
+
+                if (_selectedRegion is not null)
+                {
+                    _selectedRegion.Neurons.CollectionChanged += OnSelectedRegionNeuronsChanged;
+                }
+
                 OnPropertyChanged(nameof(SelectedRegionLabel));
                 UpdateRegionSizeText();
                 UpdateJumpNeuronText();
@@ -382,10 +397,28 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         {
             if (SetProperty(ref _canvasZoom, Clamp(value, 0.5, 2.5)))
             {
+                CanvasZoomText = _canvasZoom.ToString("0.##");
                 OnPropertyChanged(nameof(CanvasNodeSize));
                 OnPropertyChanged(nameof(CanvasNodeRadius));
                 OnPropertyChanged(nameof(CanvasNodeGap));
                 RefreshRegionView();
+            }
+        }
+    }
+
+    public string CanvasZoomText
+    {
+        get => _canvasZoomText;
+        set
+        {
+            if (!SetProperty(ref _canvasZoomText, value))
+            {
+                return;
+            }
+
+            if (double.TryParse(value, out var parsed))
+            {
+                CanvasZoom = parsed;
             }
         }
     }
@@ -1752,6 +1785,26 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         var start = RegionPageIndex * _regionPageSize;
         var end = Math.Min(total, start + _regionPageSize);
         RegionPageSummary = $"Showing {start}-{end - 1} of {total}";
+    }
+
+    private void OnSelectedRegionNeuronsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        QueueRegionRefresh();
+    }
+
+    private void QueueRegionRefresh()
+    {
+        if (_regionRefreshPending)
+        {
+            return;
+        }
+
+        _regionRefreshPending = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            _regionRefreshPending = false;
+            RefreshRegionView();
+        }, DispatcherPriority.Background);
     }
 
     private void RefreshRegionView()
