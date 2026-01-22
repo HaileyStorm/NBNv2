@@ -95,6 +95,9 @@ public sealed class HiveMindActor : IActor
                     context.Respond(new ProtoControl.BrainIoInfo());
                 }
                 break;
+            case ProtoControl.RequestPlacement message:
+                HandleRequestPlacement(context, message);
+                break;
             case PauseBrainRequest message:
                 PauseBrain(context, message.BrainId, message.Reason);
                 break;
@@ -412,6 +415,62 @@ public sealed class HiveMindActor : IActor
         brain.OutputSinkPid = outputPid;
         UpdateOutputSinks(context, brain);
         Log($"Output sink registered for brain {brainId}: {PidLabel(outputPid)}");
+    }
+
+    private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            context.Respond(new ProtoControl.PlacementAck
+            {
+                Accepted = false,
+                Message = "Invalid brain id."
+            });
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            brain = new BrainState(brainId)
+            {
+                SpawnedMs = NowMs()
+            };
+            _brains[brainId] = brain;
+        }
+
+        if (message.BaseDef is not null && message.BaseDef.Sha256 is not null && message.BaseDef.Sha256.Value.Length == 32)
+        {
+            brain.BaseDefinition = message.BaseDef;
+        }
+
+        if (message.LastSnapshot is not null && message.LastSnapshot.Sha256 is not null && message.LastSnapshot.Sha256.Value.Length == 32)
+        {
+            brain.LastSnapshot = message.LastSnapshot;
+        }
+
+        if (message.InputWidth > 0)
+        {
+            brain.InputWidth = Math.Max(brain.InputWidth, (int)message.InputWidth);
+        }
+
+        if (message.OutputWidth > 0)
+        {
+            brain.OutputWidth = Math.Max(brain.OutputWidth, (int)message.OutputWidth);
+        }
+
+        brain.PlacementRequestedMs = NowMs();
+        brain.RequestedShardPlan = message.ShardPlan;
+
+        RegisterBrainWithIo(context, brain, force: true);
+
+        var planLabel = message.ShardPlan is null ? "none" : message.ShardPlan.Mode.ToString();
+        Log($"Placement requested for brain {brainId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth}");
+
+        context.Respond(new ProtoControl.PlacementAck
+        {
+            Accepted = true,
+            Message = "Placement request accepted."
+        });
     }
 
     private void PauseBrain(IContext context, Guid brainId, string? reason)
@@ -1259,6 +1318,8 @@ public sealed class HiveMindActor : IActor
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }
+        public long PlacementRequestedMs { get; set; }
+        public ProtoControl.ShardPlan? RequestedShardPlan { get; set; }
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
     }

@@ -5,6 +5,7 @@ using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.HiveMind;
 using Nbn.Shared.Validation;
+using Nbn.Shared.Sharding;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -60,7 +61,15 @@ var load = await RegionShardArtifactLoader.LoadAsync(
     options.NeuronCount,
     options.BrainId);
 
-var routing = RegionShardRoutingTable.CreateSingleShard(load.Header.Regions);
+var plan = ShardPlanner.BuildPlan(load.Header, options.ShardPlanMode, options.ShardCount, options.MaxNeuronsPerShard);
+var routing = RegionShardRoutingTable.CreateFromPlan(plan.Regions);
+if (plan.Warnings.Count > 0)
+{
+    foreach (var warning in plan.Warnings)
+    {
+        Console.WriteLine($"Shard plan warning: {warning}");
+    }
+}
 var config = new RegionShardActorConfig(options.BrainId, shardId, routerPid, outputPid, tickPid, routing);
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
@@ -82,6 +91,13 @@ Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Hos
 Console.WriteLine($"Shard: {PidLabel(shardPid)}");
 Console.WriteLine($"Brain: {options.BrainId}");
 Console.WriteLine($"Region: {options.RegionId} ({options.NeuronStart}-{options.NeuronStart + load.State.NeuronCount - 1})");
+if (plan.Regions.TryGetValue(options.RegionId, out var plannedShards)
+    && !plannedShards.Any(span => span.ShardIndex == options.ShardIndex
+                                  && span.NeuronStart == options.NeuronStart
+                                  && span.NeuronCount == load.State.NeuronCount))
+{
+    Console.WriteLine("Warning: shard options do not match the computed shard plan.");
+}
 if (load.SnapshotHeader is null)
 {
     Console.WriteLine("Snapshot: none");
@@ -211,6 +227,16 @@ static void ValidateOptions(RegionHostOptions options)
     if (options.ShardIndex < 0 || (uint)options.ShardIndex > ShardId32.ShardIndexMask)
     {
         throw new InvalidOperationException("Shard index must fit in 16 bits.");
+    }
+
+    if (options.ShardCount is < 0)
+    {
+        throw new InvalidOperationException("Shard count must be >= 0.");
+    }
+
+    if (options.MaxNeuronsPerShard is < 0)
+    {
+        throw new InvalidOperationException("Max neurons per shard must be >= 0.");
     }
 
     if (string.IsNullOrWhiteSpace(options.RouterAddress) || string.IsNullOrWhiteSpace(options.RouterId))

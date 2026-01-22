@@ -6,6 +6,7 @@ using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
+using Nbn.Proto.Control;
 using Nbn.Shared;
 using Proto;
 using Proto.Remote;
@@ -174,6 +175,25 @@ public sealed class WorkbenchClient : IAsyncDisposable
     {
         _hiveMindPid = null;
         _sink.OnHiveMindStatus("Disconnected", false);
+    }
+
+    public async Task<PlacementAck?> RequestPlacementAsync(RequestPlacement request)
+    {
+        if (_root is null || _hiveMindPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<PlacementAck>(_hiveMindPid, request, DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnHiveMindStatus($"Placement request failed: {ex.Message}", true);
+            return null;
+        }
     }
 
     public void DisconnectSettings()

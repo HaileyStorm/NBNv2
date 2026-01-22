@@ -433,12 +433,12 @@
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Shards per region" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding SpawnShardCountText}" />
-                  <TextBlock Grid.Column="2" Text="0=auto" Classes="muted" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="2" Text="0=auto (non-IO)" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                   <TextBlock Text="Max neurons/shard" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding SpawnShardTargetNeuronsText}" />
-                  <TextBlock Grid.Column="2" Text="0=auto" Classes="muted" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="2" Text="0=auto (non-IO)" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
                 <StackPanel Spacing="4">
                   <TextBlock Text="Artifact root" Classes="muted" />

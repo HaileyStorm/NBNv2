@@ -1,5 +1,6 @@
 using Nbn.Shared.Addressing;
 using Nbn.Shared.Format;
+using Nbn.Shared.Sharding;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -97,6 +98,36 @@ public sealed class RegionShardRoutingTable
         {
             [regionId] = new[] { new ShardSpan(0, neuronSpan, ShardId32.From(regionId, 0)) }
         };
+        return new RegionShardRoutingTable(map);
+    }
+
+    public static RegionShardRoutingTable CreateFromPlan(IReadOnlyDictionary<int, IReadOnlyList<ShardPlanSpan>> regions)
+    {
+        if (regions is null)
+        {
+            throw new ArgumentNullException(nameof(regions));
+        }
+
+        var map = new Dictionary<int, ShardSpan[]>();
+        foreach (var entry in regions)
+        {
+            if (entry.Value.Count == 0)
+            {
+                continue;
+            }
+
+            var spans = new ShardSpan[entry.Value.Count];
+            for (var i = 0; i < entry.Value.Count; i++)
+            {
+                var plan = entry.Value[i];
+                var shardId = ShardId32.From(plan.RegionId, plan.ShardIndex);
+                spans[i] = new ShardSpan(plan.NeuronStart, plan.NeuronCount, shardId);
+            }
+
+            Array.Sort(spans, static (a, b) => a.Start.CompareTo(b.Start));
+            map[entry.Key] = spans;
+        }
+
         return new RegionShardRoutingTable(map);
     }
 }

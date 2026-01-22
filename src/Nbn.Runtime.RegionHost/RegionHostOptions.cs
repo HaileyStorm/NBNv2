@@ -1,4 +1,5 @@
 using Nbn.Shared;
+using Nbn.Shared.Sharding;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -16,6 +17,9 @@ public sealed record RegionHostOptions(
     int NeuronStart,
     int NeuronCount,
     int ShardIndex,
+    ShardPlanMode ShardPlanMode,
+    int? ShardCount,
+    int? MaxNeuronsPerShard,
     string ShardName,
     string? RouterAddress,
     string? RouterId,
@@ -45,6 +49,9 @@ public sealed record RegionHostOptions(
         var neuronStart = GetEnvInt("NBN_REGIONHOST_NEURON_START") ?? 0;
         var neuronCount = GetEnvInt("NBN_REGIONHOST_NEURON_COUNT") ?? 0;
         var shardIndex = GetEnvInt("NBN_REGIONHOST_SHARD_INDEX") ?? 0;
+        var shardPlanMode = ParseShardPlanMode(GetEnv("NBN_REGIONHOST_SHARD_PLAN"));
+        var shardCount = GetEnvInt("NBN_REGIONHOST_SHARD_COUNT");
+        var maxNeuronsPerShard = GetEnvInt("NBN_REGIONHOST_MAX_NEURONS");
         var shardName = GetEnv("NBN_REGIONHOST_SHARD_NAME") ?? string.Empty;
         var routerAddress = GetEnv("NBN_REGIONHOST_ROUTER_ADDRESS");
         var routerId = GetEnv("NBN_REGIONHOST_ROUTER_ID");
@@ -147,6 +154,24 @@ public sealed record RegionHostOptions(
                     if (i + 1 < args.Length && int.TryParse(args[++i], out var shardIndexValue))
                     {
                         shardIndex = shardIndexValue;
+                    }
+                    continue;
+                case "--shard-plan":
+                    if (i + 1 < args.Length)
+                    {
+                        shardPlanMode = ParseShardPlanMode(args[++i]);
+                    }
+                    continue;
+                case "--shard-count":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var shardCountValue))
+                    {
+                        shardCount = shardCountValue;
+                    }
+                    continue;
+                case "--max-neurons-per-shard":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var maxNeuronsValue))
+                    {
+                        maxNeuronsPerShard = maxNeuronsValue;
                     }
                     continue;
                 case "--shard-name":
@@ -323,6 +348,26 @@ public sealed record RegionHostOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--shard-plan=", StringComparison.OrdinalIgnoreCase))
+            {
+                shardPlanMode = ParseShardPlanMode(arg.Substring("--shard-plan=".Length));
+                continue;
+            }
+
+            if (arg.StartsWith("--shard-count=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--shard-count=".Length), out var shardCountInline))
+            {
+                shardCount = shardCountInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--max-neurons-per-shard=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--max-neurons-per-shard=".Length), out var maxNeuronsInline))
+            {
+                maxNeuronsPerShard = maxNeuronsInline;
+                continue;
+            }
+
             if (arg.StartsWith("--shard-name=", StringComparison.OrdinalIgnoreCase))
             {
                 shardName = arg.Substring("--shard-name=".Length);
@@ -428,6 +473,9 @@ public sealed record RegionHostOptions(
             neuronStart,
             neuronCount,
             shardIndex,
+            shardPlanMode,
+            shardCount,
+            maxNeuronsPerShard,
             shardName,
             routerAddress,
             routerId,
@@ -462,6 +510,31 @@ public sealed record RegionHostOptions(
         return Guid.TryParse(value, out var parsed) ? parsed : null;
     }
 
+    private static ShardPlanMode ParseShardPlanMode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return ShardPlanMode.SingleShardPerRegion;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Equals("fixed", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("fixed-count", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("fixed-shards", StringComparison.OrdinalIgnoreCase))
+        {
+            return ShardPlanMode.FixedShardCountPerRegion;
+        }
+
+        if (normalized.Equals("max", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("max-neurons", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("max-neurons-per-shard", StringComparison.OrdinalIgnoreCase))
+        {
+            return ShardPlanMode.MaxNeuronsPerShard;
+        }
+
+        return ShardPlanMode.SingleShardPerRegion;
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("NBN RegionHost options:");
@@ -478,6 +551,9 @@ public sealed record RegionHostOptions(
         Console.WriteLine("  --neuron-start <index>           Neuron start offset within region");
         Console.WriteLine("  --neuron-count <count>           Neuron count (0 = to end)");
         Console.WriteLine("  --shard-index <index>            Shard index (default 0)");
+        Console.WriteLine("  --shard-plan <mode>              Shard plan: single | fixed | max (default single)");
+        Console.WriteLine("  --shard-count <count>            Shards per region when plan=fixed");
+        Console.WriteLine("  --max-neurons-per-shard <count>  Target neurons per shard when plan=max");
         Console.WriteLine("  --shard-name <name>              Spawn name for shard actor");
         Console.WriteLine("  --router-address <host:port>     BrainSignalRouter address");
         Console.WriteLine("  --router-id <name>               BrainSignalRouter actor id/name");

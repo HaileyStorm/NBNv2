@@ -20,8 +20,12 @@ using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
+using Nbn.Shared.Sharding;
 using Nbn.Shared.Validation;
 using Nbn.Tools.Workbench.Services;
+using ProtoControl = Nbn.Proto.Control;
+using ProtoShardPlanMode = Nbn.Proto.Control.ShardPlanMode;
+using SharedShardPlanMode = Nbn.Shared.Sharding.ShardPlanMode;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
@@ -1111,34 +1115,29 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         {
             var placementMode = SelectedSpawnPlacement.Value;
             var shardPlanMode = SelectedShardPlan.Value;
-            if (shardPlanMode != ShardPlanMode.SingleShardPerRegion)
-            {
-                Status = "Spawn canceled: shard plan not implemented yet.";
-                return;
-            }
-
             if (!TryParseOptionalNonNegativeInt(SpawnRegionHostCountText, out var regionHostCount))
             {
                 Status = "Invalid RegionHost count.";
                 return;
             }
 
-            if (!TryParseOptionalNonNegativeInt(SpawnShardCountText, out var shardCount))
+            int? shardCount = null;
+            int? maxNeuronsPerShard = null;
+            if (shardPlanMode == ShardPlanMode.FixedShardCount)
             {
-                Status = "Invalid shard count.";
-                return;
+                if (!TryParseOptionalNonNegativeInt(SpawnShardCountText, out shardCount))
+                {
+                    Status = "Invalid shard count.";
+                    return;
+                }
             }
-
-            if (!TryParseOptionalNonNegativeInt(SpawnShardTargetNeuronsText, out var maxNeuronsPerShard))
+            else if (shardPlanMode == ShardPlanMode.MaxNeuronsPerShard)
             {
-                Status = "Invalid shard target size.";
-                return;
-            }
-
-            if (shardPlanMode == ShardPlanMode.SingleShardPerRegion && shardCount is { } count && count != 1)
-            {
-                Status = "Single-shard plan requires shard count = 1.";
-                return;
+                if (!TryParseOptionalNonNegativeInt(SpawnShardTargetNeuronsText, out maxNeuronsPerShard))
+                {
+                    Status = "Invalid shard target size.";
+                    return;
+                }
             }
 
             var spawnPlan = new DesignerSpawnPlan(
@@ -1148,18 +1147,66 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 shardCount,
                 maxNeuronsPerShard);
 
-            var regionHostDecision = await ResolveRegionHostStartAsync();
+            RegionHostStartDecision regionHostDecision;
+            if (placementMode == SpawnPlacementMode.DirectPerRegion)
+            {
+                if (SelectedRegionHostPolicy.Value == RegionHostStartPolicy.Never)
+                {
+                    Status = "Direct placement requires starting local RegionHosts.";
+                    return;
+                }
+
+                regionHostDecision = RegionHostStartDecision.Create(true, "Direct placement uses local RegionHosts.");
+            }
+            else
+            {
+                regionHostDecision = await ResolveRegionHostStartAsync();
+            }
+
             if (!regionHostDecision.Success)
             {
                 Status = regionHostDecision.Error ?? "Spawn canceled.";
                 return;
             }
 
-            var startRegionHosts = regionHostDecision.ShouldStart;
             if (!TryBuildNbn(out var header, out var sections, out var error))
             {
                 Status = error ?? "Spawn failed.";
                 return;
+            }
+
+            var sharedPlanMode = ToSharedShardPlanMode(shardPlanMode);
+            ShardPlanResult shardPlan;
+            try
+            {
+                shardPlan = ShardPlanner.BuildPlan(header, sharedPlanMode, shardCount, maxNeuronsPerShard);
+            }
+            catch (Exception ex)
+            {
+                Status = $"Shard plan failed: {ex.Message}";
+                return;
+            }
+
+            var plannedShards = shardPlan.Regions
+                .OrderBy(entry => entry.Key)
+                .SelectMany(entry => entry.Value.OrderBy(span => span.ShardIndex))
+                .ToList();
+
+            var startRegionHosts = placementMode == SpawnPlacementMode.DirectPerRegion || regionHostDecision.ShouldStart;
+            if (startRegionHosts)
+            {
+                var requiredShardCount = plannedShards.Count;
+                if (requiredShardCount == 0)
+                {
+                    Status = "Shard plan produced no shards.";
+                    return;
+                }
+
+                if (regionHostCount is { } count && count > 0 && count < requiredShardCount)
+                {
+                    Status = $"RegionHost count {count} is less than required shard count {requiredShardCount}.";
+                    return;
+                }
             }
 
             if (!TryParsePort(SpawnBrainPortText, out var brainPort))
@@ -1251,6 +1298,28 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 return;
             }
 
+            if (placementMode == SpawnPlacementMode.HiveMindManaged)
+            {
+                var placementAck = await _client.RequestPlacementAsync(BuildPlacementRequest(
+                    brainId,
+                    inputWidth,
+                    outputWidth,
+                    artifactSha,
+                    artifactSize,
+                    shardPlanMode,
+                    shardCount,
+                    maxNeuronsPerShard,
+                    brainArtifactRoot));
+
+                if (placementAck is null || !placementAck.Accepted)
+                {
+                    var message = placementAck?.Message ?? "Placement request failed.";
+                    Status = message;
+                    await brainHostRunner.StopAsync();
+                    return;
+                }
+            }
+
             var regionRunners = new List<LocalServiceRunner>();
             if (startRegionHosts)
             {
@@ -1265,7 +1334,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 var routerAddress = $"{bindHost}:{brainPort}";
                 var regionPort = regionPortBase;
                 var regionCountRemaining = spawnPlan.RegionHostCount ?? int.MaxValue;
-                foreach (var region in Brain.Regions.Where(r => r.NeuronCount > 0))
+                var shardPlanArgs = BuildShardPlanArgs(shardPlanMode, shardCount, maxNeuronsPerShard);
+                foreach (var shard in plannedShards)
                 {
                     if (regionCountRemaining <= 0)
                     {
@@ -1273,7 +1343,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     }
 
                     var outputArgs = string.Empty;
-                    if (region.RegionId == NbnConstants.OutputRegionId)
+                    if (shard.RegionId == NbnConstants.OutputRegionId)
                     {
                         var outputId = OutputCoordinatorPrefix + brainId.ToString("N");
                         outputArgs = $" --output-address {ioAddress} --output-id {outputId}";
@@ -1284,10 +1354,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                                      + $" --settings-port {settingsPort}"
                                      + $" --settings-name {_connections.SettingsName}"
                                      + $" --brain-id {brainId:D}"
-                                     + $" --region {region.RegionId}"
-                                     + $" --neuron-start 0"
-                                     + $" --neuron-count {region.NeuronCount}"
-                                     + " --shard-index 0"
+                                     + $" --region {shard.RegionId}"
+                                     + $" --neuron-start {shard.NeuronStart}"
+                                     + $" --neuron-count {shard.NeuronCount}"
+                                     + $" --shard-index {shard.ShardIndex}"
                                      + $" --router-address {routerAddress}"
                                      + $" --router-id {routerId}"
                                      + $" --tick-address {hiveAddress}"
@@ -1295,14 +1365,16 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                                      + $" --nbn-sha256 {artifactSha}"
                                      + $" --nbn-size {artifactSize}"
                                      + $" --artifact-root \"{brainArtifactRoot}\""
+                                     + shardPlanArgs
                                      + outputArgs;
 
                     var regionInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", regionArgs);
                     var regionRunner = new LocalServiceRunner();
-                    var regionResult = await regionRunner.StartAsync(regionInfo, waitForExit: false, label: $"DesignerRegion{region.RegionId}-{brainId:N}");
+                    var regionResult = await regionRunner.StartAsync(regionInfo, waitForExit: false,
+                        label: $"DesignerRegion{shard.RegionId}Shard{shard.ShardIndex}-{brainId:N}");
                     if (!regionResult.Success)
                     {
-                        Status = $"RegionHost {region.RegionId} failed: {regionResult.Message}";
+                        Status = $"RegionHost {shard.RegionId}:{shard.ShardIndex} failed: {regionResult.Message}";
                         await StopSpawnedAsync(brainHostRunner, regionRunners);
                         return;
                     }
@@ -1316,6 +1388,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             _spawnedBrains[brainId] = new DesignerSpawnState(brainHostRunner, regionRunners, brainArtifactRoot);
             var hostSummary = startRegionHosts ? "Region hosts started." : "Region hosts not started.";
             Status = $"Brain spawned ({brainId:D}). {hostSummary}";
+            if (shardPlan.Warnings.Count > 0)
+            {
+                Status = $"{Status} Plan warnings: {string.Join(" ", shardPlan.Warnings)}";
+            }
             if (!string.IsNullOrWhiteSpace(regionHostDecision.Summary))
             {
                 Status = $"{Status} {regionHostDecision.Summary}";
@@ -3440,11 +3516,90 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                || label.Contains("RegionShard", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static SharedShardPlanMode ToSharedShardPlanMode(ShardPlanMode mode)
+        => mode switch
+        {
+            ShardPlanMode.FixedShardCount => SharedShardPlanMode.FixedShardCountPerRegion,
+            ShardPlanMode.MaxNeuronsPerShard => SharedShardPlanMode.MaxNeuronsPerShard,
+            _ => SharedShardPlanMode.SingleShardPerRegion
+        };
+
+    private static ProtoShardPlanMode ToProtoShardPlanMode(ShardPlanMode mode)
+        => mode switch
+        {
+            ShardPlanMode.FixedShardCount => ProtoShardPlanMode.ShardPlanFixed,
+            ShardPlanMode.MaxNeuronsPerShard => ProtoShardPlanMode.ShardPlanMaxNeurons,
+            _ => ProtoShardPlanMode.ShardPlanSingle
+        };
+
+    private static string BuildShardPlanArgs(ShardPlanMode mode, int? shardCount, int? maxNeuronsPerShard)
+    {
+        var planLabel = mode switch
+        {
+            ShardPlanMode.FixedShardCount => "fixed",
+            ShardPlanMode.MaxNeuronsPerShard => "max",
+            _ => "single"
+        };
+
+        var args = $" --shard-plan {planLabel}";
+        if (mode == ShardPlanMode.FixedShardCount && shardCount is { } count && count > 0)
+        {
+            args += $" --shard-count {count}";
+        }
+
+        if (mode == ShardPlanMode.MaxNeuronsPerShard && maxNeuronsPerShard is { } max && max > 0)
+        {
+            args += $" --max-neurons-per-shard {max}";
+        }
+
+        return args;
+    }
+
+    private static ProtoControl.RequestPlacement BuildPlacementRequest(
+        Guid brainId,
+        int inputWidth,
+        int outputWidth,
+        string artifactSha,
+        long artifactSize,
+        ShardPlanMode shardPlanMode,
+        int? shardCount,
+        int? maxNeuronsPerShard,
+        string artifactRoot)
+    {
+        var request = new ProtoControl.RequestPlacement
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = (uint)Math.Max(0, inputWidth),
+            OutputWidth = (uint)Math.Max(0, outputWidth),
+            ShardPlan = new ProtoControl.ShardPlan
+            {
+                Mode = ToProtoShardPlanMode(shardPlanMode)
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(artifactSha))
+        {
+            request.BaseDef = artifactSha.ToArtifactRef((ulong)Math.Max(0, artifactSize), "application/x-nbn", artifactRoot);
+        }
+
+        if (shardCount is { } count && count > 0)
+        {
+            request.ShardPlan.ShardCount = (uint)count;
+        }
+
+        if (maxNeuronsPerShard is { } max && max > 0)
+        {
+            request.ShardPlan.MaxNeuronsPerShard = (uint)max;
+        }
+
+        return request;
+    }
+
     private static IReadOnlyList<SpawnPlacementOption> BuildSpawnPlacementOptions()
         => new List<SpawnPlacementOption>
         {
-            new("HiveMind placement", SpawnPlacementMode.HiveMindManaged, "Let HiveMind schedule shards across available RegionHosts."),
-            new("Direct (per-region)", SpawnPlacementMode.DirectPerRegion, "Start one local shard per region (no placement).")
+            new("HiveMind placement", SpawnPlacementMode.HiveMindManaged, "Send a placement request to HiveMind; RegionHosts register shards."),
+            new("Direct (local)", SpawnPlacementMode.DirectPerRegion, "Start local RegionHosts for the shard plan (no placement).")
         };
 
     private static IReadOnlyList<RegionHostStartPolicyOption> BuildRegionHostPolicies()
@@ -3458,9 +3613,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static IReadOnlyList<ShardPlanOption> BuildShardPlanOptions()
         => new List<ShardPlanOption>
         {
-            new("Single shard per region", ShardPlanMode.SingleShardPerRegion, "Matches current single-shard RegionHost behavior."),
-            new("Fixed shard count (future)", ShardPlanMode.FixedShardCount, "Split regions into N shards (not implemented)."),
-            new("Max neurons per shard (future)", ShardPlanMode.MaxNeuronsPerShard, "Auto-split by target size (not implemented).")
+            new("Single shard per region", ShardPlanMode.SingleShardPerRegion, "Use one shard per region (IO regions stay single)."),
+            new("Fixed shard count", ShardPlanMode.FixedShardCount, "Split non-IO regions into N shards (stride-aligned)."),
+            new("Max neurons per shard", ShardPlanMode.MaxNeuronsPerShard, "Split non-IO regions by target size (stride-aligned).")
         };
 
     private static bool TryParseOptionalNonNegativeInt(string value, out int? result)

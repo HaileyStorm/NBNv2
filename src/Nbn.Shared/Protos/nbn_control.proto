@@ -74,6 +74,32 @@ message BrainIoInfo {
   uint32 output_width = 3;
 }
 
+enum ShardPlanMode {
+  SHARD_PLAN_SINGLE = 0;
+  SHARD_PLAN_FIXED = 1;
+  SHARD_PLAN_MAX_NEURONS = 2;
+}
+
+message ShardPlan {
+  ShardPlanMode mode = 1;
+  uint32 shard_count = 2;
+  uint32 max_neurons_per_shard = 3;
+}
+
+message RequestPlacement {
+  nbn.Uuid brain_id = 1;
+  nbn.ArtifactRef base_def = 2;
+  nbn.ArtifactRef last_snapshot = 3;
+  ShardPlan shard_plan = 4;
+  uint32 input_width = 5;
+  uint32 output_width = 6;
+}
+
+message PlacementAck {
+  bool accepted = 1;
+  string message = 2;
+}
+
 message KillBrain {
   nbn.Uuid brain_id = 1;
   string reason = 2;
