@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
@@ -34,6 +35,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private readonly Func<Task>? _connectAll;
     private readonly Action? _disconnectAll;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private string _statusMessage = "Idle";
     private string _settingsLaunchStatus = "Idle";
     private string _hiveMindLaunchStatus = "Idle";
@@ -307,6 +309,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private async Task RefreshAsync(bool force)
     {
+        if (!await _refreshGate.WaitAsync(0).ConfigureAwait(false))
+        {
+            return;
+        }
+
         if (!Connections.SettingsConnected)
         {
             if (force)
@@ -314,6 +321,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 StatusMessage = "SettingsMonitor not connected.";
                 Connections.SettingsStatus = "Disconnected";
             }
+            _refreshGate.Release();
             return;
         }
 
@@ -427,6 +435,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             StatusMessage = $"Settings load failed: {ex.Message}";
             Connections.SettingsStatus = "Error";
             WorkbenchLog.Warn($"Settings refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            _refreshGate.Release();
         }
     }
 
@@ -897,7 +909,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var missing = _lastBrains.Keys.Where(id => !seen.Contains(id)).ToList();
         foreach (var brainId in missing)
         {
-            var previous = _lastBrains[brainId];
+            if (!_lastBrains.TryGetValue(brainId, out var previous))
+            {
+                continue;
+            }
+
             AddTermination(new BrainTerminatedItem(
                 DateTimeOffset.UtcNow,
                 brainId.ToString("D"),
