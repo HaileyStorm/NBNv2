@@ -229,7 +229,7 @@ public sealed class WorkbenchReceiverActor : IActor
         var preview = string.Join(", ", values.Take(take).Select(v => v.ToString("0.###")));
         if (values.Count > take)
         {
-            preview += $" ? ({values.Count})";
+            preview += $" ... ({values.Count})";
         }
 
         return preview;
