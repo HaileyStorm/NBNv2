@@ -54,6 +54,11 @@ public sealed class RegionShardCpuBackend
             }
 
             var buffer = _state.Buffer[i];
+            if (!float.IsFinite(buffer))
+            {
+                buffer = 0f;
+                _state.Buffer[i] = 0f;
+            }
             if (buffer <= _state.PreActivationThreshold[i])
             {
                 continue;
@@ -61,7 +66,18 @@ public sealed class RegionShardCpuBackend
 
             costActivation++;
             var potential = Activate((ActivationFunction)_state.ActivationFunctions[i], buffer, _state.ParamA[i], _state.ParamB[i]);
-            _state.Buffer[i] = Reset((ResetFunction)_state.ResetFunctions[i], buffer, potential, _state.ActivationThreshold[i], _state.AxonCounts[i]);
+            if (!float.IsFinite(potential))
+            {
+                potential = 0f;
+            }
+
+            var reset = Reset((ResetFunction)_state.ResetFunctions[i], buffer, potential, _state.ActivationThreshold[i], _state.AxonCounts[i]);
+            if (!float.IsFinite(reset))
+            {
+                reset = 0f;
+            }
+
+            _state.Buffer[i] = reset;
             costReset++;
 
             if (outputVector is not null)
