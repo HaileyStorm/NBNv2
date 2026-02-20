@@ -120,12 +120,16 @@ NBN is not an ML training framework (no backpropagation/gradient descent).
 NBNv2 uses Beads (`bd`) for task tracking and Beads Viewer (`bv`) for graph views.
 
 Initialization:
-* Run `bd init` in the repo root once (creates `.beads/`).
-* Also initialize in each project folder that owns a `.csproj` (use `bd init --skip-hooks`).
+* Run `bd init` in the repo root once (creates root `.beads/`).
+* Do **not** run `bd init` in project subfolders; the repo-root tracker is canonical.
+* When working from a subdirectory, run Beads commands from repo root (or pass `--db <repo>/.beads/beads.db` explicitly).
 * Do not create tasks or issues as part of initialization.
 
 Usage notes:
-* Use `bd` for task lifecycle updates; keep `.beads/` under version control unless you explicitly use `--stealth`.
+* Create/update/close Beads issues in the repo-root tracker only.
+* Use `bd where` before lifecycle commands to confirm the active tracker is root `.beads/`.
+* Remove/retire legacy project-local `.beads/` directories so `bd`/`bv` do not split state across trackers.
+* Use `bd` for task lifecycle updates; keep root `.beads/` under version control unless you explicitly use `--stealth`.
 * For automation, use `bv --robot-*` only. The interactive TUI blocks the session.
 * NEVER use git worktrees (they don't work well with Beads).
 
@@ -3012,7 +3016,7 @@ Keep each sub-query narrow and evidence-backed; merge conclusions in the main th
 
 Use short delegated packets for discovery-heavy work so main-thread context stays small:
 
-1. Issue packet: Beads issue detail + dependency/related issue scan + acceptance clues.
+1. Issue packet: Beads issue detail (from repo-root tracker) + dependency/related issue scan + acceptance clues.
 2. Repo scout packet: `rg` ownership sweep + recent `git log/show` around candidate files.
 3. Slice packet: `search_context` + `peek_context` over only the symbols/ranges needed.
 
@@ -3035,6 +3039,9 @@ Use these defaults to avoid recurring Aleph friction:
    * Validate subprocess resolution with:
      * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
    * If that fails while `codex.cmd --version` works, ensure a runnable `codex` executable is on `PATH` (for example a `codex.exe` shim that delegates to `codex.cmd`).
+4. Beads/BV tracker source sanity:
+   * If `bv`/`bd` shows stale or conflicting status, run `bd where` and confirm root `.beads/` is active.
+   * Eliminate project-local `.beads/` directories (after archiving if needed) and run `bd sync` from repo root.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 
