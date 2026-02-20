@@ -194,11 +194,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(selectedId))
         {
             match = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
-            if (match is null && previousSelection is not null)
-            {
-                match = new BrainListItem(previousSelection.BrainId, "stale", false);
-                KnownBrains.Add(match);
-            }
         }
 
         if (KnownBrains.Count > 0 && match is null)

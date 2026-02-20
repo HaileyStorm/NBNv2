@@ -390,17 +390,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             UpdateConnectionStatusesFromNodes(nodes, nowMs);
 
-            var nodeAliveMap = new Dictionary<Guid, bool>();
-            foreach (var node in nodes)
-            {
-                if (node.NodeId is null || !node.NodeId.TryToGuid(out var nodeId))
-                {
-                    continue;
-                }
-
-                nodeAliveMap[nodeId] = node.IsAlive && IsFresh(node.LastSeenMs, nowMs);
-            }
-
             var controllerMap = controllers
                 .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
                 .ToDictionary(
@@ -408,11 +397,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     entry =>
                     {
                         var controllerAlive = entry.IsAlive && IsFresh(entry.LastSeenMs, nowMs);
-                        var nodeAlive = entry.NodeId is not null
-                            && entry.NodeId.TryToGuid(out var nodeId)
-                            && nodeAliveMap.TryGetValue(nodeId, out var alive)
-                            && alive;
-                        return (entry, controllerAlive && nodeAlive);
+                        return (entry, controllerAlive);
                     });
 
             var brainListAll = brains.Select(entry =>
@@ -424,7 +409,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             RecordBrainTerminations(brainListAll);
             var brainList = brainListAll
-                .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => entry.ControllerAlive && !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             _brainsUpdated?.Invoke(brainList);
 
