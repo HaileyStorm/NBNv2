@@ -2932,10 +2932,12 @@ Use primary-model sub-queries (medium/high as needed) for:
 * synthesis across many findings
 * risky refactors where subtle regressions are likely
 
+For cross-file implementation work, sub-queries are expected (not optional): run a small pack of focused sub-queries before first major edit.
+
 ### 21.7 Minimum Aleph workflow (required when section 21.2 triggers)
 
 1. Load each primary file into its own Aleph context (avoid mixing unrelated files into one context).
-2. Run focused `search_context` queries for symbols/invariants relevant to the requested behavior.
+2. Run 3+ focused sub-queries (ownership map, invariants map, test/verification map), then run `search_context` queries for symbols/invariants relevant to the requested behavior.
 3. `peek_context` only the specific ranges needed to confirm semantics and side effects.
 4. Post a brief evidence map before editing:
    * candidate files
@@ -2969,6 +2971,7 @@ If omitted, defaults should inherit from the main session model/settings.
 * Do not bulk-load the entire repository when a bounded file set is enough.
 * Prefer 2-6 focused queries over recursive/deep pipelines unless complexity clearly demands it.
 * Keep Aleph contexts task-scoped; close/ignore stale contexts to avoid contaminated reasoning.
+* Do not skip sub-queries for multi-file/cross-layer code-search-and-edit tasks.
 
 ### 21.11 Under-use prevention checklist
 
@@ -2980,6 +2983,12 @@ Before making substantial edits, run this quick gate:
 
 If any answer is "yes", Aleph should be used first (per 21.2 + 21.7).
 
+Minimum sub-query pack for these cases:
+
+1. file/symbol ownership map
+2. invariant/constraint enforcement map across creation paths
+3. test surface + regression risk map
+
 Typical NBN examples where Aleph should be considered mandatory:
 
 * Workbench Designer flow changes (layout + graph + editor semantics)
@@ -2987,6 +2996,17 @@ Typical NBN examples where Aleph should be considered mandatory:
 * protocol or lifecycle changes that span runtime + IO + tooling
 
 When Aleph is used for one of the above, include a short evidence map in progress updates before major edits.
+
+### 21.12 Sub-query starter pack for code-search/edit tasks
+
+Use these prompts as a default pattern (adapt scope/path names per task):
+
+1. "Within `[scope]`, list exact files/symbols owning `[behavior]`; output file list + symbol list + why relevant."
+2. "Find where `[invariant/constraint]` is enforced today; output code paths, gaps, and likely missed paths."
+3. "Map call path for `[user flow]` from UI to runtime/validation; output ordered path and breakpoints."
+4. "List tests touching `[behavior]` and missing cases likely to regress after `[change]`."
+
+Keep each sub-query narrow and evidence-backed; merge conclusions in the main thread before editing.
 
 ## Multi-agent coordination and workspace boundaries
 
