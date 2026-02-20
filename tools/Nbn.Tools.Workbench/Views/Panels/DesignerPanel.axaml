@@ -27,27 +27,11 @@
             <Button Content="Import .nbs" Command="{Binding ImportNbsCommand}" Margin="0,0,8,8" />
             <Button Content="Export" Command="{Binding ExportCommand}" Margin="0,0,8,8" />
             <Button Content="Export Snapshot" Command="{Binding ExportSnapshotCommand}" IsEnabled="{Binding CanExportSnapshot}" Margin="0,0,8,8" />
-            <Button Content="Validate" Command="{Binding ValidateCommand}" Margin="0,0,8,8" />
           </WrapPanel>
           <StackPanel Spacing="2">
             <TextBlock Text="{Binding LoadedSummary}" Classes="muted" />
             <TextBlock Text="{Binding Status}" Classes="muted" />
           </StackPanel>
-          <Border Classes="row">
-            <StackPanel Spacing="6">
-              <TextBlock Text="Validation" Classes="card-subtitle" />
-              <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
-              <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto">
-                <ItemsControl ItemsSource="{Binding ValidationIssues}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <TextBlock Text="{Binding}" TextWrapping="Wrap" Classes="row-title" />
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </ScrollViewer>
-            </StackPanel>
-          </Border>
         </StackPanel>
 
         <Grid ColumnDefinitions="1.35*,1*" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="14">
@@ -369,86 +353,6 @@
               </StackPanel>
             </Border>
 
-            <Border Classes="row" IsVisible="{Binding IsDesignVisible}">
-              <StackPanel Spacing="8">
-                <TextBlock Text="Spawn Options" Classes="row-title" />
-                <TextBlock Text="Requires Settings, HiveMind, and IO connections." Classes="muted" />
-                <Button Content="Spawn Brain"
-                        Command="{Binding SpawnBrainCommand}"
-                        IsEnabled="{Binding CanSpawnBrain}"
-                        Classes="accent"
-                        HorizontalAlignment="Left" />
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Bind host" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding SpawnBindHost}" />
-                  <TextBlock Grid.Column="2" Text="local" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="BrainHost port" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding SpawnBrainPortText}" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="RegionHost base" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding SpawnRegionPortText}" />
-                  <TextBlock Grid.Column="2" Text="port" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                  <TextBlock Text="Placement" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1"
-                            ItemsSource="{Binding SpawnPlacementOptions}"
-                            SelectedItem="{Binding SelectedSpawnPlacement}">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                  <TextBlock Text="RegionHost policy" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1"
-                            ItemsSource="{Binding RegionHostPolicies}"
-                            SelectedItem="{Binding SelectedRegionHostPolicy}">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                  <TextBlock Text="Shard plan" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1"
-                            ItemsSource="{Binding ShardPlanOptions}"
-                            SelectedItem="{Binding SelectedShardPlan}">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="RegionHost count" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding SpawnRegionHostCountText}" />
-                  <TextBlock Grid.Column="2" Text="0=auto" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Shards per region" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding SpawnShardCountText}" />
-                  <TextBlock Grid.Column="2" Text="0=auto (non-IO)" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Max neurons/shard" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding SpawnShardTargetNeuronsText}" />
-                  <TextBlock Grid.Column="2" Text="0=auto (non-IO)" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <StackPanel Spacing="4">
-                  <TextBlock Text="Artifact root" Classes="muted" />
-                  <TextBox Text="{Binding SpawnArtifactRoot}" />
-                </StackPanel>
-              </StackPanel>
-            </Border>
           </StackPanel>
 
           <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="row" IsVisible="{Binding IsDesignVisible}">
@@ -682,9 +586,10 @@
 
                 <StackPanel Spacing="6">
                   <TextBlock Text="Neuron State" Classes="row-title" />
-                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <TextBlock Text="{Binding SelectedNeuron.TileDetail}" Classes="muted" />
-                    <Button Content="Toggle Enabled" Command="{Binding ToggleNeuronEnabledCommand}" />
+                  <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="4">
+                    <TextBlock Text="{Binding SelectedNeuron.Exists, StringFormat='Enabled: {0}'}" Classes="row-title" />
+                    <Button Grid.Column="1" Grid.RowSpan="2" Content="Toggle Enabled" Command="{Binding ToggleNeuronEnabledCommand}" />
+                    <TextBlock Grid.Row="1" Text="{Binding SelectedNeuron.TileDetail}" Classes="muted" TextWrapping="Wrap" />
                   </Grid>
                 </StackPanel>
 
@@ -739,6 +644,108 @@
             </StackPanel>
           </Border>
         </Grid>
+
+        <StackPanel Spacing="12" IsVisible="{Binding IsDesignVisible}">
+          <Border Classes="row">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Spawn Options" Classes="row-title" />
+              <TextBlock Text="Requires Settings, HiveMind, and IO connections." Classes="muted" />
+              <Button Content="Spawn Brain"
+                      Command="{Binding SpawnBrainCommand}"
+                      IsEnabled="{Binding CanSpawnBrain}"
+                      Classes="accent"
+                      HorizontalAlignment="Left" />
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="Bind host" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding SpawnBindHost}" />
+                <TextBlock Grid.Column="2" Text="local" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="BrainHost port" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding SpawnBrainPortText}" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="RegionHost base" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding SpawnRegionPortText}" />
+                <TextBlock Grid.Column="2" Text="port" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <TextBlock Text="Placement" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding SpawnPlacementOptions}"
+                          SelectedItem="{Binding SelectedSpawnPlacement}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <TextBlock Text="RegionHost policy" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding RegionHostPolicies}"
+                          SelectedItem="{Binding SelectedRegionHostPolicy}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <TextBlock Text="Shard plan" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding ShardPlanOptions}"
+                          SelectedItem="{Binding SelectedShardPlan}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="RegionHost count" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding SpawnRegionHostCountText}" />
+                <TextBlock Grid.Column="2" Text="0=auto" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="Shards per region" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding SpawnShardCountText}" />
+                <TextBlock Grid.Column="2" Text="0=auto (non-IO)" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="Max neurons/shard" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding SpawnShardTargetNeuronsText}" />
+                <TextBlock Grid.Column="2" Text="0=auto (non-IO)" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
+              <StackPanel Spacing="4">
+                <TextBlock Text="Artifact root" Classes="muted" />
+                <TextBox Text="{Binding SpawnArtifactRoot}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="row">
+            <StackPanel Spacing="6">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBlock Text="Validation" Classes="card-subtitle" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="Validate" Command="{Binding ValidateCommand}" />
+              </Grid>
+              <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
+              <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding ValidationIssues}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding}" TextWrapping="Wrap" Classes="row-title" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+        </StackPanel>
 
       </StackPanel>
     </ScrollViewer>

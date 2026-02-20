@@ -24,6 +24,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _plasticityRateText = "0.001";
     private bool _filterZeroOutputs = true;
     private bool _filterZeroVectorOutputs = true;
+    private bool _pauseVectorUiUpdates;
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
@@ -60,6 +61,8 @@ public sealed class IoPanelViewModel : ViewModelBase
         ApplyCostEnergyCommand = new RelayCommand(ApplyCostEnergy);
         ApplyPlasticityCommand = new RelayCommand(ApplyPlasticity);
         ClearOutputsCommand = new RelayCommand(ClearOutputs);
+        ClearVectorOutputsCommand = new RelayCommand(ClearVectorOutputs);
+        ToggleVectorUiUpdatesCommand = new RelayCommand(ToggleVectorUiUpdates);
     }
 
     public ObservableCollection<OutputEventItem> OutputEvents { get; }
@@ -166,6 +169,25 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _filterZeroVectorOutputs, value);
     }
 
+    public bool PauseVectorUiUpdates
+    {
+        get => _pauseVectorUiUpdates;
+        private set
+        {
+            if (SetProperty(ref _pauseVectorUiUpdates, value))
+            {
+                OnPropertyChanged(nameof(VectorUiUpdatesButtonLabel));
+                OnPropertyChanged(nameof(VectorUiUpdatesStatus));
+            }
+        }
+    }
+
+    public string VectorUiUpdatesButtonLabel => PauseVectorUiUpdates ? "Resume UI" : "Pause UI";
+
+    public string VectorUiUpdatesStatus => PauseVectorUiUpdates
+        ? "UI updates paused (events still received)."
+        : "UI updates live.";
+
     public string PlasticityRateText
     {
         get => _plasticityRateText;
@@ -222,6 +244,10 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     public RelayCommand ClearOutputsCommand { get; }
 
+    public RelayCommand ClearVectorOutputsCommand { get; }
+
+    public RelayCommand ToggleVectorUiUpdatesCommand { get; }
+
     public void AddOutputEvent(OutputEventItem item)
     {
         if (_selectedBrainId is not null && !string.Equals(item.BrainId, _selectedBrainId.Value.ToString("D"), StringComparison.OrdinalIgnoreCase))
@@ -252,6 +278,11 @@ public sealed class IoPanelViewModel : ViewModelBase
         _dispatcher.Post(() =>
         {
             LastOutputTickLabel = item.TickId.ToString();
+            if (PauseVectorUiUpdates)
+            {
+                return;
+            }
+
             if (FilterZeroVectorOutputs && item.AllZero)
             {
                 return;
@@ -501,6 +532,16 @@ public sealed class IoPanelViewModel : ViewModelBase
     {
         OutputEvents.Clear();
         VectorEvents.Clear();
+    }
+
+    private void ClearVectorOutputs()
+    {
+        VectorEvents.Clear();
+    }
+
+    private void ToggleVectorUiUpdates()
+    {
+        PauseVectorUiUpdates = !PauseVectorUiUpdates;
     }
 
     private void UpdateCostEnergyCombined()
