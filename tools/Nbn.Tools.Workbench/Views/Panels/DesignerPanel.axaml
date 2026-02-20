@@ -30,7 +30,6 @@
           </WrapPanel>
           <StackPanel Spacing="2">
             <TextBlock Text="{Binding LoadedSummary}" Classes="muted" />
-            <TextBlock Text="{Binding Status}" Classes="muted" />
           </StackPanel>
         </StackPanel>
 
@@ -733,6 +732,7 @@
                 <TextBlock Text="Validation" Classes="card-subtitle" VerticalAlignment="Center" />
                 <Button Grid.Column="1" Content="Validate" Command="{Binding ValidateCommand}" />
               </Grid>
+              <TextBlock Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding ValidationSummary}" Classes="muted" />
               <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
                 <ItemsControl ItemsSource="{Binding ValidationIssues}">
