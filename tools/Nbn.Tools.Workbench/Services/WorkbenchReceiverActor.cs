@@ -225,7 +225,7 @@ public sealed class WorkbenchReceiverActor : IActor
             return "(empty)";
         }
 
-        var take = Math.Min(values.Count, 6);
+        var take = Math.Min(values.Count, 18);
         var preview = string.Join(", ", values.Take(take).Select(v => v.ToString("0.###")));
         if (values.Count > take)
         {
