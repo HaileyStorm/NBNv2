@@ -501,6 +501,7 @@ public sealed class IoGatewayActor : IActor
         try
         {
             var result = await context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, DefaultRequestTimeout);
+            EnsureSimilarityScore(result);
             context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
         }
         catch (Exception ex)
@@ -521,6 +522,7 @@ public sealed class IoGatewayActor : IActor
         try
         {
             var result = await context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, DefaultRequestTimeout);
+            EnsureSimilarityScore(result);
             context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
         }
         catch (Exception ex)
@@ -528,6 +530,59 @@ public sealed class IoGatewayActor : IActor
             Console.WriteLine($"ReproduceByArtifacts failed: {ex.Message}");
             context.Respond(new Nbn.Proto.Io.ReproduceResult());
         }
+    }
+
+    private static void EnsureSimilarityScore(Nbn.Proto.Repro.ReproduceResult? result)
+    {
+        var report = result?.Report;
+        if (report is null || report.SimilarityScore > 0f)
+        {
+            return;
+        }
+
+        var total = 0f;
+        var count = 0;
+
+        if (report.RegionSpanScore > 0f)
+        {
+            total += report.RegionSpanScore;
+            count++;
+        }
+
+        if (report.FunctionScore > 0f)
+        {
+            total += report.FunctionScore;
+            count++;
+        }
+
+        if (report.ConnectivityScore > 0f)
+        {
+            total += report.ConnectivityScore;
+            count++;
+        }
+
+        if (count > 0)
+        {
+            report.SimilarityScore = Clamp01(total / count);
+            return;
+        }
+
+        report.SimilarityScore = report.Compatible ? 1f : 0f;
+    }
+
+    private static float Clamp01(float value)
+    {
+        if (value < 0f)
+        {
+            return 0f;
+        }
+
+        if (value > 1f)
+        {
+            return 1f;
+        }
+
+        return value;
     }
 
     private async Task EnsureIoGatewayRegisteredAsync(IContext context, Guid brainId)

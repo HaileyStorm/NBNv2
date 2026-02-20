@@ -120,6 +120,7 @@ message SimilarityReport {
   float region_span_score = 10;
   float function_score = 11;
   float connectivity_score = 12;
+  float similarity_score = 13;
 
   uint32 regions_present_A = 20;
   uint32 regions_present_B = 21;

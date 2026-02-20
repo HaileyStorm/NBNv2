@@ -8,14 +8,65 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Reproduction" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <TextBlock Text="Choose active brains or upload parent artifacts (.nbn + optional .nbs)." Classes="card-subtitle" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="10">
+          <TextBlock Text="Parents" Classes="card-title" />
+
+          <TextBlock Text="Active brain selection" Classes="muted row-title" />
+          <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
             <TextBlock Text="Parent A" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding ParentA}" Watermark="Guid" />
-            <TextBlock Grid.Row="1" Text="Parent B" Classes="muted" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ParentB}" Watermark="Guid" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding ActiveBrains}" SelectedItem="{Binding SelectedParentABrain}" Width="300">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Column="2" Text="Parent B" Classes="muted" />
+            <ComboBox Grid.Column="3" ItemsSource="{Binding ActiveBrains}" SelectedItem="{Binding SelectedParentBBrain}" Width="300">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <TextBlock Grid.Row="1" Text="Parent A GUID" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ParentAGuidText}" Watermark="Fallback GUID" />
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Parent B GUID" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ParentBGuidText}" Watermark="Fallback GUID" />
+
             <TextBlock Grid.Row="2" Text="Seed" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding SeedText}" Watermark="auto" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding SeedText}" Watermark="auto" Width="180" />
           </Grid>
+
+          <TextBlock Text="Artifact upload mode (used when both parent .nbn paths are set)" Classes="muted row-title" />
+          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+            <TextBlock Text="A .nbn" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding ParentADefPath}" Watermark="Path to parent A definition" />
+            <Button Grid.Column="2" Content="Browse" Command="{Binding BrowseParentADefCommand}" />
+
+            <TextBlock Grid.Row="1" Text="A .nbs" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ParentAStatePath}" Watermark="Optional parent A state" />
+            <Button Grid.Row="1" Grid.Column="2" Content="Browse" Command="{Binding BrowseParentAStateCommand}" />
+
+            <TextBlock Grid.Row="2" Text="B .nbn" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ParentBDefPath}" Watermark="Path to parent B definition" />
+            <Button Grid.Row="2" Grid.Column="2" Content="Browse" Command="{Binding BrowseParentBDefCommand}" />
+
+            <TextBlock Grid.Row="3" Text="B .nbs" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ParentBStatePath}" Watermark="Optional parent B state" />
+            <Button Grid.Row="3" Grid.Column="2" Content="Browse" Command="{Binding BrowseParentBStateCommand}" />
+
+            <TextBlock Grid.Row="4" Text="Artifact root" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding ArtifactStoreRoot}" />
+            <Button Grid.Row="4" Grid.Column="2" Content="Clear Files" Command="{Binding ClearParentFilesCommand}" />
+          </Grid>
+
           <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="Strength" Classes="muted" VerticalAlignment="Center" />
             <ComboBox ItemsSource="{Binding StrengthSources}" SelectedItem="{Binding SelectedStrengthSource}" Width="160">
@@ -38,44 +89,71 @@
       </Border>
 
       <Border Classes="card">
-        <StackPanel Spacing="12" Grid.IsSharedSizeScope="True">
-          <TextBlock Text="Similarity + Mutation" Classes="card-title" />
-          <StackPanel Spacing="6">
-            <TextBlock Text="Similarity thresholds" Classes="muted row-title" />
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="Max span diff" Classes="muted" />
-              <TextBox Grid.Column="1" Text="{Binding MaxRegionSpanDiffRatio}" Width="120" />
-              <TextBlock Grid.Row="1" Text="Max func dist" Classes="muted" />
-              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxFunctionHistDistance}" Width="120" />
-              <TextBlock Grid.Row="2" Text="Max conn dist" Classes="muted" />
-              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConnectivityHistDistance}" Width="120" />
-              <TextBlock Grid.Row="3" Text="Max avg out" Classes="muted" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxAvgOutDegree}" Width="120" />
-            </Grid>
+        <StackPanel Spacing="8" Grid.IsSharedSizeScope="True">
+          <TextBlock Text="Similarity" Classes="card-title" />
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Max span diff" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding MaxRegionSpanDiffRatio}" Width="120" />
+            <TextBlock Grid.Row="1" Text="Max func dist" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxFunctionHistDistance}" Width="120" />
+            <TextBlock Grid.Row="2" Text="Max conn dist" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConnectivityHistDistance}" Width="120" />
+            <TextBlock Grid.Row="3" Text="Max avg out" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxAvgOutDegree}" Width="120" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="10" Grid.IsSharedSizeScope="True">
+          <TextBlock Text="Mutation" Classes="card-title" />
+
+          <TextBlock Text="Structure + connectivity" Classes="muted row-title" />
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel2" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Prob add first neuron" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding ProbAddNeuronToEmptyRegion}" Width="120" />
+            <TextBlock Grid.Row="1" Text="Prob remove last neuron" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ProbRemoveLastNeuronFromRegion}" Width="120" />
+            <TextBlock Grid.Row="2" Text="Prob add axon" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbAddAxon}" Width="120" />
+            <TextBlock Grid.Row="3" Text="Prob remove axon" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProbRemoveAxon}" Width="120" />
+            <TextBlock Grid.Row="4" Text="Prob reroute axon" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding ProbRerouteAxon}" Width="120" />
+          </Grid>
+
+          <TextBlock Text="Strength mutations" Classes="muted row-title" />
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <CheckBox Content="Enable strength transform" IsChecked="{Binding StrengthTransformEnabled}" />
           </StackPanel>
-          <StackPanel Spacing="6">
-            <TextBlock Text="Mutation probabilities" Classes="muted row-title" />
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel" />
-                <ColumnDefinition Width="*" />
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="Prob add neuron" Classes="muted" />
-              <TextBox Grid.Column="1" Text="{Binding ProbAddNeuron}" Width="120" />
-              <TextBlock Grid.Row="1" Text="Prob remove neuron" Classes="muted" />
-              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ProbRemoveNeuron}" Width="120" />
-              <TextBlock Grid.Row="2" Text="Prob add axon" Classes="muted" />
-              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbAddAxon}" Width="120" />
-              <TextBlock Grid.Row="3" Text="Prob remove axon" Classes="muted" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProbRemoveAxon}" Width="120" />
-              <TextBlock Grid.Row="4" Text="Prob reroute axon" Classes="muted" />
-              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding ProbRerouteAxon}" Width="120" />
-            </Grid>
-          </StackPanel>
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel2" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Prob choose A" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding ProbStrengthChooseA}" Width="120" />
+            <TextBlock Grid.Row="1" Text="Prob choose B" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ProbStrengthChooseB}" Width="120" />
+            <TextBlock Grid.Row="2" Text="Prob average" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbStrengthAverage}" Width="120" />
+            <TextBlock Grid.Row="3" Text="Prob weighted avg" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProbStrengthWeightedAverage}" Width="120" />
+            <TextBlock Grid.Row="4" Text="Weight A" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding StrengthWeightA}" Width="120" />
+            <TextBlock Grid.Row="5" Text="Weight B" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding StrengthWeightB}" Width="120" />
+            <TextBlock Grid.Row="6" Text="Prob mutate" Classes="muted" />
+            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding ProbStrengthMutate}" Width="120" />
+          </Grid>
         </StackPanel>
       </Border>
 
@@ -85,9 +163,23 @@
             <Button Content="Run Reproduction" Command="{Binding RunCommand}" Classes="accent" />
             <TextBlock Text="{Binding Status}" Classes="muted" />
           </StackPanel>
-          <TextBlock Text="{Binding ResultSummary}" Classes="row-title" />
         </StackPanel>
       </Border>
+
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="6">
+            <TextBlock Text="Similarity Result" Classes="card-title" />
+            <TextBlock Text="{Binding SimilaritySummary}" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="6">
+            <TextBlock Text="Mutation Result" Classes="card-title" />
+            <TextBlock Text="{Binding MutationSummary}" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </Grid>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

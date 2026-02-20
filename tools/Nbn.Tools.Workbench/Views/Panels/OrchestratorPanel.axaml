@@ -146,8 +146,11 @@
                 <DataTemplate>
                   <Border Classes="row">
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                      <Border Classes="pill">
-                        <TextBlock Text="{Binding Status}" />
+                      <Border Classes="pill"
+                              Background="{Binding StatusChipBackground}"
+                              BorderBrush="{Binding StatusChipBorder}"
+                              BorderThickness="1">
+                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
                       </Border>
                       <StackPanel Grid.Column="1">
                         <TextBlock Text="{Binding LogicalName}" Classes="row-title" />

@@ -523,6 +523,29 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(ReproduceByArtifactsRequest request)
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await _root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+                    _ioGatewayPid,
+                    new ReproduceByArtifacts { Request = request },
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+            return result?.Result;
+        }
+        catch (Exception ex)
+        {
+            _sink.OnIoStatus($"Repro failed: {ex.Message}", false);
+            return null;
+        }
+    }
+
     private async Task StopAsync()
     {
         if (_system is null)

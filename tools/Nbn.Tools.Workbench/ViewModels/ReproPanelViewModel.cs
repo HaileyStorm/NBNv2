@@ -1,9 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
+using Nbn.Proto;
 using Nbn.Proto.Repro;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
+using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
 namespace Nbn.Tools.Workbench.ViewModels;
@@ -11,22 +21,38 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class ReproPanelViewModel : ViewModelBase
 {
     private readonly WorkbenchClient _client;
-    private string _parentA = string.Empty;
-    private string _parentB = string.Empty;
+    private string _parentAGuidText = string.Empty;
+    private string _parentBGuidText = string.Empty;
+    private string _parentADefPath = string.Empty;
+    private string _parentAStatePath = string.Empty;
+    private string _parentBDefPath = string.Empty;
+    private string _parentBStatePath = string.Empty;
+    private string _artifactStoreRoot = BuildDefaultArtifactRoot();
     private string _seedText = string.Empty;
     private string _maxRegionSpanDiffRatio = "0.15";
     private string _maxFunctionHistDistance = "0.25";
     private string _maxConnectivityHistDistance = "0.25";
     private string _maxAvgOutDegree = "100";
-    private string _probAddNeuron = "0.02";
-    private string _probRemoveNeuron = "0.01";
+    private string _probAddNeuronToEmptyRegion = "0.02";
+    private string _probRemoveLastNeuronFromRegion = "0.01";
     private string _probAddAxon = "0.05";
     private string _probRemoveAxon = "0.02";
     private string _probRerouteAxon = "0.02";
+    private bool _strengthTransformEnabled;
+    private string _probStrengthChooseA = "0.35";
+    private string _probStrengthChooseB = "0.35";
+    private string _probStrengthAverage = "0.20";
+    private string _probStrengthWeightedAverage = "0.05";
+    private string _strengthWeightA = "0.50";
+    private string _strengthWeightB = "0.50";
+    private string _probStrengthMutate = "0.05";
     private StrengthSourceOption _selectedStrengthSource;
     private SpawnPolicyOption _selectedSpawnPolicy;
+    private ReproBrainOption? _selectedParentABrain;
+    private ReproBrainOption? _selectedParentBBrain;
     private string _status = "Idle";
-    private string _resultSummary = string.Empty;
+    private string _similaritySummary = "No result yet.";
+    private string _mutationSummary = "No result yet.";
 
     public ReproPanelViewModel(WorkbenchClient client)
     {
@@ -43,12 +69,22 @@ public sealed class ReproPanelViewModel : ViewModelBase
         };
         _selectedStrengthSource = StrengthSources[0];
         _selectedSpawnPolicy = SpawnPolicies[0];
+
+        ActiveBrains = new ObservableCollection<ReproBrainOption>();
+
         RunCommand = new AsyncRelayCommand(RunAsync);
+        BrowseParentADefCommand = new AsyncRelayCommand(() => BrowseParentFileAsync(ParentFileKind.ParentADef));
+        BrowseParentAStateCommand = new AsyncRelayCommand(() => BrowseParentFileAsync(ParentFileKind.ParentAState));
+        BrowseParentBDefCommand = new AsyncRelayCommand(() => BrowseParentFileAsync(ParentFileKind.ParentBDef));
+        BrowseParentBStateCommand = new AsyncRelayCommand(() => BrowseParentFileAsync(ParentFileKind.ParentBState));
+        ClearParentFilesCommand = new RelayCommand(ClearParentFiles);
     }
 
     public IReadOnlyList<StrengthSourceOption> StrengthSources { get; }
 
     public IReadOnlyList<SpawnPolicyOption> SpawnPolicies { get; }
+
+    public ObservableCollection<ReproBrainOption> ActiveBrains { get; }
 
     public StrengthSourceOption SelectedStrengthSource
     {
@@ -62,16 +98,58 @@ public sealed class ReproPanelViewModel : ViewModelBase
         set => SetProperty(ref _selectedSpawnPolicy, value);
     }
 
-    public string ParentA
+    public ReproBrainOption? SelectedParentABrain
     {
-        get => _parentA;
-        set => SetProperty(ref _parentA, value);
+        get => _selectedParentABrain;
+        set => SetProperty(ref _selectedParentABrain, value);
     }
 
-    public string ParentB
+    public ReproBrainOption? SelectedParentBBrain
     {
-        get => _parentB;
-        set => SetProperty(ref _parentB, value);
+        get => _selectedParentBBrain;
+        set => SetProperty(ref _selectedParentBBrain, value);
+    }
+
+    public string ParentAGuidText
+    {
+        get => _parentAGuidText;
+        set => SetProperty(ref _parentAGuidText, value);
+    }
+
+    public string ParentBGuidText
+    {
+        get => _parentBGuidText;
+        set => SetProperty(ref _parentBGuidText, value);
+    }
+
+    public string ParentADefPath
+    {
+        get => _parentADefPath;
+        set => SetProperty(ref _parentADefPath, value);
+    }
+
+    public string ParentAStatePath
+    {
+        get => _parentAStatePath;
+        set => SetProperty(ref _parentAStatePath, value);
+    }
+
+    public string ParentBDefPath
+    {
+        get => _parentBDefPath;
+        set => SetProperty(ref _parentBDefPath, value);
+    }
+
+    public string ParentBStatePath
+    {
+        get => _parentBStatePath;
+        set => SetProperty(ref _parentBStatePath, value);
+    }
+
+    public string ArtifactStoreRoot
+    {
+        get => _artifactStoreRoot;
+        set => SetProperty(ref _artifactStoreRoot, value);
     }
 
     public string SeedText
@@ -104,16 +182,16 @@ public sealed class ReproPanelViewModel : ViewModelBase
         set => SetProperty(ref _maxAvgOutDegree, value);
     }
 
-    public string ProbAddNeuron
+    public string ProbAddNeuronToEmptyRegion
     {
-        get => _probAddNeuron;
-        set => SetProperty(ref _probAddNeuron, value);
+        get => _probAddNeuronToEmptyRegion;
+        set => SetProperty(ref _probAddNeuronToEmptyRegion, value);
     }
 
-    public string ProbRemoveNeuron
+    public string ProbRemoveLastNeuronFromRegion
     {
-        get => _probRemoveNeuron;
-        set => SetProperty(ref _probRemoveNeuron, value);
+        get => _probRemoveLastNeuronFromRegion;
+        set => SetProperty(ref _probRemoveLastNeuronFromRegion, value);
     }
 
     public string ProbAddAxon
@@ -134,30 +212,163 @@ public sealed class ReproPanelViewModel : ViewModelBase
         set => SetProperty(ref _probRerouteAxon, value);
     }
 
+    public bool StrengthTransformEnabled
+    {
+        get => _strengthTransformEnabled;
+        set => SetProperty(ref _strengthTransformEnabled, value);
+    }
+
+    public string ProbStrengthChooseA
+    {
+        get => _probStrengthChooseA;
+        set => SetProperty(ref _probStrengthChooseA, value);
+    }
+
+    public string ProbStrengthChooseB
+    {
+        get => _probStrengthChooseB;
+        set => SetProperty(ref _probStrengthChooseB, value);
+    }
+
+    public string ProbStrengthAverage
+    {
+        get => _probStrengthAverage;
+        set => SetProperty(ref _probStrengthAverage, value);
+    }
+
+    public string ProbStrengthWeightedAverage
+    {
+        get => _probStrengthWeightedAverage;
+        set => SetProperty(ref _probStrengthWeightedAverage, value);
+    }
+
+    public string StrengthWeightA
+    {
+        get => _strengthWeightA;
+        set => SetProperty(ref _strengthWeightA, value);
+    }
+
+    public string StrengthWeightB
+    {
+        get => _strengthWeightB;
+        set => SetProperty(ref _strengthWeightB, value);
+    }
+
+    public string ProbStrengthMutate
+    {
+        get => _probStrengthMutate;
+        set => SetProperty(ref _probStrengthMutate, value);
+    }
+
     public string Status
     {
         get => _status;
         set => SetProperty(ref _status, value);
     }
 
-    public string ResultSummary
+    public string SimilaritySummary
     {
-        get => _resultSummary;
-        set => SetProperty(ref _resultSummary, value);
+        get => _similaritySummary;
+        set => SetProperty(ref _similaritySummary, value);
+    }
+
+    public string MutationSummary
+    {
+        get => _mutationSummary;
+        set => SetProperty(ref _mutationSummary, value);
     }
 
     public AsyncRelayCommand RunCommand { get; }
 
+    public AsyncRelayCommand BrowseParentADefCommand { get; }
+
+    public AsyncRelayCommand BrowseParentAStateCommand { get; }
+
+    public AsyncRelayCommand BrowseParentBDefCommand { get; }
+
+    public AsyncRelayCommand BrowseParentBStateCommand { get; }
+
+    public RelayCommand ClearParentFilesCommand { get; }
+
+    public void UpdateActiveBrains(IReadOnlyList<BrainListItem> brains)
+    {
+        var selectedA = SelectedParentABrain?.BrainId;
+        var selectedB = SelectedParentBBrain?.BrainId;
+
+        var active = brains
+            .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.BrainId)
+            .Select(entry => new ReproBrainOption(entry.BrainId, entry.Display))
+            .ToList();
+
+        ActiveBrains.Clear();
+        foreach (var entry in active)
+        {
+            ActiveBrains.Add(entry);
+        }
+
+        SelectedParentABrain = selectedA.HasValue
+            ? ActiveBrains.FirstOrDefault(item => item.BrainId == selectedA.Value)
+            : ActiveBrains.FirstOrDefault();
+
+        SelectedParentBBrain = selectedB.HasValue
+            ? ActiveBrains.FirstOrDefault(item => item.BrainId == selectedB.Value)
+            : ActiveBrains.Skip(1).FirstOrDefault();
+    }
+
     private async Task RunAsync()
     {
-        if (!Guid.TryParse(ParentA, out var parentA) || !Guid.TryParse(ParentB, out var parentB))
+        var config = BuildConfig();
+        var seed = ParseUlong(SeedText, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+        Status = "Submitting request...";
+
+        Nbn.Proto.Repro.ReproduceResult? result;
+        if (ShouldUseArtifactParents())
         {
-            Status = "Invalid parent IDs.";
+            result = await RunByArtifactsAsync(config, seed);
+        }
+        else
+        {
+            result = await RunByBrainIdsAsync(config, seed);
+        }
+
+        if (result is null)
+        {
+            Status = "Repro request failed.";
             return;
         }
 
-        var config = BuildConfig();
-        var seed = ParseUlong(SeedText, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var report = result.Report;
+        var summary = result.Summary;
+        var score = ComputeSimilarityScore(report);
+
+        SimilaritySummary = $"Score: {score:0.000} | Compatible: {report?.Compatible} | Region span: {report?.RegionSpanScore:0.000} | Function: {report?.FunctionScore:0.000} | Connectivity: {report?.ConnectivityScore:0.000} | Child regions: {report?.RegionsPresentChild}";
+        MutationSummary = $"+N{summary?.NeuronsAdded} -N{summary?.NeuronsRemoved} +A{summary?.AxonsAdded} -A{summary?.AxonsRemoved} reroute={summary?.AxonsRerouted} func={summary?.FunctionsMutated} strength={summary?.StrengthCodesChanged}";
+
+        var childLabel = result.ChildBrainId is not null && result.ChildBrainId.TryToGuid(out var childGuid)
+            ? childGuid.ToString("D")
+            : "unknown";
+        Status = result.Spawned ? $"Spawned child {childLabel}" : "Completed (not spawned).";
+    }
+
+    private bool ShouldUseArtifactParents()
+        => !string.IsNullOrWhiteSpace(ParentADefPath) && !string.IsNullOrWhiteSpace(ParentBDefPath);
+
+    private async Task<Nbn.Proto.Repro.ReproduceResult?> RunByBrainIdsAsync(ReproduceConfig config, ulong seed)
+    {
+        if (!TryResolveParentId(SelectedParentABrain, ParentAGuidText, out var parentA)
+            || !TryResolveParentId(SelectedParentBBrain, ParentBGuidText, out var parentB))
+        {
+            Status = "Select active parents or provide valid parent GUIDs.";
+            return null;
+        }
+
+        if (parentA == parentB)
+        {
+            Status = "Parent A and Parent B must be different.";
+            return null;
+        }
 
         var request = new ReproduceByBrainIdsRequest
         {
@@ -168,21 +379,70 @@ public sealed class ReproPanelViewModel : ViewModelBase
             Seed = seed
         };
 
-        Status = "Submitting request...";
-        var result = await _client.ReproduceByBrainIdsAsync(request);
-        if (result is null)
+        return await _client.ReproduceByBrainIdsAsync(request);
+    }
+
+    private async Task<Nbn.Proto.Repro.ReproduceResult?> RunByArtifactsAsync(ReproduceConfig config, ulong seed)
+    {
+        try
         {
-            Status = "Repro request failed.";
-            return;
+            var parentADef = await StoreArtifactReferenceAsync(ParentADefPath, "application/x-nbn");
+            var parentBDef = await StoreArtifactReferenceAsync(ParentBDefPath, "application/x-nbn");
+
+            ArtifactRef? parentAState = null;
+            ArtifactRef? parentBState = null;
+            if (!string.IsNullOrWhiteSpace(ParentAStatePath))
+            {
+                parentAState = await StoreArtifactReferenceAsync(ParentAStatePath, "application/x-nbs");
+            }
+
+            if (!string.IsNullOrWhiteSpace(ParentBStatePath))
+            {
+                parentBState = await StoreArtifactReferenceAsync(ParentBStatePath, "application/x-nbs");
+            }
+
+            var request = new ReproduceByArtifactsRequest
+            {
+                ParentADef = parentADef,
+                ParentBDef = parentBDef,
+                ParentAState = parentAState,
+                ParentBState = parentBState,
+                StrengthSource = SelectedStrengthSource.Value,
+                Config = config,
+                Seed = seed
+            };
+
+            return await _client.ReproduceByArtifactsAsync(request);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Artifact upload failed: {ex.Message}";
+            return null;
+        }
+    }
+
+    private async Task<ArtifactRef> StoreArtifactReferenceAsync(string filePath, string mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            throw new InvalidOperationException("Artifact path is required.");
         }
 
-        var report = result.Report;
-        var summary = result.Summary;
-        ResultSummary = $"Compatible: {report?.Compatible} | Regions child: {report?.RegionsPresentChild} | Mutations: +N{summary?.NeuronsAdded} -N{summary?.NeuronsRemoved} +A{summary?.AxonsAdded} -A{summary?.AxonsRemoved}";
-        var childLabel = result.ChildBrainId is not null && result.ChildBrainId.TryToGuid(out var childGuid)
-            ? childGuid.ToString("D")
-            : "unknown";
-        Status = result.Spawned ? $"Spawned child {childLabel}" : "Completed (not spawned).";
+        var fullPath = Path.GetFullPath(filePath);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException("Artifact file not found.", fullPath);
+        }
+
+        var artifactRoot = string.IsNullOrWhiteSpace(ArtifactStoreRoot)
+            ? BuildDefaultArtifactRoot()
+            : ArtifactStoreRoot;
+        Directory.CreateDirectory(artifactRoot);
+
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+        await using var stream = File.OpenRead(fullPath);
+        var manifest = await store.StoreAsync(stream, mediaType);
+        return manifest.ArtifactId.ToHex().ToArtifactRef((ulong)Math.Max(0, manifest.ByteLength), mediaType, artifactRoot);
     }
 
     private ReproduceConfig BuildConfig()
@@ -192,14 +452,120 @@ public sealed class ReproPanelViewModel : ViewModelBase
             MaxRegionSpanDiffRatio = ParseFloat(MaxRegionSpanDiffRatio, 0.15f),
             MaxFunctionHistDistance = ParseFloat(MaxFunctionHistDistance, 0.25f),
             MaxConnectivityHistDistance = ParseFloat(MaxConnectivityHistDistance, 0.25f),
-            ProbAddNeuronToEmptyRegion = ParseFloat(ProbAddNeuron, 0.02f),
-            ProbRemoveLastNeuronFromRegion = ParseFloat(ProbRemoveNeuron, 0.01f),
+            ProbAddNeuronToEmptyRegion = ParseFloat(ProbAddNeuronToEmptyRegion, 0.02f),
+            ProbRemoveLastNeuronFromRegion = ParseFloat(ProbRemoveLastNeuronFromRegion, 0.01f),
             ProbAddAxon = ParseFloat(ProbAddAxon, 0.05f),
             ProbRemoveAxon = ParseFloat(ProbRemoveAxon, 0.02f),
             ProbRerouteAxon = ParseFloat(ProbRerouteAxon, 0.02f),
             MaxAvgOutDegreeBrain = ParseFloat(MaxAvgOutDegree, 100f),
+            StrengthTransformEnabled = StrengthTransformEnabled,
+            ProbStrengthChooseA = ParseFloat(ProbStrengthChooseA, 0.35f),
+            ProbStrengthChooseB = ParseFloat(ProbStrengthChooseB, 0.35f),
+            ProbStrengthAverage = ParseFloat(ProbStrengthAverage, 0.20f),
+            ProbStrengthWeightedAverage = ParseFloat(ProbStrengthWeightedAverage, 0.05f),
+            StrengthWeightA = ParseFloat(StrengthWeightA, 0.50f),
+            StrengthWeightB = ParseFloat(StrengthWeightB, 0.50f),
+            ProbStrengthMutate = ParseFloat(ProbStrengthMutate, 0.05f),
             SpawnChild = SelectedSpawnPolicy.Value
         };
+    }
+
+    private async Task BrowseParentFileAsync(ParentFileKind kind)
+    {
+        var extension = kind is ParentFileKind.ParentADef or ParentFileKind.ParentBDef ? "nbn" : "nbs";
+        var filter = extension.ToUpperInvariant() + " files";
+        var file = await PickOpenFileAsync($"Select .{extension} file", filter, extension);
+        if (file is null)
+        {
+            return;
+        }
+
+        var path = FormatPath(file);
+        switch (kind)
+        {
+            case ParentFileKind.ParentADef:
+                ParentADefPath = path;
+                break;
+            case ParentFileKind.ParentAState:
+                ParentAStatePath = path;
+                break;
+            case ParentFileKind.ParentBDef:
+                ParentBDefPath = path;
+                break;
+            case ParentFileKind.ParentBState:
+                ParentBStatePath = path;
+                break;
+        }
+    }
+
+    private void ClearParentFiles()
+    {
+        ParentADefPath = string.Empty;
+        ParentAStatePath = string.Empty;
+        ParentBDefPath = string.Empty;
+        ParentBStatePath = string.Empty;
+    }
+
+    private static float ComputeSimilarityScore(SimilarityReport? report)
+    {
+        if (report is null)
+        {
+            return 0f;
+        }
+
+        if (report.SimilarityScore > 0f)
+        {
+            return Clamp01(report.SimilarityScore);
+        }
+
+        var hasAny = false;
+        var total = 0f;
+        var count = 0;
+
+        if (report.RegionSpanScore > 0f)
+        {
+            total += report.RegionSpanScore;
+            count++;
+            hasAny = true;
+        }
+
+        if (report.FunctionScore > 0f)
+        {
+            total += report.FunctionScore;
+            count++;
+            hasAny = true;
+        }
+
+        if (report.ConnectivityScore > 0f)
+        {
+            total += report.ConnectivityScore;
+            count++;
+            hasAny = true;
+        }
+
+        if (hasAny && count > 0)
+        {
+            return Clamp01(total / count);
+        }
+
+        return report.Compatible ? 1f : 0f;
+    }
+
+    private static bool TryResolveParentId(ReproBrainOption? selected, string rawText, out Guid brainId)
+    {
+        if (selected is not null)
+        {
+            brainId = selected.BrainId;
+            return true;
+        }
+
+        if (Guid.TryParse(rawText, out brainId))
+        {
+            return true;
+        }
+
+        brainId = Guid.Empty;
+        return false;
     }
 
     private static float ParseFloat(string value, float fallback)
@@ -215,6 +581,80 @@ public sealed class ReproPanelViewModel : ViewModelBase
             ? parsed
             : fallback;
     }
+
+    private static float Clamp01(float value)
+    {
+        if (value < 0f)
+        {
+            return 0f;
+        }
+
+        if (value > 1f)
+        {
+            return 1f;
+        }
+
+        return value;
+    }
+
+    private static async Task<IStorageFile?> PickOpenFileAsync(string title, string filterName, string extension)
+    {
+        var provider = GetStorageProvider();
+        if (provider is null)
+        {
+            return null;
+        }
+
+        var options = new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false,
+            FileTypeFilter = new List<FilePickerFileType>
+            {
+                new(filterName) { Patterns = new List<string> { $"*.{extension}" } }
+            }
+        };
+
+        var results = await provider.OpenFilePickerAsync(options);
+        return results.FirstOrDefault();
+    }
+
+    private static IStorageProvider? GetStorageProvider()
+    {
+        var window = GetMainWindow();
+        return window?.StorageProvider;
+    }
+
+    private static Window? GetMainWindow()
+        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
+
+    private static string BuildDefaultArtifactRoot()
+    {
+        var baseDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Nbn.Workbench",
+            "repro-artifacts");
+        Directory.CreateDirectory(baseDir);
+        return baseDir;
+    }
+
+    private static string FormatPath(IStorageItem item)
+        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
+
+    private enum ParentFileKind
+    {
+        ParentADef,
+        ParentAState,
+        ParentBDef,
+        ParentBState
+    }
+}
+
+public sealed record ReproBrainOption(Guid BrainId, string Label)
+{
+    public string BrainIdLabel => BrainId.ToString("D");
 }
 
 public sealed record StrengthSourceOption(string Label, StrengthSource Value);

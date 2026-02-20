@@ -7,7 +7,7 @@
     <StackPanel Spacing="16">
       <Border Classes="card">
         <StackPanel Spacing="8">
-          <TextBlock Text="IO + Energy" Classes="card-title" />
+          <TextBlock Text="Energy + Plasticity" Classes="card-title" />
           <TextBlock Text="Applies to all active brains (selection lives in Visualizer)." Classes="muted" />
           <TextBlock Text="Selected Brain" Classes="muted" />
           <TextBox Text="{Binding BrainIdText}" IsReadOnly="True" />

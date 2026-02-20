@@ -54,7 +54,13 @@ public sealed record NodeStatusItem(
     string Address,
     string RootActor,
     string LastSeen,
-    string Status);
+    string Status)
+{
+    public bool IsOnline => string.Equals(Status, "online", StringComparison.OrdinalIgnoreCase);
+    public string StatusChipBackground => IsOnline ? "#DDF5E5" : "#F6E8BF";
+    public string StatusChipBorder => IsOnline ? "#2D9A5E" : "#C8A13F";
+    public string StatusChipForeground => IsOnline ? "#0F5832" : "#5C4511";
+}
 
 public sealed record SettingItem(string Key, string Value, string Updated);
 

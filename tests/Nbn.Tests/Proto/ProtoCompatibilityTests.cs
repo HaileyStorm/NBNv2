@@ -157,6 +157,9 @@ public class ProtoCompatibilityTests
         AssertField(config, "strength_transform_enabled", 50, FieldType.Bool);
         AssertField(config, "limits", 70, FieldType.Message, "nbn.repro.ReproduceLimits");
         AssertField(config, "spawn_child", 80, FieldType.Enum, "nbn.repro.SpawnChildPolicy");
+
+        var report = descriptor.MessageTypes.Single(message => message.Name == "SimilarityReport");
+        AssertField(report, "similarity_score", 13, FieldType.Float);
     }
 
     [Fact]

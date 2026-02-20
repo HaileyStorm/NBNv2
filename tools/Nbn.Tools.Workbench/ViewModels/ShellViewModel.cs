@@ -34,11 +34,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Navigation = new ObservableCollection<NavItemViewModel>
         {
             new("Orchestrator", "Nodes + Settings", "O", Orchestrator),
-            new("IO + Energy", "Brain inputs & outputs", "I", Io),
             new("Visualizer", "Activity stream", "V", Viz),
-            new("Debug", "Logs & filters", "D", Debug),
             new("Designer", "Build + import", "S", Designer),
-            new("Reproduction", "Spawn variants", "R", Repro)
+            new("Energy + Plasticity", "Brain inputs & outputs", "I", Io),
+            new("Reproduction", "Spawn variants", "R", Repro),
+            new("Debug", "Logs & filters", "D", Debug)
         };
 
         SelectedNav = Navigation[0];
@@ -254,6 +254,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private void OnBrainsUpdated(IReadOnlyList<BrainListItem> brains)
     {
         Viz.SetBrains(brains);
+        Repro.UpdateActiveBrains(brains);
         var active = brains
             .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
             .Select(entry => entry.BrainId)

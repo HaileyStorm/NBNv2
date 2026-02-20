@@ -339,6 +339,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var nodes = nodesResponse?.Nodes?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.NodeStatus>();
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
+            var sortedNodes = nodes
+                .OrderByDescending(node => node.LastSeenMs)
+                .ThenBy(node => node.LogicalName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             UpdateHiveMindEndpoint(nodes, nowMs);
@@ -354,7 +358,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             _dispatcher.Post(() =>
             {
                 Nodes.Clear();
-                foreach (var node in nodes)
+                foreach (var node in sortedNodes)
                 {
                     var isFresh = IsFresh(node.LastSeenMs, nowMs);
                     var isAlive = node.IsAlive && isFresh;
