@@ -1,11 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
+using Nbn.Proto.Debug;
+using Nbn.Proto.Viz;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Shared.HiveMind;
 using Proto;
+using ProtoSeverity = Nbn.Proto.Severity;
 using ProtoIo = Nbn.Proto.Io;
 using ProtoSettings = Nbn.Proto.Settings;
 using ProtoControl = Nbn.Proto.Control;
@@ -18,9 +21,12 @@ public sealed class HiveMindActor : IActor
     private readonly BackpressureController _backpressure;
     private readonly PID? _settingsPid;
     private readonly PID? _ioPid;
+    private readonly PID? _debugHubPid;
+    private readonly PID? _vizHubPid;
     private readonly Dictionary<Guid, BrainState> _brains = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
+    private ulong _vizSequence;
 
     private TickState? _tick;
     private TickPhase _phase = TickPhase.Idle;
@@ -32,13 +38,16 @@ public sealed class HiveMindActor : IActor
     private string? _queuedRescheduleReason;
     private ulong _lastCompletedTickId;
 
-    public HiveMindActor(HiveMindOptions options)
+    public HiveMindActor(HiveMindOptions options, PID? debugHubPid = null, PID? vizHubPid = null)
     {
         _options = options;
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
         _settingsPid = BuildSettingsPid(options);
         _ioPid = BuildIoPid(options);
+        var resolvedObs = ObservabilityTargets.Resolve(options.SettingsHost);
+        _debugHubPid = debugHubPid ?? resolvedObs.DebugHub;
+        _vizHubPid = vizHubPid ?? resolvedObs.VizHub;
     }
 
     public Task ReceiveAsync(IContext context)
@@ -201,6 +210,17 @@ public sealed class HiveMindActor : IActor
         RegisterBrainWithIo(context, brainState);
 
         ReportBrainRegistration(context, brainState);
+
+        if (isNew)
+        {
+            EmitVizEvent(context, VizEventType.VizBrainSpawned, brainId: brainState.BrainId);
+            EmitDebug(context, ProtoSeverity.SevInfo, "brain.spawned", $"Registered brain {brainState.BrainId}.");
+        }
+
+        EmitVizEvent(
+            context,
+            brainState.Paused ? VizEventType.VizBrainPaused : VizEventType.VizBrainActive,
+            brainId: brainState.BrainId);
     }
 
     private void UpdateBrainSignalRouter(IContext context, Guid brainId, PID routerPid)
@@ -238,6 +258,8 @@ public sealed class HiveMindActor : IActor
         }
 
         ReportBrainUnregistered(context, brainId);
+        EmitVizEvent(context, VizEventType.VizBrainTerminated, brainId: brainId);
+        EmitDebug(context, ProtoSeverity.SevWarn, "brain.terminated", $"Brain {brainId} unregistered.");
 
         if (_phase == TickPhase.Compute)
         {
@@ -270,6 +292,12 @@ public sealed class HiveMindActor : IActor
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
         UpdateRoutingTable(context, brain);
+        EmitVizEvent(
+            context,
+            VizEventType.VizShardSpawned,
+            brainId: brainId,
+            regionId: (uint)regionId,
+            shardId: shardId);
 
         if (neuronCount > 0)
         {
@@ -297,6 +325,12 @@ public sealed class HiveMindActor : IActor
         {
             Log($"Shard registered mid-compute for brain {brainId}; will start next tick.");
         }
+
+        EmitDebug(
+            context,
+            ProtoSeverity.SevDebug,
+            "shard.registered",
+            $"Brain={brainId} region={regionId} shard={shardId} neurons={neuronStart}:{neuronCount}");
     }
 
     private void UnregisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex)
@@ -499,6 +533,8 @@ public sealed class HiveMindActor : IActor
         }
 
         ReportBrainState(context, brainId, "Paused", reason);
+        EmitVizEvent(context, VizEventType.VizBrainPaused, brainId: brainId);
+        EmitDebug(context, ProtoSeverity.SevInfo, "brain.paused", $"Brain {brainId} paused. reason={reason ?? "none"}");
     }
 
     private void ResumeBrain(IContext context, Guid brainId)
@@ -508,12 +544,15 @@ public sealed class HiveMindActor : IActor
             brain.Paused = false;
             brain.PausedReason = null;
             ReportBrainState(context, brainId, "Active", null);
+            EmitVizEvent(context, VizEventType.VizBrainActive, brainId: brainId);
+            EmitDebug(context, ProtoSeverity.SevInfo, "brain.resumed", $"Brain {brainId} resumed.");
         }
     }
 
     private void StartTick(IContext context)
     {
         _tick = new TickState(_lastCompletedTickId + 1, DateTime.UtcNow);
+        EmitVizEvent(context, VizEventType.VizTick, tickId: _tick.TickId);
         _phase = TickPhase.Compute;
         _pendingCompute.Clear();
         _pendingDeliver.Clear();
@@ -663,6 +702,11 @@ public sealed class HiveMindActor : IActor
                 if (_pendingCompute.Count > 0)
                 {
                     LogError($"TickCompute timeout: tick {_tick.TickId} pending={_pendingCompute.Count}");
+                    EmitDebug(
+                        context,
+                        ProtoSeverity.SevError,
+                        "tick.compute.timeout",
+                        $"Tick {_tick.TickId} compute timeout pending={_pendingCompute.Count}");
                 }
                 _pendingCompute.Clear();
                 CompleteComputePhase(context);
@@ -673,6 +717,11 @@ public sealed class HiveMindActor : IActor
                 {
                     var pendingBrains = string.Join(",", _pendingDeliver);
                     LogError($"TickDeliver timeout: tick {_tick.TickId} pendingBrains={pendingBrains}");
+                    EmitDebug(
+                        context,
+                        ProtoSeverity.SevError,
+                        "tick.deliver.timeout",
+                        $"Tick {_tick.TickId} deliver timeout pendingBrains={pendingBrains}");
                 }
                 _pendingDeliver.Clear();
                 CompleteTick(context);
@@ -1425,6 +1474,60 @@ public sealed class HiveMindActor : IActor
 
     private static Guid DeriveNodeId(string address)
         => NodeIdentity.DeriveNodeId(address);
+
+    private void EmitVizEvent(
+        IContext context,
+        VizEventType type,
+        Guid? brainId = null,
+        ulong tickId = 0,
+        uint regionId = 0,
+        ShardId32? shardId = null)
+    {
+        if (_vizHubPid is null || !ObservabilityTargets.CanSend(context, _vizHubPid))
+        {
+            return;
+        }
+
+        var evt = new VisualizationEvent
+        {
+            EventId = $"hm-{++_vizSequence}",
+            TimeMs = (ulong)NowMs(),
+            Type = type,
+            TickId = tickId,
+            RegionId = regionId
+        };
+
+        if (brainId.HasValue)
+        {
+            evt.BrainId = brainId.Value.ToProtoUuid();
+        }
+
+        if (shardId.HasValue)
+        {
+            evt.ShardId = shardId.Value.ToProtoShardId32();
+        }
+
+        context.Send(_vizHubPid, evt);
+    }
+
+    private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)
+    {
+        if (_debugHubPid is null || !ObservabilityTargets.CanSend(context, _debugHubPid))
+        {
+            return;
+        }
+
+        context.Send(_debugHubPid, new DebugOutbound
+        {
+            Severity = severity,
+            Context = $"hivemind.{category}",
+            Summary = category,
+            Message = message,
+            SenderActor = PidLabel(context.Self),
+            SenderNode = context.System.Address ?? string.Empty,
+            TimeMs = (ulong)NowMs()
+        });
+    }
 
     private static PID? BuildSettingsPid(HiveMindOptions options)
     {

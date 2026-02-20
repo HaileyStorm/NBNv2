@@ -1,8 +1,10 @@
 using Nbn.Proto;
 using Nbn.Proto.Control;
+using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
+using Nbn.Proto.Viz;
 using Proto.Remote;
 
 namespace Nbn.Runtime.RegionHost;
@@ -41,9 +43,11 @@ public static class RegionHostRemote
         config = config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
             NbnControlReflection.Descriptor,
+            NbnDebugReflection.Descriptor,
             NbnSettingsReflection.Descriptor,
             NbnSignalsReflection.Descriptor,
-            NbnIoReflection.Descriptor);
+            NbnIoReflection.Descriptor,
+            NbnVizReflection.Descriptor);
 
         return config;
     }

@@ -50,3 +50,15 @@ Notes:
 - `--nbs-*` flags are optional (omit for no snapshot overlays).
 - Output region shards (`region 31`) require a valid `--output-*` PID.
 - RegionHost registers/unregisters its shard with the HiveMind PID provided via `--tick-*`.
+
+## Observability Event Routing
+
+Runtime services now emit `VisualizationEvent` and `DebugOutbound` messages (for
+example: brain spawn/active/pause/terminate, shard spawned, tick, neuron-fired,
+axon-sent, and timeout anomalies). Emission target can be configured with:
+
+- `NBN_OBS_ADDRESS` (full `host:port`, takes precedence)
+- `NBN_OBS_HOST` + `NBN_OBS_PORT` (default port `12060`)
+- `NBN_OBS_DEBUG_HUB` (default `DebugHub`)
+- `NBN_OBS_VIZ_HUB` (default `VisualizationHub`)
+- `NBN_OBS_DISABLED=true` to disable emission

@@ -1,8 +1,10 @@
 using Nbn.Proto;
 using Nbn.Proto.Control;
+using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
+using Nbn.Proto.Viz;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.BrainHost;
 using Nbn.Shared;
@@ -182,9 +184,11 @@ static RemoteConfig BuildRemoteConfig(string bindHost, int port, string? adverti
     config = config.WithProtoMessages(
         NbnCommonReflection.Descriptor,
         NbnControlReflection.Descriptor,
+        NbnDebugReflection.Descriptor,
         NbnIoReflection.Descriptor,
         NbnSettingsReflection.Descriptor,
-        NbnSignalsReflection.Descriptor);
+        NbnSignalsReflection.Descriptor,
+        NbnVizReflection.Descriptor);
 
     return config;
 }

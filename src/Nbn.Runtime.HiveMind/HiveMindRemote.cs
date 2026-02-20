@@ -1,7 +1,9 @@
 using Nbn.Proto;
 using Nbn.Proto.Control;
+using Nbn.Proto.Debug;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
+using Nbn.Proto.Viz;
 using Proto.Remote;
 
 namespace Nbn.Runtime.HiveMind;
@@ -40,8 +42,10 @@ public static class HiveMindRemote
         config = config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
             NbnControlReflection.Descriptor,
+            NbnDebugReflection.Descriptor,
             NbnSettingsReflection.Descriptor,
-            NbnSignalsReflection.Descriptor);
+            NbnSignalsReflection.Descriptor,
+            NbnVizReflection.Descriptor);
 
         return config;
     }

@@ -17,6 +17,7 @@ Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = tru
 
 var options = RegionHostOptions.FromArgs(args);
 ValidateOptions(options);
+var obsTargets = ObservabilityTargets.Resolve(options.SettingsHost);
 
 var system = new ActorSystem();
 var remoteConfig = RegionHostRemote.BuildConfig(options);
@@ -70,7 +71,15 @@ if (plan.Warnings.Count > 0)
         Console.WriteLine($"Shard plan warning: {warning}");
     }
 }
-var config = new RegionShardActorConfig(options.BrainId, shardId, routerPid, outputPid, tickPid, routing);
+var config = new RegionShardActorConfig(
+    options.BrainId,
+    shardId,
+    routerPid,
+    outputPid,
+    tickPid,
+    routing,
+    obsTargets.VizHub,
+    obsTargets.DebugHub);
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 var shardRemotePid = new PID(GetAdvertisedAddress(remoteConfig), shardPid.Id);

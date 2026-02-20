@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using Nbn.Proto.Control;
+using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
+using Nbn.Proto.Viz;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Proto;
+using ProtoSeverity = Nbn.Proto.Severity;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -21,8 +24,11 @@ public sealed class RegionShardActor : IActor
     private PID? _router;
     private PID? _outputSink;
     private PID? _tickSink;
+    private PID? _vizHub;
+    private PID? _debugHub;
     private bool _hasComputed;
     private ulong _lastComputeTickId;
+    private ulong _vizSequence;
 
     public RegionShardActor(RegionShardState state, RegionShardActorConfig config)
     {
@@ -33,6 +39,8 @@ public sealed class RegionShardActor : IActor
         _router = config.Router;
         _outputSink = config.OutputSink;
         _tickSink = config.TickSink;
+        _vizHub = config.VizHub;
+        _debugHub = config.DebugHub;
         _routing = config.Routing ?? RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
     }
 
@@ -40,6 +48,10 @@ public sealed class RegionShardActor : IActor
     {
         switch (context.Message)
         {
+            case Started:
+                EmitVizEvent(context, VizEventType.VizShardSpawned, tickId: 0, value: 0f);
+                EmitDebug(context, ProtoSeverity.SevInfo, "shard.started", $"Shard {_shardId} for brain {_brainId} started.");
+                break;
             case RegionShardUpdateEndpoints endpoints:
                 _router = endpoints.Router;
                 _outputSink = endpoints.OutputSink;
@@ -96,6 +108,7 @@ public sealed class RegionShardActor : IActor
         if (!IsBatchForShard(batch, out var rejectReason))
         {
             RegionHostTelemetry.RecordSignalBatchRejected();
+            EmitDebug(context, ProtoSeverity.SevWarn, "signal.rejected", $"Rejected SignalBatch tick={batch.TickId} reason={rejectReason}");
             if (LogDelivery)
             {
                 Console.WriteLine($"[RegionShard] SignalBatch rejected. reason={rejectReason} tick={batch.TickId}");
@@ -106,6 +119,7 @@ public sealed class RegionShardActor : IActor
         if (_hasComputed && batch.TickId < _lastComputeTickId)
         {
             RegionHostTelemetry.RecordSignalBatchLate();
+            EmitDebug(context, ProtoSeverity.SevWarn, "signal.late", $"Late SignalBatch tick={batch.TickId} lastCompute={_lastComputeTickId}");
             if (LogDelivery)
             {
                 Console.WriteLine($"[RegionShard] SignalBatch late. tick={batch.TickId} lastCompute={_lastComputeTickId}");
@@ -156,6 +170,7 @@ public sealed class RegionShardActor : IActor
         if (_recentComputeDone.TryGetValue(tick.TickId, out var cachedDone))
         {
             RegionHostTelemetry.RecordComputeDuplicate();
+            EmitDebug(context, ProtoSeverity.SevDebug, "tick.duplicate", $"Duplicate TickCompute {tick.TickId}");
             if (LogDelivery)
             {
                 Console.WriteLine($"[RegionShard] TickCompute duplicate. tick={tick.TickId}");
@@ -168,6 +183,7 @@ public sealed class RegionShardActor : IActor
         if (_hasComputed && tick.TickId < _lastComputeTickId)
         {
             RegionHostTelemetry.RecordComputeOutOfOrder();
+            EmitDebug(context, ProtoSeverity.SevWarn, "tick.out_of_order", $"Out-of-order TickCompute tick={tick.TickId} lastCompute={_lastComputeTickId}");
             if (LogDelivery)
             {
                 Console.WriteLine($"[RegionShard] TickCompute out-of-order. tick={tick.TickId} lastCompute={_lastComputeTickId}");
@@ -178,6 +194,7 @@ public sealed class RegionShardActor : IActor
         if (_hasComputed && tick.TickId > _lastComputeTickId + 1)
         {
             RegionHostTelemetry.RecordComputeJump();
+            EmitDebug(context, ProtoSeverity.SevWarn, "tick.jump", $"TickCompute jump tick={tick.TickId} lastCompute={_lastComputeTickId}");
             if (LogDelivery)
             {
                 Console.WriteLine($"[RegionShard] TickCompute jump. tick={tick.TickId} lastCompute={_lastComputeTickId}");
@@ -231,6 +248,24 @@ public sealed class RegionShardActor : IActor
                 vector.Values.Add(result.OutputVector);
                 context.Send(_outputSink, vector);
             }
+        }
+
+        if (result.FiredCount > 0)
+        {
+            EmitVizEvent(
+                context,
+                VizEventType.VizNeuronFired,
+                tick.TickId,
+                result.FiredCount);
+        }
+
+        if (result.OutContribs > 0)
+        {
+            EmitVizEvent(
+                context,
+                VizEventType.VizAxonSent,
+                tick.TickId,
+                result.OutContribs);
         }
 
         var done = new TickComputeDone
@@ -317,6 +352,47 @@ public sealed class RegionShardActor : IActor
 
         reason = "ok";
         return true;
+    }
+
+    private void EmitVizEvent(IContext context, VizEventType type, ulong tickId, float value)
+    {
+        if (_vizHub is null || !ObservabilityTargets.CanSend(context, _vizHub))
+        {
+            return;
+        }
+
+        var evt = new VisualizationEvent
+        {
+            EventId = $"region-{++_vizSequence}",
+            TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Type = type,
+            BrainId = _brainId.ToProtoUuid(),
+            TickId = tickId,
+            RegionId = (uint)_state.RegionId,
+            ShardId = _shardId.ToProtoShardId32(),
+            Value = value
+        };
+
+        context.Send(_vizHub, evt);
+    }
+
+    private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)
+    {
+        if (_debugHub is null || !ObservabilityTargets.CanSend(context, _debugHub))
+        {
+            return;
+        }
+
+        context.Send(_debugHub, new DebugOutbound
+        {
+            Severity = severity,
+            Context = $"region.{category}",
+            Summary = category,
+            Message = message,
+            SenderActor = string.IsNullOrWhiteSpace(context.Self.Address) ? context.Self.Id : $"{context.Self.Address}/{context.Self.Id}",
+            SenderNode = context.System.Address ?? string.Empty,
+            TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
     }
 
     private static bool IsEnvTrue(string key)

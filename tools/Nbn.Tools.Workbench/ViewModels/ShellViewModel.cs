@@ -173,7 +173,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnDebugEvent(DebugEventItem item) => Debug.AddDebugEvent(item);
 
-    public void OnVizEvent(VizEventItem item) => Debug.AddVizEvent(item);
+    public void OnVizEvent(VizEventItem item)
+    {
+        Debug.AddVizEvent(item);
+        Viz.AddVizEvent(item);
+    }
 
     public void OnBrainTerminated(BrainTerminatedItem item) => Orchestrator.AddTermination(item);
 

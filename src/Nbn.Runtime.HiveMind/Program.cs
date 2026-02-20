@@ -16,8 +16,9 @@ var remoteConfig = HiveMindRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
+var obsTargets = ObservabilityTargets.Resolve(options.SettingsHost);
 var hiveMindPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new HiveMindActor(options)),
+    Props.FromProducer(() => new HiveMindActor(options, obsTargets.DebugHub, obsTargets.VizHub)),
     HiveMindNames.HiveMind);
 
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
