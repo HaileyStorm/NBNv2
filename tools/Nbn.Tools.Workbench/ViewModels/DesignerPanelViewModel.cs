@@ -108,6 +108,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private bool _regionRefreshPending;
     private bool _suppressNeuronConstraintEnforcement;
     private string _edgeSummary = string.Empty;
+    private string _edgeAnalyticsSummary = "Select a neuron to inspect edge analytics.";
     private string _snapshotTickText = "0";
     private string _snapshotEnergyText = "0";
     private bool _snapshotIncludeEnabledBitset = true;
@@ -178,6 +179,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         LastRegionPageCommand = new RelayCommand(LastRegionPage, () => CanEditDesign && RegionPageIndex + 1 < RegionPageCount);
         JumpToNeuronCommand = new RelayCommand(JumpToNeuron, () => CanEditDesign && SelectedRegion is not null);
         AddAxonByIdCommand = new RelayCommand(AddAxonById, () => CanEditDesign && SelectedNeuron is not null);
+        FocusEdgeEndpointCommand = new RelayCommand<DesignerEdgeViewModel>(FocusEdgeEndpoint);
     }
 
     public ObservableCollection<string> ValidationIssues { get; }
@@ -499,6 +501,12 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         private set => SetProperty(ref _edgeSummary, value);
     }
 
+    public string EdgeAnalyticsSummary
+    {
+        get => _edgeAnalyticsSummary;
+        private set => SetProperty(ref _edgeAnalyticsSummary, value);
+    }
+
     public string SnapshotTickText
     {
         get => _snapshotTickText;
@@ -694,6 +702,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     public RelayCommand LastRegionPageCommand { get; }
     public RelayCommand JumpToNeuronCommand { get; }
     public RelayCommand AddAxonByIdCommand { get; }
+    public RelayCommand<DesignerEdgeViewModel> FocusEdgeEndpointCommand { get; }
 
     private void NewBrain()
     {
@@ -1956,6 +1965,34 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         Status = $"Focused neuron {neuron.NeuronId} in region {SelectedRegion.RegionId}.";
     }
 
+    private void FocusEdgeEndpoint(DesignerEdgeViewModel? edge)
+    {
+        if (edge is null || !edge.CanNavigate || Brain is null)
+        {
+            return;
+        }
+
+        var targetRegionId = edge.NavigationRegionId;
+        var targetNeuronId = edge.NavigationNeuronId;
+        if (!targetRegionId.HasValue || !targetNeuronId.HasValue)
+        {
+            return;
+        }
+
+        var region = Brain.Regions.FirstOrDefault(candidate => candidate.RegionId == targetRegionId.Value);
+        if (region is null || targetNeuronId.Value < 0 || targetNeuronId.Value >= region.NeuronCount)
+        {
+            Status = "Edge endpoint is no longer available.";
+            return;
+        }
+
+        var neuron = region.Neurons[targetNeuronId.Value];
+        SelectRegion(region);
+        EnsureNeuronVisible(neuron);
+        SelectNeuron(neuron);
+        Status = $"Focused edge endpoint R{region.RegionId} N{neuron.NeuronId}.";
+    }
+
     private void AddAxonById()
     {
         if (Brain is null || SelectedNeuron is null)
@@ -2238,6 +2275,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         VisibleEdges.Clear();
         EdgeSummary = string.Empty;
+        EdgeAnalyticsSummary = "Select a neuron to inspect edge analytics.";
 
         if (SelectedRegion is null || VisibleNeurons.Count == 0)
         {
@@ -2269,6 +2307,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         var visibleInbound = 0;
         var offPageInbound = 0;
 
+        var visibleOutboundTargets = new List<(DesignerAxonViewModel Axon, Point End, bool IsSelected)>();
+        var visibleInboundSources = new List<(int SourceRegionId, int SourceNeuronId, Point Start)>();
         var offPageOutboundAxons = new List<(DesignerAxonViewModel Axon, bool IsSelected)>();
         var offPageInboundSources = new List<(int SourceRegionId, int SourceNeuronId)>();
 
@@ -2296,7 +2336,20 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 && SelectedAxon.TargetRegionId == axon.TargetRegionId
                 && SelectedAxon.TargetNeuronId == axon.TargetNeuronId;
 
-            VisibleEdges.Add(new DesignerEdgeViewModel(start, end, false, isSelected, DesignerEdgeKind.OutboundInternal));
+            visibleOutboundTargets.Add((axon, end, isSelected));
+        }
+
+        for (var i = 0; i < visibleOutboundTargets.Count; i++)
+        {
+            var entry = visibleOutboundTargets[i];
+            VisibleEdges.Add(new DesignerEdgeViewModel(
+                start,
+                entry.End,
+                false,
+                entry.IsSelected,
+                DesignerEdgeKind.OutboundInternal,
+                bundleIndex: i,
+                bundleCount: visibleOutboundTargets.Count));
             visibleOutbound++;
         }
 
@@ -2323,8 +2376,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                             continue;
                         }
 
-                        VisibleEdges.Add(new DesignerEdgeViewModel(inboundStart, start, false, false, DesignerEdgeKind.InboundInternal));
-                        visibleInbound++;
+                        visibleInboundSources.Add((sourceRegion.RegionId, sourceNeuron.NeuronId, inboundStart));
                     }
                     else
                     {
@@ -2333,6 +2385,20 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     }
                 }
             }
+        }
+
+        for (var i = 0; i < visibleInboundSources.Count; i++)
+        {
+            var entry = visibleInboundSources[i];
+            VisibleEdges.Add(new DesignerEdgeViewModel(
+                entry.Start,
+                start,
+                false,
+                false,
+                DesignerEdgeKind.InboundInternal,
+                bundleIndex: i,
+                bundleCount: visibleInboundSources.Count));
+            visibleInbound++;
         }
 
         if (offPageOutboundAxons.Count > 0)
@@ -2349,7 +2415,18 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 var labelText = BuildOutboundOffPageLabel(entry.Axon);
                 var labelPoint = new Point(endPoint.X + 4, endPoint.Y - 6);
                 labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight);
-                VisibleEdges.Add(new DesignerEdgeViewModel(start, endPoint, false, entry.IsSelected, DesignerEdgeKind.OutboundExternal, labelText, labelPoint));
+                VisibleEdges.Add(new DesignerEdgeViewModel(
+                    start,
+                    endPoint,
+                    false,
+                    entry.IsSelected,
+                    DesignerEdgeKind.OutboundExternal,
+                    labelText,
+                    labelPoint,
+                    i,
+                    offPageOutboundAxons.Count,
+                    entry.Axon.TargetRegionId,
+                    entry.Axon.TargetNeuronId));
             }
         }
 
@@ -2367,7 +2444,18 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 var labelText = BuildInboundOffPageLabel(entry.SourceRegionId, entry.SourceNeuronId);
                 var labelPoint = new Point(endPoint.X - 38, endPoint.Y - 6);
                 labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight);
-                VisibleEdges.Add(new DesignerEdgeViewModel(endPoint, start, false, false, DesignerEdgeKind.InboundExternal, labelText, labelPoint));
+                VisibleEdges.Add(new DesignerEdgeViewModel(
+                    endPoint,
+                    start,
+                    false,
+                    false,
+                    DesignerEdgeKind.InboundExternal,
+                    labelText,
+                    labelPoint,
+                    i,
+                    offPageInboundSources.Count,
+                    entry.SourceRegionId,
+                    entry.SourceNeuronId));
             }
         }
 
@@ -2375,13 +2463,60 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         {
             if (positions.TryGetValue(_hoveredNeuron.NeuronId, out var hoverEnd))
             {
-                VisibleEdges.Add(new DesignerEdgeViewModel(start, hoverEnd, true, false, DesignerEdgeKind.OutboundInternal));
+                VisibleEdges.Add(new DesignerEdgeViewModel(start, hoverEnd, true, false, DesignerEdgeKind.OutboundInternal, bundleCount: 1));
             }
         }
 
-        EdgeSummary = source.Axons.Count == 0 && visibleInbound == 0 && offPageInbound == 0
+        var summary = source.Axons.Count == 0 && visibleInbound == 0 && offPageInbound == 0
             ? "No inbound or outbound axons."
             : $"Out: {visibleOutbound} visible, {offPageOutbound} external/off-page. In: {visibleInbound} visible, {offPageInbound} external/off-page.";
+        if (offPageOutbound + offPageInbound > 0)
+        {
+            summary += " Click off-page labels to jump.";
+        }
+
+        EdgeSummary = summary;
+        EdgeAnalyticsSummary = BuildEdgeAnalyticsSummary(source, visibleOutbound, offPageOutbound, visibleInbound, offPageInbound);
+    }
+
+    private string BuildEdgeAnalyticsSummary(
+        DesignerNeuronViewModel source,
+        int visibleOutbound,
+        int offPageOutbound,
+        int visibleInbound,
+        int offPageInbound)
+    {
+        var totalOutbound = visibleOutbound + offPageOutbound;
+        var totalInbound = visibleInbound + offPageInbound;
+        var totalEdges = totalOutbound + totalInbound;
+        if (totalEdges == 0)
+        {
+            return "Density: idle (0 edges).";
+        }
+
+        var externalEdges = offPageOutbound + offPageInbound;
+        var externalPct = (externalEdges * 100.0) / totalEdges;
+        var pressure = totalEdges switch
+        {
+            < 8 => "light",
+            < 20 => "moderate",
+            < 45 => "dense",
+            _ => "saturated"
+        };
+
+        var regionTotal = Math.Max(1, SelectedRegion?.NeuronCount ?? 0);
+        var pageCoveragePct = (VisibleNeurons.Count * 100.0) / regionTotal;
+        var dominantTargetGroup = source.Axons
+            .GroupBy(axon => axon.TargetRegionId)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key)
+            .FirstOrDefault();
+        var dominantTarget = dominantTargetGroup is null
+            ? "none"
+            : $"R{dominantTargetGroup.Key} ({dominantTargetGroup.Count()})";
+
+        return $"Density: {pressure} ({totalEdges} edges). External/off-page: {externalPct:0.#}% ({externalEdges}). "
+             + $"Page coverage: {pageCoveragePct:0.#}% ({VisibleNeurons.Count}/{regionTotal}). Dominant target: {dominantTarget}.";
     }
 
     private static double BuildArcAngle(int index, int total, double startAngle, double endAngle)
@@ -2399,22 +2534,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         if (SelectedRegion is null || axon.TargetRegionId != SelectedRegion.RegionId)
         {
-            return $"→ R{axon.TargetRegionId} N{axon.TargetNeuronId}";
+            return $"-> R{axon.TargetRegionId} N{axon.TargetNeuronId}";
         }
 
         var page = _regionPageSize == 0 ? 0 : axon.TargetNeuronId / _regionPageSize;
-        return $"→ P{page + 1} N{axon.TargetNeuronId}";
+        return $"-> P{page + 1} N{axon.TargetNeuronId}";
     }
 
     private string BuildInboundOffPageLabel(int sourceRegionId, int sourceNeuronId)
     {
         if (SelectedRegion is null || sourceRegionId != SelectedRegion.RegionId)
         {
-            return $"← R{sourceRegionId} N{sourceNeuronId}";
+            return $"<- R{sourceRegionId} N{sourceNeuronId}";
         }
 
         var page = _regionPageSize == 0 ? 0 : sourceNeuronId / _regionPageSize;
-        return $"← P{page + 1} N{sourceNeuronId}";
+        return $"<- P{page + 1} N{sourceNeuronId}";
     }
 
     private static Point ClampToCanvas(Point point, double width, double height)
@@ -4676,3 +4811,4 @@ public sealed record SpawnPlacementOption(string Label, SpawnPlacementMode Value
 public sealed record RegionHostStartPolicyOption(string Label, RegionHostStartPolicy Value, string Description);
 
 public sealed record ShardPlanOption(string Label, ShardPlanMode Value, string Description);
+

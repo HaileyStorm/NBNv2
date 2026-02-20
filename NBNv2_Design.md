@@ -2872,7 +2872,7 @@ Aleph is the default workflow for deep codebase analysis in this repo:
 
 Use Aleph to reduce context bloat while still collecting concrete evidence (paths, symbols, message contracts, and behavior edges).
 
-For non-trivial tasks, Aleph-first is the expected posture: use shell/`rg` to find candidate files, then move quickly into Aleph contexts for analysis.
+For non-trivial tasks, Aleph-first is the expected posture: do minimal shell scouting, then move quickly into Aleph contexts and delegated sub-query packets for analysis.
 
 ### 21.2 When Aleph use is expected (strong default)
 
@@ -2937,7 +2937,7 @@ For cross-file implementation work, sub-queries are expected (not optional): run
 ### 21.7 Minimum Aleph workflow (required when section 21.2 triggers)
 
 1. Load each primary file into its own Aleph context (avoid mixing unrelated files into one context).
-2. Run 3+ focused sub-queries (ownership map, invariants map, test/verification map), then run `search_context` queries for symbols/invariants relevant to the requested behavior.
+2. Run 3+ focused sub-queries (ownership map, invariants map, test/verification map). Delegate bounded discovery packets via sub-query (or sub-agent via sub-query) instead of long manual command loops in the main thread.
 3. `peek_context` only the specific ranges needed to confirm semantics and side effects.
 4. Post a brief evidence map before editing:
    * candidate files
@@ -3007,6 +3007,16 @@ Use these prompts as a default pattern (adapt scope/path names per task):
 4. "List tests touching `[behavior]` and missing cases likely to regress after `[change]`."
 
 Keep each sub-query narrow and evidence-backed; merge conclusions in the main thread before editing.
+
+### 21.13 Sub-query packet pattern (default for scouting)
+
+Use short delegated packets for discovery-heavy work so main-thread context stays small:
+
+1. Issue packet: Beads issue detail + dependency/related issue scan + acceptance clues.
+2. Repo scout packet: `rg` ownership sweep + recent `git log/show` around candidate files.
+3. Slice packet: `search_context` + `peek_context` over only the symbols/ranges needed.
+
+When these packets are available, prefer them over repeated ad-hoc `rg`/`git`/`Get-Content` loops in the primary thread.
 
 ## Multi-agent coordination and workspace boundaries
 

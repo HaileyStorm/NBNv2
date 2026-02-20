@@ -526,10 +526,16 @@
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="vm:DesignerEdgeViewModel" x:CompileBindings="False">
-                          <shapes:Line StartPoint="{Binding Start}"
-                                       EndPoint="{Binding End}"
-                                       Stroke="{Binding Stroke}"
-                                       StrokeThickness="{Binding Thickness}" />
+                          <Canvas>
+                            <shapes:Path Data="{Binding PathGeometry}"
+                                         Stroke="{Binding Stroke}"
+                                         StrokeThickness="{Binding Thickness}" />
+                            <shapes:Path Data="{Binding ArrowHeadGeometry}"
+                                         IsVisible="{Binding ShowArrowHead}"
+                                         Fill="{Binding Stroke}"
+                                         Stroke="{Binding Stroke}"
+                                         StrokeThickness="0.8" />
+                          </Canvas>
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -581,10 +587,17 @@
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="vm:DesignerEdgeViewModel" x:CompileBindings="False">
-                          <TextBlock Text="{Binding Label}"
-                                     IsVisible="{Binding HasLabel}"
-                                     Classes="muted"
-                                     FontSize="10" />
+                          <Button Content="{Binding Label}"
+                                  IsVisible="{Binding HasLabel}"
+                                  IsEnabled="{Binding CanNavigate}"
+                                  Command="{Binding DataContext.FocusEdgeEndpointCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                  CommandParameter="{Binding}"
+                                  ToolTip.Tip="{Binding NavigationHint}"
+                                  Background="Transparent"
+                                  BorderBrush="Transparent"
+                                  Foreground="{DynamicResource NbnMutedBrush}"
+                                  FontSize="10"
+                                  Padding="1" />
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -592,8 +605,13 @@
                 </ScrollViewer>
               </Border>
 
-              <TextBlock Grid.Row="4" Text="{Binding EdgeSummary}" Classes="muted" />
-              <TextBlock Grid.Row="4" Text="{Binding RegionPageSummary}" Classes="muted" HorizontalAlignment="Right" />
+              <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Grid.Column="0" Spacing="2">
+                  <TextBlock Text="{Binding EdgeSummary}" Classes="muted" />
+                  <TextBlock Text="{Binding EdgeAnalyticsSummary}" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding RegionPageSummary}" Classes="muted" VerticalAlignment="Top" />
+              </Grid>
 
               <Expander Grid.Row="5" Header="Visible Neuron Tiles (compact list)" IsExpanded="False">
                 <ItemsControl ItemsSource="{Binding VisibleNeurons}">

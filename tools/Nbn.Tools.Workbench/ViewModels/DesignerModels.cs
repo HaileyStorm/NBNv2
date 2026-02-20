@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using Avalonia;
 using Avalonia.Media;
@@ -479,6 +480,12 @@ public sealed class DesignerAxonViewModel : ViewModelBase
 
 public sealed class DesignerEdgeViewModel : ViewModelBase
 {
+    private const double InternalBundleBase = 12;
+    private const double ExternalBundleBase = 18;
+    private const double BundleSpread = 8;
+    private const double MinVectorLength = 0.001;
+    private const double ArrowLengthBase = 8;
+    private const double ArrowWidthBase = 4.5;
     private Point _start;
     private Point _end;
     private bool _isPreview;
@@ -488,6 +495,13 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
     private double _thickness;
     private string? _label;
     private Point _labelPosition;
+    private Geometry _pathGeometry;
+    private Geometry _arrowHeadGeometry;
+    private bool _showArrowHead;
+    private readonly int _bundleIndex;
+    private readonly int _bundleCount;
+    private readonly int? _navigationRegionId;
+    private readonly int? _navigationNeuronId;
 
     public DesignerEdgeViewModel(
         Point start,
@@ -496,7 +510,11 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         bool isSelected,
         DesignerEdgeKind kind = DesignerEdgeKind.OutboundInternal,
         string? label = null,
-        Point? labelPosition = null)
+        Point? labelPosition = null,
+        int bundleIndex = 0,
+        int bundleCount = 1,
+        int? navigationRegionId = null,
+        int? navigationNeuronId = null)
     {
         _start = start;
         _end = end;
@@ -507,19 +525,37 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         _labelPosition = labelPosition ?? default;
         _stroke = DesignerBrushes.Border;
         _thickness = 1;
+        _pathGeometry = Geometry.Parse("M 0 0");
+        _arrowHeadGeometry = Geometry.Parse("M 0 0");
+        _bundleIndex = Math.Max(0, bundleIndex);
+        _bundleCount = Math.Max(1, bundleCount);
+        _navigationRegionId = navigationRegionId;
+        _navigationNeuronId = navigationNeuronId;
         UpdateAppearance();
     }
 
     public Point Start
     {
         get => _start;
-        set => SetProperty(ref _start, value);
+        set
+        {
+            if (SetProperty(ref _start, value))
+            {
+                UpdateGeometry();
+            }
+        }
     }
 
     public Point End
     {
         get => _end;
-        set => SetProperty(ref _end, value);
+        set
+        {
+            if (SetProperty(ref _end, value))
+            {
+                UpdateGeometry();
+            }
+        }
     }
 
     public bool IsPreview
@@ -590,6 +626,34 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         set => SetProperty(ref _labelPosition, value);
     }
 
+    public Geometry PathGeometry
+    {
+        get => _pathGeometry;
+        private set => SetProperty(ref _pathGeometry, value);
+    }
+
+    public Geometry ArrowHeadGeometry
+    {
+        get => _arrowHeadGeometry;
+        private set => SetProperty(ref _arrowHeadGeometry, value);
+    }
+
+    public bool ShowArrowHead
+    {
+        get => _showArrowHead;
+        private set => SetProperty(ref _showArrowHead, value);
+    }
+
+    public bool CanNavigate => _navigationRegionId.HasValue && _navigationNeuronId.HasValue;
+
+    public int? NavigationRegionId => _navigationRegionId;
+
+    public int? NavigationNeuronId => _navigationNeuronId;
+
+    public string NavigationHint => CanNavigate
+        ? $"Focus R{_navigationRegionId} N{_navigationNeuronId}"
+        : string.Empty;
+
     private void UpdateAppearance()
     {
         if (_isPreview)
@@ -628,7 +692,92 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
                     break;
             }
         }
+
+        UpdateGeometry();
     }
+
+    private void UpdateGeometry()
+    {
+        var dx = _end.X - _start.X;
+        var dy = _end.Y - _start.Y;
+        var length = Math.Sqrt((dx * dx) + (dy * dy));
+        var safeDx = length < MinVectorLength ? 1.0 : dx;
+        var safeDy = length < MinVectorLength ? 0.0 : dy;
+        var safeLength = length < MinVectorLength ? 1.0 : length;
+
+        var unitPerpX = -safeDy / safeLength;
+        var unitPerpY = safeDx / safeLength;
+
+        var midpoint = new Point((_start.X + _end.X) / 2.0, (_start.Y + _end.Y) / 2.0);
+        var bundleOffset = ComputeBundleOffset();
+        var control = new Point(
+            midpoint.X + (unitPerpX * bundleOffset),
+            midpoint.Y + (unitPerpY * bundleOffset));
+
+        var pathData = $"M {FormatPoint(_start)} Q {FormatPoint(control)} {FormatPoint(_end)}";
+        PathGeometry = Geometry.Parse(pathData);
+
+        var tangentX = _end.X - control.X;
+        var tangentY = _end.Y - control.Y;
+        var tangentLength = Math.Sqrt((tangentX * tangentX) + (tangentY * tangentY));
+        if (tangentLength < MinVectorLength)
+        {
+            tangentX = safeDx;
+            tangentY = safeDy;
+            tangentLength = safeLength;
+        }
+
+        if (length < 4)
+        {
+            ArrowHeadGeometry = Geometry.Parse("M 0 0");
+            ShowArrowHead = false;
+            return;
+        }
+
+        var unitX = tangentX / tangentLength;
+        var unitY = tangentY / tangentLength;
+        var arrowLength = ArrowLengthBase + Math.Min(4, Thickness * 1.5);
+        var arrowWidth = ArrowWidthBase + Math.Min(2.5, Thickness * 0.8);
+
+        var tip = _end;
+        var back = new Point(tip.X - (unitX * arrowLength), tip.Y - (unitY * arrowLength));
+        var left = new Point(back.X - (unitY * arrowWidth), back.Y + (unitX * arrowWidth));
+        var right = new Point(back.X + (unitY * arrowWidth), back.Y - (unitX * arrowWidth));
+
+        var arrowData = $"M {FormatPoint(left)} L {FormatPoint(tip)} L {FormatPoint(right)}";
+        ArrowHeadGeometry = Geometry.Parse(arrowData);
+        ShowArrowHead = true;
+    }
+
+    private double ComputeBundleOffset()
+    {
+        var baseOffset = _kind is DesignerEdgeKind.OutboundExternal or DesignerEdgeKind.InboundExternal
+            ? ExternalBundleBase
+            : InternalBundleBase;
+        var orientedBase = _kind is DesignerEdgeKind.InboundInternal or DesignerEdgeKind.InboundExternal
+            ? -baseOffset
+            : baseOffset;
+        var centeredIndex = _bundleIndex - ((_bundleCount - 1) / 2.0);
+        var spread = centeredIndex * BundleSpread;
+
+        var offset = orientedBase + spread;
+        if (_isPreview)
+        {
+            offset *= 1.15;
+        }
+        else if (_isSelected)
+        {
+            offset *= 1.1;
+        }
+
+        return offset;
+    }
+
+    private static string FormatPoint(Point point)
+        => $"{FormatDouble(point.X)} {FormatDouble(point.Y)}";
+
+    private static string FormatDouble(double value)
+        => value.ToString("0.###", CultureInfo.InvariantCulture);
 }
 
 public enum DesignerEdgeKind
