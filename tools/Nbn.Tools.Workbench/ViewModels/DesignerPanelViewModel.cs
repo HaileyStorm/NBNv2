@@ -87,9 +87,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private DesignerRegionViewModel? _selectedRegion;
     private DesignerNeuronViewModel? _selectedNeuron;
     private DesignerAxonViewModel? _selectedAxon;
-    private DesignerNeuronViewModel? _pendingAxonSource;
-    private DesignerNeuronViewModel? _hoveredNeuron;
-    private bool _isAxonLinkMode;
     private int _defaultAxonStrength = 24;
     private int _regionPageSize = 256;
     private string _regionPageSizeText = "256";
@@ -101,8 +98,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _jumpNeuronIdText = "0";
     private string _axonTargetRegionText = "1";
     private string _axonTargetNeuronText = "0";
-    private double _canvasZoom = 1;
-    private string _canvasZoomText = "1";
+    private double _canvasZoom = 0.9;
+    private string _canvasZoomText = "0.9";
     private double _canvasWidth;
     private double _canvasHeight;
     private bool _regionRefreshPending;
@@ -163,11 +160,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         SpawnBrainCommand = new AsyncRelayCommand(SpawnBrainAsync, () => CanSpawnBrain);
 
         SelectRegionCommand = new RelayCommand<DesignerRegionViewModel>(SelectRegion);
-        SelectNeuronCommand = new RelayCommand<DesignerNeuronViewModel>(HandleNeuronSelection);
+        SelectNeuronCommand = new RelayCommand<DesignerNeuronViewModel>(SelectNeuron);
         SelectAxonCommand = new RelayCommand<DesignerAxonViewModel>(SelectAxon);
         AddNeuronCommand = new RelayCommand(AddNeuron, () => CanAddNeuron);
         ToggleNeuronEnabledCommand = new RelayCommand(ToggleNeuronEnabled, () => CanToggleNeuron);
-        ToggleAxonLinkModeCommand = new RelayCommand(ToggleAxonLinkMode, () => CanEditDesign);
         ClearSelectionCommand = new RelayCommand(ClearSelection, () => CanEditDesign);
         RemoveAxonCommand = new RelayCommand(RemoveSelectedAxon, () => CanRemoveAxon);
         RandomizeSeedCommand = new RelayCommand(RandomizeSeed, () => Brain is not null);
@@ -325,27 +321,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 OnPropertyChanged(nameof(HasAxonSelection));
                 RefreshEdges();
                 UpdateCommandStates();
-            }
-        }
-    }
-
-    public bool IsAxonLinkMode
-    {
-        get => _isAxonLinkMode;
-        set
-        {
-            if (SetProperty(ref _isAxonLinkMode, value))
-            {
-                if (!_isAxonLinkMode)
-                {
-                    ClearPendingAxonSource();
-                }
-
-                OnPropertyChanged(nameof(AxonLinkStatus));
-                OnPropertyChanged(nameof(AxonLinkButtonLabel));
-                OnPropertyChanged(nameof(AxonLinkButtonBackground));
-                OnPropertyChanged(nameof(AxonLinkButtonForeground));
-                OnPropertyChanged(nameof(AxonLinkButtonBorder));
             }
         }
     }
@@ -642,14 +617,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     public string ParameterHelp => ParameterHelpText;
 
-    public string AxonLinkButtonLabel => IsAxonLinkMode ? "Exit Link Mode" : "Link Axon";
-
-    public IBrush AxonLinkButtonBackground => IsAxonLinkMode ? DesignerBrushes.Accent : DesignerBrushes.SurfaceAlt;
-
-    public IBrush AxonLinkButtonForeground => IsAxonLinkMode ? DesignerBrushes.OnAccent : DesignerBrushes.Ink;
-
-    public IBrush AxonLinkButtonBorder => IsAxonLinkMode ? DesignerBrushes.Accent : DesignerBrushes.Border;
-
     public string ResetBrainButtonLabel => _resetPending ? "Confirm Reset" : "Reset Brain";
 
     public IBrush ResetBrainButtonBackground => _resetPending ? DesignerBrushes.Accent : DesignerBrushes.SurfaceAlt;
@@ -657,24 +624,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     public IBrush ResetBrainButtonForeground => _resetPending ? DesignerBrushes.OnAccent : DesignerBrushes.Ink;
 
     public IBrush ResetBrainButtonBorder => _resetPending ? DesignerBrushes.Accent : DesignerBrushes.Border;
-
-    public string AxonLinkStatus
-    {
-        get
-        {
-            if (!IsAxonLinkMode)
-            {
-                return "Axon link tool idle.";
-            }
-
-            if (_pendingAxonSource is null)
-            {
-                return "Axon link mode: click a source neuron (click Link Axon again to exit).";
-            }
-
-            return $"Axon link mode: source N{_pendingAxonSource.NeuronId} set. Click a target neuron or click Link Axon again to exit.";
-        }
-    }
 
     public RelayCommand NewBrainCommand { get; }
     public RelayCommand NewRandomBrainCommand { get; }
@@ -690,7 +639,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     public RelayCommand<DesignerAxonViewModel> SelectAxonCommand { get; }
     public RelayCommand AddNeuronCommand { get; }
     public RelayCommand ToggleNeuronEnabledCommand { get; }
-    public RelayCommand ToggleAxonLinkModeCommand { get; }
     public RelayCommand ClearSelectionCommand { get; }
     public RelayCommand RemoveAxonCommand { get; }
     public RelayCommand RandomizeSeedCommand { get; }
@@ -1574,19 +1522,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             : $"Neuron {SelectedNeuron.NeuronId} disabled.";
     }
 
-    private void ToggleAxonLinkMode()
-    {
-        IsAxonLinkMode = !IsAxonLinkMode;
-        Status = IsAxonLinkMode
-            ? "Axon link mode enabled."
-            : "Axon link mode disabled.";
-        RefreshEdges();
-    }
-
     private void ClearSelection()
     {
-        ClearPendingAxonSource();
-        SetHoveredNeuron(null);
         SelectNeuron(null);
         SelectAxon(null);
         RefreshEdges();
@@ -1706,45 +1643,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         RefreshEdges();
     }
 
-    private void HandleNeuronSelection(DesignerNeuronViewModel? neuron)
-    {
-        if (neuron is null)
-        {
-            return;
-        }
-
-        if (IsAxonLinkMode)
-        {
-            if (_pendingAxonSource is null)
-            {
-                SetPendingAxonSource(neuron);
-                SelectNeuron(neuron);
-                return;
-            }
-
-            if (_pendingAxonSource == neuron)
-            {
-                ClearPendingAxonSource();
-                Status = "Axon source cleared.";
-                return;
-            }
-
-            if (TryAddAxon(_pendingAxonSource, neuron, out var message))
-            {
-                Status = message ?? "Axon added.";
-                IsAxonLinkMode = false;
-            }
-            else
-            {
-                Status = message ?? "Unable to add axon.";
-            }
-
-            return;
-        }
-
-        SelectNeuron(neuron);
-    }
-
     private bool TryAddAxon(DesignerNeuronViewModel source, DesignerNeuronViewModel target, out string? message)
     {
         message = null;
@@ -1806,48 +1704,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return true;
     }
 
-    private void SetPendingAxonSource(DesignerNeuronViewModel neuron)
-    {
-        ClearPendingAxonSource();
-        _pendingAxonSource = neuron;
-        _pendingAxonSource.IsPendingSource = true;
-        OnPropertyChanged(nameof(AxonLinkStatus));
-        RefreshEdges();
-    }
-
-    private void ClearPendingAxonSource()
-    {
-        if (_pendingAxonSource is not null)
-        {
-            _pendingAxonSource.IsPendingSource = false;
-        }
-
-        _pendingAxonSource = null;
-        OnPropertyChanged(nameof(AxonLinkStatus));
-        RefreshEdges();
-    }
-
-    public void SetHoveredNeuron(DesignerNeuronViewModel? neuron)
-    {
-        if (_hoveredNeuron == neuron)
-        {
-            return;
-        }
-
-        if (_hoveredNeuron is not null)
-        {
-            _hoveredNeuron.IsHovered = false;
-        }
-
-        _hoveredNeuron = neuron;
-        if (_hoveredNeuron is not null)
-        {
-            _hoveredNeuron.IsHovered = true;
-        }
-
-        RefreshEdges();
-    }
-
     private void ApplyRegionSize()
     {
         if (SelectedRegion is null || Brain is null)
@@ -1901,11 +1757,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         if (SelectedNeuron is not null && SelectedNeuron.RegionId == SelectedRegion.RegionId && SelectedNeuron.NeuronId >= targetCount)
         {
             SelectNeuron(null);
-        }
-
-        if (_pendingAxonSource is not null && _pendingAxonSource.RegionId == SelectedRegion.RegionId && _pendingAxonSource.NeuronId >= targetCount)
-        {
-            ClearPendingAxonSource();
         }
 
         SelectedRegion.UpdateCounts();
@@ -2035,10 +1886,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         if (TryAddAxon(SelectedNeuron, targetNeuron, out var message))
         {
             Status = message ?? "Axon added.";
-            if (IsAxonLinkMode)
-            {
-                IsAxonLinkMode = false;
-            }
         }
         else
         {
@@ -2282,9 +2129,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             return;
         }
 
-        var source = IsAxonLinkMode && _pendingAxonSource is not null
-            ? _pendingAxonSource
-            : SelectedNeuron;
+        var source = SelectedNeuron;
 
         if (source is null || source.RegionId != SelectedRegion.RegionId)
         {
@@ -2456,14 +2301,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     offPageInboundSources.Count,
                     entry.SourceRegionId,
                     entry.SourceNeuronId));
-            }
-        }
-
-        if (IsAxonLinkMode && _pendingAxonSource is not null && _hoveredNeuron is not null && _hoveredNeuron != _pendingAxonSource)
-        {
-            if (positions.TryGetValue(_hoveredNeuron.NeuronId, out var hoverEnd))
-            {
-                VisibleEdges.Add(new DesignerEdgeViewModel(start, hoverEnd, true, false, DesignerEdgeKind.OutboundInternal, bundleCount: 1));
             }
         }
 
@@ -2811,7 +2648,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         AddNeuronCommand.RaiseCanExecuteChanged();
         ToggleNeuronEnabledCommand.RaiseCanExecuteChanged();
-        ToggleAxonLinkModeCommand.RaiseCanExecuteChanged();
         ClearSelectionCommand.RaiseCanExecuteChanged();
         RemoveAxonCommand.RaiseCanExecuteChanged();
         RandomizeSeedCommand.RaiseCanExecuteChanged();
