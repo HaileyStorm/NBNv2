@@ -31,6 +31,7 @@
     Appendix A: Defaults and constants
     Appendix B: Function catalog (IDs, formulas, tiers, costs)
     Appendix C: Region axial map (3D-inspired) and distance examples
+21. Aleph MCP workflow for NBNv2
 
 ---
 
@@ -2858,6 +2859,78 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 * dist(8,23) = 5 * |(-1) - (+1)| = 10
 
 ---
+
+## 21. Aleph MCP workflow for NBNv2
+
+### 21.1 Purpose
+
+Aleph is the default workflow for deep codebase analysis in this repo:
+
+* file-first investigation
+* scoped sub-queries for discovery and synthesis
+* compact context handoff into final edits
+
+Use Aleph to reduce context bloat while still collecting concrete evidence (paths, symbols, message contracts, and behavior edges).
+
+### 21.2 Model defaults and upgrade policy
+
+* Default behavior: sub-queries inherit the currently selected Codex/main conversation model.
+* Current baseline expectation is GPT-5.3 class quality; Spark baseline is GPT-5.3-Spark class speed.
+* Do not hard-pin version numbers when an alias/channel is available.
+* For explicit model routing, prefer family aliases so upgrades happen automatically as new versions release:
+  * stable/primary family alias (GPT-5)
+  * fast scouting family alias (GPT-5-Spark)
+* Never reduce reasoning effort below **medium** for either primary or Spark family calls.
+
+### 21.3 Reasoning-effort policy
+
+* **Medium (default):**
+  * repository scouting
+  * finding relevant files/types/messages
+  * assembling focused snippets
+  * simple, low-risk refactors
+* **High:**
+  * cross-module behavior changes
+  * protocol/schema or lifecycle changes
+  * recovery, ordering, concurrency, or correctness-critical logic
+
+### 21.4 Sub-query routing guidance
+
+Use Spark-family sub-queries at **medium** for bounded discovery tasks:
+
+* locate ownership of a workflow
+* map call paths and message types
+* collect candidate edit files and tests
+
+Use primary-model sub-queries (medium/high as needed) for:
+
+* ambiguous architectural reasoning
+* synthesis across many findings
+* risky refactors where subtle regressions are likely
+
+### 21.5 Practical workflow
+
+1. Scout structure first (roots, key projects, protocols, tests).
+2. Run narrow sub-queries with explicit scope and expected output.
+3. Validate findings in the main thread before editing.
+4. Implement changes locally.
+5. Run quality gates and update docs for changed behavior/workflows.
+
+### 21.6 Tooling knobs
+
+Aleph supports explicit sub-query controls when needed:
+
+* `--sub-query-model`
+* `--sub-query-reasoning-effort`
+
+If omitted, defaults should inherit from the main session model/settings.
+
+### 21.7 Guardrails
+
+* Treat sub-query output as evidence, not authority.
+* Prefer multiple small scoped queries over one broad query.
+* Require concrete references in sub-query outputs (paths, symbols, contracts).
+* Keep final merge decisions in the primary thread.
 
 ## Multi-agent coordination and workspace boundaries
 
