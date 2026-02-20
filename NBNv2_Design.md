@@ -3018,6 +3018,26 @@ Use short delegated packets for discovery-heavy work so main-thread context stay
 
 When these packets are available, prefer them over repeated ad-hoc `rg`/`git`/`Get-Content` loops in the primary thread.
 
+### 21.14 Aleph CLI/MCP reliability notes (Windows + syntax)
+
+Use these defaults to avoid recurring Aleph friction:
+
+1. Increase sub-query timeout for real scouting packets (5 minutes recommended):
+   * `configure(sub_query_timeout="300")`
+   * Verify with `exec_python("get_config()")` and confirm `sub_query_timeout_seconds` is `300.0`.
+2. Aleph MCP tools that accept `output` require one of:
+   * `markdown`
+   * `json`
+   * `object`
+   `text` is invalid for these tools.
+3. Codex sub-query backend on Windows:
+   * Aleph sub-query currently invokes `codex` (not `codex.cmd`).
+   * Validate subprocess resolution with:
+     * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
+   * If that fails while `codex.cmd --version` works, ensure a runnable `codex` executable is on `PATH` (for example a `codex.exe` shim that delegates to `codex.cmd`).
+
+When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
+
 ## Multi-agent coordination and workspace boundaries
 
 To prevent cross-agent collisions in multi-project work:
