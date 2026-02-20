@@ -2872,7 +2872,31 @@ Aleph is the default workflow for deep codebase analysis in this repo:
 
 Use Aleph to reduce context bloat while still collecting concrete evidence (paths, symbols, message contracts, and behavior edges).
 
-### 21.2 Model defaults and upgrade policy
+For non-trivial tasks, Aleph-first is the expected posture: use shell/`rg` to find candidate files, then move quickly into Aleph contexts for analysis.
+
+### 21.2 When Aleph use is expected (strong default)
+
+Use Aleph before substantial edits when **any** of the following is true:
+
+* task touches 3+ files, or likely spans UI + ViewModel + service/protocol layers
+* any target file is large (roughly 500+ LOC) or dense/low-cohesion
+* request explicitly asks for a careful sweep, architecture review, or “fine-tooth comb” pass
+* ownership/call path/invariant location is not obvious from a quick file scan
+* you need to synthesize behavior across modules before changing code
+
+If you skip Aleph despite these triggers, provide a one-line reason in your progress update.
+
+### 21.3 When direct shell-only analysis is acceptable
+
+Aleph is optional for narrowly scoped work such as:
+
+* single-file, clearly located fixes with low ambiguity
+* mechanical edits with exact known paths/symbols
+* pure build/test/run/format loops after edits are complete
+
+If scope expands mid-task, switch to Aleph immediately.
+
+### 21.4 Model defaults and upgrade policy
 
 * Default behavior: sub-queries inherit the currently selected Codex/main conversation model.
 * Current baseline expectation is GPT-5.3 class quality; Spark baseline is GPT-5.3-Spark class speed.
@@ -2882,7 +2906,7 @@ Use Aleph to reduce context bloat while still collecting concrete evidence (path
   * fast scouting family alias (GPT-5-Spark)
 * Never reduce reasoning effort below **medium** for either primary or Spark family calls.
 
-### 21.3 Reasoning-effort policy
+### 21.5 Reasoning-effort policy
 
 * **Medium (default):**
   * repository scouting
@@ -2894,7 +2918,7 @@ Use Aleph to reduce context bloat while still collecting concrete evidence (path
   * protocol/schema or lifecycle changes
   * recovery, ordering, concurrency, or correctness-critical logic
 
-### 21.4 Sub-query routing guidance
+### 21.6 Sub-query routing guidance
 
 Use Spark-family sub-queries at **medium** for bounded discovery tasks:
 
@@ -2908,7 +2932,18 @@ Use primary-model sub-queries (medium/high as needed) for:
 * synthesis across many findings
 * risky refactors where subtle regressions are likely
 
-### 21.5 Practical workflow
+### 21.7 Minimum Aleph workflow (required when section 21.2 triggers)
+
+1. Load each primary file into its own Aleph context (avoid mixing unrelated files into one context).
+2. Run focused `search_context` queries for symbols/invariants relevant to the requested behavior.
+3. `peek_context` only the specific ranges needed to confirm semantics and side effects.
+4. Post a brief evidence map before editing:
+   * candidate files
+   * key methods/symbols
+   * risk points/invariants
+5. After edits, re-run targeted Aleph searches to verify constraints and hotspot behavior remain coherent.
+
+### 21.8 Practical workflow
 
 1. Scout structure first (roots, key projects, protocols, tests).
 2. Run narrow sub-queries with explicit scope and expected output.
@@ -2916,7 +2951,7 @@ Use primary-model sub-queries (medium/high as needed) for:
 4. Implement changes locally.
 5. Run quality gates and update docs for changed behavior/workflows.
 
-### 21.6 Tooling knobs
+### 21.9 Tooling knobs
 
 Aleph supports explicit sub-query controls when needed:
 
@@ -2925,12 +2960,33 @@ Aleph supports explicit sub-query controls when needed:
 
 If omitted, defaults should inherit from the main session model/settings.
 
-### 21.7 Guardrails
+### 21.10 Guardrails (quality + anti-overuse)
 
 * Treat sub-query output as evidence, not authority.
 * Prefer multiple small scoped queries over one broad query.
 * Require concrete references in sub-query outputs (paths, symbols, contracts).
 * Keep final merge decisions in the primary thread.
+* Do not bulk-load the entire repository when a bounded file set is enough.
+* Prefer 2-6 focused queries over recursive/deep pipelines unless complexity clearly demands it.
+* Keep Aleph contexts task-scoped; close/ignore stale contexts to avoid contaminated reasoning.
+
+### 21.11 Under-use prevention checklist
+
+Before making substantial edits, run this quick gate:
+
+1. Will this likely touch UI + VM + backend/validation/protocol code?
+2. Are there invariants/constraints that must hold across multiple creation paths (random/manual/import/repro)?
+3. Would a mistake likely create broad regressions or expensive rework?
+
+If any answer is "yes", Aleph should be used first (per 21.2 + 21.7).
+
+Typical NBN examples where Aleph should be considered mandatory:
+
+* Workbench Designer flow changes (layout + graph + editor semantics)
+* random brain generation plus manual-editor validation/invariant parity
+* protocol or lifecycle changes that span runtime + IO + tooling
+
+When Aleph is used for one of the above, include a short evidence map in progress updates before major edits.
 
 ## Multi-agent coordination and workspace boundaries
 
