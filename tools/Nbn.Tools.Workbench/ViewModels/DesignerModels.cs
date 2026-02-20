@@ -263,13 +263,13 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
     public int ActivationFunctionId
     {
         get => _activationFunctionId;
-        set => SetProperty(ref _activationFunctionId, Clamp(value, 0, 63));
+        set => SetProperty(ref _activationFunctionId, Clamp(value, 0, 29));
     }
 
     public int ResetFunctionId
     {
         get => _resetFunctionId;
-        set => SetProperty(ref _resetFunctionId, Clamp(value, 0, 63));
+        set => SetProperty(ref _resetFunctionId, Clamp(value, 0, 60));
     }
 
     public int AccumulationFunctionId
@@ -483,17 +483,26 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
     private Point _end;
     private bool _isPreview;
     private bool _isSelected;
+    private DesignerEdgeKind _kind;
     private IBrush _stroke;
     private double _thickness;
     private string? _label;
     private Point _labelPosition;
 
-    public DesignerEdgeViewModel(Point start, Point end, bool isPreview, bool isSelected, string? label = null, Point? labelPosition = null)
+    public DesignerEdgeViewModel(
+        Point start,
+        Point end,
+        bool isPreview,
+        bool isSelected,
+        DesignerEdgeKind kind = DesignerEdgeKind.OutboundInternal,
+        string? label = null,
+        Point? labelPosition = null)
     {
         _start = start;
         _end = end;
         _isPreview = isPreview;
         _isSelected = isSelected;
+        _kind = kind;
         _label = label;
         _labelPosition = labelPosition ?? default;
         _stroke = DesignerBrushes.Border;
@@ -531,6 +540,18 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _isSelected, value))
+            {
+                UpdateAppearance();
+            }
+        }
+    }
+
+    public DesignerEdgeKind Kind
+    {
+        get => _kind;
+        set
+        {
+            if (SetProperty(ref _kind, value))
             {
                 UpdateAppearance();
             }
@@ -583,10 +604,39 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         }
         else
         {
-            Stroke = DesignerBrushes.Border;
-            Thickness = 1;
+            switch (_kind)
+            {
+                case DesignerEdgeKind.OutboundInternal:
+                    Stroke = DesignerBrushes.Accent;
+                    Thickness = 1.8;
+                    break;
+                case DesignerEdgeKind.InboundInternal:
+                    Stroke = DesignerBrushes.Teal;
+                    Thickness = 1.6;
+                    break;
+                case DesignerEdgeKind.OutboundExternal:
+                    Stroke = DesignerBrushes.Gold;
+                    Thickness = 1.4;
+                    break;
+                case DesignerEdgeKind.InboundExternal:
+                    Stroke = DesignerBrushes.Muted;
+                    Thickness = 1.3;
+                    break;
+                default:
+                    Stroke = DesignerBrushes.Border;
+                    Thickness = 1;
+                    break;
+            }
         }
     }
+}
+
+public enum DesignerEdgeKind
+{
+    OutboundInternal,
+    InboundInternal,
+    OutboundExternal,
+    InboundExternal
 }
 
 public sealed class DesignerFunctionOption
@@ -618,6 +668,7 @@ internal static class DesignerBrushes
     public static readonly IBrush Border = new SolidColorBrush(Color.Parse("#D3C9B6"));
     public static readonly IBrush Accent = new SolidColorBrush(Color.Parse("#F16D3A"));
     public static readonly IBrush Teal = new SolidColorBrush(Color.Parse("#2F9C8A"));
+    public static readonly IBrush Gold = new SolidColorBrush(Color.Parse("#E2B548"));
     public static readonly IBrush Disabled = new SolidColorBrush(Color.Parse("#F0EBDD"));
     public static readonly IBrush OnAccent = new SolidColorBrush(Color.Parse("#FFFFFF"));
 }

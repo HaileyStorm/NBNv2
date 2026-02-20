@@ -50,7 +50,7 @@
           </Border>
         </StackPanel>
 
-        <Grid ColumnDefinitions="240,*,320" ColumnSpacing="14">
+        <Grid ColumnDefinitions="300,2*,360" ColumnSpacing="14">
           <StackPanel Grid.Column="0" Spacing="12">
             <Border Classes="row">
               <StackPanel Spacing="8">
@@ -134,161 +134,164 @@
                   <TextBox Grid.Column="3" Text="{Binding RandomOptions.StrengthMaxText}" />
                   <TextBlock Grid.Column="4" Text="(code)" Classes="muted" VerticalAlignment="Center" />
                 </Grid>
-                <TextBlock Text="Advanced options" Classes="muted" />
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Region mode" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.RegionSelectionModes}" SelectedItem="{Binding RandomOptions.SelectedRegionSelectionMode}" Width="160">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.RegionListText}" Width="140"
-                           IsEnabled="{Binding RandomOptions.IsRegionListEnabled}" Watermark="1,2,3" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Neuron mode" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.NeuronCountModes}" SelectedItem="{Binding RandomOptions.SelectedNeuronCountMode}" Width="110">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.NeuronCountMinText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsNeuronRangeEnabled}" />
-                  <TextBlock Grid.Column="3" Text="to" Classes="muted" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="4" Text="{Binding RandomOptions.NeuronCountMaxText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsNeuronRangeEnabled}" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Axon mode" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.AxonCountModes}" SelectedItem="{Binding RandomOptions.SelectedAxonCountMode}" Width="110">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.AxonCountMinText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsAxonRangeEnabled}" />
-                  <TextBlock Grid.Column="3" Text="to" Classes="muted" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="4" Text="{Binding RandomOptions.AxonCountMaxText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsAxonRangeEnabled}" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Target bias" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.TargetBiasModes}" SelectedItem="{Binding RandomOptions.SelectedTargetBiasMode}" Width="160">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Strength dist" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.StrengthDistributions}" SelectedItem="{Binding RandomOptions.SelectedStrengthDistribution}" Width="160">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Activation" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ActivationModes}" SelectedItem="{Binding RandomOptions.SelectedActivationMode}" Width="130">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.ActivationFixedIdText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsActivationFixedEnabled}" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Reset" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ResetModes}" SelectedItem="{Binding RandomOptions.SelectedResetMode}" Width="130">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.ResetFixedIdText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsResetFixedEnabled}" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Accumulation" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.AccumulationModes}" SelectedItem="{Binding RandomOptions.SelectedAccumulationMode}" Width="130">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                  <TextBox Grid.Column="2" Text="{Binding RandomOptions.AccumulationFixedIdText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsAccumulationFixedEnabled}" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Threshold mode" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ThresholdModes}" SelectedItem="{Binding RandomOptions.SelectedThresholdMode}" Width="130">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Pre-act" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.PreActivationMinText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
-                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.PreActivationMaxText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
-                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Act thresh" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.ActivationThresholdMinText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
-                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.ActivationThresholdMaxText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
-                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Param mode" VerticalAlignment="Center" />
-                  <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ParamModes}" SelectedItem="{Binding RandomOptions.SelectedParamMode}" Width="130">
-                    <ComboBox.ItemTemplate>
-                      <DataTemplate>
-                        <TextBlock Text="{Binding Label}" />
-                      </DataTemplate>
-                    </ComboBox.ItemTemplate>
-                  </ComboBox>
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Param A" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.ParamAMinText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
-                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.ParamAMaxText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
-                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                  <TextBlock Text="Param B" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="1" Text="{Binding RandomOptions.ParamBMinText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
-                  <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
-                  <TextBox Grid.Column="3" Text="{Binding RandomOptions.ParamBMaxText}" Width="70"
-                           IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
-                  <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
-                </Grid>
+                <Expander Header="Advanced options" IsExpanded="False">
+                  <StackPanel Margin="0,6,0,0" Spacing="8">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Region mode" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.RegionSelectionModes}" SelectedItem="{Binding RandomOptions.SelectedRegionSelectionMode}" Width="160">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBox Grid.Column="2" Text="{Binding RandomOptions.RegionListText}" Width="140"
+                               IsEnabled="{Binding RandomOptions.IsRegionListEnabled}" Watermark="1,2,3" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Neuron mode" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.NeuronCountModes}" SelectedItem="{Binding RandomOptions.SelectedNeuronCountMode}" Width="110">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBox Grid.Column="2" Text="{Binding RandomOptions.NeuronCountMinText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsNeuronRangeEnabled}" />
+                      <TextBlock Grid.Column="3" Text="to" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="4" Text="{Binding RandomOptions.NeuronCountMaxText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsNeuronRangeEnabled}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Axon mode" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.AxonCountModes}" SelectedItem="{Binding RandomOptions.SelectedAxonCountMode}" Width="110">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBox Grid.Column="2" Text="{Binding RandomOptions.AxonCountMinText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsAxonRangeEnabled}" />
+                      <TextBlock Grid.Column="3" Text="to" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="4" Text="{Binding RandomOptions.AxonCountMaxText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsAxonRangeEnabled}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Target bias" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.TargetBiasModes}" SelectedItem="{Binding RandomOptions.SelectedTargetBiasMode}" Width="160">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Strength dist" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.StrengthDistributions}" SelectedItem="{Binding RandomOptions.SelectedStrengthDistribution}" Width="160">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Activation" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ActivationModes}" SelectedItem="{Binding RandomOptions.SelectedActivationMode}" Width="130">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBox Grid.Column="2" Text="{Binding RandomOptions.ActivationFixedIdText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsActivationFixedEnabled}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Reset" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ResetModes}" SelectedItem="{Binding RandomOptions.SelectedResetMode}" Width="130">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBox Grid.Column="2" Text="{Binding RandomOptions.ResetFixedIdText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsResetFixedEnabled}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Accumulation" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.AccumulationModes}" SelectedItem="{Binding RandomOptions.SelectedAccumulationMode}" Width="130">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <TextBox Grid.Column="2" Text="{Binding RandomOptions.AccumulationFixedIdText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsAccumulationFixedEnabled}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Threshold mode" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ThresholdModes}" SelectedItem="{Binding RandomOptions.SelectedThresholdMode}" Width="130">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Pre-act" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding RandomOptions.PreActivationMinText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                      <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="3" Text="{Binding RandomOptions.PreActivationMaxText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                      <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Act thresh" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding RandomOptions.ActivationThresholdMinText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                      <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="3" Text="{Binding RandomOptions.ActivationThresholdMaxText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsThresholdRangeEnabled}" />
+                      <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Param mode" VerticalAlignment="Center" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding RandomOptions.ParamModes}" SelectedItem="{Binding RandomOptions.SelectedParamMode}" Width="130">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <TextBlock Text="{Binding Label}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Param A" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding RandomOptions.ParamAMinText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                      <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="3" Text="{Binding RandomOptions.ParamAMaxText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                      <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                      <TextBlock Text="Param B" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding RandomOptions.ParamBMinText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                      <TextBlock Grid.Column="2" Text="to" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="3" Text="{Binding RandomOptions.ParamBMaxText}" Width="70"
+                               IsEnabled="{Binding RandomOptions.IsParamRangeEnabled}" />
+                      <TextBlock Grid.Column="4" Text="code" Classes="muted" VerticalAlignment="Center" />
+                    </Grid>
+                  </StackPanel>
+                </Expander>
                 <Button Content="Generate Random Brain" Command="{Binding NewRandomBrainCommand}" />
               </StackPanel>
             </Border>
@@ -449,8 +452,8 @@
           </StackPanel>
 
           <Border Grid.Column="1" Classes="row" IsVisible="{Binding IsDesignVisible}">
-            <StackPanel Spacing="10">
-              <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+            <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" RowSpacing="10">
+              <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
                 <StackPanel Grid.Column="0">
                   <TextBlock Text="Workspace" Classes="row-title" />
                   <TextBlock Text="{Binding SelectedRegionLabel}" Classes="muted" />
@@ -464,23 +467,39 @@
                         BorderBrush="{Binding AxonLinkButtonBorder}" />
                 <Button Grid.Column="3" Content="Clear" Command="{Binding ClearSelectionCommand}" />
               </Grid>
-              <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}">
-                <TextBlock Text="{Binding AxonLinkStatus}" />
-              </Border>
-              <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8">
-                <TextBlock Text="Link Strength" VerticalAlignment="Center" />
-                <Slider Grid.Column="1" Minimum="0" Maximum="31" Value="{Binding DefaultAxonStrength}" />
-                <TextBox Grid.Column="2" Text="{Binding DefaultAxonStrength}" />
-              </Grid>
-              <StackPanel Spacing="6">
-                <StackPanel Orientation="Horizontal" Spacing="6">
+
+              <WrapPanel Grid.Row="1" Orientation="Horizontal" ItemHeight="28" Margin="0,0,0,2">
+                <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}" Margin="0,0,8,4">
+                  <TextBlock Text="{Binding AxonLinkStatus}" />
+                </Border>
+                <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}" Margin="0,0,8,4">
+                  <TextBlock Text="Outbound (internal) = orange" Classes="muted" />
+                </Border>
+                <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}" Margin="0,0,8,4">
+                  <TextBlock Text="Inbound (internal) = teal" Classes="muted" />
+                </Border>
+                <Border Classes="chip" BorderBrush="{DynamicResource NbnBorderBrush}" Background="{DynamicResource NbnSurfaceAltBrush}" Margin="0,0,8,4">
+                  <TextBlock Text="External/off-page = gold + gray labels" Classes="muted" />
+                </Border>
+              </WrapPanel>
+
+              <Grid Grid.Row="2" ColumnDefinitions="Auto,*,60,Auto,*,60" ColumnSpacing="8" RowDefinitions="Auto,Auto" RowSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Link Strength" VerticalAlignment="Center" />
+                <Slider Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="31" Value="{Binding DefaultAxonStrength}" />
+                <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding DefaultAxonStrength}" />
+
+                <TextBlock Grid.Row="0" Grid.Column="3" Text="Zoom" VerticalAlignment="Center" />
+                <Slider Grid.Row="0" Grid.Column="4" Minimum="0.5" Maximum="2.5" Value="{Binding CanvasZoom}" />
+                <TextBox Grid.Row="0" Grid.Column="5" Text="{Binding CanvasZoomText}" />
+
+                <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="6">
                   <Button Content="First" Command="{Binding FirstRegionPageCommand}" />
                   <Button Content="Prev" Command="{Binding PreviousRegionPageCommand}" />
                   <Button Content="Next" Command="{Binding NextRegionPageCommand}" />
                   <Button Content="Last" Command="{Binding LastRegionPageCommand}" />
-                  <TextBlock Text="{Binding RegionPageSummary}" Classes="muted" VerticalAlignment="Center" />
                 </StackPanel>
-                <Grid ColumnDefinitions="Auto,60,Auto,60,Auto,*,Auto" ColumnSpacing="8">
+
+                <Grid Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="3" ColumnDefinitions="Auto,60,Auto,60,Auto,*" ColumnSpacing="6">
                   <TextBlock Text="Page" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding RegionPageIndexText}" />
                   <TextBlock Grid.Column="2" Text="/" VerticalAlignment="Center" />
@@ -488,14 +507,15 @@
                   <TextBlock Grid.Column="4" Text="Size" VerticalAlignment="Center" />
                   <TextBox Grid.Column="5" Text="{Binding RegionPageSizeText}" />
                 </Grid>
-                <Grid ColumnDefinitions="Auto,*,60" ColumnSpacing="8">
-                  <TextBlock Text="Zoom" VerticalAlignment="Center" />
-                  <Slider Grid.Column="1" Minimum="0.5" Maximum="2.5" Value="{Binding CanvasZoom}" />
-                  <TextBox Grid.Column="2" Text="{Binding CanvasZoomText}" />
-                </Grid>
-              </StackPanel>
+              </Grid>
 
-              <Border BorderBrush="{DynamicResource NbnBorderBrush}" BorderThickness="1" CornerRadius="10" Background="{DynamicResource NbnSurfaceBrush}" Padding="6">
+              <Border Grid.Row="3"
+                      BorderBrush="{DynamicResource NbnBorderBrush}"
+                      BorderThickness="1"
+                      CornerRadius="10"
+                      Background="{DynamicResource NbnSurfaceBrush}"
+                      Padding="6"
+                      MinHeight="620">
                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                   <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}">
                     <ItemsControl ItemsSource="{Binding VisibleEdges}">
@@ -513,6 +533,7 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
                     <ItemsControl ItemsSource="{Binding VisibleNeurons}">
                       <ItemsControl.ItemContainerTheme>
                         <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
@@ -545,6 +566,7 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
                     <ItemsControl ItemsSource="{Binding VisibleEdges}">
                       <ItemsControl.ItemContainerTheme>
                         <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
@@ -569,37 +591,41 @@
                   </Grid>
                 </ScrollViewer>
               </Border>
-              <TextBlock Text="{Binding EdgeSummary}" Classes="muted" />
 
-              <ItemsControl ItemsSource="{Binding VisibleNeurons}">
-                <ItemsControl.ItemsPanel>
-                  <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal" ItemWidth="110" ItemHeight="70" />
-                  </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate DataType="vm:DesignerNeuronViewModel" x:CompileBindings="False">
-                    <Button Command="{Binding DataContext.SelectNeuronCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            CommandParameter="{Binding}"
-                            Background="{Binding TileBackground}"
-                            BorderBrush="{Binding TileBorder}"
-                            Foreground="{Binding TileForeground}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Margin="4"
-                            Padding="6"
-                            Opacity="{Binding TileOpacity}"
-                            PointerEntered="NeuronPointerEntered"
-                            PointerExited="NeuronPointerExited">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="{Binding TileLabel}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding TileDetail}" Classes="muted" />
-                      </StackPanel>
-                    </Button>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </StackPanel>
+              <TextBlock Grid.Row="4" Text="{Binding EdgeSummary}" Classes="muted" />
+              <TextBlock Grid.Row="4" Text="{Binding RegionPageSummary}" Classes="muted" HorizontalAlignment="Right" />
+
+              <Expander Grid.Row="5" Header="Visible Neuron Tiles (compact list)" IsExpanded="False">
+                <ItemsControl ItemsSource="{Binding VisibleNeurons}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel Orientation="Horizontal" ItemWidth="120" ItemHeight="72" />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:DesignerNeuronViewModel" x:CompileBindings="False">
+                      <Button Command="{Binding DataContext.SelectNeuronCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                              CommandParameter="{Binding}"
+                              Background="{Binding TileBackground}"
+                              BorderBrush="{Binding TileBorder}"
+                              Foreground="{Binding TileForeground}"
+                              BorderThickness="1"
+                              CornerRadius="8"
+                              Margin="4"
+                              Padding="6"
+                              Opacity="{Binding TileOpacity}"
+                              PointerEntered="NeuronPointerEntered"
+                              PointerExited="NeuronPointerExited">
+                        <StackPanel Spacing="2">
+                          <TextBlock Text="{Binding TileLabel}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding TileDetail}" Classes="muted" />
+                        </StackPanel>
+                      </Button>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Expander>
+            </Grid>
           </Border>
 
           <Border Grid.Column="2" Classes="row" IsVisible="{Binding IsDesignVisible}">
@@ -611,6 +637,7 @@
                 <StackPanel Spacing="6">
                   <TextBlock Text="Functions" Classes="row-title" />
                   <TextBlock Text="{Binding FunctionLegend}" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding SelectedNeuronConstraintHint}" Classes="muted" TextWrapping="Wrap" />
                   <StackPanel Spacing="4">
                     <TextBlock Text="Activation" Classes="muted"
                                ToolTip.Tip="Activation computes potential from buffer B (and params)." />

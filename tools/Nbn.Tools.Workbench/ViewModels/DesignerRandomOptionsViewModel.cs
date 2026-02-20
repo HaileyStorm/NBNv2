@@ -552,9 +552,9 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         var activationFixedId = 0;
         if (SelectedActivationMode.Value == RandomFunctionSelectionMode.Fixed)
         {
-            if (!TryParseInt(ActivationFixedIdText, out activationFixedId) || activationFixedId < 0 || activationFixedId > 63)
+            if (!TryParseInt(ActivationFixedIdText, out activationFixedId) || activationFixedId < 0 || activationFixedId > 29)
             {
-                error = "Activation function id must be between 0 and 63.";
+                error = "Activation function id must be between 0 and 29.";
                 return false;
             }
         }
@@ -566,9 +566,9 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         var resetFixedId = 0;
         if (SelectedResetMode.Value == RandomFunctionSelectionMode.Fixed)
         {
-            if (!TryParseInt(ResetFixedIdText, out resetFixedId) || resetFixedId < 0 || resetFixedId > 63)
+            if (!TryParseInt(ResetFixedIdText, out resetFixedId) || resetFixedId < 0 || resetFixedId > 60)
             {
-                error = "Reset function id must be between 0 and 63.";
+                error = "Reset function id must be between 0 and 60.";
                 return false;
             }
         }
