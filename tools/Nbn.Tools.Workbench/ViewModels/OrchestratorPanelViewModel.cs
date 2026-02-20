@@ -424,7 +424,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             RecordBrainTerminations(brainListAll);
             var brainList = brainListAll
-                .Where(entry => entry.ControllerAlive && !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             _brainsUpdated?.Invoke(brainList);
 

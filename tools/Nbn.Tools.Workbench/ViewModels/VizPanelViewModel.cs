@@ -201,7 +201,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
         }
 
-        if (KnownBrains.Count > 0)
+        if (KnownBrains.Count > 0 && match is null)
         {
             match = KnownBrains[0];
         }

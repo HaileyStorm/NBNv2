@@ -23,7 +23,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _energyRateText = "0";
     private string _plasticityRateText = "0.001";
     private bool _filterZeroOutputs = true;
-    private bool _filterZeroVectorOutputs = true;
+    private bool _filterZeroVectorOutputs;
     private bool _pauseVectorUiUpdates;
     private bool _costEnabled;
     private bool _energyEnabled;
