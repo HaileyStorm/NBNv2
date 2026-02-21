@@ -313,16 +313,21 @@ public static class VizActivityCanvasLayoutBuilder
         var nodeByKey = new Dictionary<string, VizActivityCanvasNode>(StringComparer.OrdinalIgnoreCase);
 
         var sortedNeurons = focusNeuronStats.Keys.OrderBy(NeuronFromAddress).ToList();
-        var neuronMaxOrbit = Math.Min(
+        var visibleNeuronMaxOrbit = Math.Min(
             CenterX - (CanvasPadding + MaxFocusNeuronNodeRadius + 6.0),
             (CenterY - (CanvasPadding + MaxFocusNeuronNodeRadius + 6.0)) / 0.94);
-        var neuronMinOrbit = Math.Min(64.0, neuronMaxOrbit);
+        var overflowOrbitBoost = Math.Clamp((sortedNeurons.Count - 24) * 2.0, 0.0, 112.0);
+        var neuronMaxOrbit = visibleNeuronMaxOrbit + overflowOrbitBoost;
+        var neuronMinOrbit = Math.Min(64.0, visibleNeuronMaxOrbit);
         var neuronPositions = BuildConcentricPositions(
             sortedNeurons.Count,
             minRadius: neuronMinOrbit,
             maxRadius: neuronMaxOrbit,
             yScale: 0.94,
-            minCenterSpacing: (MaxFocusNeuronNodeRadius * 2.0) + 2.0);
+            minCenterSpacing: (MaxFocusNeuronNodeRadius * 2.0) + 2.0,
+            ringGapPadding: 24.0,
+            minRingGap: 36.0,
+            clampToCanvas: false);
         var maxNeuronEvents = Math.Max(1, focusNeuronStats.Values.Max(item => item.EventCount));
         var maxNeuronFlowDegree = Math.Max(1, focusNeuronStats.Values.Max(item => item.OutboundCount + item.InboundCount));
         for (var index = 0; index < sortedNeurons.Count; index++)
@@ -1108,7 +1113,10 @@ public static class VizActivityCanvasLayoutBuilder
         double minRadius,
         double maxRadius,
         double yScale,
-        double minCenterSpacing)
+        double minCenterSpacing,
+        double ringGapPadding = 12.0,
+        double minRingGap = 24.0,
+        bool clampToCanvas = true)
     {
         if (count <= 0)
         {
@@ -1124,7 +1132,9 @@ public static class VizActivityCanvasLayoutBuilder
         var safeSpacing = Math.Max(8.0, minCenterSpacing);
         var safeMinRadius = Math.Max(0.0, minRadius);
         var safeMaxRadius = Math.Max(safeMinRadius, maxRadius);
-        var ringGap = Math.Max(24.0, safeSpacing + 12.0);
+        var safeRingGapPadding = Math.Max(0.0, ringGapPadding);
+        var safeMinRingGap = Math.Max(8.0, minRingGap);
+        var ringGap = Math.Max(safeMinRingGap, safeSpacing + safeRingGapPadding);
         var positions = new List<CanvasPoint>(count);
 
         var remaining = count;
@@ -1159,9 +1169,11 @@ public static class VizActivityCanvasLayoutBuilder
                 var angle = ringPhase + (slot * angleStep);
                 var x = CenterX + (Math.Cos(angle) * radius);
                 var y = CenterY + (Math.Sin(angle) * radius * safeYScale);
-                positions.Add(new CanvasPoint(
-                    Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
-                    Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding)));
+                positions.Add(clampToCanvas
+                    ? new CanvasPoint(
+                        Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+                        Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding))
+                    : new CanvasPoint(x, y));
             }
 
             remaining -= ringCount;
@@ -1186,9 +1198,11 @@ public static class VizActivityCanvasLayoutBuilder
             var angle = (index * fallbackStep) + (Math.PI / 7.0);
             var x = CenterX + (Math.Cos(angle) * fallbackRadius);
             var y = CenterY + (Math.Sin(angle) * fallbackRadius * safeYScale);
-            positions.Add(new CanvasPoint(
-                Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
-                Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding)));
+            positions.Add(clampToCanvas
+                ? new CanvasPoint(
+                    Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+                    Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding))
+                : new CanvasPoint(x, y));
         }
 
         return positions;

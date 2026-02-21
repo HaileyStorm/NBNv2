@@ -3053,6 +3053,10 @@ Use these defaults to avoid recurring Aleph friction:
 6. Windows shell chaining in this repo:
    * In Windows PowerShell sessions, do not use bash-style `&&` command separators.
    * Use `;` for sequential commands, or `if ($?) { ... }` when the second command must only run on success.
+7. `rg` patterns in PowerShell/tool JSON:
+   * Patterns containing embedded quotes/parentheses are easy to over-escape and can trigger `regex parse error`.
+   * Prefer a two-step sweep for XAML/search-debug loops: first broad token match (for example `rg "PointerPressed"`), then inspect narrowed lines with `Get-Content`/line ranges.
+   * If you need literal matching (no regex semantics), use `rg -F` to avoid regex parser pitfalls.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 

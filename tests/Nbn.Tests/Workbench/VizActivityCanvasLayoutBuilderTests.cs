@@ -406,6 +406,100 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_FocusModeDenseRegionUsesWiderRadialLayerSpacingWithoutForcingFullOnscreenFit()
+    {
+        const uint focusRegionId = 0;
+        const int neuronCount = 80;
+        const int routeCount = 960;
+        const double focusYScale = 0.94;
+        var events = new List<VizEventItem>(routeCount);
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+        var neuronAddresses = new HashSet<uint>();
+
+        for (var neuron = 0; neuron < neuronCount; neuron++)
+        {
+            neuronAddresses.Add(uint.Parse(Address(focusRegionId, (uint)neuron), CultureInfo.InvariantCulture));
+        }
+
+        for (var i = 0; i < routeCount; i++)
+        {
+            var src = (uint)(i % neuronCount);
+            var dst = (uint)((i * 13 + 7) % neuronCount);
+            var source = Address(focusRegionId, src);
+            var target = Address(focusRegionId, dst);
+            var value = (i % 2 == 0) ? 0.85f : -0.75f;
+            var strength = (i % 3 == 0) ? 0.55f : -0.4f;
+            events.Add(CreateEvent("VizAxonSent", (ulong)(5200 + i), focusRegionId, source, target, value, strength));
+            neuronRoutes.Add(new(
+                uint.Parse(source, CultureInfo.InvariantCulture),
+                uint.Parse(target, CultureInfo.InvariantCulture)));
+        }
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 128, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            neuronAddresses,
+            neuronRoutes);
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 128, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        var neurons = layout.Nodes
+            .Where(item => item.RegionId == focusRegionId && item.NeuronId.HasValue)
+            .ToList();
+        Assert.Equal(neuronCount, neurons.Count);
+
+        var centerX = VizActivityCanvasLayoutBuilder.CanvasWidth / 2.0;
+        var centerY = VizActivityCanvasLayoutBuilder.CanvasHeight / 2.0;
+        var normalizedRadii = neurons
+            .Select(node =>
+            {
+                var x = node.Left + (node.Diameter / 2.0);
+                var y = node.Top + (node.Diameter / 2.0);
+                var dx = x - centerX;
+                var dy = (y - centerY) / focusYScale;
+                return Math.Sqrt((dx * dx) + (dy * dy));
+            })
+            .OrderBy(value => value)
+            .ToList();
+
+        var bandCenters = new List<double>();
+        var bandCounts = new List<int>();
+        foreach (var radius in normalizedRadii)
+        {
+            if (bandCenters.Count == 0 || Math.Abs(radius - bandCenters[^1]) > 16.0)
+            {
+                bandCenters.Add(radius);
+                bandCounts.Add(1);
+                continue;
+            }
+
+            var bandIndex = bandCenters.Count - 1;
+            bandCounts[bandIndex]++;
+            bandCenters[bandIndex] = ((bandCenters[bandIndex] * (bandCounts[bandIndex] - 1)) + radius) / bandCounts[bandIndex];
+        }
+
+        Assert.True(bandCenters.Count >= 4, $"Expected at least 4 radial bands but saw {bandCenters.Count}.");
+        var minBandGap = bandCenters
+            .Zip(bandCenters.Skip(1), (left, right) => right - left)
+            .Min();
+        Assert.True(minBandGap >= 50.0, $"Expected wider radial layer spacing; observed minimum gap {minBandGap:0.###}.");
+
+        Assert.Contains(
+            neurons,
+            node => node.Left < 0
+                    || node.Top < 0
+                    || (node.Left + node.Diameter) > VizActivityCanvasLayoutBuilder.CanvasWidth
+                    || (node.Top + node.Diameter) > VizActivityCanvasLayoutBuilder.CanvasHeight);
+    }
+
+    [Fact]
     public void Build_FocusModeCollapsesGatewayFanoutIntoSingleDisplayedRoute()
     {
         const uint focusRegionId = 0;
