@@ -144,6 +144,9 @@ Preferred commands:
 
 * `dotnet build -c Release --disable-build-servers`
 * `dotnet test -c Release --disable-build-servers` (add `--no-build` only if you already built with the same config)
+* If local running processes are locking Release binaries, use an isolated output root:
+  * `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
+  * (same pattern applies to `dotnet build` when needed)
 
 ---
 

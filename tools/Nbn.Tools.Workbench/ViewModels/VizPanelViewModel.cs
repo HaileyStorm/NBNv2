@@ -48,6 +48,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 420;
     private const double HoverCardMaxHeight = 220;
+    private const double CanvasBoundsPadding = 28;
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
@@ -71,6 +72,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private bool _includeLowSignalEvents;
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
+    private double _activityCanvasWidth = VizActivityCanvasLayoutBuilder.CanvasWidth;
+    private double _activityCanvasHeight = VizActivityCanvasLayoutBuilder.CanvasHeight;
     private bool _showProjectionSnapshot;
     private bool _showVisualizationStream;
     private DateTime _nextStreamingRefreshUtc = DateTime.MinValue;
@@ -168,8 +171,17 @@ public sealed class VizPanelViewModel : ViewModelBase
     public ObservableCollection<VizActivityCanvasNode> CanvasNodes { get; }
     public ObservableCollection<VizActivityCanvasEdge> CanvasEdges { get; }
 
-    public double ActivityCanvasWidth => VizActivityCanvasLayoutBuilder.CanvasWidth;
-    public double ActivityCanvasHeight => VizActivityCanvasLayoutBuilder.CanvasHeight;
+    public double ActivityCanvasWidth
+    {
+        get => _activityCanvasWidth;
+        private set => SetProperty(ref _activityCanvasWidth, value);
+    }
+
+    public double ActivityCanvasHeight
+    {
+        get => _activityCanvasHeight;
+        private set => SetProperty(ref _activityCanvasHeight, value);
+    }
     public string CanvasHoverCardText
     {
         get => _canvasHoverCardText;
@@ -1379,6 +1391,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         var frameStart = Stopwatch.GetTimestamp();
         if (_currentProjection is null)
         {
+            SetActivityCanvasDimensions(VizActivityCanvasLayoutBuilder.CanvasWidth, VizActivityCanvasLayoutBuilder.CanvasHeight);
             ReplaceItems(CanvasNodes, Array.Empty<VizActivityCanvasNode>());
             ReplaceItems(CanvasEdges, Array.Empty<VizActivityCanvasEdge>());
             RebuildCanvasHitIndex(Array.Empty<VizActivityCanvasNode>(), Array.Empty<VizActivityCanvasEdge>());
@@ -1426,6 +1439,8 @@ public sealed class VizPanelViewModel : ViewModelBase
                 topology,
                 SelectedCanvasColorMode.Mode);
         }
+
+        canvas = NormalizeCanvasLayout(canvas);
         _lastCanvasLayoutBuildMs = StopwatchElapsedMs(layoutStart);
 
         var applyStart = Stopwatch.GetTimestamp();
@@ -1438,6 +1453,96 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
         _lastCanvasFrameMs = StopwatchElapsedMs(frameStart);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
+    }
+
+    private VizActivityCanvasLayout NormalizeCanvasLayout(VizActivityCanvasLayout canvas)
+    {
+        var minX = 0.0;
+        var minY = 0.0;
+        var maxX = Math.Max(1.0, canvas.Width);
+        var maxY = Math.Max(1.0, canvas.Height);
+        foreach (var node in canvas.Nodes)
+        {
+            minX = Math.Min(minX, node.Left);
+            minY = Math.Min(minY, node.Top);
+            maxX = Math.Max(maxX, node.Left + node.Diameter);
+            maxY = Math.Max(maxY, node.Top + node.Diameter);
+        }
+
+        foreach (var edge in canvas.Edges)
+        {
+            var edgePadding = Math.Max(2.0, edge.HitTestThickness * 0.5);
+            minX = Math.Min(minX, Math.Min(edge.SourceX, Math.Min(edge.ControlX, edge.TargetX)) - edgePadding);
+            minY = Math.Min(minY, Math.Min(edge.SourceY, Math.Min(edge.ControlY, edge.TargetY)) - edgePadding);
+            maxX = Math.Max(maxX, Math.Max(edge.SourceX, Math.Max(edge.ControlX, edge.TargetX)) + edgePadding);
+            maxY = Math.Max(maxY, Math.Max(edge.SourceY, Math.Max(edge.ControlY, edge.TargetY)) + edgePadding);
+        }
+
+        var offsetX = minX < CanvasBoundsPadding ? CanvasBoundsPadding - minX : 0.0;
+        var offsetY = minY < CanvasBoundsPadding ? CanvasBoundsPadding - minY : 0.0;
+        var width = Math.Max(VizActivityCanvasLayoutBuilder.CanvasWidth, maxX + offsetX + CanvasBoundsPadding);
+        var height = Math.Max(VizActivityCanvasLayoutBuilder.CanvasHeight, maxY + offsetY + CanvasBoundsPadding);
+        SetActivityCanvasDimensions(width, height);
+
+        var needsOffset = Math.Abs(offsetX) > 0.0001 || Math.Abs(offsetY) > 0.0001;
+        var needsResize = Math.Abs(canvas.Width - width) > 0.0001 || Math.Abs(canvas.Height - height) > 0.0001;
+        if (!needsOffset && !needsResize)
+        {
+            return canvas;
+        }
+
+        if (!needsOffset)
+        {
+            return canvas with
+            {
+                Width = width,
+                Height = height
+            };
+        }
+
+        var shiftedNodes = new List<VizActivityCanvasNode>(canvas.Nodes.Count);
+        foreach (var node in canvas.Nodes)
+        {
+            shiftedNodes.Add(node with
+            {
+                Left = node.Left + offsetX,
+                Top = node.Top + offsetY
+            });
+        }
+
+        var shiftedEdges = new List<VizActivityCanvasEdge>(canvas.Edges.Count);
+        foreach (var edge in canvas.Edges)
+        {
+            var sourceX = edge.SourceX + offsetX;
+            var sourceY = edge.SourceY + offsetY;
+            var controlX = edge.ControlX + offsetX;
+            var controlY = edge.ControlY + offsetY;
+            var targetX = edge.TargetX + offsetX;
+            var targetY = edge.TargetY + offsetY;
+            shiftedEdges.Add(edge with
+            {
+                SourceX = sourceX,
+                SourceY = sourceY,
+                ControlX = controlX,
+                ControlY = controlY,
+                TargetX = targetX,
+                TargetY = targetY,
+                PathData = FormattableString.Invariant($"M {sourceX:0.###} {sourceY:0.###} Q {controlX:0.###} {controlY:0.###} {targetX:0.###} {targetY:0.###}")
+            });
+        }
+
+        return new VizActivityCanvasLayout(
+            width,
+            height,
+            canvas.Legend,
+            shiftedNodes,
+            shiftedEdges);
+    }
+
+    private void SetActivityCanvasDimensions(double width, double height)
+    {
+        ActivityCanvasWidth = Math.Max(1.0, width);
+        ActivityCanvasHeight = Math.Max(1.0, height);
     }
 
     private void QueueDefinitionTopologyHydration(Guid brainId, uint? focusRegionId)

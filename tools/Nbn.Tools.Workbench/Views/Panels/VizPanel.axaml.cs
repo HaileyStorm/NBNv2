@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -47,6 +48,7 @@ public partial class VizPanel : UserControl
     private double _touchStartScale;
     private Point _touchStartWorldCenter;
     private readonly ScaleTransform _canvasScaleTransform = new(1, 1);
+    private INotifyPropertyChanged? _viewModelNotifier;
 
     public VizPanel()
     {
@@ -82,11 +84,42 @@ public partial class VizPanel : UserControl
             ActivityCanvasScaleRoot.RenderTransform = _canvasScaleTransform;
         }
 
-        DataContextChanged += (_, _) => SyncCanvasScaleVisuals();
+        DataContextChanged += VizPanelDataContextChanged;
         AttachedToVisualTree += (_, _) => SyncCanvasScaleVisuals();
+        DetachedFromVisualTree += (_, _) => DetachViewModelNotifier();
     }
 
     private VizPanelViewModel? ViewModel => DataContext as VizPanelViewModel;
+
+    private void VizPanelDataContextChanged(object? sender, EventArgs e)
+    {
+        DetachViewModelNotifier();
+        _viewModelNotifier = DataContext as INotifyPropertyChanged;
+        if (_viewModelNotifier is not null)
+        {
+            _viewModelNotifier.PropertyChanged += ViewModelPropertyChanged;
+        }
+
+        SyncCanvasScaleVisuals();
+    }
+
+    private void ViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(VizPanelViewModel.ActivityCanvasWidth)
+            or nameof(VizPanelViewModel.ActivityCanvasHeight))
+        {
+            SyncCanvasScaleVisuals();
+        }
+    }
+
+    private void DetachViewModelNotifier()
+    {
+        if (_viewModelNotifier is not null)
+        {
+            _viewModelNotifier.PropertyChanged -= ViewModelPropertyChanged;
+            _viewModelNotifier = null;
+        }
+    }
 
     private void VizRootPointerMoved(object? sender, PointerEventArgs e)
     {
@@ -631,6 +664,11 @@ public partial class VizPanel : UserControl
         if (CanvasZoomLabel is not null)
         {
             CanvasZoomLabel.Text = $"Zoom {_canvasScale * 100.0:0}%";
+        }
+
+        if (ActivityCanvasScrollViewer is { } scrollViewer)
+        {
+            scrollViewer.Offset = ClampOffset(scrollViewer.Offset, scrollViewer);
         }
     }
 
