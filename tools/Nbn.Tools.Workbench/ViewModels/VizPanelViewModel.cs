@@ -28,6 +28,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int MaxPendingEvents = 1600;
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
+    private const int SnapshotRegionRows = 10;
+    private const int SnapshotEdgeRows = 14;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private const int HoverClearDelayMs = 180;
     private const int EdgeHitSamples = 12;
@@ -1174,8 +1176,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         _currentProjectionOptions = options;
 
         ReplaceItems(ActivityStats, projection.Stats);
-        ReplaceItems(RegionActivity, projection.Regions);
-        ReplaceItems(EdgeActivity, projection.Edges);
+        ReplaceItems(RegionActivity, projection.Regions.Take(SnapshotRegionRows).ToList());
+        ReplaceItems(EdgeActivity, projection.Edges.Take(SnapshotEdgeRows).ToList());
         ReplaceItems(TickActivity, projection.Ticks);
         ActivitySummary = projection.Summary;
         RefreshCanvasLayoutOnly();

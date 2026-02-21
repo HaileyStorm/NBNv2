@@ -105,6 +105,34 @@ public class VizActivityProjectionBuilderTests
         Assert.Equal("R2N9 -> R31N1", edge.RouteLabel);
     }
 
+    [Fact]
+    public void Build_DoesNotCapRegionOrEdgeRowsUsedByCanvas()
+    {
+        var events = new List<VizEventItem>();
+        for (uint region = 0; region < 20; region++)
+        {
+            var next = (region + 1) % 20;
+            events.Add(CreateEvent(
+                type: "VizAxonSent",
+                tick: 300 + region,
+                region: region,
+                source: Address(region, 1),
+                target: Address(next, 2),
+                value: 0.75f,
+                strength: 0.25f));
+        }
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 64,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null));
+
+        Assert.True(projection.Regions.Count >= 20);
+        Assert.True(projection.Edges.Count >= 20);
+    }
+
     private static VizEventItem CreateEvent(
         string type,
         ulong tick,

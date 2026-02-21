@@ -54,8 +54,6 @@ public static class VizActivityProjectionBuilder
 {
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
-    private const int MaxRegionRows = 10;
-    private const int MaxEdgeRows = 14;
     private const int MaxTickRows = 20;
     private const float LowSignalThreshold = 1e-5f;
 
@@ -164,7 +162,6 @@ public static class VizActivityProjectionBuilder
             .OrderByDescending(item => item.EventCount)
             .ThenByDescending(item => item.LastTick)
             .ThenBy(item => item.RegionId)
-            .Take(MaxRegionRows)
             .ToList();
     }
 
@@ -196,7 +193,6 @@ public static class VizActivityProjectionBuilder
             .OrderByDescending(item => item.EventCount)
             .ThenByDescending(item => item.LastTick)
             .ThenBy(item => item.RouteLabel, StringComparer.OrdinalIgnoreCase)
-            .Take(MaxEdgeRows)
             .ToList();
     }
 
