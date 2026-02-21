@@ -12,7 +12,6 @@ public partial class VizPanel : UserControl
 {
     private const double HoverHitTestMinIntervalMs = 16;
     private const double HoverHitTestMinMovePx = 1.2;
-    private const double HoverProbeDistancePx = 4.0;
     private const double PressProbeDistancePx = 5.0;
     private const int HoverTargetSwitchSamples = 2;
     private const int HoverTargetClearSamples = 4;
@@ -20,11 +19,7 @@ public partial class VizPanel : UserControl
     private const double HoverNoHitRetentionDistancePx = 8.0;
     private static readonly Point[] HoverProbeOffsets =
     {
-        new(0, 0),
-        new(HoverProbeDistancePx, 0),
-        new(-HoverProbeDistancePx, 0),
-        new(0, HoverProbeDistancePx),
-        new(0, -HoverProbeDistancePx)
+        new(0, 0)
     };
     private static readonly Point[] PressProbeOffsets =
     {
