@@ -24,6 +24,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 400;
     private const int MaxEventsPerUiFlush = 96;
+    private const int MaxPendingEvents = 1600;
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
@@ -399,6 +400,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         lock (_pendingEventsGate)
         {
+            while (_pendingEvents.Count >= MaxPendingEvents)
+            {
+                _pendingEvents.Dequeue();
+            }
+
             _pendingEvents.Enqueue(item);
             if (_flushScheduled)
             {
@@ -736,6 +742,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         var selectedBrainId = SelectedBrain.BrainId;
+        var hasFocusFilter = TryParseRegionId(RegionFocusText, out var focusRegionId);
         foreach (var item in _allEvents)
         {
             if (!Guid.TryParse(item.BrainId, out var itemBrainId))
@@ -745,11 +752,38 @@ public sealed class VizPanelViewModel : ViewModelBase
 
             if (itemBrainId == selectedBrainId)
             {
+                if (hasFocusFilter && !TouchesFocusRegion(item, focusRegionId))
+                {
+                    continue;
+                }
+
                 return item.TickId;
             }
         }
 
         return 0;
+    }
+
+    private static bool TouchesFocusRegion(VizEventItem item, uint focusRegionId)
+    {
+        if (TryParseRegionForTopology(item.Region, out var eventRegion) && eventRegion == focusRegionId)
+        {
+            return true;
+        }
+
+        if (TryParseAddressForTopology(item.Source, out var sourceAddress)
+            && (sourceAddress >> NbnConstants.AddressNeuronBits) == focusRegionId)
+        {
+            return true;
+        }
+
+        if (TryParseAddressForTopology(item.Target, out var targetAddress)
+            && (targetAddress >> NbnConstants.AddressNeuronBits) == focusRegionId)
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private bool MatchesFilter(VizEventItem item, bool ignoreBrain = false)
@@ -843,7 +877,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         if (hasMore)
         {
-            _dispatcher.Post(FlushPendingEvents);
+            Avalonia.Threading.Dispatcher.UIThread.Post(FlushPendingEvents, Avalonia.Threading.DispatcherPriority.Background);
         }
     }
 

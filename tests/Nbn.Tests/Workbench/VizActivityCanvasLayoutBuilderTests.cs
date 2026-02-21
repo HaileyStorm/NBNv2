@@ -279,6 +279,38 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.True(layout.Edges.Count > 0);
     }
 
+    [Fact]
+    public void Build_FocusModeCollapsesGatewayFanoutIntoSingleDisplayedRoute()
+    {
+        const uint focusRegionId = 0;
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { focusRegionId, 8 },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            new HashSet<uint>
+            {
+                uint.Parse(Address(focusRegionId, 0), CultureInfo.InvariantCulture)
+            },
+            new HashSet<VizActivityCanvasNeuronRoute>
+            {
+                new(uint.Parse(Address(focusRegionId, 0), CultureInfo.InvariantCulture), uint.Parse(Address(8, 0), CultureInfo.InvariantCulture)),
+                new(uint.Parse(Address(focusRegionId, 0), CultureInfo.InvariantCulture), uint.Parse(Address(8, 1), CultureInfo.InvariantCulture)),
+                new(uint.Parse(Address(focusRegionId, 0), CultureInfo.InvariantCulture), uint.Parse(Address(8, 2), CultureInfo.InvariantCulture))
+            });
+
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        Assert.Single(layout.Edges, edge => string.Equals(edge.RouteLabel, "N0 -> R8", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(layout.Edges.Count, layout.Edges.Select(edge => edge.RouteLabel).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>

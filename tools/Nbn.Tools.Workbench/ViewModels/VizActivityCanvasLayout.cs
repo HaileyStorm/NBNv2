@@ -647,9 +647,7 @@ public static class VizActivityCanvasLayoutBuilder
             return Array.Empty<VizActivityCanvasEdge>();
         }
 
-        var routeSet = new HashSet<VizActivityCanvasNeuronRoute>(routes.Keys);
-        var maxEdgeEvents = Math.Max(1, routes.Values.Max(item => item.EventCount));
-        var edges = new List<VizActivityCanvasEdge>(routes.Count);
+        var displayRoutes = new Dictionary<FocusDisplayRouteKey, FocusRouteAggregate>();
 
         foreach (var (route, aggregate) in routes)
         {
@@ -668,10 +666,40 @@ public static class VizActivityCanvasLayoutBuilder
                 continue;
             }
 
-            var reverse = new VizActivityCanvasNeuronRoute(route.TargetAddress, route.SourceAddress);
-            var hasReverse = routeSet.Contains(reverse) && reverse != route;
-            var kind = GetFocusedEdgeKind(sourceRegion, targetRegion, focusRegionId, hasReverse);
-            var routeLabel = BuildFocusedRouteLabel(route.SourceAddress, route.TargetAddress, focusRegionId);
+            // Collapse route fan-out into displayed node/gateway routes so rendering
+            // scales with visible edges instead of raw axon count.
+            var key = new FocusDisplayRouteKey(sourceKey, targetKey, sourceRegion, targetRegion);
+            if (!displayRoutes.TryGetValue(key, out var existing))
+            {
+                displayRoutes[key] = aggregate;
+                continue;
+            }
+
+            displayRoutes[key] = MergeFocusRouteAggregate(existing, aggregate);
+        }
+
+        if (displayRoutes.Count == 0)
+        {
+            return Array.Empty<VizActivityCanvasEdge>();
+        }
+
+        var routeSet = new HashSet<(string SourceKey, string TargetKey)>(
+            displayRoutes.Keys.Select(item => (item.SourceNodeKey, item.TargetNodeKey)));
+        var maxEdgeEvents = Math.Max(1, displayRoutes.Values.Max(item => item.EventCount));
+        var edges = new List<VizActivityCanvasEdge>(displayRoutes.Count);
+
+        foreach (var (key, aggregate) in displayRoutes)
+        {
+            if (!nodeByKey.TryGetValue(key.SourceNodeKey, out var sourceNode)
+                || !nodeByKey.TryGetValue(key.TargetNodeKey, out var targetNode))
+            {
+                continue;
+            }
+
+            var hasReverse = routeSet.Contains((key.TargetNodeKey, key.SourceNodeKey))
+                             && !string.Equals(key.SourceNodeKey, key.TargetNodeKey, StringComparison.OrdinalIgnoreCase);
+            var kind = GetFocusedEdgeKind(key.SourceRegionId, key.TargetRegionId, focusRegionId, hasReverse);
+            var routeLabel = BuildFocusedDisplayRouteLabel(key.SourceNodeKey, key.TargetNodeKey, focusRegionId);
             var isSelected = interaction.IsSelectedRoute(routeLabel);
             var isHovered = interaction.IsHoveredRoute(routeLabel);
             var isPinned = interaction.IsRoutePinned(routeLabel);
@@ -699,8 +727,8 @@ public static class VizActivityCanvasLayoutBuilder
             var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
-            var curveDirection = hasReverse && string.CompareOrdinal(sourceKey, targetKey) > 0 ? -1 : 1;
-            var curve = BuildEdgeCurve(sourceCenter, targetCenter, sourceKey == targetKey, curveDirection);
+            var curveDirection = hasReverse && string.CompareOrdinal(key.SourceNodeKey, key.TargetNodeKey) > 0 ? -1 : 1;
+            var curve = BuildEdgeCurve(sourceCenter, targetCenter, string.Equals(key.SourceNodeKey, key.TargetNodeKey, StringComparison.OrdinalIgnoreCase), curveDirection);
             var detail = $"{routeLabel} | {kind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}";
             if (isDormant)
             {
@@ -724,8 +752,8 @@ public static class VizActivityCanvasLayoutBuilder
                 true,
                 aggregate.LastTick,
                 aggregate.EventCount,
-                sourceRegion,
-                targetRegion,
+                key.SourceRegionId,
+                key.TargetRegionId,
                 isSelected,
                 isHovered,
                 isPinned));
@@ -739,6 +767,30 @@ public static class VizActivityCanvasLayoutBuilder
             .ThenByDescending(item => item.LastTick)
             .ThenBy(item => item.RouteLabel, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static FocusRouteAggregate MergeFocusRouteAggregate(FocusRouteAggregate current, FocusRouteAggregate next)
+    {
+        if (current.EventCount <= 0)
+        {
+            return next;
+        }
+
+        if (next.EventCount <= 0)
+        {
+            return current;
+        }
+
+        var combinedCount = current.EventCount + next.EventCount;
+        var nextWeight = (float)next.EventCount / combinedCount;
+        var currentWeight = 1f - nextWeight;
+        return new FocusRouteAggregate(
+            combinedCount,
+            Math.Max(current.LastTick, next.LastTick),
+            (current.AverageMagnitude * currentWeight) + (next.AverageMagnitude * nextWeight),
+            (current.AverageStrength * currentWeight) + (next.AverageStrength * nextWeight),
+            (current.SignedValue * currentWeight) + (next.SignedValue * nextWeight),
+            (current.SignedStrength * currentWeight) + (next.SignedStrength * nextWeight));
     }
 
     private static Dictionary<uint, CanvasPoint> BuildRegionPositions(IEnumerable<uint> regionIds)
@@ -826,6 +878,49 @@ public static class VizActivityCanvasLayoutBuilder
             ? $"N{NeuronFromAddress(targetAddress)}"
             : $"R{targetRegion}";
         return $"{sourceText} -> {targetText}";
+    }
+
+    private static string BuildFocusedDisplayRouteLabel(string sourceKey, string targetKey, uint focusRegionId)
+        => $"{BuildFocusedNodeLabel(sourceKey, focusRegionId)} -> {BuildFocusedNodeLabel(targetKey, focusRegionId)}";
+
+    private static string BuildFocusedNodeLabel(string nodeKey, uint focusRegionId)
+    {
+        if (string.IsNullOrWhiteSpace(nodeKey))
+        {
+            return "?";
+        }
+
+        if (nodeKey.StartsWith("neuron:", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = nodeKey.Substring("neuron:".Length);
+            if (uint.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out var address))
+            {
+                var regionId = RegionFromAddress(address);
+                return regionId == focusRegionId
+                    ? $"N{NeuronFromAddress(address)}"
+                    : $"R{regionId}";
+            }
+        }
+
+        if (nodeKey.StartsWith("gateway:", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = nodeKey.Substring("gateway:".Length);
+            if (uint.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out var regionId))
+            {
+                return $"R{regionId}";
+            }
+        }
+
+        if (nodeKey.StartsWith("region:", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = nodeKey.Substring("region:".Length);
+            if (uint.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out var regionId))
+            {
+                return $"R{regionId}";
+            }
+        }
+
+        return nodeKey;
     }
 
     private static string GetFocusedEdgeKind(uint sourceRegionId, uint targetRegionId, uint focusRegionId, bool hasReverse)
@@ -1281,6 +1376,12 @@ public static class VizActivityCanvasLayoutBuilder
             return new FocusRouteAggregate(nextCount, Math.Max(LastTick, tickId), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength);
         }
     }
+
+    private readonly record struct FocusDisplayRouteKey(
+        string SourceNodeKey,
+        string TargetNodeKey,
+        uint SourceRegionId,
+        uint TargetRegionId);
 
     private readonly record struct FocusNeuronStat(int EventCount, ulong LastTick)
     {
