@@ -6,11 +6,15 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
+using Nbn.Shared.Format;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -49,6 +53,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private readonly HashSet<string> _pinnedCanvasNodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _pinnedCanvasRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Guid, BrainCanvasTopologyState> _topologyByBrainId = new();
+    private readonly SemaphoreSlim _definitionTopologyGate = new(1, 1);
     private VizActivityProjection? _currentProjection;
     private VizActivityProjectionOptions _currentProjectionOptions = new(DefaultTickWindow, false, null);
     private string _activityInteractionSummary = "Select a node or route to inspect activity details.";
@@ -123,6 +128,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                     if (value is not null && (previous?.BrainId != value.BrainId))
                     {
                         _brain.SelectBrain(value.BrainId, preserveOutputs: true);
+                        QueueDefinitionTopologyHydration(value.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
                     }
                     RefreshFilteredEvents();
                 }
@@ -330,6 +336,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         if (match is not null)
         {
             _brain.EnsureSelectedBrain(match.BrainId);
+            QueueDefinitionTopologyHydration(match.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
         }
         RefreshFilteredEvents();
     }
@@ -482,6 +489,10 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         RegionFocusText = regionId.ToString(CultureInfo.InvariantCulture);
         RefreshFilteredEvents();
+        if (SelectedBrain is not null)
+        {
+            QueueDefinitionTopologyHydration(SelectedBrain.BrainId, regionId);
+        }
         Status = $"Zoom focus set to region {regionId}.";
     }
 
@@ -490,6 +501,10 @@ public sealed class VizPanelViewModel : ViewModelBase
         RegionFocusText = string.Empty;
         RegionFilterText = string.Empty;
         RefreshFilteredEvents();
+        if (SelectedBrain is not null)
+        {
+            QueueDefinitionTopologyHydration(SelectedBrain.BrainId, null);
+        }
         Status = "Full-brain view enabled.";
     }
 
@@ -503,6 +518,10 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         TickWindowText = tickWindow.ToString(CultureInfo.InvariantCulture);
         RefreshFilteredEvents();
+        if (SelectedBrain is not null)
+        {
+            QueueDefinitionTopologyHydration(SelectedBrain.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
+        }
         Status = $"Applied activity options (tick window {tickWindow}).";
     }
 
@@ -734,7 +753,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                      .Take(24))
         {
             sb.AppendLine(
-                $"- {edge.RouteLabel} events={edge.EventCount} tick={edge.LastTick} stroke={edge.StrokeThickness:0.##} opacity={edge.Opacity:0.##} color={edge.Stroke} src={edge.SourceRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} dst={edge.TargetRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} selected={edge.IsSelected} hover={edge.IsHovered} pinned={edge.IsPinned}");
+                $"- {edge.RouteLabel} events={edge.EventCount} tick={edge.LastTick} stroke={edge.StrokeThickness:0.##} opacity={edge.Opacity:0.##} color={edge.Stroke} activity_color={edge.ActivityStroke} activity_stroke={edge.ActivityStrokeThickness:0.##} activity_opacity={edge.ActivityOpacity:0.##} src={edge.SourceRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} dst={edge.TargetRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} selected={edge.IsSelected} hover={edge.IsHovered} pinned={edge.IsPinned}");
         }
 
         sb.AppendLine("RecentVizEvents:");
@@ -821,6 +840,256 @@ public sealed class VizPanelViewModel : ViewModelBase
         ActivityCanvasLegend = canvas.Legend;
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
+    }
+
+    private void QueueDefinitionTopologyHydration(Guid brainId, uint? focusRegionId)
+    {
+        _ = HydrateDefinitionTopologyAsync(brainId, focusRegionId);
+    }
+
+    private async Task HydrateDefinitionTopologyAsync(Guid brainId, uint? focusRegionId)
+    {
+        await _definitionTopologyGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var artifactRef = await ResolveDefinitionArtifactReferenceAsync(brainId).ConfigureAwait(false);
+            if (artifactRef is null || !artifactRef.TryToSha256Bytes(out var shaBytes))
+            {
+                return;
+            }
+
+            var definitionShaHex = Convert.ToHexString(shaBytes).ToLowerInvariant();
+            var loaded = await TryLoadDefinitionTopologyAsync(artifactRef, focusRegionId).ConfigureAwait(false);
+            if (loaded is null)
+            {
+                return;
+            }
+
+            _dispatcher.Post(() =>
+            {
+                if (!_topologyByBrainId.TryGetValue(brainId, out var state))
+                {
+                    state = new BrainCanvasTopologyState();
+                    state.Regions.Add((uint)NbnConstants.InputRegionId);
+                    state.Regions.Add((uint)NbnConstants.OutputRegionId);
+                    _topologyByBrainId[brainId] = state;
+                }
+
+                if (state.HasDefinitionRegionTopology
+                    && string.Equals(state.DefinitionShaHex, definitionShaHex, StringComparison.OrdinalIgnoreCase)
+                    && (!focusRegionId.HasValue || state.DefinitionFocusRegions.Contains(focusRegionId.Value)))
+                {
+                    return;
+                }
+
+                state.DefinitionShaHex = definitionShaHex;
+                state.HasDefinitionRegionTopology = true;
+                state.Regions.UnionWith(loaded.Value.Regions);
+                state.RegionRoutes.UnionWith(loaded.Value.RegionRoutes);
+
+                if (focusRegionId.HasValue)
+                {
+                    state.DefinitionFocusRegions.Add(focusRegionId.Value);
+                    state.NeuronAddresses.UnionWith(loaded.Value.NeuronAddresses);
+                    state.NeuronRoutes.UnionWith(loaded.Value.NeuronRoutes);
+                }
+
+                if (SelectedBrain?.BrainId == brainId)
+                {
+                    RefreshCanvasLayoutOnly();
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(() =>
+            {
+                if (SelectedBrain?.BrainId == brainId)
+                {
+                    Status = $"Definition topology load failed: {ex.Message}";
+                }
+            });
+        }
+        finally
+        {
+            _definitionTopologyGate.Release();
+        }
+    }
+
+    private async Task<Nbn.Proto.ArtifactRef?> ResolveDefinitionArtifactReferenceAsync(Guid brainId)
+    {
+        var exported = await _brain.ExportBrainDefinitionReferenceAsync(brainId, rebaseOverlays: false).ConfigureAwait(false);
+        if (exported is not null && exported.TryToSha256Bytes(out _))
+        {
+            return exported;
+        }
+
+        var info = await _brain.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
+        return info?.BaseDefinition is { } baseDefinition && baseDefinition.TryToSha256Bytes(out _)
+            ? baseDefinition
+            : null;
+    }
+
+    private static async Task<DefinitionTopologyLoadResult?> TryLoadDefinitionTopologyAsync(Nbn.Proto.ArtifactRef artifactRef, uint? focusRegionId)
+    {
+        if (!artifactRef.TryToSha256Bytes(out var shaBytes))
+        {
+            return null;
+        }
+
+        var hash = Sha256Hash.FromBytes(shaBytes);
+        foreach (var artifactRoot in ResolveArtifactStoreRoots(artifactRef.StoreUri))
+        {
+            try
+            {
+                var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+                await using var stream = await store.TryOpenArtifactAsync(hash).ConfigureAwait(false);
+                if (stream is null)
+                {
+                    continue;
+                }
+
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer).ConfigureAwait(false);
+                return BuildDefinitionTopology(buffer.ToArray(), focusRegionId);
+            }
+            catch
+            {
+                // Continue probing other candidate roots.
+            }
+        }
+
+        return null;
+    }
+
+    private static DefinitionTopologyLoadResult BuildDefinitionTopology(byte[] definitionBytes, uint? focusRegionId)
+    {
+        var header = NbnBinary.ReadNbnHeader(definitionBytes);
+        var regions = new HashSet<uint>();
+        var regionRoutes = new HashSet<VizActivityCanvasRegionRoute>();
+        var neuronAddresses = new HashSet<uint>();
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+
+        for (var regionId = (uint)NbnConstants.RegionMinId; regionId <= NbnConstants.RegionMaxId; regionId++)
+        {
+            var entry = header.Regions[(int)regionId];
+            if (entry.NeuronSpan == 0 || entry.Offset == 0)
+            {
+                continue;
+            }
+
+            regions.Add(regionId);
+            var section = NbnBinary.ReadNbnRegionSection(definitionBytes, entry.Offset);
+            var axonCursor = 0;
+            for (var neuronIndex = 0; neuronIndex < section.NeuronRecords.Length; neuronIndex++)
+            {
+                var neuron = section.NeuronRecords[neuronIndex];
+                var sourceAddress = ComposeAddressForTopology(regionId, (uint)neuronIndex);
+                if (focusRegionId.HasValue && focusRegionId.Value == regionId && neuron.Exists)
+                {
+                    neuronAddresses.Add(sourceAddress);
+                }
+
+                var axonCount = (int)neuron.AxonCount;
+                for (var offset = 0; offset < axonCount && axonCursor < section.AxonRecords.Length; offset++, axonCursor++)
+                {
+                    var axon = section.AxonRecords[axonCursor];
+                    var targetRegion = (uint)axon.TargetRegionId;
+                    var targetAddress = ComposeAddressForTopology(targetRegion, (uint)Math.Max(0, axon.TargetNeuronId));
+                    regionRoutes.Add(new VizActivityCanvasRegionRoute(regionId, targetRegion));
+
+                    if (!focusRegionId.HasValue)
+                    {
+                        continue;
+                    }
+
+                    if (regionId != focusRegionId.Value && targetRegion != focusRegionId.Value)
+                    {
+                        continue;
+                    }
+
+                    neuronRoutes.Add(new VizActivityCanvasNeuronRoute(sourceAddress, targetAddress));
+                    if (regionId == focusRegionId.Value && neuron.Exists)
+                    {
+                        neuronAddresses.Add(sourceAddress);
+                    }
+
+                    if (targetRegion == focusRegionId.Value)
+                    {
+                        neuronAddresses.Add(targetAddress);
+                    }
+                }
+            }
+        }
+
+        regions.Add((uint)NbnConstants.InputRegionId);
+        regions.Add((uint)NbnConstants.OutputRegionId);
+        return new DefinitionTopologyLoadResult(regions, regionRoutes, neuronAddresses, neuronRoutes);
+    }
+
+    private static IReadOnlyList<string> ResolveArtifactStoreRoots(string? storeUri)
+    {
+        var roots = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static string? NormalizeStoreRoot(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var trimmed = raw.Trim().Trim('"');
+            if (trimmed.Length == 0)
+            {
+                return null;
+            }
+
+            if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) && uri.IsFile)
+            {
+                return uri.LocalPath;
+            }
+
+            return trimmed;
+        }
+
+        static string BuildDefaultRoot(string suffix)
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return Path.Combine(localAppData, "Nbn.Workbench", suffix);
+        }
+
+        void AddCandidate(string? candidate)
+        {
+            var normalized = NormalizeStoreRoot(candidate);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(normalized);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (!Directory.Exists(fullPath) || !seen.Add(fullPath))
+            {
+                return;
+            }
+
+            roots.Add(fullPath);
+        }
+
+        AddCandidate(storeUri);
+        AddCandidate(BuildDefaultRoot("designer-artifacts"));
+        AddCandidate(BuildDefaultRoot(Path.Combine("sample-brain", "artifacts")));
+        AddCandidate(BuildDefaultRoot("repro-artifacts"));
+        return roots;
     }
 
     private int ParseTickWindowOrDefault()
@@ -938,6 +1207,10 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         RegionFocusText = regionId.Value.ToString(CultureInfo.InvariantCulture);
         RefreshFilteredEvents();
+        if (SelectedBrain is not null)
+        {
+            QueueDefinitionTopologyHydration(SelectedBrain.BrainId, regionId.Value);
+        }
         Status = $"Canvas navigation focused region {regionId.Value}.";
     }
 
@@ -1155,6 +1428,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         var selectedEdge = edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _selectedCanvasRouteLabel, StringComparison.OrdinalIgnoreCase));
         return selectedEdge?.TargetRegionId ?? selectedEdge?.SourceRegionId;
     }
+
+    private static uint ComposeAddressForTopology(uint regionId, uint neuronId)
+        => (regionId << NbnConstants.AddressNeuronBits) | (neuronId & NbnConstants.AddressNeuronMask);
 
     private static bool TryParseRegionForTopology(string? value, out uint regionId)
     {
@@ -1390,6 +1666,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
+    private readonly record struct DefinitionTopologyLoadResult(
+        HashSet<uint> Regions,
+        HashSet<VizActivityCanvasRegionRoute> RegionRoutes,
+        HashSet<uint> NeuronAddresses,
+        HashSet<VizActivityCanvasNeuronRoute> NeuronRoutes);
+
     private sealed class BrainCanvasTopologyState
     {
         public HashSet<uint> Regions { get; } = new();
@@ -1399,6 +1681,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         public HashSet<uint> NeuronAddresses { get; } = new();
 
         public HashSet<VizActivityCanvasNeuronRoute> NeuronRoutes { get; } = new();
+
+        public bool HasDefinitionRegionTopology { get; set; }
+
+        public string? DefinitionShaHex { get; set; }
+
+        public HashSet<uint> DefinitionFocusRegions { get; } = new();
     }
 }
 

@@ -383,36 +383,60 @@ public sealed class WorkbenchClient : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    public Task RequestBrainInfoAsync(Guid brainId, Action<BrainInfo?> callback)
+    public async Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
     {
         if (_root is null || _ioGatewayPid is null)
         {
-            callback(null);
-            return Task.CompletedTask;
-        }
-
-        return RequestBrainInfoInternalAsync(brainId, callback);
-    }
-
-    private async Task RequestBrainInfoInternalAsync(Guid brainId, Action<BrainInfo?> callback)
-    {
-        if (_root is null || _ioGatewayPid is null)
-        {
-            callback(null);
-            return;
+            return null;
         }
 
         try
         {
-            var info = await _root.RequestAsync<BrainInfo>(
+            return await _root.RequestAsync<BrainInfo>(
                 _ioGatewayPid,
                 new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
-                DefaultTimeout);
-            callback(info);
+                DefaultTimeout).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            callback(null);
+            return null;
+        }
+    }
+
+    public async Task RequestBrainInfoAsync(Guid brainId, Action<BrainInfo?> callback)
+    {
+        if (callback is null)
+        {
+            return;
+        }
+
+        var info = await RequestBrainInfoAsync(brainId).ConfigureAwait(false);
+        callback(info);
+    }
+
+    public async Task<Nbn.Proto.ArtifactRef?> ExportBrainDefinitionAsync(Guid brainId, bool rebaseOverlays = false)
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var ready = await _root.RequestAsync<BrainDefinitionReady>(
+                _ioGatewayPid,
+                new ExportBrainDefinition
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    RebaseOverlays = rebaseOverlays
+                },
+                DefaultTimeout).ConfigureAwait(false);
+
+            return ready?.BrainDef;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

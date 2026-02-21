@@ -38,6 +38,8 @@ public sealed record VizEdgeActivityItem(
     ulong LastTick,
     float AverageMagnitude,
     float AverageStrength,
+    float AverageSignedValue,
+    float AverageSignedStrength,
     uint? SourceRegionId,
     uint? TargetRegionId);
 
@@ -184,6 +186,8 @@ public static class VizActivityProjectionBuilder
                     group.Max(item => item.TickId),
                     AverageMagnitude(group.Select(item => item.Value)),
                     AverageMagnitude(group.Select(item => item.Strength)),
+                    AverageSigned(group.Select(item => item.Value)),
+                    AverageSigned(group.Select(item => item.Strength)),
                     sourceRegion,
                     targetRegion);
             });
@@ -273,6 +277,19 @@ public static class VizActivityProjectionBuilder
         foreach (var value in values)
         {
             total += Math.Abs(value);
+            count++;
+        }
+
+        return count == 0 ? 0f : total / count;
+    }
+
+    private static float AverageSigned(IEnumerable<float> values)
+    {
+        var total = 0f;
+        var count = 0;
+        foreach (var value in values)
+        {
+            total += value;
             count++;
         }
 

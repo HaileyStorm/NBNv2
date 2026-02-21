@@ -157,6 +157,11 @@
                                   PointerPressed="CanvasEdgePointerPressed"
                                   ToolTip.Tip="{Binding Detail}" />
                             <Path Data="{Binding PathData}"
+                                  Stroke="{Binding ActivityStroke}"
+                                  StrokeThickness="{Binding ActivityStrokeThickness}"
+                                  Opacity="{Binding ActivityOpacity}"
+                                  IsHitTestVisible="False" />
+                            <Path Data="{Binding PathData}"
                                   Stroke="{DynamicResource NbnGoldBrush}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"

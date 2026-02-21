@@ -338,6 +338,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         SelectBrain(brainId, preserveOutputs: true);
     }
 
+    public Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
+        => _client.RequestBrainInfoAsync(brainId);
+
+    public Task<Nbn.Proto.ArtifactRef?> ExportBrainDefinitionReferenceAsync(Guid brainId, bool rebaseOverlays = false)
+        => _client.ExportBrainDefinitionAsync(brainId, rebaseOverlays);
+
     public void UpdateActiveBrains(IReadOnlyList<Guid> brains)
     {
         _activeBrains = brains.Distinct().ToList();

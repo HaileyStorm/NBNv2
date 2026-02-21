@@ -163,7 +163,9 @@ public sealed class IoGatewayActor : IActor
                 CostEnabled = false,
                 EnergyEnabled = false,
                 EnergyRemaining = 0,
-                PlasticityEnabled = false
+                PlasticityEnabled = false,
+                BaseDefinition = new ArtifactRef(),
+                LastSnapshot = new ArtifactRef()
             });
             return;
         }
@@ -177,7 +179,9 @@ public sealed class IoGatewayActor : IActor
             CostEnabled = entry.Energy.CostEnabled,
             EnergyEnabled = entry.Energy.EnergyEnabled,
             EnergyRemaining = entry.Energy.EnergyRemaining,
-            PlasticityEnabled = entry.Energy.PlasticityEnabled
+            PlasticityEnabled = entry.Energy.PlasticityEnabled,
+            BaseDefinition = entry.BaseDefinition ?? new ArtifactRef(),
+            LastSnapshot = entry.LastSnapshot ?? new ArtifactRef()
         });
     }
 

@@ -104,6 +104,12 @@ public sealed class HiveMindActor : IActor
                     context.Respond(new ProtoControl.BrainIoInfo());
                 }
                 break;
+            case ProtoIo.ExportBrainDefinition message:
+                HandleExportBrainDefinition(context, message);
+                break;
+            case ProtoIo.RequestSnapshot message:
+                HandleRequestSnapshot(context, message);
+                break;
             case ProtoControl.RequestPlacement message:
                 HandleRequestPlacement(context, message);
                 break;
@@ -1183,6 +1189,54 @@ public sealed class HiveMindActor : IActor
             InputWidth = (uint)Math.Max(0, brain.InputWidth),
             OutputWidth = (uint)Math.Max(0, brain.OutputWidth)
         };
+    }
+
+    private void HandleExportBrainDefinition(IContext context, ProtoIo.ExportBrainDefinition message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            context.Respond(new ProtoIo.BrainDefinitionReady());
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain) || brain.BaseDefinition is null)
+        {
+            context.Respond(new ProtoIo.BrainDefinitionReady
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+            return;
+        }
+
+        context.Respond(new ProtoIo.BrainDefinitionReady
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainDef = brain.BaseDefinition
+        });
+    }
+
+    private void HandleRequestSnapshot(IContext context, ProtoIo.RequestSnapshot message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            context.Respond(new ProtoIo.SnapshotReady());
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain) || brain.LastSnapshot is null)
+        {
+            context.Respond(new ProtoIo.SnapshotReady
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+            return;
+        }
+
+        context.Respond(new ProtoIo.SnapshotReady
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Snapshot = brain.LastSnapshot
+        });
     }
 
     private void UpdateRoutingTable(IContext? context, BrainState brain)

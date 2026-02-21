@@ -181,6 +181,33 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.Contains(layout.Edges, edge => edge.Detail.Contains("bidirectional", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Build_UsesSignedActivityColor_WithSeparateDirectionBorder()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 300, region: 9, source: Address(9, 1), target: Address(23, 4), value: 1.0f, strength: 0.6f),
+            CreateEvent("VizAxonSent", tick: 301, region: 23, source: Address(23, 4), target: Address(9, 1), value: -1.0f, strength: -0.5f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var positive = layout.Edges.Single(edge => string.Equals(edge.RouteLabel, "R9 -> R23", StringComparison.OrdinalIgnoreCase));
+        var negative = layout.Edges.Single(edge => string.Equals(edge.RouteLabel, "R23 -> R9", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotEqual(positive.Stroke, positive.ActivityStroke);
+        Assert.NotEqual(negative.Stroke, negative.ActivityStroke);
+        Assert.NotEqual(positive.ActivityStroke, negative.ActivityStroke);
+        Assert.True(positive.ActivityOpacity > 0.2);
+        Assert.True(negative.ActivityOpacity > 0.2);
+        Assert.True(positive.ActivityStrokeThickness < positive.StrokeThickness);
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>

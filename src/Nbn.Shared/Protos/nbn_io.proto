@@ -31,6 +31,8 @@ message BrainInfo {
   sint64 energy_remaining = 6;
 
   bool plasticity_enabled = 7;
+  nbn.ArtifactRef base_definition = 8;
+  nbn.ArtifactRef last_snapshot = 9;
 }
 
 message BrainEnergyState {

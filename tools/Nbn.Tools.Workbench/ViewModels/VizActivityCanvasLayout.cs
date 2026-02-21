@@ -121,8 +121,11 @@ public sealed record VizActivityCanvasEdge(
     string Detail,
     string PathData,
     string Stroke,
+    string ActivityStroke,
     double StrokeThickness,
+    double ActivityStrokeThickness,
     double Opacity,
+    double ActivityOpacity,
     bool IsFocused,
     ulong LastTick,
     int EventCount,
@@ -416,7 +419,9 @@ public static class VizActivityCanvasLayoutBuilder
                 edge.EventCount,
                 edge.LastTick,
                 edge.AverageMagnitude,
-                edge.AverageStrength);
+                edge.AverageStrength,
+                edge.AverageSignedValue,
+                edge.AverageSignedStrength);
         }
 
         foreach (var route in topology.RegionRoutes)
@@ -449,30 +454,43 @@ public static class VizActivityCanvasLayoutBuilder
             var isDormant = aggregate.EventCount <= 0 || aggregate.LastTick == 0;
             var recency = isDormant ? 0.0 : TickRecency(aggregate.LastTick, latestTick, options.TickWindow);
             var normalizedLoad = isDormant ? 0.0 : Math.Clamp((double)aggregate.EventCount / maxEdgeEvents, 0.0, 1.0);
+            var normalizedStrength = Math.Clamp((double)Math.Abs(aggregate.AverageStrength), 0.0, 1.0);
+            var signedSignal = Clamp(aggregate.SignedValue * 0.75f + aggregate.SignedStrength * 0.25f, -1.0, 1.0);
             var emphasis = (isSelected ? 0.22 : 0.0) + (isHovered ? 0.12 : 0.0) + (isPinned ? 0.16 : 0.0);
             var thickness = BaseEdgeStroke
                             + (normalizedLoad * MaxEdgeStrokeBoost)
+                            + (normalizedStrength * 0.7)
                             + (isPinned ? 0.8 : 0.0)
                             + (isHovered ? 0.5 : 0.0)
                             + (isSelected ? 0.9 : 0.0);
             var opacity = Math.Clamp((isDormant ? 0.16 : 0.32 + (0.45 * recency)) + emphasis, 0.14, 1.0);
+            var activityIntensity = isDormant
+                ? 0.0
+                : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
+            var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.26 + (0.62 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
+            var activityThickness = Math.Max(0.9, thickness - 1.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && route.SourceRegionId > route.TargetRegionId ? -1 : 1;
             var curve = BuildEdgeCurve(sourceCenter, targetCenter, route.SourceRegionId == route.TargetRegionId, curveDirection);
-            var detail = $"{routeLabel} | {edgeKind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###}";
+            var detail = $"{routeLabel} | {edgeKind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
             }
 
+            var directionStroke = GetRegionEdgeDirectionColor(edgeKind, isDormant);
+            var activityStroke = GetActivityEdgeColor(signedSignal, activityIntensity, isDormant);
             edges.Add(new VizActivityCanvasEdge(
                 routeLabel,
                 detail,
                 curve,
-                GetRegionEdgeColor(edgeKind, isDormant),
+                directionStroke,
+                activityStroke,
                 thickness,
+                activityThickness,
                 opacity,
+                activityOpacity,
                 false,
                 aggregate.LastTick,
                 aggregate.EventCount,
@@ -648,31 +666,44 @@ public static class VizActivityCanvasLayoutBuilder
             var isDormant = aggregate.EventCount <= 0 || aggregate.LastTick == 0;
             var recency = isDormant ? 0.0 : TickRecency(aggregate.LastTick, latestTick, tickWindow);
             var normalizedLoad = isDormant ? 0.0 : Math.Clamp((double)aggregate.EventCount / maxEdgeEvents, 0.0, 1.0);
+            var normalizedStrength = Math.Clamp((double)Math.Abs(aggregate.AverageStrength), 0.0, 1.0);
+            var signedSignal = Clamp(aggregate.SignedValue * 0.75f + aggregate.SignedStrength * 0.25f, -1.0, 1.0);
             var emphasis = (isSelected ? 0.22 : 0.0) + (isHovered ? 0.12 : 0.0) + (isPinned ? 0.16 : 0.0);
             var thickness = BaseEdgeStroke
                             + (normalizedLoad * MaxEdgeStrokeBoost)
+                            + (normalizedStrength * 0.7)
                             + (kind == "bidirectional" ? 0.25 : 0.0)
                             + (isPinned ? 0.8 : 0.0)
                             + (isHovered ? 0.5 : 0.0)
                             + (isSelected ? 0.9 : 0.0);
             var opacity = Math.Clamp((isDormant ? 0.17 : 0.34 + (0.44 * recency)) + emphasis, 0.15, 1.0);
+            var activityIntensity = isDormant
+                ? 0.0
+                : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
+            var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.28 + (0.60 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
+            var activityThickness = Math.Max(0.9, thickness - 1.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && string.CompareOrdinal(sourceKey, targetKey) > 0 ? -1 : 1;
             var curve = BuildEdgeCurve(sourceCenter, targetCenter, sourceKey == targetKey, curveDirection);
-            var detail = $"{routeLabel} | {kind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###}";
+            var detail = $"{routeLabel} | {kind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
             }
 
+            var directionStroke = GetFocusedEdgeDirectionColor(kind, isDormant);
+            var activityStroke = GetActivityEdgeColor(signedSignal, activityIntensity, isDormant);
             edges.Add(new VizActivityCanvasEdge(
                 routeLabel,
                 detail,
                 curve,
-                GetFocusedEdgeColor(kind, isDormant),
+                directionStroke,
+                activityStroke,
                 thickness,
+                activityThickness,
                 opacity,
+                activityOpacity,
                 true,
                 aggregate.LastTick,
                 aggregate.EventCount,
@@ -795,14 +826,14 @@ public static class VizActivityCanvasLayoutBuilder
         return sourceRegionId == focusRegionId ? "outbound" : "inbound";
     }
 
-    private static string GetFocusedEdgeColor(string kind, bool isDormant)
+    private static string GetFocusedEdgeDirectionColor(string kind, bool isDormant)
     {
         var color = kind switch
         {
-            "internal" => "#2A9D8F",
-            "outbound" => "#F4A261",
-            "inbound" => "#457B9D",
-            "bidirectional" => "#E9C46A",
+            "internal" => "#6C757D",
+            "outbound" => "#7C8DA6",
+            "inbound" => "#5F7896",
+            "bidirectional" => "#B8A04D",
             _ => "#7A838A"
         };
 
@@ -826,18 +857,31 @@ public static class VizActivityCanvasLayoutBuilder
             : "feedback";
     }
 
-    private static string GetRegionEdgeColor(string edgeKind, bool isDormant)
+    private static string GetRegionEdgeDirectionColor(string edgeKind, bool isDormant)
     {
         var color = edgeKind switch
         {
             "self" => "#6C757D",
-            "bidirectional" => "#E9C46A",
-            "feed-forward" => "#2A9D8F",
-            "feedback" => "#E76F51",
+            "bidirectional" => "#B8A04D",
+            "feed-forward" => "#6B7F99",
+            "feedback" => "#8A6F94",
             _ => "#7A838A"
         };
 
         return isDormant ? DimColor(color) : color;
+    }
+
+    private static string GetActivityEdgeColor(double signedSignal, double intensity, bool isDormant)
+    {
+        var neutral = isDormant ? "#4F565D" : "#56606A";
+        if (Math.Abs(signedSignal) < 1e-5)
+        {
+            return BlendColor(neutral, "#B8C46A", intensity * 0.6);
+        }
+
+        var target = signedSignal > 0 ? "#2ECC71" : "#E74C3C";
+        var blend = Math.Clamp((0.30 + (0.70 * intensity)) * Math.Abs(signedSignal), 0.0, 1.0);
+        return BlendColor(neutral, target, blend);
     }
 
     private static (string Fill, string Stroke) GetRegionNodePalette(uint regionId, bool isDormant)
@@ -917,6 +961,26 @@ public static class VizActivityCanvasLayoutBuilder
 
     private static string ToHex(byte r, byte g, byte b)
         => $"#{r:X2}{g:X2}{b:X2}";
+
+    private static string BlendColor(string fromHex, string toHex, double toWeight)
+    {
+        if (!TryParseHexColor(fromHex, out var fromR, out var fromG, out var fromB))
+        {
+            return toHex;
+        }
+
+        if (!TryParseHexColor(toHex, out var toR, out var toG, out var toB))
+        {
+            return fromHex;
+        }
+
+        var weight = Math.Clamp(toWeight, 0.0, 1.0);
+        var inverse = 1.0 - weight;
+        return ToHex(
+            (byte)Math.Clamp(Math.Round((fromR * inverse) + (toR * weight)), 0, 255),
+            (byte)Math.Clamp(Math.Round((fromG * inverse) + (toG * weight)), 0, 255),
+            (byte)Math.Clamp(Math.Round((fromB * inverse) + (toB * weight)), 0, 255));
+    }
 
     private static string NodeKeyForRegion(uint regionId)
         => $"region:{regionId}";
@@ -1127,23 +1191,43 @@ public static class VizActivityCanvasLayoutBuilder
 
     private sealed record RegionNodeSource(uint RegionId, int EventCount, ulong LastTick, int FiredCount, int AxonCount);
 
-    private readonly record struct RouteAggregate(int EventCount, ulong LastTick, float AverageMagnitude, float AverageStrength)
+    private readonly record struct RouteAggregate(
+        int EventCount,
+        ulong LastTick,
+        float AverageMagnitude,
+        float AverageStrength,
+        float SignedValue,
+        float SignedStrength)
     {
-        public static RouteAggregate Empty { get; } = new(0, 0, 0f, 0f);
+        public static RouteAggregate Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f);
 
-        public RouteAggregate Merge(int eventCount, ulong lastTick, float averageMagnitude, float averageStrength)
+        public RouteAggregate Merge(
+            int eventCount,
+            ulong lastTick,
+            float averageMagnitude,
+            float averageStrength,
+            float averageSignedValue,
+            float averageSignedStrength)
         {
             var nextCount = EventCount + Math.Max(0, eventCount);
             var weight = nextCount == 0 ? 0f : (float)Math.Max(0, eventCount) / nextCount;
             var nextMagnitude = (AverageMagnitude * (1f - weight)) + (averageMagnitude * weight);
             var nextStrength = (AverageStrength * (1f - weight)) + (averageStrength * weight);
-            return new RouteAggregate(nextCount, Math.Max(LastTick, lastTick), nextMagnitude, nextStrength);
+            var nextSignedValue = (SignedValue * (1f - weight)) + (averageSignedValue * weight);
+            var nextSignedStrength = (SignedStrength * (1f - weight)) + (averageSignedStrength * weight);
+            return new RouteAggregate(nextCount, Math.Max(LastTick, lastTick), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength);
         }
     }
 
-    private readonly record struct FocusRouteAggregate(int EventCount, ulong LastTick, float AverageMagnitude, float AverageStrength)
+    private readonly record struct FocusRouteAggregate(
+        int EventCount,
+        ulong LastTick,
+        float AverageMagnitude,
+        float AverageStrength,
+        float SignedValue,
+        float SignedStrength)
     {
-        public static FocusRouteAggregate Empty { get; } = new(0, 0, 0f, 0f);
+        public static FocusRouteAggregate Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f);
 
         public FocusRouteAggregate Merge(ulong tickId, float value, float strength)
         {
@@ -1151,7 +1235,9 @@ public static class VizActivityCanvasLayoutBuilder
             var weight = nextCount == 0 ? 0f : 1f / nextCount;
             var nextMagnitude = (AverageMagnitude * (1f - weight)) + (Math.Abs(value) * weight);
             var nextStrength = (AverageStrength * (1f - weight)) + (Math.Abs(strength) * weight);
-            return new FocusRouteAggregate(nextCount, Math.Max(LastTick, tickId), nextMagnitude, nextStrength);
+            var nextSignedValue = (SignedValue * (1f - weight)) + (value * weight);
+            var nextSignedStrength = (SignedStrength * (1f - weight)) + (strength * weight);
+            return new FocusRouteAggregate(nextCount, Math.Max(LastTick, tickId), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength);
         }
     }
 
