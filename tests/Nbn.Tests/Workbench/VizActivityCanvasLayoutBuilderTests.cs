@@ -254,9 +254,9 @@ public class VizActivityCanvasLayoutBuilderTests
 
         var focusedNeuron = Assert.Single(layout.Nodes, node => node.RegionId == focusRegionId && node.NeuronId == 7);
         Assert.True(focusedNeuron.EventCount > 0);
-        Assert.Contains("buffer n=0", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("avg=n/a", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("latest=n/a", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("value n=1", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avg=1.2", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("latest=1.2@500", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(layout.Edges);
     }
 
@@ -440,7 +440,7 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
-    public void Build_RegionNodeDetailUsesNotAvailableWhenNoBufferSamples()
+    public void Build_RegionNodeDetailUsesValueMetricsWhenBufferSamplesAreAbsent()
     {
         var events = new List<VizEventItem>
         {
@@ -455,7 +455,30 @@ public class VizActivityCanvasLayoutBuilderTests
             new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
 
         var node = Assert.Single(layout.Nodes, item => item.RegionId == 9);
-        Assert.Contains("buffer n=0", node.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("value n=1", node.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avg=0.75", node.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("latest=0.75@630", node.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_RegionNodeDetailShowsNotAvailableWhenNoValueEvents()
+    {
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { 0, 5, 31 },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            new HashSet<uint>(),
+            new HashSet<VizActivityCanvasNeuronRoute>());
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        var node = Assert.Single(layout.Nodes, item => item.RegionId == 5);
+        Assert.Contains("value n=0", node.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("avg=n/a", node.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("latest=n/a", node.Detail, StringComparison.OrdinalIgnoreCase);
     }
@@ -500,7 +523,7 @@ public class VizActivityCanvasLayoutBuilderTests
             new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null));
 
         var outputNode = Assert.Single(layout.Nodes, node => node.RegionId == 31);
-        Assert.Contains("buffer n=1", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("value n=1", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("routes out", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("avg |v|", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
     }
@@ -528,7 +551,7 @@ public class VizActivityCanvasLayoutBuilderTests
         var neuron = Assert.Single(layout.Nodes, node => node.RegionId == focusRegionId && node.NeuronId == 2);
         Assert.Contains("fired 1", neuron.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("out 1", neuron.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("buffer n=1", neuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("value n=3", neuron.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("latest=0.42@702", neuron.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -607,7 +630,7 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.Contains("fired", gateway.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("avg |v|", gateway.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("routes out", gateway.Detail, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("buffer n=", gateway.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("value n=", gateway.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     private static VizActivityProjection BuildProjection()

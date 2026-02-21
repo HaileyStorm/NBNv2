@@ -30,7 +30,8 @@ public sealed record VizRegionActivityItem(
     int FiredCount,
     int AxonCount,
     string DominantType,
-    float AverageMagnitude);
+    float AverageMagnitude,
+    float AverageSignedValue);
 
 public sealed record VizEdgeActivityItem(
     string RouteLabel,
@@ -157,7 +158,8 @@ public static class VizActivityProjectionBuilder
                     items.Count(item => IsFiredType(item.Type)),
                     items.Count(item => IsAxonType(item.Type)),
                     dominantType,
-                    AverageMagnitude(items.Select(item => item.Value)));
+                    AverageMagnitude(items.Select(item => item.Value)),
+                    AverageSigned(items.Select(item => item.Value)));
             })
             .OrderByDescending(item => item.EventCount)
             .ThenByDescending(item => item.LastTick)

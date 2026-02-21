@@ -56,6 +56,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _brainEntryText = string.Empty;
     private BrainListItem? _selectedBrain;
     private VizPanelTypeOption _selectedVizType;
+    private VizCanvasColorModeOption _selectedCanvasColorMode;
     private bool _suspendSelection;
     private VizEventItem? _selectedEvent;
     private string _selectedPayload = string.Empty;
@@ -126,6 +127,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         KnownBrains = new ObservableCollection<BrainListItem>();
         VizPanelTypeOptions = new ObservableCollection<VizPanelTypeOption>(VizPanelTypeOption.CreateDefaults());
         _selectedVizType = VizPanelTypeOptions[0];
+        CanvasColorModeOptions = new ObservableCollection<VizCanvasColorModeOption>(VizCanvasColorModeOption.CreateDefaults());
+        _selectedCanvasColorMode = CanvasColorModeOptions[0];
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
@@ -190,6 +193,8 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public ObservableCollection<VizPanelTypeOption> VizPanelTypeOptions { get; }
 
+    public ObservableCollection<VizCanvasColorModeOption> CanvasColorModeOptions { get; }
+
     public string BrainEntryText
     {
         get => _brainEntryText;
@@ -235,6 +240,21 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
         }
     }
+
+    public VizCanvasColorModeOption SelectedCanvasColorMode
+    {
+        get => _selectedCanvasColorMode;
+        set
+        {
+            if (SetProperty(ref _selectedCanvasColorMode, value))
+            {
+                OnPropertyChanged(nameof(CanvasColorModeHint));
+                RefreshCanvasLayoutOnly();
+            }
+        }
+    }
+
+    public string CanvasColorModeHint => SelectedCanvasColorMode.LegendHint;
 
     public string RegionFocusText
     {
@@ -1295,7 +1315,12 @@ public sealed class VizPanelViewModel : ViewModelBase
             _pinnedCanvasNodes,
             _pinnedCanvasRoutes);
         var layoutStart = Stopwatch.GetTimestamp();
-        var canvas = VizActivityCanvasLayoutBuilder.Build(_currentProjection, _currentProjectionOptions, interaction, topology);
+        var canvas = VizActivityCanvasLayoutBuilder.Build(
+            _currentProjection,
+            _currentProjectionOptions,
+            interaction,
+            topology,
+            SelectedCanvasColorMode.Mode);
 
         if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
         {
@@ -1306,7 +1331,12 @@ public sealed class VizPanelViewModel : ViewModelBase
                 _hoverCanvasRouteLabel,
                 _pinnedCanvasNodes,
                 _pinnedCanvasRoutes);
-            canvas = VizActivityCanvasLayoutBuilder.Build(_currentProjection, _currentProjectionOptions, interaction, topology);
+            canvas = VizActivityCanvasLayoutBuilder.Build(
+                _currentProjection,
+                _currentProjectionOptions,
+                interaction,
+                topology,
+                SelectedCanvasColorMode.Mode);
         }
         _lastCanvasLayoutBuildMs = StopwatchElapsedMs(layoutStart);
 
@@ -1314,7 +1344,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
         _lastCanvasEdgeDiffStats = ApplyKeyedDiff(CanvasEdges, canvas.Edges, static item => item.RouteLabel);
         RebuildCanvasHitIndex(canvas.Nodes, canvas.Edges);
-        ActivityCanvasLegend = canvas.Legend;
+        ActivityCanvasLegend = $"{canvas.Legend} | Color mode: {SelectedCanvasColorMode.Label} ({SelectedCanvasColorMode.LegendHint})";
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
         RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
         _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
@@ -2905,6 +2935,26 @@ public sealed record VizPanelTypeOption(string Label, string? TypeFilter)
 
         return options;
     }
+}
+
+public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasColorMode Mode, string LegendHint)
+{
+    public static IReadOnlyList<VizCanvasColorModeOption> CreateDefaults()
+        => new[]
+        {
+            new VizCanvasColorModeOption(
+                "State priority",
+                VizActivityCanvasColorMode.StateValue,
+                "fill=value sign/magnitude, pulse=activity, border=topology"),
+            new VizCanvasColorModeOption(
+                "Activity priority",
+                VizActivityCanvasColorMode.Activity,
+                "fill=activity load/recency, border=topology"),
+            new VizCanvasColorModeOption(
+                "Topology reference",
+                VizActivityCanvasColorMode.Topology,
+                "fill=topology slices, pulse=activity")
+        };
 }
 
 public sealed record VizPanelExportItem(

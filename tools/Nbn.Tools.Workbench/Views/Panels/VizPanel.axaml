@@ -39,7 +39,7 @@
         <StackPanel Spacing="10">
           <TextBlock Text="Neural Activity View" Classes="card-title" />
           <TextBlock Text="Canvas projection for region/edge/tick activity with deterministic layout and focus anchoring." Classes="card-subtitle" />
-          <Grid ColumnDefinitions="Auto,96,Auto,Auto,96,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+          <Grid ColumnDefinitions="Auto,96,Auto,Auto,96,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" Watermark="blank = full brain" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
@@ -74,6 +74,22 @@
               <Button Content="Clear override" Command="{Binding ClearTickRateOverrideCommand}" />
               <TextBlock Text="{Binding TickRateOverrideSummary}" Classes="muted" VerticalAlignment="Center" />
             </StackPanel>
+
+            <TextBlock Grid.Row="3" Text="Color mode" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding CanvasColorModeOptions}" SelectedItem="{Binding SelectedCanvasColorMode}" Width="180">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:VizCanvasColorModeOption">
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Row="3"
+                       Grid.Column="2"
+                       Grid.ColumnSpan="4"
+                       Text="{Binding CanvasColorModeHint}"
+                       Classes="muted"
+                       VerticalAlignment="Center"
+                       TextWrapping="Wrap" />
           </Grid>
 
           <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,*" ColumnSpacing="12" RowSpacing="8">

@@ -144,6 +144,13 @@ public sealed record VizActivityCanvasEdge(
     bool IsHovered,
     bool IsPinned);
 
+public enum VizActivityCanvasColorMode
+{
+    StateValue = 0,
+    Activity = 1,
+    Topology = 2
+}
+
 public static class VizActivityCanvasLayoutBuilder
 {
     public const double CanvasWidth = 860;
@@ -151,10 +158,13 @@ public static class VizActivityCanvasLayoutBuilder
     private const double CenterX = CanvasWidth / 2.0;
     private const double CenterY = CanvasHeight / 2.0;
     private const double CanvasPadding = 26;
-    private const double RegionNodeRadius = 22;
-    private const double FocusNeuronNodeRadius = 14;
-    private const double GatewayNodeRadius = 13;
-    private const double RegionNodePositionPadding = CanvasPadding + RegionNodeRadius + 4;
+    private const double MinRegionNodeRadius = 16;
+    private const double MaxRegionNodeRadius = 29;
+    private const double MinFocusNeuronNodeRadius = 11;
+    private const double MaxFocusNeuronNodeRadius = 19;
+    private const double MinGatewayNodeRadius = 11;
+    private const double MaxGatewayNodeRadius = 16;
+    private const double RegionNodePositionPadding = CanvasPadding + MaxRegionNodeRadius + 4;
     private const double EdgeControlPadding = CanvasPadding;
     private const double EdgeNodeClearance = 4;
     private const double BaseEdgeStroke = 1.1;
@@ -168,7 +178,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityProjection projection,
         VizActivityProjectionOptions options,
         VizActivityCanvasInteractionState? interaction = null,
-        VizActivityCanvasTopology? topology = null)
+        VizActivityCanvasTopology? topology = null,
+        VizActivityCanvasColorMode colorMode = VizActivityCanvasColorMode.StateValue)
     {
         interaction ??= VizActivityCanvasInteractionState.Empty;
         topology ??= VizActivityCanvasTopology.Empty;
@@ -176,10 +187,10 @@ public static class VizActivityCanvasLayoutBuilder
         var latestTick = ResolveLatestTick(projection);
         if (options.FocusRegionId is uint focusRegionId)
         {
-            return BuildFocusedNeuronCanvas(projection, options, topology, interaction, latestTick, focusRegionId);
+            return BuildFocusedNeuronCanvas(projection, options, topology, interaction, latestTick, focusRegionId, colorMode);
         }
 
-        return BuildRegionCanvas(projection, options, topology, interaction, latestTick);
+        return BuildRegionCanvas(projection, options, topology, interaction, latestTick, colorMode);
     }
 
     private static VizActivityCanvasLayout BuildRegionCanvas(
@@ -187,7 +198,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityProjectionOptions options,
         VizActivityCanvasTopology topology,
         VizActivityCanvasInteractionState interaction,
-        ulong latestTick)
+        ulong latestTick,
+        VizActivityCanvasColorMode colorMode)
     {
         var nodeSource = BuildRegionNodeSources(projection, topology);
         if (nodeSource.Count == 0)
@@ -204,6 +216,13 @@ public static class VizActivityCanvasLayoutBuilder
         var regionBufferMetrics = BuildRegionBufferMetrics(projection.WindowEvents);
         var regionRouteDegrees = BuildRegionRouteDegrees(projection, topology);
         var maxNodeEvents = Math.Max(1, nodeSource.Values.Max(item => item.EventCount));
+        var maxRouteDegree = Math.Max(
+            1,
+            nodeSource.Keys.Max(regionId =>
+            {
+                regionRouteDegrees.TryGetValue(regionId, out var degree);
+                return degree.OutboundCount + degree.InboundCount;
+            }));
         var nodes = new List<VizActivityCanvasNode>(nodeSource.Count);
         var nodeByRegion = new Dictionary<uint, VizActivityCanvasNode>();
 
@@ -216,10 +235,10 @@ public static class VizActivityCanvasLayoutBuilder
             var isPinned = interaction.IsNodePinned(nodeKey);
             var isDormant = stats.EventCount <= 0 || stats.LastTick == 0;
             var loadRatio = isDormant ? 0.0 : Math.Clamp((double)stats.EventCount / maxNodeEvents, 0.0, 1.0);
-            var radius = RegionNodeRadius;
             var tickRecency = isDormant ? 0.0 : TickRecency(stats.LastTick, latestTick, options.TickWindow);
             var emphasis = (isSelected ? 0.25 : 0.0) + (isHovered ? 0.14 : 0.0) + (isPinned ? 0.18 : 0.0);
-            var (fill, stroke) = GetRegionNodePalette(regionId, isDormant);
+            var stroke = GetTopologyStrokeColor(regionId, isDormant);
+            var fill = ResolveRegionFillColor(colorMode, regionId, stats.SignedValue, loadRatio, tickRecency, isDormant);
             var fillOpacity = Math.Clamp((isDormant ? 0.14 : 0.36 + (0.45 * loadRatio)) + emphasis, 0.12, 1.0);
             var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.25 + (0.45 * tickRecency)) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.3
@@ -228,13 +247,16 @@ public static class VizActivityCanvasLayoutBuilder
                                   + (isSelected ? 0.9 : 0.0);
             regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
             regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
+            var structureRatio = Math.Clamp((double)(routeDegree.OutboundCount + routeDegree.InboundCount) / maxRouteDegree, 0.0, 1.0);
+            var radius = MinRegionNodeRadius
+                         + ((MaxRegionNodeRadius - MinRegionNodeRadius) * ((structureRatio * 0.78) + (loadRatio * 0.22)));
             var bufferAverageText = FormatBufferAverage(bufferMetrics);
             var bufferLatestText = FormatBufferLatest(bufferMetrics);
             var detail = $"R{regionId} | events {stats.EventCount} | last tick {stats.LastTick}"
                          + $" | fired {stats.FiredCount} | axon {stats.AxonCount}"
-                         + $" | dom {stats.DominantType} | avg |v| {stats.AverageMagnitude:0.###}"
+                         + $" | dom {stats.DominantType} | avg |v| {stats.AverageMagnitude:0.###} | avg v {stats.SignedValue:0.###}"
                          + $" | routes out {routeDegree.OutboundCount} in {routeDegree.InboundCount}"
-                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
+                         + $" | value n={bufferMetrics.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -277,7 +299,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityCanvasTopology topology,
         VizActivityCanvasInteractionState interaction,
         ulong latestTick,
-        uint focusRegionId)
+        uint focusRegionId,
+        VizActivityCanvasColorMode colorMode)
     {
         var routes = BuildFocusRoutes(projection, topology, focusRegionId);
         var focusNeuronStats = BuildFocusNeuronStats(routes, projection.WindowEvents, topology, focusRegionId);
@@ -292,6 +315,7 @@ public static class VizActivityCanvasLayoutBuilder
         var sortedNeurons = focusNeuronStats.Keys.OrderBy(NeuronFromAddress).ToList();
         var neuronPositions = BuildCircularPositions(sortedNeurons.Count, 92, 162, yScale: 0.78);
         var maxNeuronEvents = Math.Max(1, focusNeuronStats.Values.Max(item => item.EventCount));
+        var maxNeuronFlowDegree = Math.Max(1, focusNeuronStats.Values.Max(item => item.OutboundCount + item.InboundCount));
         for (var index = 0; index < sortedNeurons.Count; index++)
         {
             var address = sortedNeurons[index];
@@ -304,17 +328,21 @@ public static class VizActivityCanvasLayoutBuilder
             var isPinned = interaction.IsNodePinned(nodeKey);
             var isDormant = stats.EventCount <= 0 || stats.LastTick == 0;
             var loadRatio = isDormant ? 0.0 : Math.Clamp((double)stats.EventCount / maxNeuronEvents, 0.0, 1.0);
-            var radius = FocusNeuronNodeRadius;
+            var structureRatio = Math.Clamp((double)(stats.OutboundCount + stats.InboundCount) / maxNeuronFlowDegree, 0.0, 1.0);
+            var radius = MinFocusNeuronNodeRadius
+                         + ((MaxFocusNeuronNodeRadius - MinFocusNeuronNodeRadius) * ((structureRatio * 0.75) + (loadRatio * 0.25)));
             var emphasis = (isSelected ? 0.24 : 0.0) + (isHovered ? 0.12 : 0.0) + (isPinned ? 0.16 : 0.0);
             var fillOpacity = Math.Clamp((isDormant ? 0.15 : 0.34 + (0.45 * loadRatio)) + emphasis, 0.12, 1.0);
             var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.28 + (0.35 * TickRecency(stats.LastTick, latestTick, options.TickWindow))) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.2 + (isPinned ? 0.8 : 0.0) + (isHovered ? 0.6 : 0.0) + (isSelected ? 0.9 : 0.0);
-            var (fill, stroke) = isDormant ? ("#2E3F46", "#4E6A73") : ("#2A9D8F", "#1B6B63");
+            var stroke = GetTopologyStrokeColor(focusRegionId, isDormant);
+            var fill = ResolveFocusFillColor(colorMode, focusRegionId, stats.AverageValue, loadRatio, isDormant);
             var bufferAverageText = FormatBufferAverage(stats.BufferCount, stats.AverageBufferValue);
             var bufferLatestText = FormatBufferLatest(stats.BufferCount, stats.LatestBufferValue, stats.LatestBufferTick);
             var detail = $"R{focusRegionId}N{neuronId} | events {stats.EventCount} | last tick {stats.LastTick}"
                          + $" | fired {stats.FiredCount} | out {stats.OutboundCount} in {stats.InboundCount}"
-                         + $" | buffer n={stats.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
+                         + $" | avg v {stats.AverageValue:0.###}"
+                         + $" | value n={stats.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -347,6 +375,15 @@ public static class VizActivityCanvasLayoutBuilder
 
         var sortedGateways = gatewayStats.Keys.OrderBy(item => item).ToList();
         var gatewayPositions = BuildCircularPositions(sortedGateways.Count, 168, 198, yScale: 0.9);
+        var maxGatewayRouteDegree = Math.Max(
+            1,
+            sortedGateways.Count == 0
+                ? 1
+                : sortedGateways.Max(regionId =>
+                {
+                    regionRouteDegrees.TryGetValue(regionId, out var degree);
+                    return degree.OutboundCount + degree.InboundCount;
+                }));
         for (var index = 0; index < sortedGateways.Count; index++)
         {
             var regionId = sortedGateways[index];
@@ -365,7 +402,7 @@ public static class VizActivityCanvasLayoutBuilder
                 : stats.HasInbound
                     ? "inbound"
                     : "outbound";
-            var (fill, stroke) = GetGatewayPalette(role);
+            var (_, topologyStroke) = GetGatewayPalette(role);
             regionAggregates.TryGetValue(regionId, out var aggregate);
             regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
             regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
@@ -375,14 +412,27 @@ public static class VizActivityCanvasLayoutBuilder
             var aggregateAxon = aggregate?.AxonCount ?? 0;
             var aggregateDominantType = aggregate?.DominantType ?? "unknown";
             var aggregateAverageMagnitude = aggregate?.AverageMagnitude ?? 0f;
+            var aggregateAverageSigned = aggregate?.AverageSignedValue ?? 0f;
+            var aggregateDormant = aggregateEventCount <= 0 || aggregateLastTick == 0;
+            var structureRatio = Math.Clamp((double)(routeDegree.OutboundCount + routeDegree.InboundCount) / maxGatewayRouteDegree, 0.0, 1.0);
+            var activityRatio = aggregateEventCount > 0 ? 1.0 : 0.0;
+            var radius = MinGatewayNodeRadius
+                         + ((MaxGatewayNodeRadius - MinGatewayNodeRadius) * ((structureRatio * 0.8) + (activityRatio * 0.2)));
+            var fill = ResolveFocusFillColor(
+                colorMode,
+                regionId,
+                aggregateAverageSigned,
+                activityRatio,
+                isDormant: aggregateDormant);
+            var stroke = aggregateDormant ? DimColor(topologyStroke) : topologyStroke;
             var bufferAverageText = FormatBufferAverage(bufferMetrics);
             var bufferLatestText = FormatBufferLatest(bufferMetrics);
             var detail = $"R{regionId} gateway | {role} | events {stats.EventCount} | last tick {stats.LastTick}"
                          + $" | agg events {aggregateEventCount} | agg last tick {aggregateLastTick}"
                          + $" | fired {aggregateFired} | axon {aggregateAxon}"
-                         + $" | dom {aggregateDominantType} | avg |v| {aggregateAverageMagnitude:0.###}"
+                         + $" | dom {aggregateDominantType} | avg |v| {aggregateAverageMagnitude:0.###} | avg v {aggregateAverageSigned:0.###}"
                          + $" | routes out {routeDegree.OutboundCount} in {routeDegree.InboundCount}"
-                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
+                         + $" | value n={bufferMetrics.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
             if (stats.EventCount == 0 && aggregateEventCount == 0)
             {
                 detail = $"{detail} | inactive in window";
@@ -395,9 +445,9 @@ public static class VizActivityCanvasLayoutBuilder
                 regionId,
                 $"R{regionId}",
                 detail,
-                position.X - GatewayNodeRadius,
-                position.Y - GatewayNodeRadius,
-                GatewayNodeRadius * 2.0,
+                position.X - radius,
+                position.Y - radius,
+                radius * 2.0,
                 fill,
                 stroke,
                 fillOpacity,
@@ -432,7 +482,8 @@ public static class VizActivityCanvasLayoutBuilder
                 item.FiredCount,
                 item.AxonCount,
                 item.DominantType,
-                item.AverageMagnitude));
+                item.AverageMagnitude,
+                item.AverageSignedValue));
 
         foreach (var edge in projection.Edges)
         {
@@ -455,7 +506,7 @@ public static class VizActivityCanvasLayoutBuilder
         var byRegion = new Dictionary<uint, RegionBufferMetric>();
         foreach (var item in events)
         {
-            if (!IsBufferType(item.Type))
+            if (!IsValueMetricType(item.Type))
             {
                 continue;
             }
@@ -610,7 +661,7 @@ public static class VizActivityCanvasLayoutBuilder
                          + $" | avg |s| {aggregate.AverageStrength:0.###} | avg s {aggregate.SignedStrength:0.###}";
             if (isDormant)
             {
-                detail = $"{detail} | inactive in window";
+                detail = $"{detail} | topology only (no events in window)";
             }
 
             var directionStroke = GetRegionEdgeDirectionColor(edgeKind, isDormant);
@@ -747,11 +798,13 @@ public static class VizActivityCanvasLayoutBuilder
                 }
 
                 byNeuronAddress.TryGetValue(sourceAddress, out var existing);
-                byNeuronAddress[sourceAddress] = existing.WithFired(item.TickId);
+                byNeuronAddress[sourceAddress] = existing
+                    .WithFired(item.TickId)
+                    .WithValueSample(item.TickId, item.Value, includeEventCount: false);
                 continue;
             }
 
-            if (!IsBufferType(item.Type))
+            if (!IsValueMetricType(item.Type))
             {
                 continue;
             }
@@ -762,7 +815,7 @@ public static class VizActivityCanvasLayoutBuilder
             }
 
             byNeuronAddress.TryGetValue(bufferAddress, out var current);
-            byNeuronAddress[bufferAddress] = current.WithBuffer(item.TickId, item.Value);
+            byNeuronAddress[bufferAddress] = current.WithValueSample(item.TickId, item.Value, includeEventCount: IsBufferType(item.Type));
         }
 
         if (byNeuronAddress.Count == 0)
@@ -906,7 +959,7 @@ public static class VizActivityCanvasLayoutBuilder
                          + $" | avg |s| {aggregate.AverageStrength:0.###} | avg s {aggregate.SignedStrength:0.###}";
             if (isDormant)
             {
-                detail = $"{detail} | inactive in window";
+                detail = $"{detail} | topology only (no events in window)";
             }
 
             var directionStroke = GetFocusedEdgeDirectionColor(kind, isDormant);
@@ -1210,20 +1263,75 @@ public static class VizActivityCanvasLayoutBuilder
         var neutral = isDormant ? "#4F565D" : "#56606A";
         if (Math.Abs(signedSignal) < 1e-5)
         {
-            return BlendColor(neutral, "#B8C46A", intensity * 0.6);
+            return BlendColor(neutral, "#8EA4B8", intensity * 0.45);
         }
 
-        var target = signedSignal > 0 ? "#2ECC71" : "#E74C3C";
+        var target = signedSignal > 0 ? "#E69F00" : "#0072B2";
         var blend = Math.Clamp((0.30 + (0.70 * intensity)) * Math.Abs(signedSignal), 0.0, 1.0);
         return BlendColor(neutral, target, blend);
     }
 
-    private static (string Fill, string Stroke) GetRegionNodePalette(uint regionId, bool isDormant)
+    private static string ResolveRegionFillColor(
+        VizActivityCanvasColorMode colorMode,
+        uint regionId,
+        float signedValue,
+        double loadRatio,
+        double tickRecency,
+        bool isDormant)
+        => colorMode switch
+        {
+            VizActivityCanvasColorMode.Topology => GetTopologyFillColor(regionId, isDormant),
+            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, loadRatio, tickRecency, isDormant),
+            _ => GetStateFillColor(signedValue, isDormant)
+        };
+
+    private static string ResolveFocusFillColor(
+        VizActivityCanvasColorMode colorMode,
+        uint regionId,
+        float signedValue,
+        double activityRatio,
+        bool isDormant)
+        => colorMode switch
+        {
+            VizActivityCanvasColorMode.Topology => GetTopologyFillColor(regionId, isDormant),
+            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, activityRatio, activityRatio, isDormant),
+            _ => GetStateFillColor(signedValue, isDormant)
+        };
+
+    private static string GetTopologyFillColor(uint regionId, bool isDormant)
     {
         var color = GetSliceColor(GetRegionSlice(regionId));
-        return isDormant
-            ? (DimColor(color), "#5A6670")
-            : (color, DarkenColor(color));
+        return isDormant ? DimColor(color) : color;
+    }
+
+    private static string GetTopologyStrokeColor(uint regionId, bool isDormant)
+    {
+        var color = DarkenColor(GetSliceColor(GetRegionSlice(regionId)));
+        return isDormant ? DimColor(color) : color;
+    }
+
+    private static string GetActivityFillColor(uint regionId, double loadRatio, double recency, bool isDormant)
+    {
+        var baseColor = GetTopologyFillColor(regionId, isDormant);
+        var neutral = isDormant ? "#4E5863" : "#5B6772";
+        var intensity = Math.Clamp((0.65 * loadRatio) + (0.35 * recency), 0.0, 1.0);
+        return BlendColor(neutral, baseColor, 0.18 + (0.72 * intensity));
+    }
+
+    private static string GetStateFillColor(double signedValue, bool isDormant)
+    {
+        var clamped = Clamp(signedValue, -1.0, 1.0);
+        var neutral = isDormant ? "#4E5863" : "#5E6873";
+        var magnitude = Math.Abs(clamped);
+        if (magnitude < 1e-5)
+        {
+            return neutral;
+        }
+
+        var target = clamped >= 0 ? "#E69F00" : "#0072B2";
+        var minBlend = isDormant ? 0.22 : 0.38;
+        var maxBlend = isDormant ? 0.60 : 0.88;
+        return BlendColor(neutral, target, minBlend + ((maxBlend - minBlend) * magnitude));
     }
 
     private static (string Fill, string Stroke) GetGatewayPalette(string role)
@@ -1241,13 +1349,13 @@ public static class VizActivityCanvasLayoutBuilder
     {
         return slice switch
         {
-            -3 => "#457B9D",
-            -2 => "#4F9D69",
-            -1 => "#7AA37A",
-            0 => "#2A9D8F",
-            1 => "#E9C46A",
-            2 => "#F4A261",
-            3 => "#E76F51",
+            -3 => "#0072B2",
+            -2 => "#56B4E9",
+            -1 => "#009E73",
+            0 => "#CC79A7",
+            1 => "#F0E442",
+            2 => "#E69F00",
+            3 => "#D55E00",
             _ => "#7A838A"
         };
     }
@@ -1449,6 +1557,9 @@ public static class VizActivityCanvasLayoutBuilder
     private static bool IsBufferType(string? type)
         => !string.IsNullOrWhiteSpace(type) && type.Contains("BUFFER", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsValueMetricType(string? type)
+        => IsAxonType(type) || IsFiredType(type) || IsBufferType(type);
+
     private static bool TouchesFocusRegion(uint sourceAddress, uint targetAddress, uint focusRegionId)
     {
         var sourceRegion = RegionFromAddress(sourceAddress);
@@ -1485,11 +1596,12 @@ public static class VizActivityCanvasLayoutBuilder
                 existing.FiredCount,
                 existing.AxonCount,
                 existing.DominantType,
-                existing.AverageMagnitude);
+                existing.AverageMagnitude,
+                existing.SignedValue);
             return;
         }
 
-        byRegion[regionId] = new RegionNodeSource(regionId, Math.Max(0, eventCount), lastTick, 0, Math.Max(0, eventCount), "unknown", 0f);
+        byRegion[regionId] = new RegionNodeSource(regionId, Math.Max(0, eventCount), lastTick, 0, Math.Max(0, eventCount), "unknown", 0f, 0f);
     }
 
     private static CanvasEdgeCurve BuildEdgeCurve(
@@ -1527,18 +1639,18 @@ public static class VizActivityCanvasLayoutBuilder
         CanvasEdgeCurve curve;
         if (isSelfLoop)
         {
-            var anchorOffsetX = Math.Max(8.0, sourceRadius * 0.78);
-            var anchorOffsetY = Math.Max(8.0, sourceRadius * 0.74);
-            var loopLift = Math.Max(16.0, sourceRadius + 12.0);
+            var radialOffset = Math.Max(10.0, sourceRadius * 1.02);
+            var tangentialOffset = Math.Max(7.0, sourceRadius * 0.38);
+            var apexOffset = Math.Max(16.0, sourceRadius * 1.58);
             var start = new CanvasPoint(
-                Clamp(source.X + anchorOffsetX, minX, maxX),
-                Clamp(source.Y - anchorOffsetY, minY, maxY));
+                Clamp(source.X + radialOffset, minX, maxX),
+                Clamp(source.Y - tangentialOffset, minY, maxY));
             var control = new CanvasPoint(
-                Clamp(source.X, minX, maxX),
-                Clamp(source.Y - loopLift, minY, maxY));
+                Clamp(source.X + apexOffset, minX, maxX),
+                Clamp(source.Y - apexOffset, minY, maxY));
             var end = new CanvasPoint(
-                Clamp(source.X - anchorOffsetX, minX, maxX),
-                Clamp(source.Y - anchorOffsetY, minY, maxY));
+                Clamp(source.X + (radialOffset * 0.46), minX, maxX),
+                Clamp(source.Y - (radialOffset * 1.04), minY, maxY));
             var pathData = FormattableString.Invariant($"M {start.X:0.###} {start.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {end.X:0.###} {end.Y:0.###}");
             curve = new CanvasEdgeCurve(pathData, start, control, end);
         }
@@ -1687,7 +1799,8 @@ public static class VizActivityCanvasLayoutBuilder
         int FiredCount,
         int AxonCount,
         string DominantType,
-        float AverageMagnitude);
+        float AverageMagnitude,
+        float SignedValue);
 
     private readonly record struct RegionBufferMetric(
         int BufferCount,
@@ -1797,6 +1910,8 @@ public static class VizActivityCanvasLayoutBuilder
         float AverageBufferValue)
     {
         public static FocusNeuronStat Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0f, 0f);
+        public float LatestValue => LatestBufferValue;
+        public float AverageValue => AverageBufferValue;
 
         public FocusNeuronStat Merge(int eventCount, ulong lastTick)
             => new(
@@ -1847,6 +1962,9 @@ public static class VizActivityCanvasLayoutBuilder
                 AverageBufferValue);
 
         public FocusNeuronStat WithBuffer(ulong tickId, float value)
+            => WithValueSample(tickId, value, includeEventCount: true);
+
+        public FocusNeuronStat WithValueSample(ulong tickId, float value, bool includeEventCount)
         {
             var nextBufferCount = BufferCount + 1;
             var weight = nextBufferCount == 0 ? 0f : 1f / nextBufferCount;
@@ -1854,7 +1972,7 @@ public static class VizActivityCanvasLayoutBuilder
             if (tickId >= LatestBufferTick)
             {
                 return new FocusNeuronStat(
-                    EventCount + 1,
+                    EventCount + (includeEventCount ? 1 : 0),
                     Math.Max(LastTick, tickId),
                     FiredCount,
                     OutboundCount,
@@ -1866,7 +1984,7 @@ public static class VizActivityCanvasLayoutBuilder
             }
 
             return new FocusNeuronStat(
-                EventCount + 1,
+                EventCount + (includeEventCount ? 1 : 0),
                 Math.Max(LastTick, tickId),
                 FiredCount,
                 OutboundCount,

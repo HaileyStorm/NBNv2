@@ -16,6 +16,8 @@ public partial class VizPanel : UserControl
     private const double PressProbeDistancePx = 5.0;
     private const int HoverTargetSwitchSamples = 2;
     private const int HoverTargetClearSamples = 4;
+    private const int HoverExitClearDelayMs = 420;
+    private const double HoverNoHitRetentionDistancePx = 14.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0),
@@ -44,6 +46,8 @@ public partial class VizPanel : UserControl
     private int _hoverCandidateSamples;
     private VizActivityCanvasNode? _hoverCandidateNode;
     private VizActivityCanvasEdge? _hoverCandidateEdge;
+    private Point _lastCommittedHoverPoint;
+    private bool _hasCommittedHoverPoint;
 
     public VizPanel()
     {
@@ -131,9 +135,22 @@ public partial class VizPanel : UserControl
 
     private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
     {
+        if (sender is Visual visual)
+        {
+            var point = e.GetPosition(visual);
+            if (point.X >= 0
+                && point.Y >= 0
+                && point.X <= visual.Bounds.Width
+                && point.Y <= visual.Bounds.Height)
+            {
+                ViewModel?.KeepCanvasHoverAlive();
+                return;
+            }
+        }
+
         _hasHoverHitTestPoint = false;
         ResetHoverStability();
-        ViewModel?.ClearCanvasHoverDeferred();
+        ViewModel?.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
     }
 
     private bool ShouldProcessHoverPointerMove(Point point)
@@ -233,20 +250,45 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        _hoverCommittedSignature = signature;
         if (node is not null)
         {
+            _hoverCommittedSignature = signature;
+            _lastCommittedHoverPoint = pointer;
+            _hasCommittedHoverPoint = true;
             ViewModel.SetCanvasNodeHover(node, pointer.X, pointer.Y);
             return;
         }
 
         if (edge is not null)
         {
+            _hoverCommittedSignature = signature;
+            _lastCommittedHoverPoint = pointer;
+            _hasCommittedHoverPoint = true;
             ViewModel.SetCanvasEdgeHover(edge, pointer.X, pointer.Y);
             return;
         }
 
+        if (ShouldRetainCommittedHover(pointer))
+        {
+            ViewModel.KeepCanvasHoverAlive();
+            return;
+        }
+
+        _hoverCommittedSignature = string.Empty;
+        _hasCommittedHoverPoint = false;
         ViewModel.ClearCanvasHoverDeferred();
+    }
+
+    private bool ShouldRetainCommittedHover(Point pointer)
+    {
+        if (string.IsNullOrEmpty(_hoverCommittedSignature) || !_hasCommittedHoverPoint)
+        {
+            return false;
+        }
+
+        var dx = pointer.X - _lastCommittedHoverPoint.X;
+        var dy = pointer.Y - _lastCommittedHoverPoint.Y;
+        return ((dx * dx) + (dy * dy)) <= (HoverNoHitRetentionDistancePx * HoverNoHitRetentionDistancePx);
     }
 
     private int GetRequiredHoverSamples(string signature)
@@ -268,6 +310,7 @@ public partial class VizPanel : UserControl
         _hoverCandidateSamples = 0;
         _hoverCandidateNode = null;
         _hoverCandidateEdge = null;
+        _hasCommittedHoverPoint = false;
     }
 
     private static string BuildHoverSignature(VizActivityCanvasNode? node, VizActivityCanvasEdge? edge)
