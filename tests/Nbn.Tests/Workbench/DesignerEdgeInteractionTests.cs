@@ -116,6 +116,44 @@ public class DesignerEdgeInteractionTests
         Assert.Equal(2, inboundExternal.NavigationNeuronId);
     }
 
+    [Fact]
+    public void RefreshEdges_ExtendsOffPageEdgesBeyondVisibleNeuronEnvelope()
+    {
+        const double outerMargin = 28;
+        const double canvasMargin = 14;
+
+        var (vm, region, source, _, offPageTarget) = CreateInputRegionScenario(pageSize: 2);
+        AddAxon(source, offPageTarget);
+        AddAxon(offPageTarget, source);
+        region.UpdateCounts();
+        vm.Brain!.UpdateTotals();
+
+        vm.SelectNeuronCommand.Execute(source);
+
+        var externalEdges = vm.VisibleEdges
+            .Where(edge => edge.Kind is DesignerEdgeKind.OutboundExternal or DesignerEdgeKind.InboundExternal)
+            .ToList();
+        Assert.NotEmpty(externalEdges);
+
+        var sourceCenter = new Point(source.CanvasX + vm.CanvasNodeRadius, source.CanvasY + vm.CanvasNodeRadius);
+        var furthestVisibleNeuronEdge = vm.VisibleNeurons
+            .Select(neuron => Distance(
+                sourceCenter,
+                new Point(neuron.CanvasX + vm.CanvasNodeRadius, neuron.CanvasY + vm.CanvasNodeRadius)) + vm.CanvasNodeRadius)
+            .DefaultIfEmpty(vm.CanvasNodeRadius)
+            .Max();
+        var minExpectedRadius = furthestVisibleNeuronEdge + outerMargin;
+
+        foreach (var edge in externalEdges)
+        {
+            var offPagePoint = edge.Kind == DesignerEdgeKind.InboundExternal ? edge.Start : edge.End;
+            var radius = Distance(sourceCenter, offPagePoint);
+            Assert.True(radius >= minExpectedRadius - 0.5, $"Off-page radius {radius:0.###} was below envelope minimum {minExpectedRadius:0.###}.");
+            Assert.InRange(offPagePoint.X, canvasMargin, vm.CanvasWidth - canvasMargin);
+            Assert.InRange(offPagePoint.Y, canvasMargin, vm.CanvasHeight - canvasMargin);
+        }
+    }
+
     private static DesignerPanelViewModel CreateViewModel()
     {
         EnsureAvaloniaInitialized();
@@ -175,6 +213,13 @@ public class DesignerEdgeInteractionTests
         var field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
         return (int)field!.GetValue(target)!;
+    }
+
+    private static double Distance(Point a, Point b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return Math.Sqrt((dx * dx) + (dy * dy));
     }
 
     private static void EnsureAvaloniaInitialized()

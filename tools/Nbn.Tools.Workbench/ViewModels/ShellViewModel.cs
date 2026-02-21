@@ -26,7 +26,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, Viz.AddBrainId, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
+        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, OnBrainDiscovered, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel(Connections, _client);
@@ -158,7 +158,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Io.AddOutputEvent(item);
         if (Guid.TryParse(item.BrainId, out var brainId))
         {
-            Viz.AddBrainId(brainId);
+            OnBrainDiscovered(brainId);
         }
     }
 
@@ -167,7 +167,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Io.AddVectorEvent(item);
         if (Guid.TryParse(item.BrainId, out var brainId))
         {
-            Viz.AddBrainId(brainId);
+            OnBrainDiscovered(brainId);
         }
     }
 
@@ -255,15 +255,24 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 
+    private void OnBrainDiscovered(Guid brainId)
+    {
+        _dispatcher.Post(() => Viz.AddBrainId(brainId));
+    }
+
     private void OnBrainsUpdated(IReadOnlyList<BrainListItem> brains)
     {
-        Viz.SetBrains(brains);
-        Repro.UpdateActiveBrains(brains);
-        var active = brains
-            .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
-            .Select(entry => entry.BrainId)
-            .ToList();
-        Io.UpdateActiveBrains(active);
+        var snapshot = brains.ToList();
+        _dispatcher.Post(() =>
+        {
+            Viz.SetBrains(snapshot);
+            Repro.UpdateActiveBrains(snapshot);
+            var active = snapshot
+                .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.BrainId)
+                .ToList();
+            Io.UpdateActiveBrains(active);
+        });
     }
 
     private static int ParsePortOrDefault(string value, int fallback)

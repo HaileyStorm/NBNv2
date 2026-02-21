@@ -46,6 +46,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const double BaseCanvasNodeSize = 40;
     private const double BaseCanvasGap = 18;
     private const double CanvasPadding = 24;
+    private const double OffPageEdgeOuterMargin = 28;
+    private const double OffPageEdgeCanvasMargin = 14;
+    private const double OffPageEdgeFallbackRadiusPadding = 26;
     private const double MinCanvasWidth = 920;
     private const double MinCanvasHeight = 620;
     private const int RegionIntrasliceUnit = 3;
@@ -2147,6 +2150,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             return;
         }
 
+        var offPageRadius = ComputeOffPageEdgeRadius(start, positions);
+
         var visibleOutbound = 0;
         var offPageOutbound = 0;
         var visibleInbound = 0;
@@ -2248,18 +2253,18 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         if (offPageOutboundAxons.Count > 0)
         {
-            var radius = CanvasNodeRadius + 26;
             for (var i = 0; i < offPageOutboundAxons.Count; i++)
             {
                 var entry = offPageOutboundAxons[i];
                 var angle = BuildArcAngle(i, offPageOutboundAxons.Count, -0.55 * Math.PI, 0.35 * Math.PI);
                 var endPoint = ClampToCanvas(
-                    new Point(start.X + (Math.Cos(angle) * radius), start.Y + (Math.Sin(angle) * radius)),
+                    new Point(start.X + (Math.Cos(angle) * offPageRadius), start.Y + (Math.Sin(angle) * offPageRadius)),
                     CanvasWidth,
-                    CanvasHeight);
+                    CanvasHeight,
+                    OffPageEdgeCanvasMargin);
                 var labelText = BuildOutboundOffPageLabel(entry.Axon);
                 var labelPoint = new Point(endPoint.X + 4, endPoint.Y - 6);
-                labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight);
+                labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight, OffPageEdgeCanvasMargin);
                 VisibleEdges.Add(new DesignerEdgeViewModel(
                     start,
                     endPoint,
@@ -2277,18 +2282,18 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         if (offPageInboundSources.Count > 0)
         {
-            var radius = CanvasNodeRadius + 26;
             for (var i = 0; i < offPageInboundSources.Count; i++)
             {
                 var entry = offPageInboundSources[i];
                 var angle = BuildArcAngle(i, offPageInboundSources.Count, 0.55 * Math.PI, 1.45 * Math.PI);
                 var endPoint = ClampToCanvas(
-                    new Point(start.X + (Math.Cos(angle) * radius), start.Y + (Math.Sin(angle) * radius)),
+                    new Point(start.X + (Math.Cos(angle) * offPageRadius), start.Y + (Math.Sin(angle) * offPageRadius)),
                     CanvasWidth,
-                    CanvasHeight);
+                    CanvasHeight,
+                    OffPageEdgeCanvasMargin);
                 var labelText = BuildInboundOffPageLabel(entry.SourceRegionId, entry.SourceNeuronId);
                 var labelPoint = new Point(endPoint.X - 38, endPoint.Y - 6);
-                labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight);
+                labelPoint = ClampToCanvas(labelPoint, CanvasWidth, CanvasHeight, OffPageEdgeCanvasMargin);
                 VisibleEdges.Add(new DesignerEdgeViewModel(
                     endPoint,
                     start,
@@ -2389,13 +2394,48 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return $"<- P{page + 1} N{sourceNeuronId}";
     }
 
-    private static Point ClampToCanvas(Point point, double width, double height)
+    private double ComputeOffPageEdgeRadius(Point start, IReadOnlyDictionary<int, Point> positions)
     {
-        var maxX = Math.Max(0, width - 10);
-        var maxY = Math.Max(0, height - 10);
+        var minRadius = CanvasNodeRadius + OffPageEdgeFallbackRadiusPadding;
+        foreach (var center in positions.Values)
+        {
+            var dx = center.X - start.X;
+            var dy = center.Y - start.Y;
+            var centerDistance = Math.Sqrt((dx * dx) + (dy * dy));
+            var edgeDistance = centerDistance + CanvasNodeRadius + OffPageEdgeOuterMargin;
+            if (edgeDistance > minRadius)
+            {
+                minRadius = edgeDistance;
+            }
+        }
+
+        var maxRadius = Math.Min(
+            Math.Min(start.X - OffPageEdgeCanvasMargin, CanvasWidth - start.X - OffPageEdgeCanvasMargin),
+            Math.Min(start.Y - OffPageEdgeCanvasMargin, CanvasHeight - start.Y - OffPageEdgeCanvasMargin));
+        var floorRadius = CanvasNodeRadius + OffPageEdgeFallbackRadiusPadding;
+        if (maxRadius <= floorRadius)
+        {
+            return floorRadius;
+        }
+
+        if (minRadius > maxRadius)
+        {
+            return maxRadius;
+        }
+
+        return minRadius;
+    }
+
+    private static Point ClampToCanvas(Point point, double width, double height, double margin = 10)
+    {
+        var normalizedMargin = Math.Max(0, margin);
+        var minX = Math.Min(normalizedMargin, Math.Max(0, width));
+        var minY = Math.Min(normalizedMargin, Math.Max(0, height));
+        var maxX = Math.Max(minX, width - normalizedMargin);
+        var maxY = Math.Max(minY, height - normalizedMargin);
         return new Point(
-            Clamp(point.X, 0, maxX),
-            Clamp(point.Y, 0, maxY));
+            Clamp(point.X, minX, maxX),
+            Clamp(point.Y, minY, maxY));
     }
 
     private void EnsureNeuronVisible(DesignerNeuronViewModel neuron)

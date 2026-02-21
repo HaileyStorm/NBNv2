@@ -18,6 +18,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 {
     private const int MaxRows = 200;
     private const long StaleNodeMs = 15000;
+    private const long SpawnVisibilityGraceMs = 30000;
     private const string SampleRouterId = "demo-router";
     private const string SampleOutputPrefix = "io-output-";
     private readonly UiDispatcher _dispatcher;
@@ -400,16 +401,23 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                         return (entry, controllerAlive);
                     });
 
-            var brainListAll = brains.Select(entry =>
+            var brainEntries = brains.Select(entry =>
             {
                 var brainId = entry.BrainId?.ToGuid() ?? Guid.Empty;
                 var alive = controllerMap.TryGetValue(brainId, out var controller) && controller.Item2;
-                return new BrainListItem(brainId, entry.State ?? string.Empty, alive);
-            }).Where(entry => entry.BrainId != Guid.Empty).ToList();
+                var spawnedRecently = IsSpawnRecent(entry.SpawnedMs, nowMs);
+                var item = new BrainListItem(brainId, entry.State ?? string.Empty, alive);
+                return (item, spawnedRecently);
+            }).Where(entry => entry.item.BrainId != Guid.Empty).ToList();
 
+            var brainListAll = brainEntries
+                .Select(entry => entry.item)
+                .ToList();
             RecordBrainTerminations(brainListAll);
-            var brainList = brainListAll
-                .Where(entry => entry.ControllerAlive && !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            var brainList = brainEntries
+                .Where(entry => !string.Equals(entry.item.State, "Dead", StringComparison.OrdinalIgnoreCase))
+                .Where(entry => entry.item.ControllerAlive || entry.spawnedRecently)
+                .Select(entry => entry.item)
                 .ToList();
             _brainsUpdated?.Invoke(brainList);
 
@@ -818,6 +826,22 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         return delta <= StaleNodeMs;
+    }
+
+    private static bool IsSpawnRecent(ulong spawnedMs, long nowMs)
+    {
+        if (spawnedMs == 0)
+        {
+            return false;
+        }
+
+        var delta = nowMs - (long)spawnedMs;
+        if (delta < 0)
+        {
+            return false;
+        }
+
+        return delta <= SpawnVisibilityGraceMs;
     }
 
     private void UpdateConnectionStatusesFromNodes(IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)
