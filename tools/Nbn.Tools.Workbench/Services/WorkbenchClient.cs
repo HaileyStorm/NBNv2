@@ -221,6 +221,32 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public async Task<SetTickRateOverrideAck?> SetTickRateOverrideAsync(float? targetTickHz)
+    {
+        if (_root is null || _hiveMindPid is null)
+        {
+            return null;
+        }
+
+        var request = targetTickHz.HasValue
+            ? new SetTickRateOverride { TargetTickHz = targetTickHz.Value }
+            : new SetTickRateOverride { ClearOverride = true };
+
+        try
+        {
+            return await _root.RequestAsync<SetTickRateOverrideAck>(
+                    _hiveMindPid,
+                    request,
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnHiveMindStatus($"Tick override request failed: {ex.Message}", true);
+            return null;
+        }
+    }
+
     public void DisconnectSettings()
     {
         if (_root is null || _receiverPid is null)

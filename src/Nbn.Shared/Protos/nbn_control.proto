@@ -170,6 +170,19 @@ message TickDeliverDone {
 
 message GetHiveMindStatus { }
 
+message SetTickRateOverride {
+  bool clear_override = 1;
+  float target_tick_hz = 2;
+}
+
+message SetTickRateOverrideAck {
+  bool accepted = 1;
+  string message = 2;
+  float target_tick_hz = 3;
+  bool has_override = 4;
+  float override_tick_hz = 5;
+}
+
 message HiveMindStatus {
   fixed64 last_completed_tick_id = 1;
   bool tick_loop_enabled = 2;
@@ -179,6 +192,8 @@ message HiveMindStatus {
   bool reschedule_in_progress = 6;
   uint32 registered_brains = 7;
   uint32 registered_shards = 8;
+  bool has_tick_rate_override = 9;
+  float tick_rate_override_hz = 10;
 }
 
 message GetBrainRouting {

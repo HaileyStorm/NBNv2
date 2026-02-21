@@ -345,6 +345,9 @@ public sealed class IoPanelViewModel : ViewModelBase
     public Task<Nbn.Proto.ArtifactRef?> ExportBrainDefinitionReferenceAsync(Guid brainId, bool rebaseOverlays = false)
         => _client.ExportBrainDefinitionAsync(brainId, rebaseOverlays);
 
+    public Task<Nbn.Proto.Control.SetTickRateOverrideAck?> SetTickRateOverrideAsync(float? targetTickHz)
+        => _client.SetTickRateOverrideAsync(targetTickHz);
+
     public void UpdateActiveBrains(IReadOnlyList<Guid> brains)
     {
         _activeBrains = brains.Distinct().ToList();

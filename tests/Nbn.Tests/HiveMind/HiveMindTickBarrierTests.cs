@@ -269,6 +269,74 @@ public class HiveMindTickBarrierTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task TickRateOverride_Request_UpdatesStatus_And_Clears()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(targetTickHz: 30f, minTickHz: 5f);
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var setAck = await root.RequestAsync<ProtoControl.SetTickRateOverrideAck>(
+            hiveMind,
+            new ProtoControl.SetTickRateOverride { TargetTickHz = 12.5f });
+
+        Assert.True(setAck.Accepted);
+        Assert.True(setAck.HasOverride);
+        Assert.Equal(12.5f, setAck.OverrideTickHz, 3);
+        Assert.Equal(12.5f, setAck.TargetTickHz, 3);
+
+        var overriddenStatus = await root.RequestAsync<ProtoControl.HiveMindStatus>(
+            hiveMind,
+            new ProtoControl.GetHiveMindStatus());
+        Assert.True(overriddenStatus.HasTickRateOverride);
+        Assert.Equal(12.5f, overriddenStatus.TickRateOverrideHz, 3);
+        Assert.Equal(12.5f, overriddenStatus.TargetTickHz, 3);
+
+        var clearAck = await root.RequestAsync<ProtoControl.SetTickRateOverrideAck>(
+            hiveMind,
+            new ProtoControl.SetTickRateOverride { ClearOverride = true });
+
+        Assert.True(clearAck.Accepted);
+        Assert.False(clearAck.HasOverride);
+        Assert.True(clearAck.TargetTickHz > 0f);
+        Assert.True(clearAck.TargetTickHz <= options.TargetTickHz);
+
+        var clearedStatus = await root.RequestAsync<ProtoControl.HiveMindStatus>(
+            hiveMind,
+            new ProtoControl.GetHiveMindStatus());
+        Assert.False(clearedStatus.HasTickRateOverride);
+        Assert.Equal(0f, clearedStatus.TickRateOverrideHz, 3);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickRateOverride_Request_Rejects_NonPositiveValues()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(targetTickHz: 30f, minTickHz: 5f);
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var ack = await root.RequestAsync<ProtoControl.SetTickRateOverrideAck>(
+            hiveMind,
+            new ProtoControl.SetTickRateOverride { TargetTickHz = 0f });
+
+        Assert.False(ack.Accepted);
+        Assert.False(ack.HasOverride);
+        Assert.Contains("greater than zero", ack.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(options.TargetTickHz, ack.TargetTickHz, 3);
+
+        var status = await root.RequestAsync<ProtoControl.HiveMindStatus>(
+            hiveMind,
+            new ProtoControl.GetHiveMindStatus());
+        Assert.False(status.HasTickRateOverride);
+        Assert.Equal(options.TargetTickHz, status.TargetTickHz, 3);
+
+        await system.ShutdownAsync();
+    }
+
     private static async Task<PID> WaitForSignalRouter(IRootContext root, PID brainRoot, TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();

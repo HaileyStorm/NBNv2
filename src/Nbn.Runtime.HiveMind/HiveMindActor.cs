@@ -152,6 +152,9 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.GetHiveMindStatus:
                 context.Respond(BuildStatus());
                 break;
+            case ProtoControl.SetTickRateOverride message:
+                HandleSetTickRateOverride(context, message);
+                break;
             case GetBrainRouting message:
                 context.Respond(BuildRoutingInfo(message.BrainId));
                 break;
@@ -1165,8 +1168,33 @@ public sealed class HiveMindActor : IActor
             PendingDeliver = (uint)_pendingDeliver.Count,
             RescheduleInProgress = _rescheduleInProgress,
             RegisteredBrains = (uint)_brains.Count,
-            RegisteredShards = (uint)_brains.Values.Sum(brain => brain.Shards.Count)
+            RegisteredShards = (uint)_brains.Values.Sum(brain => brain.Shards.Count),
+            HasTickRateOverride = _backpressure.HasTickRateOverride,
+            TickRateOverrideHz = _backpressure.TickRateOverrideHz
         };
+
+    private void HandleSetTickRateOverride(IContext context, ProtoControl.SetTickRateOverride message)
+    {
+        float? requestedOverride = message.ClearOverride ? null : message.TargetTickHz;
+        var accepted = _backpressure.TrySetTickRateOverride(requestedOverride, out var summary);
+        if (accepted)
+        {
+            EmitDebug(context, ProtoSeverity.SevInfo, "tick.override", summary);
+        }
+        else
+        {
+            EmitDebug(context, ProtoSeverity.SevWarn, "tick.override.invalid", summary);
+        }
+
+        context.Respond(new ProtoControl.SetTickRateOverrideAck
+        {
+            Accepted = accepted,
+            Message = summary,
+            TargetTickHz = _backpressure.TargetTickHz,
+            HasOverride = _backpressure.HasTickRateOverride,
+            OverrideTickHz = _backpressure.TickRateOverrideHz
+        });
+    }
 
     private BrainRoutingInfo BuildRoutingInfo(Guid brainId)
     {

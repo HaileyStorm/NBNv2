@@ -59,6 +59,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private VizEventItem? _selectedEvent;
     private string _selectedPayload = string.Empty;
     private string _tickWindowText = DefaultTickWindow.ToString(CultureInfo.InvariantCulture);
+    private string _tickRateOverrideText = string.Empty;
+    private string _tickRateOverrideSummary = "Tick override: default backpressure target.";
     private bool _includeLowSignalEvents;
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
@@ -131,6 +133,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         ToggleVisualizationStreamCommand = new RelayCommand(() => ShowVisualizationStream = !ShowVisualizationStream);
         CopyCanvasDiagnosticsCommand = new AsyncRelayCommand(CopyCanvasDiagnosticsAsync);
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
+        ApplyTickRateOverrideCommand = new AsyncRelayCommand(ApplyTickRateOverrideAsync);
+        ClearTickRateOverrideCommand = new AsyncRelayCommand(ClearTickRateOverrideAsync);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
         ApplyEnergyRateCommand = new RelayCommand(() => _brain.ApplyEnergyRateSelected());
@@ -249,6 +253,18 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         get => _tickWindowText;
         set => SetProperty(ref _tickWindowText, value);
+    }
+
+    public string TickRateOverrideText
+    {
+        get => _tickRateOverrideText;
+        set => SetProperty(ref _tickRateOverrideText, value);
+    }
+
+    public string TickRateOverrideSummary
+    {
+        get => _tickRateOverrideSummary;
+        set => SetProperty(ref _tickRateOverrideSummary, value);
     }
 
     public bool IncludeLowSignalEvents
@@ -382,6 +398,10 @@ public sealed class VizPanelViewModel : ViewModelBase
     public AsyncRelayCommand CopyCanvasDiagnosticsCommand { get; }
 
     public RelayCommand ApplyActivityOptionsCommand { get; }
+
+    public AsyncRelayCommand ApplyTickRateOverrideCommand { get; }
+
+    public AsyncRelayCommand ClearTickRateOverrideCommand { get; }
 
     public AsyncRelayCommand ExportCommand { get; }
 
@@ -800,6 +820,52 @@ public sealed class VizPanelViewModel : ViewModelBase
         Status = $"Applied activity options (tick window {tickWindow}).";
     }
 
+    private async Task ApplyTickRateOverrideAsync()
+    {
+        if (!float.TryParse(TickRateOverrideText, NumberStyles.Float, CultureInfo.InvariantCulture, out var targetTickHz)
+            || !float.IsFinite(targetTickHz)
+            || targetTickHz <= 0f)
+        {
+            Status = "Tick override must be a positive number.";
+            return;
+        }
+
+        var ack = await _brain.SetTickRateOverrideAsync(targetTickHz).ConfigureAwait(false);
+        UpdateTickRateOverrideStatus(ack, "Tick override request failed: HiveMind unavailable.");
+    }
+
+    private async Task ClearTickRateOverrideAsync()
+    {
+        var ack = await _brain.SetTickRateOverrideAsync(null).ConfigureAwait(false);
+        UpdateTickRateOverrideStatus(ack, "Tick override clear failed: HiveMind unavailable.");
+    }
+
+    private void UpdateTickRateOverrideStatus(Nbn.Proto.Control.SetTickRateOverrideAck? ack, string fallbackStatus)
+    {
+        if (ack is null)
+        {
+            Status = fallbackStatus;
+            return;
+        }
+
+        var targetTickHz = ack.TargetTickHz;
+        if (ack.Accepted)
+        {
+            TickRateOverrideSummary = ack.HasOverride
+                ? $"Tick override active ({ack.OverrideTickHz:0.###} Hz). Current target {targetTickHz:0.###} Hz."
+                : $"Tick override cleared. Current target {targetTickHz:0.###} Hz.";
+
+            if (ack.HasOverride)
+            {
+                TickRateOverrideText = ack.OverrideTickHz.ToString("0.###", CultureInfo.InvariantCulture);
+            }
+        }
+
+        Status = string.IsNullOrWhiteSpace(ack.Message)
+            ? (ack.Accepted ? TickRateOverrideSummary : "Tick override request rejected.")
+            : ack.Message;
+    }
+
     private void Clear()
     {
         lock (_pendingEventsGate)
@@ -1106,7 +1172,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 ? "<none>"
                 : string.Join(" | ", state.LastDefinitionRootsTried.Take(3));
             sb.AppendLine(
-                $"definition source={NormalizeDiagnosticText(state.DefinitionSource)} sha={NormalizeDiagnosticText(state.DefinitionShaHex)} has_region_topology={state.HasDefinitionRegionTopology} focus_regions={state.DefinitionFocusRegions.Count} status={NormalizeDiagnosticText(state.DefinitionLoadStatus)} roots={rootsPreview}");
+                $"definition source={NormalizeDiagnosticText(state.DefinitionSource)} sha={NormalizeDiagnosticText(state.DefinitionShaHex)} has_region_topology={state.HasDefinitionRegionTopology} has_full_topology={state.HasDefinitionFullTopology} focus_regions={state.DefinitionFocusRegions.Count} status={NormalizeDiagnosticText(state.DefinitionLoadStatus)} roots={rootsPreview}");
         }
 
         sb.AppendLine(
@@ -1331,9 +1397,22 @@ public sealed class VizPanelViewModel : ViewModelBase
 
                 if (state.HasDefinitionRegionTopology
                     && string.Equals(state.DefinitionShaHex, definitionShaHex, StringComparison.OrdinalIgnoreCase)
-                    && (!focusRegionId.HasValue || state.DefinitionFocusRegions.Contains(focusRegionId.Value)))
+                    && ((focusRegionId.HasValue && state.DefinitionFocusRegions.Contains(focusRegionId.Value))
+                        || (!focusRegionId.HasValue && state.HasDefinitionFullTopology)))
                 {
                     return;
+                }
+
+                if (!string.Equals(state.DefinitionShaHex, definitionShaHex, StringComparison.OrdinalIgnoreCase))
+                {
+                    state.Regions.Clear();
+                    state.RegionRoutes.Clear();
+                    state.NeuronAddresses.Clear();
+                    state.NeuronRoutes.Clear();
+                    state.DefinitionFocusRegions.Clear();
+                    state.HasDefinitionFullTopology = false;
+                    state.Regions.Add((uint)NbnConstants.InputRegionId);
+                    state.Regions.Add((uint)NbnConstants.OutputRegionId);
                 }
 
                 state.DefinitionShaHex = definitionShaHex;
@@ -1350,6 +1429,10 @@ public sealed class VizPanelViewModel : ViewModelBase
                     state.DefinitionFocusRegions.Add(focusRegionId.Value);
                     state.NeuronAddresses.UnionWith(loaded.NeuronAddresses);
                     state.NeuronRoutes.UnionWith(loaded.NeuronRoutes);
+                }
+                else
+                {
+                    state.HasDefinitionFullTopology = true;
                 }
 
                 if (SelectedBrain?.BrainId == brainId)
@@ -1391,7 +1474,8 @@ public sealed class VizPanelViewModel : ViewModelBase
             : (uint?)null;
         if (_topologyByBrainId.TryGetValue(SelectedBrain.BrainId, out var state)
             && state.HasDefinitionRegionTopology
-            && (!focusRegionId.HasValue || state.DefinitionFocusRegions.Contains(focusRegionId.Value)))
+            && ((focusRegionId.HasValue && state.DefinitionFocusRegions.Contains(focusRegionId.Value))
+                || (!focusRegionId.HasValue && state.HasDefinitionFullTopology)))
         {
             return;
         }
@@ -2776,6 +2860,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         public HashSet<VizActivityCanvasNeuronRoute> NeuronRoutes { get; } = new();
 
         public bool HasDefinitionRegionTopology { get; set; }
+
+        public bool HasDefinitionFullTopology { get; set; }
 
         public string? DefinitionShaHex { get; set; }
 

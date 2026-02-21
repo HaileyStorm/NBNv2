@@ -66,6 +66,27 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoControl_TickRateOverrideFields_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+
+        var setOverride = descriptor.MessageTypes.Single(message => message.Name == "SetTickRateOverride");
+        AssertField(setOverride, "clear_override", 1, FieldType.Bool);
+        AssertField(setOverride, "target_tick_hz", 2, FieldType.Float);
+
+        var setOverrideAck = descriptor.MessageTypes.Single(message => message.Name == "SetTickRateOverrideAck");
+        AssertField(setOverrideAck, "accepted", 1, FieldType.Bool);
+        AssertField(setOverrideAck, "message", 2, FieldType.String);
+        AssertField(setOverrideAck, "target_tick_hz", 3, FieldType.Float);
+        AssertField(setOverrideAck, "has_override", 4, FieldType.Bool);
+        AssertField(setOverrideAck, "override_tick_hz", 5, FieldType.Float);
+
+        var status = descriptor.MessageTypes.Single(message => message.Name == "HiveMindStatus");
+        AssertField(status, "has_tick_rate_override", 9, FieldType.Bool);
+        AssertField(status, "tick_rate_override_hz", 10, FieldType.Float);
+    }
+
+    [Fact]
     public void ProtoSignals_BatchFields_AreStable()
     {
         var descriptor = NbnSignalsReflection.Descriptor;
