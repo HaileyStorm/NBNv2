@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -10,8 +9,6 @@ namespace Nbn.Tools.Workbench.Views.Panels;
 
 public partial class VizPanel : UserControl
 {
-    private const double HoverHitTestMinIntervalMs = 16;
-    private const double HoverHitTestMinMovePx = 1.2;
     private const double PressProbeDistancePx = 5.0;
     private const int HoverTargetSwitchSamples = 2;
     private const int HoverTargetClearSamples = 1;
@@ -33,9 +30,6 @@ public partial class VizPanel : UserControl
         new(PressProbeDistancePx * 0.6, -PressProbeDistancePx * 0.6),
         new(-PressProbeDistancePx * 0.6, -PressProbeDistancePx * 0.6)
     };
-    private long _lastHoverHitTestTimestamp;
-    private Point _lastHoverHitTestPoint;
-    private bool _hasHoverHitTestPoint;
     private string _hoverCommittedSignature = string.Empty;
     private string _hoverCandidateSignature = string.Empty;
     private int _hoverCandidateSamples;
@@ -59,25 +53,6 @@ public partial class VizPanel : UserControl
         }
 
         var point = e.GetPosition(visual);
-        if (!ShouldProcessHoverPointerMove(point))
-        {
-            if (!string.IsNullOrEmpty(_hoverCommittedSignature))
-            {
-                if (TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out _, out _))
-                {
-                    ViewModel.KeepCanvasHoverAlive();
-                }
-                else
-                {
-                    _hoverCommittedSignature = string.Empty;
-                    _hasCommittedHoverPoint = false;
-                    ViewModel.ClearCanvasHover();
-                }
-            }
-
-            return;
-        }
-
         if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out var node, out var edge))
         {
             node = null;
@@ -158,34 +133,8 @@ public partial class VizPanel : UserControl
             }
         }
 
-        _hasHoverHitTestPoint = false;
         ResetHoverStability();
         ViewModel?.ClearCanvasHover();
-    }
-
-    private bool ShouldProcessHoverPointerMove(Point point)
-    {
-        var now = Stopwatch.GetTimestamp();
-        if (!_hasHoverHitTestPoint)
-        {
-            _hasHoverHitTestPoint = true;
-            _lastHoverHitTestTimestamp = now;
-            _lastHoverHitTestPoint = point;
-            return true;
-        }
-
-        var elapsedMs = ((double)(now - _lastHoverHitTestTimestamp) * 1000.0) / Stopwatch.Frequency;
-        var dx = point.X - _lastHoverHitTestPoint.X;
-        var dy = point.Y - _lastHoverHitTestPoint.Y;
-        var movedEnough = ((dx * dx) + (dy * dy)) >= (HoverHitTestMinMovePx * HoverHitTestMinMovePx);
-        if (elapsedMs < HoverHitTestMinIntervalMs && !movedEnough)
-        {
-            return false;
-        }
-
-        _lastHoverHitTestTimestamp = now;
-        _lastHoverHitTestPoint = point;
-        return true;
     }
 
     private bool TryResolveCanvasHitWithProbe(

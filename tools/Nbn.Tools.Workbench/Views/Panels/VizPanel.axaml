@@ -159,7 +159,7 @@
                          Padding="0"
                          TextWrapping="Wrap"
                          IsTabStop="False" />
-                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                               VerticalScrollBarVisibility="Disabled">
                   <Grid ClipToBounds="True">
                     <Grid Width="{Binding ActivityCanvasWidth}"
