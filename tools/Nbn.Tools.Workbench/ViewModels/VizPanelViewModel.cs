@@ -46,6 +46,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
     private bool _showProjectionSnapshot;
+    private bool _showVisualizationStream;
     private string? _selectedCanvasNodeKey;
     private string? _selectedCanvasRouteLabel;
     private string? _hoverCanvasNodeKey;
@@ -78,6 +79,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ZoomCommand = new RelayCommand(ZoomRegion);
         ShowFullBrainCommand = new RelayCommand(ShowFullBrain);
         ToggleProjectionSnapshotCommand = new RelayCommand(() => ShowProjectionSnapshot = !ShowProjectionSnapshot);
+        ToggleVisualizationStreamCommand = new RelayCommand(() => ShowVisualizationStream = !ShowVisualizationStream);
         CopyCanvasDiagnosticsCommand = new AsyncRelayCommand(CopyCanvasDiagnosticsAsync);
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
@@ -244,6 +246,20 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public string ProjectionSnapshotToggleLabel => ShowProjectionSnapshot ? "Hide snapshot" : "Show snapshot";
 
+    public bool ShowVisualizationStream
+    {
+        get => _showVisualizationStream;
+        set
+        {
+            if (SetProperty(ref _showVisualizationStream, value))
+            {
+                OnPropertyChanged(nameof(VisualizationStreamToggleLabel));
+            }
+        }
+    }
+
+    public string VisualizationStreamToggleLabel => ShowVisualizationStream ? "Hide stream" : "Show stream";
+
     public VizEventItem? SelectedEvent
     {
         get => _selectedEvent;
@@ -271,6 +287,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand ShowFullBrainCommand { get; }
 
     public RelayCommand ToggleProjectionSnapshotCommand { get; }
+
+    public RelayCommand ToggleVisualizationStreamCommand { get; }
 
     public AsyncRelayCommand CopyCanvasDiagnosticsCommand { get; }
 
@@ -369,6 +387,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedCanvasRouteLabel = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
         RefreshCanvasLayoutOnly();
+        Status = $"Selected node {node.Label}.";
     }
 
     public void SelectCanvasEdge(VizActivityCanvasEdge? edge)
@@ -383,6 +402,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedCanvasNodeKey = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
         RefreshCanvasLayoutOnly();
+        Status = $"Selected route {edge.RouteLabel}.";
     }
 
     public void SetCanvasNodeHover(VizActivityCanvasNode? node)
@@ -395,7 +415,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         _hoverCanvasNodeKey = nextNode;
         _hoverCanvasRouteLabel = null;
-        RefreshCanvasLayoutOnly();
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
     public void SetCanvasEdgeHover(VizActivityCanvasEdge? edge)
@@ -408,7 +428,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         _hoverCanvasRouteLabel = nextRoute;
         _hoverCanvasNodeKey = null;
-        RefreshCanvasLayoutOnly();
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
     public void TogglePinCanvasNode(VizActivityCanvasNode? node)
@@ -720,6 +740,15 @@ public sealed class VizPanelViewModel : ViewModelBase
         sb.AppendLine($"Visualizer diagnostics @ {utcNow:O}");
         sb.AppendLine($"selected_brain={selectedBrainText} known_brains={KnownBrains.Count} selected_type={selectedTypeText}");
         sb.AppendLine($"topology regions={topology.Regions.Count} region_routes={topology.RegionRoutes.Count} neuron_addresses={topology.NeuronAddresses.Count} neuron_routes={topology.NeuronRoutes.Count}");
+        if (SelectedBrain is not null && _topologyByBrainId.TryGetValue(SelectedBrain.BrainId, out var state))
+        {
+            var rootsPreview = state.LastDefinitionRootsTried.Count == 0
+                ? "<none>"
+                : string.Join(" | ", state.LastDefinitionRootsTried.Take(3));
+            sb.AppendLine(
+                $"definition source={NormalizeDiagnosticText(state.DefinitionSource)} sha={NormalizeDiagnosticText(state.DefinitionShaHex)} has_region_topology={state.HasDefinitionRegionTopology} focus_regions={state.DefinitionFocusRegions.Count} status={NormalizeDiagnosticText(state.DefinitionLoadStatus)} roots={rootsPreview}");
+        }
+
         sb.AppendLine(
             $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents}");
         sb.AppendLine(
@@ -852,18 +881,50 @@ public sealed class VizPanelViewModel : ViewModelBase
         await _definitionTopologyGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            var artifactRef = await ResolveDefinitionArtifactReferenceAsync(brainId).ConfigureAwait(false);
+            var resolvedReference = await ResolveDefinitionArtifactReferenceAsync(brainId).ConfigureAwait(false);
+            var artifactRef = resolvedReference.Reference;
             if (artifactRef is null || !artifactRef.TryToSha256Bytes(out var shaBytes))
             {
+                _dispatcher.Post(() =>
+                {
+                    if (!_topologyByBrainId.TryGetValue(brainId, out var state))
+                    {
+                        state = new BrainCanvasTopologyState();
+                        state.Regions.Add((uint)NbnConstants.InputRegionId);
+                        state.Regions.Add((uint)NbnConstants.OutputRegionId);
+                        _topologyByBrainId[brainId] = state;
+                    }
+
+                    state.DefinitionSource = resolvedReference.Source;
+                    state.DefinitionLoadStatus = "No definition artifact reference available.";
+                    state.LastDefinitionRootsTried.Clear();
+                });
                 return;
             }
 
             var definitionShaHex = Convert.ToHexString(shaBytes).ToLowerInvariant();
-            var loaded = await TryLoadDefinitionTopologyAsync(artifactRef, focusRegionId).ConfigureAwait(false);
-            if (loaded is null)
+            var loadAttempt = await TryLoadDefinitionTopologyAsync(artifactRef, focusRegionId).ConfigureAwait(false);
+            if (loadAttempt.Topology is null)
             {
+                _dispatcher.Post(() =>
+                {
+                    if (!_topologyByBrainId.TryGetValue(brainId, out var state))
+                    {
+                        state = new BrainCanvasTopologyState();
+                        state.Regions.Add((uint)NbnConstants.InputRegionId);
+                        state.Regions.Add((uint)NbnConstants.OutputRegionId);
+                        _topologyByBrainId[brainId] = state;
+                    }
+
+                    state.DefinitionSource = resolvedReference.Source;
+                    state.DefinitionLoadStatus = $"Definition {definitionShaHex[..8]} not found in {loadAttempt.RootsTried.Count} candidate roots.";
+                    state.LastDefinitionRootsTried.Clear();
+                    state.LastDefinitionRootsTried.AddRange(loadAttempt.RootsTried.Take(12));
+                });
                 return;
             }
+
+            var loaded = loadAttempt.Topology.Value;
 
             _dispatcher.Post(() =>
             {
@@ -883,15 +944,19 @@ public sealed class VizPanelViewModel : ViewModelBase
                 }
 
                 state.DefinitionShaHex = definitionShaHex;
+                state.DefinitionSource = resolvedReference.Source;
+                state.DefinitionLoadStatus = $"Loaded definition topology ({(focusRegionId.HasValue ? $"focus R{focusRegionId.Value}" : "full brain")}).";
+                state.LastDefinitionRootsTried.Clear();
+                state.LastDefinitionRootsTried.AddRange(loadAttempt.RootsTried.Take(12));
                 state.HasDefinitionRegionTopology = true;
-                state.Regions.UnionWith(loaded.Value.Regions);
-                state.RegionRoutes.UnionWith(loaded.Value.RegionRoutes);
+                state.Regions.UnionWith(loaded.Regions);
+                state.RegionRoutes.UnionWith(loaded.RegionRoutes);
 
                 if (focusRegionId.HasValue)
                 {
                     state.DefinitionFocusRegions.Add(focusRegionId.Value);
-                    state.NeuronAddresses.UnionWith(loaded.Value.NeuronAddresses);
-                    state.NeuronRoutes.UnionWith(loaded.Value.NeuronRoutes);
+                    state.NeuronAddresses.UnionWith(loaded.NeuronAddresses);
+                    state.NeuronRoutes.UnionWith(loaded.NeuronRoutes);
                 }
 
                 if (SelectedBrain?.BrainId == brainId)
@@ -916,29 +981,33 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
-    private async Task<Nbn.Proto.ArtifactRef?> ResolveDefinitionArtifactReferenceAsync(Guid brainId)
+    private async Task<DefinitionReferenceResolution> ResolveDefinitionArtifactReferenceAsync(Guid brainId)
     {
         var exported = await _brain.ExportBrainDefinitionReferenceAsync(brainId, rebaseOverlays: false).ConfigureAwait(false);
         if (exported is not null && exported.TryToSha256Bytes(out _))
         {
-            return exported;
+            return new DefinitionReferenceResolution(exported, "export");
         }
 
         var info = await _brain.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
-        return info?.BaseDefinition is { } baseDefinition && baseDefinition.TryToSha256Bytes(out _)
-            ? baseDefinition
-            : null;
+        if (info?.BaseDefinition is { } baseDefinition && baseDefinition.TryToSha256Bytes(out _))
+        {
+            return new DefinitionReferenceResolution(baseDefinition, "brain-info");
+        }
+
+        return new DefinitionReferenceResolution(null, "none");
     }
 
-    private static async Task<DefinitionTopologyLoadResult?> TryLoadDefinitionTopologyAsync(Nbn.Proto.ArtifactRef artifactRef, uint? focusRegionId)
+    private static async Task<DefinitionTopologyLoadAttempt> TryLoadDefinitionTopologyAsync(Nbn.Proto.ArtifactRef artifactRef, uint? focusRegionId)
     {
         if (!artifactRef.TryToSha256Bytes(out var shaBytes))
         {
-            return null;
+            return new DefinitionTopologyLoadAttempt(null, Array.Empty<string>());
         }
 
         var hash = Sha256Hash.FromBytes(shaBytes);
-        foreach (var artifactRoot in ResolveArtifactStoreRoots(artifactRef.StoreUri))
+        var candidateRoots = ResolveArtifactStoreRoots(artifactRef.StoreUri);
+        foreach (var artifactRoot in candidateRoots)
         {
             try
             {
@@ -951,7 +1020,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
                 using var buffer = new MemoryStream();
                 await stream.CopyToAsync(buffer).ConfigureAwait(false);
-                return BuildDefinitionTopology(buffer.ToArray(), focusRegionId);
+                return new DefinitionTopologyLoadAttempt(BuildDefinitionTopology(buffer.ToArray(), focusRegionId), candidateRoots);
             }
             catch
             {
@@ -959,7 +1028,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
         }
 
-        return null;
+        return new DefinitionTopologyLoadAttempt(null, candidateRoots);
     }
 
     private static DefinitionTopologyLoadResult BuildDefinitionTopology(byte[] definitionBytes, uint? focusRegionId)
@@ -985,7 +1054,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             {
                 var neuron = section.NeuronRecords[neuronIndex];
                 var sourceAddress = ComposeAddressForTopology(regionId, (uint)neuronIndex);
-                if (focusRegionId.HasValue && focusRegionId.Value == regionId && neuron.Exists)
+                if (focusRegionId.HasValue && focusRegionId.Value == regionId)
                 {
                     neuronAddresses.Add(sourceAddress);
                 }
@@ -1009,7 +1078,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                     }
 
                     neuronRoutes.Add(new VizActivityCanvasNeuronRoute(sourceAddress, targetAddress));
-                    if (regionId == focusRegionId.Value && neuron.Exists)
+                    if (regionId == focusRegionId.Value)
                     {
                         neuronAddresses.Add(sourceAddress);
                     }
@@ -1059,6 +1128,10 @@ public sealed class VizPanelViewModel : ViewModelBase
             return Path.Combine(localAppData, "Nbn.Workbench", suffix);
         }
 
+        static bool IsArtifactStoreRoot(string path)
+            => File.Exists(Path.Combine(path, "artifacts.db"))
+               || Directory.Exists(Path.Combine(path, "chunks"));
+
         void AddCandidate(string? candidate)
         {
             var normalized = NormalizeStoreRoot(candidate);
@@ -1077,12 +1150,43 @@ public sealed class VizPanelViewModel : ViewModelBase
                 return;
             }
 
-            if (!Directory.Exists(fullPath) || !seen.Add(fullPath))
+            if (!Directory.Exists(fullPath))
             {
                 return;
             }
 
-            roots.Add(fullPath);
+            var queue = new Queue<(string Path, int Depth)>();
+            queue.Enqueue((fullPath, 0));
+            while (queue.Count > 0)
+            {
+                var (path, depth) = queue.Dequeue();
+                if (!Directory.Exists(path))
+                {
+                    continue;
+                }
+
+                if (IsArtifactStoreRoot(path) && seen.Add(path))
+                {
+                    roots.Add(path);
+                }
+
+                if (depth >= 2)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    foreach (var child in Directory.EnumerateDirectories(path))
+                    {
+                        queue.Enqueue((child, depth + 1));
+                    }
+                }
+                catch
+                {
+                    // Ignore permission or IO failures while scanning candidates.
+                }
+            }
         }
 
         AddCandidate(storeUri);
@@ -1672,6 +1776,14 @@ public sealed class VizPanelViewModel : ViewModelBase
         HashSet<uint> NeuronAddresses,
         HashSet<VizActivityCanvasNeuronRoute> NeuronRoutes);
 
+    private readonly record struct DefinitionTopologyLoadAttempt(
+        DefinitionTopologyLoadResult? Topology,
+        IReadOnlyList<string> RootsTried);
+
+    private readonly record struct DefinitionReferenceResolution(
+        Nbn.Proto.ArtifactRef? Reference,
+        string Source);
+
     private sealed class BrainCanvasTopologyState
     {
         public HashSet<uint> Regions { get; } = new();
@@ -1685,6 +1797,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         public bool HasDefinitionRegionTopology { get; set; }
 
         public string? DefinitionShaHex { get; set; }
+
+        public string? DefinitionSource { get; set; }
+
+        public string DefinitionLoadStatus { get; set; } = "Not attempted.";
+
+        public List<string> LastDefinitionRootsTried { get; } = new();
 
         public HashSet<uint> DefinitionFocusRegions { get; } = new();
     }

@@ -48,6 +48,17 @@ public partial class VizPanel : UserControl
         e.Handled = true;
     }
 
+    private void CanvasNodeTapped(object? sender, TappedEventArgs e)
+    {
+        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasNode node })
+        {
+            return;
+        }
+
+        ViewModel.SelectCanvasNode(node);
+        e.Handled = true;
+    }
+
     private void CanvasEdgePointerEntered(object? sender, PointerEventArgs e)
     {
         if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasEdge edge })
@@ -80,6 +91,17 @@ public partial class VizPanel : UserControl
             ViewModel.SelectCanvasEdge(edge);
         }
 
+        e.Handled = true;
+    }
+
+    private void CanvasEdgeTapped(object? sender, TappedEventArgs e)
+    {
+        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasEdge edge })
+        {
+            return;
+        }
+
+        ViewModel.SelectCanvasEdge(edge);
         e.Handled = true;
     }
 }

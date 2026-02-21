@@ -19,6 +19,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _inputIndexText = "0";
     private string _inputValueText = "0";
     private string _inputVectorText = string.Empty;
+    private string _lastSuggestedInputVector = string.Empty;
     private string _energyCreditText = "1000";
     private string _energyRateText = "0";
     private string _plasticityRateText = "0.001";
@@ -430,6 +431,15 @@ public sealed class IoPanelViewModel : ViewModelBase
         EnergyEnabled = info.EnergyEnabled;
         PlasticityEnabled = info.PlasticityEnabled;
 
+        var suggestedVector = BuildSuggestedVector((int)Math.Max(0, info.InputWidth));
+        if (!string.IsNullOrWhiteSpace(suggestedVector)
+            && (string.IsNullOrWhiteSpace(InputVectorText)
+                || string.Equals(InputVectorText.Trim(), _lastSuggestedInputVector, StringComparison.Ordinal)))
+        {
+            _lastSuggestedInputVector = suggestedVector;
+            InputVectorText = suggestedVector;
+        }
+
         BrainInfoSummary = $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining}";
     }
 
@@ -633,6 +643,19 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             collection.RemoveAt(collection.Count - 1);
         }
+    }
+
+    private static string BuildSuggestedVector(int inputWidth)
+    {
+        if (inputWidth <= 0)
+        {
+            return string.Empty;
+        }
+
+        const int maxSuggestedInputs = 256;
+        var count = Math.Min(inputWidth, maxSuggestedInputs);
+        var values = Enumerable.Range(1, count).Select(index => index.ToString(CultureInfo.InvariantCulture));
+        return string.Join(", ", values);
     }
 }
 

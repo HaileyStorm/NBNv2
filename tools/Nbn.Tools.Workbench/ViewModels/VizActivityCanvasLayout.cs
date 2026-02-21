@@ -121,6 +121,7 @@ public sealed record VizActivityCanvasEdge(
     string Detail,
     string PathData,
     string Stroke,
+    string DirectionDashArray,
     string ActivityStroke,
     double StrokeThickness,
     double ActivityStrokeThickness,
@@ -456,6 +457,7 @@ public static class VizActivityCanvasLayoutBuilder
             var isSelected = interaction.IsSelectedRoute(routeLabel);
             var isHovered = interaction.IsHoveredRoute(routeLabel);
             var isPinned = interaction.IsRoutePinned(routeLabel);
+            var directionDashArray = GetRegionDirectionDashPattern(edgeKind);
             var isDormant = aggregate.EventCount <= 0 || aggregate.LastTick == 0;
             var recency = isDormant ? 0.0 : TickRecency(aggregate.LastTick, latestTick, options.TickWindow);
             var normalizedLoad = isDormant ? 0.0 : Math.Clamp((double)aggregate.EventCount / maxEdgeEvents, 0.0, 1.0);
@@ -465,6 +467,7 @@ public static class VizActivityCanvasLayoutBuilder
             var thickness = BaseEdgeStroke
                             + (normalizedLoad * MaxEdgeStrokeBoost)
                             + (normalizedStrength * 0.7)
+                            + 1.1
                             + (isPinned ? 0.8 : 0.0)
                             + (isHovered ? 0.5 : 0.0)
                             + (isSelected ? 0.9 : 0.0);
@@ -473,7 +476,7 @@ public static class VizActivityCanvasLayoutBuilder
                 ? 0.0
                 : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
             var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.26 + (0.62 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
-            var activityThickness = Math.Max(0.9, thickness - 1.0);
+            var activityThickness = Math.Max(0.7, thickness - 2.2);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && route.SourceRegionId > route.TargetRegionId ? -1 : 1;
@@ -491,6 +494,7 @@ public static class VizActivityCanvasLayoutBuilder
                 detail,
                 curve,
                 directionStroke,
+                directionDashArray,
                 activityStroke,
                 thickness,
                 activityThickness,
@@ -668,6 +672,7 @@ public static class VizActivityCanvasLayoutBuilder
             var isSelected = interaction.IsSelectedRoute(routeLabel);
             var isHovered = interaction.IsHoveredRoute(routeLabel);
             var isPinned = interaction.IsRoutePinned(routeLabel);
+            var directionDashArray = GetFocusedDirectionDashPattern(kind);
             var isDormant = aggregate.EventCount <= 0 || aggregate.LastTick == 0;
             var recency = isDormant ? 0.0 : TickRecency(aggregate.LastTick, latestTick, tickWindow);
             var normalizedLoad = isDormant ? 0.0 : Math.Clamp((double)aggregate.EventCount / maxEdgeEvents, 0.0, 1.0);
@@ -677,6 +682,7 @@ public static class VizActivityCanvasLayoutBuilder
             var thickness = BaseEdgeStroke
                             + (normalizedLoad * MaxEdgeStrokeBoost)
                             + (normalizedStrength * 0.7)
+                            + 1.1
                             + (kind == "bidirectional" ? 0.25 : 0.0)
                             + (isPinned ? 0.8 : 0.0)
                             + (isHovered ? 0.5 : 0.0)
@@ -686,7 +692,7 @@ public static class VizActivityCanvasLayoutBuilder
                 ? 0.0
                 : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
             var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.28 + (0.60 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
-            var activityThickness = Math.Max(0.9, thickness - 1.0);
+            var activityThickness = Math.Max(0.7, thickness - 2.2);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && string.CompareOrdinal(sourceKey, targetKey) > 0 ? -1 : 1;
@@ -704,6 +710,7 @@ public static class VizActivityCanvasLayoutBuilder
                 detail,
                 curve,
                 directionStroke,
+                directionDashArray,
                 activityStroke,
                 thickness,
                 activityThickness,
@@ -860,6 +867,30 @@ public static class VizActivityCanvasLayoutBuilder
         return GetRegionSlice(route.SourceRegionId) <= GetRegionSlice(route.TargetRegionId)
             ? "feed-forward"
             : "feedback";
+    }
+
+    private static string GetRegionDirectionDashPattern(string edgeKind)
+    {
+        return edgeKind switch
+        {
+            "feed-forward" => string.Empty,
+            "feedback" => "9 5",
+            "bidirectional" => "2 4",
+            "self" => "12 4 2 4",
+            _ => "7 4"
+        };
+    }
+
+    private static string GetFocusedDirectionDashPattern(string kind)
+    {
+        return kind switch
+        {
+            "internal" => string.Empty,
+            "outbound" => "8 4",
+            "inbound" => "2 4",
+            "bidirectional" => "12 4 2 4",
+            _ => "7 4"
+        };
     }
 
     private static string GetRegionEdgeDirectionColor(string edgeKind, bool isDormant)

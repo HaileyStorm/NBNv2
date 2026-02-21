@@ -150,31 +150,39 @@
                                   Height="420">
                             <Path Data="{Binding PathData}"
                                   Stroke="{Binding Stroke}"
+                                  StrokeDashArray="{Binding DirectionDashArray}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"
+                                  StrokeLineCap="Round"
                                   PointerEntered="CanvasEdgePointerEntered"
                                   PointerExited="CanvasEdgePointerExited"
                                   PointerPressed="CanvasEdgePointerPressed"
+                                  Tapped="CanvasEdgeTapped"
+                                  ToolTip.ShowDelay="0"
                                   ToolTip.Tip="{Binding Detail}" />
                             <Path Data="{Binding PathData}"
                                   Stroke="{Binding ActivityStroke}"
                                   StrokeThickness="{Binding ActivityStrokeThickness}"
                                   Opacity="{Binding ActivityOpacity}"
+                                  StrokeLineCap="Round"
                                   IsHitTestVisible="False" />
                             <Path Data="{Binding PathData}"
                                   Stroke="{DynamicResource NbnGoldBrush}"
+                                  StrokeDashArray="{Binding DirectionDashArray}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"
                                   IsVisible="{Binding IsPinned}"
                                   IsHitTestVisible="False" />
                             <Path Data="{Binding PathData}"
                                   Stroke="{DynamicResource NbnTealBrush}"
+                                  StrokeDashArray="{Binding DirectionDashArray}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"
                                   IsVisible="{Binding IsHovered}"
                                   IsHitTestVisible="False" />
                             <Path Data="{Binding PathData}"
                                   Stroke="{DynamicResource NbnAccentBrush}"
+                                  StrokeDashArray="{Binding DirectionDashArray}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"
                                   IsVisible="{Binding IsSelected}"
@@ -205,6 +213,8 @@
                                 PointerEntered="CanvasNodePointerEntered"
                                 PointerExited="CanvasNodePointerExited"
                                 PointerPressed="CanvasNodePointerPressed"
+                                Tapped="CanvasNodeTapped"
+                                ToolTip.ShowDelay="0"
                                 ToolTip.Tip="{Binding Detail}">
                             <Ellipse Fill="{Binding Fill}" Opacity="{Binding FillOpacity}" />
                             <Ellipse Stroke="{Binding Stroke}"
@@ -314,13 +324,16 @@
 
       <Border Classes="card">
         <StackPanel Spacing="8">
-          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
             <TextBlock Text="Visualization Stream" Classes="card-title" VerticalAlignment="Center" />
-            <Button Grid.Column="1" Content="Export" Command="{Binding ExportCommand}" />
-            <Button Grid.Column="2" Content="Clear" Command="{Binding ClearCommand}" />
+            <Button Grid.Column="1"
+                    Content="{Binding VisualizationStreamToggleLabel}"
+                    Command="{Binding ToggleVisualizationStreamCommand}" />
+            <Button Grid.Column="2" Content="Export" Command="{Binding ExportCommand}" IsVisible="{Binding ShowVisualizationStream}" />
+            <Button Grid.Column="3" Content="Clear" Command="{Binding ClearCommand}" IsVisible="{Binding ShowVisualizationStream}" />
           </Grid>
           <TextBlock Text="{Binding Status}" Classes="muted" />
-          <Grid ColumnDefinitions="1.35*,1*" ColumnSpacing="12">
+          <Grid ColumnDefinitions="1.35*,1*" ColumnSpacing="12" IsVisible="{Binding ShowVisualizationStream}">
             <ListBox ItemsSource="{Binding VizEvents}" SelectedItem="{Binding SelectedEvent}" MaxHeight="260">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="models:VizEventItem">
