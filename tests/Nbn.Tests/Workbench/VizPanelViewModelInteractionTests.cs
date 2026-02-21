@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -24,6 +25,21 @@ public class VizPanelViewModelInteractionTests
             "ApplyKeyedDiff",
             BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ApplyKeyedDiff method not found.");
+    private static readonly MethodInfo EnsureDefinitionTopologyCoverageMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "EnsureDefinitionTopologyCoverage",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("EnsureDefinitionTopologyCoverage method not found.");
+    private static readonly FieldInfo DefinitionTopologyGateField =
+        typeof(VizPanelViewModel).GetField(
+            "_definitionTopologyGate",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_definitionTopologyGate field not found.");
+    private static readonly FieldInfo PendingDefinitionHydrationKeysField =
+        typeof(VizPanelViewModel).GetField(
+            "_pendingDefinitionHydrationKeys",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_pendingDefinitionHydrationKeys field not found.");
 
     [Fact]
     public void TryResolveCanvasHit_NodeHoverStickyTolerance_ResolvesNearMiss()
@@ -266,6 +282,31 @@ public class VizPanelViewModelInteractionTests
         Assert.Equal(secondUpdated.NodeKey, target[0].NodeKey);
         Assert.Equal("updated-detail", target[0].Detail);
         Assert.Same(first, target[1]);
+    }
+
+    [Fact]
+    public void EnsureDefinitionTopologyCoverage_DedupesRepeatedRequests()
+    {
+        var vm = CreateViewModel();
+        var gate = (SemaphoreSlim)DefinitionTopologyGateField.GetValue(vm)!;
+        Assert.True(gate.Wait(0));
+        try
+        {
+            var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+            vm.KnownBrains.Add(brain);
+            vm.SelectedBrain = brain;
+
+            EnsureDefinitionTopologyCoverageMethod.Invoke(vm, Array.Empty<object>());
+            EnsureDefinitionTopologyCoverageMethod.Invoke(vm, Array.Empty<object>());
+
+            var pending = PendingDefinitionHydrationKeysField.GetValue(vm)!;
+            var pendingCount = (int)(pending.GetType().GetProperty("Count")?.GetValue(pending) ?? 0);
+            Assert.Equal(1, pendingCount);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private static VizActivityCanvasNode CreateNode(string key, string label, double left, double top)

@@ -31,6 +31,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
+    private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
     private const int HoverClearDelayMs = 180;
     private const int EdgeHitSamples = 12;
     private const double HitTestCellSize = 54;
@@ -73,6 +74,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private readonly HashSet<string> _pinnedCanvasRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Guid, BrainCanvasTopologyState> _topologyByBrainId = new();
     private readonly SemaphoreSlim _definitionTopologyGate = new(1, 1);
+    private readonly object _pendingDefinitionHydrationGate = new();
+    private readonly HashSet<string> _pendingDefinitionHydrationKeys = new(StringComparer.OrdinalIgnoreCase);
     private VizActivityProjection? _currentProjection;
     private VizActivityProjectionOptions _currentProjectionOptions = new(DefaultTickWindow, false, null);
     private string _activityInteractionSummary = "Select a node or route to inspect activity details.";
@@ -94,6 +97,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private double _lastCanvasLayoutBuildMs;
     private double _lastCanvasApplyMs;
     private double _lastCanvasFrameMs;
+    private DateTime _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
     private double _lastFlushBatchMs;
     private int _lastFlushBatchCount;
     private int _maxObservedPendingEvents;
@@ -806,10 +810,15 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         _allEvents.Clear();
         _topologyByBrainId.Clear();
+        lock (_pendingDefinitionHydrationGate)
+        {
+            _pendingDefinitionHydrationKeys.Clear();
+        }
         _currentProjection = null;
         _currentProjectionOptions = new VizActivityProjectionOptions(DefaultTickWindow, IncludeLowSignalEvents, null);
         _lastRenderedTickId = 0;
         _nextStreamingRefreshUtc = DateTime.MinValue;
+        _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;
@@ -884,6 +893,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         SelectedPayload = BuildPayload(SelectedEvent);
         RefreshActivityProjection();
+        EnsureDefinitionTopologyCoverage();
         _lastRenderedTickId = GetLatestTickForCurrentSelection();
         if (fromStreaming)
         {
@@ -1247,10 +1257,19 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void QueueDefinitionTopologyHydration(Guid brainId, uint? focusRegionId)
     {
-        _ = HydrateDefinitionTopologyAsync(brainId, focusRegionId);
+        var hydrationKey = BuildDefinitionHydrationKey(brainId, focusRegionId);
+        lock (_pendingDefinitionHydrationGate)
+        {
+            if (!_pendingDefinitionHydrationKeys.Add(hydrationKey))
+            {
+                return;
+            }
+        }
+
+        _ = HydrateDefinitionTopologyAsync(brainId, focusRegionId, hydrationKey);
     }
 
-    private async Task HydrateDefinitionTopologyAsync(Guid brainId, uint? focusRegionId)
+    private async Task HydrateDefinitionTopologyAsync(Guid brainId, uint? focusRegionId, string hydrationKey)
     {
         await _definitionTopologyGate.WaitAsync().ConfigureAwait(false);
         try
@@ -1335,6 +1354,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
                 if (SelectedBrain?.BrainId == brainId)
                 {
+                    _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
                     RefreshCanvasLayoutOnly();
                 }
             });
@@ -1352,8 +1372,44 @@ public sealed class VizPanelViewModel : ViewModelBase
         finally
         {
             _definitionTopologyGate.Release();
+            lock (_pendingDefinitionHydrationGate)
+            {
+                _pendingDefinitionHydrationKeys.Remove(hydrationKey);
+            }
         }
     }
+
+    private void EnsureDefinitionTopologyCoverage()
+    {
+        if (SelectedBrain is null)
+        {
+            return;
+        }
+
+        var focusRegionId = TryParseRegionId(RegionFocusText, out var parsedFocusRegionId)
+            ? parsedFocusRegionId
+            : (uint?)null;
+        if (_topologyByBrainId.TryGetValue(SelectedBrain.BrainId, out var state)
+            && state.HasDefinitionRegionTopology
+            && (!focusRegionId.HasValue || state.DefinitionFocusRegions.Contains(focusRegionId.Value)))
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (now < _nextDefinitionHydrationRetryUtc)
+        {
+            return;
+        }
+
+        _nextDefinitionHydrationRetryUtc = now + DefinitionHydrationRetryInterval;
+        QueueDefinitionTopologyHydration(SelectedBrain.BrainId, focusRegionId);
+    }
+
+    private static string BuildDefinitionHydrationKey(Guid brainId, uint? focusRegionId)
+        => focusRegionId.HasValue
+            ? $"{brainId:D}:focus:{focusRegionId.Value}"
+            : $"{brainId:D}:full";
 
     private async Task<DefinitionReferenceResolution> ResolveDefinitionArtifactReferenceAsync(Guid brainId)
     {
@@ -1564,6 +1620,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         AddCandidate(storeUri);
+        AddCandidate(RepoLocator.ResolvePathFromRepo("artifacts"));
+        AddCandidate(RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo"));
+        AddCandidate(RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo", "artifacts"));
+        AddCandidate(Directory.GetCurrentDirectory());
+        AddCandidate(AppContext.BaseDirectory);
         AddCandidate(BuildDefaultRoot("designer-artifacts"));
         AddCandidate(BuildDefaultRoot(Path.Combine("sample-brain", "artifacts")));
         AddCandidate(BuildDefaultRoot("repro-artifacts"));
