@@ -21,6 +21,9 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.Equal(first.Edges.Count, second.Edges.Count);
         Assert.Equal(first.Nodes, second.Nodes);
         Assert.Equal(first.Edges, second.Edges);
+        Assert.All(
+            first.Edges.Zip(second.Edges, (left, right) => (left, right)),
+            pair => Assert.Same(pair.left.PathData, pair.right.PathData));
     }
 
     [Fact]
@@ -360,6 +363,67 @@ public class VizActivityCanvasLayoutBuilderTests
 
         Assert.Single(layout.Edges, edge => string.Equals(edge.RouteLabel, "N0 -> R8", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(layout.Edges.Count, layout.Edges.Select(edge => edge.RouteLabel).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    [Fact]
+    public void Build_RegionEdgesReportAggregatedUnderlyingRouteCount()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 600, region: 9, source: Address(9, 1), target: Address(23, 4), value: 0.9f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 601, region: 9, source: Address(9, 7), target: Address(23, 9), value: 0.7f, strength: 0.4f),
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var edge = Assert.Single(layout.Edges, item => string.Equals(item.RouteLabel, "R9 -> R23", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("routes 2", edge.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_RegionNodeDetailIncludesBufferAndRouteDegreeMetrics()
+    {
+        var projection = BuildProjection();
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var outputNode = Assert.Single(layout.Nodes, node => node.RegionId == 31);
+        Assert.Contains("buffer n=1", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("routes out", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avg |v|", outputNode.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_FocusNeuronDetailIncludesBufferAndFlowMetrics()
+    {
+        const uint focusRegionId = 11;
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 700, region: focusRegionId, source: Address(focusRegionId, 2), target: Address(focusRegionId, 3), value: 1.1f, strength: 0.2f),
+            CreateEvent("VizNeuronFired", tick: 701, region: focusRegionId, source: Address(focusRegionId, 2), target: Address(focusRegionId, 3), value: 0.9f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 702, region: focusRegionId, source: Address(focusRegionId, 2), target: Address(focusRegionId, 3), value: 0.42f, strength: 0f),
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty);
+
+        var neuron = Assert.Single(layout.Nodes, node => node.RegionId == focusRegionId && node.NeuronId == 2);
+        Assert.Contains("fired 1", neuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("out 1", neuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("buffer n=1", neuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("latest=0.42@702", neuron.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
     private static VizActivityProjection BuildProjection()

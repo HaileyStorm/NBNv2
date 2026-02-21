@@ -29,15 +29,16 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
-    private const int HoverClearDelayMs = 120;
+    private const int HoverClearDelayMs = 180;
     private const int EdgeHitSamples = 12;
     private const double HitTestCellSize = 54;
     private const double EdgeHitIndexPadding = 4;
+    private const double NodeHitPadding = 2.5;
     private const double StickyNodeHitPadding = 6;
     private const double StickyEdgeHitPadding = 6;
     private const double HoverCardOffset = 14;
-    private const double HoverCardMaxWidth = 280;
-    private const double HoverCardMaxHeight = 132;
+    private const double HoverCardMaxWidth = 420;
+    private const double HoverCardMaxHeight = 220;
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
@@ -582,6 +583,20 @@ public sealed class VizPanelViewModel : ViewModelBase
         CanvasHoverCardText = string.Empty;
         IsCanvasHoverCardVisible = false;
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+    }
+
+    public void KeepCanvasHoverAlive()
+    {
+        var hasHover = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
+                       || !string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
+                       || IsCanvasHoverCardVisible
+                       || !string.IsNullOrWhiteSpace(CanvasHoverCardText);
+        if (!hasHover)
+        {
+            return;
+        }
+
+        CancelPendingHoverClear();
     }
 
     public bool TryResolveCanvasHit(double pointerX, double pointerY, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
@@ -2034,10 +2049,10 @@ public sealed class VizPanelViewModel : ViewModelBase
             AddIndexEntry(
                 _nodeHitIndex,
                 index,
-                node.Left,
-                node.Top,
-                node.Left + node.Diameter,
-                node.Top + node.Diameter);
+                node.Left - NodeHitPadding,
+                node.Top - NodeHitPadding,
+                node.Left + node.Diameter + NodeHitPadding,
+                node.Top + node.Diameter + NodeHitPadding);
         }
 
         for (var index = 0; index < edges.Count; index++)
@@ -2192,7 +2207,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 var node = _canvasNodeSnapshot[index];
                 var centerX = node.Left + (node.Diameter / 2.0);
                 var centerY = node.Top + (node.Diameter / 2.0);
-                var radius = node.Diameter / 2.0;
+                var radius = (node.Diameter / 2.0) + NodeHitPadding;
                 var dx = pointerX - centerX;
                 var dy = pointerY - centerY;
                 var distanceSquared = (dx * dx) + (dy * dy);
@@ -2221,7 +2236,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             var centerX = node.Left + (node.Diameter / 2.0);
             var centerY = node.Top + (node.Diameter / 2.0);
-            var radius = node.Diameter / 2.0;
+            var radius = (node.Diameter / 2.0) + NodeHitPadding;
             var dx = pointerX - centerX;
             var dy = pointerY - centerY;
             var distanceSquared = (dx * dx) + (dy * dy);

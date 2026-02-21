@@ -11,8 +11,8 @@ public partial class VizPanel : UserControl
 {
     private const double HoverHitTestMinIntervalMs = 16;
     private const double HoverHitTestMinMovePx = 1.2;
-    private const double HoverProbeDistancePx = 2.0;
-    private const double PressProbeDistancePx = 4.0;
+    private const double HoverProbeDistancePx = 3.0;
+    private const double PressProbeDistancePx = 5.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0),
@@ -52,6 +52,7 @@ public partial class VizPanel : UserControl
         }
 
         var point = e.GetPosition(visual);
+        ViewModel.KeepCanvasHoverAlive();
         if (!ShouldProcessHoverPointerMove(point))
         {
             return;

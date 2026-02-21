@@ -243,10 +243,10 @@
                     </ItemsControl>
 
                     <Canvas IsHitTestVisible="False">
-                      <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
+                              <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
                               Canvas.Top="{Binding CanvasHoverCardTop}"
                               IsVisible="{Binding IsCanvasHoverCardVisible}"
-                              MaxWidth="280"
+                              MaxWidth="420"
                               Background="{DynamicResource NbnSurfaceBrush}"
                               BorderBrush="{DynamicResource NbnBorderBrush}"
                               BorderThickness="1"

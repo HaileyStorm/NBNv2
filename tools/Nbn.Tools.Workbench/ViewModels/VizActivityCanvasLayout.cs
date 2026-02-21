@@ -155,6 +155,10 @@ public static class VizActivityCanvasLayoutBuilder
     private const double MaxNodeRadius = 30;
     private const double BaseEdgeStroke = 1.1;
     private const double MaxEdgeStrokeBoost = 2.8;
+    private const int EdgeCurveCacheMaxEntries = 4096;
+    private static readonly object EdgeCurveCacheGate = new();
+    private static readonly Dictionary<CanvasEdgeCurveKey, CanvasEdgeCurve> EdgeCurveCache = new();
+    private static readonly Queue<CanvasEdgeCurveKey> EdgeCurveCacheOrder = new();
 
     public static VizActivityCanvasLayout Build(
         VizActivityProjection projection,
@@ -193,6 +197,8 @@ public static class VizActivityCanvasLayoutBuilder
         }
 
         var positions = BuildRegionPositions(nodeSource.Keys);
+        var regionBufferMetrics = BuildRegionBufferMetrics(projection.WindowEvents);
+        var regionRouteDegrees = BuildRegionRouteDegrees(projection, topology);
         var maxNodeEvents = Math.Max(1, nodeSource.Values.Max(item => item.EventCount));
         var nodes = new List<VizActivityCanvasNode>(nodeSource.Count);
         var nodeByRegion = new Dictionary<uint, VizActivityCanvasNode>();
@@ -216,7 +222,13 @@ public static class VizActivityCanvasLayoutBuilder
                                   + (isPinned ? 0.8 : 0.0)
                                   + (isHovered ? 0.6 : 0.0)
                                   + (isSelected ? 0.9 : 0.0);
-            var detail = $"R{regionId} | events {stats.EventCount} | last tick {stats.LastTick} | fired {stats.FiredCount} | axon {stats.AxonCount}";
+            regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
+            regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
+            var detail = $"R{regionId} | events {stats.EventCount} | last tick {stats.LastTick}"
+                         + $" | fired {stats.FiredCount} | axon {stats.AxonCount}"
+                         + $" | dom {stats.DominantType} | avg |v| {stats.AverageMagnitude:0.###}"
+                         + $" | routes out {routeDegree.OutboundCount} in {routeDegree.InboundCount}"
+                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferMetrics.AverageBufferValue:0.###} latest={bufferMetrics.LatestBufferValue:0.###}@{bufferMetrics.LatestBufferTick}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -289,7 +301,9 @@ public static class VizActivityCanvasLayoutBuilder
             var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.28 + (0.35 * TickRecency(stats.LastTick, latestTick, options.TickWindow))) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.2 + (isPinned ? 0.8 : 0.0) + (isHovered ? 0.6 : 0.0) + (isSelected ? 0.9 : 0.0);
             var (fill, stroke) = isDormant ? ("#2E3F46", "#4E6A73") : ("#2A9D8F", "#1B6B63");
-            var detail = $"R{focusRegionId}N{neuronId} | events {stats.EventCount} | last tick {stats.LastTick}";
+            var detail = $"R{focusRegionId}N{neuronId} | events {stats.EventCount} | last tick {stats.LastTick}"
+                         + $" | fired {stats.FiredCount} | out {stats.OutboundCount} in {stats.InboundCount}"
+                         + $" | buffer n={stats.BufferCount} avg={stats.AverageBufferValue:0.###} latest={stats.LatestBufferValue:0.###}@{stats.LatestBufferTick}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -384,7 +398,14 @@ public static class VizActivityCanvasLayoutBuilder
     {
         var byRegion = projection.Regions.ToDictionary(
             item => item.RegionId,
-            item => new RegionNodeSource(item.RegionId, item.EventCount, item.LastTick, item.FiredCount, item.AxonCount));
+            item => new RegionNodeSource(
+                item.RegionId,
+                item.EventCount,
+                item.LastTick,
+                item.FiredCount,
+                item.AxonCount,
+                item.DominantType,
+                item.AverageMagnitude));
 
         foreach (var edge in projection.Edges)
         {
@@ -399,6 +420,70 @@ public static class VizActivityCanvasLayoutBuilder
 
         MergeRegionNode(byRegion, (uint)NbnConstants.InputRegionId, 0, 0);
         MergeRegionNode(byRegion, (uint)NbnConstants.OutputRegionId, 0, 0);
+        return byRegion;
+    }
+
+    private static Dictionary<uint, RegionBufferMetric> BuildRegionBufferMetrics(IReadOnlyList<VizEventItem> events)
+    {
+        var byRegion = new Dictionary<uint, RegionBufferMetric>();
+        foreach (var item in events)
+        {
+            if (!IsBufferType(item.Type))
+            {
+                continue;
+            }
+
+            uint regionId;
+            if (TryParseRegion(item.Region, out var parsedRegion))
+            {
+                regionId = parsedRegion;
+            }
+            else if (TryParseAddress(item.Source, out var sourceAddress))
+            {
+                regionId = RegionFromAddress(sourceAddress);
+            }
+            else
+            {
+                continue;
+            }
+
+            byRegion.TryGetValue(regionId, out var existing);
+            byRegion[regionId] = existing.Merge(item.TickId, item.Value);
+        }
+
+        return byRegion;
+    }
+
+    private static Dictionary<uint, RegionRouteDegree> BuildRegionRouteDegrees(
+        VizActivityProjection projection,
+        VizActivityCanvasTopology topology)
+    {
+        var byRegion = new Dictionary<uint, RegionRouteDegree>();
+
+        static void AddRoute(IDictionary<uint, RegionRouteDegree> target, uint sourceRegionId, uint targetRegionId)
+        {
+            target.TryGetValue(sourceRegionId, out var sourceDegree);
+            target[sourceRegionId] = sourceDegree.IncrementOutbound();
+
+            target.TryGetValue(targetRegionId, out var targetDegree);
+            target[targetRegionId] = targetDegree.IncrementInbound();
+        }
+
+        foreach (var edge in projection.Edges)
+        {
+            if (!edge.SourceRegionId.HasValue || !edge.TargetRegionId.HasValue)
+            {
+                continue;
+            }
+
+            AddRoute(byRegion, edge.SourceRegionId.Value, edge.TargetRegionId.Value);
+        }
+
+        foreach (var route in topology.RegionRoutes)
+        {
+            AddRoute(byRegion, route.SourceRegionId, route.TargetRegionId);
+        }
+
         return byRegion;
     }
 
@@ -430,7 +515,8 @@ public static class VizActivityCanvasLayoutBuilder
                 edge.AverageMagnitude,
                 edge.AverageStrength,
                 edge.AverageSignedValue,
-                edge.AverageSignedStrength);
+                edge.AverageSignedStrength,
+                routeCountIncrement: 1);
         }
 
         foreach (var route in topology.RegionRoutes)
@@ -490,7 +576,9 @@ public static class VizActivityCanvasLayoutBuilder
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && route.SourceRegionId > route.TargetRegionId ? -1 : 1;
             var curve = BuildEdgeCurve(sourceCenter, targetCenter, route.SourceRegionId == route.TargetRegionId, curveDirection);
-            var detail = $"{routeLabel} | {edgeKind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}";
+            var detail = $"{routeLabel} | {edgeKind} | routes {aggregate.RouteCount} | events {aggregate.EventCount} | last tick {aggregate.LastTick}"
+                         + $" | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}"
+                         + $" | avg |s| {aggregate.AverageStrength:0.###} | avg s {aggregate.SignedStrength:0.###}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -581,7 +669,7 @@ public static class VizActivityCanvasLayoutBuilder
 
             if (!routes.ContainsKey(route))
             {
-                routes[route] = FocusRouteAggregate.Empty;
+                routes[route] = FocusRouteAggregate.Empty.WithRoutePresence();
             }
         }
 
@@ -610,30 +698,42 @@ public static class VizActivityCanvasLayoutBuilder
             if (RegionFromAddress(route.SourceAddress) == focusRegionId)
             {
                 byNeuronAddress.TryGetValue(route.SourceAddress, out var existing);
-                byNeuronAddress[route.SourceAddress] = existing.Merge(aggregate.EventCount, aggregate.LastTick);
+                byNeuronAddress[route.SourceAddress] = existing.WithOutboundCount(aggregate.EventCount, aggregate.LastTick);
             }
 
             if (RegionFromAddress(route.TargetAddress) == focusRegionId)
             {
                 byNeuronAddress.TryGetValue(route.TargetAddress, out var existing);
-                byNeuronAddress[route.TargetAddress] = existing.Merge(aggregate.EventCount, aggregate.LastTick);
+                byNeuronAddress[route.TargetAddress] = existing.WithInboundCount(aggregate.EventCount, aggregate.LastTick);
             }
         }
 
         foreach (var item in events)
         {
-            if (!IsFiredType(item.Type))
+            if (IsFiredType(item.Type))
+            {
+                if (!TryParseAddress(item.Source, out var sourceAddress) || RegionFromAddress(sourceAddress) != focusRegionId)
+                {
+                    continue;
+                }
+
+                byNeuronAddress.TryGetValue(sourceAddress, out var existing);
+                byNeuronAddress[sourceAddress] = existing.WithFired(item.TickId);
+                continue;
+            }
+
+            if (!IsBufferType(item.Type))
             {
                 continue;
             }
 
-            if (!TryParseAddress(item.Source, out var sourceAddress) || RegionFromAddress(sourceAddress) != focusRegionId)
+            if (!TryParseAddress(item.Source, out var bufferAddress) || RegionFromAddress(bufferAddress) != focusRegionId)
             {
                 continue;
             }
 
-            byNeuronAddress.TryGetValue(sourceAddress, out var existing);
-            byNeuronAddress[sourceAddress] = existing.Merge(1, item.TickId);
+            byNeuronAddress.TryGetValue(bufferAddress, out var current);
+            byNeuronAddress[bufferAddress] = current.WithBuffer(item.TickId, item.Value);
         }
 
         if (byNeuronAddress.Count == 0)
@@ -764,7 +864,9 @@ public static class VizActivityCanvasLayoutBuilder
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && string.CompareOrdinal(key.SourceNodeKey, key.TargetNodeKey) > 0 ? -1 : 1;
             var curve = BuildEdgeCurve(sourceCenter, targetCenter, string.Equals(key.SourceNodeKey, key.TargetNodeKey, StringComparison.OrdinalIgnoreCase), curveDirection);
-            var detail = $"{routeLabel} | {kind} | events {aggregate.EventCount} | last tick {aggregate.LastTick} | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}";
+            var detail = $"{routeLabel} | {kind} | routes {aggregate.RouteCount} | events {aggregate.EventCount} | last tick {aggregate.LastTick}"
+                         + $" | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}"
+                         + $" | avg |s| {aggregate.AverageStrength:0.###} | avg s {aggregate.SignedStrength:0.###}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -812,14 +914,29 @@ public static class VizActivityCanvasLayoutBuilder
 
     private static FocusRouteAggregate MergeFocusRouteAggregate(FocusRouteAggregate current, FocusRouteAggregate next)
     {
+        var combinedRouteCount = current.RouteCount + next.RouteCount;
         if (current.EventCount <= 0)
         {
-            return next;
+            return new FocusRouteAggregate(
+                next.EventCount,
+                Math.Max(current.LastTick, next.LastTick),
+                next.AverageMagnitude,
+                next.AverageStrength,
+                next.SignedValue,
+                next.SignedStrength,
+                combinedRouteCount);
         }
 
         if (next.EventCount <= 0)
         {
-            return current;
+            return new FocusRouteAggregate(
+                current.EventCount,
+                Math.Max(current.LastTick, next.LastTick),
+                current.AverageMagnitude,
+                current.AverageStrength,
+                current.SignedValue,
+                current.SignedStrength,
+                combinedRouteCount);
         }
 
         var combinedCount = current.EventCount + next.EventCount;
@@ -831,7 +948,8 @@ public static class VizActivityCanvasLayoutBuilder
             (current.AverageMagnitude * currentWeight) + (next.AverageMagnitude * nextWeight),
             (current.AverageStrength * currentWeight) + (next.AverageStrength * nextWeight),
             (current.SignedValue * currentWeight) + (next.SignedValue * nextWeight),
-            (current.SignedStrength * currentWeight) + (next.SignedStrength * nextWeight));
+            (current.SignedStrength * currentWeight) + (next.SignedStrength * nextWeight),
+            combinedRouteCount);
     }
 
     private static Dictionary<uint, CanvasPoint> BuildRegionPositions(IEnumerable<uint> regionIds)
@@ -1200,6 +1318,26 @@ public static class VizActivityCanvasLayoutBuilder
         return true;
     }
 
+    private static bool TryParseRegion(string? value, out uint regionId)
+    {
+        regionId = 0;
+        if (!uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            if (!TryParseRegionToken(value, out parsed, out _))
+            {
+                return false;
+            }
+        }
+
+        if (parsed > NbnConstants.RegionMaxId)
+        {
+            return false;
+        }
+
+        regionId = parsed;
+        return true;
+    }
+
     private static bool TryParseRegionToken(string? value, out uint regionId, out string remainder)
     {
         regionId = 0;
@@ -1253,6 +1391,9 @@ public static class VizActivityCanvasLayoutBuilder
     private static bool IsFiredType(string? type)
         => !string.IsNullOrWhiteSpace(type) && type.Contains("FIRED", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsBufferType(string? type)
+        => !string.IsNullOrWhiteSpace(type) && type.Contains("BUFFER", StringComparison.OrdinalIgnoreCase);
+
     private static bool TouchesFocusRegion(uint sourceAddress, uint targetAddress, uint focusRegionId)
     {
         var sourceRegion = RegionFromAddress(sourceAddress);
@@ -1287,43 +1428,78 @@ public static class VizActivityCanvasLayoutBuilder
                 existing.EventCount + Math.Max(0, eventCount),
                 Math.Max(existing.LastTick, lastTick),
                 existing.FiredCount,
-                existing.AxonCount);
+                existing.AxonCount,
+                existing.DominantType,
+                existing.AverageMagnitude);
             return;
         }
 
-        byRegion[regionId] = new RegionNodeSource(regionId, Math.Max(0, eventCount), lastTick, 0, Math.Max(0, eventCount));
+        byRegion[regionId] = new RegionNodeSource(regionId, Math.Max(0, eventCount), lastTick, 0, Math.Max(0, eventCount), "unknown", 0f);
     }
 
     private static CanvasEdgeCurve BuildEdgeCurve(CanvasPoint source, CanvasPoint target, bool isSelfLoop, int curveDirection)
     {
+        var normalizedDirection = curveDirection < 0 ? -1 : 1;
+        var cacheKey = new CanvasEdgeCurveKey(
+            QuantizeCurveCoord(source.X),
+            QuantizeCurveCoord(source.Y),
+            QuantizeCurveCoord(target.X),
+            QuantizeCurveCoord(target.Y),
+            isSelfLoop,
+            normalizedDirection);
+        lock (EdgeCurveCacheGate)
+        {
+            if (EdgeCurveCache.TryGetValue(cacheKey, out var cached))
+            {
+                return cached;
+            }
+        }
+
+        CanvasEdgeCurve curve;
         if (isSelfLoop)
         {
             var loopSize = 22;
             var c1 = new CanvasPoint(source.X + loopSize, source.Y - (loopSize * 1.3));
             var end = new CanvasPoint(source.X - 1, source.Y - 1);
-            return new CanvasEdgeCurve(
-                FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {c1.X:0.###} {c1.Y:0.###} {end.X:0.###} {end.Y:0.###}"),
-                source,
-                c1,
-                end);
+            var pathData = FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {c1.X:0.###} {c1.Y:0.###} {end.X:0.###} {end.Y:0.###}");
+            curve = new CanvasEdgeCurve(pathData, source, c1, end);
+        }
+        else
+        {
+            var midX = (source.X + target.X) / 2.0;
+            var midY = (source.Y + target.Y) / 2.0;
+            var deltaX = target.X - source.X;
+            var deltaY = target.Y - source.Y;
+            var length = Math.Max(1.0, Math.Sqrt((deltaX * deltaX) + (deltaY * deltaY)));
+            var normalX = -deltaY / length;
+            var normalY = deltaX / length;
+            var curvature = Math.Min(48.0, 16.0 + (length * 0.12)) * normalizedDirection;
+            var control = new CanvasPoint(midX + (normalX * curvature), midY + (normalY * curvature));
+            var pathData = FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {target.X:0.###} {target.Y:0.###}");
+            curve = new CanvasEdgeCurve(pathData, source, control, target);
         }
 
-        var midX = (source.X + target.X) / 2.0;
-        var midY = (source.Y + target.Y) / 2.0;
-        var deltaX = target.X - source.X;
-        var deltaY = target.Y - source.Y;
-        var length = Math.Max(1.0, Math.Sqrt((deltaX * deltaX) + (deltaY * deltaY)));
-        var normalX = -deltaY / length;
-        var normalY = deltaX / length;
-        var curvature = Math.Min(48.0, 16.0 + (length * 0.12)) * curveDirection;
-        var control = new CanvasPoint(midX + (normalX * curvature), midY + (normalY * curvature));
+        lock (EdgeCurveCacheGate)
+        {
+            if (!EdgeCurveCache.ContainsKey(cacheKey))
+            {
+                if (EdgeCurveCache.Count >= EdgeCurveCacheMaxEntries && EdgeCurveCacheOrder.Count > 0)
+                {
+                    var evicted = EdgeCurveCacheOrder.Dequeue();
+                    EdgeCurveCache.Remove(evicted);
+                }
 
-        return new CanvasEdgeCurve(
-            FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {target.X:0.###} {target.Y:0.###}"),
-            source,
-            control,
-            target);
+                EdgeCurveCache[cacheKey] = curve;
+                EdgeCurveCacheOrder.Enqueue(cacheKey);
+                return curve;
+            }
+
+            return EdgeCurveCache[cacheKey];
+        }
     }
+
+    private static int QuantizeCurveCoord(double value)
+        => (int)Math.Round(value * 1000.0, MidpointRounding.AwayFromZero);
 
     private static double TickRecency(ulong itemTick, ulong latestTick, int tickWindow)
     {
@@ -1380,7 +1556,55 @@ public static class VizActivityCanvasLayoutBuilder
 
     private readonly record struct CanvasEdgeCurve(string PathData, CanvasPoint Start, CanvasPoint Control, CanvasPoint End);
 
-    private sealed record RegionNodeSource(uint RegionId, int EventCount, ulong LastTick, int FiredCount, int AxonCount);
+    private readonly record struct CanvasEdgeCurveKey(
+        int SourceX,
+        int SourceY,
+        int TargetX,
+        int TargetY,
+        bool IsSelfLoop,
+        int CurveDirection);
+
+    private sealed record RegionNodeSource(
+        uint RegionId,
+        int EventCount,
+        ulong LastTick,
+        int FiredCount,
+        int AxonCount,
+        string DominantType,
+        float AverageMagnitude);
+
+    private readonly record struct RegionBufferMetric(
+        int BufferCount,
+        ulong LatestBufferTick,
+        float LatestBufferValue,
+        float AverageBufferValue)
+    {
+        public static RegionBufferMetric Empty { get; } = new(0, 0, 0f, 0f);
+
+        public RegionBufferMetric Merge(ulong tickId, float value)
+        {
+            var nextCount = BufferCount + 1;
+            var weight = nextCount == 0 ? 0f : 1f / nextCount;
+            var nextAverage = (AverageBufferValue * (1f - weight)) + (value * weight);
+            if (tickId >= LatestBufferTick)
+            {
+                return new RegionBufferMetric(nextCount, tickId, value, nextAverage);
+            }
+
+            return new RegionBufferMetric(nextCount, LatestBufferTick, LatestBufferValue, nextAverage);
+        }
+    }
+
+    private readonly record struct RegionRouteDegree(int OutboundCount, int InboundCount)
+    {
+        public static RegionRouteDegree Empty { get; } = new(0, 0);
+
+        public RegionRouteDegree IncrementOutbound()
+            => new(OutboundCount + 1, InboundCount);
+
+        public RegionRouteDegree IncrementInbound()
+            => new(OutboundCount, InboundCount + 1);
+    }
 
     private readonly record struct RouteAggregate(
         int EventCount,
@@ -1388,9 +1612,10 @@ public static class VizActivityCanvasLayoutBuilder
         float AverageMagnitude,
         float AverageStrength,
         float SignedValue,
-        float SignedStrength)
+        float SignedStrength,
+        int RouteCount)
     {
-        public static RouteAggregate Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f);
+        public static RouteAggregate Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f, 0);
 
         public RouteAggregate Merge(
             int eventCount,
@@ -1398,7 +1623,8 @@ public static class VizActivityCanvasLayoutBuilder
             float averageMagnitude,
             float averageStrength,
             float averageSignedValue,
-            float averageSignedStrength)
+            float averageSignedStrength,
+            int routeCountIncrement = 1)
         {
             var nextCount = EventCount + Math.Max(0, eventCount);
             var weight = nextCount == 0 ? 0f : (float)Math.Max(0, eventCount) / nextCount;
@@ -1406,7 +1632,8 @@ public static class VizActivityCanvasLayoutBuilder
             var nextStrength = (AverageStrength * (1f - weight)) + (averageStrength * weight);
             var nextSignedValue = (SignedValue * (1f - weight)) + (averageSignedValue * weight);
             var nextSignedStrength = (SignedStrength * (1f - weight)) + (averageSignedStrength * weight);
-            return new RouteAggregate(nextCount, Math.Max(LastTick, lastTick), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength);
+            var nextRouteCount = RouteCount + Math.Max(0, routeCountIncrement);
+            return new RouteAggregate(nextCount, Math.Max(LastTick, lastTick), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength, nextRouteCount);
         }
     }
 
@@ -1416,9 +1643,10 @@ public static class VizActivityCanvasLayoutBuilder
         float AverageMagnitude,
         float AverageStrength,
         float SignedValue,
-        float SignedStrength)
+        float SignedStrength,
+        int RouteCount)
     {
-        public static FocusRouteAggregate Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f);
+        public static FocusRouteAggregate Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f, 0);
 
         public FocusRouteAggregate Merge(ulong tickId, float value, float strength)
         {
@@ -1428,8 +1656,11 @@ public static class VizActivityCanvasLayoutBuilder
             var nextStrength = (AverageStrength * (1f - weight)) + (Math.Abs(strength) * weight);
             var nextSignedValue = (SignedValue * (1f - weight)) + (value * weight);
             var nextSignedStrength = (SignedStrength * (1f - weight)) + (strength * weight);
-            return new FocusRouteAggregate(nextCount, Math.Max(LastTick, tickId), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength);
+            return new FocusRouteAggregate(nextCount, Math.Max(LastTick, tickId), nextMagnitude, nextStrength, nextSignedValue, nextSignedStrength, Math.Max(1, RouteCount));
         }
+
+        public FocusRouteAggregate WithRoutePresence()
+            => RouteCount >= 1 ? this : new FocusRouteAggregate(EventCount, LastTick, AverageMagnitude, AverageStrength, SignedValue, SignedStrength, 1);
     }
 
     private readonly record struct FocusDisplayRouteKey(
@@ -1438,12 +1669,97 @@ public static class VizActivityCanvasLayoutBuilder
         uint SourceRegionId,
         uint TargetRegionId);
 
-    private readonly record struct FocusNeuronStat(int EventCount, ulong LastTick)
+    private readonly record struct FocusNeuronStat(
+        int EventCount,
+        ulong LastTick,
+        int FiredCount,
+        int OutboundCount,
+        int InboundCount,
+        int BufferCount,
+        ulong LatestBufferTick,
+        float LatestBufferValue,
+        float AverageBufferValue)
     {
-        public static FocusNeuronStat Empty { get; } = new(0, 0);
+        public static FocusNeuronStat Empty { get; } = new(0, 0, 0, 0, 0, 0, 0, 0f, 0f);
 
         public FocusNeuronStat Merge(int eventCount, ulong lastTick)
-            => new(EventCount + Math.Max(0, eventCount), Math.Max(LastTick, lastTick));
+            => new(
+                EventCount + Math.Max(0, eventCount),
+                Math.Max(LastTick, lastTick),
+                FiredCount,
+                OutboundCount,
+                InboundCount,
+                BufferCount,
+                LatestBufferTick,
+                LatestBufferValue,
+                AverageBufferValue);
+
+        public FocusNeuronStat WithOutboundCount(int eventCount, ulong lastTick)
+            => new(
+                EventCount + Math.Max(0, eventCount),
+                Math.Max(LastTick, lastTick),
+                FiredCount,
+                OutboundCount + Math.Max(0, eventCount),
+                InboundCount,
+                BufferCount,
+                LatestBufferTick,
+                LatestBufferValue,
+                AverageBufferValue);
+
+        public FocusNeuronStat WithInboundCount(int eventCount, ulong lastTick)
+            => new(
+                EventCount + Math.Max(0, eventCount),
+                Math.Max(LastTick, lastTick),
+                FiredCount,
+                OutboundCount,
+                InboundCount + Math.Max(0, eventCount),
+                BufferCount,
+                LatestBufferTick,
+                LatestBufferValue,
+                AverageBufferValue);
+
+        public FocusNeuronStat WithFired(ulong tickId)
+            => new(
+                EventCount + 1,
+                Math.Max(LastTick, tickId),
+                FiredCount + 1,
+                OutboundCount,
+                InboundCount,
+                BufferCount,
+                LatestBufferTick,
+                LatestBufferValue,
+                AverageBufferValue);
+
+        public FocusNeuronStat WithBuffer(ulong tickId, float value)
+        {
+            var nextBufferCount = BufferCount + 1;
+            var weight = nextBufferCount == 0 ? 0f : 1f / nextBufferCount;
+            var nextAverageBuffer = (AverageBufferValue * (1f - weight)) + (value * weight);
+            if (tickId >= LatestBufferTick)
+            {
+                return new FocusNeuronStat(
+                    EventCount + 1,
+                    Math.Max(LastTick, tickId),
+                    FiredCount,
+                    OutboundCount,
+                    InboundCount,
+                    nextBufferCount,
+                    tickId,
+                    value,
+                    nextAverageBuffer);
+            }
+
+            return new FocusNeuronStat(
+                EventCount + 1,
+                Math.Max(LastTick, tickId),
+                FiredCount,
+                OutboundCount,
+                InboundCount,
+                nextBufferCount,
+                LatestBufferTick,
+                LatestBufferValue,
+                nextAverageBuffer);
+        }
     }
 
     private readonly record struct GatewayStat(bool HasInbound, bool HasOutbound, int EventCount, ulong LastTick)

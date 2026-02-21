@@ -141,6 +141,54 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public async Task KeepCanvasHoverAlive_CancelsDeferredClear()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 100, top: 100);
+
+        RebuildHitIndexMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge>()
+            });
+
+        vm.SetCanvasNodeHover(node);
+        vm.ClearCanvasHoverDeferred(delayMs: 20);
+        await Task.Delay(10);
+        vm.KeepCanvasHoverAlive();
+        await Task.Delay(90);
+
+        Assert.True(vm.IsCanvasHoverCardVisible);
+        Assert.Equal(node.Detail, vm.CanvasHoverCardText);
+    }
+
+    [Fact]
+    public void TryResolveCanvasHit_NodeHitPadding_ResolvesNearMissWithoutStickyHover()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 100, top: 100);
+
+        RebuildHitIndexMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge>()
+            });
+
+        var nearMissX = (node.Left + node.Diameter) + 1.8;
+        var nearMissY = node.Top + (node.Diameter / 2.0);
+        var hit = vm.TryResolveCanvasHit(nearMissX, nearMissY, out var hitNode, out var hitEdge);
+
+        Assert.True(hit);
+        Assert.NotNull(hitNode);
+        Assert.Null(hitEdge);
+        Assert.Equal(node.NodeKey, hitNode!.NodeKey);
+    }
+
+    [Fact]
     public void BuildCanvasDiagnosticsReport_IncludesPerformanceMetrics()
     {
         var vm = CreateViewModel();
