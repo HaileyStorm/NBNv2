@@ -30,6 +30,10 @@ public sealed class VizPanelViewModel : ViewModelBase
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private const int HoverClearDelayMs = 72;
     private const int EdgeHitSamples = 12;
+    private const double HitTestCellSize = 54;
+    private const double EdgeHitIndexPadding = 4;
+    private const double StickyNodeHitPadding = 6;
+    private const double StickyEdgeHitPadding = 6;
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 280;
     private const double HoverCardMaxHeight = 132;
@@ -74,6 +78,14 @@ public sealed class VizPanelViewModel : ViewModelBase
     private double _canvasHoverCardLeft = 8;
     private double _canvasHoverCardTop = 8;
     private int _hoverClearRevision;
+    private IReadOnlyList<VizActivityCanvasNode> _canvasNodeSnapshot = Array.Empty<VizActivityCanvasNode>();
+    private IReadOnlyList<VizActivityCanvasEdge> _canvasEdgeSnapshot = Array.Empty<VizActivityCanvasEdge>();
+    private readonly Dictionary<long, List<int>> _nodeHitIndex = new();
+    private readonly Dictionary<long, List<int>> _edgeHitIndex = new();
+    private readonly HashSet<int> _nodeHitCandidates = new();
+    private readonly HashSet<int> _edgeHitCandidates = new();
+    private readonly Dictionary<string, VizActivityCanvasNode> _canvasNodeByKey = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, VizActivityCanvasEdge> _canvasEdgeByRoute = new(StringComparer.OrdinalIgnoreCase);
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -565,14 +577,21 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         edge = HitTestCanvasEdge(pointerX, pointerY);
-        return edge is not null;
+        if (edge is not null)
+        {
+            return true;
+        }
+
+        return TryResolveStickyHoverHit(pointerX, pointerY, out node, out edge);
     }
 
     public bool TrySelectHoveredCanvasItem(bool togglePin)
     {
         if (!string.IsNullOrWhiteSpace(_hoverCanvasNodeKey))
         {
-            var node = CanvasNodes.FirstOrDefault(item => string.Equals(item.NodeKey, _hoverCanvasNodeKey, StringComparison.OrdinalIgnoreCase));
+            var node = _canvasNodeByKey.TryGetValue(_hoverCanvasNodeKey!, out var keyedNode)
+                ? keyedNode
+                : CanvasNodes.FirstOrDefault(item => string.Equals(item.NodeKey, _hoverCanvasNodeKey, StringComparison.OrdinalIgnoreCase));
             if (node is not null)
             {
                 if (togglePin)
@@ -593,7 +612,9 @@ public sealed class VizPanelViewModel : ViewModelBase
             return false;
         }
 
-        var edge = CanvasEdges.FirstOrDefault(item => string.Equals(item.RouteLabel, _hoverCanvasRouteLabel, StringComparison.OrdinalIgnoreCase));
+        var edge = _canvasEdgeByRoute.TryGetValue(_hoverCanvasRouteLabel!, out var keyedEdge)
+            ? keyedEdge
+            : CanvasEdges.FirstOrDefault(item => string.Equals(item.RouteLabel, _hoverCanvasRouteLabel, StringComparison.OrdinalIgnoreCase));
         if (edge is null)
         {
             return false;
@@ -1108,6 +1129,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             ReplaceItems(CanvasNodes, Array.Empty<VizActivityCanvasNode>());
             ReplaceItems(CanvasEdges, Array.Empty<VizActivityCanvasEdge>());
+            RebuildCanvasHitIndex(Array.Empty<VizActivityCanvasNode>(), Array.Empty<VizActivityCanvasEdge>());
             ActivityCanvasLegend = "Canvas renderer awaiting activity.";
             ActivityInteractionSummary = "Selected: none | Hover: none";
             ActivityPinnedSummary = "Pinned: none.";
@@ -1139,6 +1161,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         ReplaceItems(CanvasNodes, canvas.Nodes);
         ReplaceItems(CanvasEdges, canvas.Edges);
+        RebuildCanvasHitIndex(canvas.Nodes, canvas.Edges);
         ActivityCanvasLegend = canvas.Legend;
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
         RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
@@ -1823,11 +1846,214 @@ public sealed class VizPanelViewModel : ViewModelBase
         Interlocked.Increment(ref _hoverClearRevision);
     }
 
+    private void RebuildCanvasHitIndex(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges)
+    {
+        _canvasNodeSnapshot = nodes;
+        _canvasEdgeSnapshot = edges;
+        _nodeHitIndex.Clear();
+        _edgeHitIndex.Clear();
+        _nodeHitCandidates.Clear();
+        _edgeHitCandidates.Clear();
+        _canvasNodeByKey.Clear();
+        _canvasEdgeByRoute.Clear();
+
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            var node = nodes[index];
+            if (!string.IsNullOrWhiteSpace(node.NodeKey))
+            {
+                _canvasNodeByKey[node.NodeKey] = node;
+            }
+
+            AddIndexEntry(
+                _nodeHitIndex,
+                index,
+                node.Left,
+                node.Top,
+                node.Left + node.Diameter,
+                node.Top + node.Diameter);
+        }
+
+        for (var index = 0; index < edges.Count; index++)
+        {
+            var edge = edges[index];
+            if (!string.IsNullOrWhiteSpace(edge.RouteLabel))
+            {
+                _canvasEdgeByRoute[edge.RouteLabel] = edge;
+            }
+
+            var threshold = Math.Max(4.0, edge.HitTestThickness * 0.5) + EdgeHitIndexPadding;
+            var minX = Math.Min(edge.SourceX, Math.Min(edge.ControlX, edge.TargetX)) - threshold;
+            var minY = Math.Min(edge.SourceY, Math.Min(edge.ControlY, edge.TargetY)) - threshold;
+            var maxX = Math.Max(edge.SourceX, Math.Max(edge.ControlX, edge.TargetX)) + threshold;
+            var maxY = Math.Max(edge.SourceY, Math.Max(edge.ControlY, edge.TargetY)) + threshold;
+
+            AddIndexEntry(_edgeHitIndex, index, minX, minY, maxX, maxY);
+        }
+    }
+
+    private static void AddIndexEntry(
+        IDictionary<long, List<int>> index,
+        int itemIndex,
+        double minX,
+        double minY,
+        double maxX,
+        double maxY)
+    {
+        if (!double.IsFinite(minX)
+            || !double.IsFinite(minY)
+            || !double.IsFinite(maxX)
+            || !double.IsFinite(maxY))
+        {
+            return;
+        }
+
+        var startX = (int)Math.Floor(minX / HitTestCellSize);
+        var endX = (int)Math.Floor(maxX / HitTestCellSize);
+        var startY = (int)Math.Floor(minY / HitTestCellSize);
+        var endY = (int)Math.Floor(maxY / HitTestCellSize);
+
+        for (var cellX = startX; cellX <= endX; cellX++)
+        {
+            for (var cellY = startY; cellY <= endY; cellY++)
+            {
+                var key = CellKey(cellX, cellY);
+                if (!index.TryGetValue(key, out var entries))
+                {
+                    entries = new List<int>(4);
+                    index[key] = entries;
+                }
+
+                entries.Add(itemIndex);
+            }
+        }
+    }
+
+    private static void CollectHitCandidates(
+        IReadOnlyDictionary<long, List<int>> index,
+        double pointerX,
+        double pointerY,
+        ISet<int> candidates)
+    {
+        candidates.Clear();
+
+        var cellX = (int)Math.Floor(pointerX / HitTestCellSize);
+        var cellY = (int)Math.Floor(pointerY / HitTestCellSize);
+        for (var dx = -1; dx <= 1; dx++)
+        {
+            for (var dy = -1; dy <= 1; dy++)
+            {
+                if (!index.TryGetValue(CellKey(cellX + dx, cellY + dy), out var entries))
+                {
+                    continue;
+                }
+
+                foreach (var indexValue in entries)
+                {
+                    candidates.Add(indexValue);
+                }
+            }
+        }
+    }
+
+    private static long CellKey(int cellX, int cellY)
+        => ((long)cellX << 32) ^ (uint)cellY;
+
+    private bool TryResolveStickyHoverHit(
+        double pointerX,
+        double pointerY,
+        out VizActivityCanvasNode? node,
+        out VizActivityCanvasEdge? edge)
+    {
+        if (!string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
+            && _canvasNodeByKey.TryGetValue(_hoverCanvasNodeKey!, out var hoveredNode))
+        {
+            var centerX = hoveredNode.Left + (hoveredNode.Diameter / 2.0);
+            var centerY = hoveredNode.Top + (hoveredNode.Diameter / 2.0);
+            var radius = (hoveredNode.Diameter / 2.0) + StickyNodeHitPadding;
+            var dx = pointerX - centerX;
+            var dy = pointerY - centerY;
+            if ((dx * dx) + (dy * dy) <= radius * radius)
+            {
+                node = hoveredNode;
+                edge = null;
+                return true;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
+            && _canvasEdgeByRoute.TryGetValue(_hoverCanvasRouteLabel!, out var hoveredEdge))
+        {
+            var threshold = Math.Max(4.0, hoveredEdge.HitTestThickness * 0.5) + StickyEdgeHitPadding;
+            var distance = DistanceToQuadraticBezier(
+                pointerX,
+                pointerY,
+                hoveredEdge.SourceX,
+                hoveredEdge.SourceY,
+                hoveredEdge.ControlX,
+                hoveredEdge.ControlY,
+                hoveredEdge.TargetX,
+                hoveredEdge.TargetY);
+            if (distance <= threshold)
+            {
+                node = null;
+                edge = hoveredEdge;
+                return true;
+            }
+        }
+
+        node = null;
+        edge = null;
+        return false;
+    }
+
     private VizActivityCanvasNode? HitTestCanvasNode(double pointerX, double pointerY)
     {
+        if (_canvasNodeSnapshot.Count == 0)
+        {
+            return null;
+        }
+
+        CollectHitCandidates(_nodeHitIndex, pointerX, pointerY, _nodeHitCandidates);
+        var shouldFallbackToFullScan = _nodeHitCandidates.Count == 0 && _canvasNodeSnapshot.Count <= 10;
+
         VizActivityCanvasNode? best = null;
         var bestDistance = double.MaxValue;
-        foreach (var node in CanvasNodes)
+        if (_nodeHitCandidates.Count > 0)
+        {
+            foreach (var index in _nodeHitCandidates)
+            {
+                var node = _canvasNodeSnapshot[index];
+                var centerX = node.Left + (node.Diameter / 2.0);
+                var centerY = node.Top + (node.Diameter / 2.0);
+                var radius = node.Diameter / 2.0;
+                var dx = pointerX - centerX;
+                var dy = pointerY - centerY;
+                var distanceSquared = (dx * dx) + (dy * dy);
+                var radiusSquared = radius * radius;
+                if (distanceSquared > radiusSquared)
+                {
+                    continue;
+                }
+
+                if (distanceSquared < bestDistance)
+                {
+                    bestDistance = distanceSquared;
+                    best = node;
+                }
+            }
+
+            return best;
+        }
+
+        if (!shouldFallbackToFullScan)
+        {
+            return null;
+        }
+
+        foreach (var node in _canvasNodeSnapshot)
         {
             var centerX = node.Left + (node.Diameter / 2.0);
             var centerY = node.Top + (node.Diameter / 2.0);
@@ -1853,9 +2079,52 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private VizActivityCanvasEdge? HitTestCanvasEdge(double pointerX, double pointerY)
     {
+        if (_canvasEdgeSnapshot.Count == 0)
+        {
+            return null;
+        }
+
+        CollectHitCandidates(_edgeHitIndex, pointerX, pointerY, _edgeHitCandidates);
+        var shouldFallbackToFullScan = _edgeHitCandidates.Count == 0 && _canvasEdgeSnapshot.Count <= 6;
+
         VizActivityCanvasEdge? best = null;
         var bestDistance = double.MaxValue;
-        foreach (var edge in CanvasEdges)
+        if (_edgeHitCandidates.Count > 0)
+        {
+            foreach (var index in _edgeHitCandidates)
+            {
+                var edge = _canvasEdgeSnapshot[index];
+                var threshold = Math.Max(4.0, edge.HitTestThickness * 0.5);
+                var distance = DistanceToQuadraticBezier(
+                    pointerX,
+                    pointerY,
+                    edge.SourceX,
+                    edge.SourceY,
+                    edge.ControlX,
+                    edge.ControlY,
+                    edge.TargetX,
+                    edge.TargetY);
+                if (distance > threshold)
+                {
+                    continue;
+                }
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = edge;
+                }
+            }
+
+            return best;
+        }
+
+        if (!shouldFallbackToFullScan)
+        {
+            return null;
+        }
+
+        foreach (var edge in _canvasEdgeSnapshot)
         {
             var threshold = Math.Max(4.0, edge.HitTestThickness * 0.5);
             var distance = DistanceToQuadraticBezier(

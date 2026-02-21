@@ -17,13 +17,27 @@ public sealed class RegionShardCpuBackend
         _costConfig = costConfig ?? RegionShardCostConfig.Default;
     }
 
-    public RegionShardComputeResult Compute(ulong tickId, Guid brainId, ShardId32 shardId, RegionShardRoutingTable routing)
+    public RegionShardComputeResult Compute(
+        ulong tickId,
+        Guid brainId,
+        ShardId32 shardId,
+        RegionShardRoutingTable routing,
+        RegionShardVisualizationComputeScope? visualization = null)
     {
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
+        var vizScope = visualization ?? RegionShardVisualizationComputeScope.EnabledAll;
+        var focusedRegionId = vizScope.FocusRegionId;
+        var collectNeuronViz = vizScope.Enabled
+                               && (!focusedRegionId.HasValue || focusedRegionId.Value == (uint)_state.RegionId);
+        var collectAxonViz = vizScope.Enabled;
 
         var outbox = new Dictionary<ShardId32, List<Contribution>>();
-        var axonVizRoutes = new Dictionary<AxonVizRouteKey, AxonVizAccumulator>();
-        var firedNeuronViz = new List<RegionShardNeuronVizEvent>();
+        Dictionary<AxonVizRouteKey, AxonVizAccumulator>? axonVizRoutes = collectAxonViz
+            ? new Dictionary<AxonVizRouteKey, AxonVizAccumulator>()
+            : null;
+        List<RegionShardNeuronVizEvent>? firedNeuronViz = collectNeuronViz
+            ? new List<RegionShardNeuronVizEvent>()
+            : null;
         List<OutputEvent>? outputs = _state.IsOutputRegion ? new List<OutputEvent>() : null;
         float[]? outputVector = _state.IsOutputRegion ? new float[_state.NeuronCount] : null;
         var brainProto = brainId.ToProtoUuid();
@@ -95,7 +109,7 @@ public sealed class RegionShardCpuBackend
             firedCount++;
             var sourceNeuronId = _state.NeuronStart + i;
             var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
-            firedNeuronViz.Add(new RegionShardNeuronVizEvent(sourceAddress, tickId, potential));
+            firedNeuronViz?.Add(new RegionShardNeuronVizEvent(sourceAddress, tickId, potential));
 
             if (outputs is not null)
             {
@@ -141,14 +155,21 @@ public sealed class RegionShardCpuBackend
                 });
                 outContribs++;
 
-                var targetAddress = ComposeAddress(destRegion, destNeuron);
-                var routeKey = new AxonVizRouteKey(sourceAddress, targetAddress);
-                if (!axonVizRoutes.TryGetValue(routeKey, out var routeAggregate))
+                var shouldCollectRouteViz = axonVizRoutes is not null
+                    && (!focusedRegionId.HasValue
+                        || focusedRegionId.Value == (uint)_state.RegionId
+                        || focusedRegionId.Value == destRegion);
+                if (shouldCollectRouteViz)
                 {
-                    routeAggregate = AxonVizAccumulator.Empty;
-                }
+                    var targetAddress = ComposeAddress(destRegion, destNeuron);
+                    var routeKey = new AxonVizRouteKey(sourceAddress, targetAddress);
+                    if (!axonVizRoutes!.TryGetValue(routeKey, out var routeAggregate))
+                    {
+                        routeAggregate = AxonVizAccumulator.Empty;
+                    }
 
-                axonVizRoutes[routeKey] = routeAggregate.Merge(tickId, value, strength);
+                    axonVizRoutes[routeKey] = routeAggregate.Merge(tickId, value, strength);
+                }
 
                 var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
                 costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
@@ -160,19 +181,33 @@ public sealed class RegionShardCpuBackend
 
         IReadOnlyList<OutputEvent> outputList = outputs ?? (IReadOnlyList<OutputEvent>)Array.Empty<OutputEvent>();
         IReadOnlyList<float> outputVectorList = outputVector ?? Array.Empty<float>();
-        var axonVizEvents = new List<RegionShardAxonVizEvent>(axonVizRoutes.Count);
-        foreach (var (routeKey, routeAggregate) in axonVizRoutes)
+        IReadOnlyList<RegionShardAxonVizEvent> axonVizEvents;
+        if (axonVizRoutes is null || axonVizRoutes.Count == 0)
         {
-            axonVizEvents.Add(new RegionShardAxonVizEvent(
-                routeKey.SourceAddress,
-                routeKey.TargetAddress,
-                routeAggregate.EventCount,
-                routeAggregate.LastTick,
-                routeAggregate.AverageSignedValue,
-                routeAggregate.AverageMagnitude,
-                routeAggregate.AverageSignedStrength,
-                routeAggregate.AverageStrength));
+            axonVizEvents = Array.Empty<RegionShardAxonVizEvent>();
         }
+        else
+        {
+            var events = new List<RegionShardAxonVizEvent>(axonVizRoutes.Count);
+            foreach (var (routeKey, routeAggregate) in axonVizRoutes)
+            {
+                events.Add(new RegionShardAxonVizEvent(
+                    routeKey.SourceAddress,
+                    routeKey.TargetAddress,
+                    routeAggregate.EventCount,
+                    routeAggregate.LastTick,
+                    routeAggregate.AverageSignedValue,
+                    routeAggregate.AverageMagnitude,
+                    routeAggregate.AverageSignedStrength,
+                    routeAggregate.AverageStrength));
+            }
+
+            axonVizEvents = events;
+        }
+
+        IReadOnlyList<RegionShardNeuronVizEvent> neuronVizEvents = firedNeuronViz is null
+            ? Array.Empty<RegionShardNeuronVizEvent>()
+            : firedNeuronViz;
 
         return new RegionShardComputeResult(
             outbox,
@@ -182,7 +217,7 @@ public sealed class RegionShardCpuBackend
             outContribs,
             costSummary,
             axonVizEvents,
-            firedNeuronViz);
+            neuronVizEvents);
     }
 
     private void MergeInbox(int index)
@@ -468,6 +503,14 @@ public readonly record struct RegionShardNeuronVizEvent(
     uint SourceAddress,
     ulong TickId,
     float Potential);
+
+public readonly record struct RegionShardVisualizationComputeScope(
+    bool Enabled,
+    uint? FocusRegionId)
+{
+    public static RegionShardVisualizationComputeScope EnabledAll { get; } = new(true, null);
+    public static RegionShardVisualizationComputeScope Disabled { get; } = new(false, null);
+}
 
 public sealed record RegionShardComputeResult(
     Dictionary<ShardId32, List<Contribution>> Outbox,

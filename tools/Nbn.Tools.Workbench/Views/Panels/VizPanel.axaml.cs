@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -7,6 +8,12 @@ namespace Nbn.Tools.Workbench.Views.Panels;
 
 public partial class VizPanel : UserControl
 {
+    private const double HoverHitTestMinIntervalMs = 16;
+    private const double HoverHitTestMinMovePx = 1.8;
+    private long _lastHoverHitTestTimestamp;
+    private Point _lastHoverHitTestPoint;
+    private bool _hasHoverHitTestPoint;
+
     public VizPanel()
     {
         InitializeComponent();
@@ -22,6 +29,11 @@ public partial class VizPanel : UserControl
         }
 
         var point = e.GetPosition(visual);
+        if (!ShouldProcessHoverPointerMove(point))
+        {
+            return;
+        }
+
         if (!ViewModel.TryResolveCanvasHit(point.X, point.Y, out var node, out var edge))
         {
             ViewModel.ClearCanvasHoverDeferred();
@@ -96,6 +108,32 @@ public partial class VizPanel : UserControl
 
     private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
     {
+        _hasHoverHitTestPoint = false;
         ViewModel?.ClearCanvasHoverDeferred();
+    }
+
+    private bool ShouldProcessHoverPointerMove(Point point)
+    {
+        var now = Stopwatch.GetTimestamp();
+        if (!_hasHoverHitTestPoint)
+        {
+            _hasHoverHitTestPoint = true;
+            _lastHoverHitTestTimestamp = now;
+            _lastHoverHitTestPoint = point;
+            return true;
+        }
+
+        var elapsedMs = ((double)(now - _lastHoverHitTestTimestamp) * 1000.0) / Stopwatch.Frequency;
+        var dx = point.X - _lastHoverHitTestPoint.X;
+        var dy = point.Y - _lastHoverHitTestPoint.Y;
+        var movedEnough = ((dx * dx) + (dy * dy)) >= (HoverHitTestMinMovePx * HoverHitTestMinMovePx);
+        if (elapsedMs < HoverHitTestMinIntervalMs && !movedEnough)
+        {
+            return false;
+        }
+
+        _lastHoverHitTestTimestamp = now;
+        _lastHoverHitTestPoint = point;
+        return true;
     }
 }
