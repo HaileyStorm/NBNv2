@@ -70,6 +70,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ZoomCommand = new RelayCommand(ZoomRegion);
         ShowFullBrainCommand = new RelayCommand(ShowFullBrain);
         ToggleProjectionSnapshotCommand = new RelayCommand(() => ShowProjectionSnapshot = !ShowProjectionSnapshot);
+        CopyCanvasDiagnosticsCommand = new AsyncRelayCommand(CopyCanvasDiagnosticsAsync);
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
@@ -261,6 +262,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand ShowFullBrainCommand { get; }
 
     public RelayCommand ToggleProjectionSnapshotCommand { get; }
+
+    public AsyncRelayCommand CopyCanvasDiagnosticsCommand { get; }
 
     public RelayCommand ApplyActivityOptionsCommand { get; }
 
@@ -665,6 +668,76 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
+    private async Task CopyCanvasDiagnosticsAsync()
+    {
+        var report = BuildCanvasDiagnosticsReport();
+        SelectedPayload = report;
+
+        if (await TrySetClipboardTextAsync(report))
+        {
+            Status = $"Copied visualizer diagnostics ({report.Length} chars).";
+        }
+        else
+        {
+            Status = "Clipboard unavailable; diagnostics copied to payload panel.";
+        }
+    }
+
+    private string BuildCanvasDiagnosticsReport()
+    {
+        var sb = new StringBuilder(capacity: 8192);
+        var utcNow = DateTimeOffset.UtcNow;
+        var selectedBrainText = SelectedBrain?.BrainId.ToString("D") ?? "none";
+        var selectedTypeText = SelectedVizType.TypeFilter ?? "all";
+
+        sb.AppendLine($"Visualizer diagnostics @ {utcNow:O}");
+        sb.AppendLine($"selected_brain={selectedBrainText} known_brains={KnownBrains.Count} selected_type={selectedTypeText}");
+        sb.AppendLine(
+            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents}");
+        sb.AppendLine(
+            $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count}");
+        sb.AppendLine($"summary={ActivitySummary}");
+        sb.AppendLine($"legend={ActivityCanvasLegend}");
+        sb.AppendLine($"interaction={ActivityInteractionSummary}");
+        sb.AppendLine($"pinned={ActivityPinnedSummary}");
+        sb.AppendLine();
+
+        sb.AppendLine("ActivityStats:");
+        foreach (var stat in ActivityStats.Take(20))
+        {
+            sb.AppendLine($"- {stat.Label}: {stat.Value} ({stat.Detail})");
+        }
+
+        sb.AppendLine("CanvasNodes:");
+        foreach (var node in CanvasNodes
+                     .OrderByDescending(item => item.EventCount)
+                     .ThenBy(item => item.RegionId)
+                     .Take(24))
+        {
+            sb.AppendLine(
+                $"- {node.Label} region={node.RegionId} events={node.EventCount} tick={node.LastTick} left={node.Left:0.##} top={node.Top:0.##} size={node.Diameter:0.##} selected={node.IsSelected} hover={node.IsHovered} pinned={node.IsPinned}");
+        }
+
+        sb.AppendLine("CanvasEdges:");
+        foreach (var edge in CanvasEdges
+                     .OrderByDescending(item => item.EventCount)
+                     .ThenBy(item => item.RouteLabel, StringComparer.OrdinalIgnoreCase)
+                     .Take(24))
+        {
+            sb.AppendLine(
+                $"- {edge.RouteLabel} events={edge.EventCount} tick={edge.LastTick} stroke={edge.StrokeThickness:0.##} opacity={edge.Opacity:0.##} src={edge.SourceRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} dst={edge.TargetRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} selected={edge.IsSelected} hover={edge.IsHovered} pinned={edge.IsPinned}");
+        }
+
+        sb.AppendLine("RecentVizEvents:");
+        foreach (var item in VizEvents.Take(40))
+        {
+            sb.AppendLine(
+                $"- tick={item.TickId} type={item.Type} region={NormalizeDiagnosticText(item.Region)} source={NormalizeDiagnosticText(item.Source)} target={NormalizeDiagnosticText(item.Target)} value={item.Value:0.######} strength={item.Strength:0.######}");
+        }
+
+        return sb.ToString();
+    }
+
     private static bool ShouldIncludeInVisualizer(VizEventItem item)
     {
         if (Guid.TryParse(item.BrainId, out _))
@@ -1025,6 +1098,26 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         return $"[{item.Type}] brain={item.BrainId} tick={item.TickId}\nregion={item.Region} source={item.Source} target={item.Target}\nvalue={item.Value} strength={item.Strength}\nEventId={item.EventId}";
+    }
+
+    private static string NormalizeDiagnosticText(string? value)
+        => string.IsNullOrWhiteSpace(value) ? "<empty>" : value.Trim();
+
+    private static async Task<bool> TrySetClipboardTextAsync(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow }
+            && mainWindow.Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(text);
+            return true;
+        }
+
+        return false;
     }
 
     private static async Task<IStorageFile?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)

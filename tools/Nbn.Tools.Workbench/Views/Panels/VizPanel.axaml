@@ -9,6 +9,7 @@
     <KeyBinding Gesture="Alt+Right" Command="{Binding NavigateCanvasNextCommand}" />
     <KeyBinding Gesture="Alt+Enter" Command="{Binding NavigateCanvasSelectionCommand}" />
     <KeyBinding Gesture="Alt+P" Command="{Binding TogglePinSelectionCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+C" Command="{Binding CopyCanvasDiagnosticsCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding ClearCanvasInteractionCommand}" />
   </UserControl.KeyBindings>
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
@@ -67,13 +68,22 @@
             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SearchFilterText}" Watermark="Type, event id, source, target" />
           </Grid>
 
-          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-            <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,*" ColumnSpacing="12" RowSpacing="8">
+            <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+              <Button Content="Copy diagnostics"
+                      Command="{Binding CopyCanvasDiagnosticsCommand}"
+                      ToolTip.Tip="Ctrl+Shift+C" />
+              <Button Content="{Binding ProjectionSnapshotToggleLabel}"
+                      Command="{Binding ToggleProjectionSnapshotCommand}" />
+            </StackPanel>
+
+            <Border Grid.Row="1"
+                    Grid.Column="0"
+                    BorderBrush="{DynamicResource NbnBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="12"
                     Background="{DynamicResource NbnSurfaceAltBrush}"
-                    MinHeight="300"
-                    MaxHeight="460">
+                    MinHeight="300">
               <StackPanel Spacing="8" Margin="12">
                 <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*" ColumnSpacing="6">
                   <Button Content="Prev"
@@ -101,15 +111,34 @@
                              VerticalAlignment="Center"
                              TextWrapping="Wrap" />
                 </Grid>
-                <TextBlock Text="{Binding ActivityCanvasLegend}" Classes="muted" />
-                <TextBlock Text="{Binding ActivityInteractionSummary}" Classes="muted" TextWrapping="Wrap" />
-                <TextBlock Text="{Binding ActivityPinnedSummary}" Classes="muted" TextWrapping="Wrap" />
-                <Button Content="{Binding ProjectionSnapshotToggleLabel}"
-                        Command="{Binding ToggleProjectionSnapshotCommand}"
-                        HorizontalAlignment="Left" />
+                <TextBox Text="{Binding ActivityCanvasLegend}"
+                         IsReadOnly="True"
+                         Classes="muted"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         IsTabStop="False" />
+                <TextBox Text="{Binding ActivityInteractionSummary}"
+                         IsReadOnly="True"
+                         Classes="muted"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         TextWrapping="Wrap"
+                         IsTabStop="False" />
+                <TextBox Text="{Binding ActivityPinnedSummary}"
+                         IsReadOnly="True"
+                         Classes="muted"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         TextWrapping="Wrap"
+                         IsTabStop="False" />
                 <Grid ClipToBounds="True">
-                  <Canvas Width="{Binding ActivityCanvasWidth}" Height="{Binding ActivityCanvasHeight}">
-                    <ItemsControl ItemsSource="{Binding CanvasEdges}">
+                  <Grid Width="{Binding ActivityCanvasWidth}" Height="{Binding ActivityCanvasHeight}">
+                    <ItemsControl ItemsSource="{Binding CanvasEdges}"
+                                  Width="{Binding ActivityCanvasWidth}"
+                                  Height="{Binding ActivityCanvasHeight}">
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <Canvas />
@@ -117,7 +146,8 @@
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:VizActivityCanvasEdge">
-                          <Grid>
+                          <Canvas Width="860"
+                                  Height="420">
                             <Path Data="{Binding PathData}"
                                   Stroke="{DynamicResource NbnMutedBrush}"
                                   StrokeThickness="{Binding StrokeThickness}"
@@ -144,12 +174,20 @@
                                   Opacity="{Binding Opacity}"
                                   IsVisible="{Binding IsSelected}"
                                   IsHitTestVisible="False" />
-                          </Grid>
+                          </Canvas>
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <ItemsControl ItemsSource="{Binding CanvasNodes}">
+                    <ItemsControl ItemsSource="{Binding CanvasNodes}"
+                                  Width="{Binding ActivityCanvasWidth}"
+                                  Height="{Binding ActivityCanvasHeight}">
+                      <ItemsControl.ItemContainerTheme>
+                        <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
+                          <Setter Property="Canvas.Left" Value="{Binding Left}" />
+                          <Setter Property="Canvas.Top" Value="{Binding Top}" />
+                        </ControlTheme>
+                      </ItemsControl.ItemContainerTheme>
                       <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                           <Canvas />
@@ -159,8 +197,6 @@
                         <DataTemplate x:DataType="vm:VizActivityCanvasNode">
                           <Grid Width="{Binding Diameter}"
                                 Height="{Binding Diameter}"
-                                Canvas.Left="{Binding Left}"
-                                Canvas.Top="{Binding Top}"
                                 PointerEntered="CanvasNodePointerEntered"
                                 PointerExited="CanvasNodePointerExited"
                                 PointerPressed="CanvasNodePointerPressed"
@@ -195,12 +231,13 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                  </Canvas>
+                  </Grid>
                 </Grid>
               </StackPanel>
             </Border>
 
-            <Border Grid.Column="1"
+            <Border Grid.Row="1"
+                    Grid.Column="1"
                     BorderBrush="{DynamicResource NbnBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="12"
