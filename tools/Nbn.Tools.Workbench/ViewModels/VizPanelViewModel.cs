@@ -32,13 +32,13 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int SnapshotEdgeRows = 14;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
-    private const int HoverClearDelayMs = 280;
+    private const int HoverClearDelayMs = 220;
     private const int EdgeHitSamples = 12;
     private const double HitTestCellSize = 54;
     private const double EdgeHitIndexPadding = 4;
     private const double NodeHitPadding = 2.5;
-    private const double StickyNodeHitPadding = 9;
-    private const double StickyEdgeHitPadding = 10;
+    private const double StickyNodeHitPadding = 7;
+    private const double StickyEdgeHitPadding = 8;
     private const double HitDistanceTieEpsilon = 0.05;
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 420;

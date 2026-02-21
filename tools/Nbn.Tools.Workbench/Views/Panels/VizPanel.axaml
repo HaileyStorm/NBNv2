@@ -12,7 +12,7 @@
     <KeyBinding Gesture="Ctrl+Shift+C" Command="{Binding CopyCanvasDiagnosticsCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding ClearCanvasInteractionCommand}" />
   </UserControl.KeyBindings>
-  <ScrollViewer HorizontalScrollBarVisibility="Auto">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
       <Border Classes="card">
         <StackPanel Spacing="10">
@@ -39,7 +39,7 @@
         <StackPanel Spacing="10">
           <TextBlock Text="Neural Activity View" Classes="card-title" />
           <TextBlock Text="Canvas projection for region/edge/tick activity with deterministic layout and focus anchoring." Classes="card-subtitle" />
-          <Grid ColumnDefinitions="Auto,96,Auto,Auto,96,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+          <Grid ColumnDefinitions="Auto,220,Auto,Auto,120,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" Watermark="blank = full brain" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
@@ -141,6 +141,7 @@
                          Background="Transparent"
                          BorderThickness="0"
                          Padding="0"
+                         TextWrapping="Wrap"
                          IsTabStop="False" />
                 <TextBox Text="{Binding ActivityInteractionSummary}"
                          IsReadOnly="True"
@@ -158,12 +159,14 @@
                          Padding="0"
                          TextWrapping="Wrap"
                          IsTabStop="False" />
-                <Grid ClipToBounds="True">
-                  <Grid Width="{Binding ActivityCanvasWidth}"
-                        Height="{Binding ActivityCanvasHeight}"
-                        PointerMoved="ActivityCanvasPointerMoved"
-                        PointerPressed="ActivityCanvasPointerPressed"
-                        PointerExited="ActivityCanvasPointerExited">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                  <Grid ClipToBounds="True">
+                    <Grid Width="{Binding ActivityCanvasWidth}"
+                          Height="{Binding ActivityCanvasHeight}"
+                          PointerMoved="ActivityCanvasPointerMoved"
+                          PointerPressed="ActivityCanvasPointerPressed"
+                          PointerExited="ActivityCanvasPointerExited">
                     <ItemsControl ItemsSource="{Binding CanvasEdges}"
                                   Width="{Binding ActivityCanvasWidth}"
                                   Height="{Binding ActivityCanvasHeight}">
@@ -266,28 +269,29 @@
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <Canvas IsHitTestVisible="False">
-                              <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
-                              Canvas.Top="{Binding CanvasHoverCardTop}"
-                              IsVisible="{Binding IsCanvasHoverCardVisible}"
-                              MaxWidth="420"
-                              Background="{DynamicResource NbnSurfaceBrush}"
-                              BorderBrush="{DynamicResource NbnBorderBrush}"
-                              BorderThickness="1"
-                              CornerRadius="8"
-                              Padding="8">
-                        <TextBox Text="{Binding CanvasHoverCardText}"
-                                 IsReadOnly="True"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 Padding="0"
-                                 FontSize="11"
-                                 TextWrapping="Wrap"
-                                 IsTabStop="False" />
-                      </Border>
-                    </Canvas>
+                      <Canvas IsHitTestVisible="False">
+                                <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
+                                Canvas.Top="{Binding CanvasHoverCardTop}"
+                                IsVisible="{Binding IsCanvasHoverCardVisible}"
+                                MaxWidth="420"
+                                Background="{DynamicResource NbnSurfaceBrush}"
+                                BorderBrush="{DynamicResource NbnBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8">
+                          <TextBox Text="{Binding CanvasHoverCardText}"
+                                   IsReadOnly="True"
+                                   Background="Transparent"
+                                   BorderThickness="0"
+                                   Padding="0"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   IsTabStop="False" />
+                        </Border>
+                      </Canvas>
+                    </Grid>
                   </Grid>
-                </Grid>
+                </ScrollViewer>
               </StackPanel>
             </Border>
 

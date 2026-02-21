@@ -16,8 +16,8 @@ public partial class VizPanel : UserControl
     private const double PressProbeDistancePx = 5.0;
     private const int HoverTargetSwitchSamples = 2;
     private const int HoverTargetClearSamples = 4;
-    private const int HoverExitClearDelayMs = 420;
-    private const double HoverNoHitRetentionDistancePx = 14.0;
+    private const int HoverExitClearDelayMs = 220;
+    private const double HoverNoHitRetentionDistancePx = 8.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0),
@@ -64,9 +64,13 @@ public partial class VizPanel : UserControl
         }
 
         var point = e.GetPosition(visual);
-        ViewModel.KeepCanvasHoverAlive();
         if (!ShouldProcessHoverPointerMove(point))
         {
+            if (!string.IsNullOrEmpty(_hoverCommittedSignature))
+            {
+                ViewModel.KeepCanvasHoverAlive();
+            }
+
             return;
         }
 
@@ -135,15 +139,17 @@ public partial class VizPanel : UserControl
 
     private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
     {
-        if (sender is Visual visual)
+        if (ViewModel is not null && sender is Visual visual)
         {
             var point = e.GetPosition(visual);
-            if (point.X >= 0
+            var inside = point.X >= 0
                 && point.Y >= 0
                 && point.X <= visual.Bounds.Width
-                && point.Y <= visual.Bounds.Height)
+                && point.Y <= visual.Bounds.Height;
+            if (inside
+                && TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, out var node, out var edge))
             {
-                ViewModel?.KeepCanvasHoverAlive();
+                ApplyHoverSample(point, node, edge);
                 return;
             }
         }
