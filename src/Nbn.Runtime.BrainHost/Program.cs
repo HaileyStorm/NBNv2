@@ -32,6 +32,13 @@ var hiveAddress = GetArg(args, "--hivemind-address");
 var hiveId = GetArg(args, "--hivemind-id") ?? GetArg(args, "--hivemind-name");
 var ioAddress = GetArg(args, "--io-address");
 var ioId = GetArg(args, "--io-id") ?? GetArg(args, "--io-gateway");
+var nbnSha256 = GetArg(args, "--nbn-sha256");
+var nbnSize = GetLongArg(args, "--nbn-size") ?? 0;
+var nbsSha256 = GetArg(args, "--nbs-sha256");
+var nbsSize = GetLongArg(args, "--nbs-size") ?? 0;
+var artifactStoreUri = GetArg(args, "--artifact-store-uri")
+                       ?? GetArg(args, "--artifact-root")
+                       ?? GetArg(args, "--store-uri");
 var settingsHost = GetArg(args, "--settings-host") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_HOST") ?? "127.0.0.1";
 var settingsPort = GetIntArg(args, "--settings-port") ?? GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
 var settingsName = GetArg(args, "--settings-name") ?? Environment.GetEnvironmentVariable("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
@@ -105,15 +112,30 @@ var brainRootPid = system.Root.SpawnNamed(
 
 system.Root.Send(brainRootPid, new SetSignalRouter(routerPid));
 
+var baseDefinitionRef = BuildArtifactRefOrNull(nbnSha256, nbnSize, "application/x-nbn", artifactStoreUri);
+var snapshotRef = BuildArtifactRefOrNull(nbsSha256, nbsSize, "application/x-nbs", artifactStoreUri);
+
 if (!string.IsNullOrWhiteSpace(ioAddress) && !string.IsNullOrWhiteSpace(ioId))
 {
     var ioPid = new PID(ioAddress, ioId);
-    system.Root.Send(ioPid, new Nbn.Proto.Io.RegisterBrain
+    var register = new Nbn.Proto.Io.RegisterBrain
     {
         BrainId = brainId.ToProtoUuid(),
         InputWidth = (uint)Math.Max(0, inputWidth),
         OutputWidth = (uint)Math.Max(0, outputWidth)
-    });
+    };
+
+    if (baseDefinitionRef is not null)
+    {
+        register.BaseDefinition = baseDefinitionRef;
+    }
+
+    if (snapshotRef is not null)
+    {
+        register.LastSnapshot = snapshotRef;
+    }
+
+    system.Root.Send(ioPid, register);
 }
 
 var nodeAddress = $"{remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}";
@@ -249,6 +271,12 @@ static int? GetIntArg(string[] args, string name)
     return int.TryParse(value, out var parsed) ? parsed : null;
 }
 
+static long? GetLongArg(string[] args, string name)
+{
+    var value = GetArg(args, name);
+    return long.TryParse(value, out var parsed) ? parsed : null;
+}
+
 static int? GetEnvInt(string key)
 {
     var value = GetEnv(key);
@@ -285,6 +313,27 @@ static Guid? GetGuidArg(string[] args, string name)
 static string PidLabel(PID pid)
     => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+static ArtifactRef? BuildArtifactRefOrNull(string? sha256Hex, long sizeBytes, string mediaType, string? storeUri)
+{
+    if (string.IsNullOrWhiteSpace(sha256Hex))
+    {
+        return null;
+    }
+
+    if (!ProtoSha256Extensions.TryFromHex(sha256Hex, out var sha256))
+    {
+        Console.WriteLine($"Ignoring invalid artifact sha256 for {mediaType}: {sha256Hex}");
+        return null;
+    }
+
+    if (sizeBytes < 0)
+    {
+        sizeBytes = 0;
+    }
+
+    return sha256.ToArtifactRef((ulong)sizeBytes, mediaType, storeUri);
+}
+
 static void PrintHelp()
 {
     Console.WriteLine("NBN BrainHost usage:");
@@ -292,6 +341,8 @@ static void PrintHelp()
     Console.WriteLine("  --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("  [--router-id <name>] [--brain-root-id <name>]");
     Console.WriteLine("  [--io-address <host:port>] [--io-id <name>] [--input-width <n>] [--output-width <n>]");
+    Console.WriteLine("  [--nbn-sha256 <hex>] [--nbn-size <bytes>] [--nbs-sha256 <hex>] [--nbs-size <bytes>]");
+    Console.WriteLine("  [--artifact-store-uri <path-or-uri>]");
     Console.WriteLine("  [--enable-otel|--disable-otel] [--otel-metrics] [--otel-console]");
     Console.WriteLine("  [--otel-endpoint <uri>] [--otel-service-name <name>]");
     Console.WriteLine("  [--settings-host <host>] [--settings-port <port>] [--settings-name <name>]");

@@ -1322,7 +1322,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                                 + $" --settings-port {settingsPort}"
                                 + $" --settings-name {_connections.SettingsName}"
                                 + $" --input-width {inputWidth}"
-                                + $" --output-width {outputWidth}";
+                                + $" --output-width {outputWidth}"
+                                + $" --nbn-sha256 {artifactSha}"
+                                + $" --nbn-size {artifactSize}"
+                                + $" --artifact-store-uri \"{brainArtifactRoot}\"";
             var brainHostInfo = BuildServiceStartInfo(brainHostProjectPath, "Nbn.Runtime.BrainHost", brainHostArgs);
             var brainHostRunner = new LocalServiceRunner();
             var brainResult = await brainHostRunner.StartAsync(brainHostInfo, waitForExit: false, label: $"DesignerBrainHost-{brainId:N}");

@@ -90,9 +90,11 @@ public sealed class IoGatewayActor : IActor
             case ProtoControl.BrainTerminated message:
                 HandleBrainTerminated(context, message);
                 break;
-            case RequestSnapshot:
-            case ExportBrainDefinition:
-                ForwardToHiveMind(context);
+            case RequestSnapshot message:
+                await HandleRequestSnapshotAsync(context, message);
+                break;
+            case ExportBrainDefinition message:
+                await HandleExportBrainDefinitionAsync(context, message);
                 break;
             case ReproduceByBrainIds message:
                 await HandleReproduceByBrainIds(context, message);
@@ -484,15 +486,97 @@ public sealed class IoGatewayActor : IActor
         BroadcastToClients(context, message);
     }
 
-    private void ForwardToHiveMind(IContext context)
+    private async Task HandleExportBrainDefinitionAsync(IContext context, ExportBrainDefinition message)
     {
-        if (_hiveMindPid is null)
+        if (!TryGetBrainId(message.BrainId, out var brainId))
         {
+            context.Respond(new BrainDefinitionReady());
             return;
         }
 
-        context.Forward(_hiveMindPid);
+        if (_brains.TryGetValue(brainId, out var entry) && HasArtifactRef(entry.BaseDefinition))
+        {
+            context.Respond(new BrainDefinitionReady
+            {
+                BrainId = message.BrainId,
+                BrainDef = entry.BaseDefinition
+            });
+            return;
+        }
+
+        if (_hiveMindPid is null)
+        {
+            context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
+            return;
+        }
+
+        try
+        {
+            var ready = await context.RequestAsync<BrainDefinitionReady>(_hiveMindPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+            if (ready is not null
+                && HasArtifactRef(ready.BrainDef)
+                && _brains.TryGetValue(brainId, out var existing))
+            {
+                existing.BaseDefinition = ready.BrainDef;
+            }
+
+            context.Respond(ready ?? new BrainDefinitionReady { BrainId = message.BrainId });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ExportBrainDefinition failed for {brainId}: {ex.Message}");
+            context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
+        }
     }
+
+    private async Task HandleRequestSnapshotAsync(IContext context, RequestSnapshot message)
+    {
+        if (!TryGetBrainId(message.BrainId, out var brainId))
+        {
+            context.Respond(new SnapshotReady());
+            return;
+        }
+
+        if (_brains.TryGetValue(brainId, out var entry) && HasArtifactRef(entry.LastSnapshot))
+        {
+            context.Respond(new SnapshotReady
+            {
+                BrainId = message.BrainId,
+                Snapshot = entry.LastSnapshot
+            });
+            return;
+        }
+
+        if (_hiveMindPid is null)
+        {
+            context.Respond(new SnapshotReady { BrainId = message.BrainId });
+            return;
+        }
+
+        try
+        {
+            var ready = await context.RequestAsync<SnapshotReady>(_hiveMindPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+            if (ready is not null
+                && HasArtifactRef(ready.Snapshot)
+                && _brains.TryGetValue(brainId, out var existing))
+            {
+                existing.LastSnapshot = ready.Snapshot;
+            }
+
+            context.Respond(ready ?? new SnapshotReady { BrainId = message.BrainId });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"RequestSnapshot failed for {brainId}: {ex.Message}");
+            context.Respond(new SnapshotReady { BrainId = message.BrainId });
+        }
+    }
+
+    private static bool HasArtifactRef(ArtifactRef? reference)
+        => reference is not null
+           && reference.Sha256 is not null
+           && reference.Sha256.Value is not null
+           && reference.Sha256.Value.Length == 32;
 
     private async Task HandleReproduceByBrainIds(IContext context, ReproduceByBrainIds message)
     {

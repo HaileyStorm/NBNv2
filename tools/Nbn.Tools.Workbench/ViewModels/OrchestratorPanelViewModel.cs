@@ -570,6 +570,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _sampleBrainId = brainId;
         var sampleRouterId = $"{SampleRouterPrefix}-{brainId:N}";
         var sampleBrainRootId = $"{SampleBrainRootPrefix}{brainId:N}";
+        var artifactPath = string.IsNullOrWhiteSpace(artifact.ArtifactRoot) ? artifactRoot : artifact.ArtifactRoot;
 
         SampleBrainStatus = "Starting sample brain host...";
         var brainArgs = "run-brain"
@@ -584,7 +585,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                         + $" --io-id {Connections.IoGateway}"
                         + $" --settings-host {settingsHost}"
                         + $" --settings-port {settingsPort}"
-                        + $" --settings-name {Connections.SettingsName}";
+                        + $" --settings-name {Connections.SettingsName}"
+                        + $" --nbn-sha256 {artifact.Sha256}"
+                        + $" --nbn-size {artifact.Size}"
+                        + $" --artifact-store-uri \"{artifactPath}\"";
         var brainStartInfo = BuildServiceStartInfo(brainHostProjectPath, "Nbn.Runtime.BrainHost", brainArgs);
         var brainResult = await _sampleBrainRunner.StartAsync(brainStartInfo, waitForExit: false, label: "SampleBrainHost").ConfigureAwait(false);
         if (!brainResult.Success)
@@ -594,7 +598,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var artifactPath = string.IsNullOrWhiteSpace(artifact.ArtifactRoot) ? artifactRoot : artifact.ArtifactRoot;
         var regionArgsBase = $"--bind-host {bindHost}"
                              + $" --settings-host {settingsHost}"
                              + $" --settings-port {settingsPort}"
