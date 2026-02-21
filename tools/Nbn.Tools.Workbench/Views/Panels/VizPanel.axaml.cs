@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.VisualTree;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tools.Workbench.Views.Panels;
@@ -22,13 +21,13 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        if (!TryResolveCanvasItem(e.Source, out var node, out var edge))
+        var point = e.GetPosition(visual);
+        if (!ViewModel.TryResolveCanvasHit(point.X, point.Y, out var node, out var edge))
         {
-            ViewModel.ClearCanvasHover();
+            ViewModel.ClearCanvasHoverDeferred();
             return;
         }
 
-        var point = e.GetPosition(visual);
         if (node is not null)
         {
             ViewModel.SetCanvasNodeHover(node, point.X, point.Y);
@@ -41,7 +40,7 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        ViewModel.ClearCanvasHover();
+        ViewModel.ClearCanvasHoverDeferred();
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -51,12 +50,18 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        if (!TryResolveCanvasItem(e.Source, out var node, out var edge))
+        var point = e.GetPosition(visual);
+        var pointer = e.GetCurrentPoint(visual).Properties;
+        var hasHit = ViewModel.TryResolveCanvasHit(point.X, point.Y, out var node, out var edge);
+        if (!hasHit)
         {
+            if (ViewModel.TrySelectHoveredCanvasItem(pointer.IsRightButtonPressed))
+            {
+                e.Handled = true;
+            }
+
             return;
         }
-
-        var pointer = e.GetCurrentPoint(visual).Properties;
         if (node is not null)
         {
             if (pointer.IsRightButtonPressed)
@@ -91,39 +96,6 @@ public partial class VizPanel : UserControl
 
     private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
     {
-        ViewModel?.ClearCanvasHover();
-    }
-
-    private static bool TryResolveCanvasItem(object? source, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
-    {
-        node = null;
-        edge = null;
-        if (source is not AvaloniaObject sourceObject)
-        {
-            return false;
-        }
-
-        AvaloniaObject? current = sourceObject;
-        while (current is not null)
-        {
-            if (current is StyledElement styled)
-            {
-                if (styled.DataContext is VizActivityCanvasNode canvasNode)
-                {
-                    node = canvasNode;
-                    return true;
-                }
-
-                if (styled.DataContext is VizActivityCanvasEdge canvasEdge)
-                {
-                    edge = canvasEdge;
-                    return true;
-                }
-            }
-
-            current = (current as Visual)?.GetVisualParent();
-        }
-
-        return false;
+        ViewModel?.ClearCanvasHoverDeferred();
     }
 }

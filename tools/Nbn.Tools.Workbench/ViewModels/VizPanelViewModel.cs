@@ -28,6 +28,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
+    private const int HoverClearDelayMs = 72;
+    private const int EdgeHitSamples = 12;
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 280;
     private const double HoverCardMaxHeight = 132;
@@ -71,6 +73,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private bool _isCanvasHoverCardVisible;
     private double _canvasHoverCardLeft = 8;
     private double _canvasHoverCardTop = 8;
+    private int _hoverClearRevision;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -105,6 +108,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         ClearCanvasInteractionCommand = new RelayCommand(ClearCanvasInteraction);
         RefreshActivityProjection();
     }
+
+    public event Action? VisualizationSelectionChanged;
 
     public IoPanelViewModel Brain => _brain;
 
@@ -171,9 +176,14 @@ public sealed class VizPanelViewModel : ViewModelBase
                     }
                     RefreshFilteredEvents();
                 }
+
+                OnPropertyChanged(nameof(HasSelectedBrain));
+                VisualizationSelectionChanged?.Invoke();
             }
         }
     }
+
+    public bool HasSelectedBrain => SelectedBrain is not null;
 
     public VizPanelTypeOption SelectedVizType
     {
@@ -190,8 +200,16 @@ public sealed class VizPanelViewModel : ViewModelBase
     public string RegionFocusText
     {
         get => _regionFocusText;
-        set => SetProperty(ref _regionFocusText, value);
+        set
+        {
+            if (SetProperty(ref _regionFocusText, value))
+            {
+                OnPropertyChanged(nameof(ActiveFocusRegionId));
+            }
+        }
     }
+
+    public uint? ActiveFocusRegionId => TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null;
 
     public string TickWindowText
     {
@@ -455,6 +473,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        CancelPendingHoverClear();
         var nextNode = node.NodeKey;
         if (string.Equals(_hoverCanvasNodeKey, nextNode, StringComparison.OrdinalIgnoreCase) && _hoverCanvasRouteLabel is null)
         {
@@ -476,6 +495,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        CancelPendingHoverClear();
         var nextRoute = edge.RouteLabel;
         if (string.Equals(_hoverCanvasRouteLabel, nextRoute, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(_hoverCanvasNodeKey))
         {
@@ -489,8 +509,36 @@ public sealed class VizPanelViewModel : ViewModelBase
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
+    public void ClearCanvasHoverDeferred(int delayMs = HoverClearDelayMs)
+    {
+        if (string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
+            && string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
+            && !IsCanvasHoverCardVisible
+            && string.IsNullOrWhiteSpace(CanvasHoverCardText))
+        {
+            return;
+        }
+
+        var revision = Interlocked.Increment(ref _hoverClearRevision);
+        var safeDelayMs = Math.Max(0, delayMs);
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(safeDelayMs).ConfigureAwait(false);
+            _dispatcher.Post(() =>
+            {
+                if (revision != _hoverClearRevision)
+                {
+                    return;
+                }
+
+                ClearCanvasHover();
+            });
+        });
+    }
+
     public void ClearCanvasHover()
     {
+        CancelPendingHoverClear();
         var hadHover = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
                        || !string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
                        || IsCanvasHoverCardVisible
@@ -505,6 +553,62 @@ public sealed class VizPanelViewModel : ViewModelBase
         CanvasHoverCardText = string.Empty;
         IsCanvasHoverCardVisible = false;
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+    }
+
+    public bool TryResolveCanvasHit(double pointerX, double pointerY, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
+    {
+        node = HitTestCanvasNode(pointerX, pointerY);
+        if (node is not null)
+        {
+            edge = null;
+            return true;
+        }
+
+        edge = HitTestCanvasEdge(pointerX, pointerY);
+        return edge is not null;
+    }
+
+    public bool TrySelectHoveredCanvasItem(bool togglePin)
+    {
+        if (!string.IsNullOrWhiteSpace(_hoverCanvasNodeKey))
+        {
+            var node = CanvasNodes.FirstOrDefault(item => string.Equals(item.NodeKey, _hoverCanvasNodeKey, StringComparison.OrdinalIgnoreCase));
+            if (node is not null)
+            {
+                if (togglePin)
+                {
+                    TogglePinCanvasNode(node);
+                }
+                else
+                {
+                    SelectCanvasNode(node);
+                }
+
+                return true;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel))
+        {
+            return false;
+        }
+
+        var edge = CanvasEdges.FirstOrDefault(item => string.Equals(item.RouteLabel, _hoverCanvasRouteLabel, StringComparison.OrdinalIgnoreCase));
+        if (edge is null)
+        {
+            return false;
+        }
+
+        if (togglePin)
+        {
+            TogglePinCanvasEdge(edge);
+        }
+        else
+        {
+            SelectCanvasEdge(edge);
+        }
+
+        return true;
     }
 
     public void TogglePinCanvasNode(VizActivityCanvasNode? node)
@@ -589,6 +693,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             QueueDefinitionTopologyHydration(SelectedBrain.BrainId, regionId);
         }
+        VisualizationSelectionChanged?.Invoke();
         Status = $"Zoom focus set to region {regionId}.";
     }
 
@@ -601,6 +706,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             QueueDefinitionTopologyHydration(SelectedBrain.BrainId, null);
         }
+        VisualizationSelectionChanged?.Invoke();
         Status = "Full-brain view enabled.";
     }
 
@@ -1710,6 +1816,129 @@ public sealed class VizPanelViewModel : ViewModelBase
         var regionText = pinnedRegions.Count == 0 ? "none" : string.Join(", ", pinnedRegions) + regionSuffix;
         var routeText = pinnedRoutes.Count == 0 ? "none" : string.Join(" | ", pinnedRoutes) + routeSuffix;
         return $"Pinned nodes: {regionText} | routes: {routeText}";
+    }
+
+    private void CancelPendingHoverClear()
+    {
+        Interlocked.Increment(ref _hoverClearRevision);
+    }
+
+    private VizActivityCanvasNode? HitTestCanvasNode(double pointerX, double pointerY)
+    {
+        VizActivityCanvasNode? best = null;
+        var bestDistance = double.MaxValue;
+        foreach (var node in CanvasNodes)
+        {
+            var centerX = node.Left + (node.Diameter / 2.0);
+            var centerY = node.Top + (node.Diameter / 2.0);
+            var radius = node.Diameter / 2.0;
+            var dx = pointerX - centerX;
+            var dy = pointerY - centerY;
+            var distanceSquared = (dx * dx) + (dy * dy);
+            var radiusSquared = radius * radius;
+            if (distanceSquared > radiusSquared)
+            {
+                continue;
+            }
+
+            if (distanceSquared < bestDistance)
+            {
+                bestDistance = distanceSquared;
+                best = node;
+            }
+        }
+
+        return best;
+    }
+
+    private VizActivityCanvasEdge? HitTestCanvasEdge(double pointerX, double pointerY)
+    {
+        VizActivityCanvasEdge? best = null;
+        var bestDistance = double.MaxValue;
+        foreach (var edge in CanvasEdges)
+        {
+            var threshold = Math.Max(4.0, edge.HitTestThickness * 0.5);
+            var distance = DistanceToQuadraticBezier(
+                pointerX,
+                pointerY,
+                edge.SourceX,
+                edge.SourceY,
+                edge.ControlX,
+                edge.ControlY,
+                edge.TargetX,
+                edge.TargetY);
+            if (distance > threshold)
+            {
+                continue;
+            }
+
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = edge;
+            }
+        }
+
+        return best;
+    }
+
+    private static double DistanceToQuadraticBezier(
+        double pointX,
+        double pointY,
+        double startX,
+        double startY,
+        double controlX,
+        double controlY,
+        double endX,
+        double endY)
+    {
+        var minDistance = double.MaxValue;
+        var previousX = startX;
+        var previousY = startY;
+        for (var sample = 1; sample <= EdgeHitSamples; sample++)
+        {
+            var t = (double)sample / EdgeHitSamples;
+            var oneMinusT = 1.0 - t;
+            var curveX = (oneMinusT * oneMinusT * startX) + (2.0 * oneMinusT * t * controlX) + (t * t * endX);
+            var curveY = (oneMinusT * oneMinusT * startY) + (2.0 * oneMinusT * t * controlY) + (t * t * endY);
+            var distance = DistanceToSegment(pointX, pointY, previousX, previousY, curveX, curveY);
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+            }
+
+            previousX = curveX;
+            previousY = curveY;
+        }
+
+        return minDistance;
+    }
+
+    private static double DistanceToSegment(
+        double pointX,
+        double pointY,
+        double startX,
+        double startY,
+        double endX,
+        double endY)
+    {
+        var dx = endX - startX;
+        var dy = endY - startY;
+        var lengthSquared = (dx * dx) + (dy * dy);
+        if (lengthSquared <= double.Epsilon)
+        {
+            var fx = pointX - startX;
+            var fy = pointY - startY;
+            return Math.Sqrt((fx * fx) + (fy * fy));
+        }
+
+        var projection = ((pointX - startX) * dx + (pointY - startY) * dy) / lengthSquared;
+        var clamped = Math.Max(0.0, Math.Min(1.0, projection));
+        var closestX = startX + (clamped * dx);
+        var closestY = startY + (clamped * dy);
+        var diffX = pointX - closestX;
+        var diffY = pointY - closestY;
+        return Math.Sqrt((diffX * diffX) + (diffY * diffY));
     }
 
     private bool IsCurrentSelectionPinned()

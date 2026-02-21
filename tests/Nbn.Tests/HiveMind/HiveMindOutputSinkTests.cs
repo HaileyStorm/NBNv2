@@ -102,6 +102,57 @@ public class HiveMindOutputSinkTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task SetBrainVisualization_Updates_Shards_With_FocusScope()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        root.Send(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        });
+
+        var firstUpdate = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondUpdate = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardId = ShardId32.From(13, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new VisualizationProbe(shardId, firstUpdate, secondUpdate)));
+
+        root.Send(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var initial = await firstUpdate.Task.WaitAsync(cts.Token);
+        Assert.False(initial.Enabled);
+        Assert.False(initial.HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13
+        });
+
+        var focused = await secondUpdate.Task.WaitAsync(cts.Token);
+        Assert.True(focused.Enabled);
+        Assert.True(focused.HasFocusRegion);
+        Assert.Equal<uint>(13, focused.FocusRegionId);
+
+        await system.ShutdownAsync();
+    }
+
     private static HiveMindOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -154,6 +205,49 @@ public class HiveMindOutputSinkTests
                 {
                     _tcs.TrySetResult(update);
                 }
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class VisualizationProbe : IActor
+    {
+        private readonly ShardId32 _shardId;
+        private readonly TaskCompletionSource<UpdateShardVisualization> _first;
+        private readonly TaskCompletionSource<UpdateShardVisualization> _second;
+        private int _seen;
+
+        public VisualizationProbe(
+            ShardId32 shardId,
+            TaskCompletionSource<UpdateShardVisualization> first,
+            TaskCompletionSource<UpdateShardVisualization> second)
+        {
+            _shardId = shardId;
+            _first = first;
+            _second = second;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not UpdateShardVisualization update)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (update.RegionId != (uint)_shardId.RegionId || update.ShardIndex != (uint)_shardId.ShardIndex)
+            {
+                return Task.CompletedTask;
+            }
+
+            _seen++;
+            if (_seen == 1)
+            {
+                _first.TrySetResult(update);
+            }
+            else
+            {
+                _second.TrySetResult(update);
             }
 
             return Task.CompletedTask;

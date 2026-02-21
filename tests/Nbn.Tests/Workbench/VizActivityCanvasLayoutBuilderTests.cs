@@ -232,6 +232,57 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_FocusModeUsesNeuronFiredSourceForNodeActivityWithoutAxonRoutes()
+    {
+        const uint focusRegionId = 24;
+        var source = Address(focusRegionId, 7);
+        var projection = VizActivityProjectionBuilder.Build(
+            new[]
+            {
+                CreateEvent("VizNeuronFired", tick: 500, region: focusRegionId, source: source, target: string.Empty, value: 1.2f, strength: 0f)
+            },
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty);
+
+        var focusedNeuron = Assert.Single(layout.Nodes, node => node.RegionId == focusRegionId && node.NeuronId == 7);
+        Assert.True(focusedNeuron.EventCount > 0);
+        Assert.Empty(layout.Edges);
+    }
+
+    [Fact]
+    public void Build_FocusModeDoesNotTreatNeuronFiredEventsAsAxonRoutes()
+    {
+        const uint focusRegionId = 0;
+        var sourceAddress = uint.Parse(Address(focusRegionId, 1), CultureInfo.InvariantCulture);
+        var targetAddress = uint.Parse(Address(focusRegionId, 2), CultureInfo.InvariantCulture);
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            new HashSet<uint> { sourceAddress, targetAddress },
+            new HashSet<VizActivityCanvasNeuronRoute> { new(sourceAddress, targetAddress) });
+        var projection = VizActivityProjectionBuilder.Build(
+            new[]
+            {
+                CreateEvent("VizNeuronFired", tick: 700, region: focusRegionId, source: Address(focusRegionId, 1), target: Address(focusRegionId, 2), value: 1f, strength: 0f)
+            },
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        var edge = Assert.Single(layout.Edges);
+        Assert.Equal(0, edge.EventCount);
+    }
+
+    [Fact]
     public void Build_FocusModeHandlesDenseRegionWithoutThrowing()
     {
         const uint focusRegionId = 0;

@@ -26,6 +26,8 @@ public sealed class RegionShardActor : IActor
     private PID? _tickSink;
     private PID? _vizHub;
     private PID? _debugHub;
+    private bool _vizEnabled;
+    private uint? _vizFocusRegionId;
     private bool _hasComputed;
     private ulong _lastComputeTickId;
     private ulong _vizSequence;
@@ -41,6 +43,8 @@ public sealed class RegionShardActor : IActor
         _tickSink = config.TickSink;
         _vizHub = config.VizHub;
         _debugHub = config.DebugHub;
+        _vizEnabled = config.VizEnabled;
+        _vizFocusRegionId = null;
         _routing = config.Routing ?? RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
     }
 
@@ -69,6 +73,9 @@ public sealed class RegionShardActor : IActor
             case UpdateShardOutputSink message:
                 HandleUpdateOutputSink(message);
                 break;
+            case UpdateShardVisualization message:
+                HandleUpdateVisualization(message);
+                break;
         }
 
         return Task.CompletedTask;
@@ -96,6 +103,24 @@ public sealed class RegionShardActor : IActor
         {
             _outputSink = pid;
         }
+    }
+
+    private void HandleUpdateVisualization(UpdateShardVisualization message)
+    {
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var guid) || guid != _brainId)
+        {
+            return;
+        }
+
+        if (message.RegionId != (uint)_state.RegionId || message.ShardIndex != (uint)_shardId.ShardIndex)
+        {
+            return;
+        }
+
+        _vizEnabled = message.Enabled;
+        _vizFocusRegionId = message.Enabled && message.HasFocusRegion
+            ? message.FocusRegionId
+            : null;
     }
 
     private void HandleSignalBatch(IContext context, SignalBatch batch)
@@ -225,23 +250,29 @@ public sealed class RegionShardActor : IActor
                 };
                 batch.Contribs.AddRange(contribs);
                 context.Send(outboxTarget, batch);
-
-                var absTotal = 0f;
-                foreach (var contribution in contribs)
-                {
-                    absTotal += MathF.Abs(contribution.Value);
-                }
-
-                var avgMagnitude = contribs.Count > 0 ? absTotal / contribs.Count : 0f;
-                EmitVizEvent(
-                    context,
-                    VizEventType.VizAxonSent,
-                    tick.TickId,
-                    contribs.Count,
-                    source: Address32.From(_state.RegionId, 0),
-                    target: Address32.From(destShard.RegionId, 0),
-                    strength: avgMagnitude);
             }
+        }
+
+        foreach (var axonViz in result.AxonVizEvents)
+        {
+            EmitVizEvent(
+                context,
+                VizEventType.VizAxonSent,
+                tick.TickId,
+                axonViz.AverageSignedValue,
+                source: new Address32(axonViz.SourceAddress),
+                target: new Address32(axonViz.TargetAddress),
+                strength: axonViz.AverageSignedStrength);
+        }
+
+        foreach (var fired in result.FiredNeuronEvents)
+        {
+            EmitVizEvent(
+                context,
+                VizEventType.VizNeuronFired,
+                fired.TickId,
+                fired.Potential,
+                source: new Address32(fired.SourceAddress));
         }
 
         if (_outputSink is not null)
@@ -264,15 +295,6 @@ public sealed class RegionShardActor : IActor
                 vector.Values.Add(result.OutputVector);
                 context.Send(_outputSink, vector);
             }
-        }
-
-        if (result.FiredCount > 0)
-        {
-            EmitVizEvent(
-                context,
-                VizEventType.VizNeuronFired,
-                tick.TickId,
-                result.FiredCount);
         }
 
         var done = new TickComputeDone
@@ -370,7 +392,10 @@ public sealed class RegionShardActor : IActor
         Address32? target = null,
         float strength = 0f)
     {
-        if (_vizHub is null || !ObservabilityTargets.CanSend(context, _vizHub))
+        if (!_vizEnabled
+            || _vizHub is null
+            || !ObservabilityTargets.CanSend(context, _vizHub)
+            || !TouchesFocusRegion(source, target))
         {
             return;
         }
@@ -399,6 +424,32 @@ public sealed class RegionShardActor : IActor
         }
 
         context.Send(_vizHub, evt);
+    }
+
+    private bool TouchesFocusRegion(Address32? source, Address32? target)
+    {
+        if (!_vizFocusRegionId.HasValue)
+        {
+            return true;
+        }
+
+        var focusRegionId = _vizFocusRegionId.Value;
+        if ((uint)_state.RegionId == focusRegionId)
+        {
+            return true;
+        }
+
+        if (source.HasValue && (uint)source.Value.RegionId == focusRegionId)
+        {
+            return true;
+        }
+
+        if (target.HasValue && (uint)target.Value.RegionId == focusRegionId)
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)

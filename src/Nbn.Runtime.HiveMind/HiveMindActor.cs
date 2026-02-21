@@ -94,6 +94,9 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.RegisterOutputSink message:
                 HandleRegisterOutputSink(context, message);
                 break;
+            case ProtoControl.SetBrainVisualization message:
+                HandleSetBrainVisualization(context, message);
+                break;
             case ProtoControl.GetBrainIoInfo message:
                 if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
                 {
@@ -297,6 +300,13 @@ public sealed class HiveMindActor : IActor
 
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
+        SendShardVisualizationUpdate(
+            context,
+            brainId,
+            shardId,
+            normalized,
+            brain.VisualizationEnabled,
+            brain.VisualizationFocusRegionId);
         UpdateRoutingTable(context, brain);
         EmitVizEvent(
             context,
@@ -459,6 +469,26 @@ public sealed class HiveMindActor : IActor
         brain.OutputSinkPid = outputPid;
         UpdateOutputSinks(context, brain);
         Log($"Output sink registered for brain {brainId}: {PidLabel(outputPid)}");
+    }
+
+    private void HandleSetBrainVisualization(IContext context, ProtoControl.SetBrainVisualization message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            brain = new BrainState(brainId)
+            {
+                SpawnedMs = NowMs()
+            };
+            _brains[brainId] = brain;
+        }
+
+        var focusRegionId = message.HasFocusRegion ? (uint?)message.FocusRegionId : null;
+        SetBrainVisualization(context, brain, message.Enabled, focusRegionId);
     }
 
     private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
@@ -1290,6 +1320,33 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private void SetBrainVisualization(IContext context, BrainState brain, bool enabled, uint? focusRegionId)
+    {
+        if (brain.VisualizationEnabled == enabled && brain.VisualizationFocusRegionId == focusRegionId)
+        {
+            return;
+        }
+
+        brain.VisualizationEnabled = enabled;
+        brain.VisualizationFocusRegionId = enabled ? focusRegionId : null;
+        foreach (var entry in brain.Shards)
+        {
+            SendShardVisualizationUpdate(
+                context,
+                brain.BrainId,
+                entry.Key,
+                entry.Value,
+                enabled,
+                brain.VisualizationFocusRegionId);
+        }
+
+        EmitDebug(
+            context,
+            ProtoSeverity.SevDebug,
+            "viz.toggle",
+            $"Brain={brain.BrainId} enabled={enabled} focus={(brain.VisualizationFocusRegionId.HasValue ? $"R{brain.VisualizationFocusRegionId.Value}" : "all")} shards={brain.Shards.Count}");
+    }
+
     private void RegisterBrainWithIo(IContext context, BrainState brain, bool force = false)
     {
         if (_ioPid is null)
@@ -1348,6 +1405,32 @@ public sealed class HiveMindActor : IActor
         catch (Exception ex)
         {
             LogError($"Failed to update output sink for shard {shardId}: {ex.Message}");
+        }
+    }
+
+    private static void SendShardVisualizationUpdate(
+        IContext context,
+        Guid brainId,
+        ShardId32 shardId,
+        PID shardPid,
+        bool enabled,
+        uint? focusRegionId)
+    {
+        try
+        {
+            context.Send(shardPid, new ProtoControl.UpdateShardVisualization
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = (uint)shardId.RegionId,
+                ShardIndex = (uint)shardId.ShardIndex,
+                Enabled = enabled,
+                HasFocusRegion = focusRegionId.HasValue,
+                FocusRegionId = focusRegionId ?? 0
+            });
+        }
+        catch (Exception ex)
+        {
+            LogError($"Failed to update shard visualization for shard {shardId}: {ex.Message}");
         }
     }
 
@@ -1422,6 +1505,8 @@ public sealed class HiveMindActor : IActor
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
         public long LastTickCost { get; set; }
+        public bool VisualizationEnabled { get; set; }
+        public uint? VisualizationFocusRegionId { get; set; }
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }
@@ -1537,7 +1622,9 @@ public sealed class HiveMindActor : IActor
         uint regionId = 0,
         ShardId32? shardId = null)
     {
-        if (_vizHubPid is null || !ObservabilityTargets.CanSend(context, _vizHubPid))
+        if (!IsVisualizationEmissionEnabled(brainId)
+            || _vizHubPid is null
+            || !ObservabilityTargets.CanSend(context, _vizHubPid))
         {
             return;
         }
@@ -1562,6 +1649,24 @@ public sealed class HiveMindActor : IActor
         }
 
         context.Send(_vizHubPid, evt);
+    }
+
+    private bool IsVisualizationEmissionEnabled(Guid? brainId)
+    {
+        if (brainId.HasValue)
+        {
+            return _brains.TryGetValue(brainId.Value, out var brain) && brain.VisualizationEnabled;
+        }
+
+        foreach (var brain in _brains.Values)
+        {
+            if (brain.VisualizationEnabled)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)

@@ -11,7 +11,8 @@ public sealed record RegionShardActorConfig(
     PID? TickSink,
     RegionShardRoutingTable Routing,
     PID? VizHub = null,
-    PID? DebugHub = null);
+    PID? DebugHub = null,
+    bool VizEnabled = false);
 
 public sealed record RegionShardUpdateEndpoints(PID? Router, PID? OutputSink, PID? TickSink);
 

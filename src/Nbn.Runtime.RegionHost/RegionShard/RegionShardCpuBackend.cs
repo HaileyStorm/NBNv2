@@ -22,6 +22,8 @@ public sealed class RegionShardCpuBackend
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
 
         var outbox = new Dictionary<ShardId32, List<Contribution>>();
+        var axonVizRoutes = new Dictionary<AxonVizRouteKey, AxonVizAccumulator>();
+        var firedNeuronViz = new List<RegionShardNeuronVizEvent>();
         List<OutputEvent>? outputs = _state.IsOutputRegion ? new List<OutputEvent>() : null;
         float[]? outputVector = _state.IsOutputRegion ? new float[_state.NeuronCount] : null;
         var brainProto = brainId.ToProtoUuid();
@@ -91,6 +93,9 @@ public sealed class RegionShardCpuBackend
             }
 
             firedCount++;
+            var sourceNeuronId = _state.NeuronStart + i;
+            var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
+            firedNeuronViz.Add(new RegionShardNeuronVizEvent(sourceAddress, tickId, potential));
 
             if (outputs is not null)
             {
@@ -110,13 +115,13 @@ public sealed class RegionShardCpuBackend
             }
 
             var axonStart = _state.AxonStartOffsets[i];
-            var sourceNeuronId = _state.NeuronStart + i;
             for (var a = 0; a < axonCount; a++)
             {
                 var index = axonStart + a;
                 var destRegion = _state.Axons.TargetRegionIds[index];
                 var destNeuron = _state.Axons.TargetNeuronIds[index];
-                var value = potential * _state.Axons.Strengths[index];
+                var strength = _state.Axons.Strengths[index];
+                var value = potential * strength;
 
                 if (!routing.TryGetShard(destRegion, destNeuron, out var destShard))
                 {
@@ -136,6 +141,15 @@ public sealed class RegionShardCpuBackend
                 });
                 outContribs++;
 
+                var targetAddress = ComposeAddress(destRegion, destNeuron);
+                var routeKey = new AxonVizRouteKey(sourceAddress, targetAddress);
+                if (!axonVizRoutes.TryGetValue(routeKey, out var routeAggregate))
+                {
+                    routeAggregate = AxonVizAccumulator.Empty;
+                }
+
+                axonVizRoutes[routeKey] = routeAggregate.Merge(tickId, value, strength);
+
                 var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
                 costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
             }
@@ -146,7 +160,29 @@ public sealed class RegionShardCpuBackend
 
         IReadOnlyList<OutputEvent> outputList = outputs ?? (IReadOnlyList<OutputEvent>)Array.Empty<OutputEvent>();
         IReadOnlyList<float> outputVectorList = outputVector ?? Array.Empty<float>();
-        return new RegionShardComputeResult(outbox, outputList, outputVectorList, firedCount, outContribs, costSummary);
+        var axonVizEvents = new List<RegionShardAxonVizEvent>(axonVizRoutes.Count);
+        foreach (var (routeKey, routeAggregate) in axonVizRoutes)
+        {
+            axonVizEvents.Add(new RegionShardAxonVizEvent(
+                routeKey.SourceAddress,
+                routeKey.TargetAddress,
+                routeAggregate.EventCount,
+                routeAggregate.LastTick,
+                routeAggregate.AverageSignedValue,
+                routeAggregate.AverageMagnitude,
+                routeAggregate.AverageSignedStrength,
+                routeAggregate.AverageStrength));
+        }
+
+        return new RegionShardComputeResult(
+            outbox,
+            outputList,
+            outputVectorList,
+            firedCount,
+            outContribs,
+            costSummary,
+            axonVizEvents,
+            firedNeuronViz);
     }
 
     private void MergeInbox(int index)
@@ -366,6 +402,36 @@ public sealed class RegionShardCpuBackend
 
         return 3;
     }
+
+    private static uint ComposeAddress(int regionId, int neuronId)
+        => ((uint)regionId << NbnConstants.AddressNeuronBits) | ((uint)neuronId & NbnConstants.AddressNeuronMask);
+
+    private readonly record struct AxonVizRouteKey(uint SourceAddress, uint TargetAddress);
+
+    private readonly record struct AxonVizAccumulator(
+        int EventCount,
+        ulong LastTick,
+        float AverageSignedValue,
+        float AverageMagnitude,
+        float AverageSignedStrength,
+        float AverageStrength)
+    {
+        public static AxonVizAccumulator Empty { get; } = new(0, 0, 0f, 0f, 0f, 0f);
+
+        public AxonVizAccumulator Merge(ulong tickId, float signedValue, float signedStrength)
+        {
+            var nextCount = EventCount + 1;
+            var weight = 1f / nextCount;
+            var inverseWeight = 1f - weight;
+            return new AxonVizAccumulator(
+                nextCount,
+                Math.Max(LastTick, tickId),
+                (AverageSignedValue * inverseWeight) + (signedValue * weight),
+                (AverageMagnitude * inverseWeight) + (Math.Abs(signedValue) * weight),
+                (AverageSignedStrength * inverseWeight) + (signedStrength * weight),
+                (AverageStrength * inverseWeight) + (Math.Abs(signedStrength) * weight));
+        }
+    }
 }
 
 public sealed class RegionShardCostConfig
@@ -388,10 +454,27 @@ public readonly record struct RegionShardCostSummary(
     long Distance,
     long Remote);
 
+public readonly record struct RegionShardAxonVizEvent(
+    uint SourceAddress,
+    uint TargetAddress,
+    int EventCount,
+    ulong LastTick,
+    float AverageSignedValue,
+    float AverageMagnitude,
+    float AverageSignedStrength,
+    float AverageStrength);
+
+public readonly record struct RegionShardNeuronVizEvent(
+    uint SourceAddress,
+    ulong TickId,
+    float Potential);
+
 public sealed record RegionShardComputeResult(
     Dictionary<ShardId32, List<Contribution>> Outbox,
     IReadOnlyList<OutputEvent> OutputEvents,
     IReadOnlyList<float> OutputVector,
     uint FiredCount,
     uint OutContribs,
-    RegionShardCostSummary Cost);
+    RegionShardCostSummary Cost,
+    IReadOnlyList<RegionShardAxonVizEvent> AxonVizEvents,
+    IReadOnlyList<RegionShardNeuronVizEvent> FiredNeuronEvents);

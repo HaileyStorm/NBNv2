@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Nbn.Shared;
+using Nbn.Tools.Workbench.Models;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
@@ -120,6 +121,12 @@ public sealed record VizActivityCanvasEdge(
     string RouteLabel,
     string Detail,
     string PathData,
+    double SourceX,
+    double SourceY,
+    double ControlX,
+    double ControlY,
+    double TargetX,
+    double TargetY,
     string Stroke,
     string DirectionDashArray,
     string ActivityStroke,
@@ -255,7 +262,7 @@ public static class VizActivityCanvasLayoutBuilder
         uint focusRegionId)
     {
         var routes = BuildFocusRoutes(projection, topology, focusRegionId);
-        var focusNeuronStats = BuildFocusNeuronStats(routes, topology, focusRegionId);
+        var focusNeuronStats = BuildFocusNeuronStats(routes, projection.WindowEvents, topology, focusRegionId);
         var gatewayStats = BuildGatewayStats(routes, focusRegionId);
 
         var nodes = new List<VizActivityCanvasNode>();
@@ -494,7 +501,13 @@ public static class VizActivityCanvasLayoutBuilder
             edges.Add(new VizActivityCanvasEdge(
                 routeLabel,
                 detail,
-                curve,
+                curve.PathData,
+                curve.Start.X,
+                curve.Start.Y,
+                curve.Control.X,
+                curve.Control.Y,
+                curve.End.X,
+                curve.End.Y,
                 directionStroke,
                 directionDashArray,
                 activityStroke,
@@ -532,6 +545,11 @@ public static class VizActivityCanvasLayoutBuilder
 
         foreach (var item in projection.WindowEvents)
         {
+            if (!IsAxonType(item.Type))
+            {
+                continue;
+            }
+
             if (!TryParseAddress(item.Source, out var sourceAddress) || !TryParseAddress(item.Target, out var targetAddress))
             {
                 continue;
@@ -572,6 +590,7 @@ public static class VizActivityCanvasLayoutBuilder
 
     private static Dictionary<uint, FocusNeuronStat> BuildFocusNeuronStats(
         IReadOnlyDictionary<VizActivityCanvasNeuronRoute, FocusRouteAggregate> routes,
+        IReadOnlyList<VizEventItem> events,
         VizActivityCanvasTopology topology,
         uint focusRegionId)
     {
@@ -599,6 +618,22 @@ public static class VizActivityCanvasLayoutBuilder
                 byNeuronAddress.TryGetValue(route.TargetAddress, out var existing);
                 byNeuronAddress[route.TargetAddress] = existing.Merge(aggregate.EventCount, aggregate.LastTick);
             }
+        }
+
+        foreach (var item in events)
+        {
+            if (!IsFiredType(item.Type))
+            {
+                continue;
+            }
+
+            if (!TryParseAddress(item.Source, out var sourceAddress) || RegionFromAddress(sourceAddress) != focusRegionId)
+            {
+                continue;
+            }
+
+            byNeuronAddress.TryGetValue(sourceAddress, out var existing);
+            byNeuronAddress[sourceAddress] = existing.Merge(1, item.TickId);
         }
 
         if (byNeuronAddress.Count == 0)
@@ -740,7 +775,13 @@ public static class VizActivityCanvasLayoutBuilder
             edges.Add(new VizActivityCanvasEdge(
                 routeLabel,
                 detail,
-                curve,
+                curve.PathData,
+                curve.Start.X,
+                curve.Start.Y,
+                curve.Control.X,
+                curve.Control.Y,
+                curve.End.X,
+                curve.End.Y,
                 directionStroke,
                 directionDashArray,
                 activityStroke,
@@ -1206,6 +1247,12 @@ public static class VizActivityCanvasLayoutBuilder
     private static uint NeuronFromAddress(uint address)
         => address & NbnConstants.AddressNeuronMask;
 
+    private static bool IsAxonType(string? type)
+        => !string.IsNullOrWhiteSpace(type) && type.Contains("AXON", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFiredType(string? type)
+        => !string.IsNullOrWhiteSpace(type) && type.Contains("FIRED", StringComparison.OrdinalIgnoreCase);
+
     private static bool TouchesFocusRegion(uint sourceAddress, uint targetAddress, uint focusRegionId)
     {
         var sourceRegion = RegionFromAddress(sourceAddress);
@@ -1247,15 +1294,18 @@ public static class VizActivityCanvasLayoutBuilder
         byRegion[regionId] = new RegionNodeSource(regionId, Math.Max(0, eventCount), lastTick, 0, Math.Max(0, eventCount));
     }
 
-    private static string BuildEdgeCurve(CanvasPoint source, CanvasPoint target, bool isSelfLoop, int curveDirection)
+    private static CanvasEdgeCurve BuildEdgeCurve(CanvasPoint source, CanvasPoint target, bool isSelfLoop, int curveDirection)
     {
         if (isSelfLoop)
         {
             var loopSize = 22;
             var c1 = new CanvasPoint(source.X + loopSize, source.Y - (loopSize * 1.3));
             var end = new CanvasPoint(source.X - 1, source.Y - 1);
-            return FormattableString.Invariant(
-                $"M {source.X:0.###} {source.Y:0.###} Q {c1.X:0.###} {c1.Y:0.###} {end.X:0.###} {end.Y:0.###}");
+            return new CanvasEdgeCurve(
+                FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {c1.X:0.###} {c1.Y:0.###} {end.X:0.###} {end.Y:0.###}"),
+                source,
+                c1,
+                end);
         }
 
         var midX = (source.X + target.X) / 2.0;
@@ -1268,8 +1318,11 @@ public static class VizActivityCanvasLayoutBuilder
         var curvature = Math.Min(48.0, 16.0 + (length * 0.12)) * curveDirection;
         var control = new CanvasPoint(midX + (normalX * curvature), midY + (normalY * curvature));
 
-        return FormattableString.Invariant(
-            $"M {source.X:0.###} {source.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {target.X:0.###} {target.Y:0.###}");
+        return new CanvasEdgeCurve(
+            FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {target.X:0.###} {target.Y:0.###}"),
+            source,
+            control,
+            target);
     }
 
     private static double TickRecency(ulong itemTick, ulong latestTick, int tickWindow)
@@ -1324,6 +1377,8 @@ public static class VizActivityCanvasLayoutBuilder
         => Math.Max(min, Math.Min(max, value));
 
     private readonly record struct CanvasPoint(double X, double Y);
+
+    private readonly record struct CanvasEdgeCurve(string PathData, CanvasPoint Start, CanvasPoint Control, CanvasPoint End);
 
     private sealed record RegionNodeSource(uint RegionId, int EventCount, ulong LastTick, int FiredCount, int AxonCount);
 

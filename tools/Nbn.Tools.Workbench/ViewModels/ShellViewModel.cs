@@ -26,6 +26,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
+        Viz.VisualizationSelectionChanged += UpdateObservabilitySubscriptions;
         Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, OnBrainDiscovered, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Repro = new ReproPanelViewModel(_client);
@@ -74,6 +75,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             if (SetProperty(ref _selectedNav, value))
             {
                 OnPropertyChanged(nameof(CurrentPanel));
+                UpdateObservabilitySubscriptions();
             }
         }
     }
@@ -272,6 +274,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 .Select(entry => entry.BrainId)
                 .ToList();
             Io.UpdateActiveBrains(active);
+            UpdateObservabilitySubscriptions();
         });
     }
 
@@ -376,6 +379,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             if (status is not null)
             {
+                UpdateObservabilitySubscriptions();
                 WorkbenchLog.Info($"HiveMind connected to {Connections.HiveMindHost}:{hivePort}/{Connections.HiveMindName}");
                 return;
             }
@@ -410,6 +414,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 Debug.SelectedSeverity.Severity,
                 Debug.ContextRegex).ConfigureAwait(false);
 
+            UpdateObservabilitySubscriptions();
+
             if (token.IsCancellationRequested)
             {
                 return;
@@ -433,6 +439,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.HiveMindStatus = "Disconnected";
             Connections.HiveMindConnected = false;
         });
+    }
+
+    private void UpdateObservabilitySubscriptions()
+    {
+        var isVisualizerTab = SelectedNav?.Panel is VizPanelViewModel;
+        var shouldSubscribeViz = isVisualizerTab && Viz.HasSelectedBrain;
+        var vizBrainId = shouldSubscribeViz ? Viz.SelectedBrain?.BrainId : null;
+        var vizFocusRegionId = shouldSubscribeViz ? Viz.ActiveFocusRegionId : null;
+        var shouldSubscribeDebug = SelectedNav?.Panel is DebugPanelViewModel;
+        _client.SetDebugSubscription(shouldSubscribeDebug, Debug.SelectedSeverity.Severity, Debug.ContextRegex);
+        _client.SetVizSubscription(shouldSubscribeViz);
+        _client.SetActiveVisualizationBrain(vizBrainId, vizFocusRegionId);
     }
 
     private static string NormalizeStatus(string status, bool connected)

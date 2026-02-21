@@ -27,6 +27,10 @@ public sealed class WorkbenchClient : IAsyncDisposable
     private PID? _vizHubPid;
     private PID? _settingsPid;
     private PID? _hiveMindPid;
+    private bool _debugSubscribed;
+    private bool _vizSubscribed;
+    private Guid? _vizBrainEnabled;
+    private uint? _vizFocusRegionId;
     private string? _bindHost;
     private int _bindPort;
 
@@ -161,6 +165,16 @@ public sealed class WorkbenchClient : IAsyncDisposable
                     DefaultTimeout)
                 .ConfigureAwait(false);
             _hiveMindPid = pid;
+            if (_vizBrainEnabled.HasValue)
+            {
+                _root.Send(_hiveMindPid, new SetBrainVisualization
+                {
+                    BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
+                    Enabled = true,
+                    HasFocusRegion = _vizFocusRegionId.HasValue,
+                    FocusRegionId = _vizFocusRegionId ?? 0
+                });
+            }
             _sink.OnHiveMindStatus($"Connected to {host}:{port}", true);
             return status;
         }
@@ -173,6 +187,17 @@ public sealed class WorkbenchClient : IAsyncDisposable
 
     public void DisconnectHiveMind()
     {
+        if (_root is not null && _hiveMindPid is not null && _vizBrainEnabled.HasValue)
+        {
+            _root.Send(_hiveMindPid, new SetBrainVisualization
+            {
+                BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
+                Enabled = false
+            });
+        }
+
+        _vizBrainEnabled = null;
+        _vizFocusRegionId = null;
         _hiveMindPid = null;
         _sink.OnHiveMindStatus("Disconnected", false);
     }
@@ -325,24 +350,112 @@ public sealed class WorkbenchClient : IAsyncDisposable
             return Task.CompletedTask;
         }
 
+        _ = minSeverity;
+        _ = contextRegex;
+
         _debugHubPid = new PID($"{host}:{port}", debugHub);
         _vizHubPid = new PID($"{host}:{port}", vizHub);
 
-        var subscriber = PidLabel(_receiverPid);
-        _root.Send(_debugHubPid, new DebugSubscribe
-        {
-            SubscriberActor = subscriber,
-            MinSeverity = minSeverity,
-            ContextRegex = contextRegex ?? string.Empty
-        });
-
-        _root.Send(_vizHubPid, new VizSubscribe
-        {
-            SubscriberActor = subscriber
-        });
-
-        _sink.OnObsStatus($"Subscribed to {host}:{port}", true);
+        _debugSubscribed = false;
+        _vizSubscribed = false;
+        _sink.OnObsStatus($"Connected to {host}:{port}", true);
         return Task.CompletedTask;
+    }
+
+    public void SetDebugSubscription(bool enabled, Nbn.Proto.Severity minSeverity, string contextRegex)
+    {
+        if (_root is null || _receiverPid is null || _debugHubPid is null)
+        {
+            return;
+        }
+
+        var subscriber = PidLabel(_receiverPid);
+        if (enabled)
+        {
+            _root.Send(_debugHubPid, new DebugSubscribe
+            {
+                SubscriberActor = subscriber,
+                MinSeverity = minSeverity,
+                ContextRegex = contextRegex ?? string.Empty
+            });
+            _debugSubscribed = true;
+            return;
+        }
+
+        if (!_debugSubscribed)
+        {
+            return;
+        }
+
+        _root.Send(_debugHubPid, new DebugUnsubscribe { SubscriberActor = subscriber });
+        _debugSubscribed = false;
+    }
+
+    public void SetVizSubscription(bool enabled)
+    {
+        if (_root is null || _receiverPid is null || _vizHubPid is null)
+        {
+            return;
+        }
+
+        var subscriber = PidLabel(_receiverPid);
+        if (enabled)
+        {
+            if (_vizSubscribed)
+            {
+                return;
+            }
+
+            _root.Send(_vizHubPid, new VizSubscribe { SubscriberActor = subscriber });
+            _vizSubscribed = true;
+            return;
+        }
+
+        if (!_vizSubscribed)
+        {
+            return;
+        }
+
+        _root.Send(_vizHubPid, new VizUnsubscribe { SubscriberActor = subscriber });
+        _vizSubscribed = false;
+    }
+
+    public void SetActiveVisualizationBrain(Guid? brainId, uint? focusRegionId)
+    {
+        if (_vizBrainEnabled == brainId && _vizFocusRegionId == focusRegionId)
+        {
+            return;
+        }
+
+        if (_root is null || _hiveMindPid is null)
+        {
+            _vizBrainEnabled = brainId;
+            _vizFocusRegionId = focusRegionId;
+            return;
+        }
+
+        if (_vizBrainEnabled.HasValue && _vizBrainEnabled.Value != brainId)
+        {
+            _root.Send(_hiveMindPid, new SetBrainVisualization
+            {
+                BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
+                Enabled = false
+            });
+        }
+
+        _vizBrainEnabled = brainId;
+        _vizFocusRegionId = focusRegionId;
+
+        if (brainId.HasValue)
+        {
+            _root.Send(_hiveMindPid, new SetBrainVisualization
+            {
+                BrainId = brainId.Value.ToProtoUuid(),
+                Enabled = true,
+                HasFocusRegion = focusRegionId.HasValue,
+                FocusRegionId = focusRegionId ?? 0
+            });
+        }
     }
 
     public void DisconnectObservability(string? contextRegex = null)
@@ -363,12 +476,14 @@ public sealed class WorkbenchClient : IAsyncDisposable
             _root.Send(_vizHubPid, new VizUnsubscribe { SubscriberActor = subscriber });
         }
 
+        _debugSubscribed = false;
+        _vizSubscribed = false;
         _sink.OnObsStatus("Disconnected", false);
     }
 
     public Task RefreshDebugFilterAsync(Nbn.Proto.Severity minSeverity, string contextRegex)
     {
-        if (_root is null || _receiverPid is null || _debugHubPid is null)
+        if (_root is null || _receiverPid is null || _debugHubPid is null || !_debugSubscribed)
         {
             return Task.CompletedTask;
         }
@@ -579,6 +694,15 @@ public sealed class WorkbenchClient : IAsyncDisposable
 
         try
         {
+            if (_root is not null && _hiveMindPid is not null && _vizBrainEnabled.HasValue)
+            {
+                _root.Send(_hiveMindPid, new SetBrainVisualization
+                {
+                    BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
+                    Enabled = false
+                });
+            }
+
             if (_system.Remote() is not null)
             {
                 await _system.Remote().ShutdownAsync(true).ConfigureAwait(false);
@@ -599,6 +723,10 @@ public sealed class WorkbenchClient : IAsyncDisposable
             _vizHubPid = null;
             _settingsPid = null;
             _hiveMindPid = null;
+            _debugSubscribed = false;
+            _vizSubscribed = false;
+            _vizBrainEnabled = null;
+            _vizFocusRegionId = null;
         }
     }
 
