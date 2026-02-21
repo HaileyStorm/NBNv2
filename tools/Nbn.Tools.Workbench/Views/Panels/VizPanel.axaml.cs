@@ -366,24 +366,17 @@ public partial class VizPanel : UserControl
     {
         point = default;
         inside = false;
-        var viewModel = ViewModel;
-        var extentHost = ActivityCanvasExtentHost;
-        if (viewModel is null
-            || extentHost is null
-            || !extentHost.IsVisible
-            || extentHost.Bounds.Width <= 0
-            || extentHost.Bounds.Height <= 0)
+        var canvas = ActivityCanvasSurface;
+        if (canvas is null || !canvas.IsVisible || canvas.Bounds.Width <= 0 || canvas.Bounds.Height <= 0)
         {
             return false;
         }
 
-        var rawPoint = e.GetPosition(extentHost);
-        var safeScale = Math.Max(0.0001, _canvasScale);
-        point = new Point(rawPoint.X / safeScale, rawPoint.Y / safeScale);
+        point = e.GetPosition(canvas);
         inside = point.X >= 0
             && point.Y >= 0
-            && point.X <= viewModel.ActivityCanvasWidth
-            && point.Y <= viewModel.ActivityCanvasHeight;
+            && point.X <= canvas.Bounds.Width
+            && point.Y <= canvas.Bounds.Height;
         return true;
     }
 
@@ -641,10 +634,24 @@ public partial class VizPanel : UserControl
         }
     }
 
-    private static Vector ClampOffset(Vector offset, ScrollViewer scrollViewer)
+    private Vector ClampOffset(Vector offset, ScrollViewer scrollViewer)
     {
-        var maxX = Math.Max(0.0, scrollViewer.Extent.Width - scrollViewer.Viewport.Width);
-        var maxY = Math.Max(0.0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        var width = ViewModel?.ActivityCanvasWidth ?? scrollViewer.Extent.Width;
+        var height = ViewModel?.ActivityCanvasHeight ?? scrollViewer.Extent.Height;
+        var scaledWidth = width * _canvasScale;
+        var scaledHeight = height * _canvasScale;
+        if (!double.IsFinite(scaledWidth) || scaledWidth <= 0)
+        {
+            scaledWidth = scrollViewer.Extent.Width;
+        }
+
+        if (!double.IsFinite(scaledHeight) || scaledHeight <= 0)
+        {
+            scaledHeight = scrollViewer.Extent.Height;
+        }
+
+        var maxX = Math.Max(0.0, scaledWidth - scrollViewer.Viewport.Width);
+        var maxY = Math.Max(0.0, scaledHeight - scrollViewer.Viewport.Height);
         return new Vector(
             Math.Clamp(offset.X, 0.0, maxX),
             Math.Clamp(offset.Y, 0.0, maxY));

@@ -208,6 +208,7 @@
                         <Grid x:Name="ActivityCanvasSurface"
                               Width="{Binding ActivityCanvasWidth}"
                               Height="{Binding ActivityCanvasHeight}"
+                              Background="Transparent"
                               PointerPressed="ActivityCanvasPointerPressed">
                           <ItemsControl ItemsSource="{Binding CanvasEdges}"
                                         Width="{Binding ActivityCanvasWidth}"

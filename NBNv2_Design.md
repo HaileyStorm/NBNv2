@@ -3074,6 +3074,11 @@ Use these defaults to avoid recurring Aleph friction:
 11. Codex model override compatibility:
    * Some Codex-account modes reject explicit Spark overrides (for example `gpt-5-spark`) even when default Codex runs fine.
    * For sub-queries, prefer inherited/default model unless you have confirmed the override is supported in that account/session.
+12. Aleph `exec_python(sub_query(...))` timeout behavior:
+   * In some MCP sessions, tool-call timeout can occur around ~60s even when `sub_query_timeout` is larger.
+   * Keep delegated prompts narrow (single concrete ask) and prefer concise output shape to avoid MCP timeout before sub-query completion.
+   * If repeated timeout persists, run a minimal smoke check prompt first (`Return exactly OK.`), then split larger requests into multiple sub-queries.
+   * If still blocked, explicitly log the timeout condition and continue with Aleph `run_command`/`search_context`/`peek_context` evidence packets.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 
