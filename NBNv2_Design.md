@@ -3038,9 +3038,11 @@ Use these defaults to avoid recurring Aleph friction:
    * Aleph sub-query currently invokes `codex` (not `codex.cmd`).
    * Validate subprocess resolution with:
      * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
+     * `python -c "import subprocess; print(subprocess.run(['codex.cmd','--version']).returncode)"`
      * `exec_python("import shutil; print(shutil.which('codex'))")` inside the active Aleph session
    * If that fails while `codex.cmd --version` works, ensure a runnable `codex` executable is on `PATH` (for example a `codex.exe` shim that delegates to `codex.cmd`).
    * If `which('codex')` only resolves to `.CMD` and sub-queries still fail, add a real `codex.exe` shim on `PATH` before retrying recipes.
+   * If you cannot add a shim on that machine/session, explicitly log that sub-query is blocked and run the same investigation using Aleph `search_context` + `peek_context` packets (do not silently skip Aleph evidence gathering).
 4. API fallback prerequisites (when CLI backend is unavailable):
    * `sub_query` with `backend="api"` requires an API key (`ALEPH_SUB_QUERY_API_KEY` or `OPENAI_API_KEY`).
    * API backend also requires a model (`ALEPH_SUB_QUERY_MODEL` or per-step `model` in the recipe).

@@ -12,9 +12,7 @@
     <KeyBinding Gesture="Ctrl+Shift+C" Command="{Binding CopyCanvasDiagnosticsCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding ClearCanvasInteractionCommand}" />
   </UserControl.KeyBindings>
-  <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                PointerMoved="VizRootPointerMoved"
-                PointerExited="VizRootPointerExited">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
       <Border Classes="card">
         <StackPanel Spacing="10">
@@ -167,9 +165,7 @@
                     <Grid x:Name="ActivityCanvasSurface"
                           Width="{Binding ActivityCanvasWidth}"
                           Height="{Binding ActivityCanvasHeight}"
-                          PointerMoved="ActivityCanvasPointerMoved"
-                          PointerPressed="ActivityCanvasPointerPressed"
-                          PointerExited="ActivityCanvasPointerExited">
+                          PointerPressed="ActivityCanvasPointerPressed">
                     <ItemsControl ItemsSource="{Binding CanvasEdges}"
                                   Width="{Binding ActivityCanvasWidth}"
                                   Height="{Binding ActivityCanvasHeight}">

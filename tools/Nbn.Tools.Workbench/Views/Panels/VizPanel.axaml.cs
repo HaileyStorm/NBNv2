@@ -1,8 +1,8 @@
-using System;
 using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tools.Workbench.Views.Panels;
@@ -10,10 +10,6 @@ namespace Nbn.Tools.Workbench.Views.Panels;
 public partial class VizPanel : UserControl
 {
     private const double PressProbeDistancePx = 5.0;
-    private const int HoverTargetSwitchSamples = 2;
-    private const int HoverTargetClearSamples = 1;
-    private const int HoverExitClearDelayMs = 220;
-    private const double HoverNoHitRetentionDistancePx = 8.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -30,68 +26,48 @@ public partial class VizPanel : UserControl
         new(PressProbeDistancePx * 0.6, -PressProbeDistancePx * 0.6),
         new(-PressProbeDistancePx * 0.6, -PressProbeDistancePx * 0.6)
     };
-    private string _hoverCommittedSignature = string.Empty;
-    private string _hoverCandidateSignature = string.Empty;
-    private int _hoverCandidateSamples;
-    private VizActivityCanvasNode? _hoverCandidateNode;
-    private VizActivityCanvasEdge? _hoverCandidateEdge;
-    private Point _lastCommittedHoverPoint;
-    private bool _hasCommittedHoverPoint;
 
     public VizPanel()
     {
         InitializeComponent();
+        AddHandler(
+            InputElement.PointerMovedEvent,
+            VizRootPointerMoved,
+            RoutingStrategies.Bubble,
+            handledEventsToo: true);
+        AddHandler(
+            InputElement.PointerExitedEvent,
+            VizRootPointerExited,
+            RoutingStrategies.Bubble,
+            handledEventsToo: true);
     }
 
     private VizPanelViewModel? ViewModel => DataContext as VizPanelViewModel;
 
     private void VizRootPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (ViewModel is null || string.IsNullOrEmpty(_hoverCommittedSignature))
+        if (ViewModel is null)
         {
             return;
         }
 
-        if (!TryIsPointerInsideCanvas(e, out var isInsideCanvas))
+        if (!TryGetCanvasPointerPoint(e, out var point, out var isInsideCanvas))
         {
             return;
         }
 
-        if (isInsideCanvas)
+        if (!isInsideCanvas)
         {
+            ViewModel.ClearCanvasHover();
             return;
         }
 
-        ResetHoverStability();
-        ViewModel.ClearCanvasHover();
+        UpdateCanvasHover(point);
     }
 
     private void VizRootPointerExited(object? sender, PointerEventArgs e)
     {
-        if (ViewModel is null || string.IsNullOrEmpty(_hoverCommittedSignature))
-        {
-            return;
-        }
-
-        ResetHoverStability();
-        ViewModel.ClearCanvasHover();
-    }
-
-    private void ActivityCanvasPointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (ViewModel is null || sender is not Visual visual)
-        {
-            return;
-        }
-
-        var point = e.GetPosition(visual);
-        if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out var node, out var edge))
-        {
-            node = null;
-            edge = null;
-        }
-
-        ApplyHoverSample(point, node, edge);
+        ViewModel?.ClearCanvasHover();
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -148,25 +124,32 @@ public partial class VizPanel : UserControl
         e.Handled = true;
     }
 
-    private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
+    private void UpdateCanvasHover(Point point)
     {
-        if (ViewModel is not null && sender is Visual visual)
+        if (ViewModel is null)
         {
-            var point = e.GetPosition(visual);
-            var inside = point.X >= 0
-                && point.Y >= 0
-                && point.X <= visual.Bounds.Width
-                && point.Y <= visual.Bounds.Height;
-            if (inside
-                && TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out var node, out var edge))
-            {
-                ApplyHoverSample(point, node, edge);
-                return;
-            }
+            return;
         }
 
-        ResetHoverStability();
-        ViewModel?.ClearCanvasHover();
+        if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out var node, out var edge))
+        {
+            ViewModel.ClearCanvasHover();
+            return;
+        }
+
+        if (node is not null)
+        {
+            ViewModel.SetCanvasNodeHover(node, point.X, point.Y);
+            return;
+        }
+
+        if (edge is not null)
+        {
+            ViewModel.SetCanvasEdgeHover(edge, point.X, point.Y);
+            return;
+        }
+
+        ViewModel.ClearCanvasHover();
     }
 
     private bool TryResolveCanvasHitWithProbe(
@@ -197,8 +180,9 @@ public partial class VizPanel : UserControl
         return false;
     }
 
-    private bool TryIsPointerInsideCanvas(PointerEventArgs e, out bool inside)
+    private bool TryGetCanvasPointerPoint(PointerEventArgs e, out Point point, out bool inside)
     {
+        point = default;
         inside = false;
         var canvas = ActivityCanvasSurface;
         if (canvas is null || !canvas.IsVisible || canvas.Bounds.Width <= 0 || canvas.Bounds.Height <= 0)
@@ -206,7 +190,7 @@ public partial class VizPanel : UserControl
             return false;
         }
 
-        var point = e.GetPosition(canvas);
+        point = e.GetPosition(canvas);
         inside = point.X >= 0
             && point.Y >= 0
             && point.X <= canvas.Bounds.Width
@@ -214,139 +198,4 @@ public partial class VizPanel : UserControl
         return true;
     }
 
-    private void ApplyHoverSample(Point pointer, VizActivityCanvasNode? node, VizActivityCanvasEdge? edge)
-    {
-        if (ViewModel is null)
-        {
-            return;
-        }
-
-        var signature = BuildHoverSignature(node, edge);
-        if (!string.Equals(_hoverCandidateSignature, signature, StringComparison.Ordinal))
-        {
-            _hoverCandidateSignature = signature;
-            _hoverCandidateSamples = 1;
-        }
-        else
-        {
-            _hoverCandidateSamples++;
-        }
-
-        _hoverCandidateNode = node;
-        _hoverCandidateEdge = edge;
-
-        if (string.Equals(_hoverCommittedSignature, signature, StringComparison.Ordinal))
-        {
-            ApplyHoverResolution(pointer, node, edge, signature);
-            return;
-        }
-
-        var requiredSamples = GetRequiredHoverSamples(signature);
-        if (_hoverCandidateSamples < requiredSamples)
-        {
-            if (string.IsNullOrEmpty(signature))
-            {
-                ViewModel.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
-            }
-            else
-            {
-                ViewModel.KeepCanvasHoverAlive();
-            }
-
-            return;
-        }
-
-        ApplyHoverResolution(pointer, _hoverCandidateNode, _hoverCandidateEdge, signature);
-    }
-
-    private void ApplyHoverResolution(
-        Point pointer,
-        VizActivityCanvasNode? node,
-        VizActivityCanvasEdge? edge,
-        string signature)
-    {
-        if (ViewModel is null)
-        {
-            return;
-        }
-
-        if (node is not null)
-        {
-            _hoverCommittedSignature = signature;
-            _lastCommittedHoverPoint = pointer;
-            _hasCommittedHoverPoint = true;
-            ViewModel.SetCanvasNodeHover(node, pointer.X, pointer.Y);
-            return;
-        }
-
-        if (edge is not null)
-        {
-            _hoverCommittedSignature = signature;
-            _lastCommittedHoverPoint = pointer;
-            _hasCommittedHoverPoint = true;
-            ViewModel.SetCanvasEdgeHover(edge, pointer.X, pointer.Y);
-            return;
-        }
-
-        if (ShouldRetainCommittedHover(pointer))
-        {
-            _hoverCommittedSignature = string.Empty;
-            _hasCommittedHoverPoint = false;
-            ViewModel.ClearCanvasHover();
-            return;
-        }
-
-        _hoverCommittedSignature = string.Empty;
-        _hasCommittedHoverPoint = false;
-        ViewModel.ClearCanvasHover();
-    }
-
-    private bool ShouldRetainCommittedHover(Point pointer)
-    {
-        if (string.IsNullOrEmpty(_hoverCommittedSignature) || !_hasCommittedHoverPoint)
-        {
-            return false;
-        }
-
-        var dx = pointer.X - _lastCommittedHoverPoint.X;
-        var dy = pointer.Y - _lastCommittedHoverPoint.Y;
-        return ((dx * dx) + (dy * dy)) <= (HoverNoHitRetentionDistancePx * HoverNoHitRetentionDistancePx);
-    }
-
-    private int GetRequiredHoverSamples(string signature)
-    {
-        if (string.IsNullOrEmpty(_hoverCommittedSignature))
-        {
-            return 1;
-        }
-
-        return string.IsNullOrEmpty(signature)
-            ? HoverTargetClearSamples
-            : HoverTargetSwitchSamples;
-    }
-
-    private void ResetHoverStability()
-    {
-        _hoverCommittedSignature = string.Empty;
-        _hoverCandidateSignature = string.Empty;
-        _hoverCandidateSamples = 0;
-        _hoverCandidateNode = null;
-        _hoverCandidateEdge = null;
-        _hasCommittedHoverPoint = false;
-    }
-
-    private static string BuildHoverSignature(VizActivityCanvasNode? node, VizActivityCanvasEdge? edge)
-    {
-        if (node is not null && !string.IsNullOrWhiteSpace(node.NodeKey))
-        {
-            return $"node:{node.NodeKey}";
-        }
-
-        if (edge is not null && !string.IsNullOrWhiteSpace(edge.RouteLabel))
-        {
-            return $"edge:{edge.RouteLabel}";
-        }
-
-        return string.Empty;
-    }
 }
