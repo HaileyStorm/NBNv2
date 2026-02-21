@@ -178,7 +178,7 @@
                             <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
                                      StrokeThickness="2.8"
                                      IsVisible="{Binding IsSelected}" />
-                            <TextBlock Text="★"
+                            <TextBlock Text="*"
                                        IsVisible="{Binding IsPinned}"
                                        FontSize="10"
                                        FontWeight="Bold"
