@@ -3050,6 +3050,9 @@ Use these defaults to avoid recurring Aleph friction:
 5. Beads/BV tracker source sanity:
    * If `bv`/`bd` shows stale or conflicting status, run `bd where` and confirm root `.beads/` is active.
    * Eliminate project-local `.beads/` directories (after archiving if needed) and run `bd sync` from repo root.
+6. Windows shell chaining in this repo:
+   * In Windows PowerShell sessions, do not use bash-style `&&` command separators.
+   * Use `;` for sequential commands, or `if ($?) { ... }` when the second command must only run on success.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 
