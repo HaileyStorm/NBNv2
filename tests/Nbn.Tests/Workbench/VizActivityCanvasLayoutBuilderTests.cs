@@ -337,6 +337,75 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_FocusModeDenseRegionAvoidsNeuronOverlap()
+    {
+        const uint focusRegionId = 0;
+        const int neuronCount = 48;
+        const int routeCount = 560;
+        var events = new List<VizEventItem>(routeCount);
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+        var neuronAddresses = new HashSet<uint>();
+
+        for (var neuron = 0; neuron < neuronCount; neuron++)
+        {
+            neuronAddresses.Add(uint.Parse(Address(focusRegionId, (uint)neuron), CultureInfo.InvariantCulture));
+        }
+
+        for (var i = 0; i < routeCount; i++)
+        {
+            var src = (uint)(i % neuronCount);
+            var dst = (uint)((i * 11 + 5) % neuronCount);
+            var source = Address(focusRegionId, src);
+            var target = Address(focusRegionId, dst);
+            var value = (i % 2 == 0) ? 0.9f : -0.7f;
+            var strength = (i % 3 == 0) ? 0.5f : -0.35f;
+            events.Add(CreateEvent("VizAxonSent", (ulong)(4200 + i), focusRegionId, source, target, value, strength));
+            neuronRoutes.Add(new(
+                uint.Parse(source, CultureInfo.InvariantCulture),
+                uint.Parse(target, CultureInfo.InvariantCulture)));
+        }
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 96, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            neuronAddresses,
+            neuronRoutes);
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 96, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        var neurons = layout.Nodes
+            .Where(item => item.RegionId == focusRegionId && item.NeuronId.HasValue)
+            .OrderBy(item => item.NeuronId!.Value)
+            .ToList();
+        Assert.Equal(neuronCount, neurons.Count);
+
+        for (var left = 0; left < neurons.Count; left++)
+        {
+            var leftNode = neurons[left];
+            var leftCenterX = leftNode.Left + (leftNode.Diameter / 2.0);
+            var leftCenterY = leftNode.Top + (leftNode.Diameter / 2.0);
+            for (var right = left + 1; right < neurons.Count; right++)
+            {
+                var rightNode = neurons[right];
+                var rightCenterX = rightNode.Left + (rightNode.Diameter / 2.0);
+                var rightCenterY = rightNode.Top + (rightNode.Diameter / 2.0);
+                var minimumDistance = ((leftNode.Diameter + rightNode.Diameter) / 2.0) - 0.2;
+                var actualDistance = Distance(leftCenterX, leftCenterY, rightCenterX, rightCenterY);
+                Assert.True(
+                    actualDistance >= minimumDistance,
+                    $"Nodes {leftNode.Label} and {rightNode.Label} overlap. actual={actualDistance:0.###}, required={minimumDistance:0.###}");
+            }
+        }
+    }
+
+    [Fact]
     public void Build_FocusModeCollapsesGatewayFanoutIntoSingleDisplayedRoute()
     {
         const uint focusRegionId = 0;

@@ -313,7 +313,16 @@ public static class VizActivityCanvasLayoutBuilder
         var nodeByKey = new Dictionary<string, VizActivityCanvasNode>(StringComparer.OrdinalIgnoreCase);
 
         var sortedNeurons = focusNeuronStats.Keys.OrderBy(NeuronFromAddress).ToList();
-        var neuronPositions = BuildCircularPositions(sortedNeurons.Count, 92, 162, yScale: 0.78);
+        var neuronMaxOrbit = Math.Min(
+            CenterX - (CanvasPadding + MaxFocusNeuronNodeRadius + 6.0),
+            (CenterY - (CanvasPadding + MaxFocusNeuronNodeRadius + 6.0)) / 0.94);
+        var neuronMinOrbit = Math.Min(64.0, neuronMaxOrbit);
+        var neuronPositions = BuildConcentricPositions(
+            sortedNeurons.Count,
+            minRadius: neuronMinOrbit,
+            maxRadius: neuronMaxOrbit,
+            yScale: 0.94,
+            minCenterSpacing: (MaxFocusNeuronNodeRadius * 2.0) + 2.0);
         var maxNeuronEvents = Math.Max(1, focusNeuronStats.Values.Max(item => item.EventCount));
         var maxNeuronFlowDegree = Math.Max(1, focusNeuronStats.Values.Max(item => item.OutboundCount + item.InboundCount));
         for (var index = 0; index < sortedNeurons.Count; index++)
@@ -1089,6 +1098,97 @@ public static class VizActivityCanvasLayoutBuilder
                     Clamp(x, RegionNodePositionPadding, CanvasWidth - RegionNodePositionPadding),
                     Clamp(y, RegionNodePositionPadding, CanvasHeight - RegionNodePositionPadding));
             }
+        }
+
+        return positions;
+    }
+
+    private static IReadOnlyList<CanvasPoint> BuildConcentricPositions(
+        int count,
+        double minRadius,
+        double maxRadius,
+        double yScale,
+        double minCenterSpacing)
+    {
+        if (count <= 0)
+        {
+            return Array.Empty<CanvasPoint>();
+        }
+
+        if (count == 1)
+        {
+            return new[] { new CanvasPoint(CenterX, CenterY) };
+        }
+
+        var safeYScale = Math.Clamp(yScale, 0.45, 1.15);
+        var safeSpacing = Math.Max(8.0, minCenterSpacing);
+        var safeMinRadius = Math.Max(0.0, minRadius);
+        var safeMaxRadius = Math.Max(safeMinRadius, maxRadius);
+        var ringGap = Math.Max(24.0, safeSpacing + 12.0);
+        var positions = new List<CanvasPoint>(count);
+
+        var remaining = count;
+        var ringIndex = 0;
+        while (remaining > 0)
+        {
+            var radius = safeMinRadius + (ringIndex * ringGap);
+            if (radius > safeMaxRadius)
+            {
+                radius = safeMaxRadius;
+            }
+
+            var effectiveCircumference = 2.0 * Math.PI * Math.Max(1.0, radius * safeYScale);
+            var naturalCapacity = Math.Max(6, (int)Math.Floor(effectiveCircumference / safeSpacing));
+            var ringCount = Math.Min(naturalCapacity, remaining);
+            var nextRadius = Math.Min(safeMaxRadius, radius + ringGap);
+            var nextRingGap = nextRadius - radius;
+            var canPlaceSafeNextRing = nextRingGap >= (safeSpacing - 0.5);
+            if (remaining > ringCount && !canPlaceSafeNextRing)
+            {
+                ringCount = remaining;
+                naturalCapacity = Math.Max(naturalCapacity, ringCount);
+            }
+
+            var angleStep = (2.0 * Math.PI) / naturalCapacity;
+            var ringPhase = (ringIndex * Math.PI) / Math.Max(3, naturalCapacity);
+            for (var index = 0; index < ringCount; index++)
+            {
+                var slot = ringCount == naturalCapacity
+                    ? index
+                    : (int)Math.Floor(((index + 0.5) * naturalCapacity) / ringCount);
+                var angle = ringPhase + (slot * angleStep);
+                var x = CenterX + (Math.Cos(angle) * radius);
+                var y = CenterY + (Math.Sin(angle) * radius * safeYScale);
+                positions.Add(new CanvasPoint(
+                    Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+                    Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding)));
+            }
+
+            remaining -= ringCount;
+            ringIndex++;
+            if (radius >= safeMaxRadius)
+            {
+                break;
+            }
+        }
+
+        if (positions.Count >= count)
+        {
+            return positions;
+        }
+
+        // Fallback for extreme densities: fill the remaining slots on the outer orbit.
+        var fallbackRadius = safeMaxRadius;
+        var fallbackRemaining = count - positions.Count;
+        var fallbackStep = (2.0 * Math.PI) / fallbackRemaining;
+        for (var index = 0; index < fallbackRemaining; index++)
+        {
+            var angle = (index * fallbackStep) + (Math.PI / 7.0);
+            var x = CenterX + (Math.Cos(angle) * fallbackRadius);
+            var y = CenterY + (Math.Sin(angle) * fallbackRadius * safeYScale);
+            positions.Add(new CanvasPoint(
+                Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+                Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding)));
         }
 
         return positions;

@@ -39,6 +39,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double NodeHitPadding = 2.5;
     private const double StickyNodeHitPadding = 7;
     private const double StickyEdgeHitPadding = 8;
+    private const double HoverNodeHitPadding = 0.8;
+    private const double HoverStickyNodeHitPadding = 3.8;
+    private const double HoverStickyEdgeHitPadding = 4.2;
+    private const double HoverEdgeHitThresholdScale = 0.34;
+    private const double HoverEdgeHitThresholdMin = 2.4;
     private const double HitDistanceTieEpsilon = 0.05;
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 420;
@@ -652,19 +657,70 @@ public sealed class VizPanelViewModel : ViewModelBase
         try
         {
             // Keep hover locked to the current target while still inside sticky tolerance.
-            if (TryResolveStickyHoverHit(pointerX, pointerY, out node, out edge))
+            if (TryResolveStickyHoverHit(
+                    pointerX,
+                    pointerY,
+                    stickyNodePadding: StickyNodeHitPadding,
+                    stickyEdgePadding: StickyEdgeHitPadding,
+                    edgeHitThresholdScale: 0.5,
+                    edgeHitThresholdMin: 4.0,
+                    out node,
+                    out edge))
             {
                 return true;
             }
 
-            node = HitTestCanvasNode(pointerX, pointerY);
+            node = HitTestCanvasNode(pointerX, pointerY, NodeHitPadding);
             if (node is not null)
             {
                 edge = null;
                 return true;
             }
 
-            edge = HitTestCanvasEdge(pointerX, pointerY);
+            edge = HitTestCanvasEdge(pointerX, pointerY, edgeHitThresholdScale: 0.5, edgeHitThresholdMin: 4.0);
+            if (edge is not null)
+            {
+                return true;
+            }
+
+            return false;
+        }
+        finally
+        {
+            RecordHitTestDuration(startedAt);
+        }
+    }
+
+    public bool TryResolveCanvasHoverHit(double pointerX, double pointerY, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
+    {
+        var startedAt = Stopwatch.GetTimestamp();
+        try
+        {
+            if (TryResolveStickyHoverHit(
+                    pointerX,
+                    pointerY,
+                    stickyNodePadding: HoverStickyNodeHitPadding,
+                    stickyEdgePadding: HoverStickyEdgeHitPadding,
+                    edgeHitThresholdScale: HoverEdgeHitThresholdScale,
+                    edgeHitThresholdMin: HoverEdgeHitThresholdMin,
+                    out node,
+                    out edge))
+            {
+                return true;
+            }
+
+            node = HitTestCanvasNode(pointerX, pointerY, HoverNodeHitPadding);
+            if (node is not null)
+            {
+                edge = null;
+                return true;
+            }
+
+            edge = HitTestCanvasEdge(
+                pointerX,
+                pointerY,
+                edgeHitThresholdScale: HoverEdgeHitThresholdScale,
+                edgeHitThresholdMin: HoverEdgeHitThresholdMin);
             if (edge is not null)
             {
                 return true;
@@ -2327,6 +2383,10 @@ public sealed class VizPanelViewModel : ViewModelBase
     private bool TryResolveStickyHoverHit(
         double pointerX,
         double pointerY,
+        double stickyNodePadding,
+        double stickyEdgePadding,
+        double edgeHitThresholdScale,
+        double edgeHitThresholdMin,
         out VizActivityCanvasNode? node,
         out VizActivityCanvasEdge? edge)
     {
@@ -2335,7 +2395,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             var centerX = hoveredNode.Left + (hoveredNode.Diameter / 2.0);
             var centerY = hoveredNode.Top + (hoveredNode.Diameter / 2.0);
-            var radius = (hoveredNode.Diameter / 2.0) + StickyNodeHitPadding;
+            var radius = (hoveredNode.Diameter / 2.0) + stickyNodePadding;
             var dx = pointerX - centerX;
             var dy = pointerY - centerY;
             if ((dx * dx) + (dy * dy) <= radius * radius)
@@ -2349,7 +2409,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
             && _canvasEdgeByRoute.TryGetValue(_hoverCanvasRouteLabel!, out var hoveredEdge))
         {
-            var threshold = Math.Max(4.0, hoveredEdge.HitTestThickness * 0.5) + StickyEdgeHitPadding;
+            var threshold = Math.Max(edgeHitThresholdMin, hoveredEdge.HitTestThickness * edgeHitThresholdScale) + stickyEdgePadding;
             var distance = DistanceToQuadraticBezier(
                 pointerX,
                 pointerY,
@@ -2372,7 +2432,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         return false;
     }
 
-    private VizActivityCanvasNode? HitTestCanvasNode(double pointerX, double pointerY)
+    private VizActivityCanvasNode? HitTestCanvasNode(double pointerX, double pointerY, double nodeHitPadding)
     {
         if (_canvasNodeSnapshot.Count == 0)
         {
@@ -2391,7 +2451,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 var node = _canvasNodeSnapshot[index];
                 var centerX = node.Left + (node.Diameter / 2.0);
                 var centerY = node.Top + (node.Diameter / 2.0);
-                var radius = (node.Diameter / 2.0) + NodeHitPadding;
+                var radius = (node.Diameter / 2.0) + nodeHitPadding;
                 var dx = pointerX - centerX;
                 var dy = pointerY - centerY;
                 var distanceSquared = (dx * dx) + (dy * dy);
@@ -2423,7 +2483,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             var centerX = node.Left + (node.Diameter / 2.0);
             var centerY = node.Top + (node.Diameter / 2.0);
-            var radius = (node.Diameter / 2.0) + NodeHitPadding;
+            var radius = (node.Diameter / 2.0) + nodeHitPadding;
             var dx = pointerX - centerX;
             var dy = pointerY - centerY;
             var distanceSquared = (dx * dx) + (dy * dy);
@@ -2446,7 +2506,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         return best;
     }
 
-    private VizActivityCanvasEdge? HitTestCanvasEdge(double pointerX, double pointerY)
+    private VizActivityCanvasEdge? HitTestCanvasEdge(
+        double pointerX,
+        double pointerY,
+        double edgeHitThresholdScale,
+        double edgeHitThresholdMin)
     {
         if (_canvasEdgeSnapshot.Count == 0)
         {
@@ -2463,7 +2527,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             foreach (var index in _edgeHitCandidates)
             {
                 var edge = _canvasEdgeSnapshot[index];
-                var threshold = Math.Max(4.0, edge.HitTestThickness * 0.5);
+                var threshold = Math.Max(edgeHitThresholdMin, edge.HitTestThickness * edgeHitThresholdScale);
                 var distance = DistanceToQuadraticBezier(
                     pointerX,
                     pointerY,
@@ -2498,7 +2562,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         foreach (var edge in _canvasEdgeSnapshot)
         {
-            var threshold = Math.Max(4.0, edge.HitTestThickness * 0.5);
+            var threshold = Math.Max(edgeHitThresholdMin, edge.HitTestThickness * edgeHitThresholdScale);
             var distance = DistanceToQuadraticBezier(
                 pointerX,
                 pointerY,

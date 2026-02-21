@@ -81,7 +81,7 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, out var node, out var edge))
+        if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out var node, out var edge))
         {
             node = null;
             edge = null;
@@ -99,7 +99,7 @@ public partial class VizPanel : UserControl
 
         var point = e.GetPosition(visual);
         var pointer = e.GetCurrentPoint(visual).Properties;
-        var hasHit = TryResolveCanvasHitWithProbe(point, PressProbeOffsets, out var node, out var edge);
+        var hasHit = TryResolveCanvasHitWithProbe(point, PressProbeOffsets, hoverMode: false, out var node, out var edge);
         if (!hasHit)
         {
             if (ViewModel.TrySelectHoveredCanvasItem(pointer.IsRightButtonPressed))
@@ -154,7 +154,7 @@ public partial class VizPanel : UserControl
                 && point.X <= visual.Bounds.Width
                 && point.Y <= visual.Bounds.Height;
             if (inside
-                && TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, out var node, out var edge))
+                && TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out var node, out var edge))
             {
                 ApplyHoverSample(point, node, edge);
                 return;
@@ -194,6 +194,7 @@ public partial class VizPanel : UserControl
     private bool TryResolveCanvasHitWithProbe(
         Point point,
         IReadOnlyList<Point> probeOffsets,
+        bool hoverMode,
         out VizActivityCanvasNode? node,
         out VizActivityCanvasEdge? edge)
     {
@@ -206,7 +207,10 @@ public partial class VizPanel : UserControl
 
         foreach (var offset in probeOffsets)
         {
-            if (ViewModel.TryResolveCanvasHit(point.X + offset.X, point.Y + offset.Y, out node, out edge))
+            var hasHit = hoverMode
+                ? ViewModel.TryResolveCanvasHoverHit(point.X + offset.X, point.Y + offset.Y, out node, out edge)
+                : ViewModel.TryResolveCanvasHit(point.X + offset.X, point.Y + offset.Y, out node, out edge);
+            if (hasHit)
             {
                 return true;
             }
