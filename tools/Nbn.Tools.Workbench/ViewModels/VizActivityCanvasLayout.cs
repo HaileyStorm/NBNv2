@@ -151,10 +151,12 @@ public static class VizActivityCanvasLayoutBuilder
     private const double CenterX = CanvasWidth / 2.0;
     private const double CenterY = CanvasHeight / 2.0;
     private const double CanvasPadding = 26;
-    private const double MinNodeRadius = 13;
-    private const double MaxNodeRadius = 30;
-    private const double RegionNodePositionPadding = CanvasPadding + MaxNodeRadius + 2;
+    private const double RegionNodeRadius = 22;
+    private const double FocusNeuronNodeRadius = 14;
+    private const double GatewayNodeRadius = 13;
+    private const double RegionNodePositionPadding = CanvasPadding + RegionNodeRadius + 4;
     private const double EdgeControlPadding = CanvasPadding;
+    private const double EdgeNodeClearance = 4;
     private const double BaseEdgeStroke = 1.1;
     private const double MaxEdgeStrokeBoost = 2.8;
     private const int EdgeCurveCacheMaxEntries = 4096;
@@ -214,7 +216,7 @@ public static class VizActivityCanvasLayoutBuilder
             var isPinned = interaction.IsNodePinned(nodeKey);
             var isDormant = stats.EventCount <= 0 || stats.LastTick == 0;
             var loadRatio = isDormant ? 0.0 : Math.Clamp((double)stats.EventCount / maxNodeEvents, 0.0, 1.0);
-            var radius = MinNodeRadius + ((MaxNodeRadius - MinNodeRadius) * loadRatio);
+            var radius = RegionNodeRadius;
             var tickRecency = isDormant ? 0.0 : TickRecency(stats.LastTick, latestTick, options.TickWindow);
             var emphasis = (isSelected ? 0.25 : 0.0) + (isHovered ? 0.14 : 0.0) + (isPinned ? 0.18 : 0.0);
             var (fill, stroke) = GetRegionNodePalette(regionId, isDormant);
@@ -226,11 +228,13 @@ public static class VizActivityCanvasLayoutBuilder
                                   + (isSelected ? 0.9 : 0.0);
             regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
             regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
+            var bufferAverageText = FormatBufferAverage(bufferMetrics);
+            var bufferLatestText = FormatBufferLatest(bufferMetrics);
             var detail = $"R{regionId} | events {stats.EventCount} | last tick {stats.LastTick}"
                          + $" | fired {stats.FiredCount} | axon {stats.AxonCount}"
                          + $" | dom {stats.DominantType} | avg |v| {stats.AverageMagnitude:0.###}"
                          + $" | routes out {routeDegree.OutboundCount} in {routeDegree.InboundCount}"
-                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferMetrics.AverageBufferValue:0.###} latest={bufferMetrics.LatestBufferValue:0.###}@{bufferMetrics.LatestBufferTick}";
+                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -300,15 +304,17 @@ public static class VizActivityCanvasLayoutBuilder
             var isPinned = interaction.IsNodePinned(nodeKey);
             var isDormant = stats.EventCount <= 0 || stats.LastTick == 0;
             var loadRatio = isDormant ? 0.0 : Math.Clamp((double)stats.EventCount / maxNeuronEvents, 0.0, 1.0);
-            var radius = 10.5 + (8.0 * loadRatio);
+            var radius = FocusNeuronNodeRadius;
             var emphasis = (isSelected ? 0.24 : 0.0) + (isHovered ? 0.12 : 0.0) + (isPinned ? 0.16 : 0.0);
             var fillOpacity = Math.Clamp((isDormant ? 0.15 : 0.34 + (0.45 * loadRatio)) + emphasis, 0.12, 1.0);
             var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.28 + (0.35 * TickRecency(stats.LastTick, latestTick, options.TickWindow))) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.2 + (isPinned ? 0.8 : 0.0) + (isHovered ? 0.6 : 0.0) + (isSelected ? 0.9 : 0.0);
             var (fill, stroke) = isDormant ? ("#2E3F46", "#4E6A73") : ("#2A9D8F", "#1B6B63");
+            var bufferAverageText = FormatBufferAverage(stats.BufferCount, stats.AverageBufferValue);
+            var bufferLatestText = FormatBufferLatest(stats.BufferCount, stats.LatestBufferValue, stats.LatestBufferTick);
             var detail = $"R{focusRegionId}N{neuronId} | events {stats.EventCount} | last tick {stats.LastTick}"
                          + $" | fired {stats.FiredCount} | out {stats.OutboundCount} in {stats.InboundCount}"
-                         + $" | buffer n={stats.BufferCount} avg={stats.AverageBufferValue:0.###} latest={stats.LatestBufferValue:0.###}@{stats.LatestBufferTick}";
+                         + $" | buffer n={stats.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
             if (isDormant)
             {
                 detail = $"{detail} | inactive in window";
@@ -369,12 +375,14 @@ public static class VizActivityCanvasLayoutBuilder
             var aggregateAxon = aggregate?.AxonCount ?? 0;
             var aggregateDominantType = aggregate?.DominantType ?? "unknown";
             var aggregateAverageMagnitude = aggregate?.AverageMagnitude ?? 0f;
+            var bufferAverageText = FormatBufferAverage(bufferMetrics);
+            var bufferLatestText = FormatBufferLatest(bufferMetrics);
             var detail = $"R{regionId} gateway | {role} | events {stats.EventCount} | last tick {stats.LastTick}"
                          + $" | agg events {aggregateEventCount} | agg last tick {aggregateLastTick}"
                          + $" | fired {aggregateFired} | axon {aggregateAxon}"
                          + $" | dom {aggregateDominantType} | avg |v| {aggregateAverageMagnitude:0.###}"
                          + $" | routes out {routeDegree.OutboundCount} in {routeDegree.InboundCount}"
-                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferMetrics.AverageBufferValue:0.###} latest={bufferMetrics.LatestBufferValue:0.###}@{bufferMetrics.LatestBufferTick}";
+                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferAverageText} latest={bufferLatestText}";
             if (stats.EventCount == 0 && aggregateEventCount == 0)
             {
                 detail = $"{detail} | inactive in window";
@@ -387,9 +395,9 @@ public static class VizActivityCanvasLayoutBuilder
                 regionId,
                 $"R{regionId}",
                 detail,
-                position.X - 13,
-                position.Y - 13,
-                26,
+                position.X - GatewayNodeRadius,
+                position.Y - GatewayNodeRadius,
+                GatewayNodeRadius * 2.0,
                 fill,
                 stroke,
                 fillOpacity,
@@ -593,8 +601,10 @@ public static class VizActivityCanvasLayoutBuilder
             var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
+            var sourceRadius = sourceNode.Diameter / 2.0;
+            var targetRadius = targetNode.Diameter / 2.0;
             var curveDirection = hasReverse && route.SourceRegionId > route.TargetRegionId ? -1 : 1;
-            var curve = BuildEdgeCurve(sourceCenter, targetCenter, route.SourceRegionId == route.TargetRegionId, curveDirection);
+            var curve = BuildEdgeCurve(sourceCenter, targetCenter, route.SourceRegionId == route.TargetRegionId, curveDirection, sourceRadius, targetRadius);
             var detail = $"{routeLabel} | {edgeKind} | routes {aggregate.RouteCount} | events {aggregate.EventCount} | last tick {aggregate.LastTick}"
                          + $" | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}"
                          + $" | avg |s| {aggregate.AverageStrength:0.###} | avg s {aggregate.SignedStrength:0.###}";
@@ -881,8 +891,16 @@ public static class VizActivityCanvasLayoutBuilder
             var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
+            var sourceRadius = sourceNode.Diameter / 2.0;
+            var targetRadius = targetNode.Diameter / 2.0;
             var curveDirection = hasReverse && string.CompareOrdinal(key.SourceNodeKey, key.TargetNodeKey) > 0 ? -1 : 1;
-            var curve = BuildEdgeCurve(sourceCenter, targetCenter, string.Equals(key.SourceNodeKey, key.TargetNodeKey, StringComparison.OrdinalIgnoreCase), curveDirection);
+            var curve = BuildEdgeCurve(
+                sourceCenter,
+                targetCenter,
+                string.Equals(key.SourceNodeKey, key.TargetNodeKey, StringComparison.OrdinalIgnoreCase),
+                curveDirection,
+                sourceRadius,
+                targetRadius);
             var detail = $"{routeLabel} | {kind} | routes {aggregate.RouteCount} | events {aggregate.EventCount} | last tick {aggregate.LastTick}"
                          + $" | avg |v| {aggregate.AverageMagnitude:0.###} | avg v {aggregate.SignedValue:0.###}"
                          + $" | avg |s| {aggregate.AverageStrength:0.###} | avg s {aggregate.SignedStrength:0.###}";
@@ -1298,6 +1316,22 @@ public static class VizActivityCanvasLayoutBuilder
             (byte)Math.Clamp(Math.Round((fromB * inverse) + (toB * weight)), 0, 255));
     }
 
+    private static string FormatBufferAverage(RegionBufferMetric metrics)
+        => FormatBufferAverage(metrics.BufferCount, metrics.AverageBufferValue);
+
+    private static string FormatBufferLatest(RegionBufferMetric metrics)
+        => FormatBufferLatest(metrics.BufferCount, metrics.LatestBufferValue, metrics.LatestBufferTick);
+
+    private static string FormatBufferAverage(int bufferCount, float averageBufferValue)
+        => bufferCount > 0
+            ? averageBufferValue.ToString("0.###", CultureInfo.InvariantCulture)
+            : "n/a";
+
+    private static string FormatBufferLatest(int bufferCount, float latestBufferValue, ulong latestBufferTick)
+        => bufferCount > 0
+            ? FormattableString.Invariant($"{latestBufferValue:0.###}@{latestBufferTick}")
+            : "n/a";
+
     private static string NodeKeyForRegion(uint regionId)
         => $"region:{regionId}";
 
@@ -1458,12 +1492,20 @@ public static class VizActivityCanvasLayoutBuilder
         byRegion[regionId] = new RegionNodeSource(regionId, Math.Max(0, eventCount), lastTick, 0, Math.Max(0, eventCount), "unknown", 0f);
     }
 
-    private static CanvasEdgeCurve BuildEdgeCurve(CanvasPoint source, CanvasPoint target, bool isSelfLoop, int curveDirection)
+    private static CanvasEdgeCurve BuildEdgeCurve(
+        CanvasPoint source,
+        CanvasPoint target,
+        bool isSelfLoop,
+        int curveDirection,
+        double sourceRadius,
+        double targetRadius)
     {
         var minX = EdgeControlPadding;
         var maxX = CanvasWidth - EdgeControlPadding;
         var minY = EdgeControlPadding;
         var maxY = CanvasHeight - EdgeControlPadding;
+        sourceRadius = Math.Max(0.0, sourceRadius);
+        targetRadius = Math.Max(0.0, targetRadius);
         var normalizedDirection = curveDirection < 0 ? -1 : 1;
         var cacheKey = new CanvasEdgeCurveKey(
             QuantizeCurveCoord(source.X),
@@ -1471,7 +1513,9 @@ public static class VizActivityCanvasLayoutBuilder
             QuantizeCurveCoord(target.X),
             QuantizeCurveCoord(target.Y),
             isSelfLoop,
-            normalizedDirection);
+            normalizedDirection,
+            QuantizeCurveCoord(sourceRadius),
+            QuantizeCurveCoord(targetRadius));
         lock (EdgeCurveCacheGate)
         {
             if (EdgeCurveCache.TryGetValue(cacheKey, out var cached))
@@ -1483,31 +1527,70 @@ public static class VizActivityCanvasLayoutBuilder
         CanvasEdgeCurve curve;
         if (isSelfLoop)
         {
-            var loopSize = 22;
-            var c1 = new CanvasPoint(
-                Clamp(source.X + loopSize, minX, maxX),
-                Clamp(source.Y - (loopSize * 1.3), minY, maxY));
+            var anchorOffsetX = Math.Max(8.0, sourceRadius * 0.78);
+            var anchorOffsetY = Math.Max(8.0, sourceRadius * 0.74);
+            var loopLift = Math.Max(16.0, sourceRadius + 12.0);
+            var start = new CanvasPoint(
+                Clamp(source.X + anchorOffsetX, minX, maxX),
+                Clamp(source.Y - anchorOffsetY, minY, maxY));
+            var control = new CanvasPoint(
+                Clamp(source.X, minX, maxX),
+                Clamp(source.Y - loopLift, minY, maxY));
             var end = new CanvasPoint(
-                Clamp(source.X - 1, minX, maxX),
-                Clamp(source.Y - 1, minY, maxY));
-            var pathData = FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {c1.X:0.###} {c1.Y:0.###} {end.X:0.###} {end.Y:0.###}");
-            curve = new CanvasEdgeCurve(pathData, source, c1, end);
+                Clamp(source.X - anchorOffsetX, minX, maxX),
+                Clamp(source.Y - anchorOffsetY, minY, maxY));
+            var pathData = FormattableString.Invariant($"M {start.X:0.###} {start.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {end.X:0.###} {end.Y:0.###}");
+            curve = new CanvasEdgeCurve(pathData, start, control, end);
         }
         else
         {
-            var midX = (source.X + target.X) / 2.0;
-            var midY = (source.Y + target.Y) / 2.0;
             var deltaX = target.X - source.X;
             var deltaY = target.Y - source.Y;
-            var length = Math.Max(1.0, Math.Sqrt((deltaX * deltaX) + (deltaY * deltaY)));
-            var normalX = -deltaY / length;
-            var normalY = deltaX / length;
+            var length = Math.Sqrt((deltaX * deltaX) + (deltaY * deltaY));
+            if (length < 1e-4)
+            {
+                length = 1e-4;
+            }
+
+            var unitX = deltaX / length;
+            var unitY = deltaY / length;
+            var startOffset = sourceRadius + EdgeNodeClearance;
+            var endOffset = targetRadius + EdgeNodeClearance;
+            var startX = source.X + (unitX * startOffset);
+            var startY = source.Y + (unitY * startOffset);
+            var endX = target.X - (unitX * endOffset);
+            var endY = target.Y - (unitY * endOffset);
+            var adjustedDeltaX = endX - startX;
+            var adjustedDeltaY = endY - startY;
+            var adjustedLength = Math.Sqrt((adjustedDeltaX * adjustedDeltaX) + (adjustedDeltaY * adjustedDeltaY));
+            if (adjustedLength < 4.0)
+            {
+                startX = source.X + (unitX * (sourceRadius * 0.5));
+                startY = source.Y + (unitY * (sourceRadius * 0.5));
+                endX = target.X - (unitX * (targetRadius * 0.5));
+                endY = target.Y - (unitY * (targetRadius * 0.5));
+                adjustedDeltaX = endX - startX;
+                adjustedDeltaY = endY - startY;
+                adjustedLength = Math.Sqrt((adjustedDeltaX * adjustedDeltaX) + (adjustedDeltaY * adjustedDeltaY));
+            }
+
+            var safeLength = Math.Max(adjustedLength, 1e-4);
+            var midX = (startX + endX) / 2.0;
+            var midY = (startY + endY) / 2.0;
+            var normalX = -adjustedDeltaY / safeLength;
+            var normalY = adjustedDeltaX / safeLength;
             var curvature = Math.Min(48.0, 16.0 + (length * 0.12)) * normalizedDirection;
+            var start = new CanvasPoint(
+                Clamp(startX, minX, maxX),
+                Clamp(startY, minY, maxY));
             var control = new CanvasPoint(
                 Clamp(midX + (normalX * curvature), minX, maxX),
                 Clamp(midY + (normalY * curvature), minY, maxY));
-            var pathData = FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {target.X:0.###} {target.Y:0.###}");
-            curve = new CanvasEdgeCurve(pathData, source, control, target);
+            var end = new CanvasPoint(
+                Clamp(endX, minX, maxX),
+                Clamp(endY, minY, maxY));
+            var pathData = FormattableString.Invariant($"M {start.X:0.###} {start.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {end.X:0.###} {end.Y:0.###}");
+            curve = new CanvasEdgeCurve(pathData, start, control, end);
         }
 
         lock (EdgeCurveCacheGate)
@@ -1593,7 +1676,9 @@ public static class VizActivityCanvasLayoutBuilder
         int TargetX,
         int TargetY,
         bool IsSelfLoop,
-        int CurveDirection);
+        int CurveDirection,
+        int SourceRadius,
+        int TargetRadius);
 
     private sealed record RegionNodeSource(
         uint RegionId,

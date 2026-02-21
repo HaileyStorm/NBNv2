@@ -32,13 +32,14 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int SnapshotEdgeRows = 14;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
-    private const int HoverClearDelayMs = 180;
+    private const int HoverClearDelayMs = 280;
     private const int EdgeHitSamples = 12;
     private const double HitTestCellSize = 54;
     private const double EdgeHitIndexPadding = 4;
     private const double NodeHitPadding = 2.5;
-    private const double StickyNodeHitPadding = 6;
-    private const double StickyEdgeHitPadding = 6;
+    private const double StickyNodeHitPadding = 9;
+    private const double StickyEdgeHitPadding = 10;
+    private const double HitDistanceTieEpsilon = 0.05;
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 420;
     private const double HoverCardMaxHeight = 220;
@@ -2370,7 +2371,10 @@ public sealed class VizPanelViewModel : ViewModelBase
                     continue;
                 }
 
-                if (distanceSquared < bestDistance)
+                if (best is null
+                    || distanceSquared < (bestDistance - HitDistanceTieEpsilon)
+                    || (Math.Abs(distanceSquared - bestDistance) <= HitDistanceTieEpsilon
+                        && string.Compare(node.NodeKey, best.NodeKey, StringComparison.OrdinalIgnoreCase) < 0))
                 {
                     bestDistance = distanceSquared;
                     best = node;
@@ -2399,7 +2403,10 @@ public sealed class VizPanelViewModel : ViewModelBase
                 continue;
             }
 
-            if (distanceSquared < bestDistance)
+            if (best is null
+                || distanceSquared < (bestDistance - HitDistanceTieEpsilon)
+                || (Math.Abs(distanceSquared - bestDistance) <= HitDistanceTieEpsilon
+                    && string.Compare(node.NodeKey, best.NodeKey, StringComparison.OrdinalIgnoreCase) < 0))
             {
                 bestDistance = distanceSquared;
                 best = node;
@@ -2441,7 +2448,10 @@ public sealed class VizPanelViewModel : ViewModelBase
                     continue;
                 }
 
-                if (distance < bestDistance)
+                if (best is null
+                    || distance < (bestDistance - HitDistanceTieEpsilon)
+                    || (Math.Abs(distance - bestDistance) <= HitDistanceTieEpsilon
+                        && string.Compare(edge.RouteLabel, best.RouteLabel, StringComparison.OrdinalIgnoreCase) < 0))
                 {
                     bestDistance = distance;
                     best = edge;
@@ -2473,7 +2483,10 @@ public sealed class VizPanelViewModel : ViewModelBase
                 continue;
             }
 
-            if (distance < bestDistance)
+            if (best is null
+                || distance < (bestDistance - HitDistanceTieEpsilon)
+                || (Math.Abs(distance - bestDistance) <= HitDistanceTieEpsilon
+                    && string.Compare(edge.RouteLabel, best.RouteLabel, StringComparison.OrdinalIgnoreCase) < 0))
             {
                 bestDistance = distance;
                 best = edge;

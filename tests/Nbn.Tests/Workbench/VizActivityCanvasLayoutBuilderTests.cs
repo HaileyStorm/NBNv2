@@ -254,6 +254,9 @@ public class VizActivityCanvasLayoutBuilderTests
 
         var focusedNeuron = Assert.Single(layout.Nodes, node => node.RegionId == focusRegionId && node.NeuronId == 7);
         Assert.True(focusedNeuron.EventCount > 0);
+        Assert.Contains("buffer n=0", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avg=n/a", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("latest=n/a", focusedNeuron.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(layout.Edges);
     }
 
@@ -383,6 +386,109 @@ public class VizActivityCanvasLayoutBuilderTests
 
         var edge = Assert.Single(layout.Edges, item => string.Equals(item.RouteLabel, "R9 -> R23", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("routes 2", edge.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_RegionEdgeEndpointsStartOutsideNodeBodies()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 610, region: 0, source: Address(0, 0), target: Address(31, 0), value: 0.8f, strength: 0.4f),
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var sourceNode = Assert.Single(layout.Nodes, item => item.RegionId == 0);
+        var targetNode = Assert.Single(layout.Nodes, item => item.RegionId == 31);
+        var edge = Assert.Single(layout.Edges, item => string.Equals(item.RouteLabel, "R0 -> R31", StringComparison.OrdinalIgnoreCase));
+        var sourceCenter = (X: sourceNode.Left + (sourceNode.Diameter / 2.0), Y: sourceNode.Top + (sourceNode.Diameter / 2.0));
+        var targetCenter = (X: targetNode.Left + (targetNode.Diameter / 2.0), Y: targetNode.Top + (targetNode.Diameter / 2.0));
+
+        var sourceDistance = Distance(sourceCenter.X, sourceCenter.Y, edge.SourceX, edge.SourceY);
+        var targetDistance = Distance(targetCenter.X, targetCenter.Y, edge.TargetX, edge.TargetY);
+        Assert.True(sourceDistance >= sourceNode.Diameter / 2.0);
+        Assert.True(targetDistance >= targetNode.Diameter / 2.0);
+    }
+
+    [Fact]
+    public void Build_RegionSelfLoopEdgeArcsOutsideNode()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 620, region: 16, source: Address(16, 0), target: Address(16, 1), value: 0.5f, strength: 0.2f),
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var node = Assert.Single(layout.Nodes, item => item.RegionId == 16);
+        var edge = Assert.Single(layout.Edges, item => string.Equals(item.RouteLabel, "R16 -> R16", StringComparison.OrdinalIgnoreCase));
+        var centerX = node.Left + (node.Diameter / 2.0);
+        var centerY = node.Top + (node.Diameter / 2.0);
+
+        Assert.True(Distance(centerX, centerY, edge.SourceX, edge.SourceY) >= node.Diameter / 2.0);
+        Assert.True(edge.ControlY < node.Top);
+    }
+
+    [Fact]
+    public void Build_RegionNodeDetailUsesNotAvailableWhenNoBufferSamples()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronFired", tick: 630, region: 9, source: Address(9, 1), target: Address(9, 1), value: 0.75f, strength: 0f),
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var node = Assert.Single(layout.Nodes, item => item.RegionId == 9);
+        Assert.Contains("buffer n=0", node.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avg=n/a", node.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("latest=n/a", node.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_RegionNodeDiameterRemainsStableAcrossLoadChanges()
+    {
+        const uint regionId = 9;
+        var lowEvents = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronFired", tick: 640, region: regionId, source: Address(regionId, 0), target: Address(regionId, 0), value: 0.1f, strength: 0f),
+        };
+        var highEvents = Enumerable.Range(0, 25)
+            .Select(index => CreateEvent(
+                "VizNeuronFired",
+                tick: (ulong)(700 + index),
+                region: regionId,
+                source: Address(regionId, (uint)(index % 3)),
+                target: Address(regionId, (uint)((index + 1) % 3)),
+                value: 1f,
+                strength: 0f))
+            .ToList();
+
+        var lowLayout = VizActivityCanvasLayoutBuilder.Build(
+            VizActivityProjectionBuilder.Build(lowEvents, new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null)),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var highLayout = VizActivityCanvasLayoutBuilder.Build(
+            VizActivityProjectionBuilder.Build(highEvents, new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null)),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var lowNode = Assert.Single(lowLayout.Nodes, item => item.RegionId == regionId);
+        var highNode = Assert.Single(highLayout.Nodes, item => item.RegionId == regionId);
+        Assert.Equal(lowNode.Diameter, highNode.Diameter);
     }
 
     [Fact]
@@ -546,5 +652,12 @@ public class VizActivityCanvasLayoutBuilderTests
     {
         var value = (regionId << NbnConstants.AddressNeuronBits) | (neuronId & NbnConstants.AddressNeuronMask);
         return value.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static double Distance(double x1, double y1, double x2, double y2)
+    {
+        var dx = x2 - x1;
+        var dy = y2 - y1;
+        return Math.Sqrt((dx * dx) + (dy * dy));
     }
 }

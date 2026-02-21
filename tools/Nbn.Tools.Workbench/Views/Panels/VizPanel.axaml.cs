@@ -12,10 +12,10 @@ public partial class VizPanel : UserControl
 {
     private const double HoverHitTestMinIntervalMs = 16;
     private const double HoverHitTestMinMovePx = 1.2;
-    private const double HoverProbeDistancePx = 3.0;
+    private const double HoverProbeDistancePx = 4.0;
     private const double PressProbeDistancePx = 5.0;
     private const int HoverTargetSwitchSamples = 2;
-    private const int HoverTargetClearSamples = 2;
+    private const int HoverTargetClearSamples = 4;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0),
