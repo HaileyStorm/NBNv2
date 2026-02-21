@@ -149,7 +149,7 @@
                           <Canvas Width="860"
                                   Height="420">
                             <Path Data="{Binding PathData}"
-                                  Stroke="{DynamicResource NbnMutedBrush}"
+                                  Stroke="{Binding Stroke}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"
                                   PointerEntered="CanvasEdgePointerEntered"
@@ -201,8 +201,8 @@
                                 PointerExited="CanvasNodePointerExited"
                                 PointerPressed="CanvasNodePointerPressed"
                                 ToolTip.Tip="{Binding Detail}">
-                            <Ellipse Fill="{DynamicResource NbnTealBrush}" Opacity="{Binding FillOpacity}" />
-                            <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
+                            <Ellipse Fill="{Binding Fill}" Opacity="{Binding FillOpacity}" />
+                            <Ellipse Stroke="{Binding Stroke}"
                                      StrokeThickness="{Binding StrokeThickness}"
                                      Opacity="{Binding PulseOpacity}" />
                             <Ellipse Stroke="{DynamicResource NbnGoldBrush}"

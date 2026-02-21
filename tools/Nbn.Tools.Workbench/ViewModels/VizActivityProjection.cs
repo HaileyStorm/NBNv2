@@ -17,7 +17,8 @@ public sealed record VizActivityProjection(
     IReadOnlyList<VizActivityStatItem> Stats,
     IReadOnlyList<VizRegionActivityItem> Regions,
     IReadOnlyList<VizEdgeActivityItem> Edges,
-    IReadOnlyList<VizTickActivityItem> Ticks);
+    IReadOnlyList<VizTickActivityItem> Ticks,
+    IReadOnlyList<VizEventItem> WindowEvents);
 
 public sealed record VizActivityStatItem(string Label, string Value, string Detail);
 
@@ -66,7 +67,8 @@ public static class VizActivityProjectionBuilder
                 new[] { new VizActivityStatItem("Events", "0", "Awaiting stream data") },
                 Array.Empty<VizRegionActivityItem>(),
                 Array.Empty<VizEdgeActivityItem>(),
-                Array.Empty<VizTickActivityItem>());
+                Array.Empty<VizTickActivityItem>(),
+                Array.Empty<VizEventItem>());
         }
 
         var tickWindow = NormalizeTickWindow(options.TickWindow);
@@ -84,7 +86,8 @@ public static class VizActivityProjectionBuilder
                 },
                 Array.Empty<VizRegionActivityItem>(),
                 Array.Empty<VizEdgeActivityItem>(),
-                Array.Empty<VizTickActivityItem>());
+                Array.Empty<VizTickActivityItem>(),
+                Array.Empty<VizEventItem>());
         }
 
         var latestTick = filtered.Max(item => item.TickId);
@@ -127,7 +130,7 @@ public static class VizActivityProjectionBuilder
             ? $"Ticks {minTick}..{latestTick} | {windowed.Count} events | focus R{focused}: {focusCount}"
             : $"Ticks {minTick}..{latestTick} | {windowed.Count} events | {uniqueRegionCount} regions";
 
-        return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows);
+        return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows, windowed);
     }
 
     private static IReadOnlyList<VizRegionActivityItem> BuildRegionRows(IReadOnlyList<VizEventItem> events)

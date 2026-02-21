@@ -42,12 +42,15 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
     private bool _showProjectionSnapshot;
-    private uint? _selectedCanvasRegionId;
+    private string? _selectedCanvasNodeKey;
     private string? _selectedCanvasRouteLabel;
-    private uint? _hoverCanvasRegionId;
+    private string? _hoverCanvasNodeKey;
     private string? _hoverCanvasRouteLabel;
-    private readonly HashSet<uint> _pinnedCanvasRegions = new();
+    private readonly HashSet<string> _pinnedCanvasNodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _pinnedCanvasRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<Guid, BrainCanvasTopologyState> _topologyByBrainId = new();
+    private VizActivityProjection? _currentProjection;
+    private VizActivityProjectionOptions _currentProjectionOptions = new(DefaultTickWindow, false, null);
     private string _activityInteractionSummary = "Select a node or route to inspect activity details.";
     private string _activityPinnedSummary = "Pinned: none.";
 
@@ -355,10 +358,10 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        _selectedCanvasRegionId = node.RegionId;
+        _selectedCanvasNodeKey = node.NodeKey;
         _selectedCanvasRouteLabel = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
     }
 
     public void SelectCanvasEdge(VizActivityCanvasEdge? edge)
@@ -370,35 +373,35 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         _selectedCanvasRouteLabel = edge.RouteLabel;
-        _selectedCanvasRegionId = null;
+        _selectedCanvasNodeKey = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
     }
 
     public void SetCanvasNodeHover(VizActivityCanvasNode? node)
     {
-        var nextRegion = node?.RegionId;
-        if (_hoverCanvasRegionId == nextRegion && _hoverCanvasRouteLabel is null)
+        var nextNode = node?.NodeKey;
+        if (string.Equals(_hoverCanvasNodeKey, nextNode, StringComparison.OrdinalIgnoreCase) && _hoverCanvasRouteLabel is null)
         {
             return;
         }
 
-        _hoverCanvasRegionId = nextRegion;
+        _hoverCanvasNodeKey = nextNode;
         _hoverCanvasRouteLabel = null;
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
     }
 
     public void SetCanvasEdgeHover(VizActivityCanvasEdge? edge)
     {
         var nextRoute = edge?.RouteLabel;
-        if (string.Equals(_hoverCanvasRouteLabel, nextRoute, StringComparison.OrdinalIgnoreCase) && !_hoverCanvasRegionId.HasValue)
+        if (string.Equals(_hoverCanvasRouteLabel, nextRoute, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(_hoverCanvasNodeKey))
         {
             return;
         }
 
         _hoverCanvasRouteLabel = nextRoute;
-        _hoverCanvasRegionId = null;
-        RefreshActivityProjection();
+        _hoverCanvasNodeKey = null;
+        RefreshCanvasLayoutOnly();
     }
 
     public void TogglePinCanvasNode(VizActivityCanvasNode? node)
@@ -408,15 +411,15 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        if (!_pinnedCanvasRegions.Add(node.RegionId))
+        if (!_pinnedCanvasNodes.Add(node.NodeKey))
         {
-            _pinnedCanvasRegions.Remove(node.RegionId);
+            _pinnedCanvasNodes.Remove(node.NodeKey);
         }
 
-        _selectedCanvasRegionId = node.RegionId;
+        _selectedCanvasNodeKey = node.NodeKey;
         _selectedCanvasRouteLabel = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
     }
 
     public void TogglePinCanvasEdge(VizActivityCanvasEdge? edge)
@@ -432,9 +435,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         _selectedCanvasRouteLabel = edge.RouteLabel;
-        _selectedCanvasRegionId = null;
+        _selectedCanvasNodeKey = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
     }
 
     private void AddBrainFromEntry()
@@ -478,7 +481,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         RegionFocusText = regionId.ToString(CultureInfo.InvariantCulture);
-        RegionFilterText = regionId.ToString(CultureInfo.InvariantCulture);
+        RefreshFilteredEvents();
         Status = $"Zoom focus set to region {regionId}.";
     }
 
@@ -512,6 +515,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         _allEvents.Clear();
+        _topologyByBrainId.Clear();
+        _currentProjection = null;
+        _currentProjectionOptions = new VizActivityProjectionOptions(DefaultTickWindow, IncludeLowSignalEvents, null);
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;
@@ -660,6 +666,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                     continue;
                 }
 
+                AccumulateTopology(item);
                 _allEvents.Insert(0, item);
             }
 
@@ -689,9 +696,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         var utcNow = DateTimeOffset.UtcNow;
         var selectedBrainText = SelectedBrain?.BrainId.ToString("D") ?? "none";
         var selectedTypeText = SelectedVizType.TypeFilter ?? "all";
+        var topology = BuildTopologySnapshotForSelectedBrain();
 
         sb.AppendLine($"Visualizer diagnostics @ {utcNow:O}");
         sb.AppendLine($"selected_brain={selectedBrainText} known_brains={KnownBrains.Count} selected_type={selectedTypeText}");
+        sb.AppendLine($"topology regions={topology.Regions.Count} region_routes={topology.RegionRoutes.Count} neuron_addresses={topology.NeuronAddresses.Count} neuron_routes={topology.NeuronRoutes.Count}");
         sb.AppendLine(
             $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents}");
         sb.AppendLine(
@@ -715,7 +724,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                      .Take(24))
         {
             sb.AppendLine(
-                $"- {node.Label} region={node.RegionId} events={node.EventCount} tick={node.LastTick} left={node.Left:0.##} top={node.Top:0.##} size={node.Diameter:0.##} selected={node.IsSelected} hover={node.IsHovered} pinned={node.IsPinned}");
+                $"- {node.Label} key={node.NodeKey} region={node.RegionId} neuron={node.NeuronId?.ToString(CultureInfo.InvariantCulture) ?? "?"} events={node.EventCount} tick={node.LastTick} left={node.Left:0.##} top={node.Top:0.##} size={node.Diameter:0.##} selected={node.IsSelected} hover={node.IsHovered} pinned={node.IsPinned}");
         }
 
         sb.AppendLine("CanvasEdges:");
@@ -725,7 +734,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                      .Take(24))
         {
             sb.AppendLine(
-                $"- {edge.RouteLabel} events={edge.EventCount} tick={edge.LastTick} stroke={edge.StrokeThickness:0.##} opacity={edge.Opacity:0.##} src={edge.SourceRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} dst={edge.TargetRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} selected={edge.IsSelected} hover={edge.IsHovered} pinned={edge.IsPinned}");
+                $"- {edge.RouteLabel} events={edge.EventCount} tick={edge.LastTick} stroke={edge.StrokeThickness:0.##} opacity={edge.Opacity:0.##} color={edge.Stroke} src={edge.SourceRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} dst={edge.TargetRegionId?.ToString(CultureInfo.InvariantCulture) ?? "?"} selected={edge.IsSelected} hover={edge.IsHovered} pinned={edge.IsPinned}");
         }
 
         sb.AppendLine("RecentVizEvents:");
@@ -761,22 +770,52 @@ public sealed class VizPanelViewModel : ViewModelBase
             TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null);
 
         var projection = VizActivityProjectionBuilder.Build(VizEvents, options);
-        TrimCanvasInteractionToProjection(projection);
+        _currentProjection = projection;
+        _currentProjectionOptions = options;
 
         ReplaceItems(ActivityStats, projection.Stats);
         ReplaceItems(RegionActivity, projection.Regions);
         ReplaceItems(EdgeActivity, projection.Edges);
         ReplaceItems(TickActivity, projection.Ticks);
         ActivitySummary = projection.Summary;
+        RefreshCanvasLayoutOnly();
+    }
 
+    private void RefreshCanvasLayoutOnly()
+    {
+        if (_currentProjection is null)
+        {
+            ReplaceItems(CanvasNodes, Array.Empty<VizActivityCanvasNode>());
+            ReplaceItems(CanvasEdges, Array.Empty<VizActivityCanvasEdge>());
+            ActivityCanvasLegend = "Canvas renderer awaiting activity.";
+            ActivityInteractionSummary = "Selected: none | Hover: none";
+            ActivityPinnedSummary = "Pinned: none.";
+            OnPropertyChanged(nameof(TogglePinSelectionLabel));
+            return;
+        }
+
+        var topology = BuildTopologySnapshotForSelectedBrain();
         var interaction = new VizActivityCanvasInteractionState(
-            _selectedCanvasRegionId,
+            _selectedCanvasNodeKey,
             _selectedCanvasRouteLabel,
-            _hoverCanvasRegionId,
+            _hoverCanvasNodeKey,
             _hoverCanvasRouteLabel,
-            _pinnedCanvasRegions,
+            _pinnedCanvasNodes,
             _pinnedCanvasRoutes);
-        var canvas = VizActivityCanvasLayoutBuilder.Build(projection, options, interaction);
+        var canvas = VizActivityCanvasLayoutBuilder.Build(_currentProjection, _currentProjectionOptions, interaction, topology);
+
+        if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
+        {
+            interaction = new VizActivityCanvasInteractionState(
+                _selectedCanvasNodeKey,
+                _selectedCanvasRouteLabel,
+                _hoverCanvasNodeKey,
+                _hoverCanvasRouteLabel,
+                _pinnedCanvasNodes,
+                _pinnedCanvasRoutes);
+            canvas = VizActivityCanvasLayoutBuilder.Build(_currentProjection, _currentProjectionOptions, interaction, topology);
+        }
+
         ReplaceItems(CanvasNodes, canvas.Nodes);
         ReplaceItems(CanvasEdges, canvas.Edges);
         ActivityCanvasLegend = canvas.Legend;
@@ -800,6 +839,70 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
+    private VizActivityCanvasTopology BuildTopologySnapshotForSelectedBrain()
+    {
+        if (SelectedBrain is null || !_topologyByBrainId.TryGetValue(SelectedBrain.BrainId, out var state))
+        {
+            return new VizActivityCanvasTopology(
+                new HashSet<uint> { (uint)NbnConstants.InputRegionId, (uint)NbnConstants.OutputRegionId },
+                new HashSet<VizActivityCanvasRegionRoute>(),
+                new HashSet<uint>(),
+                new HashSet<VizActivityCanvasNeuronRoute>());
+        }
+
+        var regions = new HashSet<uint>(state.Regions) { (uint)NbnConstants.InputRegionId, (uint)NbnConstants.OutputRegionId };
+        return new VizActivityCanvasTopology(
+            regions,
+            new HashSet<VizActivityCanvasRegionRoute>(state.RegionRoutes),
+            new HashSet<uint>(state.NeuronAddresses),
+            new HashSet<VizActivityCanvasNeuronRoute>(state.NeuronRoutes));
+    }
+
+    private void AccumulateTopology(VizEventItem item)
+    {
+        if (!Guid.TryParse(item.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!_topologyByBrainId.TryGetValue(brainId, out var state))
+        {
+            state = new BrainCanvasTopologyState();
+            state.Regions.Add((uint)NbnConstants.InputRegionId);
+            state.Regions.Add((uint)NbnConstants.OutputRegionId);
+            _topologyByBrainId[brainId] = state;
+        }
+
+        if (TryParseRegionForTopology(item.Region, out var eventRegion))
+        {
+            state.Regions.Add(eventRegion);
+        }
+
+        var hasSource = TryParseAddressForTopology(item.Source, out var sourceAddress);
+        var hasTarget = TryParseAddressForTopology(item.Target, out var targetAddress);
+        if (hasSource)
+        {
+            var sourceRegion = sourceAddress >> NbnConstants.AddressNeuronBits;
+            state.Regions.Add(sourceRegion);
+            state.NeuronAddresses.Add(sourceAddress);
+        }
+
+        if (hasTarget)
+        {
+            var targetRegion = targetAddress >> NbnConstants.AddressNeuronBits;
+            state.Regions.Add(targetRegion);
+            state.NeuronAddresses.Add(targetAddress);
+        }
+
+        if (hasSource && hasTarget)
+        {
+            var sourceRegion = sourceAddress >> NbnConstants.AddressNeuronBits;
+            var targetRegion = targetAddress >> NbnConstants.AddressNeuronBits;
+            state.RegionRoutes.Add(new VizActivityCanvasRegionRoute(sourceRegion, targetRegion));
+            state.NeuronRoutes.Add(new VizActivityCanvasNeuronRoute(sourceAddress, targetAddress));
+        }
+    }
+
     private void NavigateCanvasRelative(int delta)
     {
         if (CanvasNodes.Count == 0)
@@ -812,20 +915,21 @@ public sealed class VizPanelViewModel : ViewModelBase
             .OrderByDescending(item => item.EventCount)
             .ThenByDescending(item => item.LastTick)
             .ThenBy(item => item.RegionId)
+            .ThenBy(item => item.NodeKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var currentIndex = _selectedCanvasRegionId.HasValue
-            ? ordered.FindIndex(item => item.RegionId == _selectedCanvasRegionId.Value)
+        var currentIndex = !string.IsNullOrWhiteSpace(_selectedCanvasNodeKey)
+            ? ordered.FindIndex(item => string.Equals(item.NodeKey, _selectedCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
             : delta >= 0 ? -1 : 0;
         var nextIndex = ((currentIndex + delta) % ordered.Count + ordered.Count) % ordered.Count;
         var next = ordered[nextIndex];
         SelectCanvasNode(next);
-        Status = $"Canvas selection: region {next.RegionId}.";
+        Status = $"Canvas selection: {next.Label}.";
     }
 
     private void NavigateToCanvasSelection()
     {
-        var regionId = GetCurrentSelectionRegionId(CanvasEdges);
+        var regionId = GetCurrentSelectionRegionId(CanvasNodes, CanvasEdges);
         if (!regionId.HasValue)
         {
             Status = "Select a node or route before navigating focus.";
@@ -833,25 +937,26 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         RegionFocusText = regionId.Value.ToString(CultureInfo.InvariantCulture);
-        RegionFilterText = regionId.Value.ToString(CultureInfo.InvariantCulture);
         RefreshFilteredEvents();
         Status = $"Canvas navigation focused region {regionId.Value}.";
     }
 
     private void TogglePinForCurrentSelection()
     {
-        if (_selectedCanvasRegionId.HasValue)
+        if (!string.IsNullOrWhiteSpace(_selectedCanvasNodeKey))
         {
-            var regionId = _selectedCanvasRegionId.Value;
-            if (!_pinnedCanvasRegions.Add(regionId))
+            var nodeKey = _selectedCanvasNodeKey!;
+            var node = CanvasNodes.FirstOrDefault(item => string.Equals(item.NodeKey, nodeKey, StringComparison.OrdinalIgnoreCase));
+            if (!_pinnedCanvasNodes.Add(nodeKey))
             {
-                _pinnedCanvasRegions.Remove(regionId);
+                _pinnedCanvasNodes.Remove(nodeKey);
             }
 
-            RefreshActivityProjection();
-            Status = _pinnedCanvasRegions.Contains(regionId)
-                ? $"Pinned region {regionId}."
-                : $"Unpinned region {regionId}.";
+            RefreshCanvasLayoutOnly();
+            var label = node?.Label ?? nodeKey;
+            Status = _pinnedCanvasNodes.Contains(nodeKey)
+                ? $"Pinned node {label}."
+                : $"Unpinned node {label}.";
             return;
         }
 
@@ -863,7 +968,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 _pinnedCanvasRoutes.Remove(routeLabel);
             }
 
-            RefreshActivityProjection();
+            RefreshCanvasLayoutOnly();
             Status = _pinnedCanvasRoutes.Contains(routeLabel)
                 ? $"Pinned route {routeLabel}."
                 : $"Unpinned route {routeLabel}.";
@@ -876,97 +981,99 @@ public sealed class VizPanelViewModel : ViewModelBase
     private void ClearCanvasInteraction()
     {
         ResetCanvasInteractionState(clearPins: true);
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
         Status = "Canvas interaction reset.";
     }
 
     private void ClearCanvasSelection()
     {
-        if (!_selectedCanvasRegionId.HasValue && string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
+        if (string.IsNullOrWhiteSpace(_selectedCanvasNodeKey) && string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
         {
             return;
         }
 
-        _selectedCanvasRegionId = null;
+        _selectedCanvasNodeKey = null;
         _selectedCanvasRouteLabel = null;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshActivityProjection();
+        RefreshCanvasLayoutOnly();
     }
 
     private void ResetCanvasInteractionState(bool clearPins)
     {
-        _selectedCanvasRegionId = null;
+        _selectedCanvasNodeKey = null;
         _selectedCanvasRouteLabel = null;
-        _hoverCanvasRegionId = null;
+        _hoverCanvasNodeKey = null;
         _hoverCanvasRouteLabel = null;
         if (clearPins)
         {
-            _pinnedCanvasRegions.Clear();
+            _pinnedCanvasNodes.Clear();
             _pinnedCanvasRoutes.Clear();
         }
 
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
     }
 
-    private void TrimCanvasInteractionToProjection(VizActivityProjection projection)
+    private bool TrimCanvasInteractionToLayout(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges)
     {
-        var validRegions = new HashSet<uint>(projection.Regions.Select(item => item.RegionId));
-        foreach (var edge in projection.Edges)
-        {
-            if (edge.SourceRegionId.HasValue)
-            {
-                validRegions.Add(edge.SourceRegionId.Value);
-            }
-
-            if (edge.TargetRegionId.HasValue)
-            {
-                validRegions.Add(edge.TargetRegionId.Value);
-            }
-        }
-
+        var changed = false;
+        var validNodes = new HashSet<string>(
+            nodes.Select(item => item.NodeKey).Where(key => !string.IsNullOrWhiteSpace(key)),
+            StringComparer.OrdinalIgnoreCase);
         var validRoutes = new HashSet<string>(
-            projection.Edges
-                .Select(item => item.RouteLabel)
-                .Where(label => !string.IsNullOrWhiteSpace(label)),
+            edges.Select(item => item.RouteLabel).Where(label => !string.IsNullOrWhiteSpace(label)),
             StringComparer.OrdinalIgnoreCase);
 
-        if (_selectedCanvasRegionId.HasValue && !validRegions.Contains(_selectedCanvasRegionId.Value))
+        if (!string.IsNullOrWhiteSpace(_selectedCanvasNodeKey) && !validNodes.Contains(_selectedCanvasNodeKey!))
         {
-            _selectedCanvasRegionId = null;
+            _selectedCanvasNodeKey = null;
+            changed = true;
         }
 
-        if (_hoverCanvasRegionId.HasValue && !validRegions.Contains(_hoverCanvasRegionId.Value))
+        if (!string.IsNullOrWhiteSpace(_hoverCanvasNodeKey) && !validNodes.Contains(_hoverCanvasNodeKey!))
         {
-            _hoverCanvasRegionId = null;
+            _hoverCanvasNodeKey = null;
+            changed = true;
         }
 
         if (!string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel) && !validRoutes.Contains(_selectedCanvasRouteLabel!))
         {
             _selectedCanvasRouteLabel = null;
+            changed = true;
         }
 
         if (!string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel) && !validRoutes.Contains(_hoverCanvasRouteLabel!))
         {
             _hoverCanvasRouteLabel = null;
+            changed = true;
         }
 
-        _pinnedCanvasRegions.RemoveWhere(regionId => !validRegions.Contains(regionId));
+        var pinnedNodesBefore = _pinnedCanvasNodes.Count;
+        var pinnedRoutesBefore = _pinnedCanvasRoutes.Count;
+        _pinnedCanvasNodes.RemoveWhere(key => !validNodes.Contains(key));
         _pinnedCanvasRoutes.RemoveWhere(route => !validRoutes.Contains(route));
+        if (_pinnedCanvasNodes.Count != pinnedNodesBefore || _pinnedCanvasRoutes.Count != pinnedRoutesBefore)
+        {
+            changed = true;
+        }
+
+        return changed;
     }
 
     private void UpdateCanvasInteractionSummaries(
         IReadOnlyList<VizActivityCanvasNode> nodes,
         IReadOnlyList<VizActivityCanvasEdge> edges)
     {
-        var selectedNode = _selectedCanvasRegionId.HasValue
-            ? nodes.FirstOrDefault(item => item.RegionId == _selectedCanvasRegionId.Value)
+        var selectedNode = !string.IsNullOrWhiteSpace(_selectedCanvasNodeKey)
+            ? nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _selectedCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
             : null;
         var selectedEdge = !string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel)
             ? edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _selectedCanvasRouteLabel, StringComparison.OrdinalIgnoreCase))
             : null;
 
-        var hoverNode = _hoverCanvasRegionId.HasValue
-            ? nodes.FirstOrDefault(item => item.RegionId == _hoverCanvasRegionId.Value)
+        var hoverNode = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
+            ? nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _hoverCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
             : null;
         var hoverEdge = !string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
             ? edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _hoverCanvasRouteLabel, StringComparison.OrdinalIgnoreCase))
@@ -1016,25 +1123,28 @@ public sealed class VizPanelViewModel : ViewModelBase
         var routeSuffix = pinnedRouteCount > pinnedRoutes.Count ? $" (+{pinnedRouteCount - pinnedRoutes.Count})" : string.Empty;
         var regionText = pinnedRegions.Count == 0 ? "none" : string.Join(", ", pinnedRegions) + regionSuffix;
         var routeText = pinnedRoutes.Count == 0 ? "none" : string.Join(" | ", pinnedRoutes) + routeSuffix;
-        return $"Pinned regions: {regionText} | routes: {routeText}";
+        return $"Pinned nodes: {regionText} | routes: {routeText}";
     }
 
     private bool IsCurrentSelectionPinned()
     {
-        if (_selectedCanvasRegionId.HasValue)
+        if (!string.IsNullOrWhiteSpace(_selectedCanvasNodeKey))
         {
-            return _pinnedCanvasRegions.Contains(_selectedCanvasRegionId.Value);
+            return _pinnedCanvasNodes.Contains(_selectedCanvasNodeKey!);
         }
 
         return !string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel)
                && _pinnedCanvasRoutes.Contains(_selectedCanvasRouteLabel!);
     }
 
-    private uint? GetCurrentSelectionRegionId(IReadOnlyList<VizActivityCanvasEdge> edges)
+    private uint? GetCurrentSelectionRegionId(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges)
     {
-        if (_selectedCanvasRegionId.HasValue)
+        if (!string.IsNullOrWhiteSpace(_selectedCanvasNodeKey))
         {
-            return _selectedCanvasRegionId.Value;
+            var selectedNode = nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _selectedCanvasNodeKey, StringComparison.OrdinalIgnoreCase));
+            return selectedNode?.NavigateRegionId;
         }
 
         if (string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
@@ -1044,6 +1154,109 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         var selectedEdge = edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _selectedCanvasRouteLabel, StringComparison.OrdinalIgnoreCase));
         return selectedEdge?.TargetRegionId ?? selectedEdge?.SourceRegionId;
+    }
+
+    private static bool TryParseRegionForTopology(string? value, out uint regionId)
+    {
+        regionId = 0;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedNumeric))
+        {
+            if (parsedNumeric > NbnConstants.RegionMaxId)
+            {
+                return false;
+            }
+
+            regionId = parsedNumeric;
+            return true;
+        }
+
+        if (!TryParseRegionToken(value, out var parsedToken, out _))
+        {
+            return false;
+        }
+
+        regionId = parsedToken;
+        return true;
+    }
+
+    private static bool TryParseAddressForTopology(string? value, out uint address)
+    {
+        address = 0;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            var parsedRegion = parsed >> NbnConstants.AddressNeuronBits;
+            if (parsedRegion > NbnConstants.RegionMaxId)
+            {
+                return false;
+            }
+
+            address = parsed;
+            return true;
+        }
+
+        if (!TryParseRegionToken(value, out var regionId, out var remainder)
+            || string.IsNullOrWhiteSpace(remainder)
+            || (remainder[0] != 'N' && remainder[0] != 'n'))
+        {
+            return false;
+        }
+
+        var neuronText = remainder[1..];
+        if (!uint.TryParse(neuronText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var neuronId))
+        {
+            return false;
+        }
+
+        address = (regionId << NbnConstants.AddressNeuronBits) | (neuronId & NbnConstants.AddressNeuronMask);
+        return true;
+    }
+
+    private static bool TryParseRegionToken(string? value, out uint regionId, out string remainder)
+    {
+        regionId = 0;
+        remainder = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length < 2 || (trimmed[0] != 'R' && trimmed[0] != 'r'))
+        {
+            return false;
+        }
+
+        var end = 1;
+        while (end < trimmed.Length && char.IsDigit(trimmed[end]))
+        {
+            end++;
+        }
+
+        if (end == 1)
+        {
+            return false;
+        }
+
+        var number = trimmed[1..end];
+        if (!uint.TryParse(number, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            || parsed > NbnConstants.RegionMaxId)
+        {
+            return false;
+        }
+
+        regionId = parsed;
+        remainder = end < trimmed.Length ? trimmed[end..] : string.Empty;
+        return true;
     }
 
     private static bool TryParseTickWindow(string? value, out int tickWindow)
@@ -1068,7 +1281,10 @@ public sealed class VizPanelViewModel : ViewModelBase
         regionId = 0;
         if (!uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
         {
-            return false;
+            if (!TryParseRegionToken(value, out parsed, out _))
+            {
+                return false;
+            }
         }
 
         if (parsed > (uint)NbnConstants.RegionMaxId)
@@ -1172,6 +1388,17 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             list.RemoveAt(list.Count - 1);
         }
+    }
+
+    private sealed class BrainCanvasTopologyState
+    {
+        public HashSet<uint> Regions { get; } = new();
+
+        public HashSet<VizActivityCanvasRegionRoute> RegionRoutes { get; } = new();
+
+        public HashSet<uint> NeuronAddresses { get; } = new();
+
+        public HashSet<VizActivityCanvasNeuronRoute> NeuronRoutes { get; } = new();
     }
 }
 

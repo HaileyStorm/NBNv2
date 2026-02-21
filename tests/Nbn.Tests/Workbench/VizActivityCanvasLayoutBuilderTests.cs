@@ -24,13 +24,13 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
-    public void Build_AnchorsFocusedRegionAtCanvasCenter()
+    public void Build_FocusModeCentersSingleNeuronWhenOnlyOneKnown()
     {
         var projection = BuildProjection();
         var options = new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: 23);
 
         var layout = VizActivityCanvasLayoutBuilder.Build(projection, options);
-        var focused = layout.Nodes.Single(item => item.RegionId == 23);
+        var focused = layout.Nodes.Single(item => item.RegionId == 23 && item.NeuronId.HasValue);
         var centerX = focused.Left + (focused.Diameter / 2.0);
         var centerY = focused.Top + (focused.Diameter / 2.0);
 
@@ -70,18 +70,21 @@ public class VizActivityCanvasLayoutBuilderTests
     {
         var projection = BuildProjection();
         var options = new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null);
-        var selectedRoute = projection.Edges[0].RouteLabel;
+        var baseline = VizActivityCanvasLayoutBuilder.Build(projection, options);
+        var selectedRoute = baseline.Edges[0].RouteLabel;
+        var selectedNode = baseline.Nodes.Single(item => item.RegionId == 23);
+        var hoveredPinnedNode = baseline.Nodes.Single(item => item.RegionId == 31);
         var interaction = new VizActivityCanvasInteractionState(
-            SelectedRegionId: 23,
+            SelectedNodeKey: selectedNode.NodeKey,
             SelectedRouteLabel: selectedRoute,
-            HoverRegionId: 31,
+            HoverNodeKey: hoveredPinnedNode.NodeKey,
             HoverRouteLabel: selectedRoute,
-            PinnedRegionIds: new HashSet<uint> { 31 },
+            PinnedNodeKeys: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { hoveredPinnedNode.NodeKey },
             PinnedRouteLabels: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { selectedRoute });
 
         var layout = VizActivityCanvasLayoutBuilder.Build(projection, options, interaction);
-        var selectedNode = layout.Nodes.Single(item => item.RegionId == 23);
-        var hoveredPinnedNode = layout.Nodes.Single(item => item.RegionId == 31);
+        selectedNode = layout.Nodes.Single(item => item.RegionId == 23);
+        hoveredPinnedNode = layout.Nodes.Single(item => item.RegionId == 31);
         var selectedEdge = layout.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
 
         Assert.True(selectedNode.IsSelected);
@@ -97,29 +100,85 @@ public class VizActivityCanvasLayoutBuilderTests
     {
         var projection = BuildProjection();
         var options = new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null);
-        var selectedRegion = projection.Regions[0].RegionId;
-        var selectedRoute = projection.Edges[0].RouteLabel;
         var baseline = VizActivityCanvasLayoutBuilder.Build(projection, options, VizActivityCanvasInteractionState.Empty);
+        var selectedNode = baseline.Nodes[0];
+        var selectedRoute = baseline.Edges[0].RouteLabel;
         var selected = VizActivityCanvasLayoutBuilder.Build(
             projection,
             options,
             new VizActivityCanvasInteractionState(
-                SelectedRegionId: selectedRegion,
+                SelectedNodeKey: selectedNode.NodeKey,
                 SelectedRouteLabel: selectedRoute,
-                HoverRegionId: null,
+                HoverNodeKey: null,
                 HoverRouteLabel: null,
-                PinnedRegionIds: new HashSet<uint>(),
+                PinnedNodeKeys: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 PinnedRouteLabels: new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
 
-        var baselineNode = baseline.Nodes.Single(item => item.RegionId == selectedRegion);
-        var selectedNode = selected.Nodes.Single(item => item.RegionId == selectedRegion);
-        Assert.True(selectedNode.StrokeThickness > baselineNode.StrokeThickness);
-        Assert.True(selectedNode.FillOpacity >= baselineNode.FillOpacity);
+        var baselineNode = baseline.Nodes.Single(item => string.Equals(item.NodeKey, selectedNode.NodeKey, StringComparison.OrdinalIgnoreCase));
+        var selectedNodeState = selected.Nodes.Single(item => string.Equals(item.NodeKey, selectedNode.NodeKey, StringComparison.OrdinalIgnoreCase));
+        Assert.True(selectedNodeState.StrokeThickness > baselineNode.StrokeThickness);
+        Assert.True(selectedNodeState.FillOpacity >= baselineNode.FillOpacity);
 
         var baselineEdge = baseline.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
-        var selectedEdge = selected.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
-        Assert.True(selectedEdge.StrokeThickness > baselineEdge.StrokeThickness);
-        Assert.True(selectedEdge.Opacity >= baselineEdge.Opacity);
+        var selectedEdgeState = selected.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
+        Assert.True(selectedEdgeState.StrokeThickness > baselineEdge.StrokeThickness);
+        Assert.True(selectedEdgeState.Opacity >= baselineEdge.Opacity);
+    }
+
+    [Fact]
+    public void Build_IncludesTopologyRegionsAndRoutesWhenWindowInactive()
+    {
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { 0, 5, 31 },
+            new HashSet<VizActivityCanvasRegionRoute> { new(0, 5) },
+            new HashSet<uint>(),
+            new HashSet<VizActivityCanvasNeuronRoute>());
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        Assert.Contains(layout.Nodes, node => node.RegionId == 5);
+        Assert.Contains(layout.Edges, edge => string.Equals(edge.RouteLabel, "R0 -> R5", StringComparison.OrdinalIgnoreCase));
+        Assert.All(layout.Edges.Where(edge => edge.EventCount == 0), edge => Assert.True(edge.Opacity < 0.4));
+    }
+
+    [Fact]
+    public void Build_FocusModeShowsBidirectionalGatewayRoutes()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 200, region: 13, source: Address(13, 2), target: Address(21, 0), value: 1f, strength: 0.3f),
+            CreateEvent("VizAxonSent", tick: 201, region: 21, source: Address(21, 0), target: Address(13, 2), value: 1f, strength: 0.3f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: 13));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { 13, 21 },
+            new HashSet<VizActivityCanvasRegionRoute> { new(13, 21), new(21, 13) },
+            new HashSet<uint> { uint.Parse(Address(13, 2), CultureInfo.InvariantCulture), uint.Parse(Address(21, 0), CultureInfo.InvariantCulture) },
+            new HashSet<VizActivityCanvasNeuronRoute>
+            {
+                new(uint.Parse(Address(13, 2), CultureInfo.InvariantCulture), uint.Parse(Address(21, 0), CultureInfo.InvariantCulture)),
+                new(uint.Parse(Address(21, 0), CultureInfo.InvariantCulture), uint.Parse(Address(13, 2), CultureInfo.InvariantCulture))
+            });
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: 13),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        Assert.Contains(layout.Nodes, node => node.Label == "N2");
+        Assert.Contains(layout.Nodes, node => node.Label == "R21");
+        Assert.Contains(layout.Edges, edge => edge.Detail.Contains("bidirectional", StringComparison.OrdinalIgnoreCase));
     }
 
     private static VizActivityProjection BuildProjection()
