@@ -68,7 +68,14 @@ public partial class VizPanel : UserControl
         {
             if (!string.IsNullOrEmpty(_hoverCommittedSignature))
             {
-                ViewModel.KeepCanvasHoverAlive();
+                if (ShouldRetainCommittedHover(point))
+                {
+                    ViewModel.KeepCanvasHoverAlive();
+                }
+                else
+                {
+                    ViewModel.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
+                }
             }
 
             return;
@@ -238,7 +245,15 @@ public partial class VizPanel : UserControl
         var requiredSamples = GetRequiredHoverSamples(signature);
         if (_hoverCandidateSamples < requiredSamples)
         {
-            ViewModel.KeepCanvasHoverAlive();
+            if (string.IsNullOrEmpty(signature))
+            {
+                ViewModel.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
+            }
+            else
+            {
+                ViewModel.KeepCanvasHoverAlive();
+            }
+
             return;
         }
 
