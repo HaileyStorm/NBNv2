@@ -94,7 +94,7 @@ public static class VizActivityProjectionBuilder
             .ToList();
 
         var regionRows = BuildRegionRows(windowed);
-        var edgeRows = BuildEdgeRows(windowed, options.FocusRegionId);
+        var edgeRows = BuildEdgeRows(windowed);
         var tickRows = BuildTickRows(windowed);
         var uniqueRegionCount = regionRows.Select(item => item.RegionId).Distinct().Count();
         var uniqueTypeCount = windowed
@@ -163,7 +163,7 @@ public static class VizActivityProjectionBuilder
             .ToList();
     }
 
-    private static IReadOnlyList<VizEdgeActivityItem> BuildEdgeRows(IReadOnlyList<VizEventItem> events, uint? focusRegionId)
+    private static IReadOnlyList<VizEdgeActivityItem> BuildEdgeRows(IReadOnlyList<VizEventItem> events)
     {
         var grouped = events
             .Where(item => !string.IsNullOrWhiteSpace(item.Source) && !string.IsNullOrWhiteSpace(item.Target))
@@ -184,13 +184,6 @@ public static class VizActivityProjectionBuilder
                     sourceRegion,
                     targetRegion);
             });
-
-        if (focusRegionId is uint focus)
-        {
-            grouped = grouped.Where(item =>
-                (item.SourceRegionId.HasValue && item.SourceRegionId.Value == focus)
-                || (item.TargetRegionId.HasValue && item.TargetRegionId.Value == focus));
-        }
 
         return grouped
             .OrderByDescending(item => item.EventCount)
@@ -297,6 +290,17 @@ public static class VizActivityProjectionBuilder
     {
         if (!uint.TryParse(addressText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var address))
         {
+            if (TryParseRegionToken(addressText, out _, out var remainder)
+                && !string.IsNullOrWhiteSpace(remainder)
+                && (remainder[0] == 'N' || remainder[0] == 'n'))
+            {
+                var neuronText = remainder[1..];
+                if (uint.TryParse(neuronText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var neuronId))
+                {
+                    return neuronId.ToString(CultureInfo.InvariantCulture);
+                }
+            }
+
             return "?";
         }
 
@@ -308,7 +312,10 @@ public static class VizActivityProjectionBuilder
         regionId = 0;
         if (!uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
         {
-            return false;
+            if (!TryParseRegionToken(value, out parsed, out _))
+            {
+                return false;
+            }
         }
 
         if (parsed > NbnConstants.RegionMaxId)
@@ -325,7 +332,12 @@ public static class VizActivityProjectionBuilder
         regionId = 0;
         if (!uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
         {
-            return false;
+            if (!TryParseRegionToken(value, out regionId, out _))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         var parsedRegion = parsed >> NbnConstants.AddressNeuronBits;
@@ -335,6 +347,44 @@ public static class VizActivityProjectionBuilder
         }
 
         regionId = parsedRegion;
+        return true;
+    }
+
+    private static bool TryParseRegionToken(string? value, out uint regionId, out string remainder)
+    {
+        regionId = 0;
+        remainder = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length < 2 || (trimmed[0] != 'R' && trimmed[0] != 'r'))
+        {
+            return false;
+        }
+
+        var end = 1;
+        while (end < trimmed.Length && char.IsDigit(trimmed[end]))
+        {
+            end++;
+        }
+
+        if (end == 1)
+        {
+            return false;
+        }
+
+        var number = trimmed[1..end];
+        if (!uint.TryParse(number, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            || parsed > NbnConstants.RegionMaxId)
+        {
+            return false;
+        }
+
+        regionId = parsed;
+        remainder = end < trimmed.Length ? trimmed[end..] : string.Empty;
         return true;
     }
 }

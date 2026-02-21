@@ -41,7 +41,7 @@ public class VizActivityProjectionBuilderTests
     }
 
     [Fact]
-    public void Build_AppliesTickWindowLowSignalAndFocusFiltering()
+    public void Build_AppliesTickWindowAndLowSignalFiltering_WithoutCullingEdgesByFocus()
     {
         var events = new List<VizEventItem>
         {
@@ -60,15 +60,49 @@ public class VizActivityProjectionBuilderTests
                 FocusRegionId: 2));
 
         Assert.All(projection.Ticks, tick => Assert.InRange(tick.TickId, 100UL, 104UL));
-        Assert.Single(projection.Edges);
-        Assert.Equal((uint?)1, projection.Edges[0].SourceRegionId);
-        Assert.Equal((uint?)2, projection.Edges[0].TargetRegionId);
+        Assert.Equal(2, projection.Edges.Count);
+        Assert.Contains(projection.Edges, edge => edge.SourceRegionId == 1 && edge.TargetRegionId == 2);
+        Assert.Contains(projection.Edges, edge => edge.SourceRegionId == 3 && edge.TargetRegionId == 4);
 
         var focusCoverage = projection.Stats.Single(item => item.Label == "Focus coverage");
         Assert.Equal("2", focusCoverage.Value);
 
         var totalEvents = projection.Ticks.Sum(item => item.EventCount);
         Assert.Equal(3, totalEvents);
+    }
+
+    [Fact]
+    public void Build_ParsesPrefixedRegionAndAddressText()
+    {
+        var events = new List<VizEventItem>
+        {
+            new(
+                Time: DateTimeOffset.UtcNow,
+                Type: "VizNeuronFired",
+                BrainId: Guid.Empty.ToString("D"),
+                TickId: 200,
+                Region: "R2",
+                Source: "R2N9",
+                Target: "R31N1",
+                Value: 1.0f,
+                Strength: 0.5f,
+                EventId: Guid.NewGuid().ToString("D"))
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 16,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null));
+
+        var region = projection.Regions.Single();
+        Assert.Equal((uint)2, region.RegionId);
+
+        var edge = projection.Edges.Single();
+        Assert.Equal((uint?)2, edge.SourceRegionId);
+        Assert.Equal((uint?)31, edge.TargetRegionId);
+        Assert.Equal("R2N9 -> R31N1", edge.RouteLabel);
     }
 
     private static VizEventItem CreateEvent(

@@ -28,7 +28,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private readonly object _pendingEventsGate = new();
     private bool _flushScheduled;
     private string _status = "Streaming";
-    private string _regionFocusText = "0";
+    private string _regionFocusText = string.Empty;
     private string _regionFilterText = string.Empty;
     private string _searchFilterText = string.Empty;
     private string _brainEntryText = string.Empty;
@@ -67,6 +67,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
+        ShowFullBrainCommand = new RelayCommand(ShowFullBrain);
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
@@ -240,6 +241,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand AddBrainCommand { get; }
 
     public RelayCommand ZoomCommand { get; }
+
+    public RelayCommand ShowFullBrainCommand { get; }
 
     public RelayCommand ApplyActivityOptionsCommand { get; }
 
@@ -453,8 +456,17 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        RegionFocusText = regionId.ToString(CultureInfo.InvariantCulture);
         RegionFilterText = regionId.ToString(CultureInfo.InvariantCulture);
         Status = $"Zoom focus set to region {regionId}.";
+    }
+
+    private void ShowFullBrain()
+    {
+        RegionFocusText = string.Empty;
+        RegionFilterText = string.Empty;
+        RefreshFilteredEvents();
+        Status = "Full-brain view enabled.";
     }
 
     private void ApplyActivityOptions()
