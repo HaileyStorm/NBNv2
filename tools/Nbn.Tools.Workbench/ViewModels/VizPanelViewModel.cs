@@ -169,17 +169,6 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public void SetBrains(IReadOnlyList<BrainListItem> brains)
     {
-        if (brains.Count == 0)
-        {
-            if (KnownBrains.Count == 0)
-            {
-                Status = "No brains reported.";
-            }
-
-            RefreshFilteredEvents();
-            return;
-        }
-
         var previousSelection = SelectedBrain;
         var selectedId = previousSelection?.Id;
         _suspendSelection = true;
@@ -188,6 +177,16 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             KnownBrains.Add(brain);
         }
+
+        if (brains.Count == 0)
+        {
+            SelectedBrain = null;
+            _suspendSelection = false;
+            Status = "No brains reported.";
+            RefreshFilteredEvents();
+            return;
+        }
+
         Status = "Streaming";
 
         BrainListItem? match = null;

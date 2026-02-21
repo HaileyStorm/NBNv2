@@ -34,6 +34,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const string NoDocumentStatus = "No file loaded.";
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
     private const string OutputCoordinatorPrefix = "io-output-";
+    private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private const int DefaultActivationFunctionId = 11; // ACT_TANH (internal)
     private const int DefaultInputActivationFunctionId = 1; // ACT_IDENTITY
     private const int DefaultOutputActivationFunctionId = 11; // ACT_TANH
@@ -1275,6 +1277,16 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             }
 
             var bindHost = string.IsNullOrWhiteSpace(SpawnBindHost) ? "127.0.0.1" : SpawnBindHost;
+            var reservedPorts = new HashSet<int>();
+            if (!LocalPortAllocator.TryFindAvailablePort(bindHost, brainPort, reservedPorts, out var selectedBrainPort, out var selectedBrainPortError))
+            {
+                Status = selectedBrainPortError ?? "Unable to allocate BrainHost port.";
+                return;
+            }
+
+            reservedPorts.Add(selectedBrainPort);
+            SpawnBrainPortText = selectedBrainPort.ToString();
+
             var artifactRoot = string.IsNullOrWhiteSpace(SpawnArtifactRoot) ? BuildDefaultArtifactRoot() : SpawnArtifactRoot;
             var brainArtifactRoot = Path.Combine(artifactRoot, brainId.ToString("N"));
             Directory.CreateDirectory(brainArtifactRoot);
@@ -1298,7 +1310,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var ioAddress = $"{_connections.IoHost}:{ioPort}";
             var routerId = $"designer-router-{brainId:N}";
             var brainRootId = $"designer-root-{brainId:N}";
-            var brainHostArgs = $"--bind-host {bindHost} --port {brainPort}"
+            var brainHostArgs = $"--bind-host {bindHost} --port {selectedBrainPort}"
                                 + $" --brain-id {brainId:D}"
                                 + $" --router-id {routerId}"
                                 + $" --brain-root-id {brainRootId}"
@@ -1353,8 +1365,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     return;
                 }
 
-                var routerAddress = $"{bindHost}:{brainPort}";
-                var regionPort = regionPortBase;
+                var routerAddress = $"{bindHost}:{selectedBrainPort}";
+                var nextRegionPort = regionPortBase;
+                int? firstRegionPort = null;
                 var regionCountRemaining = spawnPlan.RegionHostCount ?? int.MaxValue;
                 var shardPlanArgs = BuildShardPlanArgs(shardPlanMode, shardCount, maxNeuronsPerShard);
                 foreach (var shard in plannedShards)
@@ -1371,7 +1384,18 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                         outputArgs = $" --output-address {ioAddress} --output-id {outputId}";
                     }
 
-                    var regionArgs = $"--bind-host {bindHost} --port {regionPort}"
+                    if (!LocalPortAllocator.TryFindAvailablePort(bindHost, nextRegionPort, reservedPorts, out var selectedRegionPort, out var selectedRegionPortError))
+                    {
+                        Status = selectedRegionPortError ?? $"Unable to allocate RegionHost port for {shard.RegionId}:{shard.ShardIndex}.";
+                        await StopSpawnedAsync(brainHostRunner, regionRunners);
+                        return;
+                    }
+
+                    reservedPorts.Add(selectedRegionPort);
+                    nextRegionPort = selectedRegionPort + 1;
+                    firstRegionPort ??= selectedRegionPort;
+
+                    var regionArgs = $"--bind-host {bindHost} --port {selectedRegionPort}"
                                      + $" --settings-host {_connections.SettingsHost}"
                                      + $" --settings-port {settingsPort}"
                                      + $" --settings-name {_connections.SettingsName}"
@@ -1402,9 +1426,21 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     }
 
                     regionRunners.Add(regionRunner);
-                    regionPort++;
                     regionCountRemaining--;
                 }
+
+                if (firstRegionPort.HasValue)
+                {
+                    SpawnRegionPortText = firstRegionPort.Value.ToString();
+                }
+            }
+
+            Status = "Waiting for brain registration...";
+            if (!await WaitForBrainRegistrationAsync(brainId).ConfigureAwait(false))
+            {
+                Status = $"Spawn failed: brain {brainId:D} did not register.";
+                await StopSpawnedAsync(brainHostRunner, regionRunners);
+                return;
             }
 
             _spawnedBrains[brainId] = new DesignerSpawnState(brainHostRunner, regionRunners, brainArtifactRoot);
@@ -4367,6 +4403,43 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         await brainHostRunner.StopAsync().ConfigureAwait(false);
     }
 
+    private async Task<bool> WaitForBrainRegistrationAsync(Guid brainId)
+    {
+        var deadline = DateTime.UtcNow + SpawnRegistrationTimeout;
+        while (DateTime.UtcNow <= deadline)
+        {
+            var response = await _client.ListBrainsAsync().ConfigureAwait(false);
+            if (IsBrainRegistered(response, brainId))
+            {
+                return true;
+            }
+
+            await Task.Delay(SpawnRegistrationPollInterval).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private static bool IsBrainRegistered(Nbn.Proto.Settings.BrainListResponse? response, Guid brainId)
+    {
+        if (response?.Brains is null)
+        {
+            return false;
+        }
+
+        foreach (var entry in response.Brains)
+        {
+            if (entry.BrainId is null || !entry.BrainId.TryToGuid(out var candidate) || candidate != brainId)
+            {
+                continue;
+            }
+
+            return !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
     private string SuggestedName(string extension)
     {
         if (!string.IsNullOrWhiteSpace(_documentPath))
@@ -4449,47 +4522,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         await stream.FlushAsync();
     }
 
-    private async Task<RegionHostStartDecision> ResolveRegionHostStartAsync()
+    private Task<RegionHostStartDecision> ResolveRegionHostStartAsync()
     {
         var policy = SelectedRegionHostPolicy.Value;
         if (policy == RegionHostStartPolicy.Never)
         {
-            return RegionHostStartDecision.Create(false, "Policy: never start region hosts.");
+            return Task.FromResult(RegionHostStartDecision.Create(false, "Policy: never start region hosts."));
         }
 
         if (policy == RegionHostStartPolicy.Always)
         {
-            return RegionHostStartDecision.Create(true, "Policy: start region hosts.");
+            return Task.FromResult(RegionHostStartDecision.Create(true, "Policy: start region hosts."));
         }
 
-        var nodes = await _client.ListNodesAsync();
-        if (nodes?.Nodes is null)
-        {
-            return RegionHostStartDecision.Create(true, "Region host status unknown; starting local region hosts.");
-        }
-
-        var anyRegionHosts = nodes.Nodes.Any(IsRegionHostNode);
-        return anyRegionHosts
-            ? RegionHostStartDecision.Create(false, "Region hosts detected; skipping local start.")
-            : RegionHostStartDecision.Create(true, "No region hosts detected; starting local region hosts.");
-    }
-
-    private static bool IsRegionHostNode(Nbn.Proto.Settings.NodeStatus node)
-    {
-        if (!node.IsAlive)
-        {
-            return false;
-        }
-
-        var label = $"{node.LogicalName} {node.RootActorName}".Trim();
-        if (string.IsNullOrWhiteSpace(label))
-        {
-            return false;
-        }
-
-        return label.Contains("RegionHost", StringComparison.OrdinalIgnoreCase)
-               || label.Contains("Region-Host", StringComparison.OrdinalIgnoreCase)
-               || label.Contains("RegionShard", StringComparison.OrdinalIgnoreCase);
+        return Task.FromResult(RegionHostStartDecision.Create(
+            true,
+            "Policy: start if none running resolved to start. RegionHosts are brain-scoped for designer spawns."));
     }
 
     private static SharedShardPlanMode ToSharedShardPlanMode(ShardPlanMode mode)

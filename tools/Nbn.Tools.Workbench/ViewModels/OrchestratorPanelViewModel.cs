@@ -19,8 +19,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private const int MaxRows = 200;
     private const long StaleNodeMs = 15000;
     private const long SpawnVisibilityGraceMs = 30000;
-    private const string SampleRouterId = "demo-router";
+    private const string SampleRouterPrefix = "demo-router";
+    private const string SampleBrainRootPrefix = "sample-root-";
     private const string SampleOutputPrefix = "io-output-";
+    private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
@@ -519,7 +522,38 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var settingsHost = string.IsNullOrWhiteSpace(Connections.SettingsHost) ? "127.0.0.1" : Connections.SettingsHost;
         var hiveAddress = $"{Connections.HiveMindHost}:{hivePort}";
         var ioAddress = $"{Connections.IoHost}:{ioPort}";
-        var brainAddress = $"{bindHost}:{sampleBrainPort}";
+        var reservedPorts = new HashSet<int>();
+        if (!LocalPortAllocator.TryFindAvailablePort(bindHost, sampleBrainPort, reservedPorts, out var sampleBrainListenPort, out var sampleBrainPortError))
+        {
+            SampleBrainStatus = sampleBrainPortError ?? "Unable to allocate sample brain port.";
+            return;
+        }
+
+        reservedPorts.Add(sampleBrainListenPort);
+        if (!LocalPortAllocator.TryFindAvailablePort(bindHost, sampleRegionPort, reservedPorts, out var sampleRegionListenPort, out var sampleRegionPortError))
+        {
+            SampleBrainStatus = sampleRegionPortError ?? "Unable to allocate sample region port.";
+            return;
+        }
+
+        reservedPorts.Add(sampleRegionListenPort);
+        if (!LocalPortAllocator.TryFindAvailablePort(bindHost, sampleRegionListenPort + 1, reservedPorts, out var sampleInputPort, out var sampleInputPortError))
+        {
+            SampleBrainStatus = sampleInputPortError ?? "Unable to allocate sample input port.";
+            return;
+        }
+
+        reservedPorts.Add(sampleInputPort);
+        if (!LocalPortAllocator.TryFindAvailablePort(bindHost, sampleInputPort + 1, reservedPorts, out var sampleOutputPort, out var sampleOutputPortError))
+        {
+            SampleBrainStatus = sampleOutputPortError ?? "Unable to allocate sample output port.";
+            return;
+        }
+
+        Connections.SampleBrainPortText = sampleBrainListenPort.ToString();
+        Connections.SampleRegionPortText = sampleRegionListenPort.ToString();
+
+        var brainAddress = $"{bindHost}:{sampleBrainListenPort}";
 
         var runRoot = BuildSampleRunRoot();
         var artifactRoot = Path.Combine(runRoot, "artifacts");
@@ -534,16 +568,18 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var brainId = Guid.NewGuid();
         _sampleBrainId = brainId;
-        _brainDiscovered?.Invoke(brainId);
+        var sampleRouterId = $"{SampleRouterPrefix}-{brainId:N}";
+        var sampleBrainRootId = $"{SampleBrainRootPrefix}{brainId:N}";
 
         SampleBrainStatus = "Starting sample brain host...";
         var brainArgs = "run-brain"
                         + $" --bind-host {bindHost}"
-                        + $" --port {sampleBrainPort}"
+                        + $" --port {sampleBrainListenPort}"
                         + $" --brain-id {brainId:D}"
                         + $" --hivemind-address {hiveAddress}"
                         + $" --hivemind-id {Connections.HiveMindName}"
-                        + $" --router-id {SampleRouterId}"
+                        + $" --router-id {sampleRouterId}"
+                        + $" --brain-root-id {sampleBrainRootId}"
                         + $" --io-address {ioAddress}"
                         + $" --io-id {Connections.IoGateway}"
                         + $" --settings-host {settingsHost}"
@@ -568,7 +604,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                              + " --neuron-count 1"
                              + " --shard-index 0"
                              + $" --router-address {brainAddress}"
-                             + $" --router-id {SampleRouterId}"
+                             + $" --router-id {sampleRouterId}"
                              + $" --tick-address {hiveAddress}"
                              + $" --tick-id {Connections.HiveMindName}"
                              + $" --nbn-sha256 {artifact.Sha256}"
@@ -576,7 +612,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                              + $" --artifact-root \"{artifactPath}\"";
 
         SampleBrainStatus = "Starting sample region host...";
-        var regionArgs = $"{regionArgsBase} --port {sampleRegionPort} --region 1";
+        var regionArgs = $"{regionArgsBase} --port {sampleRegionListenPort} --region 1";
         var regionStartInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", regionArgs);
         var regionResult = await _sampleRegionRunner.StartAsync(regionStartInfo, waitForExit: false, label: "SampleRegionHost").ConfigureAwait(false);
         if (!regionResult.Success)
@@ -587,7 +623,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         SampleBrainStatus = "Starting sample input region...";
-        var inputArgs = $"{regionArgsBase} --port {sampleRegionPort + 1} --region 0";
+        var inputArgs = $"{regionArgsBase} --port {sampleInputPort} --region 0";
         var inputStartInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", inputArgs);
         var inputResult = await _sampleInputRunner.StartAsync(inputStartInfo, waitForExit: false, label: "SampleRegionInput").ConfigureAwait(false);
         if (!inputResult.Success)
@@ -599,7 +635,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         SampleBrainStatus = "Starting sample output region...";
         var outputId = SampleOutputPrefix + brainId.ToString("N");
-        var outputArgs = $"{regionArgsBase} --port {sampleRegionPort + 2} --region 31 --output-address {ioAddress} --output-id {outputId}";
+        var outputArgs = $"{regionArgsBase} --port {sampleOutputPort} --region 31 --output-address {ioAddress} --output-id {outputId}";
         var outputStartInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", outputArgs);
         var outputResult = await _sampleOutputRunner.StartAsync(outputStartInfo, waitForExit: false, label: "SampleRegionOutput").ConfigureAwait(false);
         if (!outputResult.Success)
@@ -609,8 +645,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        SampleBrainStatus = $"Sample brain running ({brainId:D}).";
-        await Task.Delay(500).ConfigureAwait(false);
+        SampleBrainStatus = "Waiting for sample brain registration...";
+        if (!await WaitForBrainRegistrationAsync(brainId).ConfigureAwait(false))
+        {
+            SampleBrainStatus = $"Sample brain failed to register ({brainId:D}).";
+            await CleanupSampleBrainAsync().ConfigureAwait(false);
+            return;
+        }
+
+        _brainDiscovered?.Invoke(brainId);
+        SampleBrainStatus = $"Sample brain running ({brainId:D}) on ports {sampleBrainListenPort}/{sampleRegionListenPort}/{sampleInputPort}/{sampleOutputPort}.";
+        await Task.Delay(300).ConfigureAwait(false);
         await RefreshAsync(force: true).ConfigureAwait(false);
     }
 
@@ -647,6 +692,43 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
            || _sampleRegionRunner.IsRunning
            || _sampleInputRunner.IsRunning
            || _sampleOutputRunner.IsRunning;
+
+    private async Task<bool> WaitForBrainRegistrationAsync(Guid brainId)
+    {
+        var deadline = DateTime.UtcNow + SpawnRegistrationTimeout;
+        while (DateTime.UtcNow <= deadline)
+        {
+            var response = await _client.ListBrainsAsync().ConfigureAwait(false);
+            if (IsBrainRegistered(response, brainId))
+            {
+                return true;
+            }
+
+            await Task.Delay(SpawnRegistrationPollInterval).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private static bool IsBrainRegistered(Nbn.Proto.Settings.BrainListResponse? response, Guid brainId)
+    {
+        if (response?.Brains is null)
+        {
+            return false;
+        }
+
+        foreach (var entry in response.Brains)
+        {
+            if (entry.BrainId is null || !entry.BrainId.TryToGuid(out var candidate) || candidate != brainId)
+            {
+                continue;
+            }
+
+            return !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
 
     private async Task StartAutoRefreshAsync()
     {
