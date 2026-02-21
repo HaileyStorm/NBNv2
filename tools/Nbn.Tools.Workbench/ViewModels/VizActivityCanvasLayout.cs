@@ -1051,22 +1051,40 @@ public static class VizActivityCanvasLayoutBuilder
 
         const int minSlice = -3;
         const int maxSlice = 3;
-        var xStep = (CanvasWidth - (RegionNodePositionPadding * 2.0)) / (maxSlice - minSlice);
+        var sliceSpan = Math.Max(1, maxSlice - minSlice);
+        var availableWidth = CanvasWidth - (RegionNodePositionPadding * 2.0);
+        var availableHeight = CanvasHeight - (RegionNodePositionPadding * 2.0);
+        var compressedHalfWidth = (availableWidth * 0.72) / 2.0;
+        var maxLaneHalfHeight = Math.Max(38.0, availableHeight * 0.44);
         var positions = new Dictionary<uint, CanvasPoint>();
 
         foreach (var (slice, regions) in groupsBySlice)
         {
-            var x = RegionNodePositionPadding + ((slice - minSlice) * xStep);
+            var normalizedSlice = ((double)(slice - minSlice) / sliceSpan) * 2.0 - 1.0;
+            var axisX = CenterX + (normalizedSlice * compressedHalfWidth);
+            var depthRatio = 1.0 - (Math.Abs(slice) / (double)maxSlice);
+            var sliceWave = slice switch
+            {
+                -3 or 0 or 3 => 0.0,
+                _ => (((slice - minSlice) & 1) == 0 ? 1.0 : -1.0) * (24.0 + (18.0 * depthRatio))
+            };
+            var laneCenterY = CenterY + sliceWave;
             var count = regions.Count;
-            var yStep = count <= 1
+            var laneHalfHeight = count <= 1
                 ? 0.0
-                : (CanvasHeight - (RegionNodePositionPadding * 2.0)) / (count - 1);
+                : Math.Clamp(
+                    (18.0 + ((count - 1) * 12.0)) * (0.72 + (0.28 * depthRatio)),
+                    30.0,
+                    maxLaneHalfHeight);
+            var laneHalfWidth = count <= 1 ? 0.0 : 8.0 + (6.0 * depthRatio);
 
             for (var index = 0; index < count; index++)
             {
-                var y = count == 1
-                    ? CenterY
-                    : RegionNodePositionPadding + (index * yStep);
+                var laneOffset = count <= 1
+                    ? 0.0
+                    : ((double)index / (count - 1) * 2.0) - 1.0;
+                var x = axisX + (laneOffset * laneHalfWidth);
+                var y = laneCenterY + (laneOffset * laneHalfHeight);
                 positions[regions[index]] = new CanvasPoint(
                     Clamp(x, RegionNodePositionPadding, CanvasWidth - RegionNodePositionPadding),
                     Clamp(y, RegionNodePositionPadding, CanvasHeight - RegionNodePositionPadding));

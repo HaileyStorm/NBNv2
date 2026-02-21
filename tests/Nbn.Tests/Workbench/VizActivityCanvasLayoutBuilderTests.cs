@@ -591,6 +591,71 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_RegionLayoutAvoidsSingleAxisCollapseAcrossSlices()
+    {
+        var regions = new uint[] { 0, 1, 4, 9, 23, 28, 31 };
+        var events = regions
+            .Select((regionId, index) => CreateEvent(
+                "VizNeuronFired",
+                tick: (ulong)(3000 + index),
+                region: regionId,
+                source: Address(regionId, 0),
+                target: Address(regionId, 0),
+                value: 1f,
+                strength: 0f))
+            .ToList();
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var centerYs = regions
+            .Select(regionId => Assert.Single(layout.Nodes, node => node.RegionId == regionId))
+            .Select(node => node.Top + (node.Diameter / 2.0))
+            .ToList();
+        var ySpread = centerYs.Max() - centerYs.Min();
+
+        Assert.True(ySpread >= 60d, $"Expected vertical spread across slices but got {ySpread:0.##}.");
+    }
+
+    [Fact]
+    public void Build_RegionLayoutUsesCompactHorizontalSpan()
+    {
+        var events = Enumerable.Range(0, NbnConstants.RegionCount)
+            .Select(index =>
+            {
+                var regionId = (uint)index;
+                var tick = (ulong)(4000 + index);
+                return CreateEvent(
+                    "VizNeuronFired",
+                    tick,
+                    regionId,
+                    Address(regionId, 0),
+                    Address(regionId, 0),
+                    value: 1f,
+                    strength: 0f);
+            })
+            .ToList();
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var centerXs = layout.Nodes
+            .Select(node => node.Left + (node.Diameter / 2.0))
+            .ToList();
+        var xSpread = centerXs.Max() - centerXs.Min();
+
+        Assert.InRange(xSpread, 300d, 620d);
+    }
+
+    [Fact]
     public void Build_FocusGatewayDetailIncludesRegionAggregateMetrics()
     {
         const uint focusRegionId = 13;
