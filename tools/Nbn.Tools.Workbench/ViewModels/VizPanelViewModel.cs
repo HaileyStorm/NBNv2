@@ -423,10 +423,21 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private bool MatchesFilter(VizEventItem item, bool ignoreBrain = false)
     {
-        if (!ignoreBrain && SelectedBrain is not null
-            && !string.Equals(item.BrainId, SelectedBrain.Id, StringComparison.OrdinalIgnoreCase))
+        if (!ignoreBrain && SelectedBrain is not null)
         {
-            return false;
+            if (Guid.TryParse(item.BrainId, out var itemBrainId))
+            {
+                if (itemBrainId != SelectedBrain.BrainId)
+                {
+                    return false;
+                }
+            }
+            else if (IsGlobalVisualizerEvent(item.Type))
+            {
+                // Global-only events (for example VizTick with no BrainId) should not
+                // appear when viewing a specific brain.
+                return false;
+            }
         }
 
         if (SelectedVizType.TypeFilter is not null && !string.Equals(item.Type, SelectedVizType.TypeFilter, StringComparison.OrdinalIgnoreCase))
@@ -495,7 +506,19 @@ public sealed class VizPanelViewModel : ViewModelBase
     }
 
     private static bool ShouldIncludeInVisualizer(VizEventItem item)
-        => Guid.TryParse(item.BrainId, out _);
+    {
+        if (Guid.TryParse(item.BrainId, out _))
+        {
+            return true;
+        }
+
+        // Suppress global tick noise; keep other events even when BrainId is absent
+        // so Visualizer can still show activity in partially-populated streams.
+        return !IsGlobalVisualizerEvent(item.Type);
+    }
+
+    private static bool IsGlobalVisualizerEvent(string? type)
+        => string.Equals(type, Nbn.Proto.Viz.VizEventType.VizTick.ToString(), StringComparison.OrdinalIgnoreCase);
 
     private void RefreshActivityProjection()
     {
