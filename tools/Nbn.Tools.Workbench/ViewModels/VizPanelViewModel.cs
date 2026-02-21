@@ -361,7 +361,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public string TogglePinSelectionLabel => IsCurrentSelectionPinned() ? "Unpin selection" : "Pin selection";
 
-    public string CanvasNavigationHint => "Alt+Left/Alt+Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear";
+    public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Ctrl+Wheel zoom, Shift+Drag or middle-drag pan, double-click empty = fit";
 
     public bool ShowProjectionSnapshot
     {
@@ -877,6 +877,17 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        ZoomToRegion(regionId);
+    }
+
+    public bool ZoomToRegion(uint regionId)
+    {
+        if (regionId < NbnConstants.RegionMinId || regionId > NbnConstants.RegionMaxId)
+        {
+            Status = $"Region ID must be {NbnConstants.RegionMinId}-{NbnConstants.RegionMaxId}.";
+            return false;
+        }
+
         RegionFocusText = regionId.ToString(CultureInfo.InvariantCulture);
         RefreshFilteredEvents();
         if (SelectedBrain is not null)
@@ -885,6 +896,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
         VisualizationSelectionChanged?.Invoke();
         Status = $"Zoom focus set to region {regionId}.";
+        return true;
     }
 
     private void ShowFullBrain()

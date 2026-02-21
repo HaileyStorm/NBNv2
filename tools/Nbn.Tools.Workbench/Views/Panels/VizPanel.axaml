@@ -109,7 +109,7 @@
                     Background="{DynamicResource NbnSurfaceAltBrush}"
                     MinHeight="300">
               <StackPanel Spacing="8" Margin="12">
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*" ColumnSpacing="6">
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*" ColumnSpacing="6">
                   <Button Content="Prev"
                           Command="{Binding NavigateCanvasPreviousCommand}"
                           ToolTip.Tip="Alt+Left" />
@@ -129,7 +129,44 @@
                           Content="Clear"
                           Command="{Binding ClearCanvasInteractionCommand}"
                           ToolTip.Tip="Escape" />
-                  <TextBlock Grid.Column="5"
+                  <Button Grid.Column="5"
+                          Content="-"
+                          Click="CanvasZoomOutClicked"
+                          ToolTip.Tip="Zoom out" />
+                  <Button Grid.Column="6"
+                          Content="+"
+                          Click="CanvasZoomInClicked"
+                          ToolTip.Tip="Zoom in" />
+                  <Button Grid.Column="7"
+                          Content="Fit view"
+                          Click="CanvasFitViewClicked"
+                          ToolTip.Tip="Double-click empty canvas to fit" />
+                  <TextBlock Grid.Column="8"
+                            Text="Pan"
+                            Classes="muted"
+                            VerticalAlignment="Center" />
+                  <Button Grid.Column="9"
+                          Content="L"
+                          Click="CanvasPanLeftClicked"
+                          ToolTip.Tip="Pan left" />
+                  <Button Grid.Column="10"
+                          Content="R"
+                          Click="CanvasPanRightClicked"
+                          ToolTip.Tip="Pan right" />
+                  <Button Grid.Column="11"
+                          Content="U"
+                          Click="CanvasPanUpClicked"
+                          ToolTip.Tip="Pan up" />
+                  <Button Grid.Column="12"
+                          Content="D"
+                          Click="CanvasPanDownClicked"
+                          ToolTip.Tip="Pan down" />
+                  <TextBlock Grid.Column="13"
+                             x:Name="CanvasZoomLabel"
+                             Text="Zoom 100%"
+                             Classes="muted"
+                             VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="14"
                              Text="{Binding CanvasNavigationHint}"
                              Classes="muted"
                              VerticalAlignment="Center"
@@ -159,135 +196,143 @@
                          Padding="0"
                          TextWrapping="Wrap"
                          IsTabStop="False" />
-                <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                              VerticalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="ActivityCanvasScrollViewer"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Auto">
                   <Grid ClipToBounds="True">
-                    <Grid x:Name="ActivityCanvasSurface"
-                          Width="{Binding ActivityCanvasWidth}"
-                          Height="{Binding ActivityCanvasHeight}"
-                          PointerPressed="ActivityCanvasPointerPressed">
-                    <ItemsControl ItemsSource="{Binding CanvasEdges}"
-                                  Width="{Binding ActivityCanvasWidth}"
-                                  Height="{Binding ActivityCanvasHeight}">
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <Canvas />
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:VizActivityCanvasEdge">
-                          <Canvas Width="860"
-                                  Height="420">
-                            <Path Data="{Binding PathData}"
-                                  Stroke="Transparent"
-                                  StrokeThickness="{Binding HitTestThickness}" />
-                            <Path Data="{Binding PathData}"
-                                  Stroke="{Binding Stroke}"
-                                  StrokeDashArray="{Binding DirectionDashArray}"
-                                  StrokeThickness="{Binding StrokeThickness}"
-                                  Opacity="{Binding Opacity}"
-                                  StrokeLineCap="Round" />
-                            <Path Data="{Binding PathData}"
-                                  Stroke="{Binding ActivityStroke}"
-                                  StrokeThickness="{Binding ActivityStrokeThickness}"
-                                  Opacity="{Binding ActivityOpacity}"
-                                  StrokeLineCap="Round"
-                                  IsHitTestVisible="False" />
-                            <Path Data="{Binding PathData}"
-                                  Stroke="{DynamicResource NbnGoldBrush}"
-                                  StrokeDashArray="{Binding DirectionDashArray}"
-                                  StrokeThickness="{Binding StrokeThickness}"
-                                  Opacity="{Binding Opacity}"
-                                  IsVisible="{Binding IsPinned}"
-                                  IsHitTestVisible="False" />
-                            <Path Data="{Binding PathData}"
-                                  Stroke="{DynamicResource NbnTealBrush}"
-                                  StrokeDashArray="{Binding DirectionDashArray}"
-                                  StrokeThickness="{Binding StrokeThickness}"
-                                  Opacity="{Binding Opacity}"
-                                  IsVisible="{Binding IsHovered}"
-                                  IsHitTestVisible="False" />
-                            <Path Data="{Binding PathData}"
-                                  Stroke="{DynamicResource NbnAccentBrush}"
-                                  StrokeDashArray="{Binding DirectionDashArray}"
-                                  StrokeThickness="{Binding StrokeThickness}"
-                                  Opacity="{Binding Opacity}"
-                                  IsVisible="{Binding IsSelected}"
-                                  IsHitTestVisible="False" />
+                    <Grid x:Name="ActivityCanvasExtentHost">
+                      <Grid x:Name="ActivityCanvasScaleRoot"
+                            Width="{Binding ActivityCanvasWidth}"
+                            Height="{Binding ActivityCanvasHeight}"
+                            RenderTransformOrigin="0,0">
+                        <Grid x:Name="ActivityCanvasSurface"
+                              Width="{Binding ActivityCanvasWidth}"
+                              Height="{Binding ActivityCanvasHeight}"
+                              PointerPressed="ActivityCanvasPointerPressed">
+                          <ItemsControl ItemsSource="{Binding CanvasEdges}"
+                                        Width="{Binding ActivityCanvasWidth}"
+                                        Height="{Binding ActivityCanvasHeight}">
+                            <ItemsControl.ItemsPanel>
+                              <ItemsPanelTemplate>
+                                <Canvas />
+                              </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:VizActivityCanvasEdge">
+                                <Canvas Width="860"
+                                        Height="420">
+                                  <Path Data="{Binding PathData}"
+                                        Stroke="Transparent"
+                                        StrokeThickness="{Binding HitTestThickness}" />
+                                  <Path Data="{Binding PathData}"
+                                        Stroke="{Binding Stroke}"
+                                        StrokeDashArray="{Binding DirectionDashArray}"
+                                        StrokeThickness="{Binding StrokeThickness}"
+                                        Opacity="{Binding Opacity}"
+                                        StrokeLineCap="Round" />
+                                  <Path Data="{Binding PathData}"
+                                        Stroke="{Binding ActivityStroke}"
+                                        StrokeThickness="{Binding ActivityStrokeThickness}"
+                                        Opacity="{Binding ActivityOpacity}"
+                                        StrokeLineCap="Round"
+                                        IsHitTestVisible="False" />
+                                  <Path Data="{Binding PathData}"
+                                        Stroke="{DynamicResource NbnGoldBrush}"
+                                        StrokeDashArray="{Binding DirectionDashArray}"
+                                        StrokeThickness="{Binding StrokeThickness}"
+                                        Opacity="{Binding Opacity}"
+                                        IsVisible="{Binding IsPinned}"
+                                        IsHitTestVisible="False" />
+                                  <Path Data="{Binding PathData}"
+                                        Stroke="{DynamicResource NbnTealBrush}"
+                                        StrokeDashArray="{Binding DirectionDashArray}"
+                                        StrokeThickness="{Binding StrokeThickness}"
+                                        Opacity="{Binding Opacity}"
+                                        IsVisible="{Binding IsHovered}"
+                                        IsHitTestVisible="False" />
+                                  <Path Data="{Binding PathData}"
+                                        Stroke="{DynamicResource NbnAccentBrush}"
+                                        StrokeDashArray="{Binding DirectionDashArray}"
+                                        StrokeThickness="{Binding StrokeThickness}"
+                                        Opacity="{Binding Opacity}"
+                                        IsVisible="{Binding IsSelected}"
+                                        IsHitTestVisible="False" />
+                                </Canvas>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+
+                          <ItemsControl ItemsSource="{Binding CanvasNodes}"
+                                        Width="{Binding ActivityCanvasWidth}"
+                                        Height="{Binding ActivityCanvasHeight}">
+                            <ItemsControl.ItemContainerTheme>
+                              <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
+                                <Setter Property="Canvas.Left" Value="{Binding Left}" />
+                                <Setter Property="Canvas.Top" Value="{Binding Top}" />
+                              </ControlTheme>
+                            </ItemsControl.ItemContainerTheme>
+                            <ItemsControl.ItemsPanel>
+                              <ItemsPanelTemplate>
+                                <Canvas />
+                              </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="vm:VizActivityCanvasNode">
+                                <Grid Width="{Binding Diameter}"
+                                      Height="{Binding Diameter}">
+                                  <Ellipse Fill="{Binding Fill}" Opacity="{Binding FillOpacity}" />
+                                  <Ellipse Stroke="{Binding Stroke}"
+                                           StrokeThickness="{Binding StrokeThickness}"
+                                           Opacity="{Binding PulseOpacity}" />
+                                  <Ellipse Stroke="{DynamicResource NbnGoldBrush}"
+                                           StrokeThickness="2.2"
+                                           IsVisible="{Binding IsPinned}" />
+                                  <Ellipse Stroke="{DynamicResource NbnTealBrush}"
+                                           StrokeThickness="2.2"
+                                           IsVisible="{Binding IsHovered}" />
+                                  <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
+                                           StrokeThickness="2.8"
+                                           IsVisible="{Binding IsSelected}" />
+                                  <TextBlock Text="*"
+                                             IsVisible="{Binding IsPinned}"
+                                             FontSize="10"
+                                             FontWeight="Bold"
+                                             Foreground="{DynamicResource NbnGoldBrush}"
+                                             HorizontalAlignment="Left"
+                                             VerticalAlignment="Top"
+                                             Margin="2,0,0,0" />
+                                  <TextBlock Text="{Binding Label}"
+                                             FontSize="10"
+                                             FontWeight="SemiBold"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center" />
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+
+                          <Canvas IsHitTestVisible="False">
+                            <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
+                                    Canvas.Top="{Binding CanvasHoverCardTop}"
+                                    IsVisible="{Binding IsCanvasHoverCardVisible}"
+                                    MaxWidth="420"
+                                    Background="{DynamicResource NbnSurfaceBrush}"
+                                    BorderBrush="{DynamicResource NbnBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="8">
+                              <TextBox Text="{Binding CanvasHoverCardText}"
+                                       IsReadOnly="True"
+                                       Background="Transparent"
+                                       BorderThickness="0"
+                                       Padding="0"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       IsTabStop="False" />
+                            </Border>
                           </Canvas>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-
-                    <ItemsControl ItemsSource="{Binding CanvasNodes}"
-                                  Width="{Binding ActivityCanvasWidth}"
-                                  Height="{Binding ActivityCanvasHeight}">
-                      <ItemsControl.ItemContainerTheme>
-                        <ControlTheme TargetType="ContentPresenter" x:CompileBindings="False">
-                          <Setter Property="Canvas.Left" Value="{Binding Left}" />
-                          <Setter Property="Canvas.Top" Value="{Binding Top}" />
-                        </ControlTheme>
-                      </ItemsControl.ItemContainerTheme>
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <Canvas />
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:VizActivityCanvasNode">
-                          <Grid Width="{Binding Diameter}"
-                                Height="{Binding Diameter}">
-                            <Ellipse Fill="{Binding Fill}" Opacity="{Binding FillOpacity}" />
-                            <Ellipse Stroke="{Binding Stroke}"
-                                     StrokeThickness="{Binding StrokeThickness}"
-                                     Opacity="{Binding PulseOpacity}" />
-                            <Ellipse Stroke="{DynamicResource NbnGoldBrush}"
-                                     StrokeThickness="2.2"
-                                     IsVisible="{Binding IsPinned}" />
-                            <Ellipse Stroke="{DynamicResource NbnTealBrush}"
-                                     StrokeThickness="2.2"
-                                     IsVisible="{Binding IsHovered}" />
-                            <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
-                                     StrokeThickness="2.8"
-                                     IsVisible="{Binding IsSelected}" />
-                            <TextBlock Text="*"
-                                       IsVisible="{Binding IsPinned}"
-                                       FontSize="10"
-                                       FontWeight="Bold"
-                                       Foreground="{DynamicResource NbnGoldBrush}"
-                                       HorizontalAlignment="Left"
-                                       VerticalAlignment="Top"
-                                       Margin="2,0,0,0" />
-                            <TextBlock Text="{Binding Label}"
-                                       FontSize="10"
-                                       FontWeight="SemiBold"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" />
-                          </Grid>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-
-                      <Canvas IsHitTestVisible="False">
-                                <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
-                                Canvas.Top="{Binding CanvasHoverCardTop}"
-                                IsVisible="{Binding IsCanvasHoverCardVisible}"
-                                MaxWidth="420"
-                                Background="{DynamicResource NbnSurfaceBrush}"
-                                BorderBrush="{DynamicResource NbnBorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="8"
-                                Padding="8">
-                          <TextBox Text="{Binding CanvasHoverCardText}"
-                                   IsReadOnly="True"
-                                   Background="Transparent"
-                                   BorderThickness="0"
-                                   Padding="0"
-                                   FontSize="11"
-                                   TextWrapping="Wrap"
-                                   IsTabStop="False" />
-                        </Border>
-                      </Canvas>
+                        </Grid>
+                      </Grid>
                     </Grid>
                   </Grid>
                 </ScrollViewer>

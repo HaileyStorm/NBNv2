@@ -2903,6 +2903,8 @@ If scope expands mid-task, switch to Aleph immediately.
 ### 21.4 Model defaults and upgrade policy
 
 * Default behavior: sub-queries inherit the currently selected Codex/main conversation model.
+* Default backend policy: use Aleph sub-queries through the Codex CLI backend (`sub_query_backend="codex"`), backed by a working `codex` shim/executable on `PATH`.
+* Do not use API backend by default; only use API explicitly when operator policy allows it for that session.
 * Current baseline expectation is GPT-5.3 class quality; Spark baseline is GPT-5.3-Spark class speed.
 * Do not hard-pin version numbers when an alias/channel is available.
 * For explicit model routing, prefer family aliases so upgrades happen automatically as new versions release:
@@ -3029,12 +3031,15 @@ Use these defaults to avoid recurring Aleph friction:
 1. Increase sub-query timeout for real scouting packets (5 minutes recommended):
    * `configure(sub_query_timeout="300")`
    * Verify with `exec_python("get_config()")` and confirm `sub_query_timeout_seconds` is `300.0`.
-2. Aleph MCP tools that accept `output` require one of:
+2. `configure(...)` argument validation is strict:
+   * `sub_query_backend` must be one of `auto`, `codex`, `api`, `claude`, `gemini`, or `kimi` (`cli` is invalid).
+   * `output_feedback` must be `full` or `metadata` (boolean-like strings such as `false` are invalid).
+3. Aleph MCP tools that accept `output` require one of:
    * `markdown`
    * `json`
    * `object`
    `text` is invalid for these tools.
-3. Codex sub-query backend on Windows:
+4. Codex sub-query backend on Windows:
    * Aleph sub-query currently invokes `codex` (not `codex.cmd`).
    * Validate subprocess resolution with:
      * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
@@ -3043,20 +3048,27 @@ Use these defaults to avoid recurring Aleph friction:
    * If that fails while `codex.cmd --version` works, ensure a runnable `codex` executable is on `PATH` (for example a `codex.exe` shim that delegates to `codex.cmd`).
    * If `which('codex')` only resolves to `.CMD` and sub-queries still fail, add a real `codex.exe` shim on `PATH` before retrying recipes.
    * If you cannot add a shim on that machine/session, explicitly log that sub-query is blocked and run the same investigation using Aleph `search_context` + `peek_context` packets (do not silently skip Aleph evidence gathering).
-4. API fallback prerequisites (when CLI backend is unavailable):
+5. API fallback prerequisites (only if explicitly authorized for that session):
    * `sub_query` with `backend="api"` requires an API key (`ALEPH_SUB_QUERY_API_KEY` or `OPENAI_API_KEY`).
+   * Preferred recovery remains Codex CLI backend setup (`configure(sub_query_backend="codex")` + working shim); do not silently switch to API.
    * API backend also requires a model (`ALEPH_SUB_QUERY_MODEL` or per-step `model` in the recipe).
    * Missing either key or model will hard-fail recipe `sub_query`/`map_sub_query` steps.
-5. Beads/BV tracker source sanity:
+6. Beads/BV tracker source sanity:
    * If `bv`/`bd` shows stale or conflicting status, run `bd where` and confirm root `.beads/` is active.
    * Eliminate project-local `.beads/` directories (after archiving if needed) and run `bd sync` from repo root.
-6. Windows shell chaining in this repo:
+7. Windows shell chaining in this repo:
    * In Windows PowerShell sessions, do not use bash-style `&&` command separators.
    * Use `;` for sequential commands, or `if ($?) { ... }` when the second command must only run on success.
-7. `rg` patterns in PowerShell/tool JSON:
+8. `rg` patterns in PowerShell/tool JSON:
    * Patterns containing embedded quotes/parentheses are easy to over-escape and can trigger `regex parse error`.
    * Prefer a two-step sweep for XAML/search-debug loops: first broad token match (for example `rg "PointerPressed"`), then inspect narrowed lines with `Get-Content`/line ranges.
    * If you need literal matching (no regex semantics), use `rg -F` to avoid regex parser pitfalls.
+9. Beads create dependency flag:
+   * `bd create` does not support `--depends-on`; use `--deps <issue-id>` (or typed deps like `--deps blocks:<issue-id>`).
+   * If you get `unknown flag: --depends-on`, re-run with `--deps` to create the dependency edge at issue creation time.
+10. Beads comments command syntax:
+   * Use `bd comments add <issue-id> "<text>"` (plural `comments`).
+   * `bd comment add ...` is deprecated/invalid in this environment and can fail with `issue add not found`.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 
