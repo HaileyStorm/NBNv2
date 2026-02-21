@@ -68,7 +68,7 @@ public partial class VizPanel : UserControl
         {
             if (!string.IsNullOrEmpty(_hoverCommittedSignature))
             {
-                if (ShouldRetainCommittedHover(point))
+                if (TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, hoverMode: true, out _, out _))
                 {
                     ViewModel.KeepCanvasHoverAlive();
                 }
