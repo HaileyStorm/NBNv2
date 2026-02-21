@@ -432,6 +432,11 @@ public static class VizActivityCanvasLayoutBuilder
             }
         }
 
+        if (aggregates.Count == 0)
+        {
+            return Array.Empty<VizActivityCanvasEdge>();
+        }
+
         var maxEdgeEvents = Math.Max(1, aggregates.Values.Max(item => item.EventCount));
         var routeSet = new HashSet<VizActivityCanvasRegionRoute>(aggregates.Keys);
         var edges = new List<VizActivityCanvasEdge>(aggregates.Count);

@@ -208,6 +208,28 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.True(positive.ActivityStrokeThickness < positive.StrokeThickness);
     }
 
+    [Fact]
+    public void Build_DoesNotThrow_WhenRegionNodesExistWithoutAnyRoutes()
+    {
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { 0, 31 },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            new HashSet<uint>(),
+            new HashSet<VizActivityCanvasNeuronRoute>());
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        Assert.Equal(2, layout.Nodes.Count);
+        Assert.Empty(layout.Edges);
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>
