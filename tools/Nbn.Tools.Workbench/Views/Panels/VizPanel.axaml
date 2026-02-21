@@ -12,7 +12,7 @@
     <KeyBinding Gesture="Ctrl+Shift+C" Command="{Binding CopyCanvasDiagnosticsCommand}" />
     <KeyBinding Gesture="Escape" Command="{Binding ClearCanvasInteractionCommand}" />
   </UserControl.KeyBindings>
-  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+  <ScrollViewer HorizontalScrollBarVisibility="Auto">
     <StackPanel Spacing="16">
       <Border Classes="card">
         <StackPanel Spacing="10">

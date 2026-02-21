@@ -426,6 +426,84 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.Contains("latest=0.42@702", neuron.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Build_RegionNodesRemainFullyVisibleWithinCanvasBounds()
+    {
+        var events = Enumerable.Range(0, NbnConstants.RegionCount)
+            .Select(index =>
+            {
+                var regionId = (uint)index;
+                var tick = (ulong)(1000 + index);
+                return CreateEvent(
+                    "VizNeuronFired",
+                    tick,
+                    regionId,
+                    Address(regionId, 0),
+                    Address(regionId, 0),
+                    value: 1f,
+                    strength: 0f);
+            })
+            .ToList();
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 128, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 128, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        Assert.All(layout.Nodes, node =>
+        {
+            Assert.InRange(node.Left, 0d, VizActivityCanvasLayoutBuilder.CanvasWidth);
+            Assert.InRange(node.Top, 0d, VizActivityCanvasLayoutBuilder.CanvasHeight);
+            Assert.InRange(node.Left + node.Diameter, 0d, VizActivityCanvasLayoutBuilder.CanvasWidth);
+            Assert.InRange(node.Top + node.Diameter, 0d, VizActivityCanvasLayoutBuilder.CanvasHeight);
+        });
+    }
+
+    [Fact]
+    public void Build_FocusGatewayDetailIncludesRegionAggregateMetrics()
+    {
+        const uint focusRegionId = 13;
+        const uint gatewayRegionId = 21;
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 900, region: focusRegionId, source: Address(focusRegionId, 2), target: Address(gatewayRegionId, 0), value: 0.7f, strength: 0.3f),
+            CreateEvent("VizAxonSent", tick: 901, region: gatewayRegionId, source: Address(gatewayRegionId, 0), target: Address(focusRegionId, 2), value: -0.4f, strength: -0.2f),
+            CreateEvent("VizNeuronFired", tick: 902, region: gatewayRegionId, source: Address(gatewayRegionId, 0), target: Address(focusRegionId, 2), value: 1f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 903, region: gatewayRegionId, source: Address(gatewayRegionId, 0), target: Address(focusRegionId, 2), value: 0.12f, strength: 0f)
+        };
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { focusRegionId, gatewayRegionId },
+            new HashSet<VizActivityCanvasRegionRoute> { new(focusRegionId, gatewayRegionId), new(gatewayRegionId, focusRegionId) },
+            new HashSet<uint>
+            {
+                uint.Parse(Address(focusRegionId, 2), CultureInfo.InvariantCulture),
+                uint.Parse(Address(gatewayRegionId, 0), CultureInfo.InvariantCulture)
+            },
+            new HashSet<VizActivityCanvasNeuronRoute>
+            {
+                new(uint.Parse(Address(focusRegionId, 2), CultureInfo.InvariantCulture), uint.Parse(Address(gatewayRegionId, 0), CultureInfo.InvariantCulture)),
+                new(uint.Parse(Address(gatewayRegionId, 0), CultureInfo.InvariantCulture), uint.Parse(Address(focusRegionId, 2), CultureInfo.InvariantCulture))
+            });
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        var gateway = Assert.Single(layout.Nodes, node => node.Label == $"R{gatewayRegionId}");
+        Assert.Contains("agg events", gateway.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fired", gateway.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("avg |v|", gateway.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("routes out", gateway.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("buffer n=", gateway.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>

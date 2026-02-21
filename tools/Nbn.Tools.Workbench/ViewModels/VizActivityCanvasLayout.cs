@@ -153,6 +153,8 @@ public static class VizActivityCanvasLayoutBuilder
     private const double CanvasPadding = 26;
     private const double MinNodeRadius = 13;
     private const double MaxNodeRadius = 30;
+    private const double RegionNodePositionPadding = CanvasPadding + MaxNodeRadius + 2;
+    private const double EdgeControlPadding = CanvasPadding;
     private const double BaseEdgeStroke = 1.1;
     private const double MaxEdgeStrokeBoost = 2.8;
     private const int EdgeCurveCacheMaxEntries = 4096;
@@ -276,6 +278,9 @@ public static class VizActivityCanvasLayoutBuilder
         var routes = BuildFocusRoutes(projection, topology, focusRegionId);
         var focusNeuronStats = BuildFocusNeuronStats(routes, projection.WindowEvents, topology, focusRegionId);
         var gatewayStats = BuildGatewayStats(routes, focusRegionId);
+        var regionAggregates = projection.Regions.ToDictionary(item => item.RegionId);
+        var regionBufferMetrics = BuildRegionBufferMetrics(projection.WindowEvents);
+        var regionRouteDegrees = BuildRegionRouteDegrees(projection, topology);
 
         var nodes = new List<VizActivityCanvasNode>();
         var nodeByKey = new Dictionary<string, VizActivityCanvasNode>(StringComparer.OrdinalIgnoreCase);
@@ -355,8 +360,22 @@ public static class VizActivityCanvasLayoutBuilder
                     ? "inbound"
                     : "outbound";
             var (fill, stroke) = GetGatewayPalette(role);
-            var detail = $"R{regionId} gateway | {role} | events {stats.EventCount} | last tick {stats.LastTick}";
-            if (stats.EventCount == 0)
+            regionAggregates.TryGetValue(regionId, out var aggregate);
+            regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
+            regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
+            var aggregateEventCount = aggregate?.EventCount ?? 0;
+            var aggregateLastTick = aggregate?.LastTick ?? 0;
+            var aggregateFired = aggregate?.FiredCount ?? 0;
+            var aggregateAxon = aggregate?.AxonCount ?? 0;
+            var aggregateDominantType = aggregate?.DominantType ?? "unknown";
+            var aggregateAverageMagnitude = aggregate?.AverageMagnitude ?? 0f;
+            var detail = $"R{regionId} gateway | {role} | events {stats.EventCount} | last tick {stats.LastTick}"
+                         + $" | agg events {aggregateEventCount} | agg last tick {aggregateLastTick}"
+                         + $" | fired {aggregateFired} | axon {aggregateAxon}"
+                         + $" | dom {aggregateDominantType} | avg |v| {aggregateAverageMagnitude:0.###}"
+                         + $" | routes out {routeDegree.OutboundCount} in {routeDegree.InboundCount}"
+                         + $" | buffer n={bufferMetrics.BufferCount} avg={bufferMetrics.AverageBufferValue:0.###} latest={bufferMetrics.LatestBufferValue:0.###}@{bufferMetrics.LatestBufferTick}";
+            if (stats.EventCount == 0 && aggregateEventCount == 0)
             {
                 detail = $"{detail} | inactive in window";
             }
@@ -961,23 +980,25 @@ public static class VizActivityCanvasLayoutBuilder
 
         const int minSlice = -3;
         const int maxSlice = 3;
-        var xStep = (CanvasWidth - (CanvasPadding * 2.0)) / (maxSlice - minSlice);
+        var xStep = (CanvasWidth - (RegionNodePositionPadding * 2.0)) / (maxSlice - minSlice);
         var positions = new Dictionary<uint, CanvasPoint>();
 
         foreach (var (slice, regions) in groupsBySlice)
         {
-            var x = CanvasPadding + ((slice - minSlice) * xStep);
+            var x = RegionNodePositionPadding + ((slice - minSlice) * xStep);
             var count = regions.Count;
             var yStep = count <= 1
                 ? 0.0
-                : (CanvasHeight - (CanvasPadding * 2.0)) / (count - 1);
+                : (CanvasHeight - (RegionNodePositionPadding * 2.0)) / (count - 1);
 
             for (var index = 0; index < count; index++)
             {
                 var y = count == 1
                     ? CenterY
-                    : CanvasPadding + (index * yStep);
-                positions[regions[index]] = new CanvasPoint(x, y);
+                    : RegionNodePositionPadding + (index * yStep);
+                positions[regions[index]] = new CanvasPoint(
+                    Clamp(x, RegionNodePositionPadding, CanvasWidth - RegionNodePositionPadding),
+                    Clamp(y, RegionNodePositionPadding, CanvasHeight - RegionNodePositionPadding));
             }
         }
 
@@ -1439,6 +1460,10 @@ public static class VizActivityCanvasLayoutBuilder
 
     private static CanvasEdgeCurve BuildEdgeCurve(CanvasPoint source, CanvasPoint target, bool isSelfLoop, int curveDirection)
     {
+        var minX = EdgeControlPadding;
+        var maxX = CanvasWidth - EdgeControlPadding;
+        var minY = EdgeControlPadding;
+        var maxY = CanvasHeight - EdgeControlPadding;
         var normalizedDirection = curveDirection < 0 ? -1 : 1;
         var cacheKey = new CanvasEdgeCurveKey(
             QuantizeCurveCoord(source.X),
@@ -1459,8 +1484,12 @@ public static class VizActivityCanvasLayoutBuilder
         if (isSelfLoop)
         {
             var loopSize = 22;
-            var c1 = new CanvasPoint(source.X + loopSize, source.Y - (loopSize * 1.3));
-            var end = new CanvasPoint(source.X - 1, source.Y - 1);
+            var c1 = new CanvasPoint(
+                Clamp(source.X + loopSize, minX, maxX),
+                Clamp(source.Y - (loopSize * 1.3), minY, maxY));
+            var end = new CanvasPoint(
+                Clamp(source.X - 1, minX, maxX),
+                Clamp(source.Y - 1, minY, maxY));
             var pathData = FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {c1.X:0.###} {c1.Y:0.###} {end.X:0.###} {end.Y:0.###}");
             curve = new CanvasEdgeCurve(pathData, source, c1, end);
         }
@@ -1474,7 +1503,9 @@ public static class VizActivityCanvasLayoutBuilder
             var normalX = -deltaY / length;
             var normalY = deltaX / length;
             var curvature = Math.Min(48.0, 16.0 + (length * 0.12)) * normalizedDirection;
-            var control = new CanvasPoint(midX + (normalX * curvature), midY + (normalY * curvature));
+            var control = new CanvasPoint(
+                Clamp(midX + (normalX * curvature), minX, maxX),
+                Clamp(midY + (normalY * curvature), minY, maxY));
             var pathData = FormattableString.Invariant($"M {source.X:0.###} {source.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {target.X:0.###} {target.Y:0.###}");
             curve = new CanvasEdgeCurve(pathData, source, control, target);
         }
