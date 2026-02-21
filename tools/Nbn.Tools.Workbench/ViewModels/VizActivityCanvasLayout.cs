@@ -125,6 +125,7 @@ public sealed record VizActivityCanvasEdge(
     string ActivityStroke,
     double StrokeThickness,
     double ActivityStrokeThickness,
+    double HitTestThickness,
     double Opacity,
     double ActivityOpacity,
     bool IsFocused,
@@ -477,6 +478,7 @@ public static class VizActivityCanvasLayoutBuilder
                 : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
             var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.26 + (0.62 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
             var activityThickness = Math.Max(0.7, thickness - 2.2);
+            var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && route.SourceRegionId > route.TargetRegionId ? -1 : 1;
@@ -498,6 +500,7 @@ public static class VizActivityCanvasLayoutBuilder
                 activityStroke,
                 thickness,
                 activityThickness,
+                hitTestThickness,
                 opacity,
                 activityOpacity,
                 false,
@@ -693,6 +696,7 @@ public static class VizActivityCanvasLayoutBuilder
                 : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
             var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.28 + (0.60 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
             var activityThickness = Math.Max(0.7, thickness - 2.2);
+            var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
             var targetCenter = new CanvasPoint(targetNode.Left + (targetNode.Diameter / 2.0), targetNode.Top + (targetNode.Diameter / 2.0));
             var curveDirection = hasReverse && string.CompareOrdinal(sourceKey, targetKey) > 0 ? -1 : 1;
@@ -714,6 +718,7 @@ public static class VizActivityCanvasLayoutBuilder
                 activityStroke,
                 thickness,
                 activityThickness,
+                hitTestThickness,
                 opacity,
                 activityOpacity,
                 true,

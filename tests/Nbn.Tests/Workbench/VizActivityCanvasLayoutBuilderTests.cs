@@ -206,6 +206,7 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.True(positive.ActivityOpacity > 0.2);
         Assert.True(negative.ActivityOpacity > 0.2);
         Assert.True(positive.ActivityStrokeThickness < positive.StrokeThickness);
+        Assert.True(positive.HitTestThickness > positive.StrokeThickness);
     }
 
     [Fact]
@@ -228,6 +229,54 @@ public class VizActivityCanvasLayoutBuilderTests
 
         Assert.Equal(2, layout.Nodes.Count);
         Assert.Empty(layout.Edges);
+    }
+
+    [Fact]
+    public void Build_FocusModeHandlesDenseRegionWithoutThrowing()
+    {
+        const uint focusRegionId = 0;
+        const int neuronCount = 24;
+        const int routeCount = 369;
+        var events = new List<VizEventItem>(routeCount);
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+        var neuronAddresses = new HashSet<uint>();
+
+        for (var neuron = 0; neuron < neuronCount; neuron++)
+        {
+            neuronAddresses.Add(uint.Parse(Address(focusRegionId, (uint)neuron), CultureInfo.InvariantCulture));
+        }
+
+        for (var i = 0; i < routeCount; i++)
+        {
+            var src = (uint)(i % neuronCount);
+            var dst = (uint)((i * 7 + 3) % neuronCount);
+            var source = Address(focusRegionId, src);
+            var target = Address(focusRegionId, dst);
+            var value = (i % 2 == 0) ? 0.8f : -0.6f;
+            var strength = (i % 3 == 0) ? 0.4f : -0.3f;
+            events.Add(CreateEvent("VizAxonSent", (ulong)(2000 + i), focusRegionId, source, target, value, strength));
+            neuronRoutes.Add(new(
+                uint.Parse(source, CultureInfo.InvariantCulture),
+                uint.Parse(target, CultureInfo.InvariantCulture)));
+        }
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint> { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            neuronAddresses,
+            neuronRoutes);
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        Assert.Equal(neuronCount, layout.Nodes.Count(item => item.RegionId == focusRegionId && item.NeuronId.HasValue));
+        Assert.True(layout.Edges.Count > 0);
     }
 
     private static VizActivityProjection BuildProjection()

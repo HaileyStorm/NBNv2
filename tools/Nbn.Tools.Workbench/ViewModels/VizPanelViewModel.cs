@@ -23,8 +23,12 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class VizPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 400;
+    private const int MaxEventsPerUiFlush = 256;
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
+    private const double HoverCardOffset = 14;
+    private const double HoverCardMaxWidth = 280;
+    private const double HoverCardMaxHeight = 132;
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
@@ -59,6 +63,10 @@ public sealed class VizPanelViewModel : ViewModelBase
     private VizActivityProjectionOptions _currentProjectionOptions = new(DefaultTickWindow, false, null);
     private string _activityInteractionSummary = "Select a node or route to inspect activity details.";
     private string _activityPinnedSummary = "Pinned: none.";
+    private string _canvasHoverCardText = string.Empty;
+    private bool _isCanvasHoverCardVisible;
+    private double _canvasHoverCardLeft = 8;
+    private double _canvasHoverCardTop = 8;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -106,6 +114,29 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public double ActivityCanvasWidth => VizActivityCanvasLayoutBuilder.CanvasWidth;
     public double ActivityCanvasHeight => VizActivityCanvasLayoutBuilder.CanvasHeight;
+    public string CanvasHoverCardText
+    {
+        get => _canvasHoverCardText;
+        set => SetProperty(ref _canvasHoverCardText, value);
+    }
+
+    public bool IsCanvasHoverCardVisible
+    {
+        get => _isCanvasHoverCardVisible;
+        set => SetProperty(ref _isCanvasHoverCardVisible, value);
+    }
+
+    public double CanvasHoverCardLeft
+    {
+        get => _canvasHoverCardLeft;
+        set => SetProperty(ref _canvasHoverCardLeft, value);
+    }
+
+    public double CanvasHoverCardTop
+    {
+        get => _canvasHoverCardTop;
+        set => SetProperty(ref _canvasHoverCardTop, value);
+    }
 
     public ObservableCollection<BrainListItem> KnownBrains { get; }
 
@@ -405,29 +436,63 @@ public sealed class VizPanelViewModel : ViewModelBase
         Status = $"Selected route {edge.RouteLabel}.";
     }
 
-    public void SetCanvasNodeHover(VizActivityCanvasNode? node)
+    public void SetCanvasNodeHover(VizActivityCanvasNode? node, double pointerX = double.NaN, double pointerY = double.NaN)
     {
-        var nextNode = node?.NodeKey;
+        if (node is null)
+        {
+            ClearCanvasHover();
+            return;
+        }
+
+        var nextNode = node.NodeKey;
         if (string.Equals(_hoverCanvasNodeKey, nextNode, StringComparison.OrdinalIgnoreCase) && _hoverCanvasRouteLabel is null)
         {
+            UpdateCanvasHoverCard(node.Detail, pointerX, pointerY);
             return;
         }
 
         _hoverCanvasNodeKey = nextNode;
         _hoverCanvasRouteLabel = null;
+        UpdateCanvasHoverCard(node.Detail, pointerX, pointerY);
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
-    public void SetCanvasEdgeHover(VizActivityCanvasEdge? edge)
+    public void SetCanvasEdgeHover(VizActivityCanvasEdge? edge, double pointerX = double.NaN, double pointerY = double.NaN)
     {
-        var nextRoute = edge?.RouteLabel;
+        if (edge is null)
+        {
+            ClearCanvasHover();
+            return;
+        }
+
+        var nextRoute = edge.RouteLabel;
         if (string.Equals(_hoverCanvasRouteLabel, nextRoute, StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(_hoverCanvasNodeKey))
         {
+            UpdateCanvasHoverCard(edge.Detail, pointerX, pointerY);
             return;
         }
 
         _hoverCanvasRouteLabel = nextRoute;
         _hoverCanvasNodeKey = null;
+        UpdateCanvasHoverCard(edge.Detail, pointerX, pointerY);
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+    }
+
+    public void ClearCanvasHover()
+    {
+        var hadHover = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
+                       || !string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
+                       || IsCanvasHoverCardVisible
+                       || !string.IsNullOrWhiteSpace(CanvasHoverCardText);
+        if (!hadHover)
+        {
+            return;
+        }
+
+        _hoverCanvasNodeKey = null;
+        _hoverCanvasRouteLabel = null;
+        CanvasHoverCardText = string.Empty;
+        IsCanvasHoverCardVisible = false;
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
@@ -680,37 +745,47 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void FlushPendingEvents()
     {
-        while (true)
+        List<VizEventItem> batch;
+        var hasMore = false;
+        lock (_pendingEventsGate)
         {
-            List<VizEventItem> batch;
-            lock (_pendingEventsGate)
+            if (_pendingEvents.Count == 0)
             {
-                if (_pendingEvents.Count == 0)
-                {
-                    _flushScheduled = false;
-                    return;
-                }
-
-                batch = new List<VizEventItem>(_pendingEvents.Count);
-                while (_pendingEvents.Count > 0)
-                {
-                    batch.Add(_pendingEvents.Dequeue());
-                }
+                _flushScheduled = false;
+                return;
             }
 
-            foreach (var item in batch)
+            var takeCount = Math.Min(MaxEventsPerUiFlush, _pendingEvents.Count);
+            batch = new List<VizEventItem>(takeCount);
+            for (var i = 0; i < takeCount; i++)
             {
-                if (!ShouldIncludeInVisualizer(item))
-                {
-                    continue;
-                }
-
-                AccumulateTopology(item);
-                _allEvents.Insert(0, item);
+                batch.Add(_pendingEvents.Dequeue());
             }
 
-            Trim(_allEvents);
-            RefreshFilteredEvents();
+            hasMore = _pendingEvents.Count > 0;
+            if (!hasMore)
+            {
+                _flushScheduled = false;
+            }
+        }
+
+        foreach (var item in batch)
+        {
+            if (!ShouldIncludeInVisualizer(item))
+            {
+                continue;
+            }
+
+            AccumulateTopology(item);
+            _allEvents.Insert(0, item);
+        }
+
+        Trim(_allEvents);
+        RefreshFilteredEvents();
+
+        if (hasMore)
+        {
+            _dispatcher.Post(FlushPendingEvents);
         }
     }
 
@@ -868,6 +943,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ReplaceItems(CanvasEdges, canvas.Edges);
         ActivityCanvasLegend = canvas.Legend;
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
+        RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
     }
 
@@ -1381,6 +1457,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedCanvasRouteLabel = null;
         _hoverCanvasNodeKey = null;
         _hoverCanvasRouteLabel = null;
+        CanvasHoverCardText = string.Empty;
+        IsCanvasHoverCardVisible = false;
         if (clearPins)
         {
             _pinnedCanvasNodes.Clear();
@@ -1438,6 +1516,45 @@ public sealed class VizPanelViewModel : ViewModelBase
         return changed;
     }
 
+    private void UpdateCanvasHoverCard(string detail, double pointerX, double pointerY)
+    {
+        CanvasHoverCardText = detail;
+
+        if (!double.IsNaN(pointerX) && !double.IsNaN(pointerY))
+        {
+            CanvasHoverCardLeft = Clamp(pointerX + HoverCardOffset, 4.0, Math.Max(4.0, ActivityCanvasWidth - HoverCardMaxWidth));
+            CanvasHoverCardTop = Clamp(pointerY + HoverCardOffset, 4.0, Math.Max(4.0, ActivityCanvasHeight - HoverCardMaxHeight));
+        }
+
+        IsCanvasHoverCardVisible = !string.IsNullOrWhiteSpace(detail);
+    }
+
+    private void RefreshCanvasHoverCard(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges)
+    {
+        var hoverNode = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
+            ? nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _hoverCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (hoverNode is not null)
+        {
+            UpdateCanvasHoverCard(hoverNode.Detail, double.NaN, double.NaN);
+            return;
+        }
+
+        var hoverEdge = !string.IsNullOrWhiteSpace(_hoverCanvasRouteLabel)
+            ? edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _hoverCanvasRouteLabel, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (hoverEdge is not null)
+        {
+            UpdateCanvasHoverCard(hoverEdge.Detail, double.NaN, double.NaN);
+            return;
+        }
+
+        CanvasHoverCardText = string.Empty;
+        IsCanvasHoverCardVisible = false;
+    }
+
     private void UpdateCanvasInteractionSummaries(
         IReadOnlyList<VizActivityCanvasNode> nodes,
         IReadOnlyList<VizActivityCanvasEdge> edges)
@@ -1462,9 +1579,9 @@ public sealed class VizPanelViewModel : ViewModelBase
                 ? $"Selected route {selectedEdge.RouteLabel} (events {selectedEdge.EventCount}, tick {selectedEdge.LastTick})"
                 : "Selected: none";
         var hoverSummary = hoverNode is not null
-            ? $"Hover node {hoverNode.Label}"
+            ? $"Hover node {hoverNode.Label} (events {hoverNode.EventCount}, tick {hoverNode.LastTick})"
             : hoverEdge is not null
-                ? $"Hover route {hoverEdge.RouteLabel}"
+                ? $"Hover route {hoverEdge.RouteLabel} (events {hoverEdge.EventCount}, tick {hoverEdge.LastTick})"
                 : "Hover: none";
 
         ActivityInteractionSummary = $"{selectedSummary} | {hoverSummary}";
@@ -1685,6 +1802,9 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         return haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
     }
+
+    private static double Clamp(double value, double min, double max)
+        => Math.Max(min, Math.Min(max, value));
 
     private static string BuildPayload(VizEventItem? item)
     {

@@ -135,7 +135,11 @@
                          TextWrapping="Wrap"
                          IsTabStop="False" />
                 <Grid ClipToBounds="True">
-                  <Grid Width="{Binding ActivityCanvasWidth}" Height="{Binding ActivityCanvasHeight}">
+                  <Grid Width="{Binding ActivityCanvasWidth}"
+                        Height="{Binding ActivityCanvasHeight}"
+                        PointerMoved="ActivityCanvasPointerMoved"
+                        PointerPressed="ActivityCanvasPointerPressed"
+                        PointerExited="ActivityCanvasPointerExited">
                     <ItemsControl ItemsSource="{Binding CanvasEdges}"
                                   Width="{Binding ActivityCanvasWidth}"
                                   Height="{Binding ActivityCanvasHeight}">
@@ -149,17 +153,14 @@
                           <Canvas Width="860"
                                   Height="420">
                             <Path Data="{Binding PathData}"
+                                  Stroke="Transparent"
+                                  StrokeThickness="{Binding HitTestThickness}" />
+                            <Path Data="{Binding PathData}"
                                   Stroke="{Binding Stroke}"
                                   StrokeDashArray="{Binding DirectionDashArray}"
                                   StrokeThickness="{Binding StrokeThickness}"
                                   Opacity="{Binding Opacity}"
-                                  StrokeLineCap="Round"
-                                  PointerEntered="CanvasEdgePointerEntered"
-                                  PointerExited="CanvasEdgePointerExited"
-                                  PointerPressed="CanvasEdgePointerPressed"
-                                  Tapped="CanvasEdgeTapped"
-                                  ToolTip.ShowDelay="0"
-                                  ToolTip.Tip="{Binding Detail}" />
+                                  StrokeLineCap="Round" />
                             <Path Data="{Binding PathData}"
                                   Stroke="{Binding ActivityStroke}"
                                   StrokeThickness="{Binding ActivityStrokeThickness}"
@@ -209,13 +210,7 @@
                       <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:VizActivityCanvasNode">
                           <Grid Width="{Binding Diameter}"
-                                Height="{Binding Diameter}"
-                                PointerEntered="CanvasNodePointerEntered"
-                                PointerExited="CanvasNodePointerExited"
-                                PointerPressed="CanvasNodePointerPressed"
-                                Tapped="CanvasNodeTapped"
-                                ToolTip.ShowDelay="0"
-                                ToolTip.Tip="{Binding Detail}">
+                                Height="{Binding Diameter}">
                             <Ellipse Fill="{Binding Fill}" Opacity="{Binding FillOpacity}" />
                             <Ellipse Stroke="{Binding Stroke}"
                                      StrokeThickness="{Binding StrokeThickness}"
@@ -246,6 +241,27 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <Canvas IsHitTestVisible="False">
+                      <Border Canvas.Left="{Binding CanvasHoverCardLeft}"
+                              Canvas.Top="{Binding CanvasHoverCardTop}"
+                              IsVisible="{Binding IsCanvasHoverCardVisible}"
+                              MaxWidth="280"
+                              Background="{DynamicResource NbnSurfaceBrush}"
+                              BorderBrush="{DynamicResource NbnBorderBrush}"
+                              BorderThickness="1"
+                              CornerRadius="8"
+                              Padding="8">
+                        <TextBox Text="{Binding CanvasHoverCardText}"
+                                 IsReadOnly="True"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="0"
+                                 FontSize="11"
+                                 TextWrapping="Wrap"
+                                 IsTabStop="False" />
+                      </Border>
+                    </Canvas>
                   </Grid>
                 </Grid>
               </StackPanel>

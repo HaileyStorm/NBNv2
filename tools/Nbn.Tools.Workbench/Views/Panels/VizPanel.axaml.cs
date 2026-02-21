@@ -1,5 +1,7 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.VisualTree;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tools.Workbench.Views.Panels;
@@ -13,75 +15,68 @@ public partial class VizPanel : UserControl
 
     private VizPanelViewModel? ViewModel => DataContext as VizPanelViewModel;
 
-    private void CanvasNodePointerEntered(object? sender, PointerEventArgs e)
+    private void ActivityCanvasPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasNode node })
+        if (ViewModel is null || sender is not Visual visual)
         {
             return;
         }
 
-        ViewModel.SetCanvasNodeHover(node);
+        if (!TryResolveCanvasItem(e.Source, out var node, out var edge))
+        {
+            ViewModel.ClearCanvasHover();
+            return;
+        }
+
+        var point = e.GetPosition(visual);
+        if (node is not null)
+        {
+            ViewModel.SetCanvasNodeHover(node, point.X, point.Y);
+            return;
+        }
+
+        if (edge is not null)
+        {
+            ViewModel.SetCanvasEdgeHover(edge, point.X, point.Y);
+            return;
+        }
+
+        ViewModel.ClearCanvasHover();
     }
 
-    private void CanvasNodePointerExited(object? sender, PointerEventArgs e)
+    private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        ViewModel?.SetCanvasNodeHover(null);
-    }
-
-    private void CanvasNodePointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasNode node } control)
+        if (ViewModel is null || sender is not Visual visual || e.Handled)
         {
             return;
         }
 
-        var pointer = e.GetCurrentPoint(control).Properties;
-        if (pointer.IsRightButtonPressed)
-        {
-            ViewModel.TogglePinCanvasNode(node);
-        }
-        else
-        {
-            ViewModel.SelectCanvasNode(node);
-        }
-
-        e.Handled = true;
-    }
-
-    private void CanvasNodeTapped(object? sender, TappedEventArgs e)
-    {
-        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasNode node })
+        if (!TryResolveCanvasItem(e.Source, out var node, out var edge))
         {
             return;
         }
 
-        ViewModel.SelectCanvasNode(node);
-        e.Handled = true;
-    }
+        var pointer = e.GetCurrentPoint(visual).Properties;
+        if (node is not null)
+        {
+            if (pointer.IsRightButtonPressed)
+            {
+                ViewModel.TogglePinCanvasNode(node);
+            }
+            else
+            {
+                ViewModel.SelectCanvasNode(node);
+            }
 
-    private void CanvasEdgePointerEntered(object? sender, PointerEventArgs e)
-    {
-        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasEdge edge })
+            e.Handled = true;
+            return;
+        }
+
+        if (edge is null)
         {
             return;
         }
 
-        ViewModel.SetCanvasEdgeHover(edge);
-    }
-
-    private void CanvasEdgePointerExited(object? sender, PointerEventArgs e)
-    {
-        ViewModel?.SetCanvasEdgeHover(null);
-    }
-
-    private void CanvasEdgePointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasEdge edge } control)
-        {
-            return;
-        }
-
-        var pointer = e.GetCurrentPoint(control).Properties;
         if (pointer.IsRightButtonPressed)
         {
             ViewModel.TogglePinCanvasEdge(edge);
@@ -94,14 +89,41 @@ public partial class VizPanel : UserControl
         e.Handled = true;
     }
 
-    private void CanvasEdgeTapped(object? sender, TappedEventArgs e)
+    private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
     {
-        if (ViewModel is null || sender is not Control { DataContext: VizActivityCanvasEdge edge })
+        ViewModel?.ClearCanvasHover();
+    }
+
+    private static bool TryResolveCanvasItem(object? source, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
+    {
+        node = null;
+        edge = null;
+        if (source is not AvaloniaObject sourceObject)
         {
-            return;
+            return false;
         }
 
-        ViewModel.SelectCanvasEdge(edge);
-        e.Handled = true;
+        AvaloniaObject? current = sourceObject;
+        while (current is not null)
+        {
+            if (current is StyledElement styled)
+            {
+                if (styled.DataContext is VizActivityCanvasNode canvasNode)
+                {
+                    node = canvasNode;
+                    return true;
+                }
+
+                if (styled.DataContext is VizActivityCanvasEdge canvasEdge)
+                {
+                    edge = canvasEdge;
+                    return true;
+                }
+            }
+
+            current = (current as Visual)?.GetVisualParent();
+        }
+
+        return false;
     }
 }
