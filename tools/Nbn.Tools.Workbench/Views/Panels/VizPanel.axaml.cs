@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Avalonia;
@@ -13,6 +14,8 @@ public partial class VizPanel : UserControl
     private const double HoverHitTestMinMovePx = 1.2;
     private const double HoverProbeDistancePx = 3.0;
     private const double PressProbeDistancePx = 5.0;
+    private const int HoverTargetSwitchSamples = 2;
+    private const int HoverTargetClearSamples = 2;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0),
@@ -36,6 +39,11 @@ public partial class VizPanel : UserControl
     private long _lastHoverHitTestTimestamp;
     private Point _lastHoverHitTestPoint;
     private bool _hasHoverHitTestPoint;
+    private string _hoverCommittedSignature = string.Empty;
+    private string _hoverCandidateSignature = string.Empty;
+    private int _hoverCandidateSamples;
+    private VizActivityCanvasNode? _hoverCandidateNode;
+    private VizActivityCanvasEdge? _hoverCandidateEdge;
 
     public VizPanel()
     {
@@ -60,23 +68,11 @@ public partial class VizPanel : UserControl
 
         if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, out var node, out var edge))
         {
-            ViewModel.ClearCanvasHoverDeferred();
-            return;
+            node = null;
+            edge = null;
         }
 
-        if (node is not null)
-        {
-            ViewModel.SetCanvasNodeHover(node, point.X, point.Y);
-            return;
-        }
-
-        if (edge is not null)
-        {
-            ViewModel.SetCanvasEdgeHover(edge, point.X, point.Y);
-            return;
-        }
-
-        ViewModel.ClearCanvasHoverDeferred();
+        ApplyHoverSample(point, node, edge);
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -136,6 +132,7 @@ public partial class VizPanel : UserControl
     private void ActivityCanvasPointerExited(object? sender, PointerEventArgs e)
     {
         _hasHoverHitTestPoint = false;
+        ResetHoverStability();
         ViewModel?.ClearCanvasHoverDeferred();
     }
 
@@ -186,5 +183,105 @@ public partial class VizPanel : UserControl
         }
 
         return false;
+    }
+
+    private void ApplyHoverSample(Point pointer, VizActivityCanvasNode? node, VizActivityCanvasEdge? edge)
+    {
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        var signature = BuildHoverSignature(node, edge);
+        if (!string.Equals(_hoverCandidateSignature, signature, StringComparison.Ordinal))
+        {
+            _hoverCandidateSignature = signature;
+            _hoverCandidateSamples = 1;
+        }
+        else
+        {
+            _hoverCandidateSamples++;
+        }
+
+        _hoverCandidateNode = node;
+        _hoverCandidateEdge = edge;
+
+        if (string.Equals(_hoverCommittedSignature, signature, StringComparison.Ordinal))
+        {
+            ApplyHoverResolution(pointer, node, edge, signature);
+            return;
+        }
+
+        var requiredSamples = GetRequiredHoverSamples(signature);
+        if (_hoverCandidateSamples < requiredSamples)
+        {
+            ViewModel.KeepCanvasHoverAlive();
+            return;
+        }
+
+        ApplyHoverResolution(pointer, _hoverCandidateNode, _hoverCandidateEdge, signature);
+    }
+
+    private void ApplyHoverResolution(
+        Point pointer,
+        VizActivityCanvasNode? node,
+        VizActivityCanvasEdge? edge,
+        string signature)
+    {
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        _hoverCommittedSignature = signature;
+        if (node is not null)
+        {
+            ViewModel.SetCanvasNodeHover(node, pointer.X, pointer.Y);
+            return;
+        }
+
+        if (edge is not null)
+        {
+            ViewModel.SetCanvasEdgeHover(edge, pointer.X, pointer.Y);
+            return;
+        }
+
+        ViewModel.ClearCanvasHoverDeferred();
+    }
+
+    private int GetRequiredHoverSamples(string signature)
+    {
+        if (string.IsNullOrEmpty(_hoverCommittedSignature))
+        {
+            return 1;
+        }
+
+        return string.IsNullOrEmpty(signature)
+            ? HoverTargetClearSamples
+            : HoverTargetSwitchSamples;
+    }
+
+    private void ResetHoverStability()
+    {
+        _hoverCommittedSignature = string.Empty;
+        _hoverCandidateSignature = string.Empty;
+        _hoverCandidateSamples = 0;
+        _hoverCandidateNode = null;
+        _hoverCandidateEdge = null;
+    }
+
+    private static string BuildHoverSignature(VizActivityCanvasNode? node, VizActivityCanvasEdge? edge)
+    {
+        if (node is not null && !string.IsNullOrWhiteSpace(node.NodeKey))
+        {
+            return $"node:{node.NodeKey}";
+        }
+
+        if (edge is not null && !string.IsNullOrWhiteSpace(edge.RouteLabel))
+        {
+            return $"edge:{edge.RouteLabel}";
+        }
+
+        return string.Empty;
     }
 }

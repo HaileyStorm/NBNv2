@@ -119,6 +119,55 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void TryResolveCanvasHit_PrefersStickyHoveredEdge_OverOverlappingNode()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 70, top: 10);
+        var edge = new VizActivityCanvasEdge(
+            RouteLabel: "R9 -> R10",
+            Detail: "edge detail",
+            PathData: "M 20 20 Q 80 20 140 20",
+            SourceX: 20,
+            SourceY: 20,
+            ControlX: 80,
+            ControlY: 20,
+            TargetX: 140,
+            TargetY: 20,
+            Stroke: "#7A838A",
+            DirectionDashArray: string.Empty,
+            ActivityStroke: "#2ECC71",
+            StrokeThickness: 2.0,
+            ActivityStrokeThickness: 1.2,
+            HitTestThickness: 10.0,
+            Opacity: 0.9,
+            ActivityOpacity: 0.7,
+            IsFocused: false,
+            LastTick: 100,
+            EventCount: 5,
+            SourceRegionId: 9,
+            TargetRegionId: 10,
+            IsSelected: false,
+            IsHovered: false,
+            IsPinned: false);
+
+        RebuildHitIndexMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge> { edge }
+            });
+        vm.SetCanvasEdgeHover(edge);
+
+        var hit = vm.TryResolveCanvasHit(80, 20, out var hitNode, out var hitEdge);
+
+        Assert.True(hit);
+        Assert.Null(hitNode);
+        Assert.NotNull(hitEdge);
+        Assert.Equal(edge.RouteLabel, hitEdge!.RouteLabel);
+    }
+
+    [Fact]
     public async Task ClearCanvasHoverDeferred_SubsequentHoverCancelsPendingClear()
     {
         var vm = CreateViewModel();

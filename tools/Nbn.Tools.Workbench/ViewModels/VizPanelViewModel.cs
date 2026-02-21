@@ -606,6 +606,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         var startedAt = Stopwatch.GetTimestamp();
         try
         {
+            // Keep hover locked to the current target while still inside sticky tolerance.
+            if (TryResolveStickyHoverHit(pointerX, pointerY, out node, out edge))
+            {
+                return true;
+            }
+
             node = HitTestCanvasNode(pointerX, pointerY);
             if (node is not null)
             {
@@ -619,7 +625,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 return true;
             }
 
-            return TryResolveStickyHoverHit(pointerX, pointerY, out node, out edge);
+            return false;
         }
         finally
         {
