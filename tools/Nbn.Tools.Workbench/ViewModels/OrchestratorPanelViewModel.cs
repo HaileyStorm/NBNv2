@@ -22,6 +22,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private const string SampleRouterPrefix = "demo-router";
     private const string SampleBrainRootPrefix = "sample-root-";
     private const string SampleOutputPrefix = "io-output-";
+    private const float LocalDefaultTickHz = 8f;
+    private const float LocalDefaultMinTickHz = 2f;
     private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private readonly UiDispatcher _dispatcher;
@@ -239,7 +241,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\""
-                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
+                 + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.HiveMind", args);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
         HiveMindLaunchStatus = result.Message;

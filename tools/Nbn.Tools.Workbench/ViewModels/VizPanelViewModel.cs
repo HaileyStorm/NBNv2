@@ -23,9 +23,10 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class VizPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 400;
-    private const int MaxEventsPerUiFlush = 256;
+    private const int MaxEventsPerUiFlush = 96;
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
+    private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private const double HoverCardOffset = 14;
     private const double HoverCardMaxWidth = 280;
     private const double HoverCardMaxHeight = 132;
@@ -51,6 +52,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
     private bool _showProjectionSnapshot;
     private bool _showVisualizationStream;
+    private DateTime _nextStreamingRefreshUtc = DateTime.MinValue;
+    private ulong _lastRenderedTickId;
     private string? _selectedCanvasNodeKey;
     private string? _selectedCanvasRouteLabel;
     private string? _hoverCanvasNodeKey;
@@ -160,6 +163,8 @@ public sealed class VizPanelViewModel : ViewModelBase
                 {
                     if (value is not null && (previous?.BrainId != value.BrainId))
                     {
+                        _lastRenderedTickId = 0;
+                        _nextStreamingRefreshUtc = DateTime.MinValue;
                         _brain.SelectBrain(value.BrainId, preserveOutputs: true);
                         QueueDefinitionTopologyHydration(value.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
                     }
@@ -622,6 +627,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         _topologyByBrainId.Clear();
         _currentProjection = null;
         _currentProjectionOptions = new VizActivityProjectionOptions(DefaultTickWindow, IncludeLowSignalEvents, null);
+        _lastRenderedTickId = 0;
+        _nextStreamingRefreshUtc = DateTime.MinValue;
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;
@@ -659,8 +666,13 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
-    private void RefreshFilteredEvents()
+    private void RefreshFilteredEvents(bool fromStreaming = false, bool force = false)
     {
+        if (fromStreaming && !force && !ShouldRefreshFromStreamingBatch())
+        {
+            return;
+        }
+
         var selected = SelectedEvent;
         VizEvents.Clear();
         var matched = 0;
@@ -691,7 +703,53 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         SelectedPayload = BuildPayload(SelectedEvent);
         RefreshActivityProjection();
+        _lastRenderedTickId = GetLatestTickForCurrentSelection();
+        if (fromStreaming)
+        {
+            _nextStreamingRefreshUtc = DateTime.UtcNow + StreamingRefreshInterval;
+        }
+
         ExportCommand.RaiseCanExecuteChanged();
+    }
+
+    private bool ShouldRefreshFromStreamingBatch()
+    {
+        var latestTick = GetLatestTickForCurrentSelection();
+        if (latestTick <= _lastRenderedTickId)
+        {
+            return false;
+        }
+
+        return DateTime.UtcNow >= _nextStreamingRefreshUtc;
+    }
+
+    private ulong GetLatestTickForCurrentSelection()
+    {
+        if (_allEvents.Count == 0)
+        {
+            return 0;
+        }
+
+        if (SelectedBrain is null)
+        {
+            return _allEvents[0].TickId;
+        }
+
+        var selectedBrainId = SelectedBrain.BrainId;
+        foreach (var item in _allEvents)
+        {
+            if (!Guid.TryParse(item.BrainId, out var itemBrainId))
+            {
+                continue;
+            }
+
+            if (itemBrainId == selectedBrainId)
+            {
+                return item.TickId;
+            }
+        }
+
+        return 0;
     }
 
     private bool MatchesFilter(VizEventItem item, bool ignoreBrain = false)
@@ -781,7 +839,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         Trim(_allEvents);
-        RefreshFilteredEvents();
+        RefreshFilteredEvents(fromStreaming: true, force: !hasMore);
 
         if (hasMore)
         {
