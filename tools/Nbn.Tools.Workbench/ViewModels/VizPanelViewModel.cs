@@ -667,6 +667,16 @@ public sealed class VizPanelViewModel : ViewModelBase
                     out node,
                     out edge))
             {
+                if (edge is not null)
+                {
+                    var nodeInsideCircle = HitTestCanvasNodeInsideCircle(pointerX, pointerY);
+                    if (nodeInsideCircle is not null)
+                    {
+                        node = nodeInsideCircle;
+                        edge = null;
+                    }
+                }
+
                 return true;
             }
 
@@ -706,6 +716,16 @@ public sealed class VizPanelViewModel : ViewModelBase
                     out node,
                     out edge))
             {
+                if (edge is not null)
+                {
+                    var nodeInsideCircle = HitTestCanvasNodeInsideCircle(pointerX, pointerY);
+                    if (nodeInsideCircle is not null)
+                    {
+                        node = nodeInsideCircle;
+                        edge = null;
+                    }
+                }
+
                 return true;
             }
 
@@ -2379,6 +2399,9 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private static long CellKey(int cellX, int cellY)
         => ((long)cellX << 32) ^ (uint)cellY;
+
+    private VizActivityCanvasNode? HitTestCanvasNodeInsideCircle(double pointerX, double pointerY)
+        => HitTestCanvasNode(pointerX, pointerY, nodeHitPadding: 0);
 
     private bool TryResolveStickyHoverHit(
         double pointerX,

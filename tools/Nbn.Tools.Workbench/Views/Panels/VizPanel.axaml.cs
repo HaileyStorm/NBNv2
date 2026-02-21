@@ -295,7 +295,7 @@ public partial class VizPanel : UserControl
 
         if (ShouldRetainCommittedHover(pointer))
         {
-            ViewModel.KeepCanvasHoverAlive();
+            ViewModel.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
             return;
         }
 

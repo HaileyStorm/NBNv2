@@ -3038,8 +3038,14 @@ Use these defaults to avoid recurring Aleph friction:
    * Aleph sub-query currently invokes `codex` (not `codex.cmd`).
    * Validate subprocess resolution with:
      * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
+     * `exec_python("import shutil; print(shutil.which('codex'))")` inside the active Aleph session
    * If that fails while `codex.cmd --version` works, ensure a runnable `codex` executable is on `PATH` (for example a `codex.exe` shim that delegates to `codex.cmd`).
-4. Beads/BV tracker source sanity:
+   * If `which('codex')` only resolves to `.CMD` and sub-queries still fail, add a real `codex.exe` shim on `PATH` before retrying recipes.
+4. API fallback prerequisites (when CLI backend is unavailable):
+   * `sub_query` with `backend="api"` requires an API key (`ALEPH_SUB_QUERY_API_KEY` or `OPENAI_API_KEY`).
+   * API backend also requires a model (`ALEPH_SUB_QUERY_MODEL` or per-step `model` in the recipe).
+   * Missing either key or model will hard-fail recipe `sub_query`/`map_sub_query` steps.
+5. Beads/BV tracker source sanity:
    * If `bv`/`bd` shows stale or conflicting status, run `bd where` and confirm root `.beads/` is active.
    * Eliminate project-local `.beads/` directories (after archiving if needed) and run `bd sync` from repo root.
 

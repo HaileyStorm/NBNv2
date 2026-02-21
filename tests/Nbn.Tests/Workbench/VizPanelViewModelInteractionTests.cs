@@ -135,7 +135,7 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
-    public void TryResolveCanvasHit_PrefersStickyHoveredEdge_OverOverlappingNode()
+    public void TryResolveCanvasHit_PrefersOverlappingNode_OverStickyHoveredEdge()
     {
         var vm = CreateViewModel();
         var node = CreateNode("region:9", "R9", left: 70, top: 10);
@@ -178,9 +178,58 @@ public class VizPanelViewModelInteractionTests
         var hit = vm.TryResolveCanvasHit(80, 20, out var hitNode, out var hitEdge);
 
         Assert.True(hit);
-        Assert.Null(hitNode);
-        Assert.NotNull(hitEdge);
-        Assert.Equal(edge.RouteLabel, hitEdge!.RouteLabel);
+        Assert.NotNull(hitNode);
+        Assert.Null(hitEdge);
+        Assert.Equal(node.NodeKey, hitNode!.NodeKey);
+    }
+
+    [Fact]
+    public void TryResolveCanvasHoverHit_PrefersOverlappingNode_OverStickyHoveredEdge()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 70, top: 10);
+        var edge = new VizActivityCanvasEdge(
+            RouteLabel: "R9 -> R10",
+            Detail: "edge detail",
+            PathData: "M 20 20 Q 80 20 140 20",
+            SourceX: 20,
+            SourceY: 20,
+            ControlX: 80,
+            ControlY: 20,
+            TargetX: 140,
+            TargetY: 20,
+            Stroke: "#7A838A",
+            DirectionDashArray: string.Empty,
+            ActivityStroke: "#2ECC71",
+            StrokeThickness: 2.0,
+            ActivityStrokeThickness: 1.2,
+            HitTestThickness: 10.0,
+            Opacity: 0.9,
+            ActivityOpacity: 0.7,
+            IsFocused: false,
+            LastTick: 100,
+            EventCount: 5,
+            SourceRegionId: 9,
+            TargetRegionId: 10,
+            IsSelected: false,
+            IsHovered: false,
+            IsPinned: false);
+
+        RebuildHitIndexMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge> { edge }
+            });
+        vm.SetCanvasEdgeHover(edge);
+
+        var hit = vm.TryResolveCanvasHoverHit(80, 20, out var hitNode, out var hitEdge);
+
+        Assert.True(hit);
+        Assert.NotNull(hitNode);
+        Assert.Null(hitEdge);
+        Assert.Equal(node.NodeKey, hitNode!.NodeKey);
     }
 
     [Fact]
@@ -227,6 +276,26 @@ public class VizPanelViewModelInteractionTests
 
         Assert.True(vm.IsCanvasHoverCardVisible);
         Assert.Equal(node.Detail, vm.CanvasHoverCardText);
+    }
+
+    [Fact]
+    public void ClearCanvasHover_ClearsHoverImmediately()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 100, top: 100);
+
+        RebuildHitIndexMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge>()
+            });
+        vm.SetCanvasNodeHover(node);
+        vm.ClearCanvasHover();
+
+        Assert.False(vm.IsCanvasHoverCardVisible);
+        Assert.Equal(string.Empty, vm.CanvasHoverCardText);
     }
 
     [Fact]
