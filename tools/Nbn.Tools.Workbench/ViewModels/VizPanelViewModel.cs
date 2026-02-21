@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -9,6 +10,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -17,6 +19,8 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class VizPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 400;
+    private const int DefaultTickWindow = 64;
+    private const int MaxTickWindow = 4096;
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
@@ -30,27 +34,40 @@ public sealed class VizPanelViewModel : ViewModelBase
     private bool _suspendSelection;
     private VizEventItem? _selectedEvent;
     private string _selectedPayload = string.Empty;
+    private string _tickWindowText = DefaultTickWindow.ToString(CultureInfo.InvariantCulture);
+    private bool _includeLowSignalEvents;
+    private string _activitySummary = "Awaiting visualization events.";
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
         _dispatcher = dispatcher;
         _brain = brain;
         VizEvents = new ObservableCollection<VizEventItem>();
+        ActivityStats = new ObservableCollection<VizActivityStatItem>();
+        RegionActivity = new ObservableCollection<VizRegionActivityItem>();
+        EdgeActivity = new ObservableCollection<VizEdgeActivityItem>();
+        TickActivity = new ObservableCollection<VizTickActivityItem>();
         KnownBrains = new ObservableCollection<BrainListItem>();
         VizPanelTypeOptions = new ObservableCollection<VizPanelTypeOption>(VizPanelTypeOption.CreateDefaults());
         _selectedVizType = VizPanelTypeOptions[0];
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
+        ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
         ApplyEnergyRateCommand = new RelayCommand(() => _brain.ApplyEnergyRateSelected());
         ApplyCostEnergyCommand = new RelayCommand(() => _brain.ApplyCostEnergySelected());
+        RefreshActivityProjection();
     }
 
     public IoPanelViewModel Brain => _brain;
 
     public ObservableCollection<VizEventItem> VizEvents { get; }
+    public ObservableCollection<VizActivityStatItem> ActivityStats { get; }
+    public ObservableCollection<VizRegionActivityItem> RegionActivity { get; }
+    public ObservableCollection<VizEdgeActivityItem> EdgeActivity { get; }
+    public ObservableCollection<VizTickActivityItem> TickActivity { get; }
 
     public ObservableCollection<BrainListItem> KnownBrains { get; }
 
@@ -100,6 +117,24 @@ public sealed class VizPanelViewModel : ViewModelBase
         set => SetProperty(ref _regionFocusText, value);
     }
 
+    public string TickWindowText
+    {
+        get => _tickWindowText;
+        set => SetProperty(ref _tickWindowText, value);
+    }
+
+    public bool IncludeLowSignalEvents
+    {
+        get => _includeLowSignalEvents;
+        set
+        {
+            if (SetProperty(ref _includeLowSignalEvents, value))
+            {
+                RefreshFilteredEvents();
+            }
+        }
+    }
+
     public string RegionFilterText
     {
         get => _regionFilterText;
@@ -130,6 +165,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         set => SetProperty(ref _status, value);
     }
 
+    public string ActivitySummary
+    {
+        get => _activitySummary;
+        set => SetProperty(ref _activitySummary, value);
+    }
+
     public VizEventItem? SelectedEvent
     {
         get => _selectedEvent;
@@ -153,6 +194,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand AddBrainCommand { get; }
 
     public RelayCommand ZoomCommand { get; }
+
+    public RelayCommand ApplyActivityOptionsCommand { get; }
 
     public AsyncRelayCommand ExportCommand { get; }
 
@@ -252,14 +295,27 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void ZoomRegion()
     {
-        if (int.TryParse(RegionFocusText, out var regionId))
+        if (!TryParseRegionId(RegionFocusText, out var regionId))
         {
-            Status = $"Zoom focus set to region {regionId}.";
+            Status = $"Region ID must be {NbnConstants.RegionMinId}-{NbnConstants.RegionMaxId}.";
+            return;
         }
-        else
+
+        RegionFilterText = regionId.ToString(CultureInfo.InvariantCulture);
+        Status = $"Zoom focus set to region {regionId}.";
+    }
+
+    private void ApplyActivityOptions()
+    {
+        if (!TryParseTickWindow(TickWindowText, out var tickWindow))
         {
-            Status = "Region ID invalid.";
+            Status = $"Tick window must be an integer in 1-{MaxTickWindow}.";
+            return;
         }
+
+        TickWindowText = tickWindow.ToString(CultureInfo.InvariantCulture);
+        RefreshFilteredEvents();
+        Status = $"Applied activity options (tick window {tickWindow}).";
     }
 
     private void Clear()
@@ -267,7 +323,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         _allEvents.Clear();
         VizEvents.Clear();
         SelectedEvent = null;
+        SelectedPayload = string.Empty;
         ExportCommand.RaiseCanExecuteChanged();
+        RefreshActivityProjection();
         Status = "Cleared.";
     }
 
@@ -304,7 +362,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         var selected = SelectedEvent;
         VizEvents.Clear();
         var matched = 0;
-        Status = "Streaming";
+        Status = KnownBrains.Count == 0 ? "No brains reported." : "Streaming";
 
         foreach (var item in _allEvents)
         {
@@ -337,6 +395,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         SelectedPayload = BuildPayload(SelectedEvent);
+        RefreshActivityProjection();
         ExportCommand.RaiseCanExecuteChanged();
     }
 
@@ -375,6 +434,72 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
         }
 
+        return true;
+    }
+
+    private void RefreshActivityProjection()
+    {
+        var options = new VizActivityProjectionOptions(
+            ParseTickWindowOrDefault(),
+            IncludeLowSignalEvents,
+            TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null);
+
+        var projection = VizActivityProjectionBuilder.Build(VizEvents, options);
+
+        ReplaceItems(ActivityStats, projection.Stats);
+        ReplaceItems(RegionActivity, projection.Regions);
+        ReplaceItems(EdgeActivity, projection.Edges);
+        ReplaceItems(TickActivity, projection.Ticks);
+        ActivitySummary = projection.Summary;
+    }
+
+    private int ParseTickWindowOrDefault()
+    {
+        return TryParseTickWindow(TickWindowText, out var tickWindow)
+            ? tickWindow
+            : DefaultTickWindow;
+    }
+
+    private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
+    {
+        target.Clear();
+        foreach (var item in source)
+        {
+            target.Add(item);
+        }
+    }
+
+    private static bool TryParseTickWindow(string? value, out int tickWindow)
+    {
+        tickWindow = DefaultTickWindow;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return false;
+        }
+
+        if (parsed < 1 || parsed > MaxTickWindow)
+        {
+            return false;
+        }
+
+        tickWindow = parsed;
+        return true;
+    }
+
+    private static bool TryParseRegionId(string? value, out uint regionId)
+    {
+        regionId = 0;
+        if (!uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return false;
+        }
+
+        if (parsed > (uint)NbnConstants.RegionMaxId)
+        {
+            return false;
+        }
+
+        regionId = parsed;
         return true;
     }
 

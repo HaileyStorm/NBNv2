@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+             xmlns:models="clr-namespace:Nbn.Tools.Workbench.Models"
              x:Class="Nbn.Tools.Workbench.Views.Panels.VizPanel"
              x:DataType="vm:VizPanelViewModel">
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
@@ -27,25 +28,147 @@
       </Border>
 
       <Border Classes="card">
-        <StackPanel Spacing="8">
+        <StackPanel Spacing="10">
           <TextBlock Text="Neural Activity View" Classes="card-title" />
-          <TextBlock Text="Visualization placeholder for region activity and wiring." Classes="card-subtitle" />
-          <Grid ColumnDefinitions="Auto,80,Auto,*" ColumnSpacing="8" RowDefinitions="Auto" RowSpacing="6">
+          <TextBlock Text="Scaffold projection for region/edge/tick activity. Canvas renderer and interactions are split into follow-up issues." Classes="card-subtitle" />
+          <Grid ColumnDefinitions="Auto,96,Auto,96,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" />
             <Button Grid.Column="2" Content="Zoom" Command="{Binding ZoomCommand}" />
-            <TextBlock Grid.Column="3" Text="{Binding Status}" Classes="muted" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="3" Text="Tick window" Classes="muted" VerticalAlignment="Center" />
+            <TextBox Grid.Column="4" Text="{Binding TickWindowText}" Width="80" />
+            <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="10">
+              <Button Content="Apply options" Command="{Binding ApplyActivityOptionsCommand}" />
+              <CheckBox Content="Include low-signal events" IsChecked="{Binding IncludeLowSignalEvents}" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding ActivitySummary}" Classes="muted" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <TextBlock Grid.Row="1" Text="Event type" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding VizPanelTypeOptions}" SelectedItem="{Binding SelectedVizType}" Width="180">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:VizPanelTypeOption">
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="Region filter" Classes="muted" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding RegionFilterText}" />
+            <TextBlock Grid.Row="1" Grid.Column="4" Text="Search" Classes="muted" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SearchFilterText}" Watermark="Type, event id, source, target" />
           </Grid>
-          <Border BorderBrush="{DynamicResource NbnBorderBrush}"
-                  BorderThickness="1"
-                  CornerRadius="12"
-                  Background="{DynamicResource NbnSurfaceAltBrush}"
-                  MinHeight="260"
-                  MaxHeight="420">
-            <Grid>
-              <TextBlock Text="Visualization canvas coming soon" Classes="muted" HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Grid>
-          </Border>
+
+          <Grid ColumnDefinitions="1.35*,1*" ColumnSpacing="12">
+            <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Background="{DynamicResource NbnSurfaceAltBrush}"
+                    MinHeight="300"
+                    MaxHeight="460">
+              <Grid>
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
+                  <TextBlock Text="Neural canvas renderer not yet implemented" Classes="muted" HorizontalAlignment="Center" />
+                  <TextBlock Text="This scaffold now feeds region/edge/tick projections for the eventual renderer." Classes="muted" HorizontalAlignment="Center" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="1"
+                    BorderBrush="{DynamicResource NbnBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Background="{DynamicResource NbnSurfaceAltBrush}"
+                    Padding="10">
+              <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="Projection Snapshot" Classes="card-title" />
+                  <ItemsControl ItemsSource="{Binding ActivityStats}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:VizActivityStatItem">
+                        <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8" Margin="0,2">
+                          <TextBlock Text="{Binding Label}" Classes="muted" />
+                          <TextBlock Grid.Column="1" Text="{Binding Value}" Classes="row-title" />
+                          <TextBlock Grid.Column="2" Text="{Binding Detail}" Classes="muted" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+
+                  <TextBlock Text="Top Regions" Classes="card-title" />
+                  <ItemsControl ItemsSource="{Binding RegionActivity}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:VizRegionActivityItem">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8" Margin="0,2">
+                          <TextBlock Text="{Binding RegionLabel}" Classes="row-title" />
+                          <TextBlock Grid.Column="1" Text="{Binding DominantType}" Classes="muted" />
+                          <TextBlock Grid.Column="2" Text="{Binding EventCount}" Classes="muted" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+
+                  <TextBlock Text="Top Edges" Classes="card-title" />
+                  <ItemsControl ItemsSource="{Binding EdgeActivity}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:VizEdgeActivityItem">
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                          <TextBlock Text="{Binding RouteLabel}" Classes="row-title" />
+                          <TextBlock Grid.Column="1" Text="{Binding AverageStrength, StringFormat='str {0:0.###}'}" Classes="muted" />
+                          <TextBlock Grid.Column="2" Text="{Binding EventCount}" Classes="muted" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+
+                  <TextBlock Text="Recent Ticks" Classes="card-title" />
+                  <ItemsControl ItemsSource="{Binding TickActivity}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:VizTickActivityItem">
+                        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" Margin="0,2">
+                          <TextBlock Text="{Binding TickId, StringFormat='Tick {0}'}" Classes="row-title" />
+                          <TextBlock Grid.Column="1" Text="{Binding EventCount, StringFormat='all {0}'}" Classes="muted" />
+                          <TextBlock Grid.Column="2" Text="{Binding FiredCount, StringFormat='fired {0}'}" Classes="muted" />
+                          <TextBlock Grid.Column="3" Text="{Binding AxonCount, StringFormat='axon {0}'}" Classes="muted" />
+                          <TextBlock Grid.Column="4" Text="{Binding BufferCount, StringFormat='buffer {0}'}" Classes="muted" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </ScrollViewer>
+            </Border>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+            <TextBlock Text="Visualization Stream" Classes="card-title" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Content="Export" Command="{Binding ExportCommand}" />
+            <Button Grid.Column="2" Content="Clear" Command="{Binding ClearCommand}" />
+          </Grid>
+          <TextBlock Text="{Binding Status}" Classes="muted" />
+          <Grid ColumnDefinitions="1.35*,1*" ColumnSpacing="12">
+            <ListBox ItemsSource="{Binding VizEvents}" SelectedItem="{Binding SelectedEvent}" MaxHeight="260">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="models:VizEventItem">
+                  <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" Margin="0,3">
+                    <TextBlock Text="{Binding Time, StringFormat='{}{0:HH:mm:ss.fff}'}" Classes="muted" />
+                    <TextBlock Grid.Column="1" Text="{Binding Type}" Classes="row-title" />
+                    <TextBlock Grid.Column="2" Text="{Binding Region, StringFormat='R{0}'}" Classes="muted" />
+                    <TextBlock Grid.Column="3" Text="{Binding TickId}" Classes="muted" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Border Grid.Column="1"
+                    BorderBrush="{DynamicResource NbnBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="8">
+              <TextBox Text="{Binding SelectedPayload}" AcceptsReturn="True" TextWrapping="Wrap" IsReadOnly="True" MinHeight="180" />
+            </Border>
+          </Grid>
         </StackPanel>
       </Border>
 
