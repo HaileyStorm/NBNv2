@@ -316,7 +316,7 @@ public static class VizActivityCanvasLayoutBuilder
         var visibleNeuronMaxOrbit = Math.Min(
             CenterX - (CanvasPadding + MaxFocusNeuronNodeRadius + 6.0),
             (CenterY - (CanvasPadding + MaxFocusNeuronNodeRadius + 6.0)) / 0.94);
-        var overflowOrbitBoost = Math.Clamp((sortedNeurons.Count - 24) * 2.0, 0.0, 112.0);
+        var overflowOrbitBoost = Math.Clamp((sortedNeurons.Count - 16) * 4.5, 0.0, 260.0);
         var neuronMaxOrbit = visibleNeuronMaxOrbit + overflowOrbitBoost;
         var neuronMinOrbit = Math.Min(64.0, visibleNeuronMaxOrbit);
         var neuronPositions = BuildConcentricPositions(
@@ -325,8 +325,8 @@ public static class VizActivityCanvasLayoutBuilder
             maxRadius: neuronMaxOrbit,
             yScale: 0.94,
             minCenterSpacing: (MaxFocusNeuronNodeRadius * 2.0) + 2.0,
-            ringGapPadding: 24.0,
-            minRingGap: 36.0,
+            ringGapPadding: 34.0,
+            minRingGap: 56.0,
             clampToCanvas: false);
         var maxNeuronEvents = Math.Max(1, focusNeuronStats.Values.Max(item => item.EventCount));
         var maxNeuronFlowDegree = Math.Max(1, focusNeuronStats.Values.Max(item => item.OutboundCount + item.InboundCount));
@@ -388,7 +388,14 @@ public static class VizActivityCanvasLayoutBuilder
         }
 
         var sortedGateways = gatewayStats.Keys.OrderBy(item => item).ToList();
-        var gatewayPositions = BuildCircularPositions(sortedGateways.Count, 168, 198, yScale: 0.9);
+        var gatewayMinOrbit = neuronMaxOrbit + MaxFocusNeuronNodeRadius + MaxGatewayNodeRadius + 34.0;
+        var gatewayMaxOrbit = gatewayMinOrbit + 56.0;
+        var gatewayPositions = BuildCircularPositions(
+            sortedGateways.Count,
+            gatewayMinOrbit,
+            gatewayMaxOrbit,
+            yScale: 0.9,
+            clampToCanvas: false);
         var maxGatewayRouteDegree = Math.Max(
             1,
             sortedGateways.Count == 0
@@ -1208,16 +1215,16 @@ public static class VizActivityCanvasLayoutBuilder
         return positions;
     }
 
-    private static IReadOnlyList<CanvasPoint> BuildCircularPositions(int count, double minRadius, double maxRadius, double yScale)
+    private static IReadOnlyList<CanvasPoint> BuildCircularPositions(
+        int count,
+        double minRadius,
+        double maxRadius,
+        double yScale,
+        bool clampToCanvas = true)
     {
         if (count <= 0)
         {
             return Array.Empty<CanvasPoint>();
-        }
-
-        if (count == 1)
-        {
-            return new[] { new CanvasPoint(CenterX, CenterY) };
         }
 
         var radius = Math.Clamp(minRadius + (count * 3.0), minRadius, maxRadius);
@@ -1227,9 +1234,11 @@ public static class VizActivityCanvasLayoutBuilder
             var angle = (2.0 * Math.PI * index) / count;
             var x = CenterX + (Math.Cos(angle) * radius);
             var y = CenterY + (Math.Sin(angle) * radius * yScale);
-            positions.Add(new CanvasPoint(
-                Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
-                Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding)));
+            positions.Add(clampToCanvas
+                ? new CanvasPoint(
+                    Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+                    Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding))
+                : new CanvasPoint(x, y));
         }
 
         return positions;

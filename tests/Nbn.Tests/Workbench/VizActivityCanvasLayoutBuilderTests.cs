@@ -500,6 +500,125 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_FocusModeGatewayNodesRemainOutsideNeuronOrbitWithoutOverlap()
+    {
+        const uint focusRegionId = 0;
+        const int neuronCount = 41;
+        const int routeCount = 385;
+        var gatewayRegions = new[] { 8u, 13u, 23u, 31u };
+        var events = new List<VizEventItem>(routeCount);
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+        var neuronAddresses = new HashSet<uint>();
+
+        for (var neuron = 0; neuron < neuronCount; neuron++)
+        {
+            neuronAddresses.Add(uint.Parse(Address(focusRegionId, (uint)neuron), CultureInfo.InvariantCulture));
+        }
+
+        for (var i = 0; i < routeCount; i++)
+        {
+            string source;
+            string target;
+            uint eventRegion;
+            if (i % 11 == 0)
+            {
+                var gateway = gatewayRegions[(i / 11) % gatewayRegions.Length];
+                source = Address(gateway, (uint)((i * 7 + 5) % 19));
+                target = Address(focusRegionId, (uint)((i * 5 + 3) % neuronCount));
+                eventRegion = gateway;
+            }
+            else if (i % 3 == 0)
+            {
+                source = Address(focusRegionId, (uint)(i % neuronCount));
+                var gateway = gatewayRegions[(i / 3) % gatewayRegions.Length];
+                target = Address(gateway, (uint)((i * 3 + 1) % 17));
+                eventRegion = focusRegionId;
+            }
+            else
+            {
+                source = Address(focusRegionId, (uint)(i % neuronCount));
+                target = Address(focusRegionId, (uint)((i * 9 + 7) % neuronCount));
+                eventRegion = focusRegionId;
+            }
+
+            var sourceAddress = uint.Parse(source, CultureInfo.InvariantCulture);
+            var targetAddress = uint.Parse(target, CultureInfo.InvariantCulture);
+            neuronAddresses.Add(sourceAddress);
+            neuronAddresses.Add(targetAddress);
+            neuronRoutes.Add(new(sourceAddress, targetAddress));
+
+            var value = (i % 2 == 0) ? 0.82f : -0.74f;
+            var strength = (i % 3 == 0) ? 0.49f : -0.36f;
+            events.Add(CreateEvent("VizAxonSent", (ulong)(6600 + i), eventRegion, source, target, value, strength));
+        }
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 96, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint>(gatewayRegions) { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            neuronAddresses,
+            neuronRoutes);
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 96, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology);
+
+        var neurons = layout.Nodes.Where(node => node.RegionId == focusRegionId && node.NeuronId.HasValue).ToList();
+        var gateways = layout.Nodes.Where(node => node.RegionId != focusRegionId && !node.NeuronId.HasValue).ToList();
+        Assert.Equal(neuronCount, neurons.Count);
+        Assert.Equal(gatewayRegions.Length, gateways.Count);
+
+        var centerX = VizActivityCanvasLayoutBuilder.CanvasWidth / 2.0;
+        var centerY = VizActivityCanvasLayoutBuilder.CanvasHeight / 2.0;
+        var maxNeuronDistanceFromCenter = neurons
+            .Select(node =>
+            {
+                var x = node.Left + (node.Diameter / 2.0);
+                var y = node.Top + (node.Diameter / 2.0);
+                return Distance(x, y, centerX, centerY);
+            })
+            .Max();
+        var minGatewayDistanceFromCenter = gateways
+            .Select(node =>
+            {
+                var x = node.Left + (node.Diameter / 2.0);
+                var y = node.Top + (node.Diameter / 2.0);
+                return Distance(x, y, centerX, centerY);
+            })
+            .Min();
+        Assert.True(
+            minGatewayDistanceFromCenter > maxNeuronDistanceFromCenter + 20.0,
+            $"Expected gateway orbit to remain outside neuron orbit. gatewayMin={minGatewayDistanceFromCenter:0.###}, neuronMax={maxNeuronDistanceFromCenter:0.###}");
+
+        foreach (var gateway in gateways)
+        {
+            var gatewayCenterX = gateway.Left + (gateway.Diameter / 2.0);
+            var gatewayCenterY = gateway.Top + (gateway.Diameter / 2.0);
+            foreach (var neuron in neurons)
+            {
+                var neuronCenterX = neuron.Left + (neuron.Diameter / 2.0);
+                var neuronCenterY = neuron.Top + (neuron.Diameter / 2.0);
+                var minimumDistance = ((gateway.Diameter + neuron.Diameter) / 2.0) - 0.2;
+                var actualDistance = Distance(gatewayCenterX, gatewayCenterY, neuronCenterX, neuronCenterY);
+                Assert.True(
+                    actualDistance >= minimumDistance,
+                    $"Gateway {gateway.Label} overlaps neuron {neuron.Label}. actual={actualDistance:0.###}, required={minimumDistance:0.###}");
+            }
+        }
+
+        Assert.Contains(
+            layout.Nodes,
+            node => node.Left < 0
+                    || node.Top < 0
+                    || (node.Left + node.Diameter) > VizActivityCanvasLayoutBuilder.CanvasWidth
+                    || (node.Top + node.Diameter) > VizActivityCanvasLayoutBuilder.CanvasHeight);
+    }
+
+    [Fact]
     public void Build_FocusModeCollapsesGatewayFanoutIntoSingleDisplayedRoute()
     {
         const uint focusRegionId = 0;
