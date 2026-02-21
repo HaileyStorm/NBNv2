@@ -3042,11 +3042,13 @@ Use these defaults to avoid recurring Aleph friction:
 4. Codex sub-query backend on Windows:
    * Aleph sub-query currently invokes `codex` (not `codex.cmd`).
    * Validate subprocess resolution with:
-     * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
-     * `python -c "import subprocess; print(subprocess.run(['codex.cmd','--version']).returncode)"`
-     * `exec_python("import shutil; print(shutil.which('codex'))")` inside the active Aleph session
-   * If that fails while `codex.cmd --version` works, ensure a runnable `codex` executable is on `PATH` (for example a `codex.exe` shim that delegates to `codex.cmd`).
-   * If `which('codex')` only resolves to `.CMD` and sub-queries still fail, add a real `codex.exe` shim on `PATH` before retrying recipes.
+      * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
+      * `python -c "import subprocess; print(subprocess.run(['codex.cmd','--version']).returncode)"`
+      * `exec_python("import shutil; print(shutil.which('codex'))")` inside the active Aleph session
+   * If that fails while `codex.cmd --version` works, install a real `codex.exe` shim in a PATH directory (default repo helper: `powershell -ExecutionPolicy Bypass -File tools/dev/install-codex-shim.ps1`).
+   * The helper installs `codex.exe` alongside `codex.cmd` in the npm PATH directory so future sessions resolve the shim by default.
+   * After install, confirm `python -c "import shutil; print(shutil.which('codex'))"` resolves to `...\\codex.EXE` before retrying Aleph sub-queries.
+   * Run a smoke check after backend setup: `exec_python("print(sub_query('Return exactly OK.', reasoning_effort='medium').strip())")` and expect `OK`.
    * If you cannot add a shim on that machine/session, explicitly log that sub-query is blocked and run the same investigation using Aleph `search_context` + `peek_context` packets (do not silently skip Aleph evidence gathering).
 5. API fallback prerequisites (only if explicitly authorized for that session):
    * `sub_query` with `backend="api"` requires an API key (`ALEPH_SUB_QUERY_API_KEY` or `OPENAI_API_KEY`).
@@ -3069,6 +3071,9 @@ Use these defaults to avoid recurring Aleph friction:
 10. Beads comments command syntax:
    * Use `bd comments add <issue-id> "<text>"` (plural `comments`).
    * `bd comment add ...` is deprecated/invalid in this environment and can fail with `issue add not found`.
+11. Codex model override compatibility:
+   * Some Codex-account modes reject explicit Spark overrides (for example `gpt-5-spark`) even when default Codex runs fine.
+   * For sub-queries, prefer inherited/default model unless you have confirmed the override is supported in that account/session.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 
