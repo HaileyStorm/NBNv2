@@ -12,6 +12,54 @@ public sealed record VizActivityCanvasLayout(
     IReadOnlyList<VizActivityCanvasNode> Nodes,
     IReadOnlyList<VizActivityCanvasEdge> Edges);
 
+public sealed record VizActivityCanvasInteractionState(
+    uint? SelectedRegionId,
+    string? SelectedRouteLabel,
+    uint? HoverRegionId,
+    string? HoverRouteLabel,
+    IReadOnlySet<uint> PinnedRegionIds,
+    IReadOnlySet<string> PinnedRouteLabels)
+{
+    public static VizActivityCanvasInteractionState Empty { get; } = new(
+        null,
+        null,
+        null,
+        null,
+        new HashSet<uint>(),
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+    public bool IsSelectedRegion(uint regionId) => SelectedRegionId.HasValue && SelectedRegionId.Value == regionId;
+
+    public bool IsHoveredRegion(uint regionId) => HoverRegionId.HasValue && HoverRegionId.Value == regionId;
+
+    public bool IsSelectedRoute(string? routeLabel) => RouteEquals(SelectedRouteLabel, routeLabel);
+
+    public bool IsHoveredRoute(string? routeLabel) => RouteEquals(HoverRouteLabel, routeLabel);
+
+    public bool IsRegionPinned(uint regionId) => PinnedRegionIds.Contains(regionId);
+
+    public bool IsRoutePinned(string? routeLabel)
+    {
+        if (string.IsNullOrWhiteSpace(routeLabel))
+        {
+            return false;
+        }
+
+        foreach (var pinned in PinnedRouteLabels)
+        {
+            if (RouteEquals(pinned, routeLabel))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool RouteEquals(string? left, string? right)
+        => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed record VizActivityCanvasNode(
     uint RegionId,
     string Label,
@@ -24,7 +72,10 @@ public sealed record VizActivityCanvasNode(
     double StrokeThickness,
     bool IsFocused,
     ulong LastTick,
-    int EventCount);
+    int EventCount,
+    bool IsSelected,
+    bool IsHovered,
+    bool IsPinned);
 
 public sealed record VizActivityCanvasEdge(
     string RouteLabel,
@@ -34,7 +85,12 @@ public sealed record VizActivityCanvasEdge(
     double Opacity,
     bool IsFocused,
     ulong LastTick,
-    int EventCount);
+    int EventCount,
+    uint? SourceRegionId,
+    uint? TargetRegionId,
+    bool IsSelected,
+    bool IsHovered,
+    bool IsPinned);
 
 public static class VizActivityCanvasLayoutBuilder
 {
@@ -48,8 +104,13 @@ public static class VizActivityCanvasLayoutBuilder
     private const double BaseEdgeStroke = 1.2;
     private const double MaxEdgeStrokeBoost = 2.8;
 
-    public static VizActivityCanvasLayout Build(VizActivityProjection projection, VizActivityProjectionOptions options)
+    public static VizActivityCanvasLayout Build(
+        VizActivityProjection projection,
+        VizActivityProjectionOptions options,
+        VizActivityCanvasInteractionState? interaction = null)
     {
+        interaction ??= VizActivityCanvasInteractionState.Empty;
+
         var latestTick = projection.Ticks.Count > 0
             ? projection.Ticks.Max(item => item.TickId)
             : projection.Regions.Count > 0
@@ -81,11 +142,23 @@ public static class VizActivityCanvasLayoutBuilder
             var radius = MinNodeRadius + ((MaxNodeRadius - MinNodeRadius) * loadRatio);
             var tickRecency = TickRecency(stats.LastTick, latestTick, options.TickWindow);
             var isFocused = options.FocusRegionId.HasValue && options.FocusRegionId.Value == regionId;
-            var fillOpacity = Math.Clamp(0.35 + (0.5 * loadRatio), 0.25, 0.9);
-            var pulseOpacity = Math.Clamp(0.2 + (0.75 * tickRecency), 0.2, 0.95);
-            var strokeThickness = isFocused ? 3.0 : 1.4;
+            var isSelected = interaction.IsSelectedRegion(regionId);
+            var isHovered = interaction.IsHoveredRegion(regionId);
+            var isPinned = interaction.IsRegionPinned(regionId);
+            var emphasis = (isSelected ? 0.25 : 0.0) + (isHovered ? 0.14 : 0.0) + (isPinned ? 0.18 : 0.0);
+            var fillOpacity = Math.Clamp(0.35 + (0.5 * loadRatio) + emphasis, 0.25, 1.0);
+            var pulseOpacity = Math.Clamp(0.2 + (0.75 * tickRecency) + (emphasis * 0.7), 0.2, 1.0);
+            var strokeThickness = 1.4
+                                  + (isFocused ? 1.6 : 0.0)
+                                  + (isPinned ? 0.9 : 0.0)
+                                  + (isHovered ? 0.6 : 0.0)
+                                  + (isSelected ? 1.1 : 0.0);
             var diameter = radius * 2.0;
             var detail = $"R{regionId} | events {stats.EventCount} | last tick {stats.LastTick} | fired {stats.FiredCount} | axon {stats.AxonCount}";
+            if (isSelected || isHovered || isPinned)
+            {
+                detail = $"{detail} | selected {isSelected} | hover {isHovered} | pinned {isPinned}";
+            }
 
             var node = new VizActivityCanvasNode(
                 regionId,
@@ -99,13 +172,16 @@ public static class VizActivityCanvasLayoutBuilder
                 strokeThickness,
                 isFocused,
                 stats.LastTick,
-                stats.EventCount);
+                stats.EventCount,
+                isSelected,
+                isHovered,
+                isPinned);
 
             nodes.Add(node);
             nodeByRegion[regionId] = node;
         }
 
-        var edges = BuildEdges(projection, options, nodeByRegion, latestTick);
+        var edges = BuildEdges(projection, options, nodeByRegion, latestTick, interaction);
         var legend = $"Regions {nodes.Count} | Routes {edges.Count} | Latest tick {latestTick}";
 
         return new VizActivityCanvasLayout(CanvasWidth, CanvasHeight, legend, nodes, edges);
@@ -208,7 +284,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityProjection projection,
         VizActivityProjectionOptions options,
         IReadOnlyDictionary<uint, VizActivityCanvasNode> nodeByRegion,
-        ulong latestTick)
+        ulong latestTick,
+        VizActivityCanvasInteractionState interaction)
     {
         if (projection.Edges.Count == 0)
         {
@@ -236,9 +313,22 @@ public static class VizActivityCanvasLayoutBuilder
             var isFocused = options.FocusRegionId.HasValue
                             && (edge.SourceRegionId.Value == options.FocusRegionId.Value
                                 || edge.TargetRegionId.Value == options.FocusRegionId.Value);
-            var thickness = BaseEdgeStroke + (normalizedLoad * MaxEdgeStrokeBoost) + (isFocused ? 0.8 : 0.0);
-            var opacity = Math.Clamp(0.2 + (0.55 * recency) + (isFocused ? 0.15 : 0.0), 0.2, 0.95);
+            var isSelected = interaction.IsSelectedRoute(edge.RouteLabel);
+            var isHovered = interaction.IsHoveredRoute(edge.RouteLabel);
+            var isPinned = interaction.IsRoutePinned(edge.RouteLabel);
+            var emphasis = (isSelected ? 0.22 : 0.0) + (isHovered ? 0.12 : 0.0) + (isPinned ? 0.16 : 0.0);
+            var thickness = BaseEdgeStroke
+                            + (normalizedLoad * MaxEdgeStrokeBoost)
+                            + (isFocused ? 0.8 : 0.0)
+                            + (isPinned ? 0.8 : 0.0)
+                            + (isHovered ? 0.5 : 0.0)
+                            + (isSelected ? 0.9 : 0.0);
+            var opacity = Math.Clamp(0.2 + (0.55 * recency) + (isFocused ? 0.15 : 0.0) + emphasis, 0.2, 1.0);
             var detail = $"{edge.RouteLabel} | events {edge.EventCount} | last tick {edge.LastTick} | avg |v| {edge.AverageMagnitude:0.###}";
+            if (isSelected || isHovered || isPinned)
+            {
+                detail = $"{detail} | selected {isSelected} | hover {isHovered} | pinned {isPinned}";
+            }
 
             edges.Add(new VizActivityCanvasEdge(
                 edge.RouteLabel,
@@ -248,11 +338,19 @@ public static class VizActivityCanvasLayoutBuilder
                 opacity,
                 isFocused,
                 edge.LastTick,
-                edge.EventCount));
+                edge.EventCount,
+                edge.SourceRegionId,
+                edge.TargetRegionId,
+                isSelected,
+                isHovered,
+                isPinned));
         }
 
         return edges
-            .OrderByDescending(item => item.IsFocused)
+            .OrderByDescending(item => item.IsSelected)
+            .ThenByDescending(item => item.IsHovered)
+            .ThenByDescending(item => item.IsPinned)
+            .ThenByDescending(item => item.IsFocused)
             .ThenByDescending(item => item.LastTick)
             .ThenByDescending(item => item.EventCount)
             .ToList();

@@ -65,6 +65,63 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.True(newestEdge.Opacity >= oldestEdge.Opacity);
     }
 
+    [Fact]
+    public void Build_AppliesSelectionHoverAndPinFlags()
+    {
+        var projection = BuildProjection();
+        var options = new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null);
+        var selectedRoute = projection.Edges[0].RouteLabel;
+        var interaction = new VizActivityCanvasInteractionState(
+            SelectedRegionId: 23,
+            SelectedRouteLabel: selectedRoute,
+            HoverRegionId: 31,
+            HoverRouteLabel: selectedRoute,
+            PinnedRegionIds: new HashSet<uint> { 31 },
+            PinnedRouteLabels: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { selectedRoute });
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(projection, options, interaction);
+        var selectedNode = layout.Nodes.Single(item => item.RegionId == 23);
+        var hoveredPinnedNode = layout.Nodes.Single(item => item.RegionId == 31);
+        var selectedEdge = layout.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
+
+        Assert.True(selectedNode.IsSelected);
+        Assert.True(hoveredPinnedNode.IsHovered);
+        Assert.True(hoveredPinnedNode.IsPinned);
+        Assert.True(selectedEdge.IsSelected);
+        Assert.True(selectedEdge.IsHovered);
+        Assert.True(selectedEdge.IsPinned);
+    }
+
+    [Fact]
+    public void Build_BoostsVisualStrengthForSelectedEntities()
+    {
+        var projection = BuildProjection();
+        var options = new VizActivityProjectionOptions(TickWindow: 32, IncludeLowSignalEvents: true, FocusRegionId: null);
+        var selectedRegion = projection.Regions[0].RegionId;
+        var selectedRoute = projection.Edges[0].RouteLabel;
+        var baseline = VizActivityCanvasLayoutBuilder.Build(projection, options, VizActivityCanvasInteractionState.Empty);
+        var selected = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            options,
+            new VizActivityCanvasInteractionState(
+                SelectedRegionId: selectedRegion,
+                SelectedRouteLabel: selectedRoute,
+                HoverRegionId: null,
+                HoverRouteLabel: null,
+                PinnedRegionIds: new HashSet<uint>(),
+                PinnedRouteLabels: new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+
+        var baselineNode = baseline.Nodes.Single(item => item.RegionId == selectedRegion);
+        var selectedNode = selected.Nodes.Single(item => item.RegionId == selectedRegion);
+        Assert.True(selectedNode.StrokeThickness > baselineNode.StrokeThickness);
+        Assert.True(selectedNode.FillOpacity >= baselineNode.FillOpacity);
+
+        var baselineEdge = baseline.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
+        var selectedEdge = selected.Edges.Single(item => string.Equals(item.RouteLabel, selectedRoute, StringComparison.OrdinalIgnoreCase));
+        Assert.True(selectedEdge.StrokeThickness > baselineEdge.StrokeThickness);
+        Assert.True(selectedEdge.Opacity >= baselineEdge.Opacity);
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>

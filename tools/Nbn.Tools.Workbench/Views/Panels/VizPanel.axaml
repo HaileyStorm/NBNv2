@@ -4,6 +4,13 @@
              xmlns:models="clr-namespace:Nbn.Tools.Workbench.Models"
              x:Class="Nbn.Tools.Workbench.Views.Panels.VizPanel"
              x:DataType="vm:VizPanelViewModel">
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Alt+Left" Command="{Binding NavigateCanvasPreviousCommand}" />
+    <KeyBinding Gesture="Alt+Right" Command="{Binding NavigateCanvasNextCommand}" />
+    <KeyBinding Gesture="Alt+Enter" Command="{Binding NavigateCanvasSelectionCommand}" />
+    <KeyBinding Gesture="Alt+P" Command="{Binding TogglePinSelectionCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding ClearCanvasInteractionCommand}" />
+  </UserControl.KeyBindings>
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
       <Border Classes="card">
@@ -65,7 +72,35 @@
                     MinHeight="300"
                     MaxHeight="460">
               <StackPanel Spacing="8" Margin="12">
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*" ColumnSpacing="6">
+                  <Button Content="Prev"
+                          Command="{Binding NavigateCanvasPreviousCommand}"
+                          ToolTip.Tip="Alt+Left" />
+                  <Button Grid.Column="1"
+                          Content="Next"
+                          Command="{Binding NavigateCanvasNextCommand}"
+                          ToolTip.Tip="Alt+Right" />
+                  <Button Grid.Column="2"
+                          Content="{Binding TogglePinSelectionLabel}"
+                          Command="{Binding TogglePinSelectionCommand}"
+                          ToolTip.Tip="Alt+P" />
+                  <Button Grid.Column="3"
+                          Content="Navigate"
+                          Command="{Binding NavigateCanvasSelectionCommand}"
+                          ToolTip.Tip="Alt+Enter" />
+                  <Button Grid.Column="4"
+                          Content="Clear"
+                          Command="{Binding ClearCanvasInteractionCommand}"
+                          ToolTip.Tip="Escape" />
+                  <TextBlock Grid.Column="5"
+                             Text="{Binding CanvasNavigationHint}"
+                             Classes="muted"
+                             VerticalAlignment="Center"
+                             TextWrapping="Wrap" />
+                </Grid>
                 <TextBlock Text="{Binding ActivityCanvasLegend}" Classes="muted" />
+                <TextBlock Text="{Binding ActivityInteractionSummary}" Classes="muted" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding ActivityPinnedSummary}" Classes="muted" TextWrapping="Wrap" />
                 <Grid ClipToBounds="True">
                   <Canvas Width="{Binding ActivityCanvasWidth}" Height="{Binding ActivityCanvasHeight}">
                     <ItemsControl ItemsSource="{Binding CanvasEdges}">
@@ -76,11 +111,34 @@
                       </ItemsControl.ItemsPanel>
                       <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:VizActivityCanvasEdge">
-                          <Path Data="{Binding PathData}"
-                                Stroke="{DynamicResource NbnMutedBrush}"
-                                StrokeThickness="{Binding StrokeThickness}"
-                                Opacity="{Binding Opacity}"
-                                ToolTip.Tip="{Binding Detail}" />
+                          <Grid>
+                            <Path Data="{Binding PathData}"
+                                  Stroke="{DynamicResource NbnMutedBrush}"
+                                  StrokeThickness="{Binding StrokeThickness}"
+                                  Opacity="{Binding Opacity}"
+                                  PointerEntered="CanvasEdgePointerEntered"
+                                  PointerExited="CanvasEdgePointerExited"
+                                  PointerPressed="CanvasEdgePointerPressed"
+                                  ToolTip.Tip="{Binding Detail}" />
+                            <Path Data="{Binding PathData}"
+                                  Stroke="{DynamicResource NbnGoldBrush}"
+                                  StrokeThickness="{Binding StrokeThickness}"
+                                  Opacity="{Binding Opacity}"
+                                  IsVisible="{Binding IsPinned}"
+                                  IsHitTestVisible="False" />
+                            <Path Data="{Binding PathData}"
+                                  Stroke="{DynamicResource NbnTealBrush}"
+                                  StrokeThickness="{Binding StrokeThickness}"
+                                  Opacity="{Binding Opacity}"
+                                  IsVisible="{Binding IsHovered}"
+                                  IsHitTestVisible="False" />
+                            <Path Data="{Binding PathData}"
+                                  Stroke="{DynamicResource NbnAccentBrush}"
+                                  StrokeThickness="{Binding StrokeThickness}"
+                                  Opacity="{Binding Opacity}"
+                                  IsVisible="{Binding IsSelected}"
+                                  IsHitTestVisible="False" />
+                          </Grid>
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -97,11 +155,31 @@
                                 Height="{Binding Diameter}"
                                 Canvas.Left="{Binding Left}"
                                 Canvas.Top="{Binding Top}"
+                                PointerEntered="CanvasNodePointerEntered"
+                                PointerExited="CanvasNodePointerExited"
+                                PointerPressed="CanvasNodePointerPressed"
                                 ToolTip.Tip="{Binding Detail}">
                             <Ellipse Fill="{DynamicResource NbnTealBrush}" Opacity="{Binding FillOpacity}" />
                             <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
                                      StrokeThickness="{Binding StrokeThickness}"
                                      Opacity="{Binding PulseOpacity}" />
+                            <Ellipse Stroke="{DynamicResource NbnGoldBrush}"
+                                     StrokeThickness="2.2"
+                                     IsVisible="{Binding IsPinned}" />
+                            <Ellipse Stroke="{DynamicResource NbnTealBrush}"
+                                     StrokeThickness="2.2"
+                                     IsVisible="{Binding IsHovered}" />
+                            <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
+                                     StrokeThickness="2.8"
+                                     IsVisible="{Binding IsSelected}" />
+                            <TextBlock Text="★"
+                                       IsVisible="{Binding IsPinned}"
+                                       FontSize="10"
+                                       FontWeight="Bold"
+                                       Foreground="{DynamicResource NbnGoldBrush}"
+                                       HorizontalAlignment="Left"
+                                       VerticalAlignment="Top"
+                                       Margin="2,0,0,0" />
                             <TextBlock Text="{Binding Label}"
                                        FontSize="10"
                                        FontWeight="SemiBold"
