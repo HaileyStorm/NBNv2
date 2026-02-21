@@ -45,6 +45,38 @@ public partial class VizPanel : UserControl
 
     private VizPanelViewModel? ViewModel => DataContext as VizPanelViewModel;
 
+    private void VizRootPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (ViewModel is null || string.IsNullOrEmpty(_hoverCommittedSignature))
+        {
+            return;
+        }
+
+        if (!TryIsPointerInsideCanvas(e, out var isInsideCanvas))
+        {
+            return;
+        }
+
+        if (isInsideCanvas)
+        {
+            return;
+        }
+
+        ResetHoverStability();
+        ViewModel.ClearCanvasHover();
+    }
+
+    private void VizRootPointerExited(object? sender, PointerEventArgs e)
+    {
+        if (ViewModel is null || string.IsNullOrEmpty(_hoverCommittedSignature))
+        {
+            return;
+        }
+
+        ResetHoverStability();
+        ViewModel.ClearCanvasHover();
+    }
+
     private void ActivityCanvasPointerMoved(object? sender, PointerEventArgs e)
     {
         if (ViewModel is null || sender is not Visual visual)
@@ -163,6 +195,23 @@ public partial class VizPanel : UserControl
         }
 
         return false;
+    }
+
+    private bool TryIsPointerInsideCanvas(PointerEventArgs e, out bool inside)
+    {
+        inside = false;
+        var canvas = ActivityCanvasSurface;
+        if (canvas is null || !canvas.IsVisible || canvas.Bounds.Width <= 0 || canvas.Bounds.Height <= 0)
+        {
+            return false;
+        }
+
+        var point = e.GetPosition(canvas);
+        inside = point.X >= 0
+            && point.Y >= 0
+            && point.X <= canvas.Bounds.Width
+            && point.Y <= canvas.Bounds.Height;
+        return true;
     }
 
     private void ApplyHoverSample(Point pointer, VizActivityCanvasNode? node, VizActivityCanvasEdge? edge)
