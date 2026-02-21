@@ -1064,7 +1064,7 @@ public static class VizActivityCanvasLayoutBuilder
         var availableWidth = CanvasWidth - (RegionNodePositionPadding * 2.0);
         var availableHeight = CanvasHeight - (RegionNodePositionPadding * 2.0);
         var compressedHalfWidth = (availableWidth * 0.72) / 2.0;
-        var maxLaneHalfHeight = Math.Max(38.0, availableHeight * 0.44);
+        var maxLaneHalfHeight = Math.Max(54.0, availableHeight * 0.62);
         var positions = new Dictionary<uint, CanvasPoint>();
 
         foreach (var (slice, regions) in groupsBySlice)
@@ -1075,17 +1075,17 @@ public static class VizActivityCanvasLayoutBuilder
             var sliceWave = slice switch
             {
                 -3 or 0 or 3 => 0.0,
-                _ => (((slice - minSlice) & 1) == 0 ? 1.0 : -1.0) * (24.0 + (18.0 * depthRatio))
+                _ => (((slice - minSlice) & 1) == 0 ? 1.0 : -1.0) * (34.0 + (24.0 * depthRatio))
             };
             var laneCenterY = CenterY + sliceWave;
             var count = regions.Count;
             var laneHalfHeight = count <= 1
                 ? 0.0
                 : Math.Clamp(
-                    (18.0 + ((count - 1) * 12.0)) * (0.72 + (0.28 * depthRatio)),
-                    30.0,
+                    (24.0 + ((count - 1) * 16.0)) * (0.78 + (0.32 * depthRatio)),
+                    42.0,
                     maxLaneHalfHeight);
-            var laneHalfWidth = count <= 1 ? 0.0 : 8.0 + (6.0 * depthRatio);
+            var laneHalfWidth = count <= 1 ? 0.0 : 7.0 + (4.0 * depthRatio);
 
             for (var index = 0; index < count; index++)
             {

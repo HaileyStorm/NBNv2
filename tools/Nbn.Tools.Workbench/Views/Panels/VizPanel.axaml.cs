@@ -14,7 +14,7 @@ public partial class VizPanel : UserControl
     private const double HoverHitTestMinMovePx = 1.2;
     private const double PressProbeDistancePx = 5.0;
     private const int HoverTargetSwitchSamples = 2;
-    private const int HoverTargetClearSamples = 4;
+    private const int HoverTargetClearSamples = 1;
     private const int HoverExitClearDelayMs = 220;
     private const double HoverNoHitRetentionDistancePx = 8.0;
     private static readonly Point[] HoverProbeOffsets =
@@ -69,7 +69,9 @@ public partial class VizPanel : UserControl
                 }
                 else
                 {
-                    ViewModel.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
+                    _hoverCommittedSignature = string.Empty;
+                    _hasCommittedHoverPoint = false;
+                    ViewModel.ClearCanvasHover();
                 }
             }
 
@@ -158,7 +160,7 @@ public partial class VizPanel : UserControl
 
         _hasHoverHitTestPoint = false;
         ResetHoverStability();
-        ViewModel?.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
+        ViewModel?.ClearCanvasHover();
     }
 
     private bool ShouldProcessHoverPointerMove(Point point)
@@ -290,13 +292,15 @@ public partial class VizPanel : UserControl
 
         if (ShouldRetainCommittedHover(pointer))
         {
-            ViewModel.ClearCanvasHoverDeferred(HoverExitClearDelayMs);
+            _hoverCommittedSignature = string.Empty;
+            _hasCommittedHoverPoint = false;
+            ViewModel.ClearCanvasHover();
             return;
         }
 
         _hoverCommittedSignature = string.Empty;
         _hasCommittedHoverPoint = false;
-        ViewModel.ClearCanvasHoverDeferred();
+        ViewModel.ClearCanvasHover();
     }
 
     private bool ShouldRetainCommittedHover(Point pointer)
