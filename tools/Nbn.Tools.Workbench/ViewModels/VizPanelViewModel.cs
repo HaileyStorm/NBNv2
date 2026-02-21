@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -28,7 +29,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
-    private const int HoverClearDelayMs = 72;
+    private const int HoverClearDelayMs = 120;
     private const int EdgeHitSamples = 12;
     private const double HitTestCellSize = 54;
     private const double EdgeHitIndexPadding = 4;
@@ -86,6 +87,20 @@ public sealed class VizPanelViewModel : ViewModelBase
     private readonly HashSet<int> _edgeHitCandidates = new();
     private readonly Dictionary<string, VizActivityCanvasNode> _canvasNodeByKey = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, VizActivityCanvasEdge> _canvasEdgeByRoute = new(StringComparer.OrdinalIgnoreCase);
+    private double _lastProjectionBuildMs;
+    private double _lastCanvasLayoutBuildMs;
+    private double _lastCanvasApplyMs;
+    private double _lastCanvasFrameMs;
+    private double _lastFlushBatchMs;
+    private int _lastFlushBatchCount;
+    private int _maxObservedPendingEvents;
+    private long _droppedPendingEvents;
+    private double _lastHitTestMs;
+    private double _avgHitTestMs;
+    private double _maxHitTestMs;
+    private long _hitTestSamples;
+    private CollectionDiffStats _lastCanvasNodeDiffStats;
+    private CollectionDiffStats _lastCanvasEdgeDiffStats;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -433,9 +448,11 @@ public sealed class VizPanelViewModel : ViewModelBase
             while (_pendingEvents.Count >= MaxPendingEvents)
             {
                 _pendingEvents.Dequeue();
+                _droppedPendingEvents++;
             }
 
             _pendingEvents.Enqueue(item);
+            _maxObservedPendingEvents = Math.Max(_maxObservedPendingEvents, _pendingEvents.Count);
             if (_flushScheduled)
             {
                 return;
@@ -569,20 +586,28 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public bool TryResolveCanvasHit(double pointerX, double pointerY, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
     {
-        node = HitTestCanvasNode(pointerX, pointerY);
-        if (node is not null)
+        var startedAt = Stopwatch.GetTimestamp();
+        try
         {
-            edge = null;
-            return true;
-        }
+            node = HitTestCanvasNode(pointerX, pointerY);
+            if (node is not null)
+            {
+                edge = null;
+                return true;
+            }
 
-        edge = HitTestCanvasEdge(pointerX, pointerY);
-        if (edge is not null)
+            edge = HitTestCanvasEdge(pointerX, pointerY);
+            if (edge is not null)
+            {
+                return true;
+            }
+
+            return TryResolveStickyHoverHit(pointerX, pointerY, out node, out edge);
+        }
+        finally
         {
-            return true;
+            RecordHitTestDuration(startedAt);
         }
-
-        return TryResolveStickyHoverHit(pointerX, pointerY, out node, out edge);
     }
 
     public bool TrySelectHoveredCanvasItem(bool togglePin)
@@ -964,6 +989,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void FlushPendingEvents()
     {
+        var flushStart = Stopwatch.GetTimestamp();
         List<VizEventItem> batch;
         var hasMore = false;
         lock (_pendingEventsGate)
@@ -1001,6 +1027,8 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         Trim(_allEvents);
         RefreshFilteredEvents(fromStreaming: true, force: !hasMore);
+        _lastFlushBatchCount = batch.Count;
+        _lastFlushBatchMs = StopwatchElapsedMs(flushStart);
 
         if (hasMore)
         {
@@ -1030,6 +1058,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         var selectedBrainText = SelectedBrain?.BrainId.ToString("D") ?? "none";
         var selectedTypeText = SelectedVizType.TypeFilter ?? "all";
         var topology = BuildTopologySnapshotForSelectedBrain();
+        int pendingQueueDepth;
+        lock (_pendingEventsGate)
+        {
+            pendingQueueDepth = _pendingEvents.Count;
+        }
 
         sb.AppendLine($"Visualizer diagnostics @ {utcNow:O}");
         sb.AppendLine($"selected_brain={selectedBrainText} known_brains={KnownBrains.Count} selected_type={selectedTypeText}");
@@ -1047,6 +1080,14 @@ public sealed class VizPanelViewModel : ViewModelBase
             $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents}");
         sb.AppendLine(
             $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count}");
+        sb.AppendLine(
+            $"perf projection_ms={_lastProjectionBuildMs:0.###} layout_ms={_lastCanvasLayoutBuildMs:0.###} apply_ms={_lastCanvasApplyMs:0.###} frame_ms={_lastCanvasFrameMs:0.###} flush_ms={_lastFlushBatchMs:0.###} flush_batch={_lastFlushBatchCount}");
+        sb.AppendLine(
+            $"hit_test last_ms={_lastHitTestMs:0.###} avg_ms={_avgHitTestMs:0.###} max_ms={_maxHitTestMs:0.###} samples={_hitTestSamples}");
+        sb.AppendLine(
+            $"queue pending={pendingQueueDepth} pending_peak={_maxObservedPendingEvents} dropped={_droppedPendingEvents}");
+        sb.AppendLine(
+            $"canvas_diff nodes({_lastCanvasNodeDiffStats}) edges({_lastCanvasEdgeDiffStats})");
         sb.AppendLine($"summary={ActivitySummary}");
         sb.AppendLine($"legend={ActivityCanvasLegend}");
         sb.AppendLine($"interaction={ActivityInteractionSummary}");
@@ -1111,7 +1152,9 @@ public sealed class VizPanelViewModel : ViewModelBase
             IncludeLowSignalEvents,
             TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null);
 
+        var projectionStart = Stopwatch.GetTimestamp();
         var projection = VizActivityProjectionBuilder.Build(VizEvents, options);
+        _lastProjectionBuildMs = StopwatchElapsedMs(projectionStart);
         _currentProjection = projection;
         _currentProjectionOptions = options;
 
@@ -1125,6 +1168,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void RefreshCanvasLayoutOnly()
     {
+        var frameStart = Stopwatch.GetTimestamp();
         if (_currentProjection is null)
         {
             ReplaceItems(CanvasNodes, Array.Empty<VizActivityCanvasNode>());
@@ -1133,6 +1177,11 @@ public sealed class VizPanelViewModel : ViewModelBase
             ActivityCanvasLegend = "Canvas renderer awaiting activity.";
             ActivityInteractionSummary = "Selected: none | Hover: none";
             ActivityPinnedSummary = "Pinned: none.";
+            _lastCanvasLayoutBuildMs = 0;
+            _lastCanvasApplyMs = 0;
+            _lastCanvasNodeDiffStats = CollectionDiffStats.Empty;
+            _lastCanvasEdgeDiffStats = CollectionDiffStats.Empty;
+            _lastCanvasFrameMs = StopwatchElapsedMs(frameStart);
             OnPropertyChanged(nameof(TogglePinSelectionLabel));
             return;
         }
@@ -1145,6 +1194,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             _hoverCanvasRouteLabel,
             _pinnedCanvasNodes,
             _pinnedCanvasRoutes);
+        var layoutStart = Stopwatch.GetTimestamp();
         var canvas = VizActivityCanvasLayoutBuilder.Build(_currentProjection, _currentProjectionOptions, interaction, topology);
 
         if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
@@ -1158,13 +1208,17 @@ public sealed class VizPanelViewModel : ViewModelBase
                 _pinnedCanvasRoutes);
             canvas = VizActivityCanvasLayoutBuilder.Build(_currentProjection, _currentProjectionOptions, interaction, topology);
         }
+        _lastCanvasLayoutBuildMs = StopwatchElapsedMs(layoutStart);
 
-        ReplaceItems(CanvasNodes, canvas.Nodes);
-        ReplaceItems(CanvasEdges, canvas.Edges);
+        var applyStart = Stopwatch.GetTimestamp();
+        _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
+        _lastCanvasEdgeDiffStats = ApplyKeyedDiff(CanvasEdges, canvas.Edges, static item => item.RouteLabel);
         RebuildCanvasHitIndex(canvas.Nodes, canvas.Edges);
         ActivityCanvasLegend = canvas.Legend;
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
         RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
+        _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
+        _lastCanvasFrameMs = StopwatchElapsedMs(frameStart);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
     }
 
@@ -1507,6 +1561,116 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             target.Add(item);
         }
+    }
+
+    private static CollectionDiffStats ApplyKeyedDiff<T>(
+        ObservableCollection<T> target,
+        IReadOnlyList<T> source,
+        Func<T, string?> keySelector)
+    {
+        if (source.Count == 0)
+        {
+            var removedCount = target.Count;
+            if (removedCount > 0)
+            {
+                target.Clear();
+            }
+
+            return new CollectionDiffStats(0, removedCount, 0, 0);
+        }
+
+        var sourceKeys = new List<string>(source.Count);
+        var sourceKeySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in source)
+        {
+            var key = keySelector(item);
+            if (string.IsNullOrWhiteSpace(key) || !sourceKeySet.Add(key))
+            {
+                return ReplaceItemsWithStats(target, source);
+            }
+
+            sourceKeys.Add(key);
+        }
+
+        var removed = 0;
+        var added = 0;
+        var moved = 0;
+        var updated = 0;
+        for (var i = target.Count - 1; i >= 0; i--)
+        {
+            var existingKey = keySelector(target[i]);
+            if (!string.IsNullOrWhiteSpace(existingKey) && sourceKeySet.Contains(existingKey))
+            {
+                continue;
+            }
+
+            target.RemoveAt(i);
+            removed++;
+        }
+
+        for (var desiredIndex = 0; desiredIndex < source.Count; desiredIndex++)
+        {
+            var desiredItem = source[desiredIndex];
+            var desiredKey = sourceKeys[desiredIndex];
+            var hasMatchingItemAtDesiredIndex = desiredIndex < target.Count
+                && string.Equals(keySelector(target[desiredIndex]), desiredKey, StringComparison.OrdinalIgnoreCase);
+            if (hasMatchingItemAtDesiredIndex)
+            {
+                if (!EqualityComparer<T>.Default.Equals(target[desiredIndex], desiredItem))
+                {
+                    target[desiredIndex] = desiredItem;
+                    updated++;
+                }
+
+                continue;
+            }
+
+            var existingIndex = -1;
+            for (var scan = desiredIndex + 1; scan < target.Count; scan++)
+            {
+                if (string.Equals(keySelector(target[scan]), desiredKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    existingIndex = scan;
+                    break;
+                }
+            }
+
+            if (existingIndex >= 0)
+            {
+                target.Move(existingIndex, desiredIndex);
+                moved++;
+                if (!EqualityComparer<T>.Default.Equals(target[desiredIndex], desiredItem))
+                {
+                    target[desiredIndex] = desiredItem;
+                    updated++;
+                }
+
+                continue;
+            }
+
+            target.Insert(desiredIndex, desiredItem);
+            added++;
+        }
+
+        while (target.Count > source.Count)
+        {
+            target.RemoveAt(target.Count - 1);
+            removed++;
+        }
+
+        return new CollectionDiffStats(added, removed, moved, updated);
+    }
+
+    private static CollectionDiffStats ReplaceItemsWithStats<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
+    {
+        var removedCount = target.Count;
+        target.Clear();
+        foreach (var item in source)
+        {
+            target.Add(item);
+        }
+
+        return new CollectionDiffStats(source.Count, removedCount, 0, 0);
     }
 
     private VizActivityCanvasTopology BuildTopologySnapshotForSelectedBrain()
@@ -2210,6 +2374,21 @@ public sealed class VizPanelViewModel : ViewModelBase
         return Math.Sqrt((diffX * diffX) + (diffY * diffY));
     }
 
+    private void RecordHitTestDuration(long startTimestamp)
+    {
+        var elapsedMs = StopwatchElapsedMs(startTimestamp);
+        _lastHitTestMs = elapsedMs;
+        _hitTestSamples++;
+        _avgHitTestMs += (elapsedMs - _avgHitTestMs) / _hitTestSamples;
+        if (elapsedMs > _maxHitTestMs)
+        {
+            _maxHitTestMs = elapsedMs;
+        }
+    }
+
+    private static double StopwatchElapsedMs(long startTimestamp)
+        => ((double)(Stopwatch.GetTimestamp() - startTimestamp) * 1000.0) / Stopwatch.Frequency;
+
     private bool IsCurrentSelectionPinned()
     {
         if (!string.IsNullOrWhiteSpace(_selectedCanvasNodeKey))
@@ -2478,6 +2657,14 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             list.RemoveAt(list.Count - 1);
         }
+    }
+
+    private readonly record struct CollectionDiffStats(int Added, int Removed, int Moved, int Updated)
+    {
+        public static CollectionDiffStats Empty { get; } = new(0, 0, 0, 0);
+
+        public override string ToString()
+            => $"added={Added} removed={Removed} moved={Moved} updated={Updated}";
     }
 
     private readonly record struct DefinitionTopologyLoadResult(

@@ -1,4 +1,6 @@
+using System.Collections.ObjectModel;
 using System.Reflection;
+using System.Threading.Tasks;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -12,6 +14,16 @@ public class VizPanelViewModelInteractionTests
             "RebuildCanvasHitIndex",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("RebuildCanvasHitIndex method not found.");
+    private static readonly MethodInfo BuildCanvasDiagnosticsReportMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "BuildCanvasDiagnosticsReport",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("BuildCanvasDiagnosticsReport method not found.");
+    private static readonly MethodInfo ApplyKeyedDiffMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "ApplyKeyedDiff",
+            BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ApplyKeyedDiff method not found.");
 
     [Fact]
     public void TryResolveCanvasHit_NodeHoverStickyTolerance_ResolvesNearMiss()
@@ -104,6 +116,84 @@ public class VizPanelViewModelInteractionTests
         Assert.Null(hitNode);
         Assert.NotNull(hitEdge);
         Assert.Equal(edge.RouteLabel, hitEdge!.RouteLabel);
+    }
+
+    [Fact]
+    public async Task ClearCanvasHoverDeferred_SubsequentHoverCancelsPendingClear()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 100, top: 100);
+
+        RebuildHitIndexMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge>()
+            });
+        vm.SetCanvasNodeHover(node);
+        vm.ClearCanvasHoverDeferred(delayMs: 20);
+        vm.SetCanvasNodeHover(node);
+        await Task.Delay(90);
+
+        Assert.True(vm.IsCanvasHoverCardVisible);
+        Assert.Equal(node.Detail, vm.CanvasHoverCardText);
+    }
+
+    [Fact]
+    public void BuildCanvasDiagnosticsReport_IncludesPerformanceMetrics()
+    {
+        var vm = CreateViewModel();
+        var report = (string)BuildCanvasDiagnosticsReportMethod.Invoke(vm, Array.Empty<object>())!;
+
+        Assert.Contains("perf projection_ms=", report);
+        Assert.Contains("hit_test last_ms=", report);
+        Assert.Contains("queue pending=", report);
+        Assert.Contains("canvas_diff nodes(", report);
+    }
+
+    [Fact]
+    public void ApplyKeyedDiff_ReordersAndRetainsUnchangedItems()
+    {
+        var first = CreateNode("region:9", "R9", left: 20, top: 30);
+        var second = CreateNode("region:10", "R10", left: 80, top: 40);
+        var secondUpdated = second with { Detail = "updated-detail" };
+        var target = new ObservableCollection<VizActivityCanvasNode> { first, second };
+        var source = new List<VizActivityCanvasNode> { secondUpdated, first };
+        var keySelector = new Func<VizActivityCanvasNode, string?>(item => item.NodeKey);
+
+        var typedMethod = ApplyKeyedDiffMethod.MakeGenericMethod(typeof(VizActivityCanvasNode));
+        _ = typedMethod.Invoke(null, new object[] { target, source, keySelector });
+
+        Assert.Equal(2, target.Count);
+        Assert.Equal(secondUpdated.NodeKey, target[0].NodeKey);
+        Assert.Equal("updated-detail", target[0].Detail);
+        Assert.Same(first, target[1]);
+    }
+
+    private static VizActivityCanvasNode CreateNode(string key, string label, double left, double top)
+    {
+        return new VizActivityCanvasNode(
+            NodeKey: key,
+            RegionId: 9,
+            NeuronId: null,
+            NavigateRegionId: 9,
+            Label: label,
+            Detail: $"{label} detail",
+            Left: left,
+            Top: top,
+            Diameter: 20,
+            Fill: "#2A9D8F",
+            Stroke: "#1B6B63",
+            FillOpacity: 0.8,
+            PulseOpacity: 0.6,
+            StrokeThickness: 1.5,
+            IsFocused: false,
+            LastTick: 42,
+            EventCount: 3,
+            IsSelected: false,
+            IsHovered: false,
+            IsPinned: false);
     }
 
     private static VizPanelViewModel CreateViewModel()

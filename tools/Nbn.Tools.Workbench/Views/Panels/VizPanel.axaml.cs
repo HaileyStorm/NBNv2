@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
@@ -9,7 +10,29 @@ namespace Nbn.Tools.Workbench.Views.Panels;
 public partial class VizPanel : UserControl
 {
     private const double HoverHitTestMinIntervalMs = 16;
-    private const double HoverHitTestMinMovePx = 1.8;
+    private const double HoverHitTestMinMovePx = 1.2;
+    private const double HoverProbeDistancePx = 2.0;
+    private const double PressProbeDistancePx = 4.0;
+    private static readonly Point[] HoverProbeOffsets =
+    {
+        new(0, 0),
+        new(HoverProbeDistancePx, 0),
+        new(-HoverProbeDistancePx, 0),
+        new(0, HoverProbeDistancePx),
+        new(0, -HoverProbeDistancePx)
+    };
+    private static readonly Point[] PressProbeOffsets =
+    {
+        new(0, 0),
+        new(PressProbeDistancePx, 0),
+        new(-PressProbeDistancePx, 0),
+        new(0, PressProbeDistancePx),
+        new(0, -PressProbeDistancePx),
+        new(PressProbeDistancePx * 0.6, PressProbeDistancePx * 0.6),
+        new(-PressProbeDistancePx * 0.6, PressProbeDistancePx * 0.6),
+        new(PressProbeDistancePx * 0.6, -PressProbeDistancePx * 0.6),
+        new(-PressProbeDistancePx * 0.6, -PressProbeDistancePx * 0.6)
+    };
     private long _lastHoverHitTestTimestamp;
     private Point _lastHoverHitTestPoint;
     private bool _hasHoverHitTestPoint;
@@ -34,7 +57,7 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        if (!ViewModel.TryResolveCanvasHit(point.X, point.Y, out var node, out var edge))
+        if (!TryResolveCanvasHitWithProbe(point, HoverProbeOffsets, out var node, out var edge))
         {
             ViewModel.ClearCanvasHoverDeferred();
             return;
@@ -64,7 +87,7 @@ public partial class VizPanel : UserControl
 
         var point = e.GetPosition(visual);
         var pointer = e.GetCurrentPoint(visual).Properties;
-        var hasHit = ViewModel.TryResolveCanvasHit(point.X, point.Y, out var node, out var edge);
+        var hasHit = TryResolveCanvasHitWithProbe(point, PressProbeOffsets, out var node, out var edge);
         if (!hasHit)
         {
             if (ViewModel.TrySelectHoveredCanvasItem(pointer.IsRightButtonPressed))
@@ -76,6 +99,7 @@ public partial class VizPanel : UserControl
         }
         if (node is not null)
         {
+            ViewModel.SetCanvasNodeHover(node, point.X, point.Y);
             if (pointer.IsRightButtonPressed)
             {
                 ViewModel.TogglePinCanvasNode(node);
@@ -96,10 +120,12 @@ public partial class VizPanel : UserControl
 
         if (pointer.IsRightButtonPressed)
         {
+            ViewModel.SetCanvasEdgeHover(edge, point.X, point.Y);
             ViewModel.TogglePinCanvasEdge(edge);
         }
         else
         {
+            ViewModel.SetCanvasEdgeHover(edge, point.X, point.Y);
             ViewModel.SelectCanvasEdge(edge);
         }
 
@@ -135,5 +161,29 @@ public partial class VizPanel : UserControl
         _lastHoverHitTestTimestamp = now;
         _lastHoverHitTestPoint = point;
         return true;
+    }
+
+    private bool TryResolveCanvasHitWithProbe(
+        Point point,
+        IReadOnlyList<Point> probeOffsets,
+        out VizActivityCanvasNode? node,
+        out VizActivityCanvasEdge? edge)
+    {
+        node = null;
+        edge = null;
+        if (ViewModel is null)
+        {
+            return false;
+        }
+
+        foreach (var offset in probeOffsets)
+        {
+            if (ViewModel.TryResolveCanvasHit(point.X + offset.X, point.Y + offset.Y, out node, out edge))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
