@@ -30,7 +30,7 @@
       <Border Classes="card">
         <StackPanel Spacing="10">
           <TextBlock Text="Neural Activity View" Classes="card-title" />
-          <TextBlock Text="Scaffold projection for region/edge/tick activity. Canvas renderer and interactions are split into follow-up issues." Classes="card-subtitle" />
+          <TextBlock Text="Canvas projection for region/edge/tick activity with deterministic layout and focus anchoring." Classes="card-subtitle" />
           <Grid ColumnDefinitions="Auto,96,Auto,96,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" />
@@ -64,12 +64,56 @@
                     Background="{DynamicResource NbnSurfaceAltBrush}"
                     MinHeight="300"
                     MaxHeight="460">
-              <Grid>
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
-                  <TextBlock Text="Neural canvas renderer not yet implemented" Classes="muted" HorizontalAlignment="Center" />
-                  <TextBlock Text="This scaffold now feeds region/edge/tick projections for the eventual renderer." Classes="muted" HorizontalAlignment="Center" />
-                </StackPanel>
-              </Grid>
+              <StackPanel Spacing="8" Margin="12">
+                <TextBlock Text="{Binding ActivityCanvasLegend}" Classes="muted" />
+                <Grid ClipToBounds="True">
+                  <Canvas Width="{Binding ActivityCanvasWidth}" Height="{Binding ActivityCanvasHeight}">
+                    <ItemsControl ItemsSource="{Binding CanvasEdges}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <Canvas />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:VizActivityCanvasEdge">
+                          <Path Data="{Binding PathData}"
+                                Stroke="{DynamicResource NbnMutedBrush}"
+                                StrokeThickness="{Binding StrokeThickness}"
+                                Opacity="{Binding Opacity}"
+                                ToolTip.Tip="{Binding Detail}" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <ItemsControl ItemsSource="{Binding CanvasNodes}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <Canvas />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:VizActivityCanvasNode">
+                          <Grid Width="{Binding Diameter}"
+                                Height="{Binding Diameter}"
+                                Canvas.Left="{Binding Left}"
+                                Canvas.Top="{Binding Top}"
+                                ToolTip.Tip="{Binding Detail}">
+                            <Ellipse Fill="{DynamicResource NbnTealBrush}" Opacity="{Binding FillOpacity}" />
+                            <Ellipse Stroke="{DynamicResource NbnAccentBrush}"
+                                     StrokeThickness="{Binding StrokeThickness}"
+                                     Opacity="{Binding PulseOpacity}" />
+                            <TextBlock Text="{Binding Label}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </Canvas>
+                </Grid>
+              </StackPanel>
             </Border>
 
             <Border Grid.Column="1"

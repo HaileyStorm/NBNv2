@@ -37,6 +37,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _tickWindowText = DefaultTickWindow.ToString(CultureInfo.InvariantCulture);
     private bool _includeLowSignalEvents;
     private string _activitySummary = "Awaiting visualization events.";
+    private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -47,6 +48,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         RegionActivity = new ObservableCollection<VizRegionActivityItem>();
         EdgeActivity = new ObservableCollection<VizEdgeActivityItem>();
         TickActivity = new ObservableCollection<VizTickActivityItem>();
+        CanvasNodes = new ObservableCollection<VizActivityCanvasNode>();
+        CanvasEdges = new ObservableCollection<VizActivityCanvasEdge>();
         KnownBrains = new ObservableCollection<BrainListItem>();
         VizPanelTypeOptions = new ObservableCollection<VizPanelTypeOption>(VizPanelTypeOption.CreateDefaults());
         _selectedVizType = VizPanelTypeOptions[0];
@@ -68,6 +71,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     public ObservableCollection<VizRegionActivityItem> RegionActivity { get; }
     public ObservableCollection<VizEdgeActivityItem> EdgeActivity { get; }
     public ObservableCollection<VizTickActivityItem> TickActivity { get; }
+    public ObservableCollection<VizActivityCanvasNode> CanvasNodes { get; }
+    public ObservableCollection<VizActivityCanvasEdge> CanvasEdges { get; }
+
+    public double ActivityCanvasWidth => VizActivityCanvasLayoutBuilder.CanvasWidth;
+    public double ActivityCanvasHeight => VizActivityCanvasLayoutBuilder.CanvasHeight;
 
     public ObservableCollection<BrainListItem> KnownBrains { get; }
 
@@ -169,6 +177,12 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         get => _activitySummary;
         set => SetProperty(ref _activitySummary, value);
+    }
+
+    public string ActivityCanvasLegend
+    {
+        get => _activityCanvasLegend;
+        set => SetProperty(ref _activityCanvasLegend, value);
     }
 
     public VizEventItem? SelectedEvent
@@ -451,6 +465,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         ReplaceItems(EdgeActivity, projection.Edges);
         ReplaceItems(TickActivity, projection.Ticks);
         ActivitySummary = projection.Summary;
+
+        var canvas = VizActivityCanvasLayoutBuilder.Build(projection, options);
+        ReplaceItems(CanvasNodes, canvas.Nodes);
+        ReplaceItems(CanvasEdges, canvas.Edges);
+        ActivityCanvasLegend = canvas.Legend;
     }
 
     private int ParseTickWindowOrDefault()
