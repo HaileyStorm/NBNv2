@@ -225,6 +225,22 @@ public sealed class RegionShardActor : IActor
                 };
                 batch.Contribs.AddRange(contribs);
                 context.Send(outboxTarget, batch);
+
+                var absTotal = 0f;
+                foreach (var contribution in contribs)
+                {
+                    absTotal += MathF.Abs(contribution.Value);
+                }
+
+                var avgMagnitude = contribs.Count > 0 ? absTotal / contribs.Count : 0f;
+                EmitVizEvent(
+                    context,
+                    VizEventType.VizAxonSent,
+                    tick.TickId,
+                    contribs.Count,
+                    source: Address32.From(_state.RegionId, 0),
+                    target: Address32.From(destShard.RegionId, 0),
+                    strength: avgMagnitude);
             }
         }
 
@@ -257,15 +273,6 @@ public sealed class RegionShardActor : IActor
                 VizEventType.VizNeuronFired,
                 tick.TickId,
                 result.FiredCount);
-        }
-
-        if (result.OutContribs > 0)
-        {
-            EmitVizEvent(
-                context,
-                VizEventType.VizAxonSent,
-                tick.TickId,
-                result.OutContribs);
         }
 
         var done = new TickComputeDone
@@ -354,7 +361,14 @@ public sealed class RegionShardActor : IActor
         return true;
     }
 
-    private void EmitVizEvent(IContext context, VizEventType type, ulong tickId, float value)
+    private void EmitVizEvent(
+        IContext context,
+        VizEventType type,
+        ulong tickId,
+        float value,
+        Address32? source = null,
+        Address32? target = null,
+        float strength = 0f)
     {
         if (_vizHub is null || !ObservabilityTargets.CanSend(context, _vizHub))
         {
@@ -370,8 +384,19 @@ public sealed class RegionShardActor : IActor
             TickId = tickId,
             RegionId = (uint)_state.RegionId,
             ShardId = _shardId.ToProtoShardId32(),
-            Value = value
+            Value = value,
+            Strength = strength
         };
+
+        if (source.HasValue)
+        {
+            evt.Source = source.Value.ToProtoAddress32();
+        }
+
+        if (target.HasValue)
+        {
+            evt.Target = target.Value.ToProtoAddress32();
+        }
 
         context.Send(_vizHub, evt);
     }

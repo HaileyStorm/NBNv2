@@ -41,6 +41,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private bool _includeLowSignalEvents;
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
+    private bool _showProjectionSnapshot;
     private uint? _selectedCanvasRegionId;
     private string? _selectedCanvasRouteLabel;
     private uint? _hoverCanvasRegionId;
@@ -68,6 +69,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
         ShowFullBrainCommand = new RelayCommand(ShowFullBrain);
+        ToggleProjectionSnapshotCommand = new RelayCommand(() => ShowProjectionSnapshot = !ShowProjectionSnapshot);
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
@@ -218,6 +220,20 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public string CanvasNavigationHint => "Alt+Left/Alt+Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear";
 
+    public bool ShowProjectionSnapshot
+    {
+        get => _showProjectionSnapshot;
+        set
+        {
+            if (SetProperty(ref _showProjectionSnapshot, value))
+            {
+                OnPropertyChanged(nameof(ProjectionSnapshotToggleLabel));
+            }
+        }
+    }
+
+    public string ProjectionSnapshotToggleLabel => ShowProjectionSnapshot ? "Hide snapshot" : "Show snapshot";
+
     public VizEventItem? SelectedEvent
     {
         get => _selectedEvent;
@@ -243,6 +259,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand ZoomCommand { get; }
 
     public RelayCommand ShowFullBrainCommand { get; }
+
+    public RelayCommand ToggleProjectionSnapshotCommand { get; }
 
     public RelayCommand ApplyActivityOptionsCommand { get; }
 

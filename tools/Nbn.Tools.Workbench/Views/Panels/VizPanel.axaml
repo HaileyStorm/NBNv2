@@ -67,7 +67,7 @@
             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SearchFilterText}" Watermark="Type, event id, source, target" />
           </Grid>
 
-          <Grid ColumnDefinitions="1.35*,1*" ColumnSpacing="12">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
             <Border BorderBrush="{DynamicResource NbnBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="12"
@@ -104,6 +104,9 @@
                 <TextBlock Text="{Binding ActivityCanvasLegend}" Classes="muted" />
                 <TextBlock Text="{Binding ActivityInteractionSummary}" Classes="muted" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding ActivityPinnedSummary}" Classes="muted" TextWrapping="Wrap" />
+                <Button Content="{Binding ProjectionSnapshotToggleLabel}"
+                        Command="{Binding ToggleProjectionSnapshotCommand}"
+                        HorizontalAlignment="Left" />
                 <Grid ClipToBounds="True">
                   <Canvas Width="{Binding ActivityCanvasWidth}" Height="{Binding ActivityCanvasHeight}">
                     <ItemsControl ItemsSource="{Binding CanvasEdges}">
@@ -202,7 +205,9 @@
                     BorderThickness="1"
                     CornerRadius="12"
                     Background="{DynamicResource NbnSurfaceAltBrush}"
-                    Padding="10">
+                    Padding="10"
+                    Width="420"
+                    IsVisible="{Binding ShowProjectionSnapshot}">
               <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel Spacing="10">
                   <TextBlock Text="Projection Snapshot" Classes="card-title" />
