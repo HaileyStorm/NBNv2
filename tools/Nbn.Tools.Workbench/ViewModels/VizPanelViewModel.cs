@@ -24,6 +24,9 @@ public sealed class VizPanelViewModel : ViewModelBase
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
+    private readonly Queue<VizEventItem> _pendingEvents = new();
+    private readonly object _pendingEventsGate = new();
+    private bool _flushScheduled;
     private string _status = "Streaming";
     private string _regionFocusText = "0";
     private string _regionFilterText = string.Empty;
@@ -267,12 +270,18 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public void AddVizEvent(VizEventItem item)
     {
-        _dispatcher.Post(() =>
+        lock (_pendingEventsGate)
         {
-            _allEvents.Insert(0, item);
-            Trim(_allEvents);
-            RefreshFilteredEvents();
-        });
+            _pendingEvents.Enqueue(item);
+            if (_flushScheduled)
+            {
+                return;
+            }
+
+            _flushScheduled = true;
+        }
+
+        _dispatcher.Post(FlushPendingEvents);
     }
 
     private void AddBrainFromEntry()
@@ -334,6 +343,12 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void Clear()
     {
+        lock (_pendingEventsGate)
+        {
+            _pendingEvents.Clear();
+            _flushScheduled = false;
+        }
+
         _allEvents.Clear();
         VizEvents.Clear();
         SelectedEvent = null;
@@ -389,14 +404,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         if (matched == 0 && _allEvents.Count > 0 && SelectedBrain is not null)
         {
-            Status = "No events for selected brain; showing all.";
-            foreach (var item in _allEvents)
-            {
-                if (MatchesFilter(item, ignoreBrain: true))
-                {
-                    VizEvents.Add(item);
-                }
-            }
+            Status = "No events for selected brain.";
         }
 
         if (selected is not null && VizEvents.Contains(selected))
@@ -450,6 +458,44 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         return true;
     }
+
+    private void FlushPendingEvents()
+    {
+        while (true)
+        {
+            List<VizEventItem> batch;
+            lock (_pendingEventsGate)
+            {
+                if (_pendingEvents.Count == 0)
+                {
+                    _flushScheduled = false;
+                    return;
+                }
+
+                batch = new List<VizEventItem>(_pendingEvents.Count);
+                while (_pendingEvents.Count > 0)
+                {
+                    batch.Add(_pendingEvents.Dequeue());
+                }
+            }
+
+            foreach (var item in batch)
+            {
+                if (!ShouldIncludeInVisualizer(item))
+                {
+                    continue;
+                }
+
+                _allEvents.Insert(0, item);
+            }
+
+            Trim(_allEvents);
+            RefreshFilteredEvents();
+        }
+    }
+
+    private static bool ShouldIncludeInVisualizer(VizEventItem item)
+        => Guid.TryParse(item.BrainId, out _);
 
     private void RefreshActivityProjection()
     {
