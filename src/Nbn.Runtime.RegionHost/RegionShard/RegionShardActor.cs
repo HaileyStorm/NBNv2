@@ -28,6 +28,11 @@ public sealed class RegionShardActor : IActor
     private PID? _debugHub;
     private bool _vizEnabled;
     private uint? _vizFocusRegionId;
+    private bool _costEnabled;
+    private bool _energyEnabled;
+    private bool _plasticityEnabled;
+    private float _plasticityRate;
+    private bool _plasticityProbabilisticUpdates;
     private bool _hasComputed;
     private ulong _lastComputeTickId;
     private ulong _vizSequence;
@@ -82,6 +87,9 @@ public sealed class RegionShardActor : IActor
             case UpdateShardVisualization message:
                 HandleUpdateVisualization(message);
                 break;
+            case UpdateShardRuntimeConfig message:
+                HandleUpdateRuntimeConfig(message);
+                break;
         }
 
         return Task.CompletedTask;
@@ -127,6 +135,25 @@ public sealed class RegionShardActor : IActor
         _vizFocusRegionId = message.Enabled && message.HasFocusRegion
             ? message.FocusRegionId
             : null;
+    }
+
+    private void HandleUpdateRuntimeConfig(UpdateShardRuntimeConfig message)
+    {
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var guid) || guid != _brainId)
+        {
+            return;
+        }
+
+        if (message.RegionId != (uint)_state.RegionId || message.ShardIndex != (uint)_shardId.ShardIndex)
+        {
+            return;
+        }
+
+        _costEnabled = message.CostEnabled;
+        _energyEnabled = message.EnergyEnabled;
+        _plasticityEnabled = message.PlasticityEnabled;
+        _plasticityRate = message.PlasticityRate;
+        _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
     }
 
     private void HandleSignalBatch(IContext context, SignalBatch batch)

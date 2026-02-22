@@ -87,6 +87,33 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoControl_RuntimeConfigFields_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+
+        var costEnergy = descriptor.MessageTypes.Single(message => message.Name == "SetBrainCostEnergy");
+        AssertField(costEnergy, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(costEnergy, "cost_enabled", 2, FieldType.Bool);
+        AssertField(costEnergy, "energy_enabled", 3, FieldType.Bool);
+
+        var plasticity = descriptor.MessageTypes.Single(message => message.Name == "SetBrainPlasticity");
+        AssertField(plasticity, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(plasticity, "plasticity_enabled", 2, FieldType.Bool);
+        AssertField(plasticity, "plasticity_rate", 3, FieldType.Float);
+        AssertField(plasticity, "probabilistic_updates", 4, FieldType.Bool);
+
+        var shardRuntime = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardRuntimeConfig");
+        AssertField(shardRuntime, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(shardRuntime, "region_id", 2, FieldType.UInt32);
+        AssertField(shardRuntime, "shard_index", 3, FieldType.UInt32);
+        AssertField(shardRuntime, "cost_enabled", 4, FieldType.Bool);
+        AssertField(shardRuntime, "energy_enabled", 5, FieldType.Bool);
+        AssertField(shardRuntime, "plasticity_enabled", 6, FieldType.Bool);
+        AssertField(shardRuntime, "plasticity_rate", 7, FieldType.Float);
+        AssertField(shardRuntime, "probabilistic_updates", 8, FieldType.Bool);
+    }
+
+    [Fact]
     public void ProtoSignals_BatchFields_AreStable()
     {
         var descriptor = NbnSignalsReflection.Descriptor;
@@ -176,6 +203,27 @@ public class ProtoCompatibilityTests
         AssertField(brainInfo, "plasticity_rate", 11, FieldType.Float);
         AssertField(brainInfo, "plasticity_probabilistic_updates", 12, FieldType.Bool);
         AssertField(brainInfo, "last_tick_cost", 13, FieldType.SInt64);
+    }
+
+    [Fact]
+    public void ProtoIo_RegisterBrain_RuntimeConfigFields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var registerBrain = descriptor.MessageTypes.Single(message => message.Name == "RegisterBrain");
+
+        AssertField(registerBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(registerBrain, "input_width", 2, FieldType.UInt32);
+        AssertField(registerBrain, "output_width", 3, FieldType.UInt32);
+        AssertField(registerBrain, "base_definition", 4, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(registerBrain, "last_snapshot", 5, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(registerBrain, "energy_state", 6, FieldType.Message, "nbn.io.BrainEnergyState");
+        AssertField(registerBrain, "has_runtime_config", 7, FieldType.Bool);
+        AssertField(registerBrain, "cost_enabled", 8, FieldType.Bool);
+        AssertField(registerBrain, "energy_enabled", 9, FieldType.Bool);
+        AssertField(registerBrain, "plasticity_enabled", 10, FieldType.Bool);
+        AssertField(registerBrain, "plasticity_rate", 11, FieldType.Float);
+        AssertField(registerBrain, "plasticity_probabilistic_updates", 12, FieldType.Bool);
+        AssertField(registerBrain, "last_tick_cost", 13, FieldType.SInt64);
     }
 
     [Fact]

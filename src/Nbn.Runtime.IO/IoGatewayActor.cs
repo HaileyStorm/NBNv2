@@ -19,11 +19,11 @@ public sealed class IoGatewayActor : IActor
     private readonly PID? _hiveMindPid;
     private readonly PID? _reproPid;
 
-    public IoGatewayActor(IoOptions options)
+    public IoGatewayActor(IoOptions options, PID? hiveMindPid = null, PID? reproPid = null)
     {
         _options = options;
-        _hiveMindPid = TryCreatePid(options.HiveMindAddress, options.HiveMindName);
-        _reproPid = TryCreatePid(options.ReproAddress, options.ReproName);
+        _hiveMindPid = hiveMindPid ?? TryCreatePid(options.HiveMindAddress, options.HiveMindName);
+        _reproPid = reproPid ?? TryCreatePid(options.ReproAddress, options.ReproName);
     }
 
     public async Task ReceiveAsync(IContext context)
@@ -73,10 +73,10 @@ public sealed class IoGatewayActor : IActor
                 ApplyEnergyRate(message);
                 break;
             case SetCostEnergyEnabled message:
-                ApplyCostEnergyFlags(message);
+                ApplyCostEnergyFlags(context, message);
                 break;
             case SetPlasticityEnabled message:
-                ApplyPlasticityFlags(message);
+                ApplyPlasticityFlags(context, message);
                 break;
             case ApplyTickCost message:
                 ApplyTickCost(context, message);
@@ -332,7 +332,7 @@ public sealed class IoGatewayActor : IActor
         entry.Energy.SetEnergyRate(message.UnitsPerSecond);
     }
 
-    private void ApplyCostEnergyFlags(SetCostEnergyEnabled message)
+    private void ApplyCostEnergyFlags(IContext context, SetCostEnergyEnabled message)
     {
         if (!TryGetBrainEntry(message, out var entry))
         {
@@ -340,9 +340,19 @@ public sealed class IoGatewayActor : IActor
         }
 
         entry.Energy.SetCostEnergyEnabled(message.CostEnabled, message.EnergyEnabled);
+
+        if (_hiveMindPid is not null)
+        {
+            context.Send(_hiveMindPid, new ProtoControl.SetBrainCostEnergy
+            {
+                BrainId = message.BrainId,
+                CostEnabled = message.CostEnabled,
+                EnergyEnabled = message.EnergyEnabled
+            });
+        }
     }
 
-    private void ApplyPlasticityFlags(SetPlasticityEnabled message)
+    private void ApplyPlasticityFlags(IContext context, SetPlasticityEnabled message)
     {
         if (!TryGetBrainEntry(message, out var entry))
         {
@@ -350,6 +360,17 @@ public sealed class IoGatewayActor : IActor
         }
 
         entry.Energy.SetPlasticity(message.PlasticityEnabled, message.PlasticityRate, message.ProbabilisticUpdates);
+
+        if (_hiveMindPid is not null)
+        {
+            context.Send(_hiveMindPid, new ProtoControl.SetBrainPlasticity
+            {
+                BrainId = message.BrainId,
+                PlasticityEnabled = message.PlasticityEnabled,
+                PlasticityRate = message.PlasticityRate,
+                ProbabilisticUpdates = message.ProbabilisticUpdates
+            });
+        }
     }
 
     private void ApplyTickCost(IContext context, ApplyTickCost message)
@@ -428,6 +449,17 @@ public sealed class IoGatewayActor : IActor
                 existing.Energy.ResetFrom(message.EnergyState);
             }
 
+            if (message.HasRuntimeConfig)
+            {
+                existing.Energy.SetRuntimeConfig(
+                    message.CostEnabled,
+                    message.EnergyEnabled,
+                    message.PlasticityEnabled,
+                    message.PlasticityRate,
+                    message.PlasticityProbabilisticUpdates,
+                    message.LastTickCost);
+            }
+
             await EnsureIoGatewayRegisteredAsync(context, brainId);
             await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid);
             return;
@@ -460,6 +492,17 @@ public sealed class IoGatewayActor : IActor
         if (message.EnergyState is not null)
         {
             energy.ResetFrom(message.EnergyState);
+        }
+
+        if (message.HasRuntimeConfig)
+        {
+            energy.SetRuntimeConfig(
+                message.CostEnabled,
+                message.EnergyEnabled,
+                message.PlasticityEnabled,
+                message.PlasticityRate,
+                message.PlasticityProbabilisticUpdates,
+                message.LastTickCost);
         }
 
         var entry = new BrainIoEntry(brainId, inputPid, outputPid, message.InputWidth, message.OutputWidth, energy)

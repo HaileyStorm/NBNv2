@@ -2,6 +2,7 @@ using Nbn.Proto.Io;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Tests.Integration;
 
@@ -119,6 +120,132 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task SetFlags_Forwards_RuntimeConfig_To_HiveMind_And_Updates_BrainInfo()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var costEnergy = new TaskCompletionSource<ProtoControl.SetBrainCostEnergy>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var plasticity = new TaskCompletionSource<ProtoControl.SetBrainPlasticity>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveConfigProbe(costEnergy, plasticity)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 2,
+            OutputWidth = 2
+        });
+
+        var registered = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal((uint)2, registered.InputWidth);
+        Assert.Equal((uint)2, registered.OutputWidth);
+
+        root.Send(gateway, new SetCostEnergyEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = false
+        });
+
+        root.Send(gateway, new SetPlasticityEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.25f,
+            ProbabilisticUpdates = false
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var costUpdate = await costEnergy.Task.WaitAsync(cts.Token);
+        var plasticityUpdate = await plasticity.Task.WaitAsync(cts.Token);
+
+        Assert.True(costUpdate.BrainId.TryToGuid(out var costBrainId));
+        Assert.Equal(brainId, costBrainId);
+        Assert.True(costUpdate.CostEnabled);
+        Assert.False(costUpdate.EnergyEnabled);
+
+        Assert.True(plasticityUpdate.BrainId.TryToGuid(out var plasticityBrainId));
+        Assert.Equal(brainId, plasticityBrainId);
+        Assert.True(plasticityUpdate.PlasticityEnabled);
+        Assert.Equal(0.25f, plasticityUpdate.PlasticityRate);
+        Assert.False(plasticityUpdate.ProbabilisticUpdates);
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        Assert.True(info.CostEnabled);
+        Assert.False(info.EnergyEnabled);
+        Assert.True(info.PlasticityEnabled);
+        Assert.Equal(0.25f, info.PlasticityRate);
+        Assert.False(info.PlasticityProbabilisticUpdates);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RegisterBrain_RuntimeConfig_Updates_Config_Without_Resetting_Balance()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 777,
+                EnergyRateUnitsPerSecond = 12,
+                CostEnabled = false,
+                EnergyEnabled = false,
+                PlasticityEnabled = false,
+                PlasticityRate = 0f,
+                PlasticityProbabilisticUpdates = false,
+                LastTickCost = 0
+            }
+        });
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            HasRuntimeConfig = true,
+            CostEnabled = true,
+            EnergyEnabled = true,
+            PlasticityEnabled = true,
+            PlasticityRate = 0.5f,
+            PlasticityProbabilisticUpdates = true,
+            LastTickCost = 44
+        });
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        Assert.Equal(777, info.EnergyRemaining);
+        Assert.Equal(12, info.EnergyRateUnitsPerSecond);
+        Assert.True(info.CostEnabled);
+        Assert.True(info.EnergyEnabled);
+        Assert.True(info.PlasticityEnabled);
+        Assert.Equal(0.5f, info.PlasticityRate);
+        Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.Equal(44, info.LastTickCost);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -134,4 +261,36 @@ public class IoGatewayArtifactReferenceTests
             HiveMindName: null,
             ReproAddress: null,
             ReproName: null);
+
+    private sealed class HiveConfigProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.SetBrainCostEnergy> _costEnergy;
+        private readonly TaskCompletionSource<ProtoControl.SetBrainPlasticity> _plasticity;
+
+        public HiveConfigProbe(
+            TaskCompletionSource<ProtoControl.SetBrainCostEnergy> costEnergy,
+            TaskCompletionSource<ProtoControl.SetBrainPlasticity> plasticity)
+        {
+            _costEnergy = costEnergy;
+            _plasticity = plasticity;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ProtoControl.SetBrainCostEnergy costEnergy:
+                    _costEnergy.TrySetResult(costEnergy);
+                    break;
+                case ProtoControl.SetBrainPlasticity plasticity:
+                    _plasticity.TrySetResult(plasticity);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 }

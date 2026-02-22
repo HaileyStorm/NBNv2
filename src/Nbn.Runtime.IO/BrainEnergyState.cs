@@ -59,6 +59,22 @@ public sealed class BrainEnergyState
         PlasticityProbabilisticUpdates = probabilisticUpdates;
     }
 
+    public void SetRuntimeConfig(
+        bool costEnabled,
+        bool energyEnabled,
+        bool plasticityEnabled,
+        float plasticityRate,
+        bool plasticityProbabilisticUpdates,
+        long lastTickCost)
+    {
+        CostEnabled = costEnabled;
+        EnergyEnabled = energyEnabled;
+        PlasticityEnabled = plasticityEnabled;
+        PlasticityRate = plasticityRate;
+        PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
+        LastTickCost = lastTickCost;
+    }
+
     public void ApplyTickCost(long tickCost)
     {
         Accrue();

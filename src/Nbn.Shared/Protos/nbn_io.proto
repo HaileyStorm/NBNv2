@@ -57,6 +57,13 @@ message RegisterBrain {
   nbn.ArtifactRef base_definition = 4;
   nbn.ArtifactRef last_snapshot = 5;
   BrainEnergyState energy_state = 6;
+  bool has_runtime_config = 7;
+  bool cost_enabled = 8;
+  bool energy_enabled = 9;
+  bool plasticity_enabled = 10;
+  float plasticity_rate = 11;
+  bool plasticity_probabilistic_updates = 12;
+  sint64 last_tick_cost = 13;
 }
 
 message UnregisterBrain {

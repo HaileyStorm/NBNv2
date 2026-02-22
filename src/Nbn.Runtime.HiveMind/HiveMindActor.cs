@@ -38,13 +38,13 @@ public sealed class HiveMindActor : IActor
     private string? _queuedRescheduleReason;
     private ulong _lastCompletedTickId;
 
-    public HiveMindActor(HiveMindOptions options, PID? debugHubPid = null, PID? vizHubPid = null)
+    public HiveMindActor(HiveMindOptions options, PID? debugHubPid = null, PID? vizHubPid = null, PID? ioPid = null)
     {
         _options = options;
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
         _settingsPid = BuildSettingsPid(options);
-        _ioPid = BuildIoPid(options);
+        _ioPid = ioPid ?? BuildIoPid(options);
         var resolvedObs = ObservabilityTargets.Resolve(options.SettingsHost);
         _debugHubPid = debugHubPid ?? resolvedObs.DebugHub;
         _vizHubPid = vizHubPid ?? resolvedObs.VizHub;
@@ -96,6 +96,12 @@ public sealed class HiveMindActor : IActor
                 break;
             case ProtoControl.SetBrainVisualization message:
                 HandleSetBrainVisualization(context, message);
+                break;
+            case ProtoControl.SetBrainCostEnergy message:
+                HandleSetBrainCostEnergy(context, message);
+                break;
+            case ProtoControl.SetBrainPlasticity message:
+                HandleSetBrainPlasticity(context, message);
                 break;
             case ProtoControl.GetBrainIoInfo message:
                 if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
@@ -310,6 +316,16 @@ public sealed class HiveMindActor : IActor
             normalized,
             brain.VisualizationEnabled,
             brain.VisualizationFocusRegionId);
+        SendShardRuntimeConfigUpdate(
+            context,
+            brainId,
+            shardId,
+            normalized,
+            brain.CostEnabled,
+            brain.EnergyEnabled,
+            brain.PlasticityEnabled,
+            brain.PlasticityRate,
+            brain.PlasticityProbabilisticUpdates);
         UpdateRoutingTable(context, brain);
         EmitVizEvent(
             context,
@@ -492,6 +508,55 @@ public sealed class HiveMindActor : IActor
 
         var focusRegionId = message.HasFocusRegion ? (uint?)message.FocusRegionId : null;
         SetBrainVisualization(context, brain, message.Enabled, focusRegionId);
+    }
+
+    private void HandleSetBrainCostEnergy(IContext context, ProtoControl.SetBrainCostEnergy message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        if (brain.CostEnabled == message.CostEnabled && brain.EnergyEnabled == message.EnergyEnabled)
+        {
+            return;
+        }
+
+        brain.CostEnabled = message.CostEnabled;
+        brain.EnergyEnabled = message.EnergyEnabled;
+        UpdateShardRuntimeConfig(context, brain);
+        RegisterBrainWithIo(context, brain, force: true);
+    }
+
+    private void HandleSetBrainPlasticity(IContext context, ProtoControl.SetBrainPlasticity message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        if (brain.PlasticityEnabled == message.PlasticityEnabled
+            && Math.Abs(brain.PlasticityRate - message.PlasticityRate) < 0.000001f
+            && brain.PlasticityProbabilisticUpdates == message.ProbabilisticUpdates)
+        {
+            return;
+        }
+
+        brain.PlasticityEnabled = message.PlasticityEnabled;
+        brain.PlasticityRate = message.PlasticityRate;
+        brain.PlasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+        UpdateShardRuntimeConfig(context, brain);
+        RegisterBrainWithIo(context, brain, force: true);
     }
 
     private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
@@ -1375,6 +1440,23 @@ public sealed class HiveMindActor : IActor
             $"Brain={brain.BrainId} enabled={enabled} focus={(brain.VisualizationFocusRegionId.HasValue ? $"R{brain.VisualizationFocusRegionId.Value}" : "all")} shards={brain.Shards.Count}");
     }
 
+    private void UpdateShardRuntimeConfig(IContext context, BrainState brain)
+    {
+        foreach (var entry in brain.Shards)
+        {
+            SendShardRuntimeConfigUpdate(
+                context,
+                brain.BrainId,
+                entry.Key,
+                entry.Value,
+                brain.CostEnabled,
+                brain.EnergyEnabled,
+                brain.PlasticityEnabled,
+                brain.PlasticityRate,
+                brain.PlasticityProbabilisticUpdates);
+        }
+    }
+
     private void RegisterBrainWithIo(IContext context, BrainState brain, bool force = false)
     {
         if (_ioPid is null)
@@ -1398,7 +1480,14 @@ public sealed class HiveMindActor : IActor
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             InputWidth = inputWidth,
-            OutputWidth = outputWidth
+            OutputWidth = outputWidth,
+            HasRuntimeConfig = true,
+            CostEnabled = brain.CostEnabled,
+            EnergyEnabled = brain.EnergyEnabled,
+            PlasticityEnabled = brain.PlasticityEnabled,
+            PlasticityRate = brain.PlasticityRate,
+            PlasticityProbabilisticUpdates = brain.PlasticityProbabilisticUpdates,
+            LastTickCost = brain.LastTickCost
         };
 
         if (brain.BaseDefinition is not null)
@@ -1459,6 +1548,37 @@ public sealed class HiveMindActor : IActor
         catch (Exception ex)
         {
             LogError($"Failed to update shard visualization for shard {shardId}: {ex.Message}");
+        }
+    }
+
+    private static void SendShardRuntimeConfigUpdate(
+        IContext context,
+        Guid brainId,
+        ShardId32 shardId,
+        PID shardPid,
+        bool costEnabled,
+        bool energyEnabled,
+        bool plasticityEnabled,
+        float plasticityRate,
+        bool plasticityProbabilisticUpdates)
+    {
+        try
+        {
+            context.Send(shardPid, new ProtoControl.UpdateShardRuntimeConfig
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = (uint)shardId.RegionId,
+                ShardIndex = (uint)shardId.ShardIndex,
+                CostEnabled = costEnabled,
+                EnergyEnabled = energyEnabled,
+                PlasticityEnabled = plasticityEnabled,
+                PlasticityRate = plasticityRate,
+                ProbabilisticUpdates = plasticityProbabilisticUpdates
+            });
+        }
+        catch (Exception ex)
+        {
+            LogError($"Failed to update shard runtime config for shard {shardId}: {ex.Message}");
         }
     }
 
@@ -1533,6 +1653,11 @@ public sealed class HiveMindActor : IActor
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
         public long LastTickCost { get; set; }
+        public bool CostEnabled { get; set; }
+        public bool EnergyEnabled { get; set; }
+        public bool PlasticityEnabled { get; set; }
+        public float PlasticityRate { get; set; }
+        public bool PlasticityProbabilisticUpdates { get; set; }
         public bool VisualizationEnabled { get; set; }
         public uint? VisualizationFocusRegionId { get; set; }
         public bool Paused { get; set; }
