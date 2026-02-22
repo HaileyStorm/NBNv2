@@ -762,6 +762,68 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task HandleBrainTerminated_ConfigOnlyReRegister_DoesNotResetEpochTimestamp()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 100,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        var firstInfo = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal((uint)1, firstInfo.InputWidth);
+        Assert.Equal(100, firstInfo.EnergyRemaining);
+
+        var terminationTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await Task.Delay(20);
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            HasRuntimeConfig = true,
+            CostEnabled = false,
+            EnergyEnabled = false,
+            PlasticityEnabled = true,
+            PlasticityRate = 0.25f,
+            PlasticityProbabilisticUpdates = false,
+            LastTickCost = 12
+        });
+
+        root.Send(gateway, new ProtoControl.BrainTerminated
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "killed",
+            TimeMs = terminationTimeMs
+        });
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal((uint)0, info.InputWidth);
+        Assert.Equal((uint)0, info.OutputWidth);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
