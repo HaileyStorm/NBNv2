@@ -643,6 +643,125 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task HandleBrainTerminated_StaleMessage_AfterReRegisterWithEnergyState_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 100,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        var firstInfo = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal(100, firstInfo.EnergyRemaining);
+
+        var staleTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        await Task.Delay(20);
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 222,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ProtoControl.BrainTerminated
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "energy_exhausted",
+            TimeMs = staleTimeMs
+        });
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal((uint)1, info.InputWidth);
+        Assert.Equal(222, info.EnergyRemaining);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RegisterBrain_WithEnergyState_ResetsDepletionLatch_AndTickCostEpoch()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var firstKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveKillProbe(firstKill, secondKill)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 5,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ApplyTickCost(brainId, 50, 10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var firstKillMessage = await firstKill.Task.WaitAsync(cts.Token);
+        Assert.True(firstKillMessage.BrainId.TryToGuid(out var firstKilledBrainId));
+        Assert.Equal(brainId, firstKilledBrainId);
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 200,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ApplyTickCost(brainId, 40, 5));
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal(195, info.EnergyRemaining);
+        Assert.Equal(5, info.LastTickCost);
+
+        root.Send(gateway, new ApplyTickCost(brainId, 41, 300));
+        var secondKillMessage = await secondKill.Task.WaitAsync(cts.Token);
+        Assert.True(secondKillMessage.BrainId.TryToGuid(out var secondKilledBrainId));
+        Assert.Equal(brainId, secondKilledBrainId);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",

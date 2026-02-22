@@ -28,5 +28,5 @@ internal sealed class BrainIoEntry
     public ArtifactRef? LastSnapshot { get; set; }
     public bool EnergyDepletedSignaled { get; set; }
     public ulong? LastAppliedTickCostId { get; set; }
-    public long RegisteredAtMs { get; }
+    public long RegisteredAtMs { get; set; }
 }

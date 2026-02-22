@@ -10,6 +10,7 @@ namespace Nbn.Runtime.IO;
 public sealed class IoGatewayActor : IActor
 {
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
+    private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     private readonly IoOptions _options;
     private readonly Dictionary<Guid, BrainIoEntry> _brains = new();
@@ -454,6 +455,9 @@ public sealed class IoGatewayActor : IActor
             if (message.EnergyState is not null)
             {
                 existing.Energy.ResetFrom(message.EnergyState);
+                existing.EnergyDepletedSignaled = false;
+                existing.LastAppliedTickCostId = null;
+                existing.RegisteredAtMs = NowMs();
             }
 
             if (message.HasRuntimeConfig)
@@ -1026,7 +1030,7 @@ public sealed class IoGatewayActor : IActor
             LastSnapshot = entry.LastSnapshot ?? new ArtifactRef(),
             LastEnergyRemaining = entry.Energy.EnergyRemaining,
             LastTickCost = lastTickCost,
-            TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            TimeMs = (ulong)NowMs()
         };
     }
 
@@ -1036,7 +1040,7 @@ public sealed class IoGatewayActor : IActor
         var lastSnapshot = HasArtifactRef(message.LastSnapshot) ? message.LastSnapshot : entry.LastSnapshot ?? new ArtifactRef();
         var lastEnergyRemaining = entry.Energy.EnergyRemaining;
         var lastTickCost = entry.Energy.LastTickCost;
-        var timeMs = message.TimeMs == 0 ? (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : message.TimeMs;
+        var timeMs = message.TimeMs == 0 ? (ulong)NowMs() : message.TimeMs;
 
         return new ProtoControl.BrainTerminated
         {
