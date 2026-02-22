@@ -3082,6 +3082,16 @@ Use these defaults to avoid recurring Aleph friction:
    * Keep delegated prompts narrow (single concrete ask) and prefer concise output shape to avoid MCP timeout before sub-query completion.
    * If repeated timeout persists, run a minimal smoke check prompt first (`Return exactly OK.`), then split larger requests into multiple sub-queries.
    * If still blocked, explicitly log the timeout condition and continue with Aleph `run_command`/`search_context`/`peek_context` evidence packets.
+13. Visualizer binary lock during local validation:
+   * If `dotnet test -c Release --disable-build-servers` fails with file-lock errors because Workbench/runtime exes are running, run tests with isolated outputs:
+   * `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
+   * This keeps validation unblocked without killing active local demo/workbench processes.
+14. Aleph `configure(...)` output feedback enum:
+   * `output_feedback` only accepts `full` or `metadata`.
+   * Values like `summary` fail validation; if unsure, omit `output_feedback` and set only the knob you need (for example `sub_query_timeout`).
+15. Aleph sub-query batching from `exec_python`:
+   * Packing multiple `sub_query(...)` calls in one `exec_python` call can exceed the MCP tool-call deadline even when each query would pass individually.
+   * Prefer one focused `sub_query(...)` per `exec_python` invocation for reliability; batch only after confirming local session latency/headroom.
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 

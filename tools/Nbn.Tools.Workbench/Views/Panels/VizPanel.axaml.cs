@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tools.Workbench.Views.Panels;
@@ -193,30 +194,28 @@ public partial class VizPanel : UserControl
 
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
-            PanCanvasBy(-e.Delta.Y * (PanButtonStepPx * 0.45), 0);
+            if (!TryGetViewportPointerPoint(e, out var viewportPoint))
+            {
+                return;
+            }
+
+            var zoomDelta = Math.Abs(e.Delta.Y) >= Math.Abs(e.Delta.X) ? e.Delta.Y : e.Delta.X;
+            if (Math.Abs(zoomDelta) <= double.Epsilon)
+            {
+                return;
+            }
+
+            var zoomFactor = zoomDelta >= 0 ? WheelZoomFactor : 1.0 / WheelZoomFactor;
+            SetCanvasScale(_canvasScale * zoomFactor, viewportPoint);
             e.Handled = true;
             return;
         }
 
-        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers != KeyModifiers.None)
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            return;
+            // Prevent accidental touchpad pinch zoom unless Shift is also held.
+            e.Handled = true;
         }
-
-        if (!TryGetViewportPointerPoint(e, out var viewportPoint))
-        {
-            return;
-        }
-
-        var zoomDelta = Math.Abs(e.Delta.Y) >= Math.Abs(e.Delta.X) ? e.Delta.Y : e.Delta.X;
-        if (Math.Abs(zoomDelta) <= double.Epsilon)
-        {
-            return;
-        }
-
-        var zoomFactor = zoomDelta >= 0 ? WheelZoomFactor : 1.0 / WheelZoomFactor;
-        SetCanvasScale(_canvasScale * zoomFactor, viewportPoint);
-        e.Handled = true;
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -465,10 +464,18 @@ public partial class VizPanel : UserControl
         var targetOffset = new Vector(
             (worldX * _canvasScale) + _canvasPan.X - anchor.X,
             (worldY * _canvasScale) + _canvasPan.Y - anchor.Y);
-        scrollViewer.Offset = ClampOffset(targetOffset, scrollViewer);
+        ApplyCanvasOffset(targetOffset, scrollViewer, absorbResidualIntoPan: true);
     }
 
     private void FitCanvasToViewport()
+    {
+        // Run immediately and once more after render/layout settles so fit is stable
+        // when the canvas dimensions were just updated by a region/full-brain switch.
+        FitCanvasToViewportCore();
+        Dispatcher.UIThread.Post(FitCanvasToViewportCore, DispatcherPriority.Render);
+    }
+
+    private void FitCanvasToViewportCore()
     {
         var viewModel = ViewModel;
         var scrollViewer = ActivityCanvasScrollViewer;
@@ -500,7 +507,23 @@ public partial class VizPanel : UserControl
         var centeredOffset = new Vector(
             Math.Max(0.0, (scaledWidth - scrollViewer.Viewport.Width) / 2.0),
             Math.Max(0.0, (scaledHeight - scrollViewer.Viewport.Height) / 2.0));
-        scrollViewer.Offset = ClampOffset(centeredOffset, scrollViewer);
+        ApplyCanvasOffset(centeredOffset, scrollViewer, absorbResidualIntoPan: false);
+    }
+
+    private void ApplyCanvasOffset(Vector targetOffset, ScrollViewer scrollViewer, bool absorbResidualIntoPan)
+    {
+        var clampedOffset = ClampOffset(targetOffset, scrollViewer);
+        scrollViewer.Offset = clampedOffset;
+        if (!absorbResidualIntoPan)
+        {
+            return;
+        }
+
+        var residual = clampedOffset - targetOffset;
+        if (Math.Abs(residual.X) > 0.0001 || Math.Abs(residual.Y) > 0.0001)
+        {
+            SetCanvasPan(_canvasPan + residual, scrollViewer);
+        }
     }
 
     private void PanCanvasBy(double deltaX, double deltaY)

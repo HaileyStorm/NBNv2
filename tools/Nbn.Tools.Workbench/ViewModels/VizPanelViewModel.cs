@@ -374,7 +374,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public string TogglePinSelectionLabel => IsCurrentSelectionPinned() ? "Unpin selection" : "Pin selection";
 
-    public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Ctrl+Wheel zoom, Shift+Drag or middle-drag pan, double-click empty = fit";
+    public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Shift+Wheel zoom, Shift+drag or middle-drag pan, double-click empty = fit";
 
     public bool ShowProjectionSnapshot
     {
@@ -1458,12 +1458,14 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private VizActivityCanvasLayout NormalizeCanvasLayout(VizActivityCanvasLayout canvas)
     {
-        var minX = 0.0;
-        var minY = 0.0;
-        var maxX = Math.Max(1.0, canvas.Width);
-        var maxY = Math.Max(1.0, canvas.Height);
+        var minX = double.PositiveInfinity;
+        var minY = double.PositiveInfinity;
+        var maxX = double.NegativeInfinity;
+        var maxY = double.NegativeInfinity;
+        var hasGeometry = false;
         foreach (var node in canvas.Nodes)
         {
+            hasGeometry = true;
             minX = Math.Min(minX, node.Left);
             minY = Math.Min(minY, node.Top);
             maxX = Math.Max(maxX, node.Left + node.Diameter);
@@ -1472,6 +1474,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         foreach (var edge in canvas.Edges)
         {
+            hasGeometry = true;
             var edgePadding = Math.Max(2.0, edge.HitTestThickness * 0.5);
             minX = Math.Min(minX, Math.Min(edge.SourceX, Math.Min(edge.ControlX, edge.TargetX)) - edgePadding);
             minY = Math.Min(minY, Math.Min(edge.SourceY, Math.Min(edge.ControlY, edge.TargetY)) - edgePadding);
@@ -1479,10 +1482,25 @@ public sealed class VizPanelViewModel : ViewModelBase
             maxY = Math.Max(maxY, Math.Max(edge.SourceY, Math.Max(edge.ControlY, edge.TargetY)) + edgePadding);
         }
 
-        var offsetX = (minX < CanvasBoundsPadding ? CanvasBoundsPadding - minX : 0.0) + CanvasNavigationPadding;
-        var offsetY = (minY < CanvasBoundsPadding ? CanvasBoundsPadding - minY : 0.0) + CanvasNavigationPadding;
-        var width = Math.Max(VizActivityCanvasLayoutBuilder.CanvasWidth, maxX + offsetX + CanvasNavigationPadding);
-        var height = Math.Max(VizActivityCanvasLayoutBuilder.CanvasHeight, maxY + offsetY + CanvasNavigationPadding);
+        if (!hasGeometry)
+        {
+            minX = 0.0;
+            minY = 0.0;
+            maxX = Math.Max(1.0, canvas.Width);
+            maxY = Math.Max(1.0, canvas.Height);
+        }
+
+        minX -= CanvasBoundsPadding;
+        minY -= CanvasBoundsPadding;
+        maxX += CanvasBoundsPadding;
+        maxY += CanvasBoundsPadding;
+
+        var contentWidth = Math.Max(1.0, maxX - minX);
+        var contentHeight = Math.Max(1.0, maxY - minY);
+        var width = Math.Max(VizActivityCanvasLayoutBuilder.CanvasWidth, contentWidth + (CanvasNavigationPadding * 2.0));
+        var height = Math.Max(VizActivityCanvasLayoutBuilder.CanvasHeight, contentHeight + (CanvasNavigationPadding * 2.0));
+        var offsetX = ((width - contentWidth) / 2.0) - minX;
+        var offsetY = ((height - contentHeight) / 2.0) - minY;
         SetActivityCanvasDimensions(width, height);
 
         var needsOffset = Math.Abs(offsetX) > 0.0001 || Math.Abs(offsetY) > 0.0001;
