@@ -18,7 +18,7 @@ param(
     [long]$ScenarioRate = 3,
     [double]$ScenarioPlasticityRate = 0.05,
     [switch]$ScenarioAbsolutePlasticity,
-    [ulong]$ReproSeed = 12345,
+    [UInt64]$ReproSeed = 12345,
     [ValidateSet("default", "never", "always")]
     [string]$ReproSpawnPolicy = "never",
     [ValidateSet("base", "live")]
