@@ -327,6 +327,48 @@ public class HiveMindOutputSinkTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task KillBrain_Forwards_Termination_To_Io_And_Unregisters()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var terminatedTcs = new TaskCompletionSource<BrainTerminated>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unregisterTcs = new TaskCompletionSource<ProtoIo.UnregisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioProbe = root.SpawnNamed(
+            Props.FromProducer(() => new IoTerminationProbe(terminatedTcs, unregisterTcs)),
+            "io-kill-probe");
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        root.Send(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        });
+
+        root.Send(hiveMind, new KillBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "energy_exhausted"
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var terminated = await terminatedTcs.Task.WaitAsync(cts.Token);
+        Assert.True(terminated.BrainId.TryToGuid(out var terminatedBrainId));
+        Assert.Equal(brainId, terminatedBrainId);
+        Assert.Equal("energy_exhausted", terminated.Reason);
+        Assert.Equal(0, terminated.LastTickCost);
+
+        await Task.Delay(100);
+        Assert.False(unregisterTcs.Task.IsCompleted);
+
+        var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+        Assert.Equal((uint)0, status.RegisteredBrains);
+
+        await system.ShutdownAsync();
+    }
+
     private static HiveMindOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -497,6 +539,35 @@ public class HiveMindOutputSinkTests
             if (context.Message is ProtoIo.RegisterBrain register && _predicate(register))
             {
                 _tcs.TrySetResult(register);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class IoTerminationProbe : IActor
+    {
+        private readonly TaskCompletionSource<BrainTerminated> _terminated;
+        private readonly TaskCompletionSource<ProtoIo.UnregisterBrain> _unregister;
+
+        public IoTerminationProbe(
+            TaskCompletionSource<BrainTerminated> terminated,
+            TaskCompletionSource<ProtoIo.UnregisterBrain> unregister)
+        {
+            _terminated = terminated;
+            _unregister = unregister;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case BrainTerminated terminated:
+                    _terminated.TrySetResult(terminated);
+                    break;
+                case ProtoIo.UnregisterBrain unregister:
+                    _unregister.TrySetResult(unregister);
+                    break;
             }
 
             return Task.CompletedTask;

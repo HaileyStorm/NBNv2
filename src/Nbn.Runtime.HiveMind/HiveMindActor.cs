@@ -146,6 +146,12 @@ public sealed class HiveMindActor : IActor
                     ResumeBrain(context, resumeId);
                 }
                 break;
+            case ProtoControl.KillBrain message:
+                if (message.BrainId.TryToGuid(out var killId))
+                {
+                    KillBrain(context, killId, message.Reason);
+                }
+                break;
             case ProtoControl.TickComputeDone message:
                 HandleTickComputeDone(context, message);
                 break;
@@ -265,25 +271,25 @@ public sealed class HiveMindActor : IActor
         UpdateRoutingTable(context, brain);
     }
 
-    private void UnregisterBrain(IContext context, Guid brainId)
+    private void UnregisterBrain(IContext context, Guid brainId, string reason = "unregistered", bool notifyIoUnregister = true)
     {
         if (!_brains.Remove(brainId))
         {
             return;
         }
 
-        if (_ioPid is not null)
+        if (notifyIoUnregister && _ioPid is not null)
         {
             context.Send(_ioPid, new ProtoIo.UnregisterBrain
             {
                 BrainId = brainId.ToProtoUuid(),
-                Reason = "unregistered"
+                Reason = reason
             });
         }
 
         ReportBrainUnregistered(context, brainId);
         EmitVizEvent(context, VizEventType.VizBrainTerminated, brainId: brainId);
-        EmitDebug(context, ProtoSeverity.SevWarn, "brain.terminated", $"Brain {brainId} unregistered.");
+        EmitDebug(context, ProtoSeverity.SevWarn, "brain.terminated", $"Brain {brainId} unregistered. reason={reason}");
 
         if (_phase == TickPhase.Compute)
         {
@@ -435,6 +441,32 @@ public sealed class HiveMindActor : IActor
         {
             UnregisterBrain(context, brainId);
         }
+    }
+
+    private void KillBrain(IContext context, Guid brainId, string? reason)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        var terminationReason = string.IsNullOrWhiteSpace(reason) ? "killed" : reason.Trim();
+
+        if (_ioPid is not null)
+        {
+            context.Send(_ioPid, new ProtoControl.BrainTerminated
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = terminationReason,
+                BaseDef = brain.BaseDefinition ?? new Nbn.Proto.ArtifactRef(),
+                LastSnapshot = brain.LastSnapshot ?? new Nbn.Proto.ArtifactRef(),
+                LastEnergyRemaining = 0,
+                LastTickCost = brain.LastTickCost,
+                TimeMs = (ulong)NowMs()
+            });
+        }
+
+        UnregisterBrain(context, brainId, terminationReason, notifyIoUnregister: false);
     }
 
     private void HandleRegisterShard(IContext context, ProtoControl.RegisterShard message)
