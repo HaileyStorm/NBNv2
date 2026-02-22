@@ -54,7 +54,6 @@ public partial class VizPanel : UserControl
     private readonly TranslateTransform _canvasTranslateTransform = new(0, 0);
     private readonly TransformGroup _canvasTransformGroup = new();
     private INotifyPropertyChanged? _viewModelNotifier;
-    private VizPanelViewModel? _boundViewModel;
     private PendingCanvasViewMode _pendingCanvasViewMode;
     private int _pendingCanvasViewAttempts;
 
@@ -116,16 +115,10 @@ public partial class VizPanel : UserControl
     private void VizPanelDataContextChanged(object? sender, EventArgs e)
     {
         DetachViewModelNotifier();
-        _boundViewModel = DataContext as VizPanelViewModel;
-        _viewModelNotifier = _boundViewModel as INotifyPropertyChanged;
+        _viewModelNotifier = DataContext as INotifyPropertyChanged;
         if (_viewModelNotifier is not null)
         {
             _viewModelNotifier.PropertyChanged += ViewModelPropertyChanged;
-        }
-
-        if (_boundViewModel is not null)
-        {
-            _boundViewModel.VisualizationSelectionChanged += ViewModelVisualizationSelectionChanged;
         }
 
         SyncCanvasScaleVisuals();
@@ -143,10 +136,14 @@ public partial class VizPanel : UserControl
                 TryApplyPendingCanvasView();
             }
         }
+        else if (e.PropertyName is nameof(VizPanelViewModel.RegionFocusText)
+            or nameof(VizPanelViewModel.ActiveFocusRegionId)
+            or nameof(VizPanelViewModel.SelectedBrain))
+        {
+            // Recenter only for explicit navigation-context changes.
+            RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+        }
     }
-
-    private void ViewModelVisualizationSelectionChanged()
-        => RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
 
     private void ActivityCanvasScrollViewerSizeChanged(object? sender, SizeChangedEventArgs e)
     {
@@ -162,12 +159,6 @@ public partial class VizPanel : UserControl
         {
             _viewModelNotifier.PropertyChanged -= ViewModelPropertyChanged;
             _viewModelNotifier = null;
-        }
-
-        if (_boundViewModel is not null)
-        {
-            _boundViewModel.VisualizationSelectionChanged -= ViewModelVisualizationSelectionChanged;
-            _boundViewModel = null;
         }
     }
 
@@ -663,7 +654,7 @@ public partial class VizPanel : UserControl
         var delta = currentPoint - _panLastPoint;
         if (Math.Abs(delta.X) > 0.0001 || Math.Abs(delta.Y) > 0.0001)
         {
-            PanCanvasBy(delta.X, delta.Y);
+            PanCanvasBy(-delta.X, -delta.Y);
             _panLastPoint = currentPoint;
         }
 

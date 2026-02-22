@@ -50,6 +50,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double HoverCardMaxHeight = 220;
     private const double CanvasBoundsPadding = 28;
     private const double CanvasNavigationPadding = 220;
+    private const double CanvasDimensionJitterTolerance = 24;
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
@@ -1499,6 +1500,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         var contentHeight = Math.Max(1.0, maxY - minY);
         var width = Math.Max(VizActivityCanvasLayoutBuilder.CanvasWidth, contentWidth + (CanvasNavigationPadding * 2.0));
         var height = Math.Max(VizActivityCanvasLayoutBuilder.CanvasHeight, contentHeight + (CanvasNavigationPadding * 2.0));
+        width = StabilizeCanvasDimension(ActivityCanvasWidth, width);
+        height = StabilizeCanvasDimension(ActivityCanvasHeight, height);
         var offsetX = ((width - contentWidth) / 2.0) - minX;
         var offsetY = ((height - contentHeight) / 2.0) - minY;
         SetActivityCanvasDimensions(width, height);
@@ -1562,6 +1565,15 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         ActivityCanvasWidth = Math.Max(1.0, width);
         ActivityCanvasHeight = Math.Max(1.0, height);
+    }
+
+    private static double StabilizeCanvasDimension(double current, double target)
+    {
+        var safeCurrent = Math.Max(1.0, current);
+        var safeTarget = Math.Max(1.0, target);
+        return Math.Abs(safeTarget - safeCurrent) <= CanvasDimensionJitterTolerance
+            ? safeCurrent
+            : safeTarget;
     }
 
     private void QueueDefinitionTopologyHydration(Guid brainId, uint? focusRegionId)
