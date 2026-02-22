@@ -380,6 +380,13 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
+        if (entry.LastAppliedTickCostId is ulong lastAppliedTickCostId && message.TickId <= lastAppliedTickCostId)
+        {
+            return;
+        }
+
+        entry.LastAppliedTickCostId = message.TickId;
+
         if (!entry.Energy.CostEnabled)
         {
             return;

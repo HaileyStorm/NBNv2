@@ -347,6 +347,123 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task ApplyTickCost_DuplicateTick_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 100,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ApplyTickCost(brainId, 25, 7));
+        root.Send(gateway, new ApplyTickCost(brainId, 25, 7));
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        Assert.Equal(93, info.EnergyRemaining);
+        Assert.Equal(7, info.LastTickCost);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ApplyTickCost_OlderTickArrivingLate_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 100,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ApplyTickCost(brainId, 40, 11));
+        root.Send(gateway, new ApplyTickCost(brainId, 39, 3));
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        Assert.Equal(89, info.EnergyRemaining);
+        Assert.Equal(11, info.LastTickCost);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ApplyTickCost_DuplicateDepletionTick_SendsSingleKill()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var firstKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveKillProbe(firstKill, secondKill)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 5,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ApplyTickCost(brainId, 77, 10));
+        root.Send(gateway, new ApplyTickCost(brainId, 77, 10));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var kill = await firstKill.Task.WaitAsync(cts.Token);
+
+        Assert.True(kill.BrainId.TryToGuid(out var killedBrainId));
+        Assert.Equal(brainId, killedBrainId);
+        Assert.Equal("energy_exhausted", kill.Reason);
+
+        await Task.Delay(100);
+        Assert.False(secondKill.Task.IsCompleted);
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal(-5, info.EnergyRemaining);
+        Assert.Equal(10, info.LastTickCost);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -452,6 +569,42 @@ public class IoGatewayArtifactReferenceTests
                         BrainId = request.BrainId,
                         BrainDef = _rebasedDefinition
                     });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveKillProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.KillBrain> _firstKill;
+        private readonly TaskCompletionSource<ProtoControl.KillBrain> _secondKill;
+
+        public HiveKillProbe(
+            TaskCompletionSource<ProtoControl.KillBrain> firstKill,
+            TaskCompletionSource<ProtoControl.KillBrain> secondKill)
+        {
+            _firstKill = firstKill;
+            _secondKill = secondKill;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ProtoControl.KillBrain kill:
+                    if (!_firstKill.Task.IsCompleted)
+                    {
+                        _firstKill.TrySetResult(kill);
+                    }
+                    else
+                    {
+                        _secondKill.TrySetResult(kill);
+                    }
                     break;
             }
 

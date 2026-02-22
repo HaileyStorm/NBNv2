@@ -24,4 +24,5 @@ internal sealed class BrainIoEntry
     public ArtifactRef? BaseDefinition { get; set; }
     public ArtifactRef? LastSnapshot { get; set; }
     public bool EnergyDepletedSignaled { get; set; }
+    public ulong? LastAppliedTickCostId { get; set; }
 }
