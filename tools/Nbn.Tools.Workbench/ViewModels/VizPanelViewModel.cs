@@ -49,6 +49,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double HoverCardMaxWidth = 420;
     private const double HoverCardMaxHeight = 220;
     private const double CanvasBoundsPadding = 28;
+    private const double CanvasNavigationPadding = 220;
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
@@ -1478,10 +1479,10 @@ public sealed class VizPanelViewModel : ViewModelBase
             maxY = Math.Max(maxY, Math.Max(edge.SourceY, Math.Max(edge.ControlY, edge.TargetY)) + edgePadding);
         }
 
-        var offsetX = minX < CanvasBoundsPadding ? CanvasBoundsPadding - minX : 0.0;
-        var offsetY = minY < CanvasBoundsPadding ? CanvasBoundsPadding - minY : 0.0;
-        var width = Math.Max(VizActivityCanvasLayoutBuilder.CanvasWidth, maxX + offsetX + CanvasBoundsPadding);
-        var height = Math.Max(VizActivityCanvasLayoutBuilder.CanvasHeight, maxY + offsetY + CanvasBoundsPadding);
+        var offsetX = (minX < CanvasBoundsPadding ? CanvasBoundsPadding - minX : 0.0) + CanvasNavigationPadding;
+        var offsetY = (minY < CanvasBoundsPadding ? CanvasBoundsPadding - minY : 0.0) + CanvasNavigationPadding;
+        var width = Math.Max(VizActivityCanvasLayoutBuilder.CanvasWidth, maxX + offsetX + CanvasNavigationPadding);
+        var height = Math.Max(VizActivityCanvasLayoutBuilder.CanvasHeight, maxY + offsetY + CanvasNavigationPadding);
         SetActivityCanvasDimensions(width, height);
 
         var needsOffset = Math.Abs(offsetX) > 0.0001 || Math.Abs(offsetY) > 0.0001;

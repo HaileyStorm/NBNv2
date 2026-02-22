@@ -1753,10 +1753,6 @@ public static class VizActivityCanvasLayoutBuilder
         double sourceRadius,
         double targetRadius)
     {
-        var minX = EdgeControlPadding;
-        var maxX = CanvasWidth - EdgeControlPadding;
-        var minY = EdgeControlPadding;
-        var maxY = CanvasHeight - EdgeControlPadding;
         sourceRadius = Math.Max(0.0, sourceRadius);
         targetRadius = Math.Max(0.0, targetRadius);
         var normalizedDirection = curveDirection < 0 ? -1 : 1;
@@ -1784,14 +1780,14 @@ public static class VizActivityCanvasLayoutBuilder
             var tangentialOffset = Math.Max(7.0, sourceRadius * 0.38);
             var apexOffset = Math.Max(16.0, sourceRadius * 1.58);
             var start = new CanvasPoint(
-                Clamp(source.X + radialOffset, minX, maxX),
-                Clamp(source.Y - tangentialOffset, minY, maxY));
+                source.X + radialOffset,
+                source.Y - tangentialOffset);
             var control = new CanvasPoint(
-                Clamp(source.X + apexOffset, minX, maxX),
-                Clamp(source.Y - apexOffset, minY, maxY));
+                source.X + apexOffset,
+                source.Y - apexOffset);
             var end = new CanvasPoint(
-                Clamp(source.X + (radialOffset * 0.46), minX, maxX),
-                Clamp(source.Y - (radialOffset * 1.04), minY, maxY));
+                source.X + (radialOffset * 0.46),
+                source.Y - (radialOffset * 1.04));
             var pathData = FormattableString.Invariant($"M {start.X:0.###} {start.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {end.X:0.###} {end.Y:0.###}");
             curve = new CanvasEdgeCurve(pathData, start, control, end);
         }
@@ -1834,14 +1830,14 @@ public static class VizActivityCanvasLayoutBuilder
             var normalY = adjustedDeltaX / safeLength;
             var curvature = Math.Min(48.0, 16.0 + (length * 0.12)) * normalizedDirection;
             var start = new CanvasPoint(
-                Clamp(startX, minX, maxX),
-                Clamp(startY, minY, maxY));
+                startX,
+                startY);
             var control = new CanvasPoint(
-                Clamp(midX + (normalX * curvature), minX, maxX),
-                Clamp(midY + (normalY * curvature), minY, maxY));
+                midX + (normalX * curvature),
+                midY + (normalY * curvature));
             var end = new CanvasPoint(
-                Clamp(endX, minX, maxX),
-                Clamp(endY, minY, maxY));
+                endX,
+                endY);
             var pathData = FormattableString.Invariant($"M {start.X:0.###} {start.Y:0.###} Q {control.X:0.###} {control.Y:0.###} {end.X:0.###} {end.Y:0.###}");
             curve = new CanvasEdgeCurve(pathData, start, control, end);
         }

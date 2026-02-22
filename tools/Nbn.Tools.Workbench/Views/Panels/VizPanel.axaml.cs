@@ -19,6 +19,7 @@ public partial class VizPanel : UserControl
     private const double ButtonZoomFactor = 1.2;
     private const double WheelZoomFactor = 1.12;
     private const double PanButtonStepPx = 96.0;
+    private const double MinPanTranslationLimitPx = 320.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -40,14 +41,16 @@ public partial class VizPanel : UserControl
     private bool _isPanning;
     private IPointer? _panPointer;
     private int _panPointerId = -1;
-    private Point _panStartPoint;
-    private Vector _panStartOffset;
+    private Point _panLastPoint;
     private readonly Dictionary<int, Point> _activeTouchPoints = new();
     private bool _isTouchTransforming;
     private double _touchStartDistance;
     private double _touchStartScale;
     private Point _touchStartWorldCenter;
+    private Vector _canvasPan;
     private readonly ScaleTransform _canvasScaleTransform = new(1, 1);
+    private readonly TranslateTransform _canvasTranslateTransform = new(0, 0);
+    private readonly TransformGroup _canvasTransformGroup = new();
     private INotifyPropertyChanged? _viewModelNotifier;
 
     public VizPanel()
@@ -81,7 +84,9 @@ public partial class VizPanel : UserControl
 
         if (ActivityCanvasScaleRoot is not null)
         {
-            ActivityCanvasScaleRoot.RenderTransform = _canvasScaleTransform;
+            _canvasTransformGroup.Children.Add(_canvasScaleTransform);
+            _canvasTransformGroup.Children.Add(_canvasTranslateTransform);
+            ActivityCanvasScaleRoot.RenderTransform = _canvasTransformGroup;
         }
 
         DataContextChanged += VizPanelDataContextChanged;
@@ -186,24 +191,32 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
-        {
-            if (!TryGetViewportPointerPoint(e, out var viewportPoint))
-            {
-                return;
-            }
-
-            var zoomFactor = e.Delta.Y >= 0 ? WheelZoomFactor : 1.0 / WheelZoomFactor;
-            SetCanvasScale(_canvasScale * zoomFactor, viewportPoint);
-            e.Handled = true;
-            return;
-        }
-
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
             PanCanvasBy(-e.Delta.Y * (PanButtonStepPx * 0.45), 0);
             e.Handled = true;
+            return;
         }
+
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers != KeyModifiers.None)
+        {
+            return;
+        }
+
+        if (!TryGetViewportPointerPoint(e, out var viewportPoint))
+        {
+            return;
+        }
+
+        var zoomDelta = Math.Abs(e.Delta.Y) >= Math.Abs(e.Delta.X) ? e.Delta.Y : e.Delta.X;
+        if (Math.Abs(zoomDelta) <= double.Epsilon)
+        {
+            return;
+        }
+
+        var zoomFactor = zoomDelta >= 0 ? WheelZoomFactor : 1.0 / WheelZoomFactor;
+        SetCanvasScale(_canvasScale * zoomFactor, viewportPoint);
+        e.Handled = true;
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -443,13 +456,15 @@ public partial class VizPanel : UserControl
         }
 
         var anchor = viewportAnchor ?? new Point(scrollViewer.Viewport.Width / 2.0, scrollViewer.Viewport.Height / 2.0);
-        var worldX = (scrollViewer.Offset.X + anchor.X) / oldScale;
-        var worldY = (scrollViewer.Offset.Y + anchor.Y) / oldScale;
+        var worldX = (scrollViewer.Offset.X + anchor.X - _canvasPan.X) / oldScale;
+        var worldY = (scrollViewer.Offset.Y + anchor.Y - _canvasPan.Y) / oldScale;
 
         _canvasScale = clampedScale;
         SyncCanvasScaleVisuals();
 
-        var targetOffset = new Vector((worldX * _canvasScale) - anchor.X, (worldY * _canvasScale) - anchor.Y);
+        var targetOffset = new Vector(
+            (worldX * _canvasScale) + _canvasPan.X - anchor.X,
+            (worldY * _canvasScale) + _canvasPan.Y - anchor.Y);
         scrollViewer.Offset = ClampOffset(targetOffset, scrollViewer);
     }
 
@@ -477,6 +492,7 @@ public partial class VizPanel : UserControl
         }
 
         _canvasScale = ClampScale(fitScale);
+        _canvasPan = default;
         SyncCanvasScaleVisuals();
 
         var scaledWidth = viewModel.ActivityCanvasWidth * _canvasScale;
@@ -495,8 +511,15 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        var targetOffset = new Vector(scrollViewer.Offset.X + deltaX, scrollViewer.Offset.Y + deltaY);
-        scrollViewer.Offset = ClampOffset(targetOffset, scrollViewer);
+        var startOffset = scrollViewer.Offset;
+        var targetOffset = ClampOffset(new Vector(startOffset.X + deltaX, startOffset.Y + deltaY), scrollViewer);
+        scrollViewer.Offset = targetOffset;
+        var consumed = targetOffset - startOffset;
+        var remaining = new Vector(deltaX - consumed.X, deltaY - consumed.Y);
+        if (Math.Abs(remaining.X) > 0.0001 || Math.Abs(remaining.Y) > 0.0001)
+        {
+            SetCanvasPan(_canvasPan + remaining, scrollViewer);
+        }
     }
 
     private void BeginPan(PointerPressedEventArgs e)
@@ -510,8 +533,7 @@ public partial class VizPanel : UserControl
         _isPanning = true;
         _panPointer = e.Pointer;
         _panPointerId = e.Pointer.Id;
-        _panStartPoint = e.GetPosition(scrollViewer);
-        _panStartOffset = scrollViewer.Offset;
+        _panLastPoint = e.GetPosition(scrollViewer);
         _panPointer.Capture(ActivityCanvasSurface);
     }
 
@@ -524,9 +546,13 @@ public partial class VizPanel : UserControl
         }
 
         var currentPoint = e.GetPosition(scrollViewer);
-        var delta = currentPoint - _panStartPoint;
-        var targetOffset = new Vector(_panStartOffset.X - delta.X, _panStartOffset.Y - delta.Y);
-        scrollViewer.Offset = ClampOffset(targetOffset, scrollViewer);
+        var delta = currentPoint - _panLastPoint;
+        if (Math.Abs(delta.X) > 0.0001 || Math.Abs(delta.Y) > 0.0001)
+        {
+            PanCanvasBy(-delta.X, -delta.Y);
+            _panLastPoint = currentPoint;
+        }
+
         return true;
     }
 
@@ -621,8 +647,8 @@ public partial class VizPanel : UserControl
         _touchStartScale = _canvasScale;
         var safeScale = Math.Max(0.0001, _touchStartScale);
         _touchStartWorldCenter = new Point(
-            (scrollViewer.Offset.X + center.X) / safeScale,
-            (scrollViewer.Offset.Y + center.Y) / safeScale);
+            (scrollViewer.Offset.X + center.X - _canvasPan.X) / safeScale,
+            (scrollViewer.Offset.Y + center.Y - _canvasPan.Y) / safeScale);
         _isTouchTransforming = true;
     }
 
@@ -643,8 +669,8 @@ public partial class VizPanel : UserControl
         SyncCanvasScaleVisuals();
 
         var targetOffset = new Vector(
-            (_touchStartWorldCenter.X * _canvasScale) - center.X,
-            (_touchStartWorldCenter.Y * _canvasScale) - center.Y);
+            (_touchStartWorldCenter.X * _canvasScale) + _canvasPan.X - center.X,
+            (_touchStartWorldCenter.Y * _canvasScale) + _canvasPan.Y - center.Y);
         scrollViewer.Offset = ClampOffset(targetOffset, scrollViewer);
         return true;
     }
@@ -660,6 +686,9 @@ public partial class VizPanel : UserControl
 
         _canvasScaleTransform.ScaleX = _canvasScale;
         _canvasScaleTransform.ScaleY = _canvasScale;
+        _canvasPan = ClampPan(_canvasPan, ActivityCanvasScrollViewer);
+        _canvasTranslateTransform.X = _canvasPan.X;
+        _canvasTranslateTransform.Y = _canvasPan.Y;
 
         if (CanvasZoomLabel is not null)
         {
@@ -693,6 +722,23 @@ public partial class VizPanel : UserControl
         return new Vector(
             Math.Clamp(offset.X, 0.0, maxX),
             Math.Clamp(offset.Y, 0.0, maxY));
+    }
+
+    private void SetCanvasPan(Vector pan, ScrollViewer? scrollViewer)
+    {
+        _canvasPan = ClampPan(pan, scrollViewer);
+        _canvasTranslateTransform.X = _canvasPan.X;
+        _canvasTranslateTransform.Y = _canvasPan.Y;
+    }
+
+    private static Vector ClampPan(Vector pan, ScrollViewer? scrollViewer)
+    {
+        var viewport = scrollViewer?.Viewport ?? default;
+        var limitX = Math.Max(MinPanTranslationLimitPx, viewport.Width * 0.55);
+        var limitY = Math.Max(MinPanTranslationLimitPx, viewport.Height * 0.55);
+        return new Vector(
+            Math.Clamp(pan.X, -limitX, limitX),
+            Math.Clamp(pan.Y, -limitY, limitY));
     }
 
     private static double ClampScale(double scale) => Math.Clamp(scale, MinCanvasScale, MaxCanvasScale);
