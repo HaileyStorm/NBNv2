@@ -113,11 +113,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _canvasSelectionDetail = "Select a node or route to inspect identity, runtime stats, and route context.";
     private string _canvasSelectionActionHint = "Runtime actions require an input-neuron selection (R0/Nx) and an active brain.";
     private string _selectedInputPulseValueText = "1";
-    private bool _isInputPulseConfirmationVisible;
-    private string _inputPulseConfirmationText = string.Empty;
     private uint? _selectedRouteSourceRegionId;
     private uint? _selectedRouteTargetRegionId;
-    private PendingInputPulseRequest? _pendingInputPulseRequest;
     private string _canvasHoverCardText = string.Empty;
     private bool _isCanvasHoverCardVisible;
     private double _canvasHoverCardLeft = 8;
@@ -190,12 +187,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         FocusSelectedRouteSourceCommand = new RelayCommand(FocusSelectedRouteSourceRegion, () => _selectedRouteSourceRegionId.HasValue);
         FocusSelectedRouteTargetCommand = new RelayCommand(FocusSelectedRouteTargetRegion, () => _selectedRouteTargetRegionId.HasValue);
         PrepareInputPulseCommand = new RelayCommand(PrepareInputPulseForSelection, CanPrepareInputPulseForSelection);
-        ConfirmInputPulseCommand = new RelayCommand(
-            ConfirmInputPulseForSelection,
-            () => _isInputPulseConfirmationVisible && _pendingInputPulseRequest is not null);
-        CancelInputPulseCommand = new RelayCommand(
-            () => ClearPendingInputPulseRequest(updateStatus: true),
-            () => _isInputPulseConfirmationVisible || _pendingInputPulseRequest is not null);
         UpdateLodSummary();
         RefreshActivityProjection();
     }
@@ -518,18 +509,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
-    public bool IsInputPulseConfirmationVisible
-    {
-        get => _isInputPulseConfirmationVisible;
-        private set => SetProperty(ref _isInputPulseConfirmationVisible, value);
-    }
-
-    public string InputPulseConfirmationText
-    {
-        get => _inputPulseConfirmationText;
-        private set => SetProperty(ref _inputPulseConfirmationText, value);
-    }
-
     public string TogglePinSelectionLabel => IsCurrentSelectionPinned() ? "Unpin selection" : "Pin selection";
 
     public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Shift+Wheel zoom, Shift+drag or middle-drag pan, double-click empty = fit";
@@ -623,10 +602,6 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand FocusSelectedRouteTargetCommand { get; }
 
     public RelayCommand PrepareInputPulseCommand { get; }
-
-    public RelayCommand ConfirmInputPulseCommand { get; }
-
-    public RelayCommand CancelInputPulseCommand { get; }
 
     public void AddBrainId(Guid id)
     {
@@ -2618,13 +2593,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         if (string.IsNullOrWhiteSpace(_selectedCanvasNodeKey) && string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
         {
-            ClearPendingInputPulseRequest(updateStatus: false);
             return;
         }
 
         _selectedCanvasNodeKey = null;
         _selectedCanvasRouteLabel = null;
-        ClearPendingInputPulseRequest(updateStatus: false);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
         RefreshCanvasLayoutOnly();
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
@@ -2638,7 +2611,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedRouteTargetRegionId = null;
         _hoverCanvasNodeKey = null;
         _hoverCanvasRouteLabel = null;
-        ClearPendingInputPulseRequest(updateStatus: false);
         CanvasHoverCardText = string.Empty;
         IsCanvasHoverCardVisible = false;
         if (clearPins)
@@ -2810,23 +2782,6 @@ public sealed class VizPanelViewModel : ViewModelBase
             CanvasSelectionDetail = "Select a node or route to inspect identity, runtime stats, and route context.";
             _selectedRouteSourceRegionId = null;
             _selectedRouteTargetRegionId = null;
-            ClearPendingInputPulseRequest(updateStatus: false);
-        }
-
-        if (_pendingInputPulseRequest is not null)
-        {
-            var pending = _pendingInputPulseRequest.Value;
-            var stillValid = selectedNode is not null
-                && selectedNode.RegionId == NbnConstants.InputRegionId
-                && selectedNode.NeuronId.HasValue
-                && SelectedBrain is not null
-                && pending.BrainId == SelectedBrain.BrainId
-                && pending.InputIndex == selectedNode.NeuronId.Value
-                && string.Equals(pending.NodeKey, selectedNode.NodeKey, StringComparison.OrdinalIgnoreCase);
-            if (!stillValid)
-            {
-                ClearPendingInputPulseRequest(updateStatus: false);
-            }
         }
 
         UpdateCanvasSelectionActionHint(selectedNode, selectedEdge);
@@ -2838,20 +2793,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         FocusSelectedRouteSourceCommand.RaiseCanExecuteChanged();
         FocusSelectedRouteTargetCommand.RaiseCanExecuteChanged();
         PrepareInputPulseCommand.RaiseCanExecuteChanged();
-        ConfirmInputPulseCommand.RaiseCanExecuteChanged();
-        CancelInputPulseCommand.RaiseCanExecuteChanged();
     }
 
     private void UpdateCanvasSelectionActionHint(
         VizActivityCanvasNode? selectedNode,
         VizActivityCanvasEdge? selectedEdge)
     {
-        if (_isInputPulseConfirmationVisible && _pendingInputPulseRequest is not null)
-        {
-            CanvasSelectionActionHint = "Runtime action staged. Confirm or cancel below.";
-            return;
-        }
-
         if (!HasCanvasSelection)
         {
             CanvasSelectionActionHint = "Select a node or route to view available actions.";
@@ -2885,15 +2832,15 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         CanvasSelectionActionHint = FormattableString.Invariant(
-            $"Ready: stage runtime pulse to R0/N{selectedNode.NeuronId.Value} with value {SelectedInputPulseValueText.Trim()}.");
+            $"Ready: send runtime pulse to R0/N{selectedNode.NeuronId.Value} with value {SelectedInputPulseValueText.Trim()}.");
     }
 
     private bool CanPrepareInputPulseForSelection()
-        => TryBuildPendingInputPulseRequest(CanvasNodes, out _, out _);
+        => TryBuildInputPulseRequest(CanvasNodes, out _, out _);
 
     private void PrepareInputPulseForSelection()
     {
-        if (!TryBuildPendingInputPulseRequest(CanvasNodes, out var request, out var reason))
+        if (!TryBuildInputPulseRequest(CanvasNodes, out var request, out var reason))
         {
             Status = reason;
             UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
@@ -2901,43 +2848,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        _pendingInputPulseRequest = request;
-        IsInputPulseConfirmationVisible = true;
-        InputPulseConfirmationText = FormattableString.Invariant(
-            $"Confirm runtime action: send InputWrite to R0/N{request.InputIndex} ({request.NodeLabel}) with value {request.Value:0.###} on brain {request.BrainId:D}.");
-        Status = FormattableString.Invariant($"Runtime action staged for R0/N{request.InputIndex}. Confirm to dispatch.");
-        UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
-        RaiseCanvasSelectionActionCanExecuteChanged();
-    }
-
-    private void ConfirmInputPulseForSelection()
-    {
-        if (!_isInputPulseConfirmationVisible || _pendingInputPulseRequest is null)
-        {
-            Status = "No runtime action pending confirmation.";
-            return;
-        }
-
-        var pending = _pendingInputPulseRequest.Value;
-        if (!TryBuildPendingInputPulseRequest(CanvasNodes, out var current, out var reason))
-        {
-            ClearPendingInputPulseRequest(updateStatus: false);
-            Status = $"Runtime action canceled: {reason}";
-            UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
-            return;
-        }
-
-        if (current.BrainId != pending.BrainId
-            || current.InputIndex != pending.InputIndex
-            || !string.Equals(current.NodeKey, pending.NodeKey, StringComparison.OrdinalIgnoreCase))
-        {
-            ClearPendingInputPulseRequest(updateStatus: false);
-            Status = "Runtime action canceled because selection or brain changed. Stage again.";
-            UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
-            return;
-        }
-
-        if (_brain.TrySendInputSelected(pending.InputIndex, pending.Value, out var ioStatus))
+        if (_brain.TrySendInputSelected(request.InputIndex, request.Value, out var ioStatus))
         {
             Status = ioStatus;
         }
@@ -2946,33 +2857,13 @@ public sealed class VizPanelViewModel : ViewModelBase
             Status = $"Runtime action failed validation: {ioStatus}";
         }
 
-        ClearPendingInputPulseRequest(updateStatus: false);
         UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
-    }
-
-    private void ClearPendingInputPulseRequest(bool updateStatus)
-    {
-        if (_pendingInputPulseRequest is null
-            && !_isInputPulseConfirmationVisible
-            && string.IsNullOrWhiteSpace(InputPulseConfirmationText))
-        {
-            return;
-        }
-
-        _pendingInputPulseRequest = null;
-        IsInputPulseConfirmationVisible = false;
-        InputPulseConfirmationText = string.Empty;
-        if (updateStatus)
-        {
-            Status = "Runtime action canceled.";
-        }
-
         RaiseCanvasSelectionActionCanExecuteChanged();
     }
 
-    private bool TryBuildPendingInputPulseRequest(
+    private bool TryBuildInputPulseRequest(
         IReadOnlyList<VizActivityCanvasNode> nodes,
-        out PendingInputPulseRequest request,
+        out InputPulseRequest request,
         out string reason)
     {
         request = default;
@@ -3001,12 +2892,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             return false;
         }
 
-        request = new PendingInputPulseRequest(
-            SelectedBrain.BrainId,
-            selectedNode.NodeKey,
-            selectedNode.Label,
-            selectedNode.NeuronId.Value,
-            value);
+        request = new InputPulseRequest(selectedNode.NeuronId.Value, value);
         reason = string.Empty;
         return true;
     }
@@ -3844,10 +3730,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         double ProjectionMs,
         double LayoutMs);
 
-    private readonly record struct PendingInputPulseRequest(
-        Guid BrainId,
-        string NodeKey,
-        string NodeLabel,
+    private readonly record struct InputPulseRequest(
         uint InputIndex,
         float Value);
 

@@ -713,11 +713,11 @@ public static class VizActivityCanvasLayoutBuilder
                             + (isPinned ? 0.8 : 0.0)
                             + (isHovered ? 0.5 : 0.0)
                             + (isSelected ? 0.9 : 0.0);
-            var opacity = Math.Clamp((isDormant ? 0.16 : 0.32 + (0.45 * recency)) + emphasis, 0.14, 1.0);
+            var opacity = Math.Clamp((isDormant ? 0.27 : 0.32 + (0.45 * recency)) + emphasis, 0.22, 1.0);
             var activityIntensity = isDormant
                 ? 0.0
                 : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
-            var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.26 + (0.62 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
+            var activityOpacity = Math.Clamp((isDormant ? 0.20 : 0.26 + (0.62 * activityIntensity)) + (emphasis * 0.5), 0.18, 1.0);
             var activityThickness = Math.Max(0.7, thickness - 2.2);
             var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));
@@ -1024,11 +1024,11 @@ public static class VizActivityCanvasLayoutBuilder
                             + (isPinned ? 0.8 : 0.0)
                             + (isHovered ? 0.5 : 0.0)
                             + (isSelected ? 0.9 : 0.0);
-            var opacity = Math.Clamp((isDormant ? 0.17 : 0.34 + (0.44 * recency)) + emphasis, 0.15, 1.0);
+            var opacity = Math.Clamp((isDormant ? 0.29 : 0.34 + (0.44 * recency)) + emphasis, 0.24, 1.0);
             var activityIntensity = isDormant
                 ? 0.0
                 : Math.Clamp((0.45 * normalizedLoad) + (0.25 * recency) + (0.30 * Math.Abs(signedSignal)), 0.0, 1.0);
-            var activityOpacity = Math.Clamp((isDormant ? 0.14 : 0.28 + (0.60 * activityIntensity)) + (emphasis * 0.5), 0.12, 1.0);
+            var activityOpacity = Math.Clamp((isDormant ? 0.21 : 0.28 + (0.60 * activityIntensity)) + (emphasis * 0.5), 0.18, 1.0);
             var activityThickness = Math.Max(0.7, thickness - 2.2);
             var hitTestThickness = Math.Max(9.0, thickness + 7.0);
             var sourceCenter = new CanvasPoint(sourceNode.Left + (sourceNode.Diameter / 2.0), sourceNode.Top + (sourceNode.Diameter / 2.0));

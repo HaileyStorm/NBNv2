@@ -339,7 +339,7 @@ public class VizPanelViewModelInteractionTests
         Assert.Contains("region=R0", vm.CanvasSelectionIdentity, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("events=", vm.CanvasSelectionRuntime, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("focus_region=R0", vm.CanvasSelectionContext, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Ready: stage runtime pulse", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Ready: send runtime pulse", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -387,7 +387,7 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
-    public void PrepareInputPulseCommand_UsesConfirmationAndValidationFlow()
+    public void PrepareInputPulseCommand_SendsInputImmediately_WithValidationFlow()
     {
         var vm = CreateViewModel();
         var brain = new BrainListItem(Guid.NewGuid(), "test", true);
@@ -419,12 +419,6 @@ public class VizPanelViewModelInteractionTests
         Assert.True(vm.PrepareInputPulseCommand.CanExecute(null));
 
         vm.PrepareInputPulseCommand.Execute(null);
-        Assert.True(vm.IsInputPulseConfirmationVisible);
-        Assert.Contains("Confirm runtime action", vm.InputPulseConfirmationText, StringComparison.OrdinalIgnoreCase);
-        Assert.True(vm.ConfirmInputPulseCommand.CanExecute(null));
-
-        vm.ConfirmInputPulseCommand.Execute(null);
-        Assert.False(vm.IsInputPulseConfirmationVisible);
         Assert.Contains("Input pulse queued:", vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
