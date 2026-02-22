@@ -567,7 +567,8 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        if (_brains.TryGetValue(brainId, out var entry) && HasArtifactRef(entry.BaseDefinition))
+        _brains.TryGetValue(brainId, out var entry);
+        if (!message.RebaseOverlays && entry is not null && HasArtifactRef(entry.BaseDefinition))
         {
             context.Respond(new BrainDefinitionReady
             {
@@ -579,7 +580,18 @@ public sealed class IoGatewayActor : IActor
 
         if (_hiveMindPid is null)
         {
-            context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
+            if (entry is not null && HasArtifactRef(entry.BaseDefinition))
+            {
+                context.Respond(new BrainDefinitionReady
+                {
+                    BrainId = message.BrainId,
+                    BrainDef = entry.BaseDefinition
+                });
+            }
+            else
+            {
+                context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
+            }
             return;
         }
 
@@ -588,17 +600,45 @@ public sealed class IoGatewayActor : IActor
             var ready = await context.RequestAsync<BrainDefinitionReady>(_hiveMindPid, message, DefaultRequestTimeout).ConfigureAwait(false);
             if (ready is not null
                 && HasArtifactRef(ready.BrainDef)
+                && !message.RebaseOverlays
                 && _brains.TryGetValue(brainId, out var existing))
             {
                 existing.BaseDefinition = ready.BrainDef;
             }
 
-            context.Respond(ready ?? new BrainDefinitionReady { BrainId = message.BrainId });
+            if (ready is not null)
+            {
+                context.Respond(ready);
+                return;
+            }
+
+            if (entry is not null && HasArtifactRef(entry.BaseDefinition))
+            {
+                context.Respond(new BrainDefinitionReady
+                {
+                    BrainId = message.BrainId,
+                    BrainDef = entry.BaseDefinition
+                });
+                return;
+            }
+
+            context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
         }
         catch (Exception ex)
         {
             Console.WriteLine($"ExportBrainDefinition failed for {brainId}: {ex.Message}");
-            context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
+            if (entry is not null && HasArtifactRef(entry.BaseDefinition))
+            {
+                context.Respond(new BrainDefinitionReady
+                {
+                    BrainId = message.BrainId,
+                    BrainDef = entry.BaseDefinition
+                });
+            }
+            else
+            {
+                context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
+            }
         }
     }
 

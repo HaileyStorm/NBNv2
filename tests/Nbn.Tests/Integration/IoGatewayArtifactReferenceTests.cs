@@ -43,6 +43,57 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task ExportBrainDefinition_RebaseOverlays_Forwards_To_HiveMind_And_Preserves_Local_BaseDefinition()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ExportBrainDefinition>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rebasedDefinition = new string('c', 64).ToArtifactRef(222, "application/x-nbn", "test-store");
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveExportProbe(forwarded, rebasedDefinition)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainId = Guid.NewGuid();
+        var baseDef = new string('a', 64).ToArtifactRef(123, "application/x-nbn", "test-store");
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            BaseDefinition = baseDef
+        });
+
+        var rebasedReady = await root.RequestAsync<BrainDefinitionReady>(
+            gateway,
+            new ExportBrainDefinition
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RebaseOverlays = true
+            });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.True(forwardedRequest.RebaseOverlays);
+
+        Assert.NotNull(rebasedReady.BrainDef);
+        Assert.True(rebasedReady.BrainDef.TryToSha256Hex(out var rebasedSha));
+        Assert.Equal(rebasedDefinition.ToSha256Hex(), rebasedSha);
+
+        var nonRebasedReady = await root.RequestAsync<BrainDefinitionReady>(
+            gateway,
+            new ExportBrainDefinition
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RebaseOverlays = false
+            });
+
+        Assert.NotNull(nonRebasedReady.BrainDef);
+        Assert.True(nonRebasedReady.BrainDef.TryToSha256Hex(out var baseSha));
+        Assert.Equal(baseDef.ToSha256Hex(), baseSha);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RequestSnapshot_Returns_Registered_LastSnapshot()
     {
         var system = new ActorSystem();
@@ -368,6 +419,38 @@ public class IoGatewayArtifactReferenceTests
                     {
                         BrainId = request.BrainId,
                         Snapshot = _snapshot
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveExportProbe : IActor
+    {
+        private readonly TaskCompletionSource<ExportBrainDefinition> _request;
+        private readonly ArtifactRef _rebasedDefinition;
+
+        public HiveExportProbe(TaskCompletionSource<ExportBrainDefinition> request, ArtifactRef rebasedDefinition)
+        {
+            _request = request;
+            _rebasedDefinition = rebasedDefinition;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ExportBrainDefinition request:
+                    _request.TrySetResult(request);
+                    context.Respond(new BrainDefinitionReady
+                    {
+                        BrainId = request.BrainId,
+                        BrainDef = _rebasedDefinition
                     });
                     break;
             }

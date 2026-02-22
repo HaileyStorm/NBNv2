@@ -1337,10 +1337,50 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        context.Respond(new ProtoIo.BrainDefinitionReady
+        if (!message.RebaseOverlays || !HasArtifactRef(brain.BaseDefinition) || brain.Shards.Count == 0)
         {
-            BrainId = brainId.ToProtoUuid(),
-            BrainDef = brain.BaseDefinition
+            context.Respond(new ProtoIo.BrainDefinitionReady
+            {
+                BrainId = brainId.ToProtoUuid(),
+                BrainDef = brain.BaseDefinition
+            });
+            return;
+        }
+
+        var fallbackDefinition = brain.BaseDefinition!;
+        var storeRootPath = ResolveArtifactRoot(fallbackDefinition.StoreUri);
+        var request = new RebasedDefinitionBuildRequest(
+            brain.BrainId,
+            fallbackDefinition,
+            _lastCompletedTickId,
+            new Dictionary<ShardId32, PID>(brain.Shards),
+            storeRootPath,
+            string.IsNullOrWhiteSpace(fallbackDefinition.StoreUri) ? storeRootPath : fallbackDefinition.StoreUri);
+
+        var rebaseTask = BuildAndStoreRebasedDefinitionAsync(context.System, request);
+        context.ReenterAfter(rebaseTask, task =>
+        {
+            if (task is { IsCompletedSuccessfully: true } && HasArtifactRef(task.Result))
+            {
+                context.Respond(new ProtoIo.BrainDefinitionReady
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BrainDef = task.Result
+                });
+                return Task.CompletedTask;
+            }
+
+            if (task.Exception is not null)
+            {
+                LogError($"Rebased export failed for brain {brainId}: {task.Exception.GetBaseException().Message}");
+            }
+
+            context.Respond(new ProtoIo.BrainDefinitionReady
+            {
+                BrainId = brainId.ToProtoUuid(),
+                BrainDef = fallbackDefinition
+            });
+            return Task.CompletedTask;
         });
     }
 
@@ -1426,6 +1466,207 @@ public sealed class HiveMindActor : IActor
         });
     }
 
+    private static async Task<List<ProtoControl.CaptureShardSnapshotAck>> CaptureShardSnapshotsAsync(
+        ActorSystem system,
+        Guid brainId,
+        ulong tickId,
+        IReadOnlyDictionary<ShardId32, PID> shards)
+    {
+        var captures = new List<ProtoControl.CaptureShardSnapshotAck>(shards.Count);
+        foreach (var entry in shards.OrderBy(static pair => pair.Key.RegionId).ThenBy(static pair => pair.Key.ShardIndex))
+        {
+            var capture = await system.Root.RequestAsync<ProtoControl.CaptureShardSnapshotAck>(
+                    entry.Value,
+                    new ProtoControl.CaptureShardSnapshot
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        RegionId = (uint)entry.Key.RegionId,
+                        ShardIndex = (uint)entry.Key.ShardIndex,
+                        TickId = tickId
+                    },
+                    SnapshotShardRequestTimeout)
+                .ConfigureAwait(false);
+
+            if (capture is null)
+            {
+                throw new InvalidOperationException($"Snapshot capture returned null for shard {entry.Key}.");
+            }
+
+            if (!capture.Success)
+            {
+                var error = string.IsNullOrWhiteSpace(capture.Error) ? "unknown" : capture.Error;
+                throw new InvalidOperationException($"Snapshot capture failed for shard {entry.Key}: {error}");
+            }
+
+            captures.Add(capture);
+        }
+
+        return captures;
+    }
+
+    private static async Task<Nbn.Proto.ArtifactRef?> BuildAndStoreRebasedDefinitionAsync(ActorSystem system, RebasedDefinitionBuildRequest request)
+    {
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(request.StoreRootPath));
+        if (!request.BaseDefinition.TryToSha256Bytes(out var baseHashBytes))
+        {
+            throw new InvalidOperationException("Base definition sha256 is required to build rebased exports.");
+        }
+
+        var baseHash = new Sha256Hash(baseHashBytes);
+        var nbnStream = await store.TryOpenArtifactAsync(baseHash).ConfigureAwait(false);
+        if (nbnStream is null)
+        {
+            throw new InvalidOperationException($"Base NBN artifact {baseHash.ToHex()} not found in store.");
+        }
+
+        byte[] nbnBytes;
+        await using (nbnStream)
+        using (var ms = new MemoryStream())
+        {
+            await nbnStream.CopyToAsync(ms).ConfigureAwait(false);
+            nbnBytes = ms.ToArray();
+        }
+
+        var baseHeader = NbnBinary.ReadNbnHeader(nbnBytes);
+        var captures = await CaptureShardSnapshotsAsync(system, request.BrainId, request.SnapshotTickId, request.Shards).ConfigureAwait(false);
+        var (_, overlays) = BuildSnapshotSections(baseHeader, captures);
+        if (overlays.Count == 0)
+        {
+            return request.BaseDefinition;
+        }
+
+        var rebasedSections = RebaseDefinitionWithOverlays(baseHeader, nbnBytes, overlays);
+        var rebasedHeader = CloneHeader(baseHeader);
+        var validation = NbnBinaryValidator.ValidateNbn(rebasedHeader, rebasedSections);
+        if (!validation.IsValid)
+        {
+            var errors = string.Join("; ", validation.Issues.Select(static issue => issue.ToString()));
+            throw new InvalidOperationException($"Generated rebased definition failed validation: {errors}");
+        }
+
+        var bytes = NbnBinary.WriteNbn(rebasedHeader, rebasedSections);
+        await using var rebasedStream = new MemoryStream(bytes, writable: false);
+        var manifest = await store.StoreAsync(rebasedStream, "application/x-nbn").ConfigureAwait(false);
+        return manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", request.StoreUri);
+    }
+
+    private static List<NbnRegionSection> RebaseDefinitionWithOverlays(
+        NbnHeaderV2 baseHeader,
+        ReadOnlySpan<byte> nbnBytes,
+        IReadOnlyList<NbsOverlayRecord> overlays)
+    {
+        var sectionMap = new Dictionary<int, NbnRegionSection>();
+        for (var regionId = 0; regionId < baseHeader.Regions.Length; regionId++)
+        {
+            var entry = baseHeader.Regions[regionId];
+            if (entry.NeuronSpan == 0)
+            {
+                continue;
+            }
+
+            var source = NbnBinary.ReadNbnRegionSection(nbnBytes, entry.Offset);
+            sectionMap[regionId] = CloneRegionSection(source);
+        }
+
+        var routeMap = BuildAxonRouteIndex(sectionMap);
+        foreach (var overlay in overlays)
+        {
+            var routeKey = (overlay.FromAddress, overlay.ToAddress);
+            if (!routeMap.TryGetValue(routeKey, out var location))
+            {
+                throw new InvalidOperationException($"Overlay route {overlay.FromAddress}->{overlay.ToAddress} does not exist in the base definition.");
+            }
+
+            var section = sectionMap[location.RegionId];
+            var axon = section.AxonRecords[location.AxonIndex];
+            var strengthCode = (byte)Math.Clamp((int)overlay.StrengthCode, 0, 31);
+            if (axon.StrengthCode == strengthCode)
+            {
+                continue;
+            }
+
+            section.AxonRecords[location.AxonIndex] = new Nbn.Shared.Packing.AxonRecord(strengthCode, axon.TargetNeuronId, axon.TargetRegionId);
+        }
+
+        return sectionMap
+            .OrderBy(static pair => pair.Key)
+            .Select(static pair => pair.Value)
+            .ToList();
+    }
+
+    private static Dictionary<(uint From, uint To), RebasedAxonLocation> BuildAxonRouteIndex(IReadOnlyDictionary<int, NbnRegionSection> sections)
+    {
+        var routeMap = new Dictionary<(uint From, uint To), RebasedAxonLocation>();
+        foreach (var pair in sections.OrderBy(static item => item.Key))
+        {
+            var section = pair.Value;
+            var axonCursor = 0;
+            for (var neuronId = 0; neuronId < section.NeuronRecords.Length; neuronId++)
+            {
+                var fromAddress = Nbn.Shared.Addressing.Address32.From(section.RegionId, neuronId).Value;
+                var axonCount = section.NeuronRecords[neuronId].AxonCount;
+                for (var axonOffset = 0; axonOffset < axonCount; axonOffset++)
+                {
+                    var axonIndex = axonCursor + axonOffset;
+                    if ((uint)axonIndex >= (uint)section.AxonRecords.Length)
+                    {
+                        throw new InvalidOperationException($"Axon index {axonIndex} out of range for region {section.RegionId}.");
+                    }
+
+                    var axon = section.AxonRecords[axonIndex];
+                    var toAddress = Nbn.Shared.Addressing.Address32.From(axon.TargetRegionId, axon.TargetNeuronId).Value;
+                    if (!routeMap.TryAdd((fromAddress, toAddress), new RebasedAxonLocation(pair.Key, axonIndex)))
+                    {
+                        throw new InvalidOperationException($"Duplicate axon route {fromAddress}->{toAddress} in base definition.");
+                    }
+                }
+
+                axonCursor += axonCount;
+            }
+
+            if (axonCursor != section.AxonRecords.Length)
+            {
+                throw new InvalidOperationException($"Region {section.RegionId} axon traversal mismatch.");
+            }
+        }
+
+        return routeMap;
+    }
+
+    private static NbnRegionSection CloneRegionSection(NbnRegionSection section)
+    {
+        var checkpoints = (ulong[])section.Checkpoints.Clone();
+        var neurons = (Nbn.Shared.Packing.NeuronRecord[])section.NeuronRecords.Clone();
+        var axons = (Nbn.Shared.Packing.AxonRecord[])section.AxonRecords.Clone();
+        return new NbnRegionSection(
+            section.RegionId,
+            section.NeuronSpan,
+            section.TotalAxons,
+            section.Stride,
+            section.CheckpointCount,
+            checkpoints,
+            neurons,
+            axons);
+    }
+
+    private static NbnHeaderV2 CloneHeader(NbnHeaderV2 header)
+    {
+        var regions = new NbnRegionDirectoryEntry[header.Regions.Length];
+        Array.Copy(header.Regions, regions, header.Regions.Length);
+        return new NbnHeaderV2(
+            header.Magic,
+            header.Version,
+            header.Endianness,
+            header.HeaderBytesPow2,
+            header.BrainSeed,
+            header.AxonStride,
+            header.Flags,
+            header.Quantization,
+            regions);
+    }
+
+    private readonly record struct RebasedAxonLocation(int RegionId, int AxonIndex);
+
     private static async Task<Nbn.Proto.ArtifactRef?> BuildAndStoreSnapshotAsync(ActorSystem system, SnapshotBuildRequest request)
     {
         var store = new LocalArtifactStore(new ArtifactStoreOptions(request.StoreRootPath));
@@ -1450,34 +1691,7 @@ public sealed class HiveMindActor : IActor
         }
 
         var baseHeader = NbnBinary.ReadNbnHeader(nbnBytes);
-        var captures = new List<ProtoControl.CaptureShardSnapshotAck>(request.Shards.Count);
-        foreach (var entry in request.Shards.OrderBy(static pair => pair.Key.RegionId).ThenBy(static pair => pair.Key.ShardIndex))
-        {
-            var capture = await system.Root.RequestAsync<ProtoControl.CaptureShardSnapshotAck>(
-                    entry.Value,
-                    new ProtoControl.CaptureShardSnapshot
-                    {
-                        BrainId = request.BrainId.ToProtoUuid(),
-                        RegionId = (uint)entry.Key.RegionId,
-                        ShardIndex = (uint)entry.Key.ShardIndex,
-                        TickId = request.SnapshotTickId
-                    },
-                    SnapshotShardRequestTimeout)
-                .ConfigureAwait(false);
-
-            if (capture is null)
-            {
-                throw new InvalidOperationException($"Snapshot capture returned null for shard {entry.Key}.");
-            }
-
-            if (!capture.Success)
-            {
-                var error = string.IsNullOrWhiteSpace(capture.Error) ? "unknown" : capture.Error;
-                throw new InvalidOperationException($"Snapshot capture failed for shard {entry.Key}: {error}");
-            }
-
-            captures.Add(capture);
-        }
+        var captures = await CaptureShardSnapshotsAsync(system, request.BrainId, request.SnapshotTickId, request.Shards).ConfigureAwait(false);
 
         var (regions, overlays) = BuildSnapshotSections(baseHeader, captures);
         var flags = 0x1u;
@@ -1989,6 +2203,14 @@ public sealed class HiveMindActor : IActor
         bool CostEnabled,
         bool EnergyEnabled,
         bool PlasticityEnabled,
+        Dictionary<ShardId32, PID> Shards,
+        string StoreRootPath,
+        string StoreUri);
+
+    private sealed record RebasedDefinitionBuildRequest(
+        Guid BrainId,
+        Nbn.Proto.ArtifactRef BaseDefinition,
+        ulong SnapshotTickId,
         Dictionary<ShardId32, PID> Shards,
         string StoreRootPath,
         string StoreUri);

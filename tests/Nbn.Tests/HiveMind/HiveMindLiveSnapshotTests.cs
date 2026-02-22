@@ -177,6 +177,147 @@ public class HiveMindLiveSnapshotTests
         }
     }
 
+    [Fact]
+    public async Task ExportBrainDefinition_RebaseOverlays_Builds_Rebased_Nbn_From_Live_Overlay_Strengths()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hive-rebase-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var richNbn = NbnTestVectors.CreateRichNbnVector();
+            var baseManifest = await store.StoreAsync(new MemoryStream(richNbn.Bytes), "application/x-nbn");
+            var baseRef = baseManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)baseManifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var baseStrengthCode = FindAxonStrengthCode(richNbn.Bytes, fromRegionId: 1, fromNeuronId: 1, toRegionId: 31, toNeuronId: 1);
+            var rebasedStrengthCode = baseStrengthCode == 22 ? (byte)21 : (byte)22;
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+            var brainId = Guid.NewGuid();
+            var placement = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(placement.Accepted);
+
+            var region0Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(0, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 10, 11, 12 },
+                enabledBitset: new byte[] { 0b0000_0111 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+            var region1Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(1, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 20, 21, 22, 23 },
+                enabledBitset: new byte[] { 0b0000_1111 },
+                overlays: new[]
+                {
+                    new SnapshotOverlayRecord
+                    {
+                        FromAddress = SharedAddress32.From(1, 1).Value,
+                        ToAddress = SharedAddress32.From(31, 1).Value,
+                        StrengthCode = rebasedStrengthCode
+                    }
+                })));
+            var region31Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(31, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 30, 31 },
+                enabledBitset: new byte[] { 0b0000_0011 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+
+            root.Send(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 0,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region0Shard),
+                NeuronStart = 0,
+                NeuronCount = 3
+            });
+            root.Send(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 1,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region1Shard),
+                NeuronStart = 0,
+                NeuronCount = 4
+            });
+            root.Send(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 31,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region31Shard),
+                NeuronStart = 0,
+                NeuronCount = 2
+            });
+
+            var rebasedReady = await root.RequestAsync<BrainDefinitionReady>(
+                hiveMind,
+                new ExportBrainDefinition
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    RebaseOverlays = true
+                });
+
+            Assert.NotNull(rebasedReady.BrainDef);
+            Assert.True(rebasedReady.BrainDef.TryToSha256Hex(out var rebasedSha));
+
+            var rebasedReadyRepeat = await root.RequestAsync<BrainDefinitionReady>(
+                hiveMind,
+                new ExportBrainDefinition
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    RebaseOverlays = true
+                });
+
+            Assert.NotNull(rebasedReadyRepeat.BrainDef);
+            Assert.True(rebasedReadyRepeat.BrainDef.TryToSha256Hex(out var repeatedSha));
+            Assert.Equal(rebasedSha, repeatedSha);
+
+            Assert.True(rebasedReady.BrainDef.TryToSha256Bytes(out var rebasedHashBytes));
+            var rebasedStream = await store.TryOpenArtifactAsync(new Sha256Hash(rebasedHashBytes));
+            Assert.NotNull(rebasedStream);
+
+            byte[] rebasedBytes;
+            await using (rebasedStream!)
+            using (var ms = new MemoryStream())
+            {
+                await rebasedStream.CopyToAsync(ms);
+                rebasedBytes = ms.ToArray();
+            }
+
+            var exportedStrengthCode = FindAxonStrengthCode(rebasedBytes, fromRegionId: 1, fromNeuronId: 1, toRegionId: 31, toNeuronId: 1);
+            Assert.Equal(rebasedStrengthCode, exportedStrengthCode);
+            Assert.NotEqual(baseStrengthCode, exportedStrengthCode);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
     private sealed class SnapshotShardProbe : IActor
     {
         private readonly Guid _brainId;
@@ -236,6 +377,45 @@ public class HiveMindLiveSnapshotTests
             context.Respond(response);
             return Task.CompletedTask;
         }
+    }
+
+    private static byte FindAxonStrengthCode(
+        byte[] nbnBytes,
+        int fromRegionId,
+        int fromNeuronId,
+        int toRegionId,
+        int toNeuronId)
+    {
+        var header = NbnBinary.ReadNbnHeader(nbnBytes);
+        var entry = header.Regions[fromRegionId];
+        if (entry.NeuronSpan == 0)
+        {
+            throw new InvalidOperationException($"Region {fromRegionId} is not present.");
+        }
+
+        var section = NbnBinary.ReadNbnRegionSection(nbnBytes, entry.Offset);
+        if ((uint)fromNeuronId >= (uint)section.NeuronRecords.Length)
+        {
+            throw new InvalidOperationException($"Neuron {fromRegionId}:{fromNeuronId} is out of range.");
+        }
+
+        var axonStart = 0;
+        for (var neuron = 0; neuron < fromNeuronId; neuron++)
+        {
+            axonStart += section.NeuronRecords[neuron].AxonCount;
+        }
+
+        var axonCount = section.NeuronRecords[fromNeuronId].AxonCount;
+        for (var offset = 0; offset < axonCount; offset++)
+        {
+            var axon = section.AxonRecords[axonStart + offset];
+            if (axon.TargetRegionId == toRegionId && axon.TargetNeuronId == toNeuronId)
+            {
+                return axon.StrengthCode;
+            }
+        }
+
+        throw new InvalidOperationException($"Axon route {fromRegionId}:{fromNeuronId} -> {toRegionId}:{toNeuronId} not found.");
     }
 
     private static string PidLabel(PID pid)
