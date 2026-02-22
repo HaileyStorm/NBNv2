@@ -14,7 +14,7 @@ using Proto.Remote.GrpcNet;
 
 namespace Nbn.Tools.Workbench.Services;
 
-public sealed class WorkbenchClient : IAsyncDisposable
+public class WorkbenchClient : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
     private readonly IWorkbenchEventSink _sink;
@@ -671,6 +671,27 @@ public sealed class WorkbenchClient : IAsyncDisposable
         _root.Send(_receiverPid, new EnergyCreditCommand(brainId, amount));
     }
 
+    public virtual async Task<IoCommandResult> SendEnergyCreditAsync(Guid brainId, long amount)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return new IoCommandResult(brainId, "energy_credit", false, "workbench_offline");
+        }
+
+        try
+        {
+            return await _root.RequestAsync<IoCommandResult>(
+                    _receiverPid,
+                    new EnergyCreditCommand(brainId, amount),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new IoCommandResult(brainId, "energy_credit", false, $"request_failed:{ex.Message}");
+        }
+    }
+
     public void SendEnergyRate(Guid brainId, long unitsPerSecond)
     {
         if (_receiverPid is null || _root is null)
@@ -679,6 +700,27 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
 
         _root.Send(_receiverPid, new EnergyRateCommand(brainId, unitsPerSecond));
+    }
+
+    public virtual async Task<IoCommandResult> SendEnergyRateAsync(Guid brainId, long unitsPerSecond)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return new IoCommandResult(brainId, "energy_rate", false, "workbench_offline");
+        }
+
+        try
+        {
+            return await _root.RequestAsync<IoCommandResult>(
+                    _receiverPid,
+                    new EnergyRateCommand(brainId, unitsPerSecond),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new IoCommandResult(brainId, "energy_rate", false, $"request_failed:{ex.Message}");
+        }
     }
 
     public void SetCostEnergy(Guid brainId, bool costEnabled, bool energyEnabled)
@@ -691,6 +733,27 @@ public sealed class WorkbenchClient : IAsyncDisposable
         _root.Send(_receiverPid, new SetCostEnergyCommand(brainId, costEnabled, energyEnabled));
     }
 
+    public virtual async Task<IoCommandResult> SetCostEnergyAsync(Guid brainId, bool costEnabled, bool energyEnabled)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return new IoCommandResult(brainId, "set_cost_energy", false, "workbench_offline");
+        }
+
+        try
+        {
+            return await _root.RequestAsync<IoCommandResult>(
+                    _receiverPid,
+                    new SetCostEnergyCommand(brainId, costEnabled, energyEnabled),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new IoCommandResult(brainId, "set_cost_energy", false, $"request_failed:{ex.Message}");
+        }
+    }
+
     public void SetPlasticity(Guid brainId, bool enabled, float rate, bool probabilistic)
     {
         if (_receiverPid is null || _root is null)
@@ -699,6 +762,27 @@ public sealed class WorkbenchClient : IAsyncDisposable
         }
 
         _root.Send(_receiverPid, new SetPlasticityCommand(brainId, enabled, rate, probabilistic));
+    }
+
+    public virtual async Task<IoCommandResult> SetPlasticityAsync(Guid brainId, bool enabled, float rate, bool probabilistic)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return new IoCommandResult(brainId, "set_plasticity", false, "workbench_offline");
+        }
+
+        try
+        {
+            return await _root.RequestAsync<IoCommandResult>(
+                    _receiverPid,
+                    new SetPlasticityCommand(brainId, enabled, rate, probabilistic),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new IoCommandResult(brainId, "set_plasticity", false, $"request_failed:{ex.Message}");
+        }
     }
 
     public async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByBrainIdsAsync(ReproduceByBrainIdsRequest request)

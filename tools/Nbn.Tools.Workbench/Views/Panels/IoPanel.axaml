@@ -29,7 +29,8 @@
               <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
             </Grid>
             <StackPanel Orientation="Horizontal" Spacing="12">
-              <CheckBox Content="Cost + Energy Enabled" IsChecked="{Binding CostEnergyEnabled}" />
+              <CheckBox Content="Cost Enabled" IsChecked="{Binding CostEnabled}" />
+              <CheckBox Content="Energy Enabled" IsChecked="{Binding EnergyEnabled}" />
               <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
             </StackPanel>
           </StackPanel>
@@ -55,6 +56,13 @@
           </StackPanel>
         </Border>
       </Grid>
+
+      <Border Classes="card">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Command Feedback" Classes="card-title" />
+          <TextBlock Text="{Binding BrainInfoSummary}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

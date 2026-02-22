@@ -345,6 +345,16 @@ public sealed class RegionShardActor : IActor
             _plasticityProbabilisticUpdates);
         stopwatch.Stop();
 
+        if (result.PlasticityStrengthCodeChanges > 0)
+        {
+            RegionHostTelemetry.RecordPlasticityStrengthCodeChanges(result.PlasticityStrengthCodeChanges, _state.RegionId, _shardId.ShardIndex);
+            EmitDebug(
+                context,
+                ProtoSeverity.SevDebug,
+                "plasticity.mutation",
+                $"TickCompute {tick.TickId} mutated {result.PlasticityStrengthCodeChanges} strength code(s) on shard {_shardId.Value}.");
+        }
+
         var outboxTarget = _router ?? context.Sender;
         if (outboxTarget is not null)
         {

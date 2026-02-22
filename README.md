@@ -63,6 +63,46 @@ axon-sent, and timeout anomalies). Emission target can be configured with:
 - `NBN_OBS_VIZ_HUB` (default `VisualizationHub`)
 - `NBN_OBS_DISABLED=true` to disable emission
 
+## Energy + Plasticity Demo Scenario
+
+The local PowerShell demo script now includes an energy/plasticity scenario step
+by default:
+
+```powershell
+tools/demo/run_local_hivemind_demo.ps1
+```
+
+The scenario uses `Nbn.Tools.DemoHost io-scenario` to apply:
+- `EnergyCredit`
+- `EnergyRate`
+- `SetCostEnergyEnabled`
+- `SetPlasticityEnabled`
+
+and prints JSON `IoCommandAck` results plus final `BrainInfo`.
+
+You can also run it directly:
+
+```bash
+dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
+  io-scenario \
+  --io-address 127.0.0.1:12050 --io-id io-gateway \
+  --brain-id <brain_guid> \
+  --credit 500 --rate 3 \
+  --cost-enabled true --energy-enabled true \
+  --plasticity-enabled true --plasticity-rate 0.05 --probabilistic true --json
+```
+
+Useful telemetry names for this workflow:
+- `nbn.hivemind.brain.tick_cost.total`
+- `nbn.hivemind.brain.energy.depleted`
+- `nbn.regionhost.plasticity.strength_code.changed`
+- `nbn.hivemind.snapshot.overlay.records`
+- `nbn.hivemind.rebase.overlay.records`
+
+Quick troubleshooting:
+- `brain_not_found` in ack: verify the demo `BrainId` and IO registration in `io.log`.
+- request timeout: verify `--io-address`/`--io-id` and that IO Gateway is running.
+
 ## Workbench Visualizer (Neural Activity View)
 
 The Workbench Visualizer projects runtime visualization events into a canvas with

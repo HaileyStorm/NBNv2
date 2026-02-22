@@ -14,6 +14,7 @@ namespace Nbn.Tools.Workbench.Services;
 
 public sealed class WorkbenchReceiverActor : IActor
 {
+    private static readonly TimeSpan CommandAckTimeout = TimeSpan.FromSeconds(10);
     private readonly IWorkbenchEventSink _sink;
     private PID? _ioGateway;
 
@@ -76,36 +77,13 @@ public sealed class WorkbenchReceiverActor : IActor
                 });
                 return Task.CompletedTask;
             case EnergyCreditCommand credit:
-                SendToIo(context, new EnergyCredit
-                {
-                    BrainId = credit.BrainId.ToProtoUuid(),
-                    Amount = credit.Amount
-                });
-                return Task.CompletedTask;
+                return ForwardEnergyCreditAsync(context, credit);
             case EnergyRateCommand rate:
-                SendToIo(context, new EnergyRate
-                {
-                    BrainId = rate.BrainId.ToProtoUuid(),
-                    UnitsPerSecond = rate.UnitsPerSecond
-                });
-                return Task.CompletedTask;
+                return ForwardEnergyRateAsync(context, rate);
             case SetCostEnergyCommand flags:
-                SendToIo(context, new SetCostEnergyEnabled
-                {
-                    BrainId = flags.BrainId.ToProtoUuid(),
-                    CostEnabled = flags.CostEnabled,
-                    EnergyEnabled = flags.EnergyEnabled
-                });
-                return Task.CompletedTask;
+                return ForwardSetCostEnergyAsync(context, flags);
             case SetPlasticityCommand plasticity:
-                SendToIo(context, new SetPlasticityEnabled
-                {
-                    BrainId = plasticity.BrainId.ToProtoUuid(),
-                    PlasticityEnabled = plasticity.PlasticityEnabled,
-                    PlasticityRate = plasticity.PlasticityRate,
-                    ProbabilisticUpdates = plasticity.ProbabilisticUpdates
-                });
-                return Task.CompletedTask;
+                return ForwardSetPlasticityAsync(context, plasticity);
             case OutputEvent output:
                 HandleOutput(output);
                 return Task.CompletedTask;
@@ -127,6 +105,97 @@ public sealed class WorkbenchReceiverActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private async Task ForwardEnergyCreditAsync(IContext context, EnergyCreditCommand credit)
+    {
+        var message = new EnergyCredit
+        {
+            BrainId = credit.BrainId.ToProtoUuid(),
+            Amount = credit.Amount
+        };
+
+        var result = await SendCommandAsync(context, message, credit.BrainId, "energy_credit").ConfigureAwait(false);
+        if (context.Sender is not null)
+        {
+            context.Respond(result);
+        }
+    }
+
+    private async Task ForwardEnergyRateAsync(IContext context, EnergyRateCommand rate)
+    {
+        var message = new EnergyRate
+        {
+            BrainId = rate.BrainId.ToProtoUuid(),
+            UnitsPerSecond = rate.UnitsPerSecond
+        };
+
+        var result = await SendCommandAsync(context, message, rate.BrainId, "energy_rate").ConfigureAwait(false);
+        if (context.Sender is not null)
+        {
+            context.Respond(result);
+        }
+    }
+
+    private async Task ForwardSetCostEnergyAsync(IContext context, SetCostEnergyCommand flags)
+    {
+        var message = new SetCostEnergyEnabled
+        {
+            BrainId = flags.BrainId.ToProtoUuid(),
+            CostEnabled = flags.CostEnabled,
+            EnergyEnabled = flags.EnergyEnabled
+        };
+
+        var result = await SendCommandAsync(context, message, flags.BrainId, "set_cost_energy").ConfigureAwait(false);
+        if (context.Sender is not null)
+        {
+            context.Respond(result);
+        }
+    }
+
+    private async Task ForwardSetPlasticityAsync(IContext context, SetPlasticityCommand plasticity)
+    {
+        var message = new SetPlasticityEnabled
+        {
+            BrainId = plasticity.BrainId.ToProtoUuid(),
+            PlasticityEnabled = plasticity.PlasticityEnabled,
+            PlasticityRate = plasticity.PlasticityRate,
+            ProbabilisticUpdates = plasticity.ProbabilisticUpdates
+        };
+
+        var result = await SendCommandAsync(context, message, plasticity.BrainId, "set_plasticity").ConfigureAwait(false);
+        if (context.Sender is not null)
+        {
+            context.Respond(result);
+        }
+    }
+
+    private async Task<IoCommandResult> SendCommandAsync(IContext context, object message, Guid brainId, string fallbackCommand)
+    {
+        if (_ioGateway is null)
+        {
+            return new IoCommandResult(brainId, fallbackCommand, false, "io_gateway_unavailable");
+        }
+
+        if (context.Sender is null)
+        {
+            context.Send(_ioGateway, message);
+            return new IoCommandResult(brainId, fallbackCommand, true, "sent_fire_and_forget");
+        }
+
+        try
+        {
+            var ack = await context.RequestAsync<IoCommandAck>(_ioGateway, message, CommandAckTimeout).ConfigureAwait(false);
+            var resolvedBrainId = ack.BrainId?.TryToGuid(out var parsed) == true ? parsed : brainId;
+            var command = string.IsNullOrWhiteSpace(ack.Command) ? fallbackCommand : ack.Command;
+            var resultMessage = string.IsNullOrWhiteSpace(ack.Message) ? "ok" : ack.Message;
+            var energyState = ack.HasEnergyState ? ack.EnergyState : null;
+            return new IoCommandResult(resolvedBrainId, command, ack.Success, resultMessage, energyState);
+        }
+        catch (Exception ex)
+        {
+            return new IoCommandResult(brainId, fallbackCommand, false, $"request_failed:{ex.Message}");
+        }
     }
 
     private void SendToIo(IContext context, object message)
@@ -280,3 +349,9 @@ public sealed record EnergyCreditCommand(Guid BrainId, long Amount);
 public sealed record EnergyRateCommand(Guid BrainId, long UnitsPerSecond);
 public sealed record SetCostEnergyCommand(Guid BrainId, bool CostEnabled, bool EnergyEnabled);
 public sealed record SetPlasticityCommand(Guid BrainId, bool PlasticityEnabled, float PlasticityRate, bool ProbabilisticUpdates);
+public sealed record IoCommandResult(
+    Guid BrainId,
+    string Command,
+    bool Success,
+    string Message,
+    BrainEnergyState? EnergyState = null);

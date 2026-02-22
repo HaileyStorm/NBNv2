@@ -291,6 +291,96 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SetFlags_Request_Returns_IoCommandAck_With_RuntimeState()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 250,
+                EnergyRateUnitsPerSecond = 5,
+                CostEnabled = false,
+                EnergyEnabled = true,
+                PlasticityEnabled = false,
+                PlasticityRate = 0f,
+                PlasticityProbabilisticUpdates = false
+            }
+        });
+
+        var flagsAck = await root.RequestAsync<IoCommandAck>(gateway, new SetCostEnergyEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = false
+        });
+
+        Assert.True(flagsAck.Success);
+        Assert.Equal("set_cost_energy", flagsAck.Command);
+        Assert.True(flagsAck.HasEnergyState);
+        Assert.NotNull(flagsAck.EnergyState);
+        Assert.True(flagsAck.EnergyState.CostEnabled);
+        Assert.False(flagsAck.EnergyState.EnergyEnabled);
+        Assert.Equal(250, flagsAck.EnergyState.EnergyRemaining);
+
+        var plasticityAck = await root.RequestAsync<IoCommandAck>(gateway, new SetPlasticityEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.125f,
+            ProbabilisticUpdates = true
+        });
+
+        Assert.True(plasticityAck.Success);
+        Assert.Equal("set_plasticity", plasticityAck.Command);
+        Assert.True(plasticityAck.HasEnergyState);
+        Assert.NotNull(plasticityAck.EnergyState);
+        Assert.True(plasticityAck.EnergyState.PlasticityEnabled);
+        Assert.Equal(0.125f, plasticityAck.EnergyState.PlasticityRate);
+        Assert.True(plasticityAck.EnergyState.PlasticityProbabilisticUpdates);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidPlasticityRate_Returns_Failure()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        var ack = await root.RequestAsync<IoCommandAck>(gateway, new SetPlasticityEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = float.NaN,
+            ProbabilisticUpdates = false
+        });
+
+        Assert.False(ack.Success);
+        Assert.Equal("set_plasticity", ack.Command);
+        Assert.Equal("plasticity_rate_invalid", ack.Message);
+        Assert.True(ack.HasEnergyState);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterBrain_RuntimeConfig_Updates_Config_Without_Resetting_Balance()
     {
         var system = new ActorSystem();

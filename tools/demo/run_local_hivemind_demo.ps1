@@ -10,7 +10,12 @@ param(
     [int]$RegionId = 1,
     [int]$ShardIndex = 0,
     [string]$RouterId = "demo-router",
-    [string]$PidFile = ""
+    [string]$PidFile = "",
+    [switch]$RunEnergyPlasticityScenario = $true,
+    [long]$ScenarioCredit = 500,
+    [long]$ScenarioRate = 3,
+    [double]$ScenarioPlasticityRate = 0.05,
+    [switch]$ScenarioAbsolutePlasticity
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,6 +97,7 @@ $regionOutputErr = Join-Path $logRoot "regionhost-output.err.log"
 $ioErr = Join-Path $logRoot "io.err.log"
 $obsErr = Join-Path $logRoot "observability.err.log"
 $settingsErr = Join-Path $logRoot "settingsmonitor.err.log"
+$scenarioLog = Join-Path $logRoot "energy-plasticity-scenario.log"
 
 $hiveArgs = @(
     "run",
@@ -443,6 +449,39 @@ while ((Get-Date) -lt $deadline) {
     }
 
     Start-Sleep -Milliseconds 250
+}
+
+if ($RunEnergyPlasticityScenario) {
+    $probabilistic = if ($ScenarioAbsolutePlasticity) { "false" } else { "true" }
+    $scenarioArgs = @(
+        "io-scenario",
+        "--io-address", $ioAddress,
+        "--io-id", "io-gateway",
+        "--brain-id", $brainId,
+        "--credit", $ScenarioCredit,
+        "--rate", $ScenarioRate,
+        "--cost-enabled", "true",
+        "--energy-enabled", "true",
+        "--plasticity-enabled", "true",
+        "--plasticity-rate", $ScenarioPlasticityRate,
+        "--probabilistic", $probabilistic,
+        "--json"
+    )
+
+    $scenarioOutput = if (Test-Path $demoExe) {
+        & $demoExe @scenarioArgs
+    } else {
+        & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- @scenarioArgs
+    }
+
+    $scenarioOutput | Set-Content -Path $scenarioLog -Encoding UTF8
+    $scenarioJson = $scenarioOutput | Where-Object { $_ -match '^{.*}$' } | Select-Object -Last 1
+    if ($scenarioJson) {
+        Write-Host "Energy/plasticity scenario completed."
+        Write-Host "Scenario JSON: $scenarioJson"
+    } else {
+        Write-Warning "Energy/plasticity scenario did not emit JSON. See $scenarioLog."
+    }
 }
 
 Write-Host "Press Enter to stop the demo."

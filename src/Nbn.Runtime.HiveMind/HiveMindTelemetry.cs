@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Collections.Generic;
 
 namespace Nbn.Runtime.HiveMind;
 
@@ -23,6 +24,10 @@ public static class HiveMindTelemetry
     private static readonly Histogram<double> TargetTickHz = Meter.CreateHistogram<double>("nbn.hivemind.tick.target.hz");
     private static readonly Counter<long> RescheduleRequested = Meter.CreateCounter<long>("nbn.hivemind.reschedule.requested");
     private static readonly Counter<long> PauseRequested = Meter.CreateCounter<long>("nbn.hivemind.pause.requested");
+    private static readonly Counter<long> BrainTickCostTotal = Meter.CreateCounter<long>("nbn.hivemind.brain.tick_cost.total");
+    private static readonly Counter<long> BrainEnergyDepleted = Meter.CreateCounter<long>("nbn.hivemind.brain.energy.depleted");
+    private static readonly Counter<long> SnapshotOverlayRecords = Meter.CreateCounter<long>("nbn.hivemind.snapshot.overlay.records");
+    private static readonly Counter<long> RebaseOverlayRecords = Meter.CreateCounter<long>("nbn.hivemind.rebase.overlay.records");
 
     public static void RecordTickOutcome(TickOutcome outcome, float targetTickHz)
     {
@@ -84,5 +89,51 @@ public static class HiveMindTelemetry
         }
 
         LateDeliverAfterCompletion.Add(count);
+    }
+
+    public static void RecordBrainTickCost(Guid brainId, long tickCost)
+    {
+        if (tickCost <= 0)
+        {
+            return;
+        }
+
+        BrainTickCostTotal.Add(
+            tickCost,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")));
+    }
+
+    public static void RecordEnergyDepleted(Guid brainId)
+    {
+        BrainEnergyDepleted.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")));
+
+        using var activity = ActivitySource.StartActivity("hivemind.energy.depleted");
+        activity?.SetTag("brain.id", brainId.ToString("D"));
+    }
+
+    public static void RecordSnapshotOverlayRecords(Guid brainId, int overlayCount)
+    {
+        if (overlayCount <= 0)
+        {
+            return;
+        }
+
+        SnapshotOverlayRecords.Add(
+            overlayCount,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")));
+    }
+
+    public static void RecordRebaseOverlayRecords(Guid brainId, int overlayCount)
+    {
+        if (overlayCount <= 0)
+        {
+            return;
+        }
+
+        RebaseOverlayRecords.Add(
+            overlayCount,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")));
     }
 }

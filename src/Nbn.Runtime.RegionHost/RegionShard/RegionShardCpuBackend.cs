@@ -53,6 +53,7 @@ public sealed class RegionShardCpuBackend
         long costReset = 0;
         long costDistance = 0;
         const long costRemote = 0;
+        uint plasticityStrengthCodeChanges = 0;
 
         uint firedCount = 0;
         uint outContribs = 0;
@@ -176,7 +177,10 @@ public sealed class RegionShardCpuBackend
 
                 var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
                 costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
-                ApplyPlasticity(tickId, potential, index, plasticityEnabled, plasticityRate, probabilisticPlasticityUpdates);
+                if (ApplyPlasticity(tickId, potential, index, plasticityEnabled, plasticityRate, probabilisticPlasticityUpdates))
+                {
+                    plasticityStrengthCodeChanges++;
+                }
             }
         }
 
@@ -219,6 +223,7 @@ public sealed class RegionShardCpuBackend
             outputVectorList,
             firedCount,
             outContribs,
+            plasticityStrengthCodeChanges,
             costSummary,
             axonVizEvents,
             neuronVizEvents);
@@ -391,7 +396,7 @@ public sealed class RegionShardCpuBackend
         return normalized;
     }
 
-    private void ApplyPlasticity(
+    private bool ApplyPlasticity(
         ulong tickId,
         float potential,
         int axonIndex,
@@ -401,14 +406,14 @@ public sealed class RegionShardCpuBackend
     {
         if (!plasticityEnabled || !float.IsFinite(plasticityRate) || plasticityRate <= 0f)
         {
-            return;
+            return false;
         }
 
         var normalizedPotential = Math.Clamp(potential, -1f, 1f);
         var activationScale = MathF.Abs(normalizedPotential);
         if (activationScale <= 0f)
         {
-            return;
+            return false;
         }
 
         var effectiveRate = MathF.Max(plasticityRate, 0f);
@@ -417,16 +422,17 @@ public sealed class RegionShardCpuBackend
             var probability = Math.Clamp(effectiveRate * activationScale, 0f, 1f);
             if (probability <= 0f)
             {
-                return;
+                return false;
             }
 
             var seed = _state.GetDeterministicRngInput(tickId, axonIndex).ToSeed();
             if (UnitIntervalFromSeed(seed) >= probability)
             {
-                return;
+                return false;
             }
         }
 
+        var previousRuntimeCode = _state.Axons.RuntimeStrengthCodes[axonIndex];
         var currentStrength = NormalizeAxonStrength(axonIndex);
         var currentMagnitude = MathF.Abs(currentStrength);
         var currentSign = MathF.Sign(currentStrength);
@@ -448,6 +454,7 @@ public sealed class RegionShardCpuBackend
 
         _state.Axons.Strengths[axonIndex] = updatedStrength;
         UpdateRuntimeStrengthMetadata(axonIndex, updatedStrength);
+        return _state.Axons.RuntimeStrengthCodes[axonIndex] != previousRuntimeCode;
     }
 
     private void UpdateRuntimeStrengthMetadata(int axonIndex, float strength)
@@ -620,6 +627,7 @@ public sealed record RegionShardComputeResult(
     IReadOnlyList<float> OutputVector,
     uint FiredCount,
     uint OutContribs,
+    uint PlasticityStrengthCodeChanges,
     RegionShardCostSummary Cost,
     IReadOnlyList<RegionShardAxonVizEvent> AxonVizEvents,
     IReadOnlyList<RegionShardNeuronVizEvent> FiredNeuronEvents);

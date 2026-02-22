@@ -1,0 +1,161 @@
+using System.Diagnostics;
+using Nbn.Proto.Io;
+using Nbn.Tools.Workbench.Models;
+using Nbn.Tools.Workbench.Services;
+using Nbn.Tools.Workbench.ViewModels;
+
+namespace Nbn.Tests.Workbench;
+
+public class IoPanelViewModelTests
+{
+    [Fact]
+    public async Task ApplyCostEnergy_Uses_Independent_Flag_Values()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        vm.UpdateActiveBrains(new[] { brainA, brainB });
+        vm.CostEnabled = true;
+        vm.EnergyEnabled = false;
+
+        vm.ApplyCostEnergyCommand.Execute(null);
+        await WaitForAsync(() => client.CostEnergyCalls.Count == 2);
+
+        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainA && call.CostEnabled && !call.EnergyEnabled);
+        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainB && call.CostEnabled && !call.EnergyEnabled);
+    }
+
+    [Fact]
+    public async Task ApplyCostEnergy_PartialFailure_Reports_Failed_Brain_Ids()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        vm.UpdateActiveBrains(new[] { brainA, brainB });
+        vm.CostEnabled = true;
+        vm.EnergyEnabled = true;
+
+        client.CostEnergyResults[brainA] = new IoCommandResult(brainA, "set_cost_energy", true, "applied");
+        client.CostEnergyResults[brainB] = new IoCommandResult(brainB, "set_cost_energy", false, "brain_not_found");
+
+        vm.ApplyCostEnergyCommand.Execute(null);
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("Failed:", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Contains("1/2 succeeded", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(brainB.ToString("D"), vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("brain_not_found", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ApplyPlasticity_InvalidRate_Shows_Validation_Error()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.UpdateActiveBrains(new[] { Guid.NewGuid() });
+        vm.PlasticityRateText = "not-a-number";
+
+        vm.ApplyPlasticityCommand.Execute(null);
+
+        Assert.Equal("Plasticity rate invalid.", vm.BrainInfoSummary);
+    }
+
+    [Fact]
+    public async Task ApplyEnergyRate_AllSuccess_Shows_Success_Count()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        vm.UpdateActiveBrains(new[] { brainA, brainB });
+        vm.EnergyRateText = "9";
+
+        vm.ApplyEnergyRateCommand.Execute(null);
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("applied to", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Contains("Energy rate: applied to 2 brain(s).", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IoPanelViewModel CreateViewModel(WorkbenchClient client)
+    {
+        var dispatcher = new UiDispatcher();
+        return new IoPanelViewModel(client, dispatcher);
+    }
+
+    private static async Task WaitForAsync(Func<bool> predicate, int timeoutMs = 2000)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (deadline.ElapsedMilliseconds < timeoutMs)
+        {
+            if (predicate())
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        Assert.True(predicate());
+    }
+
+    private sealed class FakeWorkbenchClient : WorkbenchClient
+    {
+        public List<(Guid BrainId, bool CostEnabled, bool EnergyEnabled)> CostEnergyCalls { get; } = new();
+        public Dictionary<Guid, IoCommandResult> CostEnergyResults { get; } = new();
+
+        public FakeWorkbenchClient()
+            : base(new NullWorkbenchEventSink())
+        {
+        }
+
+        public override Task<IoCommandResult> SendEnergyCreditAsync(Guid brainId, long amount)
+        {
+            return Task.FromResult(new IoCommandResult(brainId, "energy_credit", true, "applied"));
+        }
+
+        public override Task<IoCommandResult> SendEnergyRateAsync(Guid brainId, long unitsPerSecond)
+        {
+            return Task.FromResult(new IoCommandResult(brainId, "energy_rate", true, "applied"));
+        }
+
+        public override Task<IoCommandResult> SetCostEnergyAsync(Guid brainId, bool costEnabled, bool energyEnabled)
+        {
+            CostEnergyCalls.Add((brainId, costEnabled, energyEnabled));
+            if (CostEnergyResults.TryGetValue(brainId, out var result))
+            {
+                return Task.FromResult(result);
+            }
+
+            return Task.FromResult(new IoCommandResult(brainId, "set_cost_energy", true, "applied"));
+        }
+
+        public override Task<IoCommandResult> SetPlasticityAsync(Guid brainId, bool enabled, float rate, bool probabilistic)
+        {
+            return Task.FromResult(new IoCommandResult(
+                brainId,
+                "set_plasticity",
+                true,
+                "applied",
+                new BrainEnergyState
+                {
+                    PlasticityEnabled = enabled,
+                    PlasticityRate = rate,
+                    PlasticityProbabilisticUpdates = probabilistic
+                }));
+        }
+    }
+
+    private sealed class NullWorkbenchEventSink : IWorkbenchEventSink
+    {
+        public void OnOutputEvent(OutputEventItem item) { }
+        public void OnOutputVectorEvent(OutputVectorEventItem item) { }
+        public void OnDebugEvent(DebugEventItem item) { }
+        public void OnVizEvent(VizEventItem item) { }
+        public void OnBrainTerminated(BrainTerminatedItem item) { }
+        public void OnIoStatus(string status, bool connected) { }
+        public void OnObsStatus(string status, bool connected) { }
+        public void OnSettingsStatus(string status, bool connected) { }
+        public void OnHiveMindStatus(string status, bool connected) { }
+        public void OnSettingChanged(SettingItem item) { }
+    }
+}

@@ -33,6 +33,9 @@ switch (command)
     case "init-artifacts":
         await InitArtifactsAsync(remaining);
         break;
+    case "io-scenario":
+        await RunIoScenarioAsync(remaining);
+        break;
     case "run-brain":
         await RunBrainAsync(remaining);
         break;
@@ -154,6 +157,152 @@ static async Task RunBrainAsync(string[] args)
 
     await system.Remote().ShutdownAsync(true);
     await system.ShutdownAsync();
+}
+
+static async Task RunIoScenarioAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12070;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var ioAddress = GetArg(args, "--io-address") ?? throw new InvalidOperationException("--io-address is required.");
+    var ioId = GetArg(args, "--io-id") ?? "io-gateway";
+    var brainId = GetGuidArg(args, "--brain-id") ?? throw new InvalidOperationException("--brain-id is required.");
+    var credit = GetLongArg(args, "--credit") ?? 500;
+    var rate = GetLongArg(args, "--rate") ?? 0;
+    var costEnabled = GetBoolArg(args, "--cost-enabled") ?? true;
+    var energyEnabled = GetBoolArg(args, "--energy-enabled") ?? true;
+    var plasticityEnabled = GetBoolArg(args, "--plasticity-enabled") ?? true;
+    var plasticityRate = GetFloatArg(args, "--plasticity-rate") ?? 0.05f;
+    var probabilistic = GetBoolArg(args, "--probabilistic") ?? true;
+    var timeoutSeconds = GetIntArg(args, "--timeout-seconds") ?? 10;
+    var jsonOnly = HasFlag(args, "--json");
+    var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var ioPid = new PID(ioAddress, ioId);
+        var protoBrainId = brainId.ToProtoUuid();
+
+        var creditAck = await system.Root.RequestAsync<IoCommandAck>(
+            ioPid,
+            new EnergyCredit
+            {
+                BrainId = protoBrainId,
+                Amount = credit
+            },
+            timeout);
+
+        var rateAck = await system.Root.RequestAsync<IoCommandAck>(
+            ioPid,
+            new EnergyRate
+            {
+                BrainId = protoBrainId,
+                UnitsPerSecond = rate
+            },
+            timeout);
+
+        var costEnergyAck = await system.Root.RequestAsync<IoCommandAck>(
+            ioPid,
+            new SetCostEnergyEnabled
+            {
+                BrainId = protoBrainId,
+                CostEnabled = costEnabled,
+                EnergyEnabled = energyEnabled
+            },
+            timeout);
+
+        var plasticityAck = await system.Root.RequestAsync<IoCommandAck>(
+            ioPid,
+            new SetPlasticityEnabled
+            {
+                BrainId = protoBrainId,
+                PlasticityEnabled = plasticityEnabled,
+                PlasticityRate = plasticityRate,
+                ProbabilisticUpdates = probabilistic
+            },
+            timeout);
+
+        var brainInfo = await system.Root.RequestAsync<BrainInfo>(
+            ioPid,
+            new BrainInfoRequest
+            {
+                BrainId = protoBrainId
+            },
+            timeout);
+
+        var payload = new
+        {
+            brain_id = brainId.ToString("D"),
+            io_address = ioAddress,
+            io_id = ioId,
+            credit_ack = ToAckPayload(creditAck),
+            rate_ack = ToAckPayload(rateAck),
+            cost_energy_ack = ToAckPayload(costEnergyAck),
+            plasticity_ack = ToAckPayload(plasticityAck),
+            brain_info = new
+            {
+                cost_enabled = brainInfo.CostEnabled,
+                energy_enabled = brainInfo.EnergyEnabled,
+                energy_remaining = brainInfo.EnergyRemaining,
+                energy_rate_units_per_second = brainInfo.EnergyRateUnitsPerSecond,
+                plasticity_enabled = brainInfo.PlasticityEnabled,
+                plasticity_rate = brainInfo.PlasticityRate,
+                plasticity_probabilistic_updates = brainInfo.PlasticityProbabilisticUpdates,
+                last_tick_cost = brainInfo.LastTickCost
+            }
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"Scenario brain: {brainId:D}");
+            Console.WriteLine($"Credit ack: success={creditAck.Success} message={creditAck.Message}");
+            Console.WriteLine($"Rate ack: success={rateAck.Success} message={rateAck.Message}");
+            Console.WriteLine($"Cost/Energy ack: success={costEnergyAck.Success} message={costEnergyAck.Message}");
+            Console.WriteLine($"Plasticity ack: success={plasticityAck.Success} message={plasticityAck.Message}");
+            Console.WriteLine(
+                $"BrainInfo: cost={brainInfo.CostEnabled} energy={brainInfo.EnergyEnabled} remaining={brainInfo.EnergyRemaining} " +
+                $"rate={brainInfo.EnergyRateUnitsPerSecond}/s plasticity={brainInfo.PlasticityEnabled} " +
+                $"mode={(brainInfo.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute")} plasticityRate={brainInfo.PlasticityRate:0.######}");
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+}
+
+static object ToAckPayload(IoCommandAck ack)
+{
+    return new
+    {
+        command = ack.Command,
+        success = ack.Success,
+        message = ack.Message,
+        has_energy_state = ack.HasEnergyState,
+        energy_state = ack.HasEnergyState && ack.EnergyState is not null
+            ? new
+            {
+                cost_enabled = ack.EnergyState.CostEnabled,
+                energy_enabled = ack.EnergyState.EnergyEnabled,
+                energy_remaining = ack.EnergyState.EnergyRemaining,
+                energy_rate_units_per_second = ack.EnergyState.EnergyRateUnitsPerSecond,
+                plasticity_enabled = ack.EnergyState.PlasticityEnabled,
+                plasticity_rate = ack.EnergyState.PlasticityRate,
+                plasticity_probabilistic_updates = ack.EnergyState.PlasticityProbabilisticUpdates,
+                last_tick_cost = ack.EnergyState.LastTickCost
+            }
+            : null
+    };
 }
 
 static byte[] BuildMinimalNbn()
@@ -329,6 +478,7 @@ static RemoteConfig BuildRemoteConfig(string bindHost, int port, string? adverti
         NbnCommonReflection.Descriptor,
         NbnControlReflection.Descriptor,
         NbnDebugReflection.Descriptor,
+        NbnIoReflection.Descriptor,
         NbnSettingsReflection.Descriptor,
         NbnSignalsReflection.Descriptor,
         NbnVizReflection.Descriptor);
@@ -392,6 +542,44 @@ static int? GetIntArg(string[] args, string name)
     return int.TryParse(value, out var parsed) ? parsed : null;
 }
 
+static long? GetLongArg(string[] args, string name)
+{
+    var value = GetArg(args, name);
+    return long.TryParse(value, out var parsed) ? parsed : null;
+}
+
+static float? GetFloatArg(string[] args, string name)
+{
+    var value = GetArg(args, name);
+    return float.TryParse(value, out var parsed) ? parsed : null;
+}
+
+static bool? GetBoolArg(string[] args, string name)
+{
+    var value = GetArg(args, name);
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return null;
+    }
+
+    if (bool.TryParse(value, out var parsed))
+    {
+        return parsed;
+    }
+
+    if (value == "1")
+    {
+        return true;
+    }
+
+    if (value == "0")
+    {
+        return false;
+    }
+
+    return null;
+}
+
 static int? GetEnvInt(string key)
 {
     var value = Environment.GetEnvironmentVariable(key);
@@ -411,6 +599,9 @@ static void PrintHelp()
 {
     Console.WriteLine("NBN DemoHost usage:");
     Console.WriteLine("  init-artifacts --artifact-root <path> [--json]");
+    Console.WriteLine("  io-scenario --io-address <host:port> --io-id <name> --brain-id <guid>");
+    Console.WriteLine("             [--credit <int64>] [--rate <int64>] [--cost-enabled <bool>] [--energy-enabled <bool>]");
+    Console.WriteLine("             [--plasticity-enabled <bool>] [--plasticity-rate <float>] [--probabilistic <bool>] [--json]");
     Console.WriteLine("  run-brain --bind-host <host> --port <port> --brain-id <guid>");
     Console.WriteLine("            --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("            [--router-id <name>] [--brain-root-id <name>]");

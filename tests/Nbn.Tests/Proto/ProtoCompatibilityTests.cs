@@ -229,6 +229,20 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_IoCommandAck_Fields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var ack = descriptor.MessageTypes.Single(message => message.Name == "IoCommandAck");
+
+        AssertField(ack, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(ack, "command", 2, FieldType.String);
+        AssertField(ack, "success", 3, FieldType.Bool);
+        AssertField(ack, "message", 4, FieldType.String);
+        AssertField(ack, "has_energy_state", 5, FieldType.Bool);
+        AssertField(ack, "energy_state", 6, FieldType.Message, "nbn.io.BrainEnergyState");
+    }
+
+    [Fact]
     public void ProtoIo_RequestSnapshot_Fields_AreStable()
     {
         var descriptor = NbnIoReflection.Descriptor;

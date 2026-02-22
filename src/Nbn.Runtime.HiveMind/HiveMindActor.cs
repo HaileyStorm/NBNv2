@@ -451,6 +451,11 @@ public sealed class HiveMindActor : IActor
         }
 
         var terminationReason = string.IsNullOrWhiteSpace(reason) ? "killed" : reason.Trim();
+        if (string.Equals(terminationReason, "energy_exhausted", StringComparison.OrdinalIgnoreCase))
+        {
+            HiveMindTelemetry.RecordEnergyDepleted(brainId);
+            EmitDebug(context, ProtoSeverity.SevWarn, "energy.depleted", $"Brain {brainId} energy depleted.");
+        }
 
         if (_ioPid is not null)
         {
@@ -1001,6 +1006,7 @@ public sealed class HiveMindActor : IActor
                 brain.LastTickCost = cost;
             }
 
+            HiveMindTelemetry.RecordBrainTickCost(entry.Key, cost);
             context.Send(_ioPid, new ApplyTickCost(entry.Key, tickId, cost));
         }
     }
@@ -1562,6 +1568,7 @@ public sealed class HiveMindActor : IActor
         var baseHeader = NbnBinary.ReadNbnHeader(nbnBytes);
         var captures = await CaptureShardSnapshotsAsync(system, request.BrainId, request.SnapshotTickId, request.Shards).ConfigureAwait(false);
         var (_, overlays) = BuildSnapshotSections(baseHeader, captures);
+        HiveMindTelemetry.RecordRebaseOverlayRecords(request.BrainId, overlays.Count);
         if (overlays.Count == 0)
         {
             return request.BaseDefinition;
@@ -1726,6 +1733,7 @@ public sealed class HiveMindActor : IActor
         var captures = await CaptureShardSnapshotsAsync(system, request.BrainId, request.SnapshotTickId, request.Shards).ConfigureAwait(false);
 
         var (regions, overlays) = BuildSnapshotSections(baseHeader, captures);
+        HiveMindTelemetry.RecordSnapshotOverlayRecords(request.BrainId, overlays.Count);
         var flags = 0x1u;
         if (overlays.Count > 0)
         {

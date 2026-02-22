@@ -28,6 +28,7 @@ public class RegionShardCpuBackendPlasticityTests
 
         var contribution = Assert.Single(Assert.Single(result.Outbox).Value);
         Assert.Equal(0.45f, contribution.Value, precision: 6);
+        Assert.True(result.PlasticityStrengthCodeChanges > 0);
 
         Assert.Equal(0.725f, state.Axons.Strengths[0], precision: 6);
         var expectedRuntimeCode = (byte)QuantizationSchemas.DefaultNbn.Strength.Encode(state.Axons.Strengths[0], bits: 5);
@@ -70,7 +71,7 @@ public class RegionShardCpuBackendPlasticityTests
         var routing = CreateRouting(probabilisticState.RegionId, probabilisticState.NeuronCount, destRegionId: 9, destCount: 1);
 
         var probabilisticBackend = new RegionShardCpuBackend(probabilisticState);
-        _ = probabilisticBackend.Compute(
+        var probabilisticResult = probabilisticBackend.Compute(
             tickId: gatedTick,
             brainId: Guid.NewGuid(),
             shardId: ShardId32.From(probabilisticState.RegionId, 0),
@@ -81,7 +82,7 @@ public class RegionShardCpuBackendPlasticityTests
             probabilisticPlasticityUpdates: true);
 
         var deterministicBackend = new RegionShardCpuBackend(deterministicState);
-        _ = deterministicBackend.Compute(
+        var deterministicResult = deterministicBackend.Compute(
             tickId: gatedTick,
             brainId: Guid.NewGuid(),
             shardId: ShardId32.From(deterministicState.RegionId, 0),
@@ -93,6 +94,8 @@ public class RegionShardCpuBackendPlasticityTests
 
         Assert.Equal(0.5f, probabilisticState.Axons.Strengths[0], precision: 6);
         Assert.True(deterministicState.Axons.Strengths[0] > 0.5f);
+        Assert.Equal((uint)0, probabilisticResult.PlasticityStrengthCodeChanges);
+        Assert.True(deterministicResult.PlasticityStrengthCodeChanges > 0);
     }
 
     [Fact]
@@ -115,6 +118,7 @@ public class RegionShardCpuBackendPlasticityTests
 
         var contribution = Assert.Single(Assert.Single(result.Outbox).Value);
         Assert.Equal(0f, contribution.Value, precision: 6);
+        Assert.Equal((uint)0, result.PlasticityStrengthCodeChanges);
         Assert.Equal(0f, state.Axons.Strengths[0], precision: 6);
         Assert.Equal(baseCode, state.Axons.RuntimeStrengthCodes[0]);
         Assert.False(state.Axons.HasRuntimeOverlay[0]);

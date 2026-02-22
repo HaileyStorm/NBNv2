@@ -463,7 +463,8 @@
                 <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
               </Grid>
               <StackPanel Orientation="Horizontal" Spacing="12">
-                <CheckBox Content="Cost + Energy Enabled" IsChecked="{Binding Brain.CostEnergyEnabled}" />
+                <CheckBox Content="Cost Enabled" IsChecked="{Binding Brain.CostEnabled}" />
+                <CheckBox Content="Energy Enabled" IsChecked="{Binding Brain.EnergyEnabled}" />
                 <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
               </StackPanel>
             </StackPanel>

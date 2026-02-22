@@ -370,45 +370,17 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     public void ApplyEnergyCreditSelected()
     {
-        if (!TryGetSelectedBrain(out var brainId))
-        {
-            return;
-        }
-
-        if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
-        {
-            BrainInfoSummary = "Credit value invalid.";
-            return;
-        }
-
-        _client.SendEnergyCredit(brainId, amount);
+        _ = ApplyEnergyCreditSelectedAsync();
     }
 
     public void ApplyEnergyRateSelected()
     {
-        if (!TryGetSelectedBrain(out var brainId))
-        {
-            return;
-        }
-
-        if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
-        {
-            BrainInfoSummary = "Rate value invalid.";
-            return;
-        }
-
-        _client.SendEnergyRate(brainId, rate);
+        _ = ApplyEnergyRateSelectedAsync();
     }
 
     public void ApplyCostEnergySelected()
     {
-        if (!TryGetSelectedBrain(out var brainId))
-        {
-            return;
-        }
-
-        var enabled = CostEnergyEnabled;
-        _client.SetCostEnergy(brainId, enabled, enabled);
+        _ = ApplyCostEnergySelectedAsync();
     }
 
     public bool TrySendInputSelected(uint index, float value, out string status)
@@ -625,40 +597,22 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void ApplyEnergyCredit()
     {
-        if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
-        {
-            BrainInfoSummary = "Credit value invalid.";
-            return;
-        }
-        ForEachTargetBrain(brainId => _client.SendEnergyCredit(brainId, amount));
+        _ = ApplyEnergyCreditAsync();
     }
 
     private void ApplyEnergyRate()
     {
-        if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
-        {
-            BrainInfoSummary = "Rate value invalid.";
-            return;
-        }
-        ForEachTargetBrain(brainId => _client.SendEnergyRate(brainId, rate));
+        _ = ApplyEnergyRateAsync();
     }
 
     private void ApplyCostEnergy()
     {
-        var enabled = CostEnergyEnabled;
-        ForEachTargetBrain(brainId => _client.SetCostEnergy(brainId, enabled, enabled));
+        _ = ApplyCostEnergyAsync();
     }
 
     private void ApplyPlasticity()
     {
-        if (!float.TryParse(PlasticityRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
-        {
-            BrainInfoSummary = "Plasticity rate invalid.";
-            return;
-        }
-
-        var probabilistic = SelectedPlasticityMode?.Probabilistic ?? true;
-        ForEachTargetBrain(brainId => _client.SetPlasticity(brainId, PlasticityEnabled, rate, probabilistic));
+        _ = ApplyPlasticityAsync();
     }
 
     private void ClearOutputs()
@@ -713,25 +667,206 @@ public sealed class IoPanelViewModel : ViewModelBase
         return false;
     }
 
-    private void ForEachTargetBrain(Action<Guid> action)
+    private async Task ApplyEnergyCreditSelectedAsync()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
+        {
+            BrainInfoSummary = "Credit value invalid.";
+            return;
+        }
+
+        var result = await _client.SendEnergyCreditAsync(brainId, amount).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Energy credit", new[] { result });
+    }
+
+    private async Task ApplyEnergyRateSelectedAsync()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
+        {
+            BrainInfoSummary = "Rate value invalid.";
+            return;
+        }
+
+        var result = await _client.SendEnergyRateAsync(brainId, rate).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Energy rate", new[] { result });
+    }
+
+    private async Task ApplyCostEnergySelectedAsync()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        var result = await _client.SetCostEnergyAsync(brainId, CostEnabled, EnergyEnabled).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Cost/Energy flags", new[] { result });
+    }
+
+    private async Task ApplyEnergyCreditAsync()
+    {
+        if (!long.TryParse(EnergyCreditText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var amount))
+        {
+            BrainInfoSummary = "Credit value invalid.";
+            return;
+        }
+
+        if (!TryGetTargetBrains(out var targets))
+        {
+            return;
+        }
+
+        var results = await Task.WhenAll(targets.Select(brainId => _client.SendEnergyCreditAsync(brainId, amount))).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Energy credit", results);
+    }
+
+    private async Task ApplyEnergyRateAsync()
+    {
+        if (!long.TryParse(EnergyRateText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rate))
+        {
+            BrainInfoSummary = "Rate value invalid.";
+            return;
+        }
+
+        if (!TryGetTargetBrains(out var targets))
+        {
+            return;
+        }
+
+        var results = await Task.WhenAll(targets.Select(brainId => _client.SendEnergyRateAsync(brainId, rate))).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Energy rate", results);
+    }
+
+    private async Task ApplyCostEnergyAsync()
+    {
+        if (!TryGetTargetBrains(out var targets))
+        {
+            return;
+        }
+
+        var costEnabled = CostEnabled;
+        var energyEnabled = EnergyEnabled;
+        var results = await Task.WhenAll(targets.Select(brainId => _client.SetCostEnergyAsync(brainId, costEnabled, energyEnabled))).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Cost/Energy flags", results);
+    }
+
+    private async Task ApplyPlasticityAsync()
+    {
+        if (!TryParsePlasticityRate(out var rate))
+        {
+            BrainInfoSummary = "Plasticity rate invalid.";
+            return;
+        }
+
+        if (!TryGetTargetBrains(out var targets))
+        {
+            return;
+        }
+
+        var probabilistic = SelectedPlasticityMode?.Probabilistic ?? true;
+        var enabled = PlasticityEnabled;
+        var results = await Task.WhenAll(targets.Select(brainId => _client.SetPlasticityAsync(brainId, enabled, rate, probabilistic))).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Plasticity", results);
+    }
+
+    private bool TryGetTargetBrains(out IReadOnlyList<Guid> targets)
     {
         if (_activeBrains.Count > 0)
         {
-            foreach (var brainId in _activeBrains)
-            {
-                action(brainId);
-            }
-
-            return;
+            targets = _activeBrains;
+            return true;
         }
 
         if (!TryGetBrainId(out var fallbackBrainId))
         {
             BrainInfoSummary = "No active brains available.";
+            targets = Array.Empty<Guid>();
+            return false;
+        }
+
+        targets = new[] { fallbackBrainId };
+        return true;
+    }
+
+    private bool TryParsePlasticityRate(out float rate)
+    {
+        if (!float.TryParse(PlasticityRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out rate))
+        {
+            return false;
+        }
+
+        return float.IsFinite(rate) && rate >= 0f;
+    }
+
+    private void ApplyCommandResultToSummary(string operation, IReadOnlyList<IoCommandResult> results)
+    {
+        if (results.Count == 0)
+        {
             return;
         }
 
-        action(fallbackBrainId);
+        BrainEnergyState? selectedState = null;
+        foreach (var result in results)
+        {
+            if (!result.Success || result.EnergyState is null)
+            {
+                continue;
+            }
+
+            if (_selectedBrainId.HasValue && result.BrainId == _selectedBrainId.Value)
+            {
+                selectedState = result.EnergyState;
+            }
+        }
+
+        var successes = results.Where(result => result.Success).ToList();
+        var failures = results.Where(result => !result.Success).ToList();
+        string summary;
+        if (failures.Count == 0)
+        {
+            summary = FormattableString.Invariant($"{operation}: applied to {successes.Count} brain(s).");
+        }
+        else
+        {
+            var failedIds = string.Join(", ", failures.Select(result => FormattableString.Invariant($"{result.BrainId:D} ({result.Message})")));
+            if (successes.Count == 0)
+            {
+                summary = FormattableString.Invariant($"{operation}: failed for {failures.Count} brain(s): {failedIds}");
+            }
+            else
+            {
+                summary = FormattableString.Invariant($"{operation}: {successes.Count}/{results.Count} succeeded. Failed: {failedIds}");
+            }
+        }
+
+        _dispatcher.Post(() =>
+        {
+            if (selectedState is not null)
+            {
+                CostEnabled = selectedState.CostEnabled;
+                EnergyEnabled = selectedState.EnergyEnabled;
+                PlasticityEnabled = selectedState.PlasticityEnabled;
+                EnergyRateText = selectedState.EnergyRateUnitsPerSecond.ToString(CultureInfo.InvariantCulture);
+                PlasticityRateText = selectedState.PlasticityRate.ToString("0.######", CultureInfo.InvariantCulture);
+
+                var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == selectedState.PlasticityProbabilisticUpdates);
+                if (selectedMode is not null)
+                {
+                    SelectedPlasticityMode = selectedMode;
+                }
+            }
+
+            BrainInfoSummary = summary;
+        });
     }
 
     private static IReadOnlyList<float> ParseVector(string raw)

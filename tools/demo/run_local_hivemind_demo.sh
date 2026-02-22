@@ -9,10 +9,18 @@ REGIONHOST_PORT="${REGIONHOST_PORT:-12040}"
 REGION_ID="${REGION_ID:-1}"
 SHARD_INDEX="${SHARD_INDEX:-0}"
 ROUTER_ID="${ROUTER_ID:-demo-router}"
+RUN_ENERGY_SCENARIO="${RUN_ENERGY_SCENARIO:-false}"
+IO_ADDRESS="${IO_ADDRESS:-}"
+IO_ID="${IO_ID:-io-gateway}"
+SCENARIO_CREDIT="${SCENARIO_CREDIT:-500}"
+SCENARIO_RATE="${SCENARIO_RATE:-3}"
+SCENARIO_PLASTICITY_RATE="${SCENARIO_PLASTICITY_RATE:-0.05}"
+SCENARIO_PROBABILISTIC="${SCENARIO_PROBABILISTIC:-true}"
 
 usage() {
   echo "Usage: $(basename "$0") [--demo-root PATH] [--bind-host HOST] [--hivemind-port PORT] [--brainhost-port PORT] [--regionhost-port PORT]"
   echo "       [--region-id ID] [--shard-index IDX] [--router-id NAME]"
+  echo "       [--run-energy-scenario true|false --io-address host:port --io-id name]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -33,6 +41,20 @@ while [[ $# -gt 0 ]]; do
       SHARD_INDEX="$2"; shift 2;;
     --router-id)
       ROUTER_ID="$2"; shift 2;;
+    --run-energy-scenario)
+      RUN_ENERGY_SCENARIO="$2"; shift 2;;
+    --io-address)
+      IO_ADDRESS="$2"; shift 2;;
+    --io-id)
+      IO_ID="$2"; shift 2;;
+    --scenario-credit)
+      SCENARIO_CREDIT="$2"; shift 2;;
+    --scenario-rate)
+      SCENARIO_RATE="$2"; shift 2;;
+    --scenario-plasticity-rate)
+      SCENARIO_PLASTICITY_RATE="$2"; shift 2;;
+    --scenario-probabilistic)
+      SCENARIO_PROBABILISTIC="$2"; shift 2;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -95,6 +117,7 @@ REGION_LOG="$LOG_ROOT/regionhost.log"
 HIVE_ERR="$LOG_ROOT/hivemind.err.log"
 BRAIN_ERR="$LOG_ROOT/brainhost.err.log"
 REGION_ERR="$LOG_ROOT/regionhost.err.log"
+SCENARIO_LOG="$LOG_ROOT/energy-plasticity-scenario.log"
 
 cleanup() {
   for pid in "${REGION_PID:-}" "${BRAIN_PID:-}" "${HIVE_PID:-}"; do
@@ -148,6 +171,33 @@ while [[ $SECONDS -lt $deadline ]]; do
   fi
   sleep 0.25
  done
+
+if [[ "${RUN_ENERGY_SCENARIO,,}" == "true" ]]; then
+  if [[ -z "$IO_ADDRESS" ]]; then
+    echo "Energy/plasticity scenario skipped: --io-address is required." >&2
+  else
+    scenario_args=(
+      io-scenario
+      --io-address "$IO_ADDRESS"
+      --io-id "$IO_ID"
+      --brain-id "$BRAIN_ID"
+      --credit "$SCENARIO_CREDIT"
+      --rate "$SCENARIO_RATE"
+      --cost-enabled true
+      --energy-enabled true
+      --plasticity-enabled true
+      --plasticity-rate "$SCENARIO_PLASTICITY_RATE"
+      --probabilistic "$SCENARIO_PROBABILISTIC"
+      --json
+    )
+
+    if [[ -x "$DEMO_EXE" ]]; then
+      "$DEMO_EXE" "${scenario_args[@]}" | tee "$SCENARIO_LOG"
+    else
+      DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- "${scenario_args[@]}" | tee "$SCENARIO_LOG"
+    fi
+  fi
+fi
 
 printf "Press Enter to stop the demo.\n"
 read -r

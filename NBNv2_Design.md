@@ -799,6 +799,13 @@ IO supports:
 * energy rate
 * enable/disable cost and energy
 
+Command writes can be sent as requests and return `IoCommandAck` with:
+
+* command name
+* success/failure
+* reason text
+* optional runtime `BrainEnergyState` snapshot for immediate operator feedback
+
 ### 13.6 Brain death notifications
 
 When a brain terminates, IO publishes:
@@ -971,6 +978,10 @@ Metrics include:
 * shard compute ms, deliver ms
 * reschedule events
 * per-brain cost and energy
+* per-brain tick-cost totals
+* energy depletion counts
+* plasticity strength-code mutation counts
+* snapshot/rebase overlay record counts
 * signal batch sizes and counts
 
 Traces include:
@@ -978,6 +989,8 @@ Traces include:
 * tick phase spans
 * reschedule/recovery spans
 * artifact fetch spans
+* energy depletion milestones
+* plasticity mutation milestones
 
 ### 15.3 Lateness accounting
 
@@ -2129,6 +2142,15 @@ message SetPlasticityEnabled {
   bool probabilistic_updates = 4;
 }
 
+message IoCommandAck {
+  nbn.Uuid brain_id = 1;
+  string command = 2;
+  bool success = 3;
+  string message = 4;
+  bool has_energy_state = 5;
+  BrainEnergyState energy_state = 6; // set when has_energy_state=true
+}
+
 message RequestSnapshot {
   nbn.Uuid brain_id = 1;
 }
@@ -2419,9 +2441,21 @@ For a minimal end-to-end smoke test, use the demo scripts:
 * Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) with a single self-loop axon in region 1 to exercise SignalBatch delivery, and stores it in a local artifact store
 * Starts SettingsMonitor, HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), a RegionHost shard for region 1, IO Gateway, and Observability
 * Logs output to `tools/demo/local-demo/logs`
+* Includes an energy/plasticity scenario step via `Nbn.Tools.DemoHost io-scenario` that applies credit/rate/cost-energy/plasticity commands and emits JSON acks
 
 The demo uses default ports (SettingsMonitor 12010, HiveMind 12020, BrainHost 12011, RegionHost 12040, IO 12050, Observability 12060) and can be edited in the script
 parameters if needed.
+
+Troubleshooting:
+
+* If `io-scenario` returns `brain_not_found`, verify `RegisterBrain` reached IO (`io.log`) and that `--brain-id` matches the demo BrainId.
+* If command requests timeout, verify `--io-address`/`--io-id` and ensure IO Gateway is running before scenario execution.
+* For observability checks, verify metrics/traces for:
+  `nbn.hivemind.brain.tick_cost.total`,
+  `nbn.hivemind.brain.energy.depleted`,
+  `nbn.regionhost.plasticity.strength_code.changed`,
+  `nbn.hivemind.snapshot.overlay.records`,
+  `nbn.hivemind.rebase.overlay.records`.
 
 ---
 

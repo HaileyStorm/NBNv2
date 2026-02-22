@@ -175,6 +175,15 @@ message SetPlasticityEnabled {
   bool probabilistic_updates = 4;
 }
 
+message IoCommandAck {
+  nbn.Uuid brain_id = 1;
+  string command = 2;
+  bool success = 3;
+  string message = 4;
+  bool has_energy_state = 5;
+  BrainEnergyState energy_state = 6;
+}
+
 message RequestSnapshot {
   nbn.Uuid brain_id = 1;
   bool has_runtime_state = 2;

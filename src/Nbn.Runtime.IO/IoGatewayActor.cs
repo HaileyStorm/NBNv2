@@ -68,10 +68,10 @@ public sealed class IoGatewayActor : IActor
                 await ForwardOutputAsync(context, message);
                 break;
             case EnergyCredit message:
-                ApplyEnergyCredit(message);
+                ApplyEnergyCredit(context, message);
                 break;
             case EnergyRate message:
-                ApplyEnergyRate(message);
+                ApplyEnergyRate(context, message);
                 break;
             case SetCostEnergyEnabled message:
                 ApplyCostEnergyFlags(context, message);
@@ -309,10 +309,11 @@ public sealed class IoGatewayActor : IActor
         }
     }
 
-    private void ApplyEnergyCredit(EnergyCredit message)
+    private void ApplyEnergyCredit(IContext context, EnergyCredit message)
     {
         if (!TryGetBrainEntry(message, out var entry))
         {
+            RespondCommandAck(context, message.BrainId, "energy_credit", success: false, "brain_not_found");
             return;
         }
 
@@ -321,27 +322,33 @@ public sealed class IoGatewayActor : IActor
         {
             entry.EnergyDepletedSignaled = false;
         }
+
+        RespondCommandAck(context, message.BrainId, "energy_credit", success: true, "applied", entry);
     }
 
-    private void ApplyEnergyRate(EnergyRate message)
+    private void ApplyEnergyRate(IContext context, EnergyRate message)
     {
         if (!TryGetBrainEntry(message, out var entry))
         {
+            RespondCommandAck(context, message.BrainId, "energy_rate", success: false, "brain_not_found");
             return;
         }
 
         entry.Energy.SetEnergyRate(message.UnitsPerSecond);
+        RespondCommandAck(context, message.BrainId, "energy_rate", success: true, "applied", entry);
     }
 
     private void ApplyCostEnergyFlags(IContext context, SetCostEnergyEnabled message)
     {
         if (!TryGetBrainEntry(message, out var entry))
         {
+            RespondCommandAck(context, message.BrainId, "set_cost_energy", success: false, "brain_not_found");
             return;
         }
 
         entry.Energy.SetCostEnergyEnabled(message.CostEnabled, message.EnergyEnabled);
 
+        var ackMessage = "applied";
         if (_hiveMindPid is not null)
         {
             context.Send(_hiveMindPid, new ProtoControl.SetBrainCostEnergy
@@ -351,17 +358,31 @@ public sealed class IoGatewayActor : IActor
                 EnergyEnabled = message.EnergyEnabled
             });
         }
+        else
+        {
+            ackMessage = "applied_local_only_hivemind_unavailable";
+        }
+
+        RespondCommandAck(context, message.BrainId, "set_cost_energy", success: true, ackMessage, entry);
     }
 
     private void ApplyPlasticityFlags(IContext context, SetPlasticityEnabled message)
     {
         if (!TryGetBrainEntry(message, out var entry))
         {
+            RespondCommandAck(context, message.BrainId, "set_plasticity", success: false, "brain_not_found");
+            return;
+        }
+
+        if (!float.IsFinite(message.PlasticityRate) || message.PlasticityRate < 0f)
+        {
+            RespondCommandAck(context, message.BrainId, "set_plasticity", success: false, "plasticity_rate_invalid", entry);
             return;
         }
 
         entry.Energy.SetPlasticity(message.PlasticityEnabled, message.PlasticityRate, message.ProbabilisticUpdates);
 
+        var ackMessage = "applied";
         if (_hiveMindPid is not null)
         {
             context.Send(_hiveMindPid, new ProtoControl.SetBrainPlasticity
@@ -372,6 +393,12 @@ public sealed class IoGatewayActor : IActor
                 ProbabilisticUpdates = message.ProbabilisticUpdates
             });
         }
+        else
+        {
+            ackMessage = "applied_local_only_hivemind_unavailable";
+        }
+
+        RespondCommandAck(context, message.BrainId, "set_plasticity", success: true, ackMessage, entry);
     }
 
     private void ApplyTickCost(IContext context, ApplyTickCost message)
@@ -1018,6 +1045,51 @@ public sealed class IoGatewayActor : IActor
         }
 
         return brainId.TryToGuid(out guid);
+    }
+
+    private static Nbn.Proto.Io.BrainEnergyState BuildCommandEnergyState(BrainEnergyState energy)
+    {
+        return new Nbn.Proto.Io.BrainEnergyState
+        {
+            EnergyRemaining = energy.EnergyRemaining,
+            EnergyRateUnitsPerSecond = energy.EnergyRateUnitsPerSecond,
+            CostEnabled = energy.CostEnabled,
+            EnergyEnabled = energy.EnergyEnabled,
+            PlasticityEnabled = energy.PlasticityEnabled,
+            PlasticityRate = energy.PlasticityRate,
+            PlasticityProbabilisticUpdates = energy.PlasticityProbabilisticUpdates,
+            LastTickCost = energy.LastTickCost
+        };
+    }
+
+    private static void RespondCommandAck(
+        IContext context,
+        Uuid? brainId,
+        string command,
+        bool success,
+        string message,
+        BrainIoEntry? entry = null)
+    {
+        if (context.Sender is null)
+        {
+            return;
+        }
+
+        var ack = new IoCommandAck
+        {
+            BrainId = brainId ?? Guid.Empty.ToProtoUuid(),
+            Command = command,
+            Success = success,
+            Message = message ?? string.Empty,
+            HasEnergyState = entry is not null
+        };
+
+        if (entry is not null)
+        {
+            ack.EnergyState = BuildCommandEnergyState(entry.Energy);
+        }
+
+        context.Respond(ack);
     }
 
     private ProtoControl.BrainTerminated BuildEnergyTerminated(BrainIoEntry entry, long lastTickCost)
