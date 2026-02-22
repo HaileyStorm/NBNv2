@@ -28,6 +28,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int MaxPendingEvents = 1600;
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
+    private const int MinLodRouteBudget = 16;
+    private const int MaxLodRouteBudget = 4096;
+    private const int DefaultLodLowZoomBudget = 120;
+    private const int DefaultLodMediumZoomBudget = 220;
+    private const int DefaultLodHighZoomBudget = 360;
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
@@ -65,6 +70,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private BrainListItem? _selectedBrain;
     private VizPanelTypeOption _selectedVizType;
     private VizCanvasColorModeOption _selectedCanvasColorMode;
+    private VizCanvasLayoutModeOption _selectedLayoutMode;
     private bool _suspendSelection;
     private VizEventItem? _selectedEvent;
     private string _selectedPayload = string.Empty;
@@ -72,6 +78,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _tickRateOverrideText = string.Empty;
     private string _tickRateOverrideSummary = "Tick override: default backpressure target.";
     private bool _includeLowSignalEvents;
+    private bool _enableAdaptiveLod = true;
+    private string _lodLowZoomBudgetText = DefaultLodLowZoomBudget.ToString(CultureInfo.InvariantCulture);
+    private string _lodMediumZoomBudgetText = DefaultLodMediumZoomBudget.ToString(CultureInfo.InvariantCulture);
+    private string _lodHighZoomBudgetText = DefaultLodHighZoomBudget.ToString(CultureInfo.InvariantCulture);
+    private string _lodSummary = $"Adaptive LOD enabled (routes low/med/high: {DefaultLodLowZoomBudget}/{DefaultLodMediumZoomBudget}/{DefaultLodHighZoomBudget}).";
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
     private double _activityCanvasWidth = VizActivityCanvasLayoutBuilder.CanvasWidth;
@@ -122,6 +133,9 @@ public sealed class VizPanelViewModel : ViewModelBase
     private long _hitTestSamples;
     private CollectionDiffStats _lastCanvasNodeDiffStats;
     private CollectionDiffStats _lastCanvasEdgeDiffStats;
+    private double _canvasViewportScale = 1.0;
+    private CancellationTokenSource? _projectionLayoutRefreshCts;
+    private int _projectionLayoutRefreshVersion;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -139,6 +153,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedVizType = VizPanelTypeOptions[0];
         CanvasColorModeOptions = new ObservableCollection<VizCanvasColorModeOption>(VizCanvasColorModeOption.CreateDefaults());
         _selectedCanvasColorMode = CanvasColorModeOptions[0];
+        LayoutModeOptions = new ObservableCollection<VizCanvasLayoutModeOption>(VizCanvasLayoutModeOption.CreateDefaults());
+        _selectedLayoutMode = LayoutModeOptions[0];
         ClearCommand = new RelayCommand(Clear);
         AddBrainCommand = new RelayCommand(AddBrainFromEntry);
         ZoomCommand = new RelayCommand(ZoomRegion);
@@ -158,6 +174,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         NavigateCanvasSelectionCommand = new RelayCommand(NavigateToCanvasSelection);
         TogglePinSelectionCommand = new RelayCommand(TogglePinForCurrentSelection);
         ClearCanvasInteractionCommand = new RelayCommand(ClearCanvasInteraction);
+        UpdateLodSummary();
         RefreshActivityProjection();
     }
 
@@ -213,6 +230,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public ObservableCollection<VizPanelTypeOption> VizPanelTypeOptions { get; }
 
     public ObservableCollection<VizCanvasColorModeOption> CanvasColorModeOptions { get; }
+
+    public ObservableCollection<VizCanvasLayoutModeOption> LayoutModeOptions { get; }
 
     public string BrainEntryText
     {
@@ -273,7 +292,56 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
+    public VizCanvasLayoutModeOption SelectedLayoutMode
+    {
+        get => _selectedLayoutMode;
+        set
+        {
+            if (SetProperty(ref _selectedLayoutMode, value))
+            {
+                RefreshCanvasLayoutOnly();
+            }
+        }
+    }
+
     public string CanvasColorModeHint => SelectedCanvasColorMode.LegendHint;
+
+    public bool EnableAdaptiveLod
+    {
+        get => _enableAdaptiveLod;
+        set
+        {
+            if (SetProperty(ref _enableAdaptiveLod, value))
+            {
+                UpdateLodSummary();
+                RefreshCanvasLayoutOnly();
+            }
+        }
+    }
+
+    public string LodLowZoomBudgetText
+    {
+        get => _lodLowZoomBudgetText;
+        set => SetProperty(ref _lodLowZoomBudgetText, value);
+    }
+
+    public string LodMediumZoomBudgetText
+    {
+        get => _lodMediumZoomBudgetText;
+        set => SetProperty(ref _lodMediumZoomBudgetText, value);
+    }
+
+    public string LodHighZoomBudgetText
+    {
+        get => _lodHighZoomBudgetText;
+        set => SetProperty(ref _lodHighZoomBudgetText, value);
+    }
+
+    public string LodSummary
+    {
+        get => _lodSummary;
+        private set => SetProperty(ref _lodSummary, value);
+    }
 
     public string RegionFocusText
     {
@@ -529,6 +597,21 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         _dispatcher.Post(FlushPendingEvents);
+    }
+
+    public void SetCanvasViewportScale(double scale)
+    {
+        if (!double.IsFinite(scale) || scale <= 0.0)
+        {
+            scale = 1.0;
+        }
+
+        var previousTier = GetViewportScaleTier(_canvasViewportScale);
+        _canvasViewportScale = scale;
+        if (EnableAdaptiveLod && previousTier != GetViewportScaleTier(_canvasViewportScale))
+        {
+            RefreshCanvasLayoutOnly();
+        }
     }
 
     public void SelectCanvasNode(VizActivityCanvasNode? node)
@@ -934,13 +1017,35 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParseLodRouteBudget(LodLowZoomBudgetText, out var lowBudget))
+        {
+            Status = $"LOD low-zoom budget must be an integer in {MinLodRouteBudget}-{MaxLodRouteBudget}.";
+            return;
+        }
+
+        if (!TryParseLodRouteBudget(LodMediumZoomBudgetText, out var mediumBudget))
+        {
+            Status = $"LOD medium-zoom budget must be an integer in {MinLodRouteBudget}-{MaxLodRouteBudget}.";
+            return;
+        }
+
+        if (!TryParseLodRouteBudget(LodHighZoomBudgetText, out var highBudget))
+        {
+            Status = $"LOD high-zoom budget must be an integer in {MinLodRouteBudget}-{MaxLodRouteBudget}.";
+            return;
+        }
+
         TickWindowText = tickWindow.ToString(CultureInfo.InvariantCulture);
+        LodLowZoomBudgetText = lowBudget.ToString(CultureInfo.InvariantCulture);
+        LodMediumZoomBudgetText = mediumBudget.ToString(CultureInfo.InvariantCulture);
+        LodHighZoomBudgetText = highBudget.ToString(CultureInfo.InvariantCulture);
+        UpdateLodSummary();
         RefreshFilteredEvents();
         if (SelectedBrain is not null)
         {
             QueueDefinitionTopologyHydration(SelectedBrain.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
         }
-        Status = $"Applied activity options (tick window {tickWindow}).";
+        Status = $"Applied activity options (tick window {tickWindow}, adaptive LOD {(EnableAdaptiveLod ? "on" : "off")}).";
     }
 
     private async Task ApplyTickRateOverrideAsync()
@@ -1299,7 +1404,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         sb.AppendLine(
-            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents}");
+            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
         sb.AppendLine(
             $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count}");
         sb.AppendLine(
@@ -1373,23 +1478,57 @@ public sealed class VizPanelViewModel : ViewModelBase
             ParseTickWindowOrDefault(),
             IncludeLowSignalEvents,
             TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null);
+        var eventsSnapshot = VizEvents.ToList();
+        var topology = BuildTopologySnapshotForSelectedBrain();
+        var interaction = BuildCanvasInteractionState();
+        var colorMode = SelectedCanvasColorMode.Mode;
+        var renderOptions = BuildCanvasRenderOptions();
 
-        var projectionStart = Stopwatch.GetTimestamp();
-        var projection = VizActivityProjectionBuilder.Build(VizEvents, options);
-        _lastProjectionBuildMs = StopwatchElapsedMs(projectionStart);
-        _currentProjection = projection;
-        _currentProjectionOptions = options;
+        if (eventsSnapshot.Count == 0)
+        {
+            var refreshVersion = Interlocked.Increment(ref _projectionLayoutRefreshVersion);
+            CancelAndDisposeProjectionLayoutCts();
+            var result = BuildProjectionAndCanvasSnapshot(eventsSnapshot, options, topology, interaction, colorMode, renderOptions);
+            ApplyProjectionAndCanvasSnapshot(refreshVersion, result);
+            return;
+        }
 
-        ReplaceItems(ActivityStats, projection.Stats);
-        ReplaceItems(RegionActivity, projection.Regions.Take(SnapshotRegionRows).ToList());
-        ReplaceItems(EdgeActivity, projection.Edges.Take(SnapshotEdgeRows).ToList());
-        ReplaceItems(TickActivity, projection.Ticks);
-        ActivitySummary = projection.Summary;
-        RefreshCanvasLayoutOnly();
+        var version = Interlocked.Increment(ref _projectionLayoutRefreshVersion);
+        var cts = new CancellationTokenSource();
+        var previousCts = Interlocked.Exchange(ref _projectionLayoutRefreshCts, cts);
+        previousCts?.Cancel();
+        previousCts?.Dispose();
+        _ = Task.Run(
+                () => BuildProjectionAndCanvasSnapshot(eventsSnapshot, options, topology, interaction, colorMode, renderOptions, cts.Token),
+                cts.Token)
+            .ContinueWith(task =>
+            {
+                if (cts.IsCancellationRequested || task.IsCanceled)
+                {
+                    return;
+                }
+
+                if (task.IsFaulted)
+                {
+                    _dispatcher.Post(() =>
+                    {
+                        if (version == Volatile.Read(ref _projectionLayoutRefreshVersion))
+                        {
+                            var error = task.Exception?.GetBaseException().Message ?? "unknown error";
+                            Status = $"Visualizer projection refresh failed: {error}";
+                        }
+                    });
+                    return;
+                }
+
+                var result = task.Result;
+                _dispatcher.Post(() => ApplyProjectionAndCanvasSnapshot(version, result));
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
     }
 
     private void RefreshCanvasLayoutOnly()
     {
+        InvalidatePendingProjectionLayoutRefresh();
         var frameStart = Stopwatch.GetTimestamp();
         if (_currentProjection is null)
         {
@@ -1410,36 +1549,27 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         var topology = BuildTopologySnapshotForSelectedBrain();
-        var interaction = new VizActivityCanvasInteractionState(
-            _selectedCanvasNodeKey,
-            _selectedCanvasRouteLabel,
-            _hoverCanvasNodeKey,
-            _hoverCanvasRouteLabel,
-            _pinnedCanvasNodes,
-            _pinnedCanvasRoutes);
+        var interaction = BuildCanvasInteractionState();
+        var renderOptions = BuildCanvasRenderOptions();
         var layoutStart = Stopwatch.GetTimestamp();
         var canvas = VizActivityCanvasLayoutBuilder.Build(
             _currentProjection,
             _currentProjectionOptions,
             interaction,
             topology,
-            SelectedCanvasColorMode.Mode);
+            SelectedCanvasColorMode.Mode,
+            renderOptions);
 
         if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
         {
-            interaction = new VizActivityCanvasInteractionState(
-                _selectedCanvasNodeKey,
-                _selectedCanvasRouteLabel,
-                _hoverCanvasNodeKey,
-                _hoverCanvasRouteLabel,
-                _pinnedCanvasNodes,
-                _pinnedCanvasRoutes);
+            interaction = BuildCanvasInteractionState();
             canvas = VizActivityCanvasLayoutBuilder.Build(
                 _currentProjection,
                 _currentProjectionOptions,
                 interaction,
                 topology,
-                SelectedCanvasColorMode.Mode);
+                SelectedCanvasColorMode.Mode,
+                renderOptions);
         }
 
         canvas = NormalizeCanvasLayout(canvas);
@@ -1455,6 +1585,144 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
         _lastCanvasFrameMs = StopwatchElapsedMs(frameStart);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
+    }
+
+    private ProjectionCanvasSnapshot BuildProjectionAndCanvasSnapshot(
+        IReadOnlyList<VizEventItem> eventsSnapshot,
+        VizActivityProjectionOptions options,
+        VizActivityCanvasTopology topology,
+        VizActivityCanvasInteractionState interaction,
+        VizActivityCanvasColorMode colorMode,
+        VizActivityCanvasRenderOptions renderOptions,
+        CancellationToken cancellationToken = default)
+    {
+        var projectionStart = Stopwatch.GetTimestamp();
+        var projection = VizActivityProjectionBuilder.Build(eventsSnapshot, options);
+        cancellationToken.ThrowIfCancellationRequested();
+        var projectionMs = StopwatchElapsedMs(projectionStart);
+
+        var layoutStart = Stopwatch.GetTimestamp();
+        var canvas = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            options,
+            interaction,
+            topology,
+            colorMode,
+            renderOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        var layoutMs = StopwatchElapsedMs(layoutStart);
+        return new ProjectionCanvasSnapshot(projection, options, canvas, projectionMs, layoutMs);
+    }
+
+    private void ApplyProjectionAndCanvasSnapshot(int refreshVersion, ProjectionCanvasSnapshot snapshot)
+    {
+        if (refreshVersion != Volatile.Read(ref _projectionLayoutRefreshVersion))
+        {
+            return;
+        }
+
+        _currentProjection = snapshot.Projection;
+        _currentProjectionOptions = snapshot.Options;
+
+        ReplaceItems(ActivityStats, snapshot.Projection.Stats);
+        ReplaceItems(RegionActivity, snapshot.Projection.Regions.Take(SnapshotRegionRows).ToList());
+        ReplaceItems(EdgeActivity, snapshot.Projection.Edges.Take(SnapshotEdgeRows).ToList());
+        ReplaceItems(TickActivity, snapshot.Projection.Ticks);
+        ActivitySummary = snapshot.Projection.Summary;
+
+        var layoutMs = snapshot.LayoutMs;
+        var canvas = NormalizeCanvasLayout(snapshot.Canvas);
+        if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
+        {
+            var layoutRebuildStart = Stopwatch.GetTimestamp();
+            canvas = NormalizeCanvasLayout(
+                VizActivityCanvasLayoutBuilder.Build(
+                    snapshot.Projection,
+                    snapshot.Options,
+                    BuildCanvasInteractionState(),
+                    BuildTopologySnapshotForSelectedBrain(),
+                    SelectedCanvasColorMode.Mode,
+                    BuildCanvasRenderOptions()));
+            layoutMs += StopwatchElapsedMs(layoutRebuildStart);
+        }
+
+        var applyStart = Stopwatch.GetTimestamp();
+        _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
+        _lastCanvasEdgeDiffStats = ApplyKeyedDiff(CanvasEdges, canvas.Edges, static item => item.RouteLabel);
+        RebuildCanvasHitIndex(canvas.Nodes, canvas.Edges);
+        ActivityCanvasLegend = $"{canvas.Legend} | Color mode: {SelectedCanvasColorMode.Label} ({SelectedCanvasColorMode.LegendHint})";
+        UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
+        RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
+        _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
+        _lastProjectionBuildMs = snapshot.ProjectionMs;
+        _lastCanvasLayoutBuildMs = layoutMs;
+        _lastCanvasFrameMs = snapshot.ProjectionMs + layoutMs + _lastCanvasApplyMs;
+        OnPropertyChanged(nameof(TogglePinSelectionLabel));
+    }
+
+    private VizActivityCanvasInteractionState BuildCanvasInteractionState()
+        => new(
+            _selectedCanvasNodeKey,
+            _selectedCanvasRouteLabel,
+            _hoverCanvasNodeKey,
+            _hoverCanvasRouteLabel,
+            _pinnedCanvasNodes,
+            _pinnedCanvasRoutes);
+
+    private VizActivityCanvasRenderOptions BuildCanvasRenderOptions()
+        => new(
+            SelectedLayoutMode.Mode,
+            _canvasViewportScale,
+            new VizActivityCanvasLodOptions(
+                EnableAdaptiveLod,
+                ParseLodRouteBudgetOrDefault(LodLowZoomBudgetText, DefaultLodLowZoomBudget),
+                ParseLodRouteBudgetOrDefault(LodMediumZoomBudgetText, DefaultLodMediumZoomBudget),
+                ParseLodRouteBudgetOrDefault(LodHighZoomBudgetText, DefaultLodHighZoomBudget)));
+
+    private static int ParseLodRouteBudgetOrDefault(string value, int fallback)
+        => TryParseLodRouteBudget(value, out var parsed) ? parsed : fallback;
+
+    private void InvalidatePendingProjectionLayoutRefresh()
+    {
+        Interlocked.Increment(ref _projectionLayoutRefreshVersion);
+        CancelAndDisposeProjectionLayoutCts();
+    }
+
+    private void CancelAndDisposeProjectionLayoutCts()
+    {
+        var cts = Interlocked.Exchange(ref _projectionLayoutRefreshCts, null);
+        if (cts is null)
+        {
+            return;
+        }
+
+        cts.Cancel();
+        cts.Dispose();
+    }
+
+    private void UpdateLodSummary()
+    {
+        var low = ParseLodRouteBudgetOrDefault(LodLowZoomBudgetText, DefaultLodLowZoomBudget);
+        var medium = ParseLodRouteBudgetOrDefault(LodMediumZoomBudgetText, DefaultLodMediumZoomBudget);
+        var high = ParseLodRouteBudgetOrDefault(LodHighZoomBudgetText, DefaultLodHighZoomBudget);
+        LodSummary = EnableAdaptiveLod
+            ? $"Adaptive LOD enabled (routes low/med/high: {low}/{medium}/{high})."
+            : "Adaptive LOD disabled (full-route fidelity mode).";
+    }
+
+    private static int GetViewportScaleTier(double scale)
+    {
+        if (scale < 0.9)
+        {
+            return 0;
+        }
+
+        if (scale < 1.8)
+        {
+            return 1;
+        }
+
+        return 2;
     }
 
     private VizActivityCanvasLayout NormalizeCanvasLayout(VizActivityCanvasLayout canvas)
@@ -1548,8 +1816,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 ControlX = controlX,
                 ControlY = controlY,
                 TargetX = targetX,
-                TargetY = targetY,
-                PathData = FormattableString.Invariant($"M {sourceX:0.###} {sourceY:0.###} Q {controlX:0.###} {controlY:0.###} {targetX:0.###} {targetY:0.###}")
+                TargetY = targetY
             });
         }
 
@@ -2988,6 +3255,23 @@ public sealed class VizPanelViewModel : ViewModelBase
         return true;
     }
 
+    private static bool TryParseLodRouteBudget(string? value, out int routeBudget)
+    {
+        routeBudget = 0;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return false;
+        }
+
+        if (parsed < MinLodRouteBudget || parsed > MaxLodRouteBudget)
+        {
+            return false;
+        }
+
+        routeBudget = parsed;
+        return true;
+    }
+
     private static bool TryParseRegionId(string? value, out uint regionId)
     {
         regionId = 0;
@@ -3127,6 +3411,13 @@ public sealed class VizPanelViewModel : ViewModelBase
         Nbn.Proto.ArtifactRef? Reference,
         string Source);
 
+    private readonly record struct ProjectionCanvasSnapshot(
+        VizActivityProjection Projection,
+        VizActivityProjectionOptions Options,
+        VizActivityCanvasLayout Canvas,
+        double ProjectionMs,
+        double LayoutMs);
+
     private sealed class BrainCanvasTopologyState
     {
         public HashSet<uint> Regions { get; } = new();
@@ -3189,6 +3480,16 @@ public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasCol
                 "Topology reference",
                 VizActivityCanvasColorMode.Topology,
                 "fill=topology slices, pulse=activity")
+        };
+}
+
+public sealed record VizCanvasLayoutModeOption(string Label, VizActivityCanvasLayoutMode Mode)
+{
+    public static IReadOnlyList<VizCanvasLayoutModeOption> CreateDefaults()
+        => new[]
+        {
+            new VizCanvasLayoutModeOption("Axial 2D", VizActivityCanvasLayoutMode.Axial2D),
+            new VizCanvasLayoutModeOption("Projected 3D (R&D)", VizActivityCanvasLayoutMode.Axial3DExperimental)
         };
 }
 

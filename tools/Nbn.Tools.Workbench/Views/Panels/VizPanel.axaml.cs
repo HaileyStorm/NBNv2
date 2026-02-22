@@ -854,6 +854,7 @@ public partial class VizPanel : UserControl
         {
             ActivityCanvasExtentHost.Width = viewModel.ActivityCanvasWidth * _canvasScale;
             ActivityCanvasExtentHost.Height = viewModel.ActivityCanvasHeight * _canvasScale;
+            viewModel.SetCanvasViewportScale(_canvasScale);
         }
 
         _canvasScaleTransform.ScaleX = _canvasScale;

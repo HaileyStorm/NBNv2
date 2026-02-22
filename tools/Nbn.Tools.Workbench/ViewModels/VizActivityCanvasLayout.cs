@@ -151,6 +151,33 @@ public enum VizActivityCanvasColorMode
     Topology = 2
 }
 
+public enum VizActivityCanvasLayoutMode
+{
+    Axial2D = 0,
+    Axial3DExperimental = 1
+}
+
+public sealed record VizActivityCanvasLodOptions(
+    bool Enabled,
+    int LowZoomRouteBudget,
+    int MediumZoomRouteBudget,
+    int HighZoomRouteBudget);
+
+public sealed record VizActivityCanvasRenderOptions(
+    VizActivityCanvasLayoutMode LayoutMode,
+    double ViewportScale,
+    VizActivityCanvasLodOptions Lod)
+{
+    public static VizActivityCanvasRenderOptions Default { get; } = new(
+        VizActivityCanvasLayoutMode.Axial2D,
+        1.0,
+        new VizActivityCanvasLodOptions(
+            Enabled: false,
+            LowZoomRouteBudget: 160,
+            MediumZoomRouteBudget: 280,
+            HighZoomRouteBudget: 420));
+}
+
 public static class VizActivityCanvasLayoutBuilder
 {
     public const double CanvasWidth = 860;
@@ -169,6 +196,8 @@ public static class VizActivityCanvasLayoutBuilder
     private const double EdgeNodeClearance = 4;
     private const double BaseEdgeStroke = 1.1;
     private const double MaxEdgeStrokeBoost = 2.8;
+    private const int MinAdaptiveRouteBudget = 16;
+    private const int MaxAdaptiveRouteBudget = 4096;
     private const int EdgeCurveCacheMaxEntries = 4096;
     private static readonly object EdgeCurveCacheGate = new();
     private static readonly Dictionary<CanvasEdgeCurveKey, CanvasEdgeCurve> EdgeCurveCache = new();
@@ -179,18 +208,20 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityProjectionOptions options,
         VizActivityCanvasInteractionState? interaction = null,
         VizActivityCanvasTopology? topology = null,
-        VizActivityCanvasColorMode colorMode = VizActivityCanvasColorMode.StateValue)
+        VizActivityCanvasColorMode colorMode = VizActivityCanvasColorMode.StateValue,
+        VizActivityCanvasRenderOptions? renderOptions = null)
     {
         interaction ??= VizActivityCanvasInteractionState.Empty;
         topology ??= VizActivityCanvasTopology.Empty;
+        renderOptions ??= VizActivityCanvasRenderOptions.Default;
 
         var latestTick = ResolveLatestTick(projection);
         if (options.FocusRegionId is uint focusRegionId)
         {
-            return BuildFocusedNeuronCanvas(projection, options, topology, interaction, latestTick, focusRegionId, colorMode);
+            return BuildFocusedNeuronCanvas(projection, options, topology, interaction, latestTick, focusRegionId, colorMode, renderOptions);
         }
 
-        return BuildRegionCanvas(projection, options, topology, interaction, latestTick, colorMode);
+        return BuildRegionCanvas(projection, options, topology, interaction, latestTick, colorMode, renderOptions);
     }
 
     private static VizActivityCanvasLayout BuildRegionCanvas(
@@ -199,7 +230,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityCanvasTopology topology,
         VizActivityCanvasInteractionState interaction,
         ulong latestTick,
-        VizActivityCanvasColorMode colorMode)
+        VizActivityCanvasColorMode colorMode,
+        VizActivityCanvasRenderOptions renderOptions)
     {
         var nodeSource = BuildRegionNodeSources(projection, topology);
         if (nodeSource.Count == 0)
@@ -212,7 +244,7 @@ public static class VizActivityCanvasLayoutBuilder
                 Array.Empty<VizActivityCanvasEdge>());
         }
 
-        var positions = BuildRegionPositions(nodeSource.Keys);
+        var positions = BuildRegionPositions(nodeSource.Keys, renderOptions.LayoutMode, out var used3DProjection, out var fellBackTo2D);
         var regionBufferMetrics = BuildRegionBufferMetrics(projection.WindowEvents);
         var regionRouteDegrees = BuildRegionRouteDegrees(projection, topology);
         var maxNodeEvents = Math.Max(1, nodeSource.Values.Max(item => item.EventCount));
@@ -289,7 +321,12 @@ public static class VizActivityCanvasLayoutBuilder
         }
 
         var edges = BuildRegionEdges(projection, options, topology, nodeByRegion, interaction, latestTick);
-        var legend = $"Region map | Regions {nodes.Count} | Routes {edges.Count} | Latest tick {latestTick}";
+        var layoutLegend = used3DProjection
+            ? "Layout 3D-projected"
+            : fellBackTo2D
+                ? "Layout 3D->2D fallback"
+                : "Layout 2D-axial";
+        var legend = $"Region map | Regions {nodes.Count} | Routes {edges.Count} | Latest tick {latestTick} | {layoutLegend}";
         return new VizActivityCanvasLayout(CanvasWidth, CanvasHeight, legend, nodes, edges);
     }
 
@@ -300,7 +337,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityCanvasInteractionState interaction,
         ulong latestTick,
         uint focusRegionId,
-        VizActivityCanvasColorMode colorMode)
+        VizActivityCanvasColorMode colorMode,
+        VizActivityCanvasRenderOptions renderOptions)
     {
         var routes = BuildFocusRoutes(projection, topology, focusRegionId);
         var focusNeuronStats = BuildFocusNeuronStats(routes, projection.WindowEvents, topology, focusRegionId);
@@ -488,9 +526,16 @@ public static class VizActivityCanvasLayoutBuilder
             nodeByKey[nodeKey] = node;
         }
 
-        var edges = BuildFocusedEdges(routes, nodeByKey, focusRegionId, options.TickWindow, latestTick, interaction);
+        var edgeBuild = BuildFocusedEdges(routes, nodeByKey, focusRegionId, options.TickWindow, latestTick, interaction, renderOptions);
+        var edges = edgeBuild.Edges;
         var gatewayCount = sortedGateways.Count;
-        var legend = $"Focus R{focusRegionId} | Neurons {sortedNeurons.Count} | Gateways {gatewayCount} | Routes {edges.Count} | Latest tick {latestTick}";
+        var lodLegend = edgeBuild.LodApplied
+            ? $" | LOD routes {edges.Count}/{edgeBuild.TotalDisplayRoutes} (budget {edgeBuild.RouteBudgetUsed})"
+            : string.Empty;
+        var layoutLegend = renderOptions.LayoutMode == VizActivityCanvasLayoutMode.Axial3DExperimental
+            ? " | 3D fallback to 2D in focus mode"
+            : string.Empty;
+        var legend = $"Focus R{focusRegionId} | Neurons {sortedNeurons.Count} | Gateways {gatewayCount} | Routes {edges.Count} | Latest tick {latestTick}{lodLegend}{layoutLegend}";
         return new VizActivityCanvasLayout(CanvasWidth, CanvasHeight, legend, nodes, edges);
     }
 
@@ -876,17 +921,18 @@ public static class VizActivityCanvasLayoutBuilder
         return byRegion;
     }
 
-    private static IReadOnlyList<VizActivityCanvasEdge> BuildFocusedEdges(
+    private static FocusedEdgeBuildResult BuildFocusedEdges(
         IReadOnlyDictionary<VizActivityCanvasNeuronRoute, FocusRouteAggregate> routes,
         IReadOnlyDictionary<string, VizActivityCanvasNode> nodeByKey,
         uint focusRegionId,
         int tickWindow,
         ulong latestTick,
-        VizActivityCanvasInteractionState interaction)
+        VizActivityCanvasInteractionState interaction,
+        VizActivityCanvasRenderOptions renderOptions)
     {
         if (routes.Count == 0)
         {
-            return Array.Empty<VizActivityCanvasEdge>();
+            return FocusedEdgeBuildResult.Empty;
         }
 
         var displayRoutes = new Dictionary<FocusDisplayRouteKey, FocusRouteAggregate>();
@@ -922,7 +968,25 @@ public static class VizActivityCanvasLayoutBuilder
 
         if (displayRoutes.Count == 0)
         {
-            return Array.Empty<VizActivityCanvasEdge>();
+            return FocusedEdgeBuildResult.Empty;
+        }
+
+        var totalDisplayRoutes = displayRoutes.Count;
+        var routeBudget = totalDisplayRoutes;
+        var lodApplied = false;
+        var lodOptions = renderOptions.Lod;
+        if (lodOptions.Enabled && totalDisplayRoutes > 0)
+        {
+            routeBudget = ResolveAdaptiveRouteBudget(
+                lodOptions,
+                renderOptions.ViewportScale,
+                nodeByKey.Count,
+                totalDisplayRoutes);
+            if (routeBudget < totalDisplayRoutes)
+            {
+                displayRoutes = ApplyFocusedRouteLod(displayRoutes, interaction, focusRegionId, latestTick, routeBudget);
+                lodApplied = displayRoutes.Count < totalDisplayRoutes;
+            }
         }
 
         var routeSet = new HashSet<(string SourceKey, string TargetKey)>(
@@ -1017,7 +1081,7 @@ public static class VizActivityCanvasLayoutBuilder
                 isPinned));
         }
 
-        return edges
+        var orderedEdges = edges
             .OrderByDescending(item => item.IsSelected)
             .ThenByDescending(item => item.IsHovered)
             .ThenByDescending(item => item.IsPinned)
@@ -1025,6 +1089,101 @@ public static class VizActivityCanvasLayoutBuilder
             .ThenByDescending(item => item.LastTick)
             .ThenBy(item => item.RouteLabel, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        return new FocusedEdgeBuildResult(
+            orderedEdges,
+            totalDisplayRoutes,
+            routeBudget,
+            lodApplied);
+    }
+
+    private static int ResolveAdaptiveRouteBudget(
+        VizActivityCanvasLodOptions options,
+        double viewportScale,
+        int nodeCount,
+        int routeCount)
+    {
+        if (!options.Enabled)
+        {
+            return routeCount;
+        }
+
+        var safeScale = double.IsFinite(viewportScale) && viewportScale > 0.0
+            ? viewportScale
+            : 1.0;
+        var baseBudget = safeScale < 0.9
+            ? options.LowZoomRouteBudget
+            : safeScale < 1.8
+                ? options.MediumZoomRouteBudget
+                : options.HighZoomRouteBudget;
+        baseBudget = Math.Clamp(baseBudget, MinAdaptiveRouteBudget, MaxAdaptiveRouteBudget);
+
+        var safeNodeCount = Math.Max(1, nodeCount);
+        var density = routeCount / (double)safeNodeCount;
+        var densityScale = density switch
+        {
+            >= 8.0 => 0.55,
+            >= 5.0 => 0.68,
+            >= 3.0 => 0.82,
+            _ => 1.0
+        };
+        var scaledBudget = (int)Math.Round(baseBudget * densityScale, MidpointRounding.AwayFromZero);
+        return Math.Clamp(scaledBudget, MinAdaptiveRouteBudget, MaxAdaptiveRouteBudget);
+    }
+
+    private static Dictionary<FocusDisplayRouteKey, FocusRouteAggregate> ApplyFocusedRouteLod(
+        IReadOnlyDictionary<FocusDisplayRouteKey, FocusRouteAggregate> displayRoutes,
+        VizActivityCanvasInteractionState interaction,
+        uint focusRegionId,
+        ulong latestTick,
+        int routeBudget)
+    {
+        if (displayRoutes.Count <= routeBudget)
+        {
+            return new Dictionary<FocusDisplayRouteKey, FocusRouteAggregate>(displayRoutes);
+        }
+
+        var candidates = new List<FocusRouteLodCandidate>(displayRoutes.Count);
+        foreach (var (key, aggregate) in displayRoutes)
+        {
+            var routeLabel = BuildFocusedDisplayRouteLabel(key.SourceNodeKey, key.TargetNodeKey, focusRegionId);
+            var isSelected = interaction.IsSelectedRoute(routeLabel);
+            var isHovered = interaction.IsHoveredRoute(routeLabel);
+            var isPinned = interaction.IsRoutePinned(routeLabel);
+            var recency = aggregate.LastTick == 0 ? 0.0 : TickRecency(aggregate.LastTick, latestTick, tickWindow: 512);
+            var score = (isSelected ? 2_000_000.0 : 0.0)
+                        + (isHovered ? 1_100_000.0 : 0.0)
+                        + (isPinned ? 850_000.0 : 0.0)
+                        + (aggregate.EventCount * 2_100.0)
+                        + (aggregate.RouteCount * 280.0)
+                        + (Math.Abs(aggregate.AverageMagnitude) * 180.0)
+                        + (Math.Abs(aggregate.AverageStrength) * 180.0)
+                        + (recency * 1_400.0);
+            candidates.Add(new FocusRouteLodCandidate(key, aggregate, isSelected, isHovered, isPinned, score));
+        }
+
+        var ordered = candidates
+            .OrderByDescending(item => item.IsSelected)
+            .ThenByDescending(item => item.IsHovered)
+            .ThenByDescending(item => item.IsPinned)
+            .ThenByDescending(item => item.Score)
+            .ToList();
+
+        var keep = new Dictionary<FocusDisplayRouteKey, FocusRouteAggregate>();
+        foreach (var item in ordered)
+        {
+            if (keep.Count >= routeBudget)
+            {
+                break;
+            }
+
+            if (!keep.ContainsKey(item.Key))
+            {
+                keep[item.Key] = item.Aggregate;
+            }
+        }
+
+        return keep;
     }
 
     private static FocusRouteAggregate MergeFocusRouteAggregate(FocusRouteAggregate current, FocusRouteAggregate next)
@@ -1067,7 +1226,30 @@ public static class VizActivityCanvasLayoutBuilder
             combinedRouteCount);
     }
 
-    private static Dictionary<uint, CanvasPoint> BuildRegionPositions(IEnumerable<uint> regionIds)
+    private static Dictionary<uint, CanvasPoint> BuildRegionPositions(
+        IEnumerable<uint> regionIds,
+        VizActivityCanvasLayoutMode layoutMode,
+        out bool used3DProjection,
+        out bool fellBackTo2D)
+    {
+        used3DProjection = false;
+        fellBackTo2D = false;
+        if (layoutMode == VizActivityCanvasLayoutMode.Axial3DExperimental
+            && TryBuildProjected3DRegionPositions(regionIds, out var projected))
+        {
+            used3DProjection = true;
+            return projected;
+        }
+
+        if (layoutMode == VizActivityCanvasLayoutMode.Axial3DExperimental)
+        {
+            fellBackTo2D = true;
+        }
+
+        return BuildRegionPositions2D(regionIds);
+    }
+
+    private static Dictionary<uint, CanvasPoint> BuildRegionPositions2D(IEnumerable<uint> regionIds)
     {
         var groupsBySlice = regionIds
             .GroupBy(GetRegionSlice)
@@ -1117,6 +1299,73 @@ public static class VizActivityCanvasLayoutBuilder
         }
 
         return positions;
+    }
+
+    private static bool TryBuildProjected3DRegionPositions(
+        IEnumerable<uint> regionIds,
+        out Dictionary<uint, CanvasPoint> positions)
+    {
+        var uniqueRegions = regionIds
+            .Distinct()
+            .OrderBy(GetRegionSlice)
+            .ThenBy(regionId => regionId)
+            .ToList();
+        positions = new Dictionary<uint, CanvasPoint>(uniqueRegions.Count);
+        if (uniqueRegions.Count == 0 || uniqueRegions.Count > NbnConstants.RegionCount)
+        {
+            return false;
+        }
+
+        const int minSlice = -3;
+        const int maxSlice = 3;
+        const double depthX = 62.0;
+        const double depthY = 23.0;
+        const double inSliceVertical = 72.0;
+        const double inSliceHorizontal = 12.0;
+
+        var groupsBySlice = uniqueRegions
+            .GroupBy(GetRegionSlice)
+            .OrderBy(group => group.Key)
+            .ToDictionary(group => group.Key, group => group.ToList());
+        foreach (var (slice, regions) in groupsBySlice)
+        {
+            var z = slice;
+            var depthRatio = 1.0 - (Math.Abs(z) / (double)maxSlice);
+            var laneCount = regions.Count;
+            for (var index = 0; index < laneCount; index++)
+            {
+                var lane = laneCount <= 1
+                    ? 0.0
+                    : ((double)index / (laneCount - 1) * 2.0) - 1.0;
+                var localX = lane * inSliceHorizontal * (1.0 + (0.3 * depthRatio));
+                var localY = lane * inSliceVertical * (0.7 + (0.45 * depthRatio));
+                var x = CenterX + localX + (z * depthX);
+                var y = CenterY + localY - (z * depthY);
+                x = Clamp(x, RegionNodePositionPadding, CanvasWidth - RegionNodePositionPadding);
+                y = Clamp(y, RegionNodePositionPadding, CanvasHeight - RegionNodePositionPadding);
+                positions[regions[index]] = new CanvasPoint(x, y);
+            }
+        }
+
+        var centersX = positions.Values.Select(point => point.X).ToList();
+        var centersY = positions.Values.Select(point => point.Y).ToList();
+        var xSpread = centersX.Max() - centersX.Min();
+        var ySpread = centersY.Max() - centersY.Min();
+        if (!double.IsFinite(xSpread) || !double.IsFinite(ySpread))
+        {
+            positions.Clear();
+            return false;
+        }
+
+        // Guardrail: fallback when projection collapses too narrowly for usable interaction.
+        var minimumExpectedXSpread = (maxSlice - minSlice) * 22.0;
+        if (xSpread < minimumExpectedXSpread || ySpread < 48.0)
+        {
+            positions.Clear();
+            return false;
+        }
+
+        return true;
     }
 
     private static IReadOnlyList<CanvasPoint> BuildConcentricPositions(
@@ -1266,7 +1515,7 @@ public static class VizActivityCanvasLayoutBuilder
         {
             focusRegionId
         };
-        var referencePositions = BuildRegionPositions(anchorRegions);
+        var referencePositions = BuildRegionPositions2D(anchorRegions);
         var hasFocusReference = referencePositions.TryGetValue(focusRegionId, out var focusReference);
         if (!hasFocusReference)
         {
@@ -2086,6 +2335,27 @@ public static class VizActivityCanvasLayoutBuilder
         string TargetNodeKey,
         uint SourceRegionId,
         uint TargetRegionId);
+
+    private readonly record struct FocusedEdgeBuildResult(
+        IReadOnlyList<VizActivityCanvasEdge> Edges,
+        int TotalDisplayRoutes,
+        int RouteBudgetUsed,
+        bool LodApplied)
+    {
+        public static FocusedEdgeBuildResult Empty { get; } = new(
+            Array.Empty<VizActivityCanvasEdge>(),
+            0,
+            0,
+            false);
+    }
+
+    private readonly record struct FocusRouteLodCandidate(
+        FocusDisplayRouteKey Key,
+        FocusRouteAggregate Aggregate,
+        bool IsSelected,
+        bool IsHovered,
+        bool IsPinned,
+        double Score);
 
     private readonly record struct FocusNeuronStat(
         int EventCount,

@@ -980,6 +980,157 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.Contains("value n=", gateway.Detail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Build_FocusModeAdaptiveLodUsesZoomTierBudgetsAndPreservesPinnedRoute()
+    {
+        const uint focusRegionId = 9;
+        const uint pinnedGatewayRegion = 30;
+        var focusAddress = uint.Parse(Address(focusRegionId, 0), CultureInfo.InvariantCulture);
+        var gatewayRegions = Enumerable.Range(10, 21).Select(index => (uint)index).ToList();
+        var neuronAddresses = new HashSet<uint> { focusAddress };
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+        foreach (var gatewayRegion in gatewayRegions)
+        {
+            var targetAddress = uint.Parse(Address(gatewayRegion, 0), CultureInfo.InvariantCulture);
+            neuronAddresses.Add(targetAddress);
+            neuronRoutes.Add(new VizActivityCanvasNeuronRoute(focusAddress, targetAddress));
+        }
+
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint>(gatewayRegions) { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            neuronAddresses,
+            neuronRoutes);
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var interaction = new VizActivityCanvasInteractionState(
+            SelectedNodeKey: null,
+            SelectedRouteLabel: null,
+            HoverNodeKey: null,
+            HoverRouteLabel: null,
+            PinnedNodeKeys: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            PinnedRouteLabels: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { $"N0 -> R{pinnedGatewayRegion}" });
+        var lod = new VizActivityCanvasLodOptions(
+            Enabled: true,
+            LowZoomRouteBudget: 16,
+            MediumZoomRouteBudget: 18,
+            HighZoomRouteBudget: 28);
+
+        var lowZoomLayout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            interaction,
+            topology,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(VizActivityCanvasLayoutMode.Axial2D, 0.72, lod));
+        var highZoomLayout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            interaction,
+            topology,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(VizActivityCanvasLayoutMode.Axial2D, 2.2, lod));
+
+        Assert.True(lowZoomLayout.Edges.Count <= 16, $"Expected low-zoom budget culling to <= 16 routes, got {lowZoomLayout.Edges.Count}.");
+        Assert.Contains(lowZoomLayout.Edges, edge => string.Equals(edge.RouteLabel, $"N0 -> R{pinnedGatewayRegion}", StringComparison.OrdinalIgnoreCase));
+        Assert.True(highZoomLayout.Edges.Count > lowZoomLayout.Edges.Count);
+        Assert.Contains("LOD routes", lowZoomLayout.Legend, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_FocusModeWithAdaptiveLodDisabledKeepsAllDisplayRoutes()
+    {
+        const uint focusRegionId = 9;
+        var focusAddress = uint.Parse(Address(focusRegionId, 0), CultureInfo.InvariantCulture);
+        var gatewayRegions = Enumerable.Range(10, 12).Select(index => (uint)index).ToList();
+        var neuronAddresses = new HashSet<uint> { focusAddress };
+        var neuronRoutes = new HashSet<VizActivityCanvasNeuronRoute>();
+        foreach (var gatewayRegion in gatewayRegions)
+        {
+            var targetAddress = uint.Parse(Address(gatewayRegion, 0), CultureInfo.InvariantCulture);
+            neuronAddresses.Add(targetAddress);
+            neuronRoutes.Add(new VizActivityCanvasNeuronRoute(focusAddress, targetAddress));
+        }
+
+        var topology = new VizActivityCanvasTopology(
+            new HashSet<uint>(gatewayRegions) { focusRegionId },
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            neuronAddresses,
+            neuronRoutes);
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            topology,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial2D,
+                0.5,
+                new VizActivityCanvasLodOptions(Enabled: false, LowZoomRouteBudget: 4, MediumZoomRouteBudget: 4, HighZoomRouteBudget: 4)));
+
+        Assert.Equal(gatewayRegions.Count, layout.Edges.Count);
+        Assert.DoesNotContain("LOD routes", layout.Legend, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_RegionModeProjected3DLayoutPreservesAxialOrdering()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronFired", tick: 1000, region: 0, source: Address(0, 0), target: Address(0, 0), value: 1f, strength: 0f),
+            CreateEvent("VizNeuronFired", tick: 1001, region: 9, source: Address(9, 0), target: Address(9, 0), value: 1f, strength: 0f),
+            CreateEvent("VizNeuronFired", tick: 1002, region: 31, source: Address(31, 0), target: Address(31, 0), value: 1f, strength: 0f),
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial3DExperimental,
+                1.0,
+                new VizActivityCanvasLodOptions(Enabled: false, LowZoomRouteBudget: 120, MediumZoomRouteBudget: 220, HighZoomRouteBudget: 360)));
+
+        var inputCenterX = Assert.Single(layout.Nodes, node => node.RegionId == 0).Left;
+        var centerCenterX = Assert.Single(layout.Nodes, node => node.RegionId == 9).Left;
+        var outputCenterX = Assert.Single(layout.Nodes, node => node.RegionId == 31).Left;
+        Assert.True(inputCenterX < centerCenterX && centerCenterX < outputCenterX);
+        Assert.Contains("Layout 3D-projected", layout.Legend, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_FocusModeWithProjected3DRequestUses2DFallbackLegend()
+    {
+        const uint focusRegionId = 9;
+        var projection = VizActivityProjectionBuilder.Build(
+            new[]
+            {
+                CreateEvent("VizNeuronFired", tick: 1200, region: focusRegionId, source: Address(focusRegionId, 0), target: Address(focusRegionId, 0), value: 1f, strength: 0f)
+            },
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial3DExperimental,
+                1.0,
+                new VizActivityCanvasLodOptions(Enabled: true, LowZoomRouteBudget: 40, MediumZoomRouteBudget: 80, HighZoomRouteBudget: 120)));
+
+        Assert.Contains("3D fallback to 2D in focus mode", layout.Legend, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>
