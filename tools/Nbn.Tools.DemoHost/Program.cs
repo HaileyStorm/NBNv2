@@ -40,6 +40,9 @@ switch (command)
     case "repro-scenario":
         await RunReproScenarioAsync(remaining);
         break;
+    case "repro-suite":
+        await RunReproSuiteAsync(remaining);
+        break;
     case "run-brain":
         await RunBrainAsync(remaining);
         break;
@@ -402,6 +405,479 @@ static async Task RunReproScenarioAsync(string[] args)
     }
 }
 
+static async Task RunReproSuiteAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12072;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var ioAddress = GetArg(args, "--io-address") ?? throw new InvalidOperationException("--io-address is required.");
+    var ioId = GetArg(args, "--io-id") ?? "io-gateway";
+    var parentASha = GetArg(args, "--parent-a-sha256") ?? GetArg(args, "--parent-sha256") ?? throw new InvalidOperationException("--parent-a-sha256 is required.");
+    var parentASize = GetULongArg(args, "--parent-a-size") ?? GetULongArg(args, "--parent-size") ?? throw new InvalidOperationException("--parent-a-size is required.");
+    var storeUri = GetArg(args, "--store-uri") ?? GetArg(args, "--artifact-root");
+    var seed = GetULongArg(args, "--seed") ?? 12345UL;
+    var timeoutSeconds = GetIntArg(args, "--timeout-seconds") ?? 10;
+    var jsonOnly = HasFlag(args, "--json");
+    var failOnCaseFailure = HasFlag(args, "--fail-on-case-failure");
+    var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+
+    var baseParent = parentASha.ToArtifactRef(parentASize, "application/x-nbn", storeUri);
+    var missingParent = new string('0', 64).ToArtifactRef(parentASize, "application/x-nbn", storeUri);
+    var parentBInvalidMedia = parentASha.ToArtifactRef(parentASize, "application/x-nbs", storeUri);
+
+    var variantRoot = ResolveArtifactRootForWrite(storeUri);
+    Directory.CreateDirectory(variantRoot);
+    var variantStoreUri = string.IsNullOrWhiteSpace(storeUri) ? variantRoot : storeUri;
+    var variantStore = new LocalArtifactStore(new ArtifactStoreOptions(variantRoot));
+    var variantBytes = BuildRegionSpanMismatchNbn();
+    var variantManifest = await variantStore.StoreAsync(new MemoryStream(variantBytes, writable: false), "application/x-nbn");
+    var variantParent = variantManifest.ArtifactId.ToHex().ToArtifactRef((ulong)Math.Max(0, variantManifest.ByteLength), "application/x-nbn", variantStoreUri);
+
+    var caseRows = new List<object>();
+    var passedCases = 0;
+    var ioPid = new PID(ioAddress, ioId);
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        await RunCaseAsync(
+            "compatible_spawn_never",
+            "Base parents match and spawn policy is never.",
+            new
+            {
+                compatible = true,
+                abort_reason = "",
+                child_def_present = true,
+                spawned = false
+            },
+            CreateArtifactsRequest(
+                baseParent,
+                baseParent,
+                Repro.StrengthSource.StrengthBaseOnly,
+                Repro.SpawnChildPolicy.SpawnChildNever,
+                seed,
+                null),
+            validate: (actual, failures) =>
+            {
+                ExpectResult(actual, failures);
+                ExpectEqual(actual.AbortReason, string.Empty, "abort_reason", failures);
+                ExpectTrue(actual.Compatible, "compatible", failures);
+                ExpectTrue(actual.ChildDefPresent, "child_def_present", failures);
+                ExpectFalse(actual.Spawned, "spawned", failures);
+            });
+
+        await RunCaseAsync(
+            "missing_parent_b_def",
+            "Parent B definition omitted.",
+            new
+            {
+                compatible = false,
+                abort_reason = "repro_missing_parent_b_def"
+            },
+            new Repro.ReproduceByArtifactsRequest
+            {
+                ParentADef = baseParent,
+                ParentBDef = null,
+                StrengthSource = Repro.StrengthSource.StrengthBaseOnly,
+                Config = new Repro.ReproduceConfig { SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever },
+                Seed = seed + 1
+            },
+            validate: (actual, failures) =>
+            {
+                ExpectResult(actual, failures);
+                ExpectEqual(actual.AbortReason, "repro_missing_parent_b_def", "abort_reason", failures);
+                ExpectFalse(actual.Compatible, "compatible", failures);
+            });
+
+        await RunCaseAsync(
+            "parent_b_media_type_invalid",
+            "Parent B media type is not application/x-nbn.",
+            new
+            {
+                compatible = false,
+                abort_reason = "repro_parent_b_media_type_invalid"
+            },
+            CreateArtifactsRequest(
+                baseParent,
+                parentBInvalidMedia,
+                Repro.StrengthSource.StrengthBaseOnly,
+                Repro.SpawnChildPolicy.SpawnChildNever,
+                seed + 2,
+                null),
+            validate: (actual, failures) =>
+            {
+                ExpectResult(actual, failures);
+                ExpectEqual(actual.AbortReason, "repro_parent_b_media_type_invalid", "abort_reason", failures);
+                ExpectFalse(actual.Compatible, "compatible", failures);
+            });
+
+        await RunCaseAsync(
+            "parent_a_artifact_not_found",
+            "Parent A hash not present in artifact store.",
+            new
+            {
+                compatible = false,
+                abort_reason = "repro_parent_a_artifact_not_found"
+            },
+            CreateArtifactsRequest(
+                missingParent,
+                baseParent,
+                Repro.StrengthSource.StrengthBaseOnly,
+                Repro.SpawnChildPolicy.SpawnChildNever,
+                seed + 3,
+                null),
+            validate: (actual, failures) =>
+            {
+                ExpectResult(actual, failures);
+                ExpectEqual(actual.AbortReason, "repro_parent_a_artifact_not_found", "abort_reason", failures);
+                ExpectFalse(actual.Compatible, "compatible", failures);
+            });
+
+        await RunCaseAsync(
+            "region_span_mismatch",
+            "Parent B has mismatched region span with zero span tolerance.",
+            new
+            {
+                compatible = false,
+                abort_reason = "repro_region_span_mismatch"
+            },
+            CreateArtifactsRequest(
+                baseParent,
+                variantParent,
+                Repro.StrengthSource.StrengthBaseOnly,
+                Repro.SpawnChildPolicy.SpawnChildNever,
+                seed + 4,
+                new Repro.ReproduceConfig
+                {
+                    SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever,
+                    MaxRegionSpanDiffRatio = 0f
+                }),
+            validate: (actual, failures) =>
+            {
+                ExpectResult(actual, failures);
+                ExpectEqual(actual.AbortReason, "repro_region_span_mismatch", "abort_reason", failures);
+                ExpectFalse(actual.Compatible, "compatible", failures);
+            });
+
+        await RunCaseAsync(
+            "strength_live_without_state",
+            "Strength source live codes with no parent state refs should fall back cleanly.",
+            new
+            {
+                compatible = true,
+                abort_reason = "",
+                child_def_present = true
+            },
+            CreateArtifactsRequest(
+                baseParent,
+                baseParent,
+                Repro.StrengthSource.StrengthLiveCodes,
+                Repro.SpawnChildPolicy.SpawnChildNever,
+                seed + 5,
+                null),
+            validate: (actual, failures) =>
+            {
+                ExpectResult(actual, failures);
+                ExpectEqual(actual.AbortReason, string.Empty, "abort_reason", failures);
+                ExpectTrue(actual.Compatible, "compatible", failures);
+                ExpectTrue(actual.ChildDefPresent, "child_def_present", failures);
+            });
+
+        await RunCaseAsync(
+            "spawn_always_attempt",
+            "Spawn policy always: either child spawns or a spawn-specific abort reason is returned.",
+            new
+            {
+                child_def_present = true,
+                spawned_or_spawn_abort_or_timeout = new[]
+                {
+                    "spawned",
+                    "repro_spawn_unavailable",
+                    "repro_child_artifact_missing",
+                    "repro_spawn_failed",
+                    "repro_spawn_request_failed",
+                    "request_timeout"
+                }
+            },
+            CreateArtifactsRequest(
+                baseParent,
+                baseParent,
+                Repro.StrengthSource.StrengthBaseOnly,
+                Repro.SpawnChildPolicy.SpawnChildAlways,
+                seed + 6,
+                null),
+            validate: (actual, failures) =>
+            {
+                if (!actual.ResultPresent)
+                {
+                    if (!IsExpectedRequestTimeout(actual.ExceptionMessage))
+                    {
+                        ExpectResult(actual, failures);
+                    }
+                    return;
+                }
+
+                ExpectTrue(actual.ChildDefPresent, "child_def_present", failures);
+                if (actual.Spawned)
+                {
+                    if (string.IsNullOrWhiteSpace(actual.ChildBrainId))
+                    {
+                        failures.Add("child_brain_id expected when spawned=true");
+                    }
+                }
+                else
+                {
+                    var allowed = new HashSet<string>(StringComparer.Ordinal)
+                    {
+                        "repro_spawn_unavailable",
+                        "repro_child_artifact_missing",
+                        "repro_spawn_failed",
+                        "repro_spawn_request_failed"
+                    };
+                    if (!allowed.Contains(actual.AbortReason))
+                    {
+                        failures.Add($"abort_reason expected spawn failure code, got '{actual.AbortReason}'.");
+                    }
+                }
+            });
+
+        var totalCases = caseRows.Count;
+        var failedCases = totalCases - passedCases;
+        var payload = new
+        {
+            suite = "nbn-repro-suite",
+            io_address = ioAddress,
+            io_id = ioId,
+            seed,
+            variant_parent = ToArtifactPayload(variantParent),
+            total_cases = totalCases,
+            passed_cases = passedCases,
+            failed_cases = failedCases,
+            all_passed = failedCases == 0,
+            cases = caseRows
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"Repro suite: {passedCases}/{totalCases} passed.");
+        }
+
+        if (failOnCaseFailure && failedCases > 0)
+        {
+            Environment.ExitCode = 2;
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+
+    return;
+
+    async Task RunCaseAsync(
+        string caseName,
+        string description,
+        object expected,
+        Repro.ReproduceByArtifactsRequest request,
+        Action<ReproObservation, List<string>> validate)
+    {
+        var started = DateTimeOffset.UtcNow;
+        Repro.ReproduceResult? result = null;
+        Exception? error = null;
+        try
+        {
+            result = await RequestReproduceByArtifactsAsync(system, ioPid, request, timeout);
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+        }
+
+        var elapsedMs = Math.Max(0L, (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds);
+        var observation = Observe(result, error);
+        var failures = new List<string>();
+        validate(observation, failures);
+        var passed = failures.Count == 0;
+        if (passed)
+        {
+            passedCases++;
+        }
+
+        caseRows.Add(new
+        {
+            name = caseName,
+            description,
+            passed,
+            duration_ms = elapsedMs,
+            expected,
+            actual = new
+            {
+                result_present = observation.ResultPresent,
+                exception = observation.ExceptionMessage,
+                compatible = observation.Compatible,
+                abort_reason = observation.AbortReason,
+                child_def_present = observation.ChildDefPresent,
+                spawned = observation.Spawned,
+                child_brain_id = observation.ChildBrainId
+            },
+            failures
+        });
+    }
+}
+
+static ReproObservation Observe(Repro.ReproduceResult? result, Exception? error)
+{
+    var report = result?.Report;
+    return new ReproObservation(
+        result is not null,
+        report?.Compatible ?? false,
+        NormalizeAbortReason(report),
+        HasValidArtifactRef(result?.ChildDef),
+        result?.Spawned ?? false,
+        ExtractChildBrainId(result),
+        error?.Message ?? string.Empty);
+}
+
+static async Task<Repro.ReproduceResult?> RequestReproduceByArtifactsAsync(
+    ActorSystem system,
+    PID ioPid,
+    Repro.ReproduceByArtifactsRequest request,
+    TimeSpan timeout)
+{
+    var response = await system.Root.RequestAsync<ReproduceResult>(
+        ioPid,
+        new ReproduceByArtifacts { Request = request },
+        timeout);
+    return response?.Result;
+}
+
+static Repro.ReproduceByArtifactsRequest CreateArtifactsRequest(
+    ArtifactRef parentA,
+    ArtifactRef? parentB,
+    Repro.StrengthSource strengthSource,
+    Repro.SpawnChildPolicy spawnChildPolicy,
+    ulong seed,
+    Repro.ReproduceConfig? config)
+{
+    config ??= new Repro.ReproduceConfig();
+    config.SpawnChild = spawnChildPolicy;
+    return new Repro.ReproduceByArtifactsRequest
+    {
+        ParentADef = parentA,
+        ParentBDef = parentB,
+        StrengthSource = strengthSource,
+        Config = config,
+        Seed = seed
+    };
+}
+
+static string NormalizeAbortReason(Repro.SimilarityReport? report)
+{
+    var reason = report?.AbortReason;
+    return string.IsNullOrWhiteSpace(reason) ? string.Empty : reason.Trim();
+}
+
+static string ExtractChildBrainId(Repro.ReproduceResult? result)
+{
+    if (result?.ChildBrainId is not null
+        && result.ChildBrainId.TryToGuid(out var id)
+        && id != Guid.Empty)
+    {
+        return id.ToString("D");
+    }
+
+    return string.Empty;
+}
+
+static bool HasValidArtifactRef(ArtifactRef? reference)
+{
+    if (reference is null || !reference.TryToSha256Bytes(out var bytes))
+    {
+        return false;
+    }
+
+    return bytes.Length == 32;
+}
+
+static void ExpectResult(ReproObservation actual, ICollection<string> failures)
+{
+    if (!actual.ResultPresent)
+    {
+        failures.Add(string.IsNullOrWhiteSpace(actual.ExceptionMessage)
+            ? "result missing"
+            : $"result missing: {actual.ExceptionMessage}");
+    }
+}
+
+static void ExpectEqual(string actual, string expected, string field, ICollection<string> failures)
+{
+    if (!string.Equals(actual, expected, StringComparison.Ordinal))
+    {
+        failures.Add($"{field} expected '{expected}', got '{actual}'.");
+    }
+}
+
+static void ExpectTrue(bool actual, string field, ICollection<string> failures)
+{
+    if (!actual)
+    {
+        failures.Add($"{field} expected true, got false.");
+    }
+}
+
+static void ExpectFalse(bool actual, string field, ICollection<string> failures)
+{
+    if (actual)
+    {
+        failures.Add($"{field} expected false, got true.");
+    }
+}
+
+static bool IsExpectedRequestTimeout(string? exceptionMessage)
+{
+    if (string.IsNullOrWhiteSpace(exceptionMessage))
+    {
+        return false;
+    }
+
+    return exceptionMessage.Contains("within the expected time", StringComparison.OrdinalIgnoreCase)
+        || exceptionMessage.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+        || exceptionMessage.Contains("timeout", StringComparison.OrdinalIgnoreCase);
+}
+
+static string ResolveArtifactRootForWrite(string? storeUri)
+{
+    if (!string.IsNullOrWhiteSpace(storeUri))
+    {
+        if (Uri.TryCreate(storeUri, UriKind.Absolute, out var uri) && uri.IsFile)
+        {
+            return uri.LocalPath;
+        }
+
+        if (!storeUri.Contains("://", StringComparison.Ordinal))
+        {
+            return storeUri;
+        }
+    }
+
+    var envRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+    if (!string.IsNullOrWhiteSpace(envRoot))
+    {
+        return envRoot;
+    }
+
+    return Path.Combine(Environment.CurrentDirectory, "artifacts");
+}
+
 static object ToAckPayload(IoCommandAck ack)
 {
     return new
@@ -490,6 +966,77 @@ static byte[] BuildMinimalNbn()
         1,
         10,
         brainSeed: 1,
+        axonStride: stride,
+        flags: 0,
+        quantization: QuantizationSchemas.DefaultNbn,
+        regions: directory);
+
+    return NbnBinary.WriteNbn(header, sections);
+}
+
+static byte[] BuildRegionSpanMismatchNbn()
+{
+    var stride = 1024u;
+    var sections = new List<NbnRegionSection>();
+    var directory = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
+    ulong offset = NbnBinary.NbnHeaderBytes;
+
+    var inputAxons = new[]
+    {
+        new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: 1)
+    };
+
+    offset = AddRegionSection(
+        0,
+        1,
+        stride,
+        ref directory,
+        sections,
+        offset,
+        neuronFactory: _ => new NeuronRecord(
+            axonCount: 1,
+            paramBCode: 0,
+            paramACode: 0,
+            activationThresholdCode: 0,
+            preActivationThresholdCode: 0,
+            resetFunctionId: 0,
+            activationFunctionId: 1,
+            accumulationFunctionId: 0,
+            exists: true),
+        axons: inputAxons);
+
+    var regionOneAxons = new[]
+    {
+        new AxonRecord(strengthCode: 31, targetNeuronId: 0, targetRegionId: NbnConstants.OutputRegionId)
+    };
+
+    offset = AddRegionSection(
+        1,
+        2,
+        stride,
+        ref directory,
+        sections,
+        offset,
+        neuronFactory: neuronId => new NeuronRecord(
+            axonCount: neuronId == 0 ? (ushort)1 : (ushort)0,
+            paramBCode: 0,
+            paramACode: 0,
+            activationThresholdCode: 0,
+            preActivationThresholdCode: 0,
+            resetFunctionId: 0,
+            activationFunctionId: 1,
+            accumulationFunctionId: 0,
+            exists: true),
+        axons: regionOneAxons);
+
+    AddRegionSection(NbnConstants.OutputRegionId, 1, stride, ref directory, sections, offset);
+
+    var header = new NbnHeaderV2(
+        "NBN2",
+        2,
+        1,
+        10,
+        brainSeed: 2,
         axonStride: stride,
         flags: 0,
         quantization: QuantizationSchemas.DefaultNbn,
@@ -776,8 +1323,19 @@ static void PrintHelp()
     Console.WriteLine("  repro-scenario --io-address <host:port> [--io-id <name>] --parent-a-sha256 <hex> --parent-a-size <bytes>");
     Console.WriteLine("                [--parent-b-sha256 <hex>] [--parent-b-size <bytes>] [--store-uri <path|file://uri>] [--seed <uint64>]");
     Console.WriteLine("                [--spawn-policy default|never|always] [--strength-source base|live] [--json]");
+    Console.WriteLine("  repro-suite --io-address <host:port> [--io-id <name>] --parent-a-sha256 <hex> --parent-a-size <bytes>");
+    Console.WriteLine("              [--store-uri <path|file://uri>] [--seed <uint64>] [--fail-on-case-failure] [--json]");
     Console.WriteLine("  run-brain --bind-host <host> --port <port> --brain-id <guid>");
     Console.WriteLine("            --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("            [--router-id <name>] [--brain-root-id <name>]");
     Console.WriteLine("            [--io-address <host:port>] [--io-id <name>]");
 }
+
+readonly record struct ReproObservation(
+    bool ResultPresent,
+    bool Compatible,
+    string AbortReason,
+    bool ChildDefPresent,
+    bool Spawned,
+    string ChildBrainId,
+    string ExceptionMessage);

@@ -14,6 +14,7 @@ param(
     [string]$PidFile = "",
     [switch]$RunEnergyPlasticityScenario = $true,
     [switch]$RunReproScenario = $true,
+    [switch]$RunReproSuite = $true,
     [long]$ScenarioCredit = 500,
     [long]$ScenarioRate = 3,
     [double]$ScenarioPlasticityRate = 0.05,
@@ -111,6 +112,7 @@ $obsErr = Join-Path $logRoot "observability.err.log"
 $settingsErr = Join-Path $logRoot "settingsmonitor.err.log"
 $scenarioLog = Join-Path $logRoot "energy-plasticity-scenario.log"
 $reproScenarioLog = Join-Path $logRoot "repro-scenario.log"
+$reproSuiteLog = Join-Path $logRoot "repro-suite.log"
 
 $hiveArgs = @(
     "run",
@@ -566,6 +568,37 @@ if ($RunReproScenario) {
         Write-Host "Repro JSON: $reproJson"
     } else {
         Write-Warning "Repro scenario did not emit JSON. See $reproScenarioLog."
+    }
+}
+
+if ($RunReproSuite) {
+    $reproSuiteArgs = @(
+        "repro-suite",
+        "--io-address", $ioAddress,
+        "--io-id", "io-gateway",
+        "--port", ($ReproPort + 3),
+        "--parent-a-sha256", $artifact.nbn_sha256,
+        "--parent-a-size", $artifact.nbn_size,
+        "--store-uri", $artifactRoot,
+        "--seed", $ReproSeed,
+        "--json"
+    )
+
+    $reproSuiteOutput = if (Test-Path $demoExe) {
+        & $demoExe @reproSuiteArgs
+    } else {
+        & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- @reproSuiteArgs
+    }
+
+    $reproSuiteOutput | Set-Content -Path $reproSuiteLog -Encoding UTF8
+    $reproSuiteJson = $reproSuiteOutput | Where-Object { $_ -match '^{.*}$' } | Select-Object -Last 1
+    if ($reproSuiteJson) {
+        $suitePayload = $reproSuiteJson | ConvertFrom-Json
+        Write-Host "Repro suite completed."
+        Write-Host ("Repro suite summary: {0}/{1} passed (all_passed={2})" -f $suitePayload.passed_cases, $suitePayload.total_cases, $suitePayload.all_passed)
+        Write-Host "Repro suite JSON: $reproSuiteJson"
+    } else {
+        Write-Warning "Repro suite did not emit JSON. See $reproSuiteLog."
     }
 }
 

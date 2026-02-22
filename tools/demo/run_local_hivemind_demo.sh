@@ -11,6 +11,7 @@ SHARD_INDEX="${SHARD_INDEX:-0}"
 ROUTER_ID="${ROUTER_ID:-demo-router}"
 RUN_ENERGY_SCENARIO="${RUN_ENERGY_SCENARIO:-false}"
 RUN_REPRO_SCENARIO="${RUN_REPRO_SCENARIO:-false}"
+RUN_REPRO_SUITE="${RUN_REPRO_SUITE:-false}"
 IO_ADDRESS="${IO_ADDRESS:-}"
 IO_ID="${IO_ID:-io-gateway}"
 SCENARIO_CREDIT="${SCENARIO_CREDIT:-500}"
@@ -27,6 +28,7 @@ usage() {
   echo "       [--region-id ID] [--shard-index IDX] [--router-id NAME]"
   echo "       [--run-energy-scenario true|false --io-address host:port --io-id name]"
   echo "       [--run-repro-scenario true|false --repro-seed N --repro-spawn-policy default|never|always --repro-strength-source base|live]"
+  echo "       [--run-repro-suite true|false --repro-seed N]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -51,6 +53,8 @@ while [[ $# -gt 0 ]]; do
       RUN_ENERGY_SCENARIO="$2"; shift 2;;
     --run-repro-scenario)
       RUN_REPRO_SCENARIO="$2"; shift 2;;
+    --run-repro-suite)
+      RUN_REPRO_SUITE="$2"; shift 2;;
     --io-address)
       IO_ADDRESS="$2"; shift 2;;
     --io-id)
@@ -135,6 +139,7 @@ BRAIN_ERR="$LOG_ROOT/brainhost.err.log"
 REGION_ERR="$LOG_ROOT/regionhost.err.log"
 SCENARIO_LOG="$LOG_ROOT/energy-plasticity-scenario.log"
 REPRO_SCENARIO_LOG="$LOG_ROOT/repro-scenario.log"
+REPRO_SUITE_LOG="$LOG_ROOT/repro-suite.log"
 
 cleanup() {
   for pid in "${REGION_PID:-}" "${BRAIN_PID:-}" "${HIVE_PID:-}"; do
@@ -241,6 +246,30 @@ if [[ "${RUN_REPRO_SCENARIO,,}" == "true" ]]; then
       "$DEMO_EXE" "${repro_args[@]}" | tee "$REPRO_SCENARIO_LOG"
     else
       DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- "${repro_args[@]}" | tee "$REPRO_SCENARIO_LOG"
+    fi
+  fi
+fi
+
+if [[ "${RUN_REPRO_SUITE,,}" == "true" ]]; then
+  if [[ -z "$IO_ADDRESS" ]]; then
+    echo "Repro suite skipped: --io-address is required." >&2
+  else
+    suite_args=(
+      repro-suite
+      --io-address "$IO_ADDRESS"
+      --io-id "$IO_ID"
+      --port "$((REPRO_CLIENT_PORT + 1))"
+      --parent-a-sha256 "$NBN_SHA"
+      --parent-a-size "$NBN_SIZE"
+      --store-uri "$ARTIFACT_ROOT"
+      --seed "$REPRO_SEED"
+      --json
+    )
+
+    if [[ -x "$DEMO_EXE" ]]; then
+      "$DEMO_EXE" "${suite_args[@]}" | tee "$REPRO_SUITE_LOG"
+    else
+      DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- "${suite_args[@]}" | tee "$REPRO_SUITE_LOG"
     fi
   fi
 fi

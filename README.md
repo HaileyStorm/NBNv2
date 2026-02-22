@@ -124,11 +124,17 @@ Operator runbook:
 Local deterministic repro demo flow:
 - `tools/demo/run_local_hivemind_demo.ps1` now starts `Nbn.Runtime.Reproduction`, wires IO with `--repro-address/--repro-name`, and runs `Nbn.Tools.DemoHost repro-scenario`.
 - The scenario log is written to `tools/demo/local-demo/<timestamp>/logs/repro-scenario.log`.
+- The script also runs `Nbn.Tools.DemoHost repro-suite` and writes `tools/demo/local-demo/<timestamp>/logs/repro-suite.log` with per-case pass/fail checks.
 - Default expected fields are:
   - `result.compatible == true`
   - `result.abort_reason == ""`
   - `result.child_def.sha256` present
   - `result.spawned == false` (default `spawn-policy=never`)
+
+Suite expected summary:
+- `all_passed == true`
+- `failed_cases == 0`
+- `total_cases` covers success, gate aborts, invalid references/media, and spawn-attempt behavior.
 
 Direct command example:
 
@@ -140,6 +146,15 @@ dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
   --parent-b-sha256 <hex> --parent-b-size <bytes> \
   --store-uri <artifact_root_or_file_uri> \
   --seed 12345 --spawn-policy never --strength-source base --json
+```
+
+```bash
+dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
+  repro-suite \
+  --io-address 127.0.0.1:12050 --io-id io-gateway \
+  --parent-a-sha256 <hex> --parent-a-size <bytes> \
+  --store-uri <artifact_root_or_file_uri> \
+  --seed 12345 --json
 ```
 
 ## Workbench Visualizer (Neural Activity View)

@@ -14,6 +14,10 @@ The script emits repro JSON to:
 
 `tools/demo/local-demo/<timestamp>/logs/repro-scenario.log`
 
+The script also emits a multi-case verification suite report:
+
+`tools/demo/local-demo/<timestamp>/logs/repro-suite.log`
+
 Default repro scenario policy is `spawn-policy=never`, so the expected happy-path shape is:
 
 - `result.compatible == true`
@@ -23,6 +27,37 @@ Default repro scenario policy is `spawn-policy=never`, so the expected happy-pat
 - `result.child_brain_id == ""`
 
 For a spawn attempt, set `-ReproSpawnPolicy default` or `-ReproSpawnPolicy always`.
+
+## Repro Suite (Multi-Behavior Verification)
+`Nbn.Tools.DemoHost repro-suite` runs a deterministic set of behavior checks and emits per-case pass/fail output:
+
+- `compatible_spawn_never`
+- `missing_parent_b_def`
+- `parent_b_media_type_invalid`
+- `parent_a_artifact_not_found`
+- `region_span_mismatch`
+- `strength_live_without_state`
+- `spawn_always_attempt`
+
+Each case includes:
+- `expected` assertions
+- `actual` observed values
+- `failures` list (empty when passed)
+
+A passing suite has:
+- `all_passed == true`
+- `failed_cases == 0`
+
+Direct command:
+
+```bash
+dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
+  repro-suite \
+  --io-address 127.0.0.1:12050 --io-id io-gateway \
+  --parent-a-sha256 <hex> --parent-a-size <bytes> \
+  --store-uri <artifact_root_or_file_uri> \
+  --seed 12345 --json
+```
 
 ## Direct Command
 You can invoke the scenario command directly:
