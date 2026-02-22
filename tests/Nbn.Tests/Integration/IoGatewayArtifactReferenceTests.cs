@@ -499,6 +499,7 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(kill.BrainId.TryToGuid(out var killedBrainId));
         Assert.Equal(brainId, killedBrainId);
 
+        var terminationTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         root.Send(gateway, new ProtoControl.BrainTerminated
         {
             BrainId = brainId.ToProtoUuid(),
@@ -507,7 +508,7 @@ public class IoGatewayArtifactReferenceTests
             LastSnapshot = new ArtifactRef(),
             LastEnergyRemaining = 0,
             LastTickCost = 0,
-            TimeMs = 1
+            TimeMs = terminationTimeMs
         });
 
         var broadcast = await terminated.Task.WaitAsync(cts.Token);
@@ -520,6 +521,65 @@ public class IoGatewayArtifactReferenceTests
             BrainId = brainId.ToProtoUuid()
         });
         Assert.Equal((uint)0, info.InputWidth);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task HandleBrainTerminated_StaleMessage_DoesNotRemoveRespawnedBrain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 111,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new UnregisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "restart"
+        });
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 2,
+            OutputWidth = 2,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 222,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ProtoControl.BrainTerminated
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "energy_exhausted",
+            TimeMs = 1
+        });
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        Assert.Equal((uint)2, info.InputWidth);
+        Assert.Equal((uint)2, info.OutputWidth);
+        Assert.Equal(222, info.EnergyRemaining);
 
         await system.ShutdownAsync();
     }

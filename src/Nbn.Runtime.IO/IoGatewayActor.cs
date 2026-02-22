@@ -559,6 +559,11 @@ public sealed class IoGatewayActor : IActor
         var outbound = message;
         if (_brains.TryGetValue(brainId, out var entry))
         {
+            if (message.TimeMs > 0 && message.TimeMs < (ulong)entry.RegisteredAtMs)
+            {
+                return;
+            }
+
             if (HasArtifactRef(message.BaseDef))
             {
                 entry.BaseDefinition = message.BaseDef;

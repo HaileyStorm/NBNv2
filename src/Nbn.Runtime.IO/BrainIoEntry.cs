@@ -5,6 +5,8 @@ namespace Nbn.Runtime.IO;
 
 internal sealed class BrainIoEntry
 {
+    private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
     public BrainIoEntry(Guid brainId, PID inputPid, PID outputPid, uint inputWidth, uint outputWidth, BrainEnergyState energy)
     {
         BrainId = brainId;
@@ -13,6 +15,7 @@ internal sealed class BrainIoEntry
         InputWidth = inputWidth;
         OutputWidth = outputWidth;
         Energy = energy;
+        RegisteredAtMs = NowMs();
     }
 
     public Guid BrainId { get; }
@@ -25,4 +28,5 @@ internal sealed class BrainIoEntry
     public ArtifactRef? LastSnapshot { get; set; }
     public bool EnergyDepletedSignaled { get; set; }
     public ulong? LastAppliedTickCostId { get; set; }
+    public long RegisteredAtMs { get; }
 }
