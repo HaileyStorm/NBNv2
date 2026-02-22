@@ -3092,6 +3092,13 @@ Use these defaults to avoid recurring Aleph friction:
 15. Aleph sub-query batching from `exec_python`:
    * Packing multiple `sub_query(...)` calls in one `exec_python` call can exceed the MCP tool-call deadline even when each query would pass individually.
    * Prefer one focused `sub_query(...)` per `exec_python` invocation for reliability; batch only after confirming local session latency/headroom.
+16. Aleph sub-query scope/context mismatch:
+   * Asking a sub-query to compare files/symbols that are not loaded into the current Aleph context can trigger long retries and MCP timeout.
+   * Before cross-file prompts, load both files into the same context (or run separate per-file sub-queries and merge in the main thread).
+   * Keep each sub-query scoped to the context it actually has; this is more reliable than broad "compare everything" prompts.
+17. PowerShell file-encoding flag compatibility:
+   * In Windows PowerShell 5.1, `Set-Content -Encoding utf8NoBOM` is invalid and fails parameter binding.
+   * Use `-Encoding UTF8` for compatibility in this environment (or upgrade to PowerShell 7+ if no-BOM control is required).
 
 When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
 

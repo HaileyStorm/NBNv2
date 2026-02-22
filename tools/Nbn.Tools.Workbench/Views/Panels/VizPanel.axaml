@@ -43,8 +43,8 @@
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" Watermark="blank = full brain" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
-              <Button Content="Zoom" Command="{Binding ZoomCommand}" />
-              <Button Content="Full brain" Command="{Binding ShowFullBrainCommand}" />
+              <Button Content="Zoom" Command="{Binding ZoomCommand}" Click="CanvasRegionZoomClicked" />
+              <Button Content="Full brain" Command="{Binding ShowFullBrainCommand}" Click="CanvasShowFullBrainClicked" />
             </StackPanel>
             <TextBlock Grid.Column="3" Text="Tick window" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="4" Text="{Binding TickWindowText}" Width="80" />
@@ -127,6 +127,7 @@
                   <Button Grid.Column="3"
                           Content="Navigate"
                           Command="{Binding NavigateCanvasSelectionCommand}"
+                          Click="CanvasNavigateClicked"
                           ToolTip.Tip="Alt+Enter" />
                   <Button Grid.Column="4"
                           Content="Clear"

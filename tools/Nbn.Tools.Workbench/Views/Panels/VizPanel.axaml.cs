@@ -23,9 +23,9 @@ public partial class VizPanel : UserControl
     private const double MinPanTranslationLimitPx = 320.0;
     private const double FitContentPaddingPx = 12.0;
     private const int MaxPendingCanvasViewAttempts = 8;
-    private const double CanvasViewportBottomPaddingPx = 18.0;
-    private const double CanvasViewportMinHeightPx = 260.0;
-    private const double CanvasViewportMaxHeightPx = 1200.0;
+    private const double CanvasViewportHeightRatio = 0.74;
+    private const double CanvasViewportMinHeightPx = 460.0;
+    private const double CanvasViewportMaxHeightPx = 1800.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -152,15 +152,6 @@ public partial class VizPanel : UserControl
             if (_pendingCanvasViewMode != PendingCanvasViewMode.None)
             {
                 TryApplyPendingCanvasView();
-            }
-        }
-        else if (e.PropertyName is nameof(VizPanelViewModel.RegionFocusText)
-            or nameof(VizPanelViewModel.ActiveFocusRegionId))
-        {
-            // Recenter only when navigation identity actually changes.
-            if (HasFocusRegionChanged())
-            {
-                RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
             }
         }
     }
@@ -388,6 +379,15 @@ public partial class VizPanel : UserControl
         FitCanvasToViewport();
         e.Handled = true;
     }
+
+    private void CanvasRegionZoomClicked(object? sender, RoutedEventArgs e)
+        => QueueDefaultCenterAfterNavigation();
+
+    private void CanvasShowFullBrainClicked(object? sender, RoutedEventArgs e)
+        => QueueDefaultCenterAfterNavigation();
+
+    private void CanvasNavigateClicked(object? sender, RoutedEventArgs e)
+        => QueueDefaultCenterAfterNavigation();
 
     private void CanvasPanLeftClicked(object? sender, RoutedEventArgs e)
     {
@@ -663,14 +663,34 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        var startOffset = scrollViewer.Offset;
-        var targetOffset = ClampOffset(new Vector(startOffset.X + deltaX, startOffset.Y + deltaY), scrollViewer);
-        scrollViewer.Offset = targetOffset;
-        var consumed = targetOffset - startOffset;
-        var remaining = new Vector(deltaX - consumed.X, deltaY - consumed.Y);
-        if (Math.Abs(remaining.X) > 0.0001 || Math.Abs(remaining.Y) > 0.0001)
+        var contentDelta = new Vector(deltaX, deltaY);
+        var startPan = _canvasPan;
+        var targetPan = ClampPan(startPan + contentDelta, scrollViewer);
+        var appliedPan = targetPan - startPan;
+        if (Math.Abs(appliedPan.X) > 0.0001 || Math.Abs(appliedPan.Y) > 0.0001)
         {
-            SetCanvasPan(_canvasPan + remaining, scrollViewer);
+            SetCanvasPan(targetPan, scrollViewer);
+        }
+
+        var remainingContentDelta = contentDelta - appliedPan;
+        if (Math.Abs(remainingContentDelta.X) <= 0.0001 && Math.Abs(remainingContentDelta.Y) <= 0.0001)
+        {
+            return;
+        }
+
+        var startOffset = scrollViewer.Offset;
+        var targetOffset = ClampOffset(
+            new Vector(
+                startOffset.X - remainingContentDelta.X,
+                startOffset.Y - remainingContentDelta.Y),
+            scrollViewer);
+        scrollViewer.Offset = targetOffset;
+
+        var appliedOffset = targetOffset - startOffset;
+        var leftoverContentDelta = remainingContentDelta + appliedOffset;
+        if (Math.Abs(leftoverContentDelta.X) > 0.0001 || Math.Abs(leftoverContentDelta.Y) > 0.0001)
+        {
+            SetCanvasPan(_canvasPan + leftoverContentDelta, scrollViewer);
         }
     }
 
@@ -701,7 +721,7 @@ public partial class VizPanel : UserControl
         var delta = currentPoint - _panLastPoint;
         if (Math.Abs(delta.X) > 0.0001 || Math.Abs(delta.Y) > 0.0001)
         {
-            PanCanvasBy(-delta.X, -delta.Y);
+            PanCanvasBy(delta.X, delta.Y);
             _panLastPoint = currentPoint;
         }
 
@@ -886,8 +906,9 @@ public partial class VizPanel : UserControl
     private static Vector ClampPan(Vector pan, ScrollViewer? scrollViewer)
     {
         var viewport = scrollViewer?.Viewport ?? default;
-        var limitX = Math.Max(MinPanTranslationLimitPx, viewport.Width * 0.55);
-        var limitY = Math.Max(MinPanTranslationLimitPx, viewport.Height * 0.55);
+        var extent = scrollViewer?.Extent ?? default;
+        var limitX = Math.Max(MinPanTranslationLimitPx, Math.Max(viewport.Width, extent.Width) * 2.0);
+        var limitY = Math.Max(MinPanTranslationLimitPx, Math.Max(viewport.Height, extent.Height) * 2.0);
         return new Vector(
             Math.Clamp(pan.X, -limitX, limitX),
             Math.Clamp(pan.Y, -limitY, limitY));
@@ -903,14 +924,6 @@ public partial class VizPanel : UserControl
         var dx = right.X - left.X;
         var dy = right.Y - left.Y;
         return Math.Sqrt((dx * dx) + (dy * dy));
-    }
-
-    private bool HasFocusRegionChanged()
-    {
-        var currentFocusRegionId = ViewModel?.ActiveFocusRegionId;
-        var changed = _lastNavigationFocusRegionId != currentFocusRegionId;
-        _lastNavigationFocusRegionId = currentFocusRegionId;
-        return changed;
     }
 
     private void CaptureNavigationContext()
@@ -1000,22 +1013,23 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        var topLeft = scrollViewer.TranslatePoint(default, topLevel);
-        if (topLeft is null)
+        var targetHeight = topLevel.ClientSize.Height * CanvasViewportHeightRatio;
+        if (!double.IsFinite(targetHeight))
         {
             return;
         }
 
-        var availableHeight = topLevel.ClientSize.Height - topLeft.Value.Y - CanvasViewportBottomPaddingPx;
-        if (!double.IsFinite(availableHeight))
-        {
-            return;
-        }
-
-        var targetHeight = Math.Clamp(availableHeight, CanvasViewportMinHeightPx, CanvasViewportMaxHeightPx);
+        targetHeight = Math.Clamp(targetHeight, CanvasViewportMinHeightPx, CanvasViewportMaxHeightPx);
         if (Math.Abs(scrollViewer.MaxHeight - targetHeight) > 0.5)
         {
             scrollViewer.MaxHeight = targetHeight;
         }
+    }
+
+    private void QueueDefaultCenterAfterNavigation()
+    {
+        Dispatcher.UIThread.Post(
+            () => RequestCanvasView(PendingCanvasViewMode.DefaultCenter),
+            DispatcherPriority.Background);
     }
 }
