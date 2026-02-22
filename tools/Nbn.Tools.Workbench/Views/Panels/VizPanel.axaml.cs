@@ -21,6 +21,7 @@ public partial class VizPanel : UserControl
     private const double WheelZoomFactor = 1.12;
     private const double PanButtonStepPx = 96.0;
     private const double MinPanTranslationLimitPx = 320.0;
+    private const double FitContentPaddingPx = 12.0;
     private const int MaxPendingCanvasViewAttempts = 8;
     private const double CanvasViewportBottomPaddingPx = 18.0;
     private const double CanvasViewportMinHeightPx = 260.0;
@@ -59,7 +60,6 @@ public partial class VizPanel : UserControl
     private INotifyPropertyChanged? _viewModelNotifier;
     private PendingCanvasViewMode _pendingCanvasViewMode;
     private int _pendingCanvasViewAttempts;
-    private Guid? _lastNavigationBrainId;
     private uint? _lastNavigationFocusRegionId;
     private TopLevel? _canvasTopLevel;
 
@@ -155,11 +155,10 @@ public partial class VizPanel : UserControl
             }
         }
         else if (e.PropertyName is nameof(VizPanelViewModel.RegionFocusText)
-            or nameof(VizPanelViewModel.ActiveFocusRegionId)
-            or nameof(VizPanelViewModel.SelectedBrain))
+            or nameof(VizPanelViewModel.ActiveFocusRegionId))
         {
             // Recenter only when navigation identity actually changes.
-            if (HasNavigationContextChanged())
+            if (HasFocusRegionChanged())
             {
                 RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
             }
@@ -186,7 +185,6 @@ public partial class VizPanel : UserControl
             _viewModelNotifier = null;
         }
 
-        _lastNavigationBrainId = null;
         _lastNavigationFocusRegionId = null;
     }
 
@@ -596,8 +594,16 @@ public partial class VizPanel : UserControl
 
     private void ApplyFitCanvasView(ScrollViewer scrollViewer, VizPanelViewModel viewModel)
     {
-        var fitScaleX = scrollViewer.Viewport.Width / viewModel.ActivityCanvasWidth;
-        var fitScaleY = scrollViewer.Viewport.Height / viewModel.ActivityCanvasHeight;
+        var fitWidth = viewModel.ActivityCanvasWidth;
+        var fitHeight = viewModel.ActivityCanvasHeight;
+        if (TryGetCanvasContentBounds(viewModel, out var contentBounds))
+        {
+            fitWidth = Math.Max(1.0, contentBounds.Width);
+            fitHeight = Math.Max(1.0, contentBounds.Height);
+        }
+
+        var fitScaleX = scrollViewer.Viewport.Width / fitWidth;
+        var fitScaleY = scrollViewer.Viewport.Height / fitHeight;
         var fitScale = Math.Min(1.0, Math.Min(fitScaleX, fitScaleY));
         if (!double.IsFinite(fitScale) || fitScale <= 0)
         {
@@ -614,11 +620,22 @@ public partial class VizPanel : UserControl
         scrollViewer.Offset = default;
         SyncCanvasScaleVisuals();
 
-        var scaledWidth = viewModel.ActivityCanvasWidth * _canvasScale;
-        var scaledHeight = viewModel.ActivityCanvasHeight * _canvasScale;
-        var centeredOffset = new Vector(
-            Math.Max(0.0, (scaledWidth - scrollViewer.Viewport.Width) / 2.0),
-            Math.Max(0.0, (scaledHeight - scrollViewer.Viewport.Height) / 2.0));
+        Vector centeredOffset;
+        if (TryGetCanvasContentBounds(viewModel, out var contentBounds))
+        {
+            var centeredX = ((contentBounds.X + (contentBounds.Width / 2.0)) * _canvasScale) - (scrollViewer.Viewport.Width / 2.0);
+            var centeredY = ((contentBounds.Y + (contentBounds.Height / 2.0)) * _canvasScale) - (scrollViewer.Viewport.Height / 2.0);
+            centeredOffset = new Vector(centeredX, centeredY);
+        }
+        else
+        {
+            var scaledWidth = viewModel.ActivityCanvasWidth * _canvasScale;
+            var scaledHeight = viewModel.ActivityCanvasHeight * _canvasScale;
+            centeredOffset = new Vector(
+                Math.Max(0.0, (scaledWidth - scrollViewer.Viewport.Width) / 2.0),
+                Math.Max(0.0, (scaledHeight - scrollViewer.Viewport.Height) / 2.0));
+        }
+
         ApplyCanvasOffset(centeredOffset, scrollViewer, absorbResidualIntoPan: false);
     }
 
@@ -684,7 +701,7 @@ public partial class VizPanel : UserControl
         var delta = currentPoint - _panLastPoint;
         if (Math.Abs(delta.X) > 0.0001 || Math.Abs(delta.Y) > 0.0001)
         {
-            PanCanvasBy(delta.X, delta.Y);
+            PanCanvasBy(-delta.X, -delta.Y);
             _panLastPoint = currentPoint;
         }
 
@@ -888,21 +905,62 @@ public partial class VizPanel : UserControl
         return Math.Sqrt((dx * dx) + (dy * dy));
     }
 
-    private bool HasNavigationContextChanged()
+    private bool HasFocusRegionChanged()
     {
-        var currentBrainId = ViewModel?.SelectedBrain?.BrainId;
         var currentFocusRegionId = ViewModel?.ActiveFocusRegionId;
-        var changed = _lastNavigationBrainId != currentBrainId
-            || _lastNavigationFocusRegionId != currentFocusRegionId;
-        _lastNavigationBrainId = currentBrainId;
+        var changed = _lastNavigationFocusRegionId != currentFocusRegionId;
         _lastNavigationFocusRegionId = currentFocusRegionId;
         return changed;
     }
 
     private void CaptureNavigationContext()
     {
-        _lastNavigationBrainId = ViewModel?.SelectedBrain?.BrainId;
         _lastNavigationFocusRegionId = ViewModel?.ActiveFocusRegionId;
+    }
+
+    private static bool TryGetCanvasContentBounds(VizPanelViewModel viewModel, out Rect bounds)
+    {
+        var minX = double.PositiveInfinity;
+        var minY = double.PositiveInfinity;
+        var maxX = double.NegativeInfinity;
+        var maxY = double.NegativeInfinity;
+        var hasGeometry = false;
+
+        foreach (var node in viewModel.CanvasNodes)
+        {
+            hasGeometry = true;
+            minX = Math.Min(minX, node.Left);
+            minY = Math.Min(minY, node.Top);
+            maxX = Math.Max(maxX, node.Left + node.Diameter);
+            maxY = Math.Max(maxY, node.Top + node.Diameter);
+        }
+
+        foreach (var edge in viewModel.CanvasEdges)
+        {
+            hasGeometry = true;
+            var edgePadding = Math.Max(2.0, edge.HitTestThickness * 0.5);
+            minX = Math.Min(minX, Math.Min(edge.SourceX, Math.Min(edge.ControlX, edge.TargetX)) - edgePadding);
+            minY = Math.Min(minY, Math.Min(edge.SourceY, Math.Min(edge.ControlY, edge.TargetY)) - edgePadding);
+            maxX = Math.Max(maxX, Math.Max(edge.SourceX, Math.Max(edge.ControlX, edge.TargetX)) + edgePadding);
+            maxY = Math.Max(maxY, Math.Max(edge.SourceY, Math.Max(edge.ControlY, edge.TargetY)) + edgePadding);
+        }
+
+        if (!hasGeometry || !double.IsFinite(minX) || !double.IsFinite(minY) || !double.IsFinite(maxX) || !double.IsFinite(maxY))
+        {
+            bounds = default;
+            return false;
+        }
+
+        minX -= FitContentPaddingPx;
+        minY -= FitContentPaddingPx;
+        maxX += FitContentPaddingPx;
+        maxY += FitContentPaddingPx;
+        bounds = new Rect(
+            minX,
+            minY,
+            Math.Max(1.0, maxX - minX),
+            Math.Max(1.0, maxY - minY));
+        return true;
     }
 
     private void AttachCanvasTopLevelEvents()
