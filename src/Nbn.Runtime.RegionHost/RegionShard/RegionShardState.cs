@@ -1,5 +1,5 @@
-using Nbn.Shared;
 using Nbn.Proto;
+using Nbn.Shared;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -9,6 +9,7 @@ public sealed class RegionShardState
         int regionId,
         int neuronStart,
         int neuronCount,
+        ulong brainSeed,
         int[] regionSpans,
         float[] buffer,
         bool[] enabled,
@@ -27,6 +28,7 @@ public sealed class RegionShardState
         RegionId = regionId;
         NeuronStart = neuronStart;
         NeuronCount = neuronCount;
+        BrainSeed = brainSeed;
         RegionSpans = regionSpans ?? throw new ArgumentNullException(nameof(regionSpans));
         Buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
         Enabled = enabled ?? throw new ArgumentNullException(nameof(enabled));
@@ -63,6 +65,17 @@ public sealed class RegionShardState
             throw new ArgumentException("Neuron arrays must match neuron count.");
         }
 
+        var expectedAxonCount = 0;
+        for (var i = 0; i < AxonCounts.Length; i++)
+        {
+            expectedAxonCount += AxonCounts[i];
+        }
+
+        if (Axons.Count != expectedAxonCount)
+        {
+            throw new ArgumentException("Axon arrays must match summed axon counts.", nameof(axons));
+        }
+
         _inbox = new float[neuronCount];
         _inboxHasInput = new bool[neuronCount];
     }
@@ -70,6 +83,7 @@ public sealed class RegionShardState
     public int RegionId { get; }
     public int NeuronStart { get; }
     public int NeuronCount { get; }
+    public ulong BrainSeed { get; }
     public int[] RegionSpans { get; }
 
     public float[] Buffer { get; }
@@ -202,17 +216,51 @@ public sealed class RegionShardState
         localIndex = (int)targetNeuronId - NeuronStart;
         return localIndex >= 0 && localIndex < NeuronCount;
     }
+
+    public RegionShardDeterministicRngInput GetDeterministicRngInput(ulong tickId, int axonIndex)
+    {
+        if ((uint)axonIndex >= (uint)Axons.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(axonIndex), axonIndex, "Axon index is out of range.");
+        }
+
+        return new RegionShardDeterministicRngInput(
+            BrainSeed,
+            tickId,
+            Axons.FromAddress32[axonIndex],
+            Axons.ToAddress32[axonIndex]);
+    }
 }
 
 public sealed class RegionShardAxons
 {
-    public RegionShardAxons(byte[] targetRegionIds, int[] targetNeuronIds, float[] strengths)
+    public RegionShardAxons(
+        byte[] targetRegionIds,
+        int[] targetNeuronIds,
+        float[] strengths,
+        byte[] baseStrengthCodes,
+        byte[] runtimeStrengthCodes,
+        bool[] hasRuntimeOverlay,
+        uint[] fromAddress32,
+        uint[] toAddress32)
     {
         TargetRegionIds = targetRegionIds ?? throw new ArgumentNullException(nameof(targetRegionIds));
         TargetNeuronIds = targetNeuronIds ?? throw new ArgumentNullException(nameof(targetNeuronIds));
         Strengths = strengths ?? throw new ArgumentNullException(nameof(strengths));
+        BaseStrengthCodes = baseStrengthCodes ?? throw new ArgumentNullException(nameof(baseStrengthCodes));
+        RuntimeStrengthCodes = runtimeStrengthCodes ?? throw new ArgumentNullException(nameof(runtimeStrengthCodes));
+        HasRuntimeOverlay = hasRuntimeOverlay ?? throw new ArgumentNullException(nameof(hasRuntimeOverlay));
+        FromAddress32 = fromAddress32 ?? throw new ArgumentNullException(nameof(fromAddress32));
+        ToAddress32 = toAddress32 ?? throw new ArgumentNullException(nameof(toAddress32));
 
-        if (TargetRegionIds.Length != TargetNeuronIds.Length || TargetRegionIds.Length != Strengths.Length)
+        var count = TargetRegionIds.Length;
+        if (TargetNeuronIds.Length != count
+            || Strengths.Length != count
+            || BaseStrengthCodes.Length != count
+            || RuntimeStrengthCodes.Length != count
+            || HasRuntimeOverlay.Length != count
+            || FromAddress32.Length != count
+            || ToAddress32.Length != count)
         {
             throw new ArgumentException("Axon arrays must be the same length.");
         }
@@ -221,6 +269,42 @@ public sealed class RegionShardAxons
     public byte[] TargetRegionIds { get; }
     public int[] TargetNeuronIds { get; }
     public float[] Strengths { get; }
+    public byte[] BaseStrengthCodes { get; }
+    public byte[] RuntimeStrengthCodes { get; }
+    public bool[] HasRuntimeOverlay { get; }
+    public uint[] FromAddress32 { get; }
+    public uint[] ToAddress32 { get; }
 
     public int Count => Strengths.Length;
+}
+
+public readonly record struct RegionShardDeterministicRngInput(
+    ulong BrainSeed,
+    ulong TickId,
+    uint FromAddress32,
+    uint ToAddress32)
+{
+    public ulong ToSeed()
+    {
+        return MixToU64(BrainSeed, TickId, FromAddress32, ToAddress32);
+    }
+
+    public static ulong MixToU64(ulong brainSeed, ulong tickId, uint fromAddress32, uint toAddress32)
+    {
+        var mixed = brainSeed;
+        mixed = SplitMixStep(mixed ^ tickId);
+        mixed = SplitMixStep(mixed ^ fromAddress32);
+        mixed = SplitMixStep(mixed ^ toAddress32);
+        return SplitMixStep(mixed);
+    }
+
+    private static ulong SplitMixStep(ulong value)
+    {
+        value ^= value >> 30;
+        value *= 0xbf58476d1ce4e5b9UL;
+        value ^= value >> 27;
+        value *= 0x94d049bb133111ebUL;
+        value ^= value >> 31;
+        return value;
+    }
 }

@@ -6,6 +6,7 @@ using Nbn.Shared.Quantization;
 using Nbn.Shared.Validation;
 using Nbn.Proto;
 using Proto;
+using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -137,6 +138,11 @@ public static class RegionShardArtifactLoader
         var axonTargetRegions = new byte[totalAxons];
         var axonTargetNeurons = new int[totalAxons];
         var axonStrengths = new float[totalAxons];
+        var axonBaseStrengthCodes = new byte[totalAxons];
+        var axonRuntimeStrengthCodes = new byte[totalAxons];
+        var axonHasRuntimeOverlay = new bool[totalAxons];
+        var axonFromAddress32 = new uint[totalAxons];
+        var axonToAddress32 = new uint[totalAxons];
 
         var regionSpans = new int[header.Regions.Length];
         for (var i = 0; i < header.Regions.Length; i++)
@@ -204,22 +210,36 @@ public static class RegionShardArtifactLoader
                 var axonRecord = region.AxonRecords[axonStart + a];
                 var targetRegion = axonRecord.TargetRegionId;
                 var targetNeuron = axonRecord.TargetNeuronId;
-                var strengthCode = axonRecord.StrengthCode;
+                var baseStrengthCode = axonRecord.StrengthCode;
+                var runtimeStrengthCode = baseStrengthCode;
 
                 if (overlayMap.TryGetValue((global, targetRegion, targetNeuron), out var overlayStrength))
                 {
-                    strengthCode = overlayStrength;
+                    runtimeStrengthCode = overlayStrength;
                 }
 
                 axonTargetRegions[axonCursor] = targetRegion;
                 axonTargetNeurons[axonCursor] = targetNeuron;
-                axonStrengths[axonCursor] = header.Quantization.Strength.Decode(strengthCode, 5);
+                axonStrengths[axonCursor] = header.Quantization.Strength.Decode(runtimeStrengthCode, 5);
+                axonBaseStrengthCodes[axonCursor] = baseStrengthCode;
+                axonRuntimeStrengthCodes[axonCursor] = runtimeStrengthCode;
+                axonHasRuntimeOverlay[axonCursor] = runtimeStrengthCode != baseStrengthCode;
+                axonFromAddress32[axonCursor] = SharedAddress32.From(regionId, global).Value;
+                axonToAddress32[axonCursor] = SharedAddress32.From(targetRegion, targetNeuron).Value;
                 axonCursor++;
             }
         }
 
-        var axons = new RegionShardAxons(axonTargetRegions, axonTargetNeurons, axonStrengths);
-        return new RegionShardState(regionId, neuronStart, neuronCount, regionSpans, buffer, enabled, exists, accum, activation, reset,
+        var axons = new RegionShardAxons(
+            axonTargetRegions,
+            axonTargetNeurons,
+            axonStrengths,
+            axonBaseStrengthCodes,
+            axonRuntimeStrengthCodes,
+            axonHasRuntimeOverlay,
+            axonFromAddress32,
+            axonToAddress32);
+        return new RegionShardState(regionId, neuronStart, neuronCount, header.BrainSeed, regionSpans, buffer, enabled, exists, accum, activation, reset,
             paramA, paramB, preThreshold, activationThreshold, axonCounts, axonStartOffsets, axons);
     }
 

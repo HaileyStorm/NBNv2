@@ -2,6 +2,7 @@ using Nbn.Proto;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
+using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 
 namespace Nbn.Tests.RegionHost;
 
@@ -78,6 +79,7 @@ public class RegionShardCpuBackendVisualizationTests
             regionId: sourceRegionId,
             neuronStart: 0,
             neuronCount: 1,
+            brainSeed: 0x0102030405060708UL,
             regionSpans: regionSpans,
             buffer: new[] { 0.9f },
             enabled: new[] { true },
@@ -94,7 +96,12 @@ public class RegionShardCpuBackendVisualizationTests
             axons: new RegionShardAxons(
                 targetRegionIds: new[] { (byte)destRegionId },
                 targetNeuronIds: new[] { 0 },
-                strengths: new[] { 0.5f }));
+                strengths: new[] { 0.5f },
+                baseStrengthCodes: new byte[] { 16 },
+                runtimeStrengthCodes: new byte[] { 16 },
+                hasRuntimeOverlay: new[] { false },
+                fromAddress32: new[] { SharedAddress32.From(sourceRegionId, 0).Value },
+                toAddress32: new[] { SharedAddress32.From(destRegionId, 0).Value }));
     }
 
     private static RegionShardRoutingTable CreateRouting(int sourceRegionId, int sourceCount, int destRegionId, int destCount)
