@@ -556,14 +556,24 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
+        var outbound = message;
         if (_brains.TryGetValue(brainId, out var entry))
         {
-            entry.BaseDefinition = message.BaseDef;
-            entry.LastSnapshot = message.LastSnapshot;
+            if (HasArtifactRef(message.BaseDef))
+            {
+                entry.BaseDefinition = message.BaseDef;
+            }
+
+            if (HasArtifactRef(message.LastSnapshot))
+            {
+                entry.LastSnapshot = message.LastSnapshot;
+            }
+
+            outbound = BuildTerminatedFromEntry(message, entry);
             StopAndRemoveBrain(context, entry);
         }
 
-        BroadcastToClients(context, message);
+        BroadcastToClients(context, outbound);
     }
 
     private async Task HandleExportBrainDefinitionAsync(IContext context, ExportBrainDefinition message)
@@ -1012,6 +1022,27 @@ public sealed class IoGatewayActor : IActor
             LastEnergyRemaining = entry.Energy.EnergyRemaining,
             LastTickCost = lastTickCost,
             TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+    }
+
+    private ProtoControl.BrainTerminated BuildTerminatedFromEntry(ProtoControl.BrainTerminated message, BrainIoEntry entry)
+    {
+        var isEnergyExhausted = string.Equals(message.Reason, "energy_exhausted", StringComparison.OrdinalIgnoreCase);
+        var baseDef = HasArtifactRef(message.BaseDef) ? message.BaseDef : entry.BaseDefinition ?? new ArtifactRef();
+        var lastSnapshot = HasArtifactRef(message.LastSnapshot) ? message.LastSnapshot : entry.LastSnapshot ?? new ArtifactRef();
+        var lastEnergyRemaining = isEnergyExhausted ? entry.Energy.EnergyRemaining : message.LastEnergyRemaining;
+        var lastTickCost = isEnergyExhausted ? entry.Energy.LastTickCost : message.LastTickCost;
+        var timeMs = message.TimeMs == 0 ? (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : message.TimeMs;
+
+        return new ProtoControl.BrainTerminated
+        {
+            BrainId = message.BrainId,
+            Reason = message.Reason,
+            BaseDef = baseDef,
+            LastSnapshot = lastSnapshot,
+            LastEnergyRemaining = lastEnergyRemaining,
+            LastTickCost = lastTickCost,
+            TimeMs = timeMs
         };
     }
 

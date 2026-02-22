@@ -464,6 +464,66 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task HandleBrainTerminated_EnergyExhausted_Uses_LocalEnergyState_ForBroadcast()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var firstKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveKillProbe(firstKill, secondKill)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+        var connected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminated = new TaskCompletionSource<ProtoControl.BrainTerminated>(TaskCreationOptions.RunContinuationsAsynchronously);
+        root.Spawn(Props.FromProducer(() => new TerminationClientProbe(gateway, connected, terminated)));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 5,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await connected.Task.WaitAsync(cts.Token);
+
+        root.Send(gateway, new ApplyTickCost(brainId, 88, 10));
+        var kill = await firstKill.Task.WaitAsync(cts.Token);
+        Assert.True(kill.BrainId.TryToGuid(out var killedBrainId));
+        Assert.Equal(brainId, killedBrainId);
+
+        root.Send(gateway, new ProtoControl.BrainTerminated
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "energy_exhausted",
+            BaseDef = new ArtifactRef(),
+            LastSnapshot = new ArtifactRef(),
+            LastEnergyRemaining = 0,
+            LastTickCost = 0,
+            TimeMs = 1
+        });
+
+        var broadcast = await terminated.Task.WaitAsync(cts.Token);
+        Assert.Equal("energy_exhausted", broadcast.Reason);
+        Assert.Equal(-5, broadcast.LastEnergyRemaining);
+        Assert.Equal(10, broadcast.LastTickCost);
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal((uint)0, info.InputWidth);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -605,6 +665,41 @@ public class IoGatewayArtifactReferenceTests
                     {
                         _secondKill.TrySetResult(kill);
                     }
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TerminationClientProbe : IActor
+    {
+        private readonly PID _gateway;
+        private readonly TaskCompletionSource<bool> _connected;
+        private readonly TaskCompletionSource<ProtoControl.BrainTerminated> _terminated;
+
+        public TerminationClientProbe(
+            PID gateway,
+            TaskCompletionSource<bool> connected,
+            TaskCompletionSource<ProtoControl.BrainTerminated> terminated)
+        {
+            _gateway = gateway;
+            _connected = connected;
+            _terminated = terminated;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_gateway, new Connect { ClientName = "termination-test-client" });
+                    break;
+                case ConnectAck:
+                    _connected.TrySetResult(true);
+                    break;
+                case ProtoControl.BrainTerminated brainTerminated:
+                    _terminated.TrySetResult(brainTerminated);
                     break;
             }
 
