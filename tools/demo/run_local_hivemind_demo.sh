@@ -10,17 +10,23 @@ REGION_ID="${REGION_ID:-1}"
 SHARD_INDEX="${SHARD_INDEX:-0}"
 ROUTER_ID="${ROUTER_ID:-demo-router}"
 RUN_ENERGY_SCENARIO="${RUN_ENERGY_SCENARIO:-false}"
+RUN_REPRO_SCENARIO="${RUN_REPRO_SCENARIO:-false}"
 IO_ADDRESS="${IO_ADDRESS:-}"
 IO_ID="${IO_ID:-io-gateway}"
 SCENARIO_CREDIT="${SCENARIO_CREDIT:-500}"
 SCENARIO_RATE="${SCENARIO_RATE:-3}"
 SCENARIO_PLASTICITY_RATE="${SCENARIO_PLASTICITY_RATE:-0.05}"
 SCENARIO_PROBABILISTIC="${SCENARIO_PROBABILISTIC:-true}"
+REPRO_SEED="${REPRO_SEED:-12345}"
+REPRO_SPAWN_POLICY="${REPRO_SPAWN_POLICY:-never}"
+REPRO_STRENGTH_SOURCE="${REPRO_STRENGTH_SOURCE:-base}"
+REPRO_CLIENT_PORT="${REPRO_CLIENT_PORT:-12072}"
 
 usage() {
   echo "Usage: $(basename "$0") [--demo-root PATH] [--bind-host HOST] [--hivemind-port PORT] [--brainhost-port PORT] [--regionhost-port PORT]"
   echo "       [--region-id ID] [--shard-index IDX] [--router-id NAME]"
   echo "       [--run-energy-scenario true|false --io-address host:port --io-id name]"
+  echo "       [--run-repro-scenario true|false --repro-seed N --repro-spawn-policy default|never|always --repro-strength-source base|live]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -43,6 +49,8 @@ while [[ $# -gt 0 ]]; do
       ROUTER_ID="$2"; shift 2;;
     --run-energy-scenario)
       RUN_ENERGY_SCENARIO="$2"; shift 2;;
+    --run-repro-scenario)
+      RUN_REPRO_SCENARIO="$2"; shift 2;;
     --io-address)
       IO_ADDRESS="$2"; shift 2;;
     --io-id)
@@ -55,6 +63,14 @@ while [[ $# -gt 0 ]]; do
       SCENARIO_PLASTICITY_RATE="$2"; shift 2;;
     --scenario-probabilistic)
       SCENARIO_PROBABILISTIC="$2"; shift 2;;
+    --repro-seed)
+      REPRO_SEED="$2"; shift 2;;
+    --repro-spawn-policy)
+      REPRO_SPAWN_POLICY="$2"; shift 2;;
+    --repro-strength-source)
+      REPRO_STRENGTH_SOURCE="$2"; shift 2;;
+    --repro-client-port)
+      REPRO_CLIENT_PORT="$2"; shift 2;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -86,9 +102,9 @@ pkill -f "Nbn.Runtime.HiveMind" 2>/dev/null || true
 pkill -f "Nbn.Runtime.RegionHost" 2>/dev/null || true
 pkill -f "Nbn.Tools.DemoHost" 2>/dev/null || true
 
-DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.HiveMind/Nbn.Runtime.HiveMind.csproj" -c Release >/dev/null
-DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.RegionHost/Nbn.Runtime.RegionHost.csproj" -c Release >/dev/null
-DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/tools/Nbn.Tools.DemoHost/Nbn.Tools.DemoHost.csproj" -c Release >/dev/null
+DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.HiveMind/Nbn.Runtime.HiveMind.csproj" -c Release --disable-build-servers >/dev/null
+DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/src/Nbn.Runtime.RegionHost/Nbn.Runtime.RegionHost.csproj" -c Release --disable-build-servers >/dev/null
+DOTNET_NOLOGO=1 dotnet build "$REPO_ROOT/tools/Nbn.Tools.DemoHost/Nbn.Tools.DemoHost.csproj" -c Release --disable-build-servers >/dev/null
 
 HIVE_EXE="$REPO_ROOT/src/Nbn.Runtime.HiveMind/bin/Release/net8.0/Nbn.Runtime.HiveMind"
 REGION_EXE="$REPO_ROOT/src/Nbn.Runtime.RegionHost/bin/Release/net8.0/Nbn.Runtime.RegionHost"
@@ -118,6 +134,7 @@ HIVE_ERR="$LOG_ROOT/hivemind.err.log"
 BRAIN_ERR="$LOG_ROOT/brainhost.err.log"
 REGION_ERR="$LOG_ROOT/regionhost.err.log"
 SCENARIO_LOG="$LOG_ROOT/energy-plasticity-scenario.log"
+REPRO_SCENARIO_LOG="$LOG_ROOT/repro-scenario.log"
 
 cleanup() {
   for pid in "${REGION_PID:-}" "${BRAIN_PID:-}" "${HIVE_PID:-}"; do
@@ -180,6 +197,7 @@ if [[ "${RUN_ENERGY_SCENARIO,,}" == "true" ]]; then
       io-scenario
       --io-address "$IO_ADDRESS"
       --io-id "$IO_ID"
+      --port "$((REPRO_CLIENT_PORT - 1))"
       --brain-id "$BRAIN_ID"
       --credit "$SCENARIO_CREDIT"
       --rate "$SCENARIO_RATE"
@@ -195,6 +213,34 @@ if [[ "${RUN_ENERGY_SCENARIO,,}" == "true" ]]; then
       "$DEMO_EXE" "${scenario_args[@]}" | tee "$SCENARIO_LOG"
     else
       DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- "${scenario_args[@]}" | tee "$SCENARIO_LOG"
+    fi
+  fi
+fi
+
+if [[ "${RUN_REPRO_SCENARIO,,}" == "true" ]]; then
+  if [[ -z "$IO_ADDRESS" ]]; then
+    echo "Repro scenario skipped: --io-address is required." >&2
+  else
+    repro_args=(
+      repro-scenario
+      --io-address "$IO_ADDRESS"
+      --io-id "$IO_ID"
+      --port "$REPRO_CLIENT_PORT"
+      --parent-a-sha256 "$NBN_SHA"
+      --parent-a-size "$NBN_SIZE"
+      --parent-b-sha256 "$NBN_SHA"
+      --parent-b-size "$NBN_SIZE"
+      --store-uri "$ARTIFACT_ROOT"
+      --seed "$REPRO_SEED"
+      --spawn-policy "$REPRO_SPAWN_POLICY"
+      --strength-source "$REPRO_STRENGTH_SOURCE"
+      --json
+    )
+
+    if [[ -x "$DEMO_EXE" ]]; then
+      "$DEMO_EXE" "${repro_args[@]}" | tee "$REPRO_SCENARIO_LOG"
+    else
+      DOTNET_NOLOGO=1 dotnet run --project "$REPO_ROOT/tools/Nbn.Tools.DemoHost" -c Release --no-build -- "${repro_args[@]}" | tee "$REPRO_SCENARIO_LOG"
     fi
   fi
 fi

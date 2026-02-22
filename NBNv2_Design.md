@@ -946,6 +946,25 @@ Optionally (default on):
 
 * spawn the child brain immediately and return its BrainId
 
+Implementation notes (runtime behavior):
+
+* `SimilarityReport.compatible=false` with `SimilarityReport.abort_reason=<code>` indicates a gate/runtime abort.
+* Successful child synthesis populates `child_def` and `summary` even when subsequent spawn fails.
+* Spawn-policy behavior:
+  * `SPAWN_CHILD_DEFAULT_ON`: attempt spawn after synthesis
+  * `SPAWN_CHILD_NEVER`: do not spawn; return child artifact only
+  * `SPAWN_CHILD_ALWAYS`: force spawn attempt
+* Spawn attempt failures use abort codes:
+  * `repro_spawn_unavailable`
+  * `repro_child_artifact_missing`
+  * `repro_spawn_failed`
+  * `repro_spawn_request_failed`
+* IO-layer forwarding failures (before reaching ReproductionManager) are surfaced as:
+  * `repro_unavailable`
+  * `repro_empty_response`
+  * `repro_missing_report`
+  * `repro_request_failed`
+
 ---
 
 ## 15. Observability: debug, visualization, metrics, tracing
@@ -2436,20 +2455,28 @@ message ReproduceResult {
 
 For a minimal end-to-end smoke test, use the demo scripts:
 `tools/demo/run_local_hivemind_demo.ps1` (Windows PowerShell) or
-`tools/demo/run_local_hivemind_demo.sh` (Ubuntu/Linux). The scripts:
+`tools/demo/run_local_hivemind_demo.sh` (Ubuntu/Linux).
+
+`run_local_hivemind_demo.ps1` provides the full local stack flow:
 
 * Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) with a single self-loop axon in region 1 to exercise SignalBatch delivery, and stores it in a local artifact store
-* Starts SettingsMonitor, HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), a RegionHost shard for region 1, IO Gateway, and Observability
+* Starts SettingsMonitor, HiveMind, a DemoBrainHost (BrainRoot + named BrainSignalRouter), RegionHost shards (regions 0/1/31), IO Gateway, Reproduction, and Observability
 * Logs output to `tools/demo/local-demo/logs`
 * Includes an energy/plasticity scenario step via `Nbn.Tools.DemoHost io-scenario` that applies credit/rate/cost-energy/plasticity commands and emits JSON acks
+* Includes a deterministic reproduction scenario via `Nbn.Tools.DemoHost repro-scenario` (default `spawn-policy=never`) that emits JSON with compatibility, abort code, mutation summary, and child artifact metadata
 
-The demo uses default ports (SettingsMonitor 12010, HiveMind 12020, BrainHost 12011, RegionHost 12040, IO 12050, Observability 12060) and can be edited in the script
+The demo uses default ports (SettingsMonitor 12010, HiveMind 12020, BrainHost 12011, RegionHost 12040, IO 12050, Reproduction 12070, Observability 12060) and can be edited in the script
 parameters if needed.
+
+`run_local_hivemind_demo.sh` is a smaller Linux variant; it can run the same `io-scenario`/`repro-scenario` commands when `--io-address` is provided.
 
 Troubleshooting:
 
 * If `io-scenario` returns `brain_not_found`, verify `RegisterBrain` reached IO (`io.log`) and that `--brain-id` matches the demo BrainId.
 * If command requests timeout, verify `--io-address`/`--io-id` and ensure IO Gateway is running before scenario execution.
+* If `repro-scenario` returns `repro_unavailable`, ensure IO launched with `--repro-address`/`--repro-name` and Reproduction is online.
+* If `repro-scenario` returns `repro_parent_*_artifact_not_found`, verify `--store-uri` and parent artifact sha/size values.
+* For abort-code triage procedures, use `tools/demo/reproduction_operator_runbook.md`.
 * For observability checks, verify metrics/traces for:
   `nbn.hivemind.brain.tick_cost.total`,
   `nbn.hivemind.brain.energy.depleted`,

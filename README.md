@@ -103,6 +103,45 @@ Quick troubleshooting:
 - `brain_not_found` in ack: verify the demo `BrainId` and IO registration in `io.log`.
 - request timeout: verify `--io-address`/`--io-id` and that IO Gateway is running.
 
+## Reproduction Runtime + Operator Runbook
+
+Runtime reproduction is exposed through IO messages:
+- `nbn.io.ReproduceByBrainIds`
+- `nbn.io.ReproduceByArtifacts`
+
+Result semantics (from current implementation):
+- Gate or runtime failures: `result.report.compatible=false` with `result.report.abort_reason=<code>`.
+- Successful synthesis: `result.child_def` populated with child `.nbn` artifact ref and `result.summary` populated.
+- Spawn behavior follows `config.spawn_child`:
+  - `SPAWN_CHILD_DEFAULT_ON` tries to spawn.
+  - `SPAWN_CHILD_NEVER` returns child artifact without spawning.
+  - `SPAWN_CHILD_ALWAYS` forces spawn attempt.
+- If spawn fails after successful synthesis, response keeps `child_def` and sets abort reason to spawn failure codes (for example `repro_spawn_unavailable`, `repro_spawn_failed`, `repro_spawn_request_failed`).
+
+Operator runbook:
+- `tools/demo/reproduction_operator_runbook.md`
+
+Local deterministic repro demo flow:
+- `tools/demo/run_local_hivemind_demo.ps1` now starts `Nbn.Runtime.Reproduction`, wires IO with `--repro-address/--repro-name`, and runs `Nbn.Tools.DemoHost repro-scenario`.
+- The scenario log is written to `tools/demo/local-demo/<timestamp>/logs/repro-scenario.log`.
+- Default expected fields are:
+  - `result.compatible == true`
+  - `result.abort_reason == ""`
+  - `result.child_def.sha256` present
+  - `result.spawned == false` (default `spawn-policy=never`)
+
+Direct command example:
+
+```bash
+dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
+  repro-scenario \
+  --io-address 127.0.0.1:12050 --io-id io-gateway \
+  --parent-a-sha256 <hex> --parent-a-size <bytes> \
+  --parent-b-sha256 <hex> --parent-b-size <bytes> \
+  --store-uri <artifact_root_or_file_uri> \
+  --seed 12345 --spawn-policy never --strength-source base --json
+```
+
 ## Workbench Visualizer (Neural Activity View)
 
 The Workbench Visualizer projects runtime visualization events into a canvas with

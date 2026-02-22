@@ -3,6 +3,7 @@ using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
+using Repro = Nbn.Proto.Repro;
 using Nbn.Proto.Signal;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
@@ -35,6 +36,9 @@ switch (command)
         break;
     case "io-scenario":
         await RunIoScenarioAsync(remaining);
+        break;
+    case "repro-scenario":
+        await RunReproScenarioAsync(remaining);
         break;
     case "run-brain":
         await RunBrainAsync(remaining);
@@ -112,7 +116,7 @@ static async Task RunBrainAsync(string[] args)
     if (!string.IsNullOrWhiteSpace(ioAddress) && !string.IsNullOrWhiteSpace(ioId))
     {
         var ioPid = new PID(ioAddress, ioId);
-        system.Root.Send(ioPid, new RegisterBrain
+        system.Root.Send(ioPid, new Nbn.Proto.Io.RegisterBrain
         {
             BrainId = brainId.ToProtoUuid(),
             InputWidth = 1,
@@ -272,6 +276,123 @@ static async Task RunIoScenarioAsync(string[] args)
                 $"BrainInfo: cost={brainInfo.CostEnabled} energy={brainInfo.EnergyEnabled} remaining={brainInfo.EnergyRemaining} " +
                 $"rate={brainInfo.EnergyRateUnitsPerSecond}/s plasticity={brainInfo.PlasticityEnabled} " +
                 $"mode={(brainInfo.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute")} plasticityRate={brainInfo.PlasticityRate:0.######}");
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+}
+
+static async Task RunReproScenarioAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12071;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var ioAddress = GetArg(args, "--io-address") ?? throw new InvalidOperationException("--io-address is required.");
+    var ioId = GetArg(args, "--io-id") ?? "io-gateway";
+    var parentASha = GetArg(args, "--parent-a-sha256") ?? GetArg(args, "--parent-sha256") ?? throw new InvalidOperationException("--parent-a-sha256 is required.");
+    var parentBSha = GetArg(args, "--parent-b-sha256") ?? parentASha;
+    var parentASize = GetULongArg(args, "--parent-a-size") ?? GetULongArg(args, "--parent-size") ?? throw new InvalidOperationException("--parent-a-size is required.");
+    var parentBSize = GetULongArg(args, "--parent-b-size") ?? parentASize;
+    var storeUri = GetArg(args, "--store-uri") ?? GetArg(args, "--artifact-root");
+    var seed = GetULongArg(args, "--seed") ?? 12345UL;
+    var timeoutSeconds = GetIntArg(args, "--timeout-seconds") ?? 10;
+    var jsonOnly = HasFlag(args, "--json");
+    var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+
+    var spawnPolicy = ParseSpawnPolicy(GetArg(args, "--spawn-policy") ?? "never");
+    var strengthSource = ParseStrengthSource(GetArg(args, "--strength-source"));
+
+    var parentARef = parentASha.ToArtifactRef(parentASize, "application/x-nbn", storeUri);
+    var parentBRef = parentBSha.ToArtifactRef(parentBSize, "application/x-nbn", storeUri);
+
+    var request = new Repro.ReproduceByArtifactsRequest
+    {
+        ParentADef = parentARef,
+        ParentBDef = parentBRef,
+        StrengthSource = strengthSource,
+        Config = new Repro.ReproduceConfig
+        {
+            SpawnChild = spawnPolicy
+        },
+        Seed = seed
+    };
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var ioPid = new PID(ioAddress, ioId);
+        var response = await system.Root.RequestAsync<ReproduceResult>(
+            ioPid,
+            new ReproduceByArtifacts { Request = request },
+            timeout);
+
+        var result = response?.Result;
+        var report = result?.Report;
+        var summary = result?.Summary;
+        var childBrainIdText = string.Empty;
+        if (result?.ChildBrainId is not null
+            && result.ChildBrainId.TryToGuid(out var childBrainId)
+            && childBrainId != Guid.Empty)
+        {
+            childBrainIdText = childBrainId.ToString("D");
+        }
+
+        var payload = new
+        {
+            io_address = ioAddress,
+            io_id = ioId,
+            seed,
+            strength_source = strengthSource.ToString(),
+            spawn_policy = spawnPolicy.ToString(),
+            parent_a = ToArtifactPayload(parentARef),
+            parent_b = ToArtifactPayload(parentBRef),
+            result = result is null
+                ? null
+                : new
+                {
+                    compatible = report?.Compatible ?? false,
+                    abort_reason = report?.AbortReason ?? string.Empty,
+                    similarity_score = report?.SimilarityScore ?? 0f,
+                    region_span_score = report?.RegionSpanScore ?? 0f,
+                    function_score = report?.FunctionScore ?? 0f,
+                    connectivity_score = report?.ConnectivityScore ?? 0f,
+                    regions_present_a = report?.RegionsPresentA ?? 0u,
+                    regions_present_b = report?.RegionsPresentB ?? 0u,
+                    regions_present_child = report?.RegionsPresentChild ?? 0u,
+                    summary = new
+                    {
+                        neurons_added = summary?.NeuronsAdded ?? 0u,
+                        neurons_removed = summary?.NeuronsRemoved ?? 0u,
+                        axons_added = summary?.AxonsAdded ?? 0u,
+                        axons_removed = summary?.AxonsRemoved ?? 0u,
+                        axons_rerouted = summary?.AxonsRerouted ?? 0u,
+                        functions_mutated = summary?.FunctionsMutated ?? 0u,
+                        strength_codes_changed = summary?.StrengthCodesChanged ?? 0u
+                    },
+                    child_def = ToArtifactPayload(result.ChildDef),
+                    spawned = result.Spawned,
+                    child_brain_id = childBrainIdText
+                }
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"Repro request sent to {ioAddress}/{ioId}");
+            Console.WriteLine($"Compatible: {report?.Compatible ?? false}");
+            Console.WriteLine($"Abort reason: {(string.IsNullOrWhiteSpace(report?.AbortReason) ? "(none)" : report!.AbortReason)}");
+            Console.WriteLine($"Spawned: {result?.Spawned ?? false}");
+            Console.WriteLine($"Child brain: {(string.IsNullOrWhiteSpace(childBrainIdText) ? "(none)" : childBrainIdText)}");
         }
     }
     finally
@@ -548,6 +669,12 @@ static long? GetLongArg(string[] args, string name)
     return long.TryParse(value, out var parsed) ? parsed : null;
 }
 
+static ulong? GetULongArg(string[] args, string name)
+{
+    var value = GetArg(args, name);
+    return ulong.TryParse(value, out var parsed) ? parsed : null;
+}
+
 static float? GetFloatArg(string[] args, string name)
 {
     var value = GetArg(args, name);
@@ -592,6 +719,50 @@ static Guid? GetGuidArg(string[] args, string name)
     return Guid.TryParse(value, out var parsed) ? parsed : null;
 }
 
+static Repro.StrengthSource ParseStrengthSource(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        return Repro.StrengthSource.StrengthBaseOnly;
+    }
+
+    return raw.Trim().ToLowerInvariant() switch
+    {
+        "live" => Repro.StrengthSource.StrengthLiveCodes,
+        "live_codes" => Repro.StrengthSource.StrengthLiveCodes,
+        "strength_live_codes" => Repro.StrengthSource.StrengthLiveCodes,
+        _ => Repro.StrengthSource.StrengthBaseOnly
+    };
+}
+
+static Repro.SpawnChildPolicy ParseSpawnPolicy(string raw)
+{
+    return raw.Trim().ToLowerInvariant() switch
+    {
+        "never" => Repro.SpawnChildPolicy.SpawnChildNever,
+        "spawn_child_never" => Repro.SpawnChildPolicy.SpawnChildNever,
+        "always" => Repro.SpawnChildPolicy.SpawnChildAlways,
+        "spawn_child_always" => Repro.SpawnChildPolicy.SpawnChildAlways,
+        _ => Repro.SpawnChildPolicy.SpawnChildDefaultOn
+    };
+}
+
+static object? ToArtifactPayload(ArtifactRef? reference)
+{
+    if (reference is null || !reference.TryToSha256Bytes(out var bytes))
+    {
+        return null;
+    }
+
+    return new
+    {
+        sha256 = Convert.ToHexString(bytes).ToLowerInvariant(),
+        media_type = reference.MediaType,
+        size_bytes = reference.SizeBytes,
+        store_uri = reference.StoreUri
+    };
+}
+
 static string PidLabel(PID pid)
     => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
@@ -602,6 +773,9 @@ static void PrintHelp()
     Console.WriteLine("  io-scenario --io-address <host:port> --io-id <name> --brain-id <guid>");
     Console.WriteLine("             [--credit <int64>] [--rate <int64>] [--cost-enabled <bool>] [--energy-enabled <bool>]");
     Console.WriteLine("             [--plasticity-enabled <bool>] [--plasticity-rate <float>] [--probabilistic <bool>] [--json]");
+    Console.WriteLine("  repro-scenario --io-address <host:port> [--io-id <name>] --parent-a-sha256 <hex> --parent-a-size <bytes>");
+    Console.WriteLine("                [--parent-b-sha256 <hex>] [--parent-b-size <bytes>] [--store-uri <path|file://uri>] [--seed <uint64>]");
+    Console.WriteLine("                [--spawn-policy default|never|always] [--strength-source base|live] [--json]");
     Console.WriteLine("  run-brain --bind-host <host> --port <port> --brain-id <guid>");
     Console.WriteLine("            --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("            [--router-id <name>] [--brain-root-id <name>]");

@@ -5,6 +5,7 @@ param(
     [int]$BrainHostPort = 12011,
     [int]$RegionHostPort = 12040,
     [int]$IoPort = 12050,
+    [int]$ReproPort = 12070,
     [int]$ObsPort = 12060,
     [int]$SettingsPort = 12010,
     [int]$RegionId = 1,
@@ -12,10 +13,16 @@ param(
     [string]$RouterId = "demo-router",
     [string]$PidFile = "",
     [switch]$RunEnergyPlasticityScenario = $true,
+    [switch]$RunReproScenario = $true,
     [long]$ScenarioCredit = 500,
     [long]$ScenarioRate = 3,
     [double]$ScenarioPlasticityRate = 0.05,
-    [switch]$ScenarioAbsolutePlasticity
+    [switch]$ScenarioAbsolutePlasticity,
+    [ulong]$ReproSeed = 12345,
+    [ValidateSet("default", "never", "always")]
+    [string]$ReproSpawnPolicy = "never",
+    [ValidateSet("base", "live")]
+    [string]$ReproStrengthSource = "base"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +48,7 @@ $hiveAddress = "${BindHost}:${HiveMindPort}"
 $brainAddress = "${BindHost}:${BrainHostPort}"
 $regionAddress = "${BindHost}:${RegionHostPort}"
 $ioAddress = "${BindHost}:${IoPort}"
+$reproAddress = "${BindHost}:${ReproPort}"
 $obsAddress = "${BindHost}:${ObsPort}"
 $settingsAddress = "${BindHost}:${SettingsPort}"
 
@@ -48,15 +56,16 @@ Write-Host "Demo root: $runRoot"
 Write-Host "BrainId: $brainId"
 
 Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" |
-    Where-Object { $_.CommandLine -match 'Nbn.Runtime.HiveMind|Nbn.Runtime.RegionHost|Nbn.Runtime.IO|Nbn.Runtime.Observability|Nbn.Runtime.SettingsMonitor|Nbn.Tools.DemoHost' } |
+    Where-Object { $_.CommandLine -match 'Nbn.Runtime.HiveMind|Nbn.Runtime.RegionHost|Nbn.Runtime.IO|Nbn.Runtime.Reproduction|Nbn.Runtime.Observability|Nbn.Runtime.SettingsMonitor|Nbn.Tools.DemoHost' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
-& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj") -c Release | Out-Null
-& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj") -c Release | Out-Null
-& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj") -c Release | Out-Null
-& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.Observability\Nbn.Runtime.Observability.csproj") -c Release | Out-Null
-& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.SettingsMonitor\Nbn.Runtime.SettingsMonitor.csproj") -c Release | Out-Null
-& dotnet build (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost\Nbn.Tools.DemoHost.csproj") -c Release | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj") -c Release --disable-build-servers | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj") -c Release --disable-build-servers | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj") -c Release --disable-build-servers | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.Reproduction\Nbn.Runtime.Reproduction.csproj") -c Release --disable-build-servers | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.Observability\Nbn.Runtime.Observability.csproj") -c Release --disable-build-servers | Out-Null
+& dotnet build (Join-Path $repoRoot "src\Nbn.Runtime.SettingsMonitor\Nbn.Runtime.SettingsMonitor.csproj") -c Release --disable-build-servers | Out-Null
+& dotnet build (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost\Nbn.Tools.DemoHost.csproj") -c Release --disable-build-servers | Out-Null
 
 function Get-ExePath([string]$projectFolder, [string]$exeName) {
     return Join-Path $repoRoot (Join-Path $projectFolder ("bin\Release\net8.0\" + $exeName + ".exe"))
@@ -66,6 +75,7 @@ $demoExe = Get-ExePath "tools\Nbn.Tools.DemoHost" "Nbn.Tools.DemoHost"
 $hiveExe = Get-ExePath "src\Nbn.Runtime.HiveMind" "Nbn.Runtime.HiveMind"
 $regionExe = Get-ExePath "src\Nbn.Runtime.RegionHost" "Nbn.Runtime.RegionHost"
 $ioExe = Get-ExePath "src\Nbn.Runtime.IO" "Nbn.Runtime.IO"
+$reproExe = Get-ExePath "src\Nbn.Runtime.Reproduction" "Nbn.Runtime.Reproduction"
 $obsExe = Get-ExePath "src\Nbn.Runtime.Observability" "Nbn.Runtime.Observability"
 $settingsExe = Get-ExePath "src\Nbn.Runtime.SettingsMonitor" "Nbn.Runtime.SettingsMonitor"
 
@@ -95,9 +105,12 @@ $regionErr = Join-Path $logRoot "regionhost.err.log"
 $regionInputErr = Join-Path $logRoot "regionhost-input.err.log"
 $regionOutputErr = Join-Path $logRoot "regionhost-output.err.log"
 $ioErr = Join-Path $logRoot "io.err.log"
+$reproLog = Join-Path $logRoot "reproduction.log"
+$reproErr = Join-Path $logRoot "reproduction.err.log"
 $obsErr = Join-Path $logRoot "observability.err.log"
 $settingsErr = Join-Path $logRoot "settingsmonitor.err.log"
 $scenarioLog = Join-Path $logRoot "energy-plasticity-scenario.log"
+$reproScenarioLog = Join-Path $logRoot "repro-scenario.log"
 
 $hiveArgs = @(
     "run",
@@ -310,7 +323,9 @@ $ioArgs = @(
     "--settings-port", $SettingsPort,
     "--settings-name", "SettingsMonitor",
     "--hivemind-address", $hiveAddress,
-    "--hivemind-name", "HiveMind"
+    "--hivemind-name", "HiveMind",
+    "--repro-address", $reproAddress,
+    "--repro-name", "ReproductionManager"
 )
 
 $ioServiceArgs = @(
@@ -320,7 +335,34 @@ $ioServiceArgs = @(
     "--settings-port", $SettingsPort,
     "--settings-name", "SettingsMonitor",
     "--hivemind-address", $hiveAddress,
-    "--hivemind-name", "HiveMind"
+    "--hivemind-name", "HiveMind",
+    "--repro-address", $reproAddress,
+    "--repro-name", "ReproductionManager"
+)
+
+$reproArgs = @(
+    "run",
+    "--project", (Join-Path $repoRoot "src\Nbn.Runtime.Reproduction"),
+    "-c", "Release",
+    "--no-build",
+    "--",
+    "--bind-host", $BindHost,
+    "--port", $ReproPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--io-address", $ioAddress,
+    "--io-name", "io-gateway"
+)
+
+$reproServiceArgs = @(
+    "--bind-host", $BindHost,
+    "--port", $ReproPort,
+    "--settings-host", $BindHost,
+    "--settings-port", $SettingsPort,
+    "--settings-name", "SettingsMonitor",
+    "--io-address", $ioAddress,
+    "--io-name", "io-gateway"
 )
 
 $obsArgs = @(
@@ -401,6 +443,12 @@ $ioProc = if (Test-Path $ioExe) {
     Start-Process -FilePath "dotnet" -ArgumentList $ioArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $ioLog -RedirectStandardError $ioErr
 }
 Start-Sleep -Seconds 1
+$reproProc = if (Test-Path $reproExe) {
+    Start-Process -FilePath $reproExe -ArgumentList $reproServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $reproLog -RedirectStandardError $reproErr
+} else {
+    Start-Process -FilePath "dotnet" -ArgumentList $reproArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $reproLog -RedirectStandardError $reproErr
+}
+Start-Sleep -Seconds 1
 $obsProc = if (Test-Path $obsExe) {
     Start-Process -FilePath $obsExe -ArgumentList $obsServiceArgs -WorkingDirectory $repoRoot -NoNewWindow -PassThru -RedirectStandardOutput $obsLog -RedirectStandardError $obsErr
 } else {
@@ -413,6 +461,7 @@ Write-Host "RegionHost: $regionAddress (pid $($regionProc.Id))"
 Write-Host "RegionHost Input: ${BindHost}:$($RegionHostPort + 1) (pid $($regionInputProc.Id))"
 Write-Host "RegionHost Output: ${BindHost}:$($RegionHostPort + 2) (pid $($regionOutputProc.Id))"
 Write-Host "IO Gateway: $ioAddress (pid $($ioProc.Id))"
+Write-Host "Reproduction: $reproAddress (pid $($reproProc.Id))"
 Write-Host "Observability: $obsAddress (pid $($obsProc.Id))"
 Write-Host "SettingsMonitor: $settingsAddress (pid $($settingsProc.Id))"
 Write-Host "Settings DB: $settingsDbPath"
@@ -427,6 +476,7 @@ if ($PidFile) {
         @{ pid = $regionInputProc.Id; name = $regionInputProc.ProcessName; startTicksUtc = $regionInputProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $regionOutputProc.Id; name = $regionOutputProc.ProcessName; startTicksUtc = $regionOutputProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $ioProc.Id; name = $ioProc.ProcessName; startTicksUtc = $ioProc.StartTime.ToUniversalTime().Ticks },
+        @{ pid = $reproProc.Id; name = $reproProc.ProcessName; startTicksUtc = $reproProc.StartTime.ToUniversalTime().Ticks },
         @{ pid = $obsProc.Id; name = $obsProc.ProcessName; startTicksUtc = $obsProc.StartTime.ToUniversalTime().Ticks }
     )
 
@@ -442,9 +492,10 @@ while ((Get-Date) -lt $deadline) {
     $regionInputReady = (Test-Path $regionInputLog) -and ((Get-Item $regionInputLog).Length -gt 0)
     $regionOutputReady = (Test-Path $regionOutputLog) -and ((Get-Item $regionOutputLog).Length -gt 0)
     $ioReady = (Test-Path $ioLog) -and ((Get-Item $ioLog).Length -gt 0)
+    $reproReady = (Test-Path $reproLog) -and ((Get-Item $reproLog).Length -gt 0)
     $obsReady = (Test-Path $obsLog) -and ((Get-Item $obsLog).Length -gt 0)
 
-    if ($hiveReady -and $brainReady -and $regionReady -and $regionInputReady -and $regionOutputReady -and $ioReady -and $obsReady) {
+    if ($hiveReady -and $brainReady -and $regionReady -and $regionInputReady -and $regionOutputReady -and $ioReady -and $reproReady -and $obsReady) {
         break
     }
 
@@ -457,6 +508,7 @@ if ($RunEnergyPlasticityScenario) {
         "io-scenario",
         "--io-address", $ioAddress,
         "--io-id", "io-gateway",
+        "--port", ($ReproPort + 1),
         "--brain-id", $brainId,
         "--credit", $ScenarioCredit,
         "--rate", $ScenarioRate,
@@ -484,13 +536,46 @@ if ($RunEnergyPlasticityScenario) {
     }
 }
 
+if ($RunReproScenario) {
+    $reproScenarioArgs = @(
+        "repro-scenario",
+        "--io-address", $ioAddress,
+        "--io-id", "io-gateway",
+        "--port", ($ReproPort + 2),
+        "--parent-a-sha256", $artifact.nbn_sha256,
+        "--parent-a-size", $artifact.nbn_size,
+        "--parent-b-sha256", $artifact.nbn_sha256,
+        "--parent-b-size", $artifact.nbn_size,
+        "--store-uri", $artifactRoot,
+        "--seed", $ReproSeed,
+        "--spawn-policy", $ReproSpawnPolicy,
+        "--strength-source", $ReproStrengthSource,
+        "--json"
+    )
+
+    $reproOutput = if (Test-Path $demoExe) {
+        & $demoExe @reproScenarioArgs
+    } else {
+        & dotnet run --project (Join-Path $repoRoot "tools\Nbn.Tools.DemoHost") -c Release --no-build -- @reproScenarioArgs
+    }
+
+    $reproOutput | Set-Content -Path $reproScenarioLog -Encoding UTF8
+    $reproJson = $reproOutput | Where-Object { $_ -match '^{.*}$' } | Select-Object -Last 1
+    if ($reproJson) {
+        Write-Host "Repro scenario completed."
+        Write-Host "Repro JSON: $reproJson"
+    } else {
+        Write-Warning "Repro scenario did not emit JSON. See $reproScenarioLog."
+    }
+}
+
 Write-Host "Press Enter to stop the demo."
 
 try {
     [void](Read-Host)
 }
 finally {
-    foreach ($proc in @($obsProc, $ioProc, $regionOutputProc, $regionInputProc, $regionProc, $brainProc, $hiveProc, $settingsProc)) {
+    foreach ($proc in @($obsProc, $reproProc, $ioProc, $regionOutputProc, $regionInputProc, $regionProc, $brainProc, $hiveProc, $settingsProc)) {
         if ($proc -and -not $proc.HasExited) {
             Stop-Process -Id $proc.Id -Force
         }
