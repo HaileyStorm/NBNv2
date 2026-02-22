@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Google.Protobuf;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
@@ -6,6 +7,7 @@ using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
+using Nbn.Shared.Quantization;
 using Proto;
 using ProtoSeverity = Nbn.Proto.Severity;
 
@@ -90,6 +92,9 @@ public sealed class RegionShardActor : IActor
             case UpdateShardRuntimeConfig message:
                 HandleUpdateRuntimeConfig(message);
                 break;
+            case CaptureShardSnapshot message:
+                HandleCaptureShardSnapshot(context, message);
+                break;
         }
 
         return Task.CompletedTask;
@@ -154,6 +159,72 @@ public sealed class RegionShardActor : IActor
         _plasticityEnabled = message.PlasticityEnabled;
         _plasticityRate = message.PlasticityRate;
         _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+    }
+
+    private void HandleCaptureShardSnapshot(IContext context, CaptureShardSnapshot message)
+    {
+        var response = new CaptureShardSnapshotAck
+        {
+            BrainId = _brainId.ToProtoUuid(),
+            RegionId = (uint)_state.RegionId,
+            ShardIndex = (uint)_shardId.ShardIndex,
+            NeuronStart = (uint)_state.NeuronStart,
+            NeuronCount = (uint)_state.NeuronCount,
+            Success = false
+        };
+
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var brainId) || brainId != _brainId)
+        {
+            response.Error = "brain_id_mismatch";
+            context.Respond(response);
+            return;
+        }
+
+        if (message.RegionId != (uint)_state.RegionId || message.ShardIndex != (uint)_shardId.ShardIndex)
+        {
+            response.Error = "shard_id_mismatch";
+            context.Respond(response);
+            return;
+        }
+
+        var enabledBytes = new byte[(_state.NeuronCount + 7) / 8];
+        for (var i = 0; i < _state.NeuronCount; i++)
+        {
+            var buffer = _state.Buffer[i];
+            if (!float.IsFinite(buffer))
+            {
+                buffer = 0f;
+            }
+
+            var code = QuantizationSchemas.DefaultBuffer.Encode(buffer, bits: 16);
+            response.BufferCodes.Add(code);
+
+            if (_state.Enabled[i])
+            {
+                enabledBytes[i / 8] |= (byte)(1 << (i % 8));
+            }
+        }
+
+        response.EnabledBitset = ByteString.CopyFrom(enabledBytes);
+
+        for (var i = 0; i < _state.Axons.Count; i++)
+        {
+            var runtimeCode = _state.Axons.RuntimeStrengthCodes[i];
+            if (!_state.Axons.HasRuntimeOverlay[i] || runtimeCode == _state.Axons.BaseStrengthCodes[i])
+            {
+                continue;
+            }
+
+            response.Overlays.Add(new SnapshotOverlayRecord
+            {
+                FromAddress = _state.Axons.FromAddress32[i],
+                ToAddress = _state.Axons.ToAddress32[i],
+                StrengthCode = runtimeCode
+            });
+        }
+
+        response.Success = true;
+        context.Respond(response);
     }
 
     private void HandleSignalBatch(IContext context, SignalBatch batch)

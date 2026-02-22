@@ -111,6 +111,29 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "plasticity_enabled", 6, FieldType.Bool);
         AssertField(shardRuntime, "plasticity_rate", 7, FieldType.Float);
         AssertField(shardRuntime, "probabilistic_updates", 8, FieldType.Bool);
+
+        var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
+        AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);
+        AssertField(snapshotOverlay, "to_address", 2, FieldType.Fixed32);
+        AssertField(snapshotOverlay, "strength_code", 3, FieldType.UInt32);
+
+        var captureSnapshot = descriptor.MessageTypes.Single(message => message.Name == "CaptureShardSnapshot");
+        AssertField(captureSnapshot, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(captureSnapshot, "region_id", 2, FieldType.UInt32);
+        AssertField(captureSnapshot, "shard_index", 3, FieldType.UInt32);
+        AssertField(captureSnapshot, "tick_id", 4, FieldType.Fixed64);
+
+        var captureSnapshotAck = descriptor.MessageTypes.Single(message => message.Name == "CaptureShardSnapshotAck");
+        AssertField(captureSnapshotAck, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(captureSnapshotAck, "region_id", 2, FieldType.UInt32);
+        AssertField(captureSnapshotAck, "shard_index", 3, FieldType.UInt32);
+        AssertField(captureSnapshotAck, "neuron_start", 4, FieldType.UInt32);
+        AssertField(captureSnapshotAck, "neuron_count", 5, FieldType.UInt32);
+        AssertRepeatedField(captureSnapshotAck, "buffer_codes", 6, FieldType.SInt32);
+        AssertField(captureSnapshotAck, "enabled_bitset", 7, FieldType.Bytes);
+        AssertRepeatedField(captureSnapshotAck, "overlays", 8, FieldType.Message, "nbn.control.SnapshotOverlayRecord");
+        AssertField(captureSnapshotAck, "success", 9, FieldType.Bool);
+        AssertField(captureSnapshotAck, "error", 10, FieldType.String);
     }
 
     [Fact]
@@ -203,6 +226,20 @@ public class ProtoCompatibilityTests
         AssertField(brainInfo, "plasticity_rate", 11, FieldType.Float);
         AssertField(brainInfo, "plasticity_probabilistic_updates", 12, FieldType.Bool);
         AssertField(brainInfo, "last_tick_cost", 13, FieldType.SInt64);
+    }
+
+    [Fact]
+    public void ProtoIo_RequestSnapshot_Fields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var requestSnapshot = descriptor.MessageTypes.Single(message => message.Name == "RequestSnapshot");
+
+        AssertField(requestSnapshot, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(requestSnapshot, "has_runtime_state", 2, FieldType.Bool);
+        AssertField(requestSnapshot, "energy_remaining", 3, FieldType.SInt64);
+        AssertField(requestSnapshot, "cost_enabled", 4, FieldType.Bool);
+        AssertField(requestSnapshot, "energy_enabled", 5, FieldType.Bool);
+        AssertField(requestSnapshot, "plasticity_enabled", 6, FieldType.Bool);
     }
 
     [Fact]

@@ -177,6 +177,11 @@ message SetPlasticityEnabled {
 
 message RequestSnapshot {
   nbn.Uuid brain_id = 1;
+  bool has_runtime_state = 2;
+  sint64 energy_remaining = 3;
+  bool cost_enabled = 4;
+  bool energy_enabled = 5;
+  bool plasticity_enabled = 6;
 }
 
 message SnapshotReady {

@@ -1,3 +1,4 @@
+using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
@@ -69,6 +70,55 @@ public class IoGatewayArtifactReferenceTests
         Assert.NotNull(ready.Snapshot);
         Assert.True(ready.Snapshot.TryToSha256Hex(out var snapshotSha));
         Assert.Equal(snapshot.ToSha256Hex(), snapshotSha);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RequestSnapshot_Forwards_RuntimeState_To_HiveMind_And_Uses_Fresh_Snapshot()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<RequestSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var freshSnapshot = new string('f', 64).ToArtifactRef(654, "application/x-nbs", "test-store");
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSnapshotProbe(forwarded, freshSnapshot)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainId = Guid.NewGuid();
+        var staleSnapshot = new string('e', 64).ToArtifactRef(321, "application/x-nbs", "test-store");
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            LastSnapshot = staleSnapshot,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 42,
+                CostEnabled = true,
+                EnergyEnabled = true,
+                PlasticityEnabled = true
+            }
+        });
+
+        var ready = await root.RequestAsync<SnapshotReady>(
+            gateway,
+            new RequestSnapshot
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.True(forwardedRequest.HasRuntimeState);
+        Assert.Equal(42, forwardedRequest.EnergyRemaining);
+        Assert.True(forwardedRequest.CostEnabled);
+        Assert.True(forwardedRequest.EnergyEnabled);
+        Assert.True(forwardedRequest.PlasticityEnabled);
+
+        Assert.NotNull(ready.Snapshot);
+        Assert.True(ready.Snapshot.TryToSha256Hex(out var snapshotSha));
+        Assert.Equal(freshSnapshot.ToSha256Hex(), snapshotSha);
 
         await system.ShutdownAsync();
     }
@@ -287,6 +337,38 @@ public class IoGatewayArtifactReferenceTests
                     break;
                 case ProtoControl.SetBrainPlasticity plasticity:
                     _plasticity.TrySetResult(plasticity);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveSnapshotProbe : IActor
+    {
+        private readonly TaskCompletionSource<RequestSnapshot> _request;
+        private readonly ArtifactRef _snapshot;
+
+        public HiveSnapshotProbe(TaskCompletionSource<RequestSnapshot> request, ArtifactRef snapshot)
+        {
+            _request = request;
+            _snapshot = snapshot;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case RequestSnapshot request:
+                    _request.TrySetResult(request);
+                    context.Respond(new SnapshotReady
+                    {
+                        BrainId = request.BrainId,
+                        Snapshot = _snapshot
+                    });
                     break;
             }
 

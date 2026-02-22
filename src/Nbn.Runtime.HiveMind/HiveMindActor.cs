@@ -2,11 +2,15 @@ using System.Security.Cryptography;
 using System.Text;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Viz;
+using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
+using Nbn.Shared.Format;
 using Nbn.Shared.HiveMind;
+using Nbn.Shared.Quantization;
+using Nbn.Shared.Validation;
 using Proto;
 using ProtoSeverity = Nbn.Proto.Severity;
 using ProtoIo = Nbn.Proto.Io;
@@ -27,6 +31,8 @@ public sealed class HiveMindActor : IActor
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
     private ulong _vizSequence;
+    private static readonly TimeSpan SnapshotShardRequestTimeout = TimeSpan.FromSeconds(5);
+    private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
 
     private TickState? _tick;
     private TickPhase _phase = TickPhase.Idle;
@@ -1346,7 +1352,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!_brains.TryGetValue(brainId, out var brain) || brain.LastSnapshot is null)
+        if (!_brains.TryGetValue(brainId, out var brain))
         {
             context.Respond(new ProtoIo.SnapshotReady
             {
@@ -1355,11 +1361,317 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (!HasArtifactRef(brain.BaseDefinition) || brain.Shards.Count == 0)
+        {
+            RespondSnapshot(context, brainId, brain.LastSnapshot);
+            return;
+        }
+
+        var storeRootPath = ResolveArtifactRoot(brain.BaseDefinition!.StoreUri);
+        var request = new SnapshotBuildRequest(
+            brain.BrainId,
+            brain.BaseDefinition!,
+            _lastCompletedTickId,
+            message.HasRuntimeState ? message.EnergyRemaining : 0L,
+            message.HasRuntimeState ? message.CostEnabled : brain.CostEnabled,
+            message.HasRuntimeState ? message.EnergyEnabled : brain.EnergyEnabled,
+            message.HasRuntimeState ? message.PlasticityEnabled : brain.PlasticityEnabled,
+            new Dictionary<ShardId32, PID>(brain.Shards),
+            storeRootPath,
+            string.IsNullOrWhiteSpace(brain.BaseDefinition.StoreUri) ? storeRootPath : brain.BaseDefinition.StoreUri);
+
+        var snapshotTask = BuildAndStoreSnapshotAsync(context.System, request);
+        context.ReenterAfter(snapshotTask, task =>
+        {
+            if (task is { IsCompletedSuccessfully: true } && task.Result is not null)
+            {
+                var snapshot = task.Result;
+                if (_brains.TryGetValue(brainId, out var liveBrain))
+                {
+                    liveBrain.LastSnapshot = snapshot;
+                    if (_ioPid is not null)
+                    {
+                        context.Send(_ioPid, new UpdateBrainSnapshot(brainId, snapshot));
+                    }
+
+                    RegisterBrainWithIo(context, liveBrain, force: true);
+                }
+
+                context.Respond(new ProtoIo.SnapshotReady
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    Snapshot = snapshot
+                });
+                return Task.CompletedTask;
+            }
+
+            if (task.Exception is not null)
+            {
+                LogError($"Live snapshot generation failed for brain {brainId}: {task.Exception.GetBaseException().Message}");
+            }
+
+            if (_brains.TryGetValue(brainId, out var liveFallback))
+            {
+                RespondSnapshot(context, brainId, liveFallback.LastSnapshot);
+            }
+            else
+            {
+                context.Respond(new ProtoIo.SnapshotReady
+                {
+                    BrainId = brainId.ToProtoUuid()
+                });
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
+    private static async Task<Nbn.Proto.ArtifactRef?> BuildAndStoreSnapshotAsync(ActorSystem system, SnapshotBuildRequest request)
+    {
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(request.StoreRootPath));
+        if (!request.BaseDefinition.TryToSha256Bytes(out var baseHashBytes))
+        {
+            throw new InvalidOperationException("Base definition sha256 is required to build snapshots.");
+        }
+
+        var baseHash = new Sha256Hash(baseHashBytes);
+        var nbnStream = await store.TryOpenArtifactAsync(baseHash).ConfigureAwait(false);
+        if (nbnStream is null)
+        {
+            throw new InvalidOperationException($"Base NBN artifact {baseHash.ToHex()} not found in store.");
+        }
+
+        byte[] nbnBytes;
+        await using (nbnStream)
+        using (var ms = new MemoryStream())
+        {
+            await nbnStream.CopyToAsync(ms).ConfigureAwait(false);
+            nbnBytes = ms.ToArray();
+        }
+
+        var baseHeader = NbnBinary.ReadNbnHeader(nbnBytes);
+        var captures = new List<ProtoControl.CaptureShardSnapshotAck>(request.Shards.Count);
+        foreach (var entry in request.Shards.OrderBy(static pair => pair.Key.RegionId).ThenBy(static pair => pair.Key.ShardIndex))
+        {
+            var capture = await system.Root.RequestAsync<ProtoControl.CaptureShardSnapshotAck>(
+                    entry.Value,
+                    new ProtoControl.CaptureShardSnapshot
+                    {
+                        BrainId = request.BrainId.ToProtoUuid(),
+                        RegionId = (uint)entry.Key.RegionId,
+                        ShardIndex = (uint)entry.Key.ShardIndex,
+                        TickId = request.SnapshotTickId
+                    },
+                    SnapshotShardRequestTimeout)
+                .ConfigureAwait(false);
+
+            if (capture is null)
+            {
+                throw new InvalidOperationException($"Snapshot capture returned null for shard {entry.Key}.");
+            }
+
+            if (!capture.Success)
+            {
+                var error = string.IsNullOrWhiteSpace(capture.Error) ? "unknown" : capture.Error;
+                throw new InvalidOperationException($"Snapshot capture failed for shard {entry.Key}: {error}");
+            }
+
+            captures.Add(capture);
+        }
+
+        var (regions, overlays) = BuildSnapshotSections(baseHeader, captures);
+        var flags = 0x1u;
+        if (overlays.Count > 0)
+        {
+            flags |= 0x2u;
+        }
+
+        if (request.CostEnabled)
+        {
+            flags |= 0x4u;
+        }
+
+        if (request.EnergyEnabled)
+        {
+            flags |= 0x8u;
+        }
+
+        if (request.PlasticityEnabled)
+        {
+            flags |= 0x10u;
+        }
+
+        var header = new NbsHeaderV2(
+            magic: "NBS2",
+            version: 2,
+            endianness: 1,
+            headerBytesPow2: 9,
+            brainId: request.BrainId,
+            snapshotTickId: request.SnapshotTickId,
+            timestampMs: (ulong)NowMs(),
+            energyRemaining: request.EnergyRemaining,
+            baseNbnSha256: baseHashBytes,
+            flags: flags,
+            bufferMap: SnapshotBufferQuantization);
+
+        NbsOverlaySection? overlaySection = null;
+        if (overlays.Count > 0)
+        {
+            overlaySection = new NbsOverlaySection(overlays.ToArray(), NbnBinary.GetNbsOverlaySectionSize(overlays.Count));
+        }
+
+        var validation = NbnBinaryValidator.ValidateNbs(header, regions, overlaySection);
+        if (!validation.IsValid)
+        {
+            var errors = string.Join("; ", validation.Issues.Select(static issue => issue.ToString()));
+            throw new InvalidOperationException($"Generated snapshot failed validation: {errors}");
+        }
+
+        var bytes = NbnBinary.WriteNbs(header, regions, overlays);
+        await using var snapshotStream = new MemoryStream(bytes, writable: false);
+        var manifest = await store.StoreAsync(snapshotStream, "application/x-nbs").ConfigureAwait(false);
+
+        return manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbs", request.StoreUri);
+    }
+
+    private static (List<NbsRegionSection> Regions, List<NbsOverlayRecord> Overlays) BuildSnapshotSections(
+        NbnHeaderV2 baseHeader,
+        IReadOnlyList<ProtoControl.CaptureShardSnapshotAck> captures)
+    {
+        var regions = new Dictionary<int, SnapshotRegionBuffer>();
+        for (var regionId = 0; regionId < baseHeader.Regions.Length; regionId++)
+        {
+            var span = (int)baseHeader.Regions[regionId].NeuronSpan;
+            if (span == 0)
+            {
+                continue;
+            }
+
+            regions[regionId] = new SnapshotRegionBuffer(span);
+        }
+
+        var overlayMap = new Dictionary<(uint From, uint To), byte>();
+        foreach (var capture in captures)
+        {
+            var regionId = (int)capture.RegionId;
+            if (!regions.TryGetValue(regionId, out var region))
+            {
+                throw new InvalidOperationException($"Capture returned unknown region {regionId}.");
+            }
+
+            var neuronStart = checked((int)capture.NeuronStart);
+            var neuronCount = checked((int)capture.NeuronCount);
+            if (neuronCount != capture.BufferCodes.Count)
+            {
+                throw new InvalidOperationException($"Capture buffer count mismatch for region {regionId}: expected {neuronCount}, got {capture.BufferCodes.Count}.");
+            }
+
+            var enabledBytes = capture.EnabledBitset is null ? Array.Empty<byte>() : capture.EnabledBitset.ToByteArray();
+            var expectedEnabledBytes = (neuronCount + 7) / 8;
+            if (enabledBytes.Length != expectedEnabledBytes)
+            {
+                throw new InvalidOperationException($"Capture enabled bitset length mismatch for region {regionId}: expected {expectedEnabledBytes}, got {enabledBytes.Length}.");
+            }
+
+            for (var i = 0; i < neuronCount; i++)
+            {
+                var globalNeuron = neuronStart + i;
+                if ((uint)globalNeuron >= (uint)region.BufferCodes.Length)
+                {
+                    throw new InvalidOperationException($"Capture neuron index {globalNeuron} is out of range for region {regionId}.");
+                }
+
+                if (region.Assigned[globalNeuron])
+                {
+                    throw new InvalidOperationException($"Capture overlap detected for region {regionId} neuron {globalNeuron}.");
+                }
+
+                region.Assigned[globalNeuron] = true;
+                var code = capture.BufferCodes[i];
+                code = Math.Clamp(code, 0, ushort.MaxValue);
+                region.BufferCodes[globalNeuron] = unchecked((short)(ushort)code);
+
+                if ((enabledBytes[i / 8] & (1 << (i % 8))) != 0)
+                {
+                    region.EnabledBitset[globalNeuron / 8] |= (byte)(1 << (globalNeuron % 8));
+                }
+            }
+
+            foreach (var overlay in capture.Overlays)
+            {
+                var strengthCode = (byte)Math.Clamp((int)overlay.StrengthCode, 0, 31);
+                overlayMap[(overlay.FromAddress, overlay.ToAddress)] = strengthCode;
+            }
+        }
+
+        var regionSections = new List<NbsRegionSection>(regions.Count);
+        foreach (var pair in regions.OrderBy(static item => item.Key))
+        {
+            var regionId = pair.Key;
+            var region = pair.Value;
+            if (region.Assigned.Any(static assigned => !assigned))
+            {
+                throw new InvalidOperationException($"Capture did not fully cover region {regionId}.");
+            }
+
+            regionSections.Add(new NbsRegionSection((byte)regionId, (uint)region.BufferCodes.Length, region.BufferCodes, region.EnabledBitset));
+        }
+
+        var overlayRecords = overlayMap
+            .OrderBy(static item => item.Key.From)
+            .ThenBy(static item => item.Key.To)
+            .Select(static item => new NbsOverlayRecord(item.Key.From, item.Key.To, item.Value))
+            .ToList();
+
+        return (regionSections, overlayRecords);
+    }
+
+    private void RespondSnapshot(IContext context, Guid brainId, Nbn.Proto.ArtifactRef? snapshot)
+    {
+        if (HasArtifactRef(snapshot))
+        {
+            context.Respond(new ProtoIo.SnapshotReady
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Snapshot = snapshot
+            });
+            return;
+        }
+
         context.Respond(new ProtoIo.SnapshotReady
         {
-            BrainId = brainId.ToProtoUuid(),
-            Snapshot = brain.LastSnapshot
+            BrainId = brainId.ToProtoUuid()
         });
+    }
+
+    private static bool HasArtifactRef(Nbn.Proto.ArtifactRef? reference)
+        => reference is not null
+           && reference.Sha256 is not null
+           && reference.Sha256.Value is not null
+           && reference.Sha256.Value.Length == 32;
+
+    private static string ResolveArtifactRoot(string? storeUri)
+    {
+        if (!string.IsNullOrWhiteSpace(storeUri))
+        {
+            if (Uri.TryCreate(storeUri, UriKind.Absolute, out var uri) && uri.IsFile)
+            {
+                return uri.LocalPath;
+            }
+
+            if (!storeUri.Contains("://", StringComparison.Ordinal))
+            {
+                return storeUri;
+            }
+        }
+
+        var envRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        if (!string.IsNullOrWhiteSpace(envRoot))
+        {
+            return envRoot;
+        }
+
+        return Path.Combine(Environment.CurrentDirectory, "artifacts");
     }
 
     private void UpdateRoutingTable(IContext? context, BrainState brain)
@@ -1667,6 +1979,32 @@ public sealed class HiveMindActor : IActor
         public ProtoControl.ShardPlan? RequestedShardPlan { get; set; }
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
+    }
+
+    private sealed record SnapshotBuildRequest(
+        Guid BrainId,
+        Nbn.Proto.ArtifactRef BaseDefinition,
+        ulong SnapshotTickId,
+        long EnergyRemaining,
+        bool CostEnabled,
+        bool EnergyEnabled,
+        bool PlasticityEnabled,
+        Dictionary<ShardId32, PID> Shards,
+        string StoreRootPath,
+        string StoreUri);
+
+    private sealed class SnapshotRegionBuffer
+    {
+        public SnapshotRegionBuffer(int neuronSpan)
+        {
+            BufferCodes = new short[neuronSpan];
+            EnabledBitset = new byte[(neuronSpan + 7) / 8];
+            Assigned = new bool[neuronSpan];
+        }
+
+        public short[] BufferCodes { get; }
+        public byte[] EnabledBitset { get; }
+        public bool[] Assigned { get; }
     }
 
     private readonly record struct ShardKey(Guid BrainId, ShardId32 ShardId);

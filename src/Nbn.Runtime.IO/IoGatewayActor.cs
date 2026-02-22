@@ -610,25 +610,41 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        if (_brains.TryGetValue(brainId, out var entry) && HasArtifactRef(entry.LastSnapshot))
-        {
-            context.Respond(new SnapshotReady
-            {
-                BrainId = message.BrainId,
-                Snapshot = entry.LastSnapshot
-            });
-            return;
-        }
+        _brains.TryGetValue(brainId, out var entry);
 
         if (_hiveMindPid is null)
         {
+            if (entry is not null && HasArtifactRef(entry.LastSnapshot))
+            {
+                context.Respond(new SnapshotReady
+                {
+                    BrainId = message.BrainId,
+                    Snapshot = entry.LastSnapshot
+                });
+                return;
+            }
+
             context.Respond(new SnapshotReady { BrainId = message.BrainId });
             return;
         }
 
         try
         {
-            var ready = await context.RequestAsync<SnapshotReady>(_hiveMindPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+            var request = new RequestSnapshot
+            {
+                BrainId = message.BrainId
+            };
+
+            if (entry is not null)
+            {
+                request.HasRuntimeState = true;
+                request.EnergyRemaining = entry.Energy.EnergyRemaining;
+                request.CostEnabled = entry.Energy.CostEnabled;
+                request.EnergyEnabled = entry.Energy.EnergyEnabled;
+                request.PlasticityEnabled = entry.Energy.PlasticityEnabled;
+            }
+
+            var ready = await context.RequestAsync<SnapshotReady>(_hiveMindPid, request, DefaultRequestTimeout).ConfigureAwait(false);
             if (ready is not null
                 && HasArtifactRef(ready.Snapshot)
                 && _brains.TryGetValue(brainId, out var existing))
@@ -636,11 +652,37 @@ public sealed class IoGatewayActor : IActor
                 existing.LastSnapshot = ready.Snapshot;
             }
 
-            context.Respond(ready ?? new SnapshotReady { BrainId = message.BrainId });
+            if (ready is not null && HasArtifactRef(ready.Snapshot))
+            {
+                context.Respond(ready);
+                return;
+            }
+
+            if (entry is not null && HasArtifactRef(entry.LastSnapshot))
+            {
+                context.Respond(new SnapshotReady
+                {
+                    BrainId = message.BrainId,
+                    Snapshot = entry.LastSnapshot
+                });
+                return;
+            }
+
+            context.Respond(new SnapshotReady { BrainId = message.BrainId });
         }
         catch (Exception ex)
         {
             Console.WriteLine($"RequestSnapshot failed for {brainId}: {ex.Message}");
+            if (entry is not null && HasArtifactRef(entry.LastSnapshot))
+            {
+                context.Respond(new SnapshotReady
+                {
+                    BrainId = message.BrainId,
+                    Snapshot = entry.LastSnapshot
+                });
+                return;
+            }
+
             context.Respond(new SnapshotReady { BrainId = message.BrainId });
         }
     }

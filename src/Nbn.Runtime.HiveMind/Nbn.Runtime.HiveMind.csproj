@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Nbn.Shared\Nbn.Shared.csproj" />
+    <ProjectReference Include="..\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
     <ProjectReference Include="..\Nbn.Runtime.Brain\Nbn.Runtime.Brain.csproj" />
     <ProjectReference Include="..\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj" />
     <ProjectReference Include="..\Nbn.Runtime.SettingsMonitor\Nbn.Runtime.SettingsMonitor.csproj" />

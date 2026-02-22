@@ -1,0 +1,276 @@
+using Microsoft.Data.Sqlite;
+using Nbn.Proto;
+using Nbn.Proto.Control;
+using Nbn.Proto.Io;
+using Nbn.Runtime.Artifacts;
+using Nbn.Runtime.HiveMind;
+using Nbn.Shared;
+using Nbn.Shared.Format;
+using Nbn.Tests.Format;
+using Proto;
+using SharedAddress32 = Nbn.Shared.Addressing.Address32;
+using ShardId32 = Nbn.Shared.Addressing.ShardId32;
+
+namespace Nbn.Tests.HiveMind;
+
+public class HiveMindLiveSnapshotTests
+{
+    [Fact]
+    public async Task RequestSnapshot_Builds_And_Persists_Live_Nbs_With_Overlay_Deltas()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hive-snapshot-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var richNbn = NbnTestVectors.CreateRichNbnVector();
+            var baseManifest = await store.StoreAsync(new MemoryStream(richNbn.Bytes), "application/x-nbn");
+            var baseRef = baseManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)baseManifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+            var brainId = Guid.NewGuid();
+            var placement = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(placement.Accepted);
+
+            var region0Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(0, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 10, 11, 12 },
+                enabledBitset: new byte[] { 0b0000_0111 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+            var region1Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(1, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 20, 21, 22, 23 },
+                enabledBitset: new byte[] { 0b0000_1101 },
+                overlays: new[]
+                {
+                    new SnapshotOverlayRecord
+                    {
+                        FromAddress = SharedAddress32.From(1, 1).Value,
+                        ToAddress = SharedAddress32.From(31, 1).Value,
+                        StrengthCode = 22
+                    }
+                })));
+            var region31Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(31, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 30, 31 },
+                enabledBitset: new byte[] { 0b0000_0001 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+
+            root.Send(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 0,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region0Shard),
+                NeuronStart = 0,
+                NeuronCount = 3
+            });
+            root.Send(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 1,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region1Shard),
+                NeuronStart = 0,
+                NeuronCount = 4
+            });
+            root.Send(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 31,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region31Shard),
+                NeuronStart = 0,
+                NeuronCount = 2
+            });
+
+            var ready = await root.RequestAsync<SnapshotReady>(
+                hiveMind,
+                new RequestSnapshot
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    HasRuntimeState = true,
+                    EnergyRemaining = 777,
+                    CostEnabled = true,
+                    EnergyEnabled = true,
+                    PlasticityEnabled = true
+                });
+
+            Assert.NotNull(ready.Snapshot);
+            Assert.True(ready.Snapshot.TryToSha256Bytes(out var snapshotHashBytes));
+
+            var snapshotStream = await store.TryOpenArtifactAsync(new Sha256Hash(snapshotHashBytes));
+            Assert.NotNull(snapshotStream);
+
+            byte[] snapshotBytes;
+            await using (snapshotStream!)
+            using (var ms = new MemoryStream())
+            {
+                await snapshotStream.CopyToAsync(ms);
+                snapshotBytes = ms.ToArray();
+            }
+
+            var nbsHeader = NbnBinary.ReadNbsHeader(snapshotBytes);
+            Assert.Equal(brainId, nbsHeader.BrainId);
+            Assert.Equal((long)777, nbsHeader.EnergyRemaining);
+            Assert.True(nbsHeader.CostEnabled);
+            Assert.True(nbsHeader.EnergyEnabled);
+            Assert.True(nbsHeader.PlasticityEnabled);
+            Assert.True(nbsHeader.EnabledBitsetIncluded);
+            Assert.True(nbsHeader.AxonOverlayIncluded);
+
+            var nbnHeader = NbnBinary.ReadNbnHeader(richNbn.Bytes);
+            var offset = NbnBinary.NbsHeaderBytes;
+            var regionSections = new Dictionary<int, NbsRegionSection>();
+            for (var regionId = 0; regionId < nbnHeader.Regions.Length; regionId++)
+            {
+                if (nbnHeader.Regions[regionId].NeuronSpan == 0)
+                {
+                    continue;
+                }
+
+                var section = NbnBinary.ReadNbsRegionSection(snapshotBytes, offset, includeEnabledBitset: true);
+                regionSections[regionId] = section;
+                offset += section.ByteLength;
+            }
+
+            Assert.Equal(new short[] { 10, 11, 12 }, regionSections[0].BufferCodes);
+            Assert.Equal(new byte[] { 0b0000_0111 }, regionSections[0].EnabledBitset);
+            Assert.Equal(new short[] { 20, 21, 22, 23 }, regionSections[1].BufferCodes);
+            Assert.Equal(new byte[] { 0b0000_1101 }, regionSections[1].EnabledBitset);
+            Assert.Equal(new short[] { 30, 31 }, regionSections[31].BufferCodes);
+            Assert.Equal(new byte[] { 0b0000_0001 }, regionSections[31].EnabledBitset);
+
+            var overlays = NbnBinary.ReadNbsOverlaySection(snapshotBytes, offset);
+            var overlay = Assert.Single(overlays.Records);
+            Assert.Equal(SharedAddress32.From(1, 1).Value, overlay.FromAddress);
+            Assert.Equal(SharedAddress32.From(31, 1).Value, overlay.ToAddress);
+            Assert.Equal((byte)22, overlay.StrengthCode);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    private sealed class SnapshotShardProbe : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly int _neuronStart;
+        private readonly int[] _bufferCodes;
+        private readonly byte[] _enabledBitset;
+        private readonly IReadOnlyList<SnapshotOverlayRecord> _overlays;
+
+        public SnapshotShardProbe(
+            Guid brainId,
+            ShardId32 shardId,
+            int neuronStart,
+            int[] bufferCodes,
+            byte[] enabledBitset,
+            IReadOnlyList<SnapshotOverlayRecord> overlays)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _neuronStart = neuronStart;
+            _bufferCodes = bufferCodes;
+            _enabledBitset = enabledBitset;
+            _overlays = overlays;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not CaptureShardSnapshot capture)
+            {
+                return Task.CompletedTask;
+            }
+
+            var response = new CaptureShardSnapshotAck
+            {
+                BrainId = _brainId.ToProtoUuid(),
+                RegionId = (uint)_shardId.RegionId,
+                ShardIndex = (uint)_shardId.ShardIndex,
+                NeuronStart = (uint)_neuronStart,
+                NeuronCount = (uint)_bufferCodes.Length,
+                Success = capture.BrainId is not null
+                          && capture.BrainId.TryToGuid(out var guid)
+                          && guid == _brainId
+                          && capture.RegionId == (uint)_shardId.RegionId
+                          && capture.ShardIndex == (uint)_shardId.ShardIndex
+            };
+
+            if (!response.Success)
+            {
+                response.Error = "mismatch";
+                context.Respond(response);
+                return Task.CompletedTask;
+            }
+
+            response.BufferCodes.AddRange(_bufferCodes);
+            response.EnabledBitset = Google.Protobuf.ByteString.CopyFrom(_enabledBitset);
+            response.Overlays.Add(_overlays);
+            context.Respond(response);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static HiveMindOptions CreateOptions()
+        => new(
+            BindHost: "127.0.0.1",
+            Port: 0,
+            AdvertisedHost: null,
+            AdvertisedPort: null,
+            TargetTickHz: 50f,
+            MinTickHz: 10f,
+            ComputeTimeoutMs: 500,
+            DeliverTimeoutMs: 500,
+            BackpressureDecay: 0.9f,
+            BackpressureRecovery: 1.1f,
+            LateBackpressureThreshold: 2,
+            TimeoutRescheduleThreshold: 3,
+            TimeoutPauseThreshold: 6,
+            RescheduleMinTicks: 10,
+            RescheduleMinMinutes: 1,
+            RescheduleQuietMs: 50,
+            RescheduleSimulatedMs: 50,
+            AutoStart: false,
+            EnableOpenTelemetry: false,
+            EnableOtelMetrics: false,
+            EnableOtelTraces: false,
+            EnableOtelConsoleExporter: false,
+            OtlpEndpoint: null,
+            ServiceName: "nbn.hivemind.tests",
+            SettingsDbPath: null,
+            SettingsHost: null,
+            SettingsPort: 0,
+            SettingsName: "SettingsMonitor",
+            IoAddress: null,
+            IoName: null);
+}
