@@ -584,6 +584,65 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task HandleBrainTerminated_NonEnergyReason_Uses_LocalEnergyState_ForBroadcast()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+        var connected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminated = new TaskCompletionSource<ProtoControl.BrainTerminated>(TaskCreationOptions.RunContinuationsAsynchronously);
+        root.Spawn(Props.FromProducer(() => new TerminationClientProbe(gateway, connected, terminated)));
+
+        var brainId = Guid.NewGuid();
+        var baseDef = new string('a', 64).ToArtifactRef(123, "application/x-nbn", "test-store");
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            BaseDefinition = baseDef,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 50,
+                CostEnabled = true,
+                EnergyEnabled = true
+            }
+        });
+
+        root.Send(gateway, new ApplyTickCost(brainId, 14, 7));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await connected.Task.WaitAsync(cts.Token);
+
+        var terminationTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        root.Send(gateway, new ProtoControl.BrainTerminated
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "killed",
+            BaseDef = new ArtifactRef(),
+            LastSnapshot = new ArtifactRef(),
+            LastEnergyRemaining = 0,
+            LastTickCost = 0,
+            TimeMs = terminationTimeMs
+        });
+
+        var broadcast = await terminated.Task.WaitAsync(cts.Token);
+        Assert.Equal("killed", broadcast.Reason);
+        Assert.Equal(43, broadcast.LastEnergyRemaining);
+        Assert.Equal(7, broadcast.LastTickCost);
+        Assert.True(broadcast.BaseDef.TryToSha256Hex(out var broadcastBaseSha));
+        Assert.Equal(baseDef.ToSha256Hex(), broadcastBaseSha);
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.Equal((uint)0, info.InputWidth);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",

@@ -1032,11 +1032,10 @@ public sealed class IoGatewayActor : IActor
 
     private ProtoControl.BrainTerminated BuildTerminatedFromEntry(ProtoControl.BrainTerminated message, BrainIoEntry entry)
     {
-        var isEnergyExhausted = string.Equals(message.Reason, "energy_exhausted", StringComparison.OrdinalIgnoreCase);
         var baseDef = HasArtifactRef(message.BaseDef) ? message.BaseDef : entry.BaseDefinition ?? new ArtifactRef();
         var lastSnapshot = HasArtifactRef(message.LastSnapshot) ? message.LastSnapshot : entry.LastSnapshot ?? new ArtifactRef();
-        var lastEnergyRemaining = isEnergyExhausted ? entry.Energy.EnergyRemaining : message.LastEnergyRemaining;
-        var lastTickCost = isEnergyExhausted ? entry.Energy.LastTickCost : message.LastTickCost;
+        var lastEnergyRemaining = entry.Energy.EnergyRemaining;
+        var lastTickCost = entry.Energy.LastTickCost;
         var timeMs = message.TimeMs == 0 ? (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : message.TimeMs;
 
         return new ProtoControl.BrainTerminated
