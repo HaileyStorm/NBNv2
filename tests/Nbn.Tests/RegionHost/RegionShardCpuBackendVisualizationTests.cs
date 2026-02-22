@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
+using Nbn.Shared.Quantization;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 
@@ -80,6 +81,7 @@ public class RegionShardCpuBackendVisualizationTests
             neuronStart: 0,
             neuronCount: 1,
             brainSeed: 0x0102030405060708UL,
+            strengthQuantization: QuantizationSchemas.DefaultNbn.Strength,
             regionSpans: regionSpans,
             buffer: new[] { 0.9f },
             enabled: new[] { true },

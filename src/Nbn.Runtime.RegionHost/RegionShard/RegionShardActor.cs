@@ -263,7 +263,15 @@ public sealed class RegionShardActor : IActor
         var vizScope = _vizEnabled
             ? new RegionShardVisualizationComputeScope(true, _vizFocusRegionId)
             : RegionShardVisualizationComputeScope.Disabled;
-        var result = _cpu.Compute(tick.TickId, _brainId, _shardId, _routing, vizScope);
+        var result = _cpu.Compute(
+            tick.TickId,
+            _brainId,
+            _shardId,
+            _routing,
+            vizScope,
+            _plasticityEnabled,
+            _plasticityRate,
+            _plasticityProbabilisticUpdates);
         stopwatch.Stop();
 
         var outboxTarget = _router ?? context.Sender;

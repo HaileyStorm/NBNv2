@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Nbn.Shared;
+using Nbn.Shared.Quantization;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -10,6 +11,7 @@ public sealed class RegionShardState
         int neuronStart,
         int neuronCount,
         ulong brainSeed,
+        QuantizationMap strengthQuantization,
         int[] regionSpans,
         float[] buffer,
         bool[] enabled,
@@ -29,6 +31,7 @@ public sealed class RegionShardState
         NeuronStart = neuronStart;
         NeuronCount = neuronCount;
         BrainSeed = brainSeed;
+        StrengthQuantization = strengthQuantization;
         RegionSpans = regionSpans ?? throw new ArgumentNullException(nameof(regionSpans));
         Buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
         Enabled = enabled ?? throw new ArgumentNullException(nameof(enabled));
@@ -84,6 +87,7 @@ public sealed class RegionShardState
     public int NeuronStart { get; }
     public int NeuronCount { get; }
     public ulong BrainSeed { get; }
+    public QuantizationMap StrengthQuantization { get; }
     public int[] RegionSpans { get; }
 
     public float[] Buffer { get; }

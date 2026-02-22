@@ -239,7 +239,7 @@ public static class RegionShardArtifactLoader
             axonHasRuntimeOverlay,
             axonFromAddress32,
             axonToAddress32);
-        return new RegionShardState(regionId, neuronStart, neuronCount, header.BrainSeed, regionSpans, buffer, enabled, exists, accum, activation, reset,
+        return new RegionShardState(regionId, neuronStart, neuronCount, header.BrainSeed, header.Quantization.Strength, regionSpans, buffer, enabled, exists, accum, activation, reset,
             paramA, paramB, preThreshold, activationThreshold, axonCounts, axonStartOffsets, axons);
     }
 

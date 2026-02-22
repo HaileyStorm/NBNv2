@@ -22,7 +22,10 @@ public sealed class RegionShardCpuBackend
         Guid brainId,
         ShardId32 shardId,
         RegionShardRoutingTable routing,
-        RegionShardVisualizationComputeScope? visualization = null)
+        RegionShardVisualizationComputeScope? visualization = null,
+        bool plasticityEnabled = false,
+        float plasticityRate = 0f,
+        bool probabilisticPlasticityUpdates = false)
     {
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
         var vizScope = visualization ?? RegionShardVisualizationComputeScope.EnabledAll;
@@ -134,7 +137,7 @@ public sealed class RegionShardCpuBackend
                 var index = axonStart + a;
                 var destRegion = _state.Axons.TargetRegionIds[index];
                 var destNeuron = _state.Axons.TargetNeuronIds[index];
-                var strength = _state.Axons.Strengths[index];
+                var strength = NormalizeAxonStrength(index);
                 var value = potential * strength;
 
                 if (!routing.TryGetShard(destRegion, destNeuron, out var destShard))
@@ -173,6 +176,7 @@ public sealed class RegionShardCpuBackend
 
                 var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
                 costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
+                ApplyPlasticity(tickId, potential, index, plasticityEnabled, plasticityRate, probabilisticPlasticityUpdates);
             }
         }
 
@@ -372,6 +376,104 @@ public sealed class RegionShardCpuBackend
     private static float SafeInverse(float value)
     {
         return value == 0f ? 0f : 1f / value;
+    }
+
+    private float NormalizeAxonStrength(int axonIndex)
+    {
+        var strength = _state.Axons.Strengths[axonIndex];
+        var normalized = ClampStrengthValue(strength);
+        if (normalized != strength)
+        {
+            _state.Axons.Strengths[axonIndex] = normalized;
+            UpdateRuntimeStrengthMetadata(axonIndex, normalized);
+        }
+
+        return normalized;
+    }
+
+    private void ApplyPlasticity(
+        ulong tickId,
+        float potential,
+        int axonIndex,
+        bool plasticityEnabled,
+        float plasticityRate,
+        bool probabilisticPlasticityUpdates)
+    {
+        if (!plasticityEnabled || !float.IsFinite(plasticityRate) || plasticityRate <= 0f)
+        {
+            return;
+        }
+
+        var normalizedPotential = Math.Clamp(potential, -1f, 1f);
+        var activationScale = MathF.Abs(normalizedPotential);
+        if (activationScale <= 0f)
+        {
+            return;
+        }
+
+        var effectiveRate = MathF.Max(plasticityRate, 0f);
+        if (probabilisticPlasticityUpdates)
+        {
+            var probability = Math.Clamp(effectiveRate * activationScale, 0f, 1f);
+            if (probability <= 0f)
+            {
+                return;
+            }
+
+            var seed = _state.GetDeterministicRngInput(tickId, axonIndex).ToSeed();
+            if (UnitIntervalFromSeed(seed) >= probability)
+            {
+                return;
+            }
+        }
+
+        var currentStrength = NormalizeAxonStrength(axonIndex);
+        var currentMagnitude = MathF.Abs(currentStrength);
+        var currentSign = MathF.Sign(currentStrength);
+        var potentialSign = MathF.Sign(normalizedPotential);
+
+        var delta = effectiveRate * activationScale;
+        var nextMagnitude = potentialSign == currentSign
+            ? currentMagnitude + delta
+            : currentMagnitude - delta;
+        if (!float.IsFinite(nextMagnitude) || nextMagnitude < 0f)
+        {
+            nextMagnitude = 0f;
+        }
+
+        var updatedStrength = currentSign == 0f
+            ? 0f
+            : currentSign * nextMagnitude;
+        updatedStrength = ClampStrengthValue(updatedStrength);
+
+        _state.Axons.Strengths[axonIndex] = updatedStrength;
+        UpdateRuntimeStrengthMetadata(axonIndex, updatedStrength);
+    }
+
+    private void UpdateRuntimeStrengthMetadata(int axonIndex, float strength)
+    {
+        var runtimeCode = (byte)_state.StrengthQuantization.Encode(strength, bits: 5);
+        _state.Axons.RuntimeStrengthCodes[axonIndex] = runtimeCode;
+        _state.Axons.HasRuntimeOverlay[axonIndex] = runtimeCode != _state.Axons.BaseStrengthCodes[axonIndex];
+    }
+
+    private float ClampStrengthValue(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            value = 0f;
+        }
+
+        var min = MathF.Min(_state.StrengthQuantization.Min, _state.StrengthQuantization.Max);
+        var max = MathF.Max(_state.StrengthQuantization.Min, _state.StrengthQuantization.Max);
+        return Math.Clamp(value, min, max);
+    }
+
+    private static float UnitIntervalFromSeed(ulong seed)
+    {
+        const double scale = 1d / (1UL << 53);
+        var bits = seed >> 11;
+        return (float)(bits * scale);
     }
 
     private long ComputeDistanceUnits(int sourceNeuronId, byte destRegionId, int destNeuronId, int sourceRegionZ, int?[] regionDistanceCache)
