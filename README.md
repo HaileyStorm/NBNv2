@@ -62,3 +62,67 @@ axon-sent, and timeout anomalies). Emission target can be configured with:
 - `NBN_OBS_DEBUG_HUB` (default `DebugHub`)
 - `NBN_OBS_VIZ_HUB` (default `VisualizationHub`)
 - `NBN_OBS_DISABLED=true` to disable emission
+
+## Workbench Visualizer (Neural Activity View)
+
+The Workbench Visualizer projects runtime visualization events into a canvas with
+two modes:
+
+- Full-brain mode (default): region nodes and inter-region routes.
+- Focus-region mode: neuron and gateway nodes for one region plus focused routes.
+
+`Region focus` is blank by default, which means full-brain mode. Enter a region id
+and use `Zoom` to switch to focus mode, or use `Full brain` to clear focus.
+
+### Core controls
+
+- Brain selection: choose a known brain or paste/add a `BrainId`.
+- Projection options: tick window, event type filter, region filter, search, and
+  low-signal inclusion.
+- Tick override: apply/clear temporary HiveMind target tick rate override from the
+  Visualizer panel.
+- Color mode: switch between state-value, activity, and topology emphasis.
+- Snapshot/stream cards: both `Projection Snapshot` and `Visualization Stream` are
+  toggleable and default-collapsed.
+
+### Canvas interaction model
+
+- Hover: tooltip card follows current hover target and clears when off-target.
+- Select: single-click node/edge selects it; right-click toggles pin state.
+- Navigate: `Alt+Left` / `Alt+Right` cycles nodes, `Alt+Enter` navigates selection.
+- Pin/Clear: `Alt+P` toggles pin for selection, `Esc` clears interaction state.
+- Double-click behavior: empty canvas fits view, region/gateway node zooms to that
+  region, neuron node keeps normal selection behavior.
+
+### Zoom and pan controls
+
+- On-canvas controls: `-`, `+`, `Fit view`, and pan buttons `L/R/U/D`.
+- Mouse/trackpad: `Shift+Wheel` zooms, `Shift+drag` (left button) or middle-drag
+  pans, and wheel without `Shift` continues normal page scrolling.
+- Touch: two-finger gesture supports pinch-zoom and drag-pan.
+- Zoom range is clamped to `35%` to `400%` (`0.35` to `4.0` scale).
+
+### Diagnostics and operator visibility
+
+- `Ctrl+Shift+C` copies a structured diagnostics report (filters/options, projection
+  summary, canvas nodes/edges, recent events, and topology hydration status).
+- Selected event payload is visible in the stream panel and supports export/clear.
+- Legend, interaction summary, and pin summary update with current selection/hover
+  state.
+
+### Operational limits and safeguards
+
+- Rendered stream list is capped to the newest `400` events.
+- Pending queue is capped at `1600`; oldest pending items are dropped above cap.
+- Streaming refresh cadence is throttled to about `180 ms`.
+- Default tick window is `64` with max `4096`.
+- Snapshot side panel is intentionally trimmed to top `10` regions and top `14`
+  edges for readability. Canvas topology itself is not trimmed to those row caps.
+
+### Test surface
+
+Visualizer behavior is covered primarily by:
+
+- `tests/Nbn.Tests/Workbench/VizActivityCanvasLayoutBuilderTests.cs`
+- `tests/Nbn.Tests/Workbench/VizPanelViewModelInteractionTests.cs`
+- `tests/Nbn.Tests/Workbench/VizActivityProjectionBuilderTests.cs`
