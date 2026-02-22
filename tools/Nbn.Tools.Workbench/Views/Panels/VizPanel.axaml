@@ -197,8 +197,8 @@
                          TextWrapping="Wrap"
                          IsTabStop="False" />
                 <ScrollViewer x:Name="ActivityCanvasScrollViewer"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto">
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Hidden">
                   <Grid ClipToBounds="True">
                     <Grid x:Name="ActivityCanvasExtentHost">
                       <Grid x:Name="ActivityCanvasScaleRoot"

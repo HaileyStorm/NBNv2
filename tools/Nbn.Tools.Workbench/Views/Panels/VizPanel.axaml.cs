@@ -56,6 +56,8 @@ public partial class VizPanel : UserControl
     private INotifyPropertyChanged? _viewModelNotifier;
     private PendingCanvasViewMode _pendingCanvasViewMode;
     private int _pendingCanvasViewAttempts;
+    private Guid? _lastNavigationBrainId;
+    private uint? _lastNavigationFocusRegionId;
 
     private enum PendingCanvasViewMode
     {
@@ -90,7 +92,7 @@ public partial class VizPanel : UserControl
         AddHandler(
             InputElement.PointerWheelChangedEvent,
             VizRootPointerWheelChanged,
-            RoutingStrategies.Bubble,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble,
             handledEventsToo: true);
 
         if (ActivityCanvasScaleRoot is not null)
@@ -121,6 +123,7 @@ public partial class VizPanel : UserControl
             _viewModelNotifier.PropertyChanged += ViewModelPropertyChanged;
         }
 
+        CaptureNavigationContext();
         SyncCanvasScaleVisuals();
         RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
     }
@@ -140,8 +143,11 @@ public partial class VizPanel : UserControl
             or nameof(VizPanelViewModel.ActiveFocusRegionId)
             or nameof(VizPanelViewModel.SelectedBrain))
         {
-            // Recenter only for explicit navigation-context changes.
-            RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+            // Recenter only when navigation identity actually changes.
+            if (HasNavigationContextChanged())
+            {
+                RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+            }
         }
     }
 
@@ -160,6 +166,9 @@ public partial class VizPanel : UserControl
             _viewModelNotifier.PropertyChanged -= ViewModelPropertyChanged;
             _viewModelNotifier = null;
         }
+
+        _lastNavigationBrainId = null;
+        _lastNavigationFocusRegionId = null;
     }
 
     private void VizRootPointerMoved(object? sender, PointerEventArgs e)
@@ -222,6 +231,11 @@ public partial class VizPanel : UserControl
 
     private void VizRootPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
+        if (e.Handled)
+        {
+            return;
+        }
+
         if (ViewModel is null || !TryGetCanvasPointerPoint(e, out _, out var isInsideCanvas) || !isInsideCanvas)
         {
             return;
@@ -856,5 +870,22 @@ public partial class VizPanel : UserControl
         var dx = right.X - left.X;
         var dy = right.Y - left.Y;
         return Math.Sqrt((dx * dx) + (dy * dy));
+    }
+
+    private bool HasNavigationContextChanged()
+    {
+        var currentBrainId = ViewModel?.SelectedBrain?.BrainId;
+        var currentFocusRegionId = ViewModel?.ActiveFocusRegionId;
+        var changed = _lastNavigationBrainId != currentBrainId
+            || _lastNavigationFocusRegionId != currentFocusRegionId;
+        _lastNavigationBrainId = currentBrainId;
+        _lastNavigationFocusRegionId = currentFocusRegionId;
+        return changed;
+    }
+
+    private void CaptureNavigationContext()
+    {
+        _lastNavigationBrainId = ViewModel?.SelectedBrain?.BrainId;
+        _lastNavigationFocusRegionId = ViewModel?.ActiveFocusRegionId;
     }
 }
