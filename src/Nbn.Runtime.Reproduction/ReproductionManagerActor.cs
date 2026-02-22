@@ -16,6 +16,7 @@ public sealed class ReproductionManagerActor : IActor
 {
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
     private const string NbnMediaType = "application/x-nbn";
+    private const string NbsMediaType = "application/x-nbs";
     private const int SpotCheckSampleCount = 32;
     private const float MinRequiredSpotOverlap = 0.35f;
     private const float MaxRequiredSpotOverlap = 0.95f;
@@ -139,11 +140,6 @@ public sealed class ReproductionManagerActor : IActor
                 return CreateAbortResult("repro_missing_parent_b_def");
             }
 
-            if (request.StrengthSource != StrengthSource.StrengthBaseOnly)
-            {
-                return CreateAbortResult("repro_strength_source_not_supported");
-            }
-
             var parentA = await TryLoadParentAsync(request.ParentADef, "a").ConfigureAwait(false);
             if (parentA.AbortReason is not null)
             {
@@ -156,10 +152,28 @@ public sealed class ReproductionManagerActor : IActor
                 return CreateAbortResult(parentB.AbortReason);
             }
 
+            var transformParentA = await ResolveTransformParentAsync(
+                    parentA.Parsed!,
+                    request.ParentADef,
+                    request.ParentAState,
+                    request.StrengthSource,
+                    "a")
+                .ConfigureAwait(false);
+
+            var transformParentB = await ResolveTransformParentAsync(
+                    parentB.Parsed!,
+                    request.ParentBDef,
+                    request.ParentBState,
+                    request.StrengthSource,
+                    "b")
+                .ConfigureAwait(false);
+
             return await EvaluateSimilarityGatesAndBuildChildAsync(
                     context,
                     parentA.Parsed!,
                     parentB.Parsed!,
+                    transformParentA.Parsed,
+                    transformParentB.Parsed,
                     request.ParentADef,
                     request.ParentBDef,
                     request.Config,
@@ -174,30 +188,32 @@ public sealed class ReproductionManagerActor : IActor
 
     private async Task<ReproduceResult> EvaluateSimilarityGatesAndBuildChildAsync(
         IContext context,
-        ParsedParent parentA,
-        ParsedParent parentB,
+        ParsedParent gateParentA,
+        ParsedParent gateParentB,
+        ParsedParent transformParentA,
+        ParsedParent transformParentB,
         ArtifactRef parentARef,
         ArtifactRef parentBRef,
         ReproduceConfig? config,
         ulong seed)
     {
-        var presentA = CountPresentRegions(parentA.Header);
-        var presentB = CountPresentRegions(parentB.Header);
+        var presentA = CountPresentRegions(gateParentA.Header);
+        var presentB = CountPresentRegions(gateParentB.Header);
 
-        if (!AreFormatContractsCompatible(parentA.Header, parentB.Header))
+        if (!AreFormatContractsCompatible(gateParentA.Header, gateParentB.Header))
         {
             return CreateAbortResult("repro_format_incompatible", regionsPresentA: presentA, regionsPresentB: presentB);
         }
 
-        if (!HaveMatchingRegionPresence(parentA.Header, parentB.Header))
+        if (!HaveMatchingRegionPresence(gateParentA.Header, gateParentB.Header))
         {
             return CreateAbortResult("repro_region_presence_mismatch", regionsPresentA: presentA, regionsPresentB: presentB);
         }
 
-        var sectionMapA = BuildSectionMap(parentA.Regions);
-        var sectionMapB = BuildSectionMap(parentB.Regions);
+        var sectionMapA = BuildSectionMap(gateParentA.Regions);
+        var sectionMapB = BuildSectionMap(gateParentB.Regions);
         var spanTolerance = ResolveSpanTolerance(config);
-        var spanScore = ComputeRegionSpanScore(parentA.Header, parentB.Header, spanTolerance, out var spanMismatch);
+        var spanScore = ComputeRegionSpanScore(gateParentA.Header, gateParentB.Header, spanTolerance, out var spanMismatch);
         if (spanMismatch)
         {
             return CreateAbortResult(
@@ -253,8 +269,8 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         var childBuild = await BuildAndStoreChildDefinitionAsync(
-                parentA,
-                parentB,
+                transformParentA,
+                transformParentB,
                 parentARef,
                 parentBRef,
                 config,
@@ -1700,6 +1716,289 @@ public sealed class ReproductionManagerActor : IActor
         return new LoadParentResult(new ParsedParent(header, sections), null);
     }
 
+    private static async Task<TransformParentResult> ResolveTransformParentAsync(
+        ParsedParent baseParent,
+        ArtifactRef parentDef,
+        ArtifactRef? parentState,
+        StrengthSource strengthSource,
+        string label)
+    {
+        if (strengthSource != StrengthSource.StrengthLiveCodes)
+        {
+            return new TransformParentResult(baseParent);
+        }
+
+        if (!HasArtifactRef(parentState))
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_ref_missing");
+            return new TransformParentResult(baseParent);
+        }
+
+        if (!string.IsNullOrWhiteSpace(parentState!.MediaType) && !IsNbsMediaType(parentState.MediaType))
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_media_type_invalid");
+            return new TransformParentResult(baseParent);
+        }
+
+        if (!parentState.TryToSha256Bytes(out var stateHashBytes) || stateHashBytes.Length != Sha256Hash.Length)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_sha256_invalid");
+            return new TransformParentResult(baseParent);
+        }
+
+        var stateHash = new Sha256Hash(stateHashBytes);
+        var stateRoot = ResolveArtifactRoot(parentState.StoreUri ?? parentDef.StoreUri);
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(stateRoot));
+        var manifest = await store.TryGetManifestAsync(stateHash).ConfigureAwait(false);
+        if (manifest is null)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_artifact_not_found");
+            return new TransformParentResult(baseParent);
+        }
+
+        if (!IsNbsMediaType(manifest.MediaType))
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_media_type_invalid");
+            return new TransformParentResult(baseParent);
+        }
+
+        byte[] stateBytes;
+        await using (var stream = store.OpenArtifactStream(manifest))
+        {
+            stateBytes = await ReadAllBytesAsync(stream, parentState.SizeBytes).ConfigureAwait(false);
+        }
+
+        NbsHeaderV2 stateHeader;
+        List<NbsRegionSection> stateRegions;
+        NbsOverlaySection? overlaySection;
+        try
+        {
+            stateHeader = NbnBinary.ReadNbsHeader(stateBytes);
+            stateRegions = ReadNbsRegions(stateBytes, baseParent.Header, stateHeader, out overlaySection);
+        }
+        catch
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_parse_failed");
+            return new TransformParentResult(baseParent);
+        }
+
+        var stateValidation = NbnBinaryValidator.ValidateNbs(stateHeader, stateRegions, overlaySection);
+        if (!stateValidation.IsValid)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_validation_failed", stateValidation.Issues.Count);
+            return new TransformParentResult(baseParent);
+        }
+
+        if (!IsParentStateCompatibleWithBase(parentDef, baseParent.Header, stateHeader, stateRegions))
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_incompatible_with_base");
+            return new TransformParentResult(baseParent);
+        }
+
+        if (overlaySection is null)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_overlay_missing");
+            return new TransformParentResult(baseParent);
+        }
+
+        if (overlaySection.Records.Length == 0)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_overlay_empty");
+            return new TransformParentResult(baseParent);
+        }
+
+        var applied = ApplyOverlayStrengthCodes(baseParent, overlaySection);
+        if (applied.MatchedRoutes == 0)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_overlay_no_matching_routes");
+            return new TransformParentResult(baseParent);
+        }
+
+        if (applied.IgnoredRoutes > 0)
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_overlay_ignored_routes", applied.IgnoredRoutes);
+        }
+
+        ReproductionTelemetry.RecordStrengthOverlayApplied(label, applied.MatchedRoutes);
+        return new TransformParentResult(applied.Parent);
+    }
+
+    private static List<NbsRegionSection> ReadNbsRegions(
+        ReadOnlySpan<byte> nbsBytes,
+        NbnHeaderV2 baseHeader,
+        NbsHeaderV2 stateHeader,
+        out NbsOverlaySection? overlays)
+    {
+        var offset = NbnBinary.NbsHeaderBytes;
+        var includeEnabledBitset = stateHeader.EnabledBitsetIncluded;
+        var regions = new List<NbsRegionSection>(NbnConstants.RegionCount);
+        for (var regionId = 0; regionId < baseHeader.Regions.Length; regionId++)
+        {
+            var entry = baseHeader.Regions[regionId];
+            if (entry.NeuronSpan == 0)
+            {
+                continue;
+            }
+
+            var section = NbnBinary.ReadNbsRegionSection(nbsBytes, offset, includeEnabledBitset);
+            regions.Add(section);
+            offset += section.ByteLength;
+        }
+
+        overlays = null;
+        if (stateHeader.AxonOverlayIncluded)
+        {
+            overlays = NbnBinary.ReadNbsOverlaySection(nbsBytes, offset);
+        }
+
+        return regions;
+    }
+
+    private static bool IsParentStateCompatibleWithBase(
+        ArtifactRef parentDef,
+        NbnHeaderV2 baseHeader,
+        NbsHeaderV2 stateHeader,
+        IReadOnlyList<NbsRegionSection> stateRegions)
+    {
+        if (!parentDef.TryToSha256Bytes(out var baseHashBytes) || baseHashBytes.Length != Sha256Hash.Length)
+        {
+            return false;
+        }
+
+        if (stateHeader.BaseNbnSha256 is null
+            || stateHeader.BaseNbnSha256.Length != Sha256Hash.Length
+            || !stateHeader.BaseNbnSha256.AsSpan().SequenceEqual(baseHashBytes))
+        {
+            return false;
+        }
+
+        var expectedRegionCount = 0;
+        for (var regionId = 0; regionId < baseHeader.Regions.Length; regionId++)
+        {
+            if (baseHeader.Regions[regionId].NeuronSpan > 0)
+            {
+                expectedRegionCount++;
+            }
+        }
+
+        if (stateRegions.Count != expectedRegionCount)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < stateRegions.Count; i++)
+        {
+            var section = stateRegions[i];
+            if (section.RegionId >= baseHeader.Regions.Length)
+            {
+                return false;
+            }
+
+            var entry = baseHeader.Regions[section.RegionId];
+            if (entry.NeuronSpan == 0 || section.NeuronSpan != entry.NeuronSpan)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static OverlayApplyResult ApplyOverlayStrengthCodes(ParsedParent baseParent, NbsOverlaySection overlaySection)
+    {
+        var overlayMap = new Dictionary<(int FromRegion, int FromNeuron, int ToRegion, int ToNeuron), byte>();
+        var invalidAddressCount = 0;
+
+        for (var i = 0; i < overlaySection.Records.Length; i++)
+        {
+            var record = overlaySection.Records[i];
+            DecodeAddress(record.FromAddress, out var fromRegion, out var fromNeuron);
+            DecodeAddress(record.ToAddress, out var toRegion, out var toNeuron);
+            if (!IsValidAddress(fromRegion, fromNeuron) || !IsValidAddress(toRegion, toNeuron))
+            {
+                invalidAddressCount++;
+                continue;
+            }
+
+            var normalizedStrength = (byte)Math.Clamp((int)record.StrengthCode, 0, 31);
+            overlayMap[(fromRegion, fromNeuron, toRegion, toNeuron)] = normalizedStrength;
+        }
+
+        if (overlayMap.Count == 0)
+        {
+            return new OverlayApplyResult(baseParent, 0, invalidAddressCount);
+        }
+
+        var matchedRoutes = new HashSet<(int FromRegion, int FromNeuron, int ToRegion, int ToNeuron)>();
+        var sections = new List<NbnRegionSection>(baseParent.Regions.Count);
+        var changed = false;
+
+        for (var sectionIndex = 0; sectionIndex < baseParent.Regions.Count; sectionIndex++)
+        {
+            var section = baseParent.Regions[sectionIndex];
+            var axonStarts = BuildAxonStarts(section);
+            AxonRecord[]? rewrittenAxons = null;
+
+            for (var neuronId = 0; neuronId < section.NeuronRecords.Length; neuronId++)
+            {
+                var neuron = section.NeuronRecords[neuronId];
+                var axonStart = axonStarts[neuronId];
+                for (var axonOffset = 0; axonOffset < neuron.AxonCount; axonOffset++)
+                {
+                    var axonIndex = axonStart + axonOffset;
+                    var current = rewrittenAxons is null ? section.AxonRecords[axonIndex] : rewrittenAxons[axonIndex];
+                    var route = ((int)section.RegionId, neuronId, (int)current.TargetRegionId, current.TargetNeuronId);
+                    if (!overlayMap.TryGetValue(route, out var overlayStrength))
+                    {
+                        continue;
+                    }
+
+                    matchedRoutes.Add(route);
+                    if (current.StrengthCode == overlayStrength)
+                    {
+                        continue;
+                    }
+
+                    rewrittenAxons ??= (AxonRecord[])section.AxonRecords.Clone();
+                    rewrittenAxons[axonIndex] = new AxonRecord(overlayStrength, current.TargetNeuronId, current.TargetRegionId);
+                    changed = true;
+                }
+            }
+
+            sections.Add(rewrittenAxons is null
+                ? section
+                : new NbnRegionSection(
+                    section.RegionId,
+                    section.NeuronSpan,
+                    section.TotalAxons,
+                    section.Stride,
+                    section.CheckpointCount,
+                    section.Checkpoints,
+                    section.NeuronRecords,
+                    rewrittenAxons));
+        }
+
+        var ignoredRoutes = Math.Max(overlayMap.Count - matchedRoutes.Count, 0) + invalidAddressCount;
+        if (!changed)
+        {
+            return new OverlayApplyResult(baseParent, matchedRoutes.Count, ignoredRoutes);
+        }
+
+        return new OverlayApplyResult(new ParsedParent(baseParent.Header, sections), matchedRoutes.Count, ignoredRoutes);
+    }
+
+    private static bool IsValidAddress(int regionId, int neuronId)
+        => regionId >= NbnConstants.RegionMinId
+           && regionId <= NbnConstants.RegionMaxId
+           && neuronId >= 0
+           && neuronId <= NbnConstants.MaxAddressNeuronId;
+
+    private static void DecodeAddress(uint address, out int regionId, out int neuronId)
+    {
+        regionId = (int)(address >> NbnConstants.AddressNeuronBits);
+        neuronId = (int)(address & NbnConstants.AddressNeuronMask);
+    }
+
     private static string MapValidationAbortReason(NbnValidationResult validation, string prefix)
     {
         foreach (var issue in validation.Issues)
@@ -1746,6 +2045,9 @@ public sealed class ReproductionManagerActor : IActor
 
     private static bool IsNbnMediaType(string mediaType)
         => string.Equals(mediaType, NbnMediaType, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsNbsMediaType(string mediaType)
+        => string.Equals(mediaType, NbsMediaType, StringComparison.OrdinalIgnoreCase);
 
     private static string ResolveArtifactRoot(string? storeUri)
     {
@@ -1899,6 +2201,14 @@ public sealed class ReproductionManagerActor : IActor
     private sealed record LoadParentResult(
         ParsedParent? Parsed,
         string? AbortReason);
+
+    private sealed record TransformParentResult(
+        ParsedParent Parsed);
+
+    private sealed record OverlayApplyResult(
+        ParsedParent Parent,
+        int MatchedRoutes,
+        int IgnoredRoutes);
 
     private sealed record ResolvedParentArtifact(
         ArtifactRef? ParentDef,
