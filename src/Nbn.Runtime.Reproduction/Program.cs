@@ -11,8 +11,9 @@ var remoteConfig = ReproductionRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
+var ioGatewayPid = BuildIoPid(options);
 var managerPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new ReproductionManagerActor()),
+    Props.FromProducer(() => new ReproductionManagerActor(ioGatewayPid)),
     options.ManagerName);
 
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
@@ -55,3 +56,13 @@ await system.ShutdownAsync();
 
 static string PidLabel(PID pid)
     => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+static PID? BuildIoPid(ReproductionOptions options)
+{
+    if (string.IsNullOrWhiteSpace(options.IoAddress) || string.IsNullOrWhiteSpace(options.IoName))
+    {
+        return null;
+    }
+
+    return new PID(options.IoAddress, options.IoName);
+}

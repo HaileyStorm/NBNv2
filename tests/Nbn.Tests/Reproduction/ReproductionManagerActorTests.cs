@@ -1,12 +1,16 @@
 using Microsoft.Data.Sqlite;
+using Nbn.Proto;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Reproduction;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
+using Nbn.Shared.Validation;
 using Nbn.Tests.Format;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
+using ProtoIo = Nbn.Proto.Io;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Reproduction;
@@ -35,6 +39,82 @@ public class ReproductionManagerActorTests
         Assert.False(response.Spawned);
 
         await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ReproduceByBrainIds_Resolves_Parents_FromIoGateway()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-brainid-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentABytes = NbnTestVectors.CreateMinimalNbn();
+            var parentBBytes = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentABytes), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentBBytes), "application/x-nbn");
+
+            var parentABrainId = Guid.NewGuid();
+            var parentBBrainId = Guid.NewGuid();
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainInfo = new Dictionary<Guid, ProtoIo.BrainInfo>
+            {
+                [parentABrainId] = new ProtoIo.BrainInfo
+                {
+                    BrainId = parentABrainId.ToProtoUuid(),
+                    InputWidth = 1,
+                    OutputWidth = 1,
+                    BaseDefinition = parentARef,
+                    LastSnapshot = new ArtifactRef()
+                },
+                [parentBBrainId] = new ProtoIo.BrainInfo
+                {
+                    BrainId = parentBBrainId.ToProtoUuid(),
+                    InputWidth = 1,
+                    OutputWidth = 1,
+                    BaseDefinition = parentBRef,
+                    LastSnapshot = new ArtifactRef()
+                }
+            };
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var ioProbe = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe(brainInfo)));
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor(ioProbe)));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByBrainIdsRequest
+                {
+                    ParentA = parentABrainId.ToProtoUuid(),
+                    ParentB = parentBBrainId.ToProtoUuid(),
+                    Seed = 19,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f,
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.Equal(string.Empty, response.Report.AbortReason);
+            Assert.NotNull(response.ChildDef);
+            Assert.False(response.Spawned);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -416,7 +496,8 @@ public class ReproductionManagerActorTests
                     Seed = 111,
                     Config = new Repro.ReproduceConfig
                     {
-                        MaxRegionSpanDiffRatio = 0f
+                        MaxRegionSpanDiffRatio = 0f,
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
                     }
                 });
 
@@ -481,7 +562,10 @@ public class ReproductionManagerActorTests
                     ParentADef = parentARef,
                     ParentBDef = parentBRef,
                     Seed = 111,
-                    Config = new Repro.ReproduceConfig()
+                    Config = new Repro.ReproduceConfig
+                    {
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                    }
                 });
 
             Assert.NotNull(response.Report);
@@ -560,7 +644,8 @@ public class ReproductionManagerActorTests
                     MaxFunctionHistDistance = 1f,
                     MaxConnectivityHistDistance = 1f,
                     ProbChooseParentA = 0.5f,
-                    ProbChooseParentB = 0.5f
+                    ProbChooseParentB = 0.5f,
+                    SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
                 }
             };
 
@@ -586,6 +671,250 @@ public class ReproductionManagerActorTests
             {
                 Directory.Delete(artifactRoot, recursive: true);
             }
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_DefaultSpawnPolicy_SpawnsChild_WhenIoGatewayAvailable()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-spawn-default-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+            var spawnedBrainId = Guid.NewGuid();
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var ioProbe = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe(spawnBrainId: spawnedBrainId)));
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor(ioProbe)));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 9,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.True(response.Spawned);
+            Assert.NotNull(response.ChildDef);
+            Assert.NotNull(response.ChildBrainId);
+            Assert.True(response.ChildBrainId.TryToGuid(out var actualBrainId));
+            Assert.Equal(spawnedBrainId, actualBrainId);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_SpawnAlways_WithoutIoGateway_Returns_SpawnAbort_And_ChildArtifact()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-spawn-always-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 10,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f,
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildAlways
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.False(response.Report.Compatible);
+            Assert.Equal("repro_spawn_unavailable", response.Report.AbortReason);
+            Assert.NotNull(response.ChildDef);
+            Assert.False(response.Spawned);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_MutationLimits_Are_Respected_And_Child_Remains_Valid()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-limits-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = DemoNbnBuilder.BuildSampleNbn();
+            var parentB = DemoNbnBuilder.BuildSampleNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 4242,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxFunctionHistDistance = 1f,
+                        MaxConnectivityHistDistance = 1f,
+                        ProbChooseParentA = 1f,
+                        ProbChooseParentB = 0f,
+                        ProbAddNeuronToEmptyRegion = 1f,
+                        ProbRemoveLastNeuronFromRegion = 1f,
+                        ProbDisableNeuron = 1f,
+                        ProbReactivateNeuron = 1f,
+                        ProbAddAxon = 1f,
+                        ProbRemoveAxon = 1f,
+                        ProbRerouteAxon = 1f,
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever,
+                        Limits = new Repro.ReproduceLimits
+                        {
+                            MaxNeuronsAddedAbs = 1,
+                            MaxNeuronsRemovedAbs = 1,
+                            MaxAxonsAddedAbs = 1,
+                            MaxAxonsRemovedAbs = 1,
+                            MaxRegionsAddedAbs = 1,
+                            MaxRegionsRemovedAbs = 1
+                        }
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.NotNull(response.Summary);
+            Assert.InRange((int)response.Summary.NeuronsAdded, 0, 1);
+            Assert.InRange((int)response.Summary.NeuronsRemoved, 0, 1);
+            Assert.InRange((int)response.Summary.AxonsAdded, 0, 1);
+            Assert.InRange((int)response.Summary.AxonsRemoved, 0, 1);
+            Assert.NotNull(response.ChildDef);
+            Assert.True(response.ChildDef.TryToSha256Bytes(out var childHash));
+
+            await using var childStream = await store.TryOpenArtifactAsync(new Sha256Hash(childHash));
+            Assert.NotNull(childStream);
+            using var ms = new MemoryStream();
+            await childStream!.CopyToAsync(ms);
+            var childBytes = ms.ToArray();
+            var childHeader = NbnBinary.ReadNbnHeader(childBytes);
+            var childSections = ReadSections(childBytes, childHeader);
+            var validation = NbnBinaryValidator.ValidateNbn(childHeader, childSections);
+            Assert.True(validation.IsValid, string.Join(" | ", validation.Issues.Select(issue => issue.Message)));
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    private sealed class ReproIoGatewayProbe : IActor
+    {
+        private readonly IReadOnlyDictionary<Guid, ProtoIo.BrainInfo> _brainInfo;
+        private readonly Guid _spawnBrainId;
+
+        public ReproIoGatewayProbe(
+            IReadOnlyDictionary<Guid, ProtoIo.BrainInfo>? brainInfo = null,
+            Guid? spawnBrainId = null)
+        {
+            _brainInfo = brainInfo ?? new Dictionary<Guid, ProtoIo.BrainInfo>();
+            _spawnBrainId = spawnBrainId ?? Guid.Empty;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoIo.BrainInfoRequest request:
+                    if (request.BrainId is not null
+                        && request.BrainId.TryToGuid(out var brainId)
+                        && _brainInfo.TryGetValue(brainId, out var info))
+                    {
+                        context.Respond(info);
+                    }
+                    else
+                    {
+                        context.Respond(new ProtoIo.BrainInfo
+                        {
+                            BrainId = request.BrainId ?? new Uuid(),
+                            InputWidth = 0,
+                            OutputWidth = 0,
+                            BaseDefinition = new ArtifactRef(),
+                            LastSnapshot = new ArtifactRef()
+                        });
+                    }
+
+                    break;
+                case ProtoIo.SpawnBrainViaIO:
+                    context.Respond(new ProtoIo.SpawnBrainViaIOAck
+                    {
+                        Ack = new ProtoControl.SpawnBrainAck
+                        {
+                            BrainId = _spawnBrainId.ToProtoUuid()
+                        }
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
         }
     }
 
@@ -681,5 +1010,22 @@ public class ReproductionManagerActorTests
             regions: directory);
 
         return NbnBinary.WriteNbn(header, orderedSections);
+    }
+
+    private static List<NbnRegionSection> ReadSections(ReadOnlySpan<byte> nbnBytes, NbnHeaderV2 header)
+    {
+        var sections = new List<NbnRegionSection>(NbnConstants.RegionCount);
+        for (var regionId = 0; regionId < header.Regions.Length; regionId++)
+        {
+            var entry = header.Regions[regionId];
+            if (entry.NeuronSpan == 0 || entry.Offset == 0)
+            {
+                continue;
+            }
+
+            sections.Add(NbnBinary.ReadNbnRegionSection(nbnBytes, entry.Offset));
+        }
+
+        return sections;
     }
 }

@@ -1,4 +1,6 @@
 using Nbn.Proto;
+using Nbn.Proto.Control;
+using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
 using Proto.Remote;
@@ -38,6 +40,8 @@ public static class ReproductionRemote
 
         config = config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
+            NbnControlReflection.Descriptor,
+            NbnIoReflection.Descriptor,
             NbnReproReflection.Descriptor,
             NbnSettingsReflection.Descriptor);
 

@@ -1,4 +1,6 @@
 using Nbn.Proto;
+using ProtoControl = Nbn.Proto.Control;
+using ProtoIo = Nbn.Proto.Io;
 using Nbn.Proto.Repro;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
@@ -12,36 +14,118 @@ namespace Nbn.Runtime.Reproduction;
 
 public sealed class ReproductionManagerActor : IActor
 {
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
     private const string NbnMediaType = "application/x-nbn";
     private const int SpotCheckSampleCount = 32;
     private const float MinRequiredSpotOverlap = 0.35f;
     private const float MaxRequiredSpotOverlap = 0.95f;
     private const ulong DefaultSpotCheckSeed = 0x9E3779B97F4A7C15UL;
+    private readonly PID? _ioGatewayPid;
+
+    public ReproductionManagerActor(PID? ioGatewayPid = null)
+    {
+        _ioGatewayPid = ioGatewayPid;
+    }
 
     public async Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
             case ReproduceByBrainIdsRequest message:
-                context.Respond(HandleReproduceByBrainIds(message));
+                context.Respond(await HandleReproduceByBrainIdsAsync(context, message).ConfigureAwait(false));
                 break;
             case ReproduceByArtifactsRequest message:
-                context.Respond(await HandleReproduceByArtifactsAsync(message).ConfigureAwait(false));
+                context.Respond(await HandleReproduceByArtifactsAsync(context, message).ConfigureAwait(false));
                 break;
         }
     }
 
-    private static ReproduceResult HandleReproduceByBrainIds(ReproduceByBrainIdsRequest request)
+    private async Task<ReproduceResult> HandleReproduceByBrainIdsAsync(IContext context, ReproduceByBrainIdsRequest request)
     {
         if (request.ParentA is null || request.ParentB is null)
         {
             return CreateAbortResult("repro_missing_parent_brain_ids");
         }
 
-        return CreateAbortResult("repro_parent_resolution_unavailable");
+        if (!request.ParentA.TryToGuid(out var parentAId) || parentAId == Guid.Empty)
+        {
+            return CreateAbortResult("repro_parent_a_brain_id_invalid");
+        }
+
+        if (!request.ParentB.TryToGuid(out var parentBId) || parentBId == Guid.Empty)
+        {
+            return CreateAbortResult("repro_parent_b_brain_id_invalid");
+        }
+
+        if (_ioGatewayPid is null)
+        {
+            return CreateAbortResult("repro_parent_resolution_unavailable");
+        }
+
+        var parentAResolution = await ResolveParentArtifactAsync(context, request.ParentA, "a").ConfigureAwait(false);
+        if (parentAResolution.AbortReason is not null)
+        {
+            return CreateAbortResult(parentAResolution.AbortReason);
+        }
+
+        var parentBResolution = await ResolveParentArtifactAsync(context, request.ParentB, "b").ConfigureAwait(false);
+        if (parentBResolution.AbortReason is not null)
+        {
+            return CreateAbortResult(parentBResolution.AbortReason);
+        }
+
+        return await HandleReproduceByArtifactsAsync(
+                context,
+                new ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentAResolution.ParentDef!,
+                    ParentBDef = parentBResolution.ParentDef!,
+                    ParentAState = parentAResolution.ParentState,
+                    ParentBState = parentBResolution.ParentState,
+                    StrengthSource = request.StrengthSource,
+                    Config = request.Config,
+                    Seed = request.Seed
+                })
+            .ConfigureAwait(false);
     }
 
-    private static async Task<ReproduceResult> HandleReproduceByArtifactsAsync(ReproduceByArtifactsRequest request)
+    private async Task<ResolvedParentArtifact> ResolveParentArtifactAsync(IContext context, Uuid brainId, string label)
+    {
+        var prefix = label == "a" ? "repro_parent_a" : "repro_parent_b";
+
+        try
+        {
+            var info = await context
+                .RequestAsync<ProtoIo.BrainInfo>(
+                    _ioGatewayPid!,
+                    new ProtoIo.BrainInfoRequest { BrainId = brainId },
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+
+            if (info is null)
+            {
+                return new ResolvedParentArtifact(null, null, $"{prefix}_lookup_failed");
+            }
+
+            if (!HasArtifactRef(info.BaseDefinition))
+            {
+                return info.InputWidth == 0 && info.OutputWidth == 0
+                    ? new ResolvedParentArtifact(null, null, $"{prefix}_brain_not_found")
+                    : new ResolvedParentArtifact(null, null, $"{prefix}_base_def_missing");
+            }
+
+            return new ResolvedParentArtifact(
+                info.BaseDefinition,
+                HasArtifactRef(info.LastSnapshot) ? info.LastSnapshot : null,
+                null);
+        }
+        catch
+        {
+            return new ResolvedParentArtifact(null, null, $"{prefix}_lookup_failed");
+        }
+    }
+
+    private async Task<ReproduceResult> HandleReproduceByArtifactsAsync(IContext context, ReproduceByArtifactsRequest request)
     {
         try
         {
@@ -73,6 +157,7 @@ public sealed class ReproductionManagerActor : IActor
             }
 
             return await EvaluateSimilarityGatesAndBuildChildAsync(
+                    context,
                     parentA.Parsed!,
                     parentB.Parsed!,
                     request.ParentADef,
@@ -87,7 +172,8 @@ public sealed class ReproductionManagerActor : IActor
         }
     }
 
-    private static async Task<ReproduceResult> EvaluateSimilarityGatesAndBuildChildAsync(
+    private async Task<ReproduceResult> EvaluateSimilarityGatesAndBuildChildAsync(
+        IContext context,
         ParsedParent parentA,
         ParsedParent parentB,
         ArtifactRef parentARef,
@@ -187,7 +273,7 @@ public sealed class ReproductionManagerActor : IActor
                 regionsPresentB: presentB);
         }
 
-        return CreateSuccessResult(
+        var result = CreateSuccessResult(
             childBuild.ChildDef!,
             childBuild.Summary ?? new MutationSummary(),
             spanScore,
@@ -196,6 +282,7 @@ public sealed class ReproductionManagerActor : IActor
             similarityScore,
             presentA,
             presentB);
+        return await ApplySpawnPolicyAsync(context, result, config).ConfigureAwait(false);
     }
 
     private static async Task<ChildBuildResult> BuildAndStoreChildDefinitionAsync(
@@ -241,9 +328,33 @@ public sealed class ReproductionManagerActor : IActor
 
         var sectionsA = BuildSectionMap(parentA.Regions);
         var sectionsB = BuildSectionMap(parentB.Regions);
-        var childSections = new List<NbnRegionSection>(sectionsA.Count);
         var state = seed == 0 ? DefaultSpotCheckSeed : seed;
-        var functionsMutated = 0u;
+        var budgets = CreateMutationBudgets(sectionsA, sectionsB, config?.Limits);
+        var mutableRegions = BuildBaseChildRegions(sectionsA, sectionsB, chooseAProbability, ref state, budgets);
+        ApplyStructuralMutations(mutableRegions, config, ref state, budgets);
+        var childSections = BuildSectionsFromMutableRegions(mutableRegions, parentA.Header.AxonStride, budgets);
+
+        summary = new MutationSummary
+        {
+            NeuronsAdded = budgets.NeuronsAdded,
+            NeuronsRemoved = budgets.NeuronsRemoved,
+            AxonsAdded = budgets.AxonsAdded,
+            AxonsRemoved = budgets.AxonsRemoved,
+            AxonsRerouted = budgets.AxonsRerouted,
+            FunctionsMutated = budgets.FunctionsMutated
+        };
+
+        return childSections;
+    }
+
+    private static Dictionary<int, MutableRegion> BuildBaseChildRegions(
+        IReadOnlyDictionary<int, NbnRegionSection> sectionsA,
+        IReadOnlyDictionary<int, NbnRegionSection> sectionsB,
+        float chooseAProbability,
+        ref ulong state,
+        MutationBudgets budgets)
+    {
+        var regions = new Dictionary<int, MutableRegion>(sectionsA.Count);
 
         for (var regionId = 0; regionId < NbnConstants.RegionCount; regionId++)
         {
@@ -255,8 +366,7 @@ public sealed class ReproductionManagerActor : IActor
             var startsA = BuildAxonStarts(sectionA);
             var startsB = BuildAxonStarts(sectionB);
             var neuronCount = Math.Min(sectionA.NeuronRecords.Length, sectionB.NeuronRecords.Length);
-            var childNeurons = new NeuronRecord[neuronCount];
-            var childAxons = new List<AxonRecord>(Math.Max(sectionA.AxonRecords.Length, sectionB.AxonRecords.Length));
+            var mutableNeurons = new List<MutableNeuron>(neuronCount);
 
             for (var neuronId = 0; neuronId < neuronCount; neuronId++)
             {
@@ -264,38 +374,716 @@ public sealed class ReproductionManagerActor : IActor
                 var sourceSection = chooseA ? sectionA : sectionB;
                 var sourceStarts = chooseA ? startsA : startsB;
                 var sourceNeuron = sourceSection.NeuronRecords[neuronId];
-                childNeurons[neuronId] = sourceNeuron;
+                var sourceAxonStart = sourceStarts[neuronId];
+                var sourceAxons = new List<AxonRecord>(sourceNeuron.AxonCount);
+                for (var axonOffset = 0; axonOffset < sourceNeuron.AxonCount; axonOffset++)
+                {
+                    sourceAxons.Add(sourceSection.AxonRecords[sourceAxonStart + axonOffset]);
+                }
 
                 if (!chooseA && NeuronFunctionsDiffer(sectionA.NeuronRecords[neuronId], sourceNeuron))
                 {
-                    functionsMutated++;
+                    budgets.FunctionsMutated++;
                 }
 
-                var axonStart = sourceStarts[neuronId];
-                for (var axonOffset = 0; axonOffset < sourceNeuron.AxonCount; axonOffset++)
-                {
-                    childAxons.Add(sourceSection.AxonRecords[axonStart + axonOffset]);
-                }
+                mutableNeurons.Add(new MutableNeuron(sourceNeuron, sourceNeuron.Exists, sourceAxons));
             }
 
-            var checkpoints = NbnBinary.BuildCheckpoints(childNeurons, parentA.Header.AxonStride);
-            childSections.Add(new NbnRegionSection(
-                (byte)regionId,
-                (uint)childNeurons.Length,
-                (ulong)childAxons.Count,
-                parentA.Header.AxonStride,
-                (uint)checkpoints.Length,
-                checkpoints,
-                childNeurons,
-                childAxons.ToArray()));
+            regions[regionId] = new MutableRegion(regionId, mutableNeurons);
         }
 
-        summary = new MutationSummary
-        {
-            FunctionsMutated = functionsMutated
-        };
-        return childSections;
+        return regions;
     }
+
+    private static MutationBudgets CreateMutationBudgets(
+        IReadOnlyDictionary<int, NbnRegionSection> sectionsA,
+        IReadOnlyDictionary<int, NbnRegionSection> sectionsB,
+        ReproduceLimits? limits)
+    {
+        var averageNeuronCount = (CountExistingNeurons(sectionsA) + CountExistingNeurons(sectionsB)) / 2;
+        var averageAxonCount = (CountTotalAxons(sectionsA) + CountTotalAxons(sectionsB)) / 2;
+
+        return new MutationBudgets(
+            ResolveMutationLimit(limits?.MaxNeuronsAddedAbs ?? 0, limits?.MaxNeuronsAddedPct ?? 0f, averageNeuronCount),
+            ResolveMutationLimit(limits?.MaxNeuronsRemovedAbs ?? 0, limits?.MaxNeuronsRemovedPct ?? 0f, averageNeuronCount),
+            ResolveMutationLimit(limits?.MaxAxonsAddedAbs ?? 0, limits?.MaxAxonsAddedPct ?? 0f, averageAxonCount),
+            ResolveMutationLimit(limits?.MaxAxonsRemovedAbs ?? 0, limits?.MaxAxonsRemovedPct ?? 0f, averageAxonCount),
+            ResolveAbsoluteLimit(limits?.MaxRegionsAddedAbs ?? 0),
+            ResolveAbsoluteLimit(limits?.MaxRegionsRemovedAbs ?? 0));
+    }
+
+    private static int CountExistingNeurons(IReadOnlyDictionary<int, NbnRegionSection> sections)
+    {
+        var count = 0;
+        foreach (var section in sections.Values)
+        {
+            for (var i = 0; i < section.NeuronRecords.Length; i++)
+            {
+                if (section.NeuronRecords[i].Exists)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static int CountTotalAxons(IReadOnlyDictionary<int, NbnRegionSection> sections)
+    {
+        var total = 0;
+        foreach (var section in sections.Values)
+        {
+            for (var i = 0; i < section.NeuronRecords.Length; i++)
+            {
+                if (section.NeuronRecords[i].Exists)
+                {
+                    total += section.NeuronRecords[i].AxonCount;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private static int ResolveMutationLimit(uint absLimit, float pctLimit, int baselineCount)
+    {
+        var absValue = absLimit > 0 ? (int)Math.Min(absLimit, int.MaxValue) : int.MaxValue;
+        var pctValue = pctLimit > 0f
+            ? (int)Math.Floor(Math.Max(0f, pctLimit) * Math.Max(baselineCount, 0))
+            : int.MaxValue;
+        return Math.Min(absValue, pctValue);
+    }
+
+    private static int ResolveAbsoluteLimit(uint absLimit)
+    {
+        if (absLimit > 0)
+        {
+            return (int)Math.Min(absLimit, int.MaxValue);
+        }
+
+        return int.MaxValue;
+    }
+
+    private static void ApplyStructuralMutations(
+        Dictionary<int, MutableRegion> regions,
+        ReproduceConfig? config,
+        ref ulong state,
+        MutationBudgets budgets)
+    {
+        if (config is null)
+        {
+            return;
+        }
+
+        var addNeuronToEmptyProbability = ClampProbability(config.ProbAddNeuronToEmptyRegion);
+        var removeLastNeuronProbability = ClampProbability(config.ProbRemoveLastNeuronFromRegion);
+        var disableNeuronProbability = ClampProbability(config.ProbDisableNeuron);
+        var reactivateNeuronProbability = ClampProbability(config.ProbReactivateNeuron);
+        var addAxonProbability = ClampProbability(config.ProbAddAxon);
+        var removeAxonProbability = ClampProbability(config.ProbRemoveAxon);
+        var rerouteAxonProbability = ClampProbability(config.ProbRerouteAxon);
+
+        for (var regionId = 1; regionId < NbnConstants.OutputRegionId; regionId++)
+        {
+            if (regions.ContainsKey(regionId))
+            {
+                continue;
+            }
+
+            if (!budgets.CanAddNeuron || !budgets.CanAddRegion || !ShouldMutate(addNeuronToEmptyProbability, ref state))
+            {
+                continue;
+            }
+
+            var defaultNeuron = new NeuronRecord(
+                axonCount: 0,
+                paramBCode: 0,
+                paramACode: 0,
+                activationThresholdCode: 0,
+                preActivationThresholdCode: 0,
+                resetFunctionId: 0,
+                activationFunctionId: 1,
+                accumulationFunctionId: 0,
+                exists: true);
+            regions[regionId] = new MutableRegion(
+                regionId,
+                new List<MutableNeuron> { new(defaultNeuron, true, new List<AxonRecord>()) });
+            budgets.ConsumeNeuronAdded();
+            budgets.ConsumeRegionAdded();
+        }
+
+        foreach (var regionId in regions.Keys.OrderBy(static id => id).ToArray())
+        {
+            if (regionId <= NbnConstants.InputRegionId || regionId >= NbnConstants.OutputRegionId)
+            {
+                continue;
+            }
+
+            if (!regions.TryGetValue(regionId, out var region))
+            {
+                continue;
+            }
+
+            if (CountExistingNeurons(region) != 1 || !budgets.CanRemoveNeuron || !budgets.CanRemoveRegion)
+            {
+                continue;
+            }
+
+            var existingNeuronId = FindSingleExistingNeuron(region);
+            if (existingNeuronId < 0)
+            {
+                continue;
+            }
+
+            var neuron = region.Neurons[existingNeuronId];
+            if (neuron.Axons.Count > 0 || HasInboundAxons(regions, regionId, existingNeuronId))
+            {
+                continue;
+            }
+
+            if (!ShouldMutate(removeLastNeuronProbability, ref state))
+            {
+                continue;
+            }
+
+            budgets.ConsumeNeuronRemoved();
+            budgets.ConsumeRegionRemoved();
+            regions.Remove(regionId);
+        }
+
+        foreach (var regionId in regions.Keys.OrderBy(static id => id).ToArray())
+        {
+            if (regionId <= NbnConstants.InputRegionId || regionId >= NbnConstants.OutputRegionId)
+            {
+                continue;
+            }
+
+            if (!regions.TryGetValue(regionId, out var region))
+            {
+                continue;
+            }
+
+            var existingCount = CountExistingNeurons(region);
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                var neuron = region.Neurons[neuronId];
+                if (neuron.Exists)
+                {
+                    if (!budgets.CanRemoveNeuron || !ShouldMutate(disableNeuronProbability, ref state))
+                    {
+                        continue;
+                    }
+
+                    if (neuron.Axons.Count > 0 || HasInboundAxons(regions, regionId, neuronId))
+                    {
+                        continue;
+                    }
+
+                    if (existingCount == 1)
+                    {
+                        if (!budgets.CanRemoveRegion)
+                        {
+                            continue;
+                        }
+
+                        budgets.ConsumeNeuronRemoved();
+                        budgets.ConsumeRegionRemoved();
+                        regions.Remove(regionId);
+                        break;
+                    }
+
+                    neuron.Exists = false;
+                    neuron.Axons.Clear();
+                    budgets.ConsumeNeuronRemoved();
+                    existingCount--;
+                    continue;
+                }
+
+                if (!budgets.CanAddNeuron || !ShouldMutate(reactivateNeuronProbability, ref state))
+                {
+                    continue;
+                }
+
+                neuron.Exists = true;
+                budgets.ConsumeNeuronAdded();
+                existingCount++;
+            }
+        }
+
+        var addedConnections = new HashSet<ulong>();
+        foreach (var regionId in regions.Keys.OrderBy(static id => id))
+        {
+            if (!regions.TryGetValue(regionId, out var region))
+            {
+                continue;
+            }
+
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                var neuron = region.Neurons[neuronId];
+                if (!neuron.Exists)
+                {
+                    neuron.Axons.Clear();
+                    continue;
+                }
+
+                var existingTargets = new HashSet<uint>();
+                for (var i = 0; i < neuron.Axons.Count; i++)
+                {
+                    existingTargets.Add(BuildTargetKey(neuron.Axons[i].TargetRegionId, neuron.Axons[i].TargetNeuronId));
+                }
+
+                for (var axonIndex = neuron.Axons.Count - 1; axonIndex >= 0; axonIndex--)
+                {
+                    if (!budgets.CanRemoveAxon || !ShouldMutate(removeAxonProbability, ref state))
+                    {
+                        continue;
+                    }
+
+                    var axon = neuron.Axons[axonIndex];
+                    neuron.Axons.RemoveAt(axonIndex);
+                    existingTargets.Remove(BuildTargetKey(axon.TargetRegionId, axon.TargetNeuronId));
+                    budgets.ConsumeAxonRemoved();
+                }
+
+                for (var axonIndex = 0; axonIndex < neuron.Axons.Count; axonIndex++)
+                {
+                    if (!ShouldMutate(rerouteAxonProbability, ref state))
+                    {
+                        continue;
+                    }
+
+                    var current = neuron.Axons[axonIndex];
+                    var currentTarget = BuildTargetKey(current.TargetRegionId, current.TargetNeuronId);
+                    if (!TrySelectTarget(
+                            regions,
+                            regionId,
+                            existingTargets,
+                            currentTarget,
+                            ref state,
+                            out var newTarget))
+                    {
+                        continue;
+                    }
+
+                    neuron.Axons[axonIndex] = new AxonRecord(current.StrengthCode, newTarget.NeuronId, (byte)newTarget.RegionId);
+                    existingTargets.Remove(currentTarget);
+                    existingTargets.Add(BuildTargetKey(newTarget.RegionId, newTarget.NeuronId));
+                    budgets.AxonsRerouted++;
+                }
+
+                if (budgets.CanAddAxon
+                    && neuron.Axons.Count < NbnConstants.MaxAxonsPerNeuron
+                    && ShouldMutate(addAxonProbability, ref state)
+                    && TrySelectTarget(regions, regionId, existingTargets, null, ref state, out var addedTarget))
+                {
+                    var strengthCode = (byte)(NextRandom(ref state) & 0x1F);
+                    neuron.Axons.Add(new AxonRecord(strengthCode, addedTarget.NeuronId, (byte)addedTarget.RegionId));
+                    existingTargets.Add(BuildTargetKey(addedTarget.RegionId, addedTarget.NeuronId));
+                    budgets.ConsumeAxonAdded();
+                    addedConnections.Add(BuildConnectionKey(regionId, neuronId, addedTarget.RegionId, addedTarget.NeuronId));
+                }
+            }
+        }
+
+        EnforceAverageOutDegree(regions, config, ref state, budgets, addedConnections);
+    }
+
+    private static void EnforceAverageOutDegree(
+        Dictionary<int, MutableRegion> regions,
+        ReproduceConfig config,
+        ref ulong state,
+        MutationBudgets budgets,
+        HashSet<ulong> addedConnections)
+    {
+        if (config.MaxAvgOutDegreeBrain <= 0f || float.IsNaN(config.MaxAvgOutDegreeBrain))
+        {
+            return;
+        }
+
+        var existingNeurons = 0;
+        var totalAxons = 0;
+        foreach (var region in regions.Values)
+        {
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                var neuron = region.Neurons[neuronId];
+                if (!neuron.Exists)
+                {
+                    continue;
+                }
+
+                existingNeurons++;
+                totalAxons += neuron.Axons.Count;
+            }
+        }
+
+        if (existingNeurons <= 0)
+        {
+            return;
+        }
+
+        var allowedAxons = (int)Math.Floor(config.MaxAvgOutDegreeBrain * existingNeurons);
+        if (allowedAxons < 0)
+        {
+            allowedAxons = 0;
+        }
+
+        while (totalAxons > allowedAxons)
+        {
+            var candidates = CollectPruneCandidates(regions, addedConnections);
+            if (candidates.Count == 0)
+            {
+                break;
+            }
+
+            var selected = SelectPruneCandidate(candidates, config.PrunePolicy, ref state);
+            if (!regions.TryGetValue(selected.SourceRegionId, out var region))
+            {
+                break;
+            }
+
+            var neuron = region.Neurons[selected.SourceNeuronId];
+            if (selected.AxonIndex < 0 || selected.AxonIndex >= neuron.Axons.Count)
+            {
+                break;
+            }
+
+            neuron.Axons.RemoveAt(selected.AxonIndex);
+            totalAxons--;
+            budgets.ConsumeAxonRemoved();
+        }
+    }
+
+    private static List<PruneCandidate> CollectPruneCandidates(
+        Dictionary<int, MutableRegion> regions,
+        HashSet<ulong> addedConnections)
+    {
+        var candidates = new List<PruneCandidate>();
+        foreach (var pair in regions)
+        {
+            var regionId = pair.Key;
+            var region = pair.Value;
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                var neuron = region.Neurons[neuronId];
+                if (!neuron.Exists)
+                {
+                    continue;
+                }
+
+                for (var axonIndex = 0; axonIndex < neuron.Axons.Count; axonIndex++)
+                {
+                    var axon = neuron.Axons[axonIndex];
+                    var key = BuildConnectionKey(regionId, neuronId, axon.TargetRegionId, axon.TargetNeuronId);
+                    candidates.Add(new PruneCandidate(
+                        regionId,
+                        neuronId,
+                        axonIndex,
+                        MathF.Abs(axon.StrengthCode - 15.5f),
+                        addedConnections.Contains(key)));
+                }
+            }
+        }
+
+        return candidates;
+    }
+
+    private static PruneCandidate SelectPruneCandidate(
+        List<PruneCandidate> candidates,
+        PrunePolicy policy,
+        ref ulong state)
+    {
+        switch (policy)
+        {
+            case PrunePolicy.PruneNewConnectionsFirst:
+            {
+                var newest = candidates.FirstOrDefault(static candidate => candidate.IsNewConnection);
+                if (newest.IsNewConnection)
+                {
+                    return newest;
+                }
+
+                break;
+            }
+            case PrunePolicy.PruneRandom:
+            {
+                var index = (int)(NextRandom(ref state) % (ulong)candidates.Count);
+                return candidates[index];
+            }
+        }
+
+        return candidates
+            .OrderBy(static candidate => candidate.StrengthDistance)
+            .ThenBy(static candidate => candidate.SourceRegionId)
+            .ThenBy(static candidate => candidate.SourceNeuronId)
+            .ThenBy(static candidate => candidate.AxonIndex)
+            .First();
+    }
+
+    private static List<NbnRegionSection> BuildSectionsFromMutableRegions(
+        Dictionary<int, MutableRegion> regions,
+        uint stride,
+        MutationBudgets budgets)
+    {
+        var sections = new List<NbnRegionSection>(regions.Count);
+        foreach (var regionId in regions.Keys.OrderBy(static id => id))
+        {
+            if (!regions.TryGetValue(regionId, out var region))
+            {
+                continue;
+            }
+
+            if (regionId != NbnConstants.InputRegionId
+                && regionId != NbnConstants.OutputRegionId
+                && CountExistingNeurons(region) == 0)
+            {
+                continue;
+            }
+
+            var neurons = new NeuronRecord[region.Neurons.Count];
+            var axons = new List<AxonRecord>();
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                var mutable = region.Neurons[neuronId];
+                var exists = mutable.Exists;
+                if ((regionId == NbnConstants.InputRegionId || regionId == NbnConstants.OutputRegionId) && !exists)
+                {
+                    exists = true;
+                }
+
+                var removedAxons = 0;
+                var normalizedAxons = exists
+                    ? NormalizeAxons(regionId, mutable.Axons, regions, out removedAxons)
+                    : new List<AxonRecord>();
+                if (removedAxons > 0)
+                {
+                    budgets.ConsumeAxonsRemoved(removedAxons);
+                }
+
+                if (normalizedAxons.Count > NbnConstants.MaxAxonsPerNeuron)
+                {
+                    var trimCount = normalizedAxons.Count - NbnConstants.MaxAxonsPerNeuron;
+                    normalizedAxons.RemoveRange(NbnConstants.MaxAxonsPerNeuron, trimCount);
+                    budgets.ConsumeAxonsRemoved(trimCount);
+                }
+
+                neurons[neuronId] = new NeuronRecord(
+                    axonCount: (ushort)normalizedAxons.Count,
+                    paramBCode: mutable.Template.ParamBCode,
+                    paramACode: mutable.Template.ParamACode,
+                    activationThresholdCode: mutable.Template.ActivationThresholdCode,
+                    preActivationThresholdCode: mutable.Template.PreActivationThresholdCode,
+                    resetFunctionId: mutable.Template.ResetFunctionId,
+                    activationFunctionId: mutable.Template.ActivationFunctionId,
+                    accumulationFunctionId: mutable.Template.AccumulationFunctionId,
+                    exists: exists);
+                axons.AddRange(normalizedAxons);
+            }
+
+            var checkpoints = NbnBinary.BuildCheckpoints(neurons, stride);
+            sections.Add(new NbnRegionSection(
+                (byte)regionId,
+                (uint)neurons.Length,
+                (ulong)axons.Count,
+                stride,
+                (uint)checkpoints.Length,
+                checkpoints,
+                neurons,
+                axons.ToArray()));
+        }
+
+        return sections;
+    }
+
+    private static List<AxonRecord> NormalizeAxons(
+        int sourceRegionId,
+        List<AxonRecord> axons,
+        IReadOnlyDictionary<int, MutableRegion> regions,
+        out int removedAxons)
+    {
+        var normalized = new List<AxonRecord>(axons.Count);
+        var seenTargets = new HashSet<uint>();
+        removedAxons = 0;
+
+        for (var i = 0; i < axons.Count; i++)
+        {
+            var axon = axons[i];
+            if (!IsValidTarget(sourceRegionId, axon, regions))
+            {
+                removedAxons++;
+                continue;
+            }
+
+            var targetKey = BuildTargetKey(axon.TargetRegionId, axon.TargetNeuronId);
+            if (!seenTargets.Add(targetKey))
+            {
+                removedAxons++;
+                continue;
+            }
+
+            normalized.Add(axon);
+        }
+
+        normalized.Sort(static (left, right) =>
+        {
+            var regionComparison = left.TargetRegionId.CompareTo(right.TargetRegionId);
+            return regionComparison != 0
+                ? regionComparison
+                : left.TargetNeuronId.CompareTo(right.TargetNeuronId);
+        });
+        return normalized;
+    }
+
+    private static bool IsValidTarget(
+        int sourceRegionId,
+        AxonRecord axon,
+        IReadOnlyDictionary<int, MutableRegion> regions)
+    {
+        if (!IsValidTargetRegion(sourceRegionId, axon.TargetRegionId))
+        {
+            return false;
+        }
+
+        if (!regions.TryGetValue(axon.TargetRegionId, out var targetRegion))
+        {
+            return false;
+        }
+
+        if (axon.TargetNeuronId < 0 || axon.TargetNeuronId >= targetRegion.Neurons.Count)
+        {
+            return false;
+        }
+
+        return targetRegion.Neurons[axon.TargetNeuronId].Exists;
+    }
+
+    private static bool IsValidTargetRegion(int sourceRegionId, int targetRegionId)
+    {
+        if (targetRegionId == NbnConstants.InputRegionId)
+        {
+            return false;
+        }
+
+        if (sourceRegionId == NbnConstants.OutputRegionId && targetRegionId == NbnConstants.OutputRegionId)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TrySelectTarget(
+        IReadOnlyDictionary<int, MutableRegion> regions,
+        int sourceRegionId,
+        HashSet<uint> existingTargets,
+        uint? excludedTarget,
+        ref ulong state,
+        out TargetLocus target)
+    {
+        var candidates = new List<TargetLocus>();
+        foreach (var regionId in regions.Keys.OrderBy(static id => id))
+        {
+            if (!regions.TryGetValue(regionId, out var region) || !IsValidTargetRegion(sourceRegionId, regionId))
+            {
+                continue;
+            }
+
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                if (!region.Neurons[neuronId].Exists)
+                {
+                    continue;
+                }
+
+                var targetKey = BuildTargetKey(regionId, neuronId);
+                if (existingTargets.Contains(targetKey) || (excludedTarget.HasValue && excludedTarget.Value == targetKey))
+                {
+                    continue;
+                }
+
+                candidates.Add(new TargetLocus(regionId, neuronId));
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            target = default;
+            return false;
+        }
+
+        var index = (int)(NextRandom(ref state) % (ulong)candidates.Count);
+        target = candidates[index];
+        return true;
+    }
+
+    private static bool HasInboundAxons(IReadOnlyDictionary<int, MutableRegion> regions, int targetRegionId, int targetNeuronId)
+    {
+        foreach (var pair in regions)
+        {
+            foreach (var neuron in pair.Value.Neurons)
+            {
+                if (!neuron.Exists)
+                {
+                    continue;
+                }
+
+                for (var i = 0; i < neuron.Axons.Count; i++)
+                {
+                    var axon = neuron.Axons[i];
+                    if (axon.TargetRegionId == targetRegionId && axon.TargetNeuronId == targetNeuronId)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static int CountExistingNeurons(MutableRegion region)
+    {
+        var count = 0;
+        for (var i = 0; i < region.Neurons.Count; i++)
+        {
+            if (region.Neurons[i].Exists)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static int FindSingleExistingNeuron(MutableRegion region)
+    {
+        for (var i = 0; i < region.Neurons.Count; i++)
+        {
+            if (region.Neurons[i].Exists)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool ShouldMutate(float probability, ref ulong state)
+        => probability > 0f && NextUnitFloat(ref state) < probability;
+
+    private static float ClampProbability(float probability)
+        => float.IsNaN(probability) ? 0f : Math.Clamp(probability, 0f, 1f);
+
+    private static uint BuildTargetKey(int targetRegionId, int targetNeuronId)
+        => ((uint)targetRegionId << NbnConstants.AddressNeuronBits) | (uint)targetNeuronId;
+
+    private static ulong BuildConnectionKey(int sourceRegionId, int sourceNeuronId, int targetRegionId, int targetNeuronId)
+        => ((ulong)(sourceRegionId & NbnConstants.RegionMaxId) << 59)
+           | (((ulong)sourceNeuronId & 0x3FFFFFUL) << 37)
+           | ((ulong)(targetRegionId & NbnConstants.RegionMaxId) << 32)
+           | ((uint)targetNeuronId & 0x3FFFFFUL);
 
     private static bool ChooseParentA(float probability, ref ulong state)
     {
@@ -983,6 +1771,72 @@ public sealed class ReproductionManagerActor : IActor
         return Path.Combine(Environment.CurrentDirectory, "artifacts");
     }
 
+    private async Task<ReproduceResult> ApplySpawnPolicyAsync(IContext context, ReproduceResult result, ReproduceConfig? config)
+    {
+        var policy = config?.SpawnChild ?? SpawnChildPolicy.SpawnChildDefaultOn;
+        if (policy == SpawnChildPolicy.SpawnChildNever)
+        {
+            return result;
+        }
+
+        if (_ioGatewayPid is null)
+        {
+            return CreateSpawnFailureResult(result, "repro_spawn_unavailable");
+        }
+
+        if (!HasArtifactRef(result.ChildDef))
+        {
+            return CreateSpawnFailureResult(result, "repro_child_artifact_missing");
+        }
+
+        try
+        {
+            var response = await context
+                .RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                    _ioGatewayPid,
+                    new ProtoIo.SpawnBrainViaIO
+                    {
+                        Request = new ProtoControl.SpawnBrain
+                        {
+                            BrainDef = result.ChildDef
+                        }
+                    },
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+
+            if (response?.Ack?.BrainId is not null
+                && response.Ack.BrainId.TryToGuid(out var childBrainId)
+                && childBrainId != Guid.Empty)
+            {
+                result.Spawned = true;
+                result.ChildBrainId = response.Ack.BrainId;
+                return result;
+            }
+
+            return CreateSpawnFailureResult(result, "repro_spawn_failed");
+        }
+        catch
+        {
+            return CreateSpawnFailureResult(result, "repro_spawn_request_failed");
+        }
+    }
+
+    private static ReproduceResult CreateSpawnFailureResult(ReproduceResult result, string reason)
+    {
+        result.Report ??= new SimilarityReport();
+        result.Report.Compatible = false;
+        result.Report.AbortReason = reason;
+        result.Spawned = false;
+        result.ChildBrainId = null;
+        return result;
+    }
+
+    private static bool HasArtifactRef(ArtifactRef? reference)
+        => reference is not null
+           && reference.Sha256 is not null
+           && reference.Sha256.Value is not null
+           && reference.Sha256.Value.Length == Sha256Hash.Length;
+
     private static ReproduceResult CreateSuccessResult(
         ArtifactRef childDef,
         MutationSummary summary,
@@ -1046,6 +1900,11 @@ public sealed class ReproductionManagerActor : IActor
         ParsedParent? Parsed,
         string? AbortReason);
 
+    private sealed record ResolvedParentArtifact(
+        ArtifactRef? ParentDef,
+        ArtifactRef? ParentState,
+        string? AbortReason);
+
     private sealed record ChildBuildResult(
         ArtifactRef? ChildDef,
         MutationSummary? Summary,
@@ -1056,6 +1915,144 @@ public sealed class ReproductionManagerActor : IActor
         int OutDegreeTotal,
         int[] TargetRegionCounts,
         int TargetRegionTotal);
+
+    private sealed class MutableRegion
+    {
+        public MutableRegion(int regionId, List<MutableNeuron> neurons)
+        {
+            RegionId = regionId;
+            Neurons = neurons;
+        }
+
+        public int RegionId { get; }
+        public List<MutableNeuron> Neurons { get; }
+    }
+
+    private sealed class MutableNeuron
+    {
+        public MutableNeuron(NeuronRecord template, bool exists, List<AxonRecord> axons)
+        {
+            Template = template;
+            Exists = exists;
+            Axons = axons;
+        }
+
+        public NeuronRecord Template { get; }
+        public bool Exists { get; set; }
+        public List<AxonRecord> Axons { get; }
+    }
+
+    private sealed class MutationBudgets
+    {
+        public MutationBudgets(
+            int maxNeuronsAdded,
+            int maxNeuronsRemoved,
+            int maxAxonsAdded,
+            int maxAxonsRemoved,
+            int maxRegionsAdded,
+            int maxRegionsRemoved)
+        {
+            MaxNeuronsAdded = maxNeuronsAdded;
+            MaxNeuronsRemoved = maxNeuronsRemoved;
+            MaxAxonsAdded = maxAxonsAdded;
+            MaxAxonsRemoved = maxAxonsRemoved;
+            MaxRegionsAdded = maxRegionsAdded;
+            MaxRegionsRemoved = maxRegionsRemoved;
+        }
+
+        public int MaxNeuronsAdded { get; }
+        public int MaxNeuronsRemoved { get; }
+        public int MaxAxonsAdded { get; }
+        public int MaxAxonsRemoved { get; }
+        public int MaxRegionsAdded { get; }
+        public int MaxRegionsRemoved { get; }
+
+        public uint NeuronsAdded { get; private set; }
+        public uint NeuronsRemoved { get; private set; }
+        public uint AxonsAdded { get; private set; }
+        public uint AxonsRemoved { get; private set; }
+        public uint RegionsAdded { get; private set; }
+        public uint RegionsRemoved { get; private set; }
+        public uint AxonsRerouted { get; set; }
+        public uint FunctionsMutated { get; set; }
+
+        public bool CanAddNeuron => NeuronsAdded < (uint)MaxNeuronsAdded;
+        public bool CanRemoveNeuron => NeuronsRemoved < (uint)MaxNeuronsRemoved;
+        public bool CanAddAxon => AxonsAdded < (uint)MaxAxonsAdded;
+        public bool CanRemoveAxon => AxonsRemoved < (uint)MaxAxonsRemoved;
+        public bool CanAddRegion => RegionsAdded < (uint)MaxRegionsAdded;
+        public bool CanRemoveRegion => RegionsRemoved < (uint)MaxRegionsRemoved;
+
+        public void ConsumeNeuronAdded()
+        {
+            if (CanAddNeuron)
+            {
+                NeuronsAdded++;
+            }
+        }
+
+        public void ConsumeNeuronRemoved()
+        {
+            if (CanRemoveNeuron)
+            {
+                NeuronsRemoved++;
+            }
+        }
+
+        public void ConsumeAxonAdded()
+        {
+            if (CanAddAxon)
+            {
+                AxonsAdded++;
+            }
+        }
+
+        public void ConsumeAxonRemoved()
+        {
+            if (CanRemoveAxon)
+            {
+                AxonsRemoved++;
+            }
+        }
+
+        public void ConsumeAxonsRemoved(int count)
+        {
+            if (count <= 0)
+            {
+                return;
+            }
+
+            for (var i = 0; i < count && CanRemoveAxon; i++)
+            {
+                AxonsRemoved++;
+            }
+        }
+
+        public void ConsumeRegionAdded()
+        {
+            if (CanAddRegion)
+            {
+                RegionsAdded++;
+            }
+        }
+
+        public void ConsumeRegionRemoved()
+        {
+            if (CanRemoveRegion)
+            {
+                RegionsRemoved++;
+            }
+        }
+    }
+
+    private readonly record struct TargetLocus(int RegionId, int NeuronId);
+
+    private readonly record struct PruneCandidate(
+        int SourceRegionId,
+        int SourceNeuronId,
+        int AxonIndex,
+        float StrengthDistance,
+        bool IsNewConnection);
 
     private sealed record NeuronLocus(int RegionId, int NeuronId);
 }
