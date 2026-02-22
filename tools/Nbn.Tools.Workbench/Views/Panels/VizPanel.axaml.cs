@@ -22,6 +22,9 @@ public partial class VizPanel : UserControl
     private const double PanButtonStepPx = 96.0;
     private const double MinPanTranslationLimitPx = 320.0;
     private const int MaxPendingCanvasViewAttempts = 8;
+    private const double CanvasViewportBottomPaddingPx = 18.0;
+    private const double CanvasViewportMinHeightPx = 260.0;
+    private const double CanvasViewportMaxHeightPx = 1200.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -58,6 +61,7 @@ public partial class VizPanel : UserControl
     private int _pendingCanvasViewAttempts;
     private Guid? _lastNavigationBrainId;
     private uint? _lastNavigationFocusRegionId;
+    private TopLevel? _canvasTopLevel;
 
     private enum PendingCanvasViewMode
     {
@@ -107,9 +111,19 @@ public partial class VizPanel : UserControl
             ActivityCanvasScrollViewer.SizeChanged += ActivityCanvasScrollViewerSizeChanged;
         }
 
+        SizeChanged += VizPanelSizeChanged;
         DataContextChanged += VizPanelDataContextChanged;
-        AttachedToVisualTree += (_, _) => SyncCanvasScaleVisuals();
-        DetachedFromVisualTree += (_, _) => DetachViewModelNotifier();
+        AttachedToVisualTree += (_, _) =>
+        {
+            AttachCanvasTopLevelEvents();
+            SyncCanvasScaleVisuals();
+            UpdateCanvasViewportHeight();
+        };
+        DetachedFromVisualTree += (_, _) =>
+        {
+            DetachCanvasTopLevelEvents();
+            DetachViewModelNotifier();
+        };
     }
 
     private VizPanelViewModel? ViewModel => DataContext as VizPanelViewModel;
@@ -126,6 +140,7 @@ public partial class VizPanel : UserControl
         CaptureNavigationContext();
         SyncCanvasScaleVisuals();
         RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+        UpdateCanvasViewportHeight();
     }
 
     private void ViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -153,11 +168,15 @@ public partial class VizPanel : UserControl
 
     private void ActivityCanvasScrollViewerSizeChanged(object? sender, SizeChangedEventArgs e)
     {
+        UpdateCanvasViewportHeight();
         if (_pendingCanvasViewMode != PendingCanvasViewMode.None)
         {
             TryApplyPendingCanvasView();
         }
     }
+
+    private void VizPanelSizeChanged(object? sender, SizeChangedEventArgs e)
+        => UpdateCanvasViewportHeight();
 
     private void DetachViewModelNotifier()
     {
@@ -261,9 +280,6 @@ public partial class VizPanel : UserControl
             e.Handled = true;
             return;
         }
-
-        // Block wheel/touchpad panning and pinch-to-zoom unless Shift is held.
-        e.Handled = true;
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -668,7 +684,7 @@ public partial class VizPanel : UserControl
         var delta = currentPoint - _panLastPoint;
         if (Math.Abs(delta.X) > 0.0001 || Math.Abs(delta.Y) > 0.0001)
         {
-            PanCanvasBy(-delta.X, -delta.Y);
+            PanCanvasBy(delta.X, delta.Y);
             _panLastPoint = currentPoint;
         }
 
@@ -887,5 +903,61 @@ public partial class VizPanel : UserControl
     {
         _lastNavigationBrainId = ViewModel?.SelectedBrain?.BrainId;
         _lastNavigationFocusRegionId = ViewModel?.ActiveFocusRegionId;
+    }
+
+    private void AttachCanvasTopLevelEvents()
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (ReferenceEquals(_canvasTopLevel, topLevel))
+        {
+            return;
+        }
+
+        DetachCanvasTopLevelEvents();
+        _canvasTopLevel = topLevel;
+        if (_canvasTopLevel is not null)
+        {
+            _canvasTopLevel.SizeChanged += CanvasTopLevelSizeChanged;
+        }
+    }
+
+    private void DetachCanvasTopLevelEvents()
+    {
+        if (_canvasTopLevel is not null)
+        {
+            _canvasTopLevel.SizeChanged -= CanvasTopLevelSizeChanged;
+            _canvasTopLevel = null;
+        }
+    }
+
+    private void CanvasTopLevelSizeChanged(object? sender, SizeChangedEventArgs e)
+        => UpdateCanvasViewportHeight();
+
+    private void UpdateCanvasViewportHeight()
+    {
+        var scrollViewer = ActivityCanvasScrollViewer;
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (scrollViewer is null || topLevel is null)
+        {
+            return;
+        }
+
+        var topLeft = scrollViewer.TranslatePoint(default, topLevel);
+        if (topLeft is null)
+        {
+            return;
+        }
+
+        var availableHeight = topLevel.ClientSize.Height - topLeft.Value.Y - CanvasViewportBottomPaddingPx;
+        if (!double.IsFinite(availableHeight))
+        {
+            return;
+        }
+
+        var targetHeight = Math.Clamp(availableHeight, CanvasViewportMinHeightPx, CanvasViewportMaxHeightPx);
+        if (Math.Abs(scrollViewer.MaxHeight - targetHeight) > 0.5)
+        {
+            scrollViewer.MaxHeight = targetHeight;
+        }
     }
 }
