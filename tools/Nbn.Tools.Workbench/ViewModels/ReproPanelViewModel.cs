@@ -342,14 +342,30 @@ public sealed class ReproPanelViewModel : ViewModelBase
         var report = result.Report;
         var summary = result.Summary;
         var score = ComputeSimilarityScore(report);
+        var compatibleText = report is null ? "Unknown" : report.Compatible ? "True" : "False";
+        var abortReason = ResolveAbortReason(report);
+        var regionSpanScore = report?.RegionSpanScore ?? 0f;
+        var functionScore = report?.FunctionScore ?? 0f;
+        var connectivityScore = report?.ConnectivityScore ?? 0f;
+        var childRegionCount = report?.RegionsPresentChild ?? 0u;
 
-        SimilaritySummary = $"Score: {score:0.000} | Compatible: {report?.Compatible} | Region span: {report?.RegionSpanScore:0.000} | Function: {report?.FunctionScore:0.000} | Connectivity: {report?.ConnectivityScore:0.000} | Child regions: {report?.RegionsPresentChild}";
-        MutationSummary = $"+N{summary?.NeuronsAdded} -N{summary?.NeuronsRemoved} +A{summary?.AxonsAdded} -A{summary?.AxonsRemoved} reroute={summary?.AxonsRerouted} func={summary?.FunctionsMutated} strength={summary?.StrengthCodesChanged}";
+        SimilaritySummary = $"Score: {score:0.000} | Compatible: {compatibleText} | Abort: {abortReason} | Region span: {regionSpanScore:0.000} | Function: {functionScore:0.000} | Connectivity: {connectivityScore:0.000} | Child regions: {childRegionCount}";
+        MutationSummary = $"+N{summary?.NeuronsAdded ?? 0u} -N{summary?.NeuronsRemoved ?? 0u} +A{summary?.AxonsAdded ?? 0u} -A{summary?.AxonsRemoved ?? 0u} reroute={summary?.AxonsRerouted ?? 0u} func={summary?.FunctionsMutated ?? 0u} strength={summary?.StrengthCodesChanged ?? 0u}";
 
         var childLabel = result.ChildBrainId is not null && result.ChildBrainId.TryToGuid(out var childGuid)
             ? childGuid.ToString("D")
             : "unknown";
-        Status = result.Spawned ? $"Spawned child {childLabel}" : "Completed (not spawned).";
+        if (result.Spawned)
+        {
+            Status = report is not null && !report.Compatible
+                ? $"Spawned child {childLabel} (abort: {abortReason})"
+                : $"Spawned child {childLabel}";
+            return;
+        }
+
+        Status = report is not null && !report.Compatible
+            ? $"Aborted: {abortReason} (not spawned)."
+            : "Completed (not spawned).";
     }
 
     private bool ShouldUseArtifactParents()
@@ -549,6 +565,12 @@ public sealed class ReproPanelViewModel : ViewModelBase
         }
 
         return report.Compatible ? 1f : 0f;
+    }
+
+    private static string ResolveAbortReason(SimilarityReport? report)
+    {
+        var abortReason = report?.AbortReason;
+        return string.IsNullOrWhiteSpace(abortReason) ? "none" : abortReason.Trim();
     }
 
     private static bool TryResolveParentId(ReproBrainOption? selected, string rawText, out Guid brainId)

@@ -785,7 +785,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByBrainIdsAsync(ReproduceByBrainIdsRequest request)
+    public virtual async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByBrainIdsAsync(ReproduceByBrainIdsRequest request)
     {
         if (_root is null || _ioGatewayPid is null)
         {
@@ -808,7 +808,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(ReproduceByArtifactsRequest request)
+    public virtual async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(ReproduceByArtifactsRequest request)
     {
         if (_root is null || _ioGatewayPid is null)
         {
