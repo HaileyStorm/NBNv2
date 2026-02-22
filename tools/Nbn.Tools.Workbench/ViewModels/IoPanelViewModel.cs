@@ -411,6 +411,27 @@ public sealed class IoPanelViewModel : ViewModelBase
         _client.SetCostEnergy(brainId, enabled, enabled);
     }
 
+    public bool TrySendInputSelected(uint index, float value, out string status)
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            status = "No brain selected.";
+            return false;
+        }
+
+        if (!float.IsFinite(value))
+        {
+            BrainInfoSummary = "Input value invalid.";
+            status = "Input value invalid.";
+            return false;
+        }
+
+        _client.SendInput(brainId, index, value);
+        status = FormattableString.Invariant($"Input pulse queued: brain {brainId:D}, index {index}, value {value:0.###}.");
+        BrainInfoSummary = status;
+        return true;
+    }
+
     private async Task RequestInfoAsync()
     {
         if (!TryGetBrainId(out var brainId))

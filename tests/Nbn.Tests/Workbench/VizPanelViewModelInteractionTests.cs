@@ -20,6 +20,11 @@ public class VizPanelViewModelInteractionTests
             "BuildCanvasDiagnosticsReport",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("BuildCanvasDiagnosticsReport method not found.");
+    private static readonly MethodInfo UpdateCanvasInteractionSummariesMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "UpdateCanvasInteractionSummaries",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("UpdateCanvasInteractionSummaries method not found.");
     private static readonly MethodInfo ApplyKeyedDiffMethod =
         typeof(VizPanelViewModel).GetMethod(
             "ApplyKeyedDiff",
@@ -40,6 +45,16 @@ public class VizPanelViewModelInteractionTests
             "_pendingDefinitionHydrationKeys",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("_pendingDefinitionHydrationKeys field not found.");
+    private static readonly FieldInfo SelectedCanvasNodeKeyField =
+        typeof(VizPanelViewModel).GetField(
+            "_selectedCanvasNodeKey",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_selectedCanvasNodeKey field not found.");
+    private static readonly FieldInfo SelectedCanvasRouteLabelField =
+        typeof(VizPanelViewModel).GetField(
+            "_selectedCanvasRouteLabel",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_selectedCanvasRouteLabel field not found.");
 
     [Fact]
     public void TryResolveCanvasHit_NodeHoverStickyTolerance_ResolvesNearMiss()
@@ -248,7 +263,7 @@ public class VizPanelViewModelInteractionTests
         vm.SetCanvasNodeHover(node);
         vm.ClearCanvasHoverDeferred(delayMs: 20);
         vm.SetCanvasNodeHover(node);
-        await Task.Delay(90);
+        await Task.Delay(140);
 
         Assert.True(vm.IsCanvasHoverCardVisible);
         Assert.Equal(node.Detail, vm.CanvasHoverCardText);
@@ -269,10 +284,9 @@ public class VizPanelViewModelInteractionTests
             });
 
         vm.SetCanvasNodeHover(node);
-        vm.ClearCanvasHoverDeferred(delayMs: 20);
-        await Task.Delay(10);
+        vm.ClearCanvasHoverDeferred(delayMs: 40);
         vm.KeepCanvasHoverAlive();
-        await Task.Delay(90);
+        await Task.Delay(140);
 
         Assert.True(vm.IsCanvasHoverCardVisible);
         Assert.Equal(node.Detail, vm.CanvasHoverCardText);
@@ -296,6 +310,122 @@ public class VizPanelViewModelInteractionTests
 
         Assert.False(vm.IsCanvasHoverCardVisible);
         Assert.Equal(string.Empty, vm.CanvasHoverCardText);
+    }
+
+    [Fact]
+    public void SelectCanvasNode_PopulatesSelectionDetailsPanel()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        var node = CreateNode(
+            key: "region:0:neuron:2",
+            label: "R0/N2",
+            left: 100,
+            top: 100,
+            regionId: 0,
+            neuronId: 2,
+            navigateRegionId: 0);
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+
+        Assert.True(vm.HasCanvasSelection);
+        Assert.Contains("Selected Node", vm.CanvasSelectionTitle, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("region=R0", vm.CanvasSelectionIdentity, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("events=", vm.CanvasSelectionRuntime, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("focus_region=R0", vm.CanvasSelectionContext, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Ready: stage runtime pulse", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SelectCanvasEdge_PopulatesSelectionRouteContextPanel()
+    {
+        var vm = CreateViewModel();
+        var edge = CreateEdge();
+        SetCanvasSelection(vm, null, edge.RouteLabel);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode>(),
+            new List<VizActivityCanvasEdge> { edge });
+
+        Assert.True(vm.HasCanvasSelection);
+        Assert.Contains("Selected Route", vm.CanvasSelectionTitle, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source=R9", vm.CanvasSelectionIdentity, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("relation=cross-region", vm.CanvasSelectionContext, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Route actions available", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrepareInputPulseCommand_IsDisabled_ForNonInputNodeSelection()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        var node = CreateNode(
+            key: "region:9",
+            label: "R9",
+            left: 100,
+            top: 100,
+            regionId: 9,
+            neuronId: null,
+            navigateRegionId: 9);
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+
+        Assert.False(vm.PrepareInputPulseCommand.CanExecute(null));
+        Assert.Contains("only available for input neurons", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrepareInputPulseCommand_UsesConfirmationAndValidationFlow()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        var node = CreateNode(
+            key: "region:0:neuron:3",
+            label: "R0/N3",
+            left: 120,
+            top: 90,
+            regionId: 0,
+            neuronId: 3,
+            navigateRegionId: 0);
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+        vm.CanvasNodes.Clear();
+        vm.CanvasNodes.Add(node);
+        vm.CanvasEdges.Clear();
+
+        vm.SelectedInputPulseValueText = "not-a-number";
+        Assert.False(vm.PrepareInputPulseCommand.CanExecute(null));
+        Assert.Contains("finite float", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+
+        vm.SelectedInputPulseValueText = "1.25";
+        Assert.True(vm.PrepareInputPulseCommand.CanExecute(null));
+
+        vm.PrepareInputPulseCommand.Execute(null);
+        Assert.True(vm.IsInputPulseConfirmationVisible);
+        Assert.Contains("Confirm runtime action", vm.InputPulseConfirmationText, StringComparison.OrdinalIgnoreCase);
+        Assert.True(vm.ConfirmInputPulseCommand.CanExecute(null));
+
+        vm.ConfirmInputPulseCommand.Execute(null);
+        Assert.False(vm.IsInputPulseConfirmationVisible);
+        Assert.Contains("Input pulse queued:", vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -447,13 +577,35 @@ public class VizPanelViewModelInteractionTests
         }
     }
 
-    private static VizActivityCanvasNode CreateNode(string key, string label, double left, double top)
+    private static void UpdateInteractionSummaries(
+        VizPanelViewModel vm,
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges)
     {
+        UpdateCanvasInteractionSummariesMethod.Invoke(vm, new object[] { nodes, edges });
+    }
+
+    private static void SetCanvasSelection(VizPanelViewModel vm, string? nodeKey, string? routeLabel)
+    {
+        SelectedCanvasNodeKeyField.SetValue(vm, nodeKey);
+        SelectedCanvasRouteLabelField.SetValue(vm, routeLabel);
+    }
+
+    private static VizActivityCanvasNode CreateNode(
+        string key,
+        string label,
+        double left,
+        double top,
+        uint regionId = 9,
+        uint? neuronId = null,
+        uint? navigateRegionId = null)
+    {
+        var targetRegion = navigateRegionId ?? regionId;
         return new VizActivityCanvasNode(
             NodeKey: key,
-            RegionId: 9,
-            NeuronId: null,
-            NavigateRegionId: 9,
+            RegionId: regionId,
+            NeuronId: neuronId,
+            NavigateRegionId: targetRegion,
             Label: label,
             Detail: $"{label} detail",
             Left: left,
@@ -467,6 +619,36 @@ public class VizPanelViewModelInteractionTests
             IsFocused: false,
             LastTick: 42,
             EventCount: 3,
+            IsSelected: false,
+            IsHovered: false,
+            IsPinned: false);
+    }
+
+    private static VizActivityCanvasEdge CreateEdge()
+    {
+        return new VizActivityCanvasEdge(
+            RouteLabel: "R9 -> R10",
+            Detail: "edge detail",
+            PathData: "M 20 20 Q 80 20 140 20",
+            SourceX: 20,
+            SourceY: 20,
+            ControlX: 80,
+            ControlY: 20,
+            TargetX: 140,
+            TargetY: 20,
+            Stroke: "#7A838A",
+            DirectionDashArray: string.Empty,
+            ActivityStroke: "#2ECC71",
+            StrokeThickness: 2.0,
+            ActivityStrokeThickness: 1.2,
+            HitTestThickness: 10.0,
+            Opacity: 0.9,
+            ActivityOpacity: 0.7,
+            IsFocused: false,
+            LastTick: 100,
+            EventCount: 5,
+            SourceRegionId: 9,
+            TargetRegionId: 10,
             IsSelected: false,
             IsHovered: false,
             IsPinned: false);

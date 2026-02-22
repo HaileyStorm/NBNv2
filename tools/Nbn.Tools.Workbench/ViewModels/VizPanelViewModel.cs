@@ -105,6 +105,19 @@ public sealed class VizPanelViewModel : ViewModelBase
     private VizActivityProjectionOptions _currentProjectionOptions = new(DefaultTickWindow, false, null);
     private string _activityInteractionSummary = "Select a node or route to inspect activity details.";
     private string _activityPinnedSummary = "Pinned: none.";
+    private bool _hasCanvasSelection;
+    private string _canvasSelectionTitle = "Selected: none";
+    private string _canvasSelectionIdentity = "Identity: none.";
+    private string _canvasSelectionRuntime = "Runtime: n/a.";
+    private string _canvasSelectionContext = "Context: n/a.";
+    private string _canvasSelectionDetail = "Select a node or route to inspect identity, runtime stats, and route context.";
+    private string _canvasSelectionActionHint = "Runtime actions require an input-neuron selection (R0/Nx) and an active brain.";
+    private string _selectedInputPulseValueText = "1";
+    private bool _isInputPulseConfirmationVisible;
+    private string _inputPulseConfirmationText = string.Empty;
+    private uint? _selectedRouteSourceRegionId;
+    private uint? _selectedRouteTargetRegionId;
+    private PendingInputPulseRequest? _pendingInputPulseRequest;
     private string _canvasHoverCardText = string.Empty;
     private bool _isCanvasHoverCardVisible;
     private double _canvasHoverCardLeft = 8;
@@ -174,6 +187,15 @@ public sealed class VizPanelViewModel : ViewModelBase
         NavigateCanvasSelectionCommand = new RelayCommand(NavigateToCanvasSelection);
         TogglePinSelectionCommand = new RelayCommand(TogglePinForCurrentSelection);
         ClearCanvasInteractionCommand = new RelayCommand(ClearCanvasInteraction);
+        FocusSelectedRouteSourceCommand = new RelayCommand(FocusSelectedRouteSourceRegion, () => _selectedRouteSourceRegionId.HasValue);
+        FocusSelectedRouteTargetCommand = new RelayCommand(FocusSelectedRouteTargetRegion, () => _selectedRouteTargetRegionId.HasValue);
+        PrepareInputPulseCommand = new RelayCommand(PrepareInputPulseForSelection, CanPrepareInputPulseForSelection);
+        ConfirmInputPulseCommand = new RelayCommand(
+            ConfirmInputPulseForSelection,
+            () => _isInputPulseConfirmationVisible && _pendingInputPulseRequest is not null);
+        CancelInputPulseCommand = new RelayCommand(
+            () => ClearPendingInputPulseRequest(updateStatus: true),
+            () => _isInputPulseConfirmationVisible || _pendingInputPulseRequest is not null);
         UpdateLodSummary();
         RefreshActivityProjection();
     }
@@ -260,6 +282,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 }
 
                 OnPropertyChanged(nameof(HasSelectedBrain));
+                UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
                 VisualizationSelectionChanged?.Invoke();
             }
         }
@@ -441,6 +464,72 @@ public sealed class VizPanelViewModel : ViewModelBase
         set => SetProperty(ref _activityPinnedSummary, value);
     }
 
+    public bool HasCanvasSelection
+    {
+        get => _hasCanvasSelection;
+        private set => SetProperty(ref _hasCanvasSelection, value);
+    }
+
+    public string CanvasSelectionTitle
+    {
+        get => _canvasSelectionTitle;
+        private set => SetProperty(ref _canvasSelectionTitle, value);
+    }
+
+    public string CanvasSelectionIdentity
+    {
+        get => _canvasSelectionIdentity;
+        private set => SetProperty(ref _canvasSelectionIdentity, value);
+    }
+
+    public string CanvasSelectionRuntime
+    {
+        get => _canvasSelectionRuntime;
+        private set => SetProperty(ref _canvasSelectionRuntime, value);
+    }
+
+    public string CanvasSelectionContext
+    {
+        get => _canvasSelectionContext;
+        private set => SetProperty(ref _canvasSelectionContext, value);
+    }
+
+    public string CanvasSelectionDetail
+    {
+        get => _canvasSelectionDetail;
+        private set => SetProperty(ref _canvasSelectionDetail, value);
+    }
+
+    public string CanvasSelectionActionHint
+    {
+        get => _canvasSelectionActionHint;
+        private set => SetProperty(ref _canvasSelectionActionHint, value);
+    }
+
+    public string SelectedInputPulseValueText
+    {
+        get => _selectedInputPulseValueText;
+        set
+        {
+            if (SetProperty(ref _selectedInputPulseValueText, value))
+            {
+                UpdateCanvasSelectionPanelState(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            }
+        }
+    }
+
+    public bool IsInputPulseConfirmationVisible
+    {
+        get => _isInputPulseConfirmationVisible;
+        private set => SetProperty(ref _isInputPulseConfirmationVisible, value);
+    }
+
+    public string InputPulseConfirmationText
+    {
+        get => _inputPulseConfirmationText;
+        private set => SetProperty(ref _inputPulseConfirmationText, value);
+    }
+
     public string TogglePinSelectionLabel => IsCurrentSelectionPinned() ? "Unpin selection" : "Pin selection";
 
     public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Shift+Wheel zoom, Shift+drag or middle-drag pan, double-click empty = fit";
@@ -528,6 +617,16 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand TogglePinSelectionCommand { get; }
 
     public RelayCommand ClearCanvasInteractionCommand { get; }
+
+    public RelayCommand FocusSelectedRouteSourceCommand { get; }
+
+    public RelayCommand FocusSelectedRouteTargetCommand { get; }
+
+    public RelayCommand PrepareInputPulseCommand { get; }
+
+    public RelayCommand ConfirmInputPulseCommand { get; }
+
+    public RelayCommand CancelInputPulseCommand { get; }
 
     public void AddBrainId(Guid id)
     {
@@ -627,6 +726,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
         RefreshCanvasLayoutOnly();
         Status = $"Selected node {node.Label}.";
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
     public void SelectCanvasEdge(VizActivityCanvasEdge? edge)
@@ -642,6 +742,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
         RefreshCanvasLayoutOnly();
         Status = $"Selected route {edge.RouteLabel}.";
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
     public void SetCanvasNodeHover(VizActivityCanvasNode? node, double pointerX = double.NaN, double pointerY = double.NaN)
@@ -2517,21 +2618,27 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         if (string.IsNullOrWhiteSpace(_selectedCanvasNodeKey) && string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
         {
+            ClearPendingInputPulseRequest(updateStatus: false);
             return;
         }
 
         _selectedCanvasNodeKey = null;
         _selectedCanvasRouteLabel = null;
+        ClearPendingInputPulseRequest(updateStatus: false);
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
         RefreshCanvasLayoutOnly();
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
     private void ResetCanvasInteractionState(bool clearPins)
     {
         _selectedCanvasNodeKey = null;
         _selectedCanvasRouteLabel = null;
+        _selectedRouteSourceRegionId = null;
+        _selectedRouteTargetRegionId = null;
         _hoverCanvasNodeKey = null;
         _hoverCanvasRouteLabel = null;
+        ClearPendingInputPulseRequest(updateStatus: false);
         CanvasHoverCardText = string.Empty;
         IsCanvasHoverCardVisible = false;
         if (clearPins)
@@ -2630,16 +2737,22 @@ public sealed class VizPanelViewModel : ViewModelBase
         IsCanvasHoverCardVisible = false;
     }
 
+    private VizActivityCanvasNode? TryGetSelectedCanvasNode(IReadOnlyList<VizActivityCanvasNode> nodes)
+        => !string.IsNullOrWhiteSpace(_selectedCanvasNodeKey)
+            ? nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _selectedCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
+            : null;
+
+    private VizActivityCanvasEdge? TryGetSelectedCanvasEdge(IReadOnlyList<VizActivityCanvasEdge> edges)
+        => !string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel)
+            ? edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _selectedCanvasRouteLabel, StringComparison.OrdinalIgnoreCase))
+            : null;
+
     private void UpdateCanvasInteractionSummaries(
         IReadOnlyList<VizActivityCanvasNode> nodes,
         IReadOnlyList<VizActivityCanvasEdge> edges)
     {
-        var selectedNode = !string.IsNullOrWhiteSpace(_selectedCanvasNodeKey)
-            ? nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _selectedCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
-            : null;
-        var selectedEdge = !string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel)
-            ? edges.FirstOrDefault(item => string.Equals(item.RouteLabel, _selectedCanvasRouteLabel, StringComparison.OrdinalIgnoreCase))
-            : null;
+        var selectedNode = TryGetSelectedCanvasNode(nodes);
+        var selectedEdge = TryGetSelectedCanvasEdge(edges);
 
         var hoverNode = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
             ? nodes.FirstOrDefault(item => string.Equals(item.NodeKey, _hoverCanvasNodeKey, StringComparison.OrdinalIgnoreCase))
@@ -2661,6 +2774,319 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         ActivityInteractionSummary = $"{selectedSummary} | {hoverSummary}";
         ActivityPinnedSummary = BuildPinnedSummary(nodes, edges);
+        UpdateCanvasSelectionPanelState(selectedNode, selectedEdge);
+    }
+
+    private void UpdateCanvasSelectionPanelState(
+        VizActivityCanvasNode? selectedNode,
+        VizActivityCanvasEdge? selectedEdge)
+    {
+        _selectedRouteSourceRegionId = selectedEdge?.SourceRegionId;
+        _selectedRouteTargetRegionId = selectedEdge?.TargetRegionId;
+
+        HasCanvasSelection = selectedNode is not null || selectedEdge is not null;
+        if (selectedNode is not null)
+        {
+            CanvasSelectionTitle = $"Selected Node {selectedNode.Label}";
+            CanvasSelectionIdentity = BuildNodeSelectionIdentity(selectedNode);
+            CanvasSelectionRuntime = BuildNodeSelectionRuntime(selectedNode);
+            CanvasSelectionContext = BuildNodeSelectionContext(selectedNode);
+            CanvasSelectionDetail = selectedNode.Detail;
+        }
+        else if (selectedEdge is not null)
+        {
+            CanvasSelectionTitle = $"Selected Route {selectedEdge.RouteLabel}";
+            CanvasSelectionIdentity = BuildEdgeSelectionIdentity(selectedEdge);
+            CanvasSelectionRuntime = BuildEdgeSelectionRuntime(selectedEdge);
+            CanvasSelectionContext = BuildEdgeSelectionContext(selectedEdge);
+            CanvasSelectionDetail = selectedEdge.Detail;
+        }
+        else
+        {
+            CanvasSelectionTitle = "Selected: none";
+            CanvasSelectionIdentity = "Identity: none.";
+            CanvasSelectionRuntime = "Runtime: n/a.";
+            CanvasSelectionContext = "Context: n/a.";
+            CanvasSelectionDetail = "Select a node or route to inspect identity, runtime stats, and route context.";
+            _selectedRouteSourceRegionId = null;
+            _selectedRouteTargetRegionId = null;
+            ClearPendingInputPulseRequest(updateStatus: false);
+        }
+
+        if (_pendingInputPulseRequest is not null)
+        {
+            var pending = _pendingInputPulseRequest.Value;
+            var stillValid = selectedNode is not null
+                && selectedNode.RegionId == NbnConstants.InputRegionId
+                && selectedNode.NeuronId.HasValue
+                && SelectedBrain is not null
+                && pending.BrainId == SelectedBrain.BrainId
+                && pending.InputIndex == selectedNode.NeuronId.Value
+                && string.Equals(pending.NodeKey, selectedNode.NodeKey, StringComparison.OrdinalIgnoreCase);
+            if (!stillValid)
+            {
+                ClearPendingInputPulseRequest(updateStatus: false);
+            }
+        }
+
+        UpdateCanvasSelectionActionHint(selectedNode, selectedEdge);
+        RaiseCanvasSelectionActionCanExecuteChanged();
+    }
+
+    private void RaiseCanvasSelectionActionCanExecuteChanged()
+    {
+        FocusSelectedRouteSourceCommand.RaiseCanExecuteChanged();
+        FocusSelectedRouteTargetCommand.RaiseCanExecuteChanged();
+        PrepareInputPulseCommand.RaiseCanExecuteChanged();
+        ConfirmInputPulseCommand.RaiseCanExecuteChanged();
+        CancelInputPulseCommand.RaiseCanExecuteChanged();
+    }
+
+    private void UpdateCanvasSelectionActionHint(
+        VizActivityCanvasNode? selectedNode,
+        VizActivityCanvasEdge? selectedEdge)
+    {
+        if (_isInputPulseConfirmationVisible && _pendingInputPulseRequest is not null)
+        {
+            CanvasSelectionActionHint = "Runtime action staged. Confirm or cancel below.";
+            return;
+        }
+
+        if (!HasCanvasSelection)
+        {
+            CanvasSelectionActionHint = "Select a node or route to view available actions.";
+            return;
+        }
+
+        if (selectedEdge is not null)
+        {
+            var sourceText = selectedEdge.SourceRegionId.HasValue ? $"source R{selectedEdge.SourceRegionId.Value}" : "source n/a";
+            var targetText = selectedEdge.TargetRegionId.HasValue ? $"target R{selectedEdge.TargetRegionId.Value}" : "target n/a";
+            CanvasSelectionActionHint = $"Route actions available ({sourceText}, {targetText}). Runtime pulse requires selecting an input neuron (R0/Nx).";
+            return;
+        }
+
+        if (SelectedBrain is null)
+        {
+            CanvasSelectionActionHint = "Select a brain to enable runtime actions.";
+            return;
+        }
+
+        if (selectedNode is null || selectedNode.RegionId != NbnConstants.InputRegionId || !selectedNode.NeuronId.HasValue)
+        {
+            CanvasSelectionActionHint = "Runtime pulse is only available for input neurons (R0/Nx).";
+            return;
+        }
+
+        if (!TryParseInputPulseValue(out _))
+        {
+            CanvasSelectionActionHint = "Pulse value must be a finite float.";
+            return;
+        }
+
+        CanvasSelectionActionHint = FormattableString.Invariant(
+            $"Ready: stage runtime pulse to R0/N{selectedNode.NeuronId.Value} with value {SelectedInputPulseValueText.Trim()}.");
+    }
+
+    private bool CanPrepareInputPulseForSelection()
+        => TryBuildPendingInputPulseRequest(CanvasNodes, out _, out _);
+
+    private void PrepareInputPulseForSelection()
+    {
+        if (!TryBuildPendingInputPulseRequest(CanvasNodes, out var request, out var reason))
+        {
+            Status = reason;
+            UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            RaiseCanvasSelectionActionCanExecuteChanged();
+            return;
+        }
+
+        _pendingInputPulseRequest = request;
+        IsInputPulseConfirmationVisible = true;
+        InputPulseConfirmationText = FormattableString.Invariant(
+            $"Confirm runtime action: send InputWrite to R0/N{request.InputIndex} ({request.NodeLabel}) with value {request.Value:0.###} on brain {request.BrainId:D}.");
+        Status = FormattableString.Invariant($"Runtime action staged for R0/N{request.InputIndex}. Confirm to dispatch.");
+        UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+        RaiseCanvasSelectionActionCanExecuteChanged();
+    }
+
+    private void ConfirmInputPulseForSelection()
+    {
+        if (!_isInputPulseConfirmationVisible || _pendingInputPulseRequest is null)
+        {
+            Status = "No runtime action pending confirmation.";
+            return;
+        }
+
+        var pending = _pendingInputPulseRequest.Value;
+        if (!TryBuildPendingInputPulseRequest(CanvasNodes, out var current, out var reason))
+        {
+            ClearPendingInputPulseRequest(updateStatus: false);
+            Status = $"Runtime action canceled: {reason}";
+            UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            return;
+        }
+
+        if (current.BrainId != pending.BrainId
+            || current.InputIndex != pending.InputIndex
+            || !string.Equals(current.NodeKey, pending.NodeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ClearPendingInputPulseRequest(updateStatus: false);
+            Status = "Runtime action canceled because selection or brain changed. Stage again.";
+            UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            return;
+        }
+
+        if (_brain.TrySendInputSelected(pending.InputIndex, pending.Value, out var ioStatus))
+        {
+            Status = ioStatus;
+        }
+        else
+        {
+            Status = $"Runtime action failed validation: {ioStatus}";
+        }
+
+        ClearPendingInputPulseRequest(updateStatus: false);
+        UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+    }
+
+    private void ClearPendingInputPulseRequest(bool updateStatus)
+    {
+        if (_pendingInputPulseRequest is null
+            && !_isInputPulseConfirmationVisible
+            && string.IsNullOrWhiteSpace(InputPulseConfirmationText))
+        {
+            return;
+        }
+
+        _pendingInputPulseRequest = null;
+        IsInputPulseConfirmationVisible = false;
+        InputPulseConfirmationText = string.Empty;
+        if (updateStatus)
+        {
+            Status = "Runtime action canceled.";
+        }
+
+        RaiseCanvasSelectionActionCanExecuteChanged();
+    }
+
+    private bool TryBuildPendingInputPulseRequest(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        out PendingInputPulseRequest request,
+        out string reason)
+    {
+        request = default;
+        if (SelectedBrain is null)
+        {
+            reason = "Select a brain to enable runtime actions.";
+            return false;
+        }
+
+        var selectedNode = TryGetSelectedCanvasNode(nodes);
+        if (selectedNode is null)
+        {
+            reason = "Select an input neuron (R0/Nx) to stage a runtime pulse.";
+            return false;
+        }
+
+        if (selectedNode.RegionId != NbnConstants.InputRegionId || !selectedNode.NeuronId.HasValue)
+        {
+            reason = "Runtime pulse is only available for input neurons (R0/Nx).";
+            return false;
+        }
+
+        if (!TryParseInputPulseValue(out var value))
+        {
+            reason = "Pulse value must be a finite float.";
+            return false;
+        }
+
+        request = new PendingInputPulseRequest(
+            SelectedBrain.BrainId,
+            selectedNode.NodeKey,
+            selectedNode.Label,
+            selectedNode.NeuronId.Value,
+            value);
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryParseInputPulseValue(out float value)
+    {
+        value = 0f;
+        if (!float.TryParse(SelectedInputPulseValueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed))
+        {
+            return false;
+        }
+
+        value = parsed;
+        return true;
+    }
+
+    private void FocusSelectedRouteSourceRegion()
+    {
+        if (!_selectedRouteSourceRegionId.HasValue)
+        {
+            Status = "Selected route does not expose a source region.";
+            return;
+        }
+
+        FocusCanvasRegion(_selectedRouteSourceRegionId.Value, "Route source focus");
+    }
+
+    private void FocusSelectedRouteTargetRegion()
+    {
+        if (!_selectedRouteTargetRegionId.HasValue)
+        {
+            Status = "Selected route does not expose a target region.";
+            return;
+        }
+
+        FocusCanvasRegion(_selectedRouteTargetRegionId.Value, "Route target focus");
+    }
+
+    private void FocusCanvasRegion(uint regionId, string origin)
+    {
+        RegionFocusText = regionId.ToString(CultureInfo.InvariantCulture);
+        RefreshFilteredEvents();
+        if (SelectedBrain is not null)
+        {
+            QueueDefinitionTopologyHydration(SelectedBrain.BrainId, regionId);
+        }
+
+        Status = $"{origin}: region {regionId}.";
+    }
+
+    private static string BuildNodeSelectionIdentity(VizActivityCanvasNode node)
+    {
+        var neuronText = node.NeuronId.HasValue ? $"N{node.NeuronId.Value}" : "aggregate";
+        return $"Identity: key={node.NodeKey} | region=R{node.RegionId} | neuron={neuronText}.";
+    }
+
+    private static string BuildNodeSelectionRuntime(VizActivityCanvasNode node)
+        => $"Runtime: events={node.EventCount}, last_tick={node.LastTick}, focused={(node.IsFocused ? "yes" : "no")}, pinned={(node.IsPinned ? "yes" : "no")}.";
+
+    private static string BuildNodeSelectionContext(VizActivityCanvasNode node)
+        => FormattableString.Invariant($"Context: focus_region=R{node.NavigateRegionId}, canvas=({node.Left:0.#},{node.Top:0.#}), diameter={node.Diameter:0.#}.");
+
+    private static string BuildEdgeSelectionIdentity(VizActivityCanvasEdge edge)
+    {
+        var sourceText = edge.SourceRegionId.HasValue ? $"R{edge.SourceRegionId.Value}" : "n/a";
+        var targetText = edge.TargetRegionId.HasValue ? $"R{edge.TargetRegionId.Value}" : "n/a";
+        return $"Identity: route={edge.RouteLabel} | source={sourceText} | target={targetText}.";
+    }
+
+    private static string BuildEdgeSelectionRuntime(VizActivityCanvasEdge edge)
+        => $"Runtime: events={edge.EventCount}, last_tick={edge.LastTick}, focused={(edge.IsFocused ? "yes" : "no")}, pinned={(edge.IsPinned ? "yes" : "no")}.";
+
+    private static string BuildEdgeSelectionContext(VizActivityCanvasEdge edge)
+    {
+        var relation = edge.SourceRegionId.HasValue && edge.TargetRegionId.HasValue && edge.SourceRegionId.Value == edge.TargetRegionId.Value
+            ? "intra-region"
+            : "cross-region";
+        return FormattableString.Invariant(
+            $"Context: relation={relation}, path src({edge.SourceX:0.#},{edge.SourceY:0.#}) ctrl({edge.ControlX:0.#},{edge.ControlY:0.#}) dst({edge.TargetX:0.#},{edge.TargetY:0.#}).");
     }
 
     private static string BuildPinnedSummary(
@@ -3417,6 +3843,13 @@ public sealed class VizPanelViewModel : ViewModelBase
         VizActivityCanvasLayout Canvas,
         double ProjectionMs,
         double LayoutMs);
+
+    private readonly record struct PendingInputPulseRequest(
+        Guid BrainId,
+        string NodeKey,
+        string NodeLabel,
+        uint InputIndex,
+        float Value);
 
     private sealed class BrainCanvasTopologyState
     {

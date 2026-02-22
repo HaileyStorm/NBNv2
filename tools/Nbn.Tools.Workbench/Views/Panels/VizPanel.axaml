@@ -216,6 +216,50 @@
                            Classes="muted"
                            TextWrapping="NoWrap"
                            TextTrimming="CharacterEllipsis" />
+                <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Background="{DynamicResource NbnSurfaceAltBrush}"
+                        Padding="8">
+                  <StackPanel Spacing="6">
+                    <TextBlock Text="Selected Item" Classes="card-title" />
+                    <TextBlock Text="{Binding CanvasSelectionTitle}" Classes="row-title" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding CanvasSelectionIdentity}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding CanvasSelectionRuntime}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding CanvasSelectionContext}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBox Text="{Binding CanvasSelectionDetail, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             MinHeight="54"
+                             MaxHeight="120" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasCanvasSelection}">
+                      <Button Content="Focus Selection" Command="{Binding NavigateCanvasSelectionCommand}" />
+                      <Button Content="{Binding TogglePinSelectionLabel}" Command="{Binding TogglePinSelectionCommand}" />
+                      <Button Content="Route Source" Command="{Binding FocusSelectedRouteSourceCommand}" />
+                      <Button Content="Route Target" Command="{Binding FocusSelectedRouteTargetCommand}" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8" IsVisible="{Binding HasCanvasSelection}">
+                      <TextBlock Text="Input pulse value" Classes="muted" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Width="90" Text="{Binding SelectedInputPulseValueText}" />
+                      <Button Grid.Column="2" Content="Stage Runtime Pulse" Command="{Binding PrepareInputPulseCommand}" />
+                    </Grid>
+                    <TextBlock Text="{Binding CanvasSelectionActionHint}" Classes="muted" TextWrapping="Wrap" />
+                    <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="8"
+                            IsVisible="{Binding IsInputPulseConfirmationVisible}">
+                      <StackPanel Spacing="6">
+                        <TextBlock Text="{Binding InputPulseConfirmationText}" Classes="muted" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <Button Content="Confirm Send" Command="{Binding ConfirmInputPulseCommand}" />
+                          <Button Content="Cancel" Command="{Binding CancelInputPulseCommand}" />
+                        </StackPanel>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                </Border>
                 <ScrollViewer x:Name="ActivityCanvasScrollViewer"
                               HorizontalScrollBarVisibility="Disabled"
                               VerticalScrollBarVisibility="Disabled">
