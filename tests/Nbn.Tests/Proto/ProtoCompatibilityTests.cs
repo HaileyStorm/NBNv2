@@ -158,6 +158,27 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_BrainInfo_Fields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var brainInfo = descriptor.MessageTypes.Single(message => message.Name == "BrainInfo");
+
+        AssertField(brainInfo, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(brainInfo, "input_width", 2, FieldType.UInt32);
+        AssertField(brainInfo, "output_width", 3, FieldType.UInt32);
+        AssertField(brainInfo, "cost_enabled", 4, FieldType.Bool);
+        AssertField(brainInfo, "energy_enabled", 5, FieldType.Bool);
+        AssertField(brainInfo, "energy_remaining", 6, FieldType.SInt64);
+        AssertField(brainInfo, "plasticity_enabled", 7, FieldType.Bool);
+        AssertField(brainInfo, "base_definition", 8, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(brainInfo, "last_snapshot", 9, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(brainInfo, "energy_rate_units_per_second", 10, FieldType.SInt64);
+        AssertField(brainInfo, "plasticity_rate", 11, FieldType.Float);
+        AssertField(brainInfo, "plasticity_probabilistic_updates", 12, FieldType.Bool);
+        AssertField(brainInfo, "last_tick_cost", 13, FieldType.SInt64);
+    }
+
+    [Fact]
     public void ProtoSettings_NodeCapabilitiesFields_AreStable()
     {
         var descriptor = NbnSettingsReflection.Descriptor;

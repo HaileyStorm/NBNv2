@@ -33,6 +33,10 @@ message BrainInfo {
   bool plasticity_enabled = 7;
   nbn.ArtifactRef base_definition = 8;
   nbn.ArtifactRef last_snapshot = 9;
+  sint64 energy_rate_units_per_second = 10;
+  float plasticity_rate = 11;
+  bool plasticity_probabilistic_updates = 12;
+  sint64 last_tick_cost = 13;
 }
 
 message BrainEnergyState {

@@ -72,6 +72,53 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task BrainInfo_Returns_Full_Energy_And_Plasticity_State()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 2,
+            EnergyState = new Nbn.Proto.Io.BrainEnergyState
+            {
+                EnergyRemaining = 1234,
+                EnergyRateUnitsPerSecond = 17,
+                CostEnabled = true,
+                EnergyEnabled = false,
+                PlasticityEnabled = true,
+                PlasticityRate = 0.125f,
+                PlasticityProbabilisticUpdates = true,
+                LastTickCost = 41
+            }
+        });
+
+        var info = await root.RequestAsync<BrainInfo>(
+            gateway,
+            new BrainInfoRequest
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+        Assert.Equal((uint)3, info.InputWidth);
+        Assert.Equal((uint)2, info.OutputWidth);
+        Assert.True(info.CostEnabled);
+        Assert.False(info.EnergyEnabled);
+        Assert.Equal(1234, info.EnergyRemaining);
+        Assert.Equal(17, info.EnergyRateUnitsPerSecond);
+        Assert.True(info.PlasticityEnabled);
+        Assert.Equal(0.125f, info.PlasticityRate);
+        Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.Equal(41, info.LastTickCost);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",

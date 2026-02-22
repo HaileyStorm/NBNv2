@@ -537,6 +537,14 @@ public sealed class IoPanelViewModel : ViewModelBase
         CostEnabled = info.CostEnabled;
         EnergyEnabled = info.EnergyEnabled;
         PlasticityEnabled = info.PlasticityEnabled;
+        EnergyRateText = info.EnergyRateUnitsPerSecond.ToString(CultureInfo.InvariantCulture);
+        PlasticityRateText = info.PlasticityRate.ToString("0.######", CultureInfo.InvariantCulture);
+
+        var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == info.PlasticityProbabilisticUpdates);
+        if (selectedMode is not null)
+        {
+            SelectedPlasticityMode = selectedMode;
+        }
 
         var suggestedVector = BuildSuggestedVector((int)Math.Max(0, info.InputWidth));
         if (!string.IsNullOrWhiteSpace(suggestedVector)
@@ -547,7 +555,9 @@ public sealed class IoPanelViewModel : ViewModelBase
             InputVectorText = suggestedVector;
         }
 
-        BrainInfoSummary = $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining}";
+        var plasticityModeLabel = info.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute";
+        BrainInfoSummary =
+            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######})";
     }
 
     private void Subscribe(bool vector)

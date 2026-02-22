@@ -172,6 +172,10 @@ public sealed class IoGatewayActor : IActor
                 EnergyEnabled = false,
                 EnergyRemaining = 0,
                 PlasticityEnabled = false,
+                EnergyRateUnitsPerSecond = 0,
+                PlasticityRate = 0,
+                PlasticityProbabilisticUpdates = false,
+                LastTickCost = 0,
                 BaseDefinition = new ArtifactRef(),
                 LastSnapshot = new ArtifactRef()
             });
@@ -188,6 +192,10 @@ public sealed class IoGatewayActor : IActor
             EnergyEnabled = entry.Energy.EnergyEnabled,
             EnergyRemaining = entry.Energy.EnergyRemaining,
             PlasticityEnabled = entry.Energy.PlasticityEnabled,
+            EnergyRateUnitsPerSecond = entry.Energy.EnergyRateUnitsPerSecond,
+            PlasticityRate = entry.Energy.PlasticityRate,
+            PlasticityProbabilisticUpdates = entry.Energy.PlasticityProbabilisticUpdates,
+            LastTickCost = entry.Energy.LastTickCost,
             BaseDefinition = entry.BaseDefinition ?? new ArtifactRef(),
             LastSnapshot = entry.LastSnapshot ?? new ArtifactRef()
         });
