@@ -219,9 +219,9 @@
                               </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
-                              <DataTemplate x:DataType="vm:VizActivityCanvasEdge">
-                                <Canvas Width="860"
-                                        Height="420">
+                              <DataTemplate x:DataType="vm:VizActivityCanvasEdge" x:CompileBindings="False">
+                                <Canvas Width="{Binding DataContext.ActivityCanvasWidth, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        Height="{Binding DataContext.ActivityCanvasHeight, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                   <Path Data="{Binding PathData}"
                                         Stroke="Transparent"
                                         StrokeThickness="{Binding HitTestThickness}" />

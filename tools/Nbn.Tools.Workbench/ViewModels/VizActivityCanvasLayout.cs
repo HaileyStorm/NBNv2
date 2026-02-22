@@ -390,8 +390,9 @@ public static class VizActivityCanvasLayoutBuilder
         var sortedGateways = gatewayStats.Keys.OrderBy(item => item).ToList();
         var gatewayMinOrbit = neuronMaxOrbit + MaxFocusNeuronNodeRadius + MaxGatewayNodeRadius + 34.0;
         var gatewayMaxOrbit = gatewayMinOrbit + 56.0;
-        var gatewayPositions = BuildCircularPositions(
-            sortedGateways.Count,
+        var gatewayPositions = BuildFocusedGatewayPositions(
+            sortedGateways,
+            focusRegionId,
             gatewayMinOrbit,
             gatewayMaxOrbit,
             yScale: 0.9,
@@ -410,7 +411,10 @@ public static class VizActivityCanvasLayoutBuilder
             var regionId = sortedGateways[index];
             var stats = gatewayStats[regionId];
             var nodeKey = NodeKeyForGateway(regionId);
-            var position = gatewayPositions[index];
+            if (!gatewayPositions.TryGetValue(regionId, out var position))
+            {
+                continue;
+            }
             var isSelected = interaction.IsSelectedNode(nodeKey);
             var isHovered = interaction.IsHoveredNode(nodeKey);
             var isPinned = interaction.IsNodePinned(nodeKey);
@@ -1239,6 +1243,54 @@ public static class VizActivityCanvasLayoutBuilder
                     Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
                     Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding))
                 : new CanvasPoint(x, y));
+        }
+
+        return positions;
+    }
+
+    private static Dictionary<uint, CanvasPoint> BuildFocusedGatewayPositions(
+        IReadOnlyList<uint> gatewayRegionIds,
+        uint focusRegionId,
+        double minRadius,
+        double maxRadius,
+        double yScale,
+        bool clampToCanvas)
+    {
+        var positions = new Dictionary<uint, CanvasPoint>();
+        if (gatewayRegionIds.Count == 0)
+        {
+            return positions;
+        }
+
+        var anchorRegions = new HashSet<uint>(gatewayRegionIds)
+        {
+            focusRegionId
+        };
+        var referencePositions = BuildRegionPositions(anchorRegions);
+        var hasFocusReference = referencePositions.TryGetValue(focusRegionId, out var focusReference);
+        if (!hasFocusReference)
+        {
+            focusReference = new CanvasPoint(CenterX, CenterY);
+        }
+
+        var safeYScale = Math.Clamp(yScale, 0.45, 1.15);
+        var radius = Math.Clamp(minRadius + (gatewayRegionIds.Count * 3.0), minRadius, maxRadius);
+        var fallbackStep = (2.0 * Math.PI) / Math.Max(1, gatewayRegionIds.Count);
+        for (var index = 0; index < gatewayRegionIds.Count; index++)
+        {
+            var regionId = gatewayRegionIds[index];
+            var hasReference = referencePositions.TryGetValue(regionId, out var referencePoint);
+            var angle = hasReference
+                ? Math.Atan2((referencePoint.Y - focusReference.Y) / safeYScale, referencePoint.X - focusReference.X)
+                : (index * fallbackStep);
+
+            var x = CenterX + (Math.Cos(angle) * radius);
+            var y = CenterY + (Math.Sin(angle) * radius * safeYScale);
+            positions[regionId] = clampToCanvas
+                ? new CanvasPoint(
+                    Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+                    Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding))
+                : new CanvasPoint(x, y);
         }
 
         return positions;

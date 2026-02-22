@@ -21,6 +21,7 @@ public partial class VizPanel : UserControl
     private const double WheelZoomFactor = 1.12;
     private const double PanButtonStepPx = 96.0;
     private const double MinPanTranslationLimitPx = 320.0;
+    private const int MaxPendingCanvasViewAttempts = 8;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -53,6 +54,16 @@ public partial class VizPanel : UserControl
     private readonly TranslateTransform _canvasTranslateTransform = new(0, 0);
     private readonly TransformGroup _canvasTransformGroup = new();
     private INotifyPropertyChanged? _viewModelNotifier;
+    private VizPanelViewModel? _boundViewModel;
+    private PendingCanvasViewMode _pendingCanvasViewMode;
+    private int _pendingCanvasViewAttempts;
+
+    private enum PendingCanvasViewMode
+    {
+        None = 0,
+        DefaultCenter = 1,
+        Fit = 2
+    }
 
     public VizPanel()
     {
@@ -90,6 +101,11 @@ public partial class VizPanel : UserControl
             ActivityCanvasScaleRoot.RenderTransform = _canvasTransformGroup;
         }
 
+        if (ActivityCanvasScrollViewer is not null)
+        {
+            ActivityCanvasScrollViewer.SizeChanged += ActivityCanvasScrollViewerSizeChanged;
+        }
+
         DataContextChanged += VizPanelDataContextChanged;
         AttachedToVisualTree += (_, _) => SyncCanvasScaleVisuals();
         DetachedFromVisualTree += (_, _) => DetachViewModelNotifier();
@@ -100,13 +116,20 @@ public partial class VizPanel : UserControl
     private void VizPanelDataContextChanged(object? sender, EventArgs e)
     {
         DetachViewModelNotifier();
-        _viewModelNotifier = DataContext as INotifyPropertyChanged;
+        _boundViewModel = DataContext as VizPanelViewModel;
+        _viewModelNotifier = _boundViewModel as INotifyPropertyChanged;
         if (_viewModelNotifier is not null)
         {
             _viewModelNotifier.PropertyChanged += ViewModelPropertyChanged;
         }
 
+        if (_boundViewModel is not null)
+        {
+            _boundViewModel.VisualizationSelectionChanged += ViewModelVisualizationSelectionChanged;
+        }
+
         SyncCanvasScaleVisuals();
+        RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
     }
 
     private void ViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -115,6 +138,21 @@ public partial class VizPanel : UserControl
             or nameof(VizPanelViewModel.ActivityCanvasHeight))
         {
             SyncCanvasScaleVisuals();
+            if (_pendingCanvasViewMode != PendingCanvasViewMode.None)
+            {
+                TryApplyPendingCanvasView();
+            }
+        }
+    }
+
+    private void ViewModelVisualizationSelectionChanged()
+        => RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+
+    private void ActivityCanvasScrollViewerSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (_pendingCanvasViewMode != PendingCanvasViewMode.None)
+        {
+            TryApplyPendingCanvasView();
         }
     }
 
@@ -124,6 +162,12 @@ public partial class VizPanel : UserControl
         {
             _viewModelNotifier.PropertyChanged -= ViewModelPropertyChanged;
             _viewModelNotifier = null;
+        }
+
+        if (_boundViewModel is not null)
+        {
+            _boundViewModel.VisualizationSelectionChanged -= ViewModelVisualizationSelectionChanged;
+            _boundViewModel = null;
         }
     }
 
@@ -196,12 +240,14 @@ public partial class VizPanel : UserControl
         {
             if (!TryGetViewportPointerPoint(e, out var viewportPoint))
             {
+                e.Handled = true;
                 return;
             }
 
             var zoomDelta = Math.Abs(e.Delta.Y) >= Math.Abs(e.Delta.X) ? e.Delta.Y : e.Delta.X;
             if (Math.Abs(zoomDelta) <= double.Epsilon)
             {
+                e.Handled = true;
                 return;
             }
 
@@ -211,11 +257,8 @@ public partial class VizPanel : UserControl
             return;
         }
 
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
-        {
-            // Prevent accidental touchpad pinch zoom unless Shift is also held.
-            e.Handled = true;
-        }
+        // Block wheel/touchpad panning and pinch-to-zoom unless Shift is held.
+        e.Handled = true;
     }
 
     private void ActivityCanvasPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -270,7 +313,7 @@ public partial class VizPanel : UserControl
             {
                 if (ViewModel.ZoomToRegion(node.NavigateRegionId))
                 {
-                    FitCanvasToViewport();
+                    RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
                 }
 
                 e.Handled = true;
@@ -468,28 +511,70 @@ public partial class VizPanel : UserControl
     }
 
     private void FitCanvasToViewport()
+        => RequestCanvasView(PendingCanvasViewMode.Fit);
+
+    private void RequestCanvasView(PendingCanvasViewMode mode)
     {
-        // Run immediately and once more after render/layout settles so fit is stable
-        // when the canvas dimensions were just updated by a region/full-brain switch.
-        FitCanvasToViewportCore();
-        Dispatcher.UIThread.Post(FitCanvasToViewportCore, DispatcherPriority.Render);
+        if (mode == PendingCanvasViewMode.None)
+        {
+            return;
+        }
+
+        _pendingCanvasViewMode = _pendingCanvasViewMode == PendingCanvasViewMode.Fit
+            ? PendingCanvasViewMode.Fit
+            : mode;
+        _pendingCanvasViewAttempts = 0;
+        TryApplyPendingCanvasView();
+        if (_pendingCanvasViewMode != PendingCanvasViewMode.None)
+        {
+            Dispatcher.UIThread.Post(TryApplyPendingCanvasView, DispatcherPriority.Render);
+        }
     }
 
-    private void FitCanvasToViewportCore()
+    private void TryApplyPendingCanvasView()
     {
+        if (_pendingCanvasViewMode == PendingCanvasViewMode.None)
+        {
+            return;
+        }
+
         var viewModel = ViewModel;
         var scrollViewer = ActivityCanvasScrollViewer;
-        if (viewModel is null || scrollViewer is null)
+        var ready = viewModel is not null
+            && scrollViewer is not null
+            && viewModel.ActivityCanvasWidth > 0
+            && viewModel.ActivityCanvasHeight > 0
+            && scrollViewer.Viewport.Width > 0
+            && scrollViewer.Viewport.Height > 0;
+        if (!ready)
         {
+            if (_pendingCanvasViewAttempts < MaxPendingCanvasViewAttempts)
+            {
+                _pendingCanvasViewAttempts++;
+                Dispatcher.UIThread.Post(TryApplyPendingCanvasView, DispatcherPriority.Background);
+            }
+
             return;
         }
 
-        if (scrollViewer.Viewport.Width <= 0 || scrollViewer.Viewport.Height <= 0)
+        var mode = _pendingCanvasViewMode;
+        _pendingCanvasViewMode = PendingCanvasViewMode.None;
+        _pendingCanvasViewAttempts = 0;
+        if (mode == PendingCanvasViewMode.Fit)
         {
-            SetCanvasScale(1.0);
-            return;
+            ApplyFitCanvasView(scrollViewer!, viewModel!);
         }
+        else
+        {
+            ApplyDefaultCanvasView(scrollViewer!, viewModel!);
+        }
+    }
 
+    private void ApplyDefaultCanvasView(ScrollViewer scrollViewer, VizPanelViewModel viewModel)
+        => CenterCanvasAtScale(scrollViewer, viewModel, 1.0);
+
+    private void ApplyFitCanvasView(ScrollViewer scrollViewer, VizPanelViewModel viewModel)
+    {
         var fitScaleX = scrollViewer.Viewport.Width / viewModel.ActivityCanvasWidth;
         var fitScaleY = scrollViewer.Viewport.Height / viewModel.ActivityCanvasHeight;
         var fitScale = Math.Min(1.0, Math.Min(fitScaleX, fitScaleY));
@@ -498,8 +583,14 @@ public partial class VizPanel : UserControl
             fitScale = 1.0;
         }
 
-        _canvasScale = ClampScale(fitScale);
+        CenterCanvasAtScale(scrollViewer, viewModel, fitScale);
+    }
+
+    private void CenterCanvasAtScale(ScrollViewer scrollViewer, VizPanelViewModel viewModel, double targetScale)
+    {
+        _canvasScale = ClampScale(targetScale);
         _canvasPan = default;
+        scrollViewer.Offset = default;
         SyncCanvasScaleVisuals();
 
         var scaledWidth = viewModel.ActivityCanvasWidth * _canvasScale;
@@ -572,7 +663,7 @@ public partial class VizPanel : UserControl
         var delta = currentPoint - _panLastPoint;
         if (Math.Abs(delta.X) > 0.0001 || Math.Abs(delta.Y) > 0.0001)
         {
-            PanCanvasBy(-delta.X, -delta.Y);
+            PanCanvasBy(delta.X, delta.Y);
             _panLastPoint = currentPoint;
         }
 
@@ -694,7 +785,7 @@ public partial class VizPanel : UserControl
         var targetOffset = new Vector(
             (_touchStartWorldCenter.X * _canvasScale) + _canvasPan.X - center.X,
             (_touchStartWorldCenter.Y * _canvasScale) + _canvasPan.Y - center.Y);
-        scrollViewer.Offset = ClampOffset(targetOffset, scrollViewer);
+        ApplyCanvasOffset(targetOffset, scrollViewer, absorbResidualIntoPan: true);
         return true;
     }
 
