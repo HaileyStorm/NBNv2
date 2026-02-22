@@ -20,6 +20,8 @@ public sealed class VizActivityCanvasSurface : Control
     private readonly Dictionary<string, CachedEdgeGeometry> _edgeGeometryCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IBrush> _brushCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DashStyle?> _dashStyleCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, FormattedText> _labelTextCache = new(StringComparer.Ordinal);
+    private FormattedText? _pinnedGlyphText;
     private INotifyCollectionChanged? _nodesNotifier;
     private INotifyCollectionChanged? _edgesNotifier;
 
@@ -65,6 +67,7 @@ public sealed class VizActivityCanvasSurface : Control
         var pinnedBrush = ResolveResourceBrush("NbnGoldBrush", Colors.Gold);
         var hoverBrush = ResolveResourceBrush("NbnTealBrush", Colors.Teal);
         var selectedBrush = ResolveResourceBrush("NbnAccentBrush", Colors.DeepSkyBlue);
+        var labelBrush = ResolveResourceBrush("NbnInkBrush", Color.FromRgb(0x10, 0x1B, 0x22));
 
         var seenRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (edges is not null)
@@ -136,6 +139,21 @@ public sealed class VizActivityCanvasSurface : Control
             {
                 var selectedStroke = new Pen(selectedBrush, 2.8, lineCap: PenLineCap.Round);
                 context.DrawEllipse(null, selectedStroke, center, radius, radius);
+            }
+
+            if (node.IsPinned)
+            {
+                var glyph = ResolvePinnedGlyphText(pinnedBrush);
+                context.DrawText(glyph, new Point(node.Left + 2.0, node.Top - 0.5));
+            }
+
+            if (!string.IsNullOrWhiteSpace(node.Label))
+            {
+                var text = ResolveNodeLabelText(node.Label, labelBrush);
+                var textOrigin = new Point(
+                    center.X - (text.Width / 2.0),
+                    center.Y - (text.Height / 2.0));
+                context.DrawText(text, textOrigin);
             }
         }
     }
@@ -277,6 +295,41 @@ public sealed class VizActivityCanvasSurface : Control
         var fallback = new SolidColorBrush(fallbackColor);
         _brushCache[cacheKey] = fallback;
         return fallback;
+    }
+
+    private FormattedText ResolveNodeLabelText(string label, IBrush foreground)
+    {
+        if (_labelTextCache.TryGetValue(label, out var cached))
+        {
+            return cached;
+        }
+
+        var layout = new FormattedText(
+            label,
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.SemiBold),
+            10,
+            foreground);
+        _labelTextCache[label] = layout;
+        return layout;
+    }
+
+    private FormattedText ResolvePinnedGlyphText(IBrush foreground)
+    {
+        if (_pinnedGlyphText is not null)
+        {
+            return _pinnedGlyphText;
+        }
+
+        _pinnedGlyphText = new FormattedText(
+            "*",
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(FontFamily.Default, FontStyle.Normal, FontWeight.Bold),
+            10,
+            foreground);
+        return _pinnedGlyphText;
     }
 
     private static int Quantize(double value)

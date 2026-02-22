@@ -21,7 +21,7 @@ public partial class VizPanel : UserControl
     private const double WheelZoomFactor = 1.12;
     private const double PanButtonStepPx = 96.0;
     private const double MinPanTranslationLimitPx = 320.0;
-    private const double FitContentPaddingPx = 12.0;
+    private const double FitContentPaddingPx = 18.0;
     private const int MaxPendingCanvasViewAttempts = 8;
     private const double CanvasViewportHeightRatio = 0.74;
     private const double CanvasViewportMinHeightPx = 460.0;
@@ -934,6 +934,8 @@ public partial class VizPanel : UserControl
 
     private static bool TryGetCanvasContentBounds(VizPanelViewModel viewModel, out Rect bounds)
     {
+        const double LabelApproxGlyphWidthPx = 6.1;
+        const double LabelApproxHeightPx = 11.5;
         var minX = double.PositiveInfinity;
         var minY = double.PositiveInfinity;
         var maxX = double.NegativeInfinity;
@@ -943,10 +945,31 @@ public partial class VizPanel : UserControl
         foreach (var node in viewModel.CanvasNodes)
         {
             hasGeometry = true;
-            minX = Math.Min(minX, node.Left);
-            minY = Math.Min(minY, node.Top);
-            maxX = Math.Max(maxX, node.Left + node.Diameter);
-            maxY = Math.Max(maxY, node.Top + node.Diameter);
+            var nodePadding = Math.Max(3.0, node.StrokeThickness + 2.4);
+            minX = Math.Min(minX, node.Left - nodePadding);
+            minY = Math.Min(minY, node.Top - nodePadding);
+            maxX = Math.Max(maxX, node.Left + node.Diameter + nodePadding);
+            maxY = Math.Max(maxY, node.Top + node.Diameter + nodePadding);
+
+            if (!string.IsNullOrWhiteSpace(node.Label))
+            {
+                var centerX = node.Left + (node.Diameter / 2.0);
+                var centerY = node.Top + (node.Diameter / 2.0);
+                var labelWidth = Math.Max(node.Diameter, (node.Label.Length * LabelApproxGlyphWidthPx) + 4.0);
+                var labelHeight = Math.Max(LabelApproxHeightPx, node.Diameter * 0.4);
+                minX = Math.Min(minX, centerX - (labelWidth / 2.0));
+                minY = Math.Min(minY, centerY - (labelHeight / 2.0));
+                maxX = Math.Max(maxX, centerX + (labelWidth / 2.0));
+                maxY = Math.Max(maxY, centerY + (labelHeight / 2.0));
+            }
+
+            if (node.IsPinned)
+            {
+                minX = Math.Min(minX, node.Left + 1.0);
+                minY = Math.Min(minY, node.Top - 1.0);
+                maxX = Math.Max(maxX, node.Left + 10.0);
+                maxY = Math.Max(maxY, node.Top + 10.0);
+            }
         }
 
         foreach (var edge in viewModel.CanvasEdges)
