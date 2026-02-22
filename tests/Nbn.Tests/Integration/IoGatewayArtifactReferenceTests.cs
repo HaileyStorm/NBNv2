@@ -995,6 +995,75 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task ReproduceByArtifacts_Preserves_Detailed_Result_From_Repro_Response()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var expectedChildBrainId = Guid.NewGuid();
+        var expectedChildDef = new string('d', 64).ToArtifactRef(321, "application/x-nbn", "test-store");
+        var expected = new Repro.ReproduceResult
+        {
+            Report = new Repro.SimilarityReport
+            {
+                Compatible = true,
+                AbortReason = string.Empty,
+                SimilarityScore = 0.77f,
+                RegionSpanScore = 0.7f,
+                FunctionScore = 0.8f,
+                ConnectivityScore = 0.9f
+            },
+            Summary = new Repro.MutationSummary
+            {
+                NeuronsAdded = 1,
+                NeuronsRemoved = 2,
+                AxonsAdded = 3,
+                AxonsRemoved = 4,
+                AxonsRerouted = 5,
+                FunctionsMutated = 6,
+                StrengthCodesChanged = 7
+            },
+            ChildDef = expectedChildDef,
+            Spawned = true,
+            ChildBrainId = expectedChildBrainId.ToProtoUuid()
+        };
+
+        var reproProbe = root.Spawn(Props.FromProducer(() => new ReproFixedResponseProbe(expected)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), reproPid: reproProbe)));
+
+        var response = await root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+            gateway,
+            new ReproduceByArtifacts
+            {
+                Request = new Repro.ReproduceByArtifactsRequest()
+            });
+
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.True(response.Result.Report.Compatible);
+        Assert.Equal(string.Empty, response.Result.Report.AbortReason);
+        Assert.Equal(0.77f, response.Result.Report.SimilarityScore);
+        Assert.Equal(0.7f, response.Result.Report.RegionSpanScore);
+        Assert.Equal(0.8f, response.Result.Report.FunctionScore);
+        Assert.Equal(0.9f, response.Result.Report.ConnectivityScore);
+        Assert.NotNull(response.Result.Summary);
+        Assert.Equal((uint)1, response.Result.Summary.NeuronsAdded);
+        Assert.Equal((uint)2, response.Result.Summary.NeuronsRemoved);
+        Assert.Equal((uint)3, response.Result.Summary.AxonsAdded);
+        Assert.Equal((uint)4, response.Result.Summary.AxonsRemoved);
+        Assert.Equal((uint)5, response.Result.Summary.AxonsRerouted);
+        Assert.Equal((uint)6, response.Result.Summary.FunctionsMutated);
+        Assert.Equal((uint)7, response.Result.Summary.StrengthCodesChanged);
+        Assert.NotNull(response.Result.ChildDef);
+        Assert.Equal(expectedChildDef.ToSha256Hex(), response.Result.ChildDef.ToSha256Hex());
+        Assert.True(response.Result.Spawned);
+        Assert.NotNull(response.Result.ChildBrainId);
+        Assert.True(response.Result.ChildBrainId.TryToGuid(out var actualChildBrainId));
+        Assert.Equal(expectedChildBrainId, actualChildBrainId);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -1010,6 +1079,29 @@ public class IoGatewayArtifactReferenceTests
             HiveMindName: null,
             ReproAddress: null,
             ReproName: null);
+
+    private sealed class ReproFixedResponseProbe : IActor
+    {
+        private readonly Repro.ReproduceResult _response;
+
+        public ReproFixedResponseProbe(Repro.ReproduceResult response)
+        {
+            _response = response;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Repro.ReproduceByBrainIdsRequest:
+                case Repro.ReproduceByArtifactsRequest:
+                    context.Respond(_response.Clone());
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class HiveConfigProbe : IActor
     {
