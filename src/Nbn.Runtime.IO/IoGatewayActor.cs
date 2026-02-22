@@ -48,6 +48,12 @@ public sealed class IoGatewayActor : IActor
             case InputVector message:
                 await ForwardInputAsync(context, message);
                 break;
+            case RuntimeNeuronPulse message:
+                await ForwardRuntimeNeuronAsync(context, message);
+                break;
+            case RuntimeNeuronStateWrite message:
+                await ForwardRuntimeNeuronAsync(context, message);
+                break;
             case SubscribeOutputs message:
                 await ForwardOutputAsync(context, message);
                 break;
@@ -205,6 +211,22 @@ public sealed class IoGatewayActor : IActor
         }
 
         if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        var routerPid = await ResolveRouterPidAsync(context, brainId).ConfigureAwait(false);
+        if (routerPid is null)
+        {
+            return;
+        }
+
+        context.Send(routerPid, message);
+    }
+
+    private async Task ForwardRuntimeNeuronAsync(IContext context, object message)
+    {
+        if (!TryGetBrainId(message, out var brainId))
         {
             return;
         }
@@ -819,6 +841,10 @@ public sealed class IoGatewayActor : IActor
                 return TryGetBrainId(costEnergy.BrainId, out guid);
             case SetPlasticityEnabled plasticity:
                 return TryGetBrainId(plasticity.BrainId, out guid);
+            case RuntimeNeuronPulse pulse:
+                return TryGetBrainId(pulse.BrainId, out guid);
+            case RuntimeNeuronStateWrite stateWrite:
+                return TryGetBrainId(stateWrite.BrainId, out guid);
         }
 
         return false;

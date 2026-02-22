@@ -56,6 +56,74 @@ public class BrainSignalRouterInputDrainTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task RuntimeNeuronCommands_AreForwarded_To_All_TargetRegionShards()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        const int targetRegionId = 9;
+
+        var targetShardA = ShardId32.From(targetRegionId, 0);
+        var targetShardB = ShardId32.From(targetRegionId, 1);
+
+        var pulseATcs = new TaskCompletionSource<RuntimeNeuronPulse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pulseBTcs = new TaskCompletionSource<RuntimeNeuronPulse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stateATcs = new TaskCompletionSource<RuntimeNeuronStateWrite>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stateBTcs = new TaskCompletionSource<RuntimeNeuronStateWrite>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var shardA = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseATcs, stateATcs)));
+        var shardB = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseBTcs, stateBTcs)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(targetShardA.Value, shardA),
+            new ShardRoute(targetShardB.Value, shardB)
+        })));
+
+        root.Send(router, new RuntimeNeuronPulse
+        {
+            BrainId = brainId.ToProtoUuid(),
+            TargetRegionId = targetRegionId,
+            TargetNeuronId = 17,
+            Value = 0.75f
+        });
+
+        root.Send(router, new RuntimeNeuronStateWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            TargetRegionId = targetRegionId,
+            TargetNeuronId = 17,
+            SetBuffer = true,
+            BufferValue = -0.5f,
+            SetAccumulator = true,
+            AccumulatorValue = 1.25f
+        });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var pulseA = await pulseATcs.Task.WaitAsync(timeoutCts.Token);
+        var pulseB = await pulseBTcs.Task.WaitAsync(timeoutCts.Token);
+        var stateA = await stateATcs.Task.WaitAsync(timeoutCts.Token);
+        var stateB = await stateBTcs.Task.WaitAsync(timeoutCts.Token);
+
+        Assert.Equal((uint)targetRegionId, pulseA.TargetRegionId);
+        Assert.Equal((uint)targetRegionId, pulseB.TargetRegionId);
+        Assert.Equal((uint)17, pulseA.TargetNeuronId);
+        Assert.Equal((uint)17, pulseB.TargetNeuronId);
+        Assert.Equal(0.75f, pulseA.Value);
+        Assert.Equal(0.75f, pulseB.Value);
+
+        Assert.Equal((uint)targetRegionId, stateA.TargetRegionId);
+        Assert.Equal((uint)targetRegionId, stateB.TargetRegionId);
+        Assert.True(stateA.SetBuffer);
+        Assert.True(stateA.SetAccumulator);
+        Assert.Equal(-0.5f, stateA.BufferValue);
+        Assert.Equal(1.25f, stateA.AccumulatorValue);
+
+        await system.ShutdownAsync();
+    }
+
     private sealed class IoDrainActor : IActor
     {
         private readonly Guid _brainId;
@@ -121,6 +189,41 @@ public class BrainSignalRouterInputDrainTests
                 {
                     context.Send(context.Sender, ack);
                 }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed class RuntimeShardProbeActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly TaskCompletionSource<RuntimeNeuronPulse> _pulseTcs;
+        private readonly TaskCompletionSource<RuntimeNeuronStateWrite> _stateWriteTcs;
+
+        public RuntimeShardProbeActor(
+            Guid brainId,
+            TaskCompletionSource<RuntimeNeuronPulse> pulseTcs,
+            TaskCompletionSource<RuntimeNeuronStateWrite> stateWriteTcs)
+        {
+            _brainId = brainId;
+            _pulseTcs = pulseTcs;
+            _stateWriteTcs = stateWriteTcs;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case RuntimeNeuronPulse pulse when Matches(pulse.BrainId):
+                    _pulseTcs.TrySetResult(pulse);
+                    break;
+                case RuntimeNeuronStateWrite stateWrite when Matches(stateWrite.BrainId):
+                    _stateWriteTcs.TrySetResult(stateWrite);
+                    break;
             }
 
             return Task.CompletedTask;

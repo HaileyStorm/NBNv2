@@ -54,6 +54,27 @@ public sealed class WorkbenchReceiverActor : IActor
                 message.Values.Add(vector.Values);
                 SendToIo(context, message);
                 return Task.CompletedTask;
+            case RuntimeNeuronPulseCommand pulse:
+                SendToIo(context, new RuntimeNeuronPulse
+                {
+                    BrainId = pulse.BrainId.ToProtoUuid(),
+                    TargetRegionId = pulse.TargetRegionId,
+                    TargetNeuronId = pulse.TargetNeuronId,
+                    Value = pulse.Value
+                });
+                return Task.CompletedTask;
+            case RuntimeNeuronStateWriteCommand stateWrite:
+                SendToIo(context, new RuntimeNeuronStateWrite
+                {
+                    BrainId = stateWrite.BrainId.ToProtoUuid(),
+                    TargetRegionId = stateWrite.TargetRegionId,
+                    TargetNeuronId = stateWrite.TargetNeuronId,
+                    SetBuffer = stateWrite.SetBuffer,
+                    BufferValue = stateWrite.BufferValue,
+                    SetAccumulator = stateWrite.SetAccumulator,
+                    AccumulatorValue = stateWrite.AccumulatorValue
+                });
+                return Task.CompletedTask;
             case EnergyCreditCommand credit:
                 SendToIo(context, new EnergyCredit
                 {
@@ -245,6 +266,15 @@ public sealed record UnsubscribeOutputsVectorCommand(Guid BrainId);
 
 public sealed record InputWriteCommand(Guid BrainId, uint InputIndex, float Value);
 public sealed record InputVectorCommand(Guid BrainId, IReadOnlyList<float> Values);
+public sealed record RuntimeNeuronPulseCommand(Guid BrainId, uint TargetRegionId, uint TargetNeuronId, float Value);
+public sealed record RuntimeNeuronStateWriteCommand(
+    Guid BrainId,
+    uint TargetRegionId,
+    uint TargetNeuronId,
+    bool SetBuffer,
+    float BufferValue,
+    bool SetAccumulator,
+    float AccumulatorValue);
 
 public sealed record EnergyCreditCommand(Guid BrainId, long Amount);
 public sealed record EnergyRateCommand(Guid BrainId, long UnitsPerSecond);

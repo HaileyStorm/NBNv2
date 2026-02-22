@@ -99,8 +99,7 @@ public sealed class RegionShardState
 
     public void ApplyContribution(uint targetNeuronId, float value)
     {
-        var localIndex = (int)targetNeuronId - NeuronStart;
-        if (localIndex < 0 || localIndex >= NeuronCount)
+        if (!TryGetLocalNeuronIndex(targetNeuronId, out var localIndex))
         {
             return;
         }
@@ -139,6 +138,69 @@ public sealed class RegionShardState
                 _inbox[localIndex] += value;
                 break;
         }
+    }
+
+    public bool TryApplyRuntimePulse(uint targetNeuronId, float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            return false;
+        }
+
+        if (!TryGetLocalNeuronIndex(targetNeuronId, out _))
+        {
+            return false;
+        }
+
+        ApplyContribution(targetNeuronId, value);
+        return true;
+    }
+
+    public bool TrySetRuntimeNeuronState(
+        uint targetNeuronId,
+        bool setBuffer,
+        float bufferValue,
+        bool setAccumulator,
+        float accumulatorValue)
+    {
+        if (!setBuffer && !setAccumulator)
+        {
+            return false;
+        }
+
+        if (setBuffer && !float.IsFinite(bufferValue))
+        {
+            return false;
+        }
+
+        if (setAccumulator && !float.IsFinite(accumulatorValue))
+        {
+            return false;
+        }
+
+        if (!TryGetLocalNeuronIndex(targetNeuronId, out var localIndex))
+        {
+            return false;
+        }
+
+        if (setBuffer)
+        {
+            Buffer[localIndex] = bufferValue;
+        }
+
+        if (setAccumulator)
+        {
+            _inbox[localIndex] = accumulatorValue;
+            _inboxHasInput[localIndex] = true;
+        }
+
+        return true;
+    }
+
+    private bool TryGetLocalNeuronIndex(uint targetNeuronId, out int localIndex)
+    {
+        localIndex = (int)targetNeuronId - NeuronStart;
+        return localIndex >= 0 && localIndex < NeuronCount;
     }
 }
 

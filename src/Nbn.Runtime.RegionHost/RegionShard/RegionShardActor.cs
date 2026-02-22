@@ -70,6 +70,12 @@ public sealed class RegionShardActor : IActor
             case TickCompute tick:
                 HandleTickCompute(context, tick);
                 break;
+            case RuntimeNeuronPulse pulse:
+                HandleRuntimeNeuronPulse(pulse);
+                break;
+            case RuntimeNeuronStateWrite stateWrite:
+                HandleRuntimeNeuronStateWrite(stateWrite);
+                break;
             case UpdateShardOutputSink message:
                 HandleUpdateOutputSink(message);
                 break;
@@ -322,6 +328,37 @@ public sealed class RegionShardActor : IActor
         _lastComputeTickId = tick.TickId;
         CacheComputeDone(done);
         SendComputeDone(context, done);
+    }
+
+    private void HandleRuntimeNeuronPulse(RuntimeNeuronPulse message)
+    {
+        if (message.BrainId is null
+            || !message.BrainId.TryToGuid(out var guid)
+            || guid != _brainId
+            || message.TargetRegionId != (uint)_state.RegionId)
+        {
+            return;
+        }
+
+        _state.TryApplyRuntimePulse(message.TargetNeuronId, message.Value);
+    }
+
+    private void HandleRuntimeNeuronStateWrite(RuntimeNeuronStateWrite message)
+    {
+        if (message.BrainId is null
+            || !message.BrainId.TryToGuid(out var guid)
+            || guid != _brainId
+            || message.TargetRegionId != (uint)_state.RegionId)
+        {
+            return;
+        }
+
+        _state.TrySetRuntimeNeuronState(
+            message.TargetNeuronId,
+            message.SetBuffer,
+            message.BufferValue,
+            message.SetAccumulator,
+            message.AccumulatorValue);
     }
 
     private void CacheComputeDone(TickComputeDone done)

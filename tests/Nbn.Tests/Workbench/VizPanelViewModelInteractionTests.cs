@@ -339,7 +339,7 @@ public class VizPanelViewModelInteractionTests
         Assert.Contains("region=R0", vm.CanvasSelectionIdentity, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("events=", vm.CanvasSelectionRuntime, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("focus_region=R0", vm.CanvasSelectionContext, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Ready: send runtime pulse", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Ready: pulse", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -391,7 +391,7 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
-    public void PrepareInputPulseCommand_IsDisabled_ForNonInputNodeSelection()
+    public void PrepareInputPulseCommand_IsDisabled_ForAggregateNodeSelection()
     {
         var vm = CreateViewModel();
         var brain = new BrainListItem(Guid.NewGuid(), "test", true);
@@ -413,11 +413,40 @@ public class VizPanelViewModelInteractionTests
             new List<VizActivityCanvasEdge>());
 
         Assert.False(vm.PrepareInputPulseCommand.CanExecute(null));
-        Assert.Contains("only available for input neurons", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("aggregate-only", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void PrepareInputPulseCommand_SendsInputImmediately_WithValidationFlow()
+    public void PrepareInputPulseCommand_IsEnabled_ForNonInputNeuronSelection()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        var node = CreateNode(
+            key: "region:9:neuron:5",
+            label: "R9/N5",
+            left: 100,
+            top: 100,
+            regionId: 9,
+            neuronId: 5,
+            navigateRegionId: 9);
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+        vm.CanvasNodes.Clear();
+        vm.CanvasNodes.Add(node);
+        vm.CanvasEdges.Clear();
+
+        vm.SelectedInputPulseValueText = "0.75";
+        Assert.True(vm.PrepareInputPulseCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void PrepareInputPulseCommand_SendsRuntimePulseImmediately_WithValidationFlow()
     {
         var vm = CreateViewModel();
         var brain = new BrainListItem(Guid.NewGuid(), "test", true);
@@ -449,7 +478,78 @@ public class VizPanelViewModelInteractionTests
         Assert.True(vm.PrepareInputPulseCommand.CanExecute(null));
 
         vm.PrepareInputPulseCommand.Execute(null);
-        Assert.Contains("Input pulse queued:", vm.Status, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Runtime pulse queued:", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrepareInputPulseCommand_IsEnabled_ForRouteNeuronEndpointSelection()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        var edge = CreateEdge() with
+        {
+            RouteLabel = "N7 -> R10",
+            SourceRegionId = 9,
+            TargetRegionId = 10
+        };
+
+        SetCanvasSelection(vm, null, edge.RouteLabel);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode>(),
+            new List<VizActivityCanvasEdge> { edge });
+        vm.CanvasNodes.Clear();
+        vm.CanvasEdges.Clear();
+        vm.CanvasEdges.Add(edge);
+
+        vm.SelectedInputPulseValueText = "0.25";
+        Assert.True(vm.PrepareInputPulseCommand.CanExecute(null));
+
+        vm.PrepareInputPulseCommand.Execute(null);
+        Assert.Contains("Runtime pulse queued:", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ApplyRuntimeStateCommand_RequiresAtLeastOneValue_AndSendsWhenValid()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "test", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        var node = CreateNode(
+            key: "region:9:neuron:3",
+            label: "R9/N3",
+            left: 120,
+            top: 90,
+            regionId: 9,
+            neuronId: 3,
+            navigateRegionId: 9);
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+        vm.CanvasNodes.Clear();
+        vm.CanvasNodes.Add(node);
+        vm.CanvasEdges.Clear();
+
+        vm.SelectedBufferValueText = string.Empty;
+        vm.SelectedAccumulatorValueText = string.Empty;
+        Assert.False(vm.ApplyRuntimeStateCommand.CanExecute(null));
+
+        vm.SelectedBufferValueText = "not-a-number";
+        Assert.False(vm.ApplyRuntimeStateCommand.CanExecute(null));
+        Assert.Contains("finite float", vm.CanvasSelectionActionHint, StringComparison.OrdinalIgnoreCase);
+
+        vm.SelectedBufferValueText = "0.5";
+        Assert.True(vm.ApplyRuntimeStateCommand.CanExecute(null));
+
+        vm.ApplyRuntimeStateCommand.Execute(null);
+        Assert.Contains("Runtime state queued:", vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

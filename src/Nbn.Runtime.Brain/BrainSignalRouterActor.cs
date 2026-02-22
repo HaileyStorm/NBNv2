@@ -51,6 +51,12 @@ public sealed class BrainSignalRouterActor : IActor
             case InputVector inputVector:
                 HandleInputVector(context, inputVector);
                 break;
+            case RuntimeNeuronPulse runtimePulse:
+                HandleRuntimeNeuronPulse(context, runtimePulse);
+                break;
+            case RuntimeNeuronStateWrite runtimeStateWrite:
+                HandleRuntimeNeuronStateWrite(context, runtimeStateWrite);
+                break;
             case InputDrain inputDrain:
                 HandleInputDrain(context, inputDrain);
                 break;
@@ -194,6 +200,64 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         CaptureIoGateway(context.Sender);
+    }
+
+    private void HandleRuntimeNeuronPulse(IContext context, RuntimeNeuronPulse message)
+    {
+        if (!IsForBrain(message.BrainId))
+        {
+            return;
+        }
+
+        CaptureIoGateway(context.Sender);
+
+        if (!float.IsFinite(message.Value))
+        {
+            return;
+        }
+
+        DispatchToRegionShards(context, message.TargetRegionId, message);
+    }
+
+    private void HandleRuntimeNeuronStateWrite(IContext context, RuntimeNeuronStateWrite message)
+    {
+        if (!IsForBrain(message.BrainId))
+        {
+            return;
+        }
+
+        CaptureIoGateway(context.Sender);
+
+        if (!message.SetBuffer && !message.SetAccumulator)
+        {
+            return;
+        }
+
+        if ((message.SetBuffer && !float.IsFinite(message.BufferValue))
+            || (message.SetAccumulator && !float.IsFinite(message.AccumulatorValue)))
+        {
+            return;
+        }
+
+        DispatchToRegionShards(context, message.TargetRegionId, message);
+    }
+
+    private void DispatchToRegionShards(IContext context, uint regionId, object message)
+    {
+        if (_routingTable.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in _routingTable.Entries)
+        {
+            if (entry.ShardId.RegionId != (int)regionId)
+            {
+                continue;
+            }
+
+            context.Send(entry.Pid, message);
+        }
     }
 
     private void HandleInputDrain(IContext context, InputDrain message)

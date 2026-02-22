@@ -111,8 +111,10 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _canvasSelectionRuntime = "Runtime: n/a.";
     private string _canvasSelectionContext = "Context: n/a.";
     private string _canvasSelectionDetail = "Select a node or route to inspect identity, runtime stats, and route context.";
-    private string _canvasSelectionActionHint = "Runtime actions require an input-neuron selection (R0/Nx) and an active brain.";
+    private string _canvasSelectionActionHint = "Runtime actions target selected neuron nodes or route endpoints (N...) with an active brain.";
     private string _selectedInputPulseValueText = "1";
+    private string _selectedBufferValueText = string.Empty;
+    private string _selectedAccumulatorValueText = string.Empty;
     private uint? _selectedRouteSourceRegionId;
     private uint? _selectedRouteTargetRegionId;
     private string _canvasHoverCardText = string.Empty;
@@ -187,6 +189,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         FocusSelectedRouteSourceCommand = new RelayCommand(FocusSelectedRouteSourceRegion, () => _selectedRouteSourceRegionId.HasValue);
         FocusSelectedRouteTargetCommand = new RelayCommand(FocusSelectedRouteTargetRegion, () => _selectedRouteTargetRegionId.HasValue);
         PrepareInputPulseCommand = new RelayCommand(PrepareInputPulseForSelection, CanPrepareInputPulseForSelection);
+        ApplyRuntimeStateCommand = new RelayCommand(ApplyRuntimeStateForSelection, CanApplyRuntimeStateForSelection);
         UpdateLodSummary();
         RefreshActivityProjection();
     }
@@ -509,6 +512,30 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
     }
 
+    public string SelectedBufferValueText
+    {
+        get => _selectedBufferValueText;
+        set
+        {
+            if (SetProperty(ref _selectedBufferValueText, value))
+            {
+                UpdateCanvasSelectionPanelState(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            }
+        }
+    }
+
+    public string SelectedAccumulatorValueText
+    {
+        get => _selectedAccumulatorValueText;
+        set
+        {
+            if (SetProperty(ref _selectedAccumulatorValueText, value))
+            {
+                UpdateCanvasSelectionPanelState(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            }
+        }
+    }
+
     public string TogglePinSelectionLabel => IsCurrentSelectionPinned() ? "Unpin selection" : "Pin selection";
 
     public bool HasSelectedRouteSource => _selectedRouteSourceRegionId.HasValue;
@@ -606,6 +633,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand FocusSelectedRouteTargetCommand { get; }
 
     public RelayCommand PrepareInputPulseCommand { get; }
+
+    public RelayCommand ApplyRuntimeStateCommand { get; }
 
     public void AddBrainId(Guid id)
     {
@@ -2799,6 +2828,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         FocusSelectedRouteSourceCommand.RaiseCanExecuteChanged();
         FocusSelectedRouteTargetCommand.RaiseCanExecuteChanged();
         PrepareInputPulseCommand.RaiseCanExecuteChanged();
+        ApplyRuntimeStateCommand.RaiseCanExecuteChanged();
     }
 
     private void UpdateCanvasSelectionActionHint(
@@ -2811,42 +2841,85 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        var routeHintPrefix = string.Empty;
         if (selectedEdge is not null)
         {
             var sourceText = selectedEdge.SourceRegionId.HasValue ? $"source R{selectedEdge.SourceRegionId.Value}" : "source n/a";
             var targetText = selectedEdge.TargetRegionId.HasValue ? $"target R{selectedEdge.TargetRegionId.Value}" : "target n/a";
-            CanvasSelectionActionHint = $"Route actions available ({sourceText}, {targetText}). Runtime pulse requires selecting an input neuron (R0/Nx).";
-            return;
+            routeHintPrefix = $"Route actions available ({sourceText}, {targetText}). ";
         }
 
         if (SelectedBrain is null)
         {
-            CanvasSelectionActionHint = "Select a brain to enable runtime actions.";
+            CanvasSelectionActionHint = routeHintPrefix + "Select a brain to enable runtime actions.";
             return;
         }
 
-        if (selectedNode is null || selectedNode.RegionId != NbnConstants.InputRegionId || !selectedNode.NeuronId.HasValue)
+        if (!TryResolveRuntimeNeuronTargetFromSelection(selectedNode, selectedEdge, out var target, out var targetReason))
         {
-            CanvasSelectionActionHint = "Runtime pulse is only available for input neurons (R0/Nx).";
+            CanvasSelectionActionHint = routeHintPrefix + targetReason;
             return;
         }
 
-        if (!TryParseInputPulseValue(out _))
+        if (!TryParseInputPulseValue(out var pulseValue))
         {
             CanvasSelectionActionHint = "Pulse value must be a finite float.";
             return;
         }
 
+        if (!TryParseOptionalRuntimeStateValue(
+                SelectedBufferValueText,
+                "Buffer value",
+                out var setBuffer,
+                out var bufferValue,
+                out var bufferReason))
+        {
+            CanvasSelectionActionHint = bufferReason;
+            return;
+        }
+
+        if (!TryParseOptionalRuntimeStateValue(
+                SelectedAccumulatorValueText,
+                "Accumulator value",
+                out var setAccumulator,
+                out var accumulatorValue,
+                out var accumulatorReason))
+        {
+            CanvasSelectionActionHint = accumulatorReason;
+            return;
+        }
+
+        string runtimeStateHint;
+        if (!setBuffer && !setAccumulator)
+        {
+            runtimeStateHint = "State write: enter buffer and/or accumulator value (blank skips).";
+        }
+        else
+        {
+            var stateParts = new List<string>(2);
+            if (setBuffer)
+            {
+                stateParts.Add(FormattableString.Invariant($"buffer {bufferValue:0.###}"));
+            }
+
+            if (setAccumulator)
+            {
+                stateParts.Add(FormattableString.Invariant($"accumulator {accumulatorValue:0.###}"));
+            }
+
+            runtimeStateHint = $"State ready: {string.Join(", ", stateParts)}.";
+        }
+
         CanvasSelectionActionHint = FormattableString.Invariant(
-            $"Ready: send runtime pulse to R0/N{selectedNode.NeuronId.Value} with value {SelectedInputPulseValueText.Trim()}.");
+            $"{routeHintPrefix}Ready: pulse R{target.RegionId}/N{target.NeuronId} with value {pulseValue:0.###}. {runtimeStateHint}");
     }
 
     private bool CanPrepareInputPulseForSelection()
-        => TryBuildInputPulseRequest(CanvasNodes, out _, out _);
+        => TryBuildRuntimePulseRequest(CanvasNodes, CanvasEdges, out _, out _);
 
     private void PrepareInputPulseForSelection()
     {
-        if (!TryBuildInputPulseRequest(CanvasNodes, out var request, out var reason))
+        if (!TryBuildRuntimePulseRequest(CanvasNodes, CanvasEdges, out var request, out var reason))
         {
             Status = reason;
             UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
@@ -2854,7 +2927,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        if (_brain.TrySendInputSelected(request.InputIndex, request.Value, out var ioStatus))
+        if (_brain.TrySendRuntimeNeuronPulseSelected(request.RegionId, request.NeuronId, request.Value, out var ioStatus))
         {
             Status = ioStatus;
         }
@@ -2867,28 +2940,48 @@ public sealed class VizPanelViewModel : ViewModelBase
         RaiseCanvasSelectionActionCanExecuteChanged();
     }
 
-    private bool TryBuildInputPulseRequest(
+    private bool CanApplyRuntimeStateForSelection()
+        => TryBuildRuntimeStateWriteRequest(CanvasNodes, CanvasEdges, out _, out _);
+
+    private void ApplyRuntimeStateForSelection()
+    {
+        if (!TryBuildRuntimeStateWriteRequest(CanvasNodes, CanvasEdges, out var request, out var reason))
+        {
+            Status = reason;
+            UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+            RaiseCanvasSelectionActionCanExecuteChanged();
+            return;
+        }
+
+        if (_brain.TrySetRuntimeNeuronStateSelected(
+                request.RegionId,
+                request.NeuronId,
+                request.SetBuffer,
+                request.BufferValue,
+                request.SetAccumulator,
+                request.AccumulatorValue,
+                out var ioStatus))
+        {
+            Status = ioStatus;
+        }
+        else
+        {
+            Status = $"Runtime action failed validation: {ioStatus}";
+        }
+
+        UpdateCanvasSelectionActionHint(TryGetSelectedCanvasNode(CanvasNodes), TryGetSelectedCanvasEdge(CanvasEdges));
+        RaiseCanvasSelectionActionCanExecuteChanged();
+    }
+
+    private bool TryBuildRuntimePulseRequest(
         IReadOnlyList<VizActivityCanvasNode> nodes,
-        out InputPulseRequest request,
+        IReadOnlyList<VizActivityCanvasEdge> edges,
+        out RuntimePulseRequest request,
         out string reason)
     {
         request = default;
-        if (SelectedBrain is null)
+        if (!TryBuildRuntimeNeuronTargetRequest(nodes, edges, out var target, out reason))
         {
-            reason = "Select a brain to enable runtime actions.";
-            return false;
-        }
-
-        var selectedNode = TryGetSelectedCanvasNode(nodes);
-        if (selectedNode is null)
-        {
-            reason = "Select an input neuron (R0/Nx) to stage a runtime pulse.";
-            return false;
-        }
-
-        if (selectedNode.RegionId != NbnConstants.InputRegionId || !selectedNode.NeuronId.HasValue)
-        {
-            reason = "Runtime pulse is only available for input neurons (R0/Nx).";
             return false;
         }
 
@@ -2898,7 +2991,211 @@ public sealed class VizPanelViewModel : ViewModelBase
             return false;
         }
 
-        request = new InputPulseRequest(selectedNode.NeuronId.Value, value);
+        request = new RuntimePulseRequest(target.RegionId, target.NeuronId, value);
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryBuildRuntimeStateWriteRequest(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges,
+        out RuntimeStateWriteRequest request,
+        out string reason)
+    {
+        request = default;
+        if (!TryBuildRuntimeNeuronTargetRequest(nodes, edges, out var target, out reason))
+        {
+            return false;
+        }
+
+        if (!TryParseOptionalRuntimeStateValue(
+                SelectedBufferValueText,
+                "Buffer value",
+                out var setBuffer,
+                out var bufferValue,
+                out reason))
+        {
+            return false;
+        }
+
+        if (!TryParseOptionalRuntimeStateValue(
+                SelectedAccumulatorValueText,
+                "Accumulator value",
+                out var setAccumulator,
+                out var accumulatorValue,
+                out reason))
+        {
+            return false;
+        }
+
+        if (!setBuffer && !setAccumulator)
+        {
+            reason = "Enter a finite buffer and/or accumulator value.";
+            return false;
+        }
+
+        request = new RuntimeStateWriteRequest(
+            target.RegionId,
+            target.NeuronId,
+            setBuffer,
+            bufferValue,
+            setAccumulator,
+            accumulatorValue);
+        reason = string.Empty;
+        return true;
+    }
+
+    private bool TryBuildRuntimeNeuronTargetRequest(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges,
+        out RuntimeNeuronTargetRequest request,
+        out string reason)
+    {
+        request = default;
+        if (SelectedBrain is null)
+        {
+            reason = "Select a brain to enable runtime actions.";
+            return false;
+        }
+
+        if (TryResolveRuntimeNeuronTargetRequest(nodes, edges, out request, out reason))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveRuntimeNeuronTargetFromSelection(
+        VizActivityCanvasNode? selectedNode,
+        VizActivityCanvasEdge? selectedEdge,
+        out RuntimeNeuronTargetRequest request,
+        out string reason)
+    {
+        request = default;
+        if (selectedNode is not null)
+        {
+            if (selectedNode.NeuronId.HasValue)
+            {
+                request = new RuntimeNeuronTargetRequest(selectedNode.RegionId, selectedNode.NeuronId.Value);
+                reason = string.Empty;
+                return true;
+            }
+
+            reason = "Selected node is aggregate-only. Select a neuron node (R#/N#) for runtime actions.";
+            return false;
+        }
+
+        if (selectedEdge is not null)
+        {
+            if (TryResolveRuntimeNeuronTargetFromEdge(selectedEdge, out request))
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            reason = "Selected route does not resolve to a neuron endpoint. Focus a region and select a route containing N#.";
+            return false;
+        }
+
+        reason = "Select a neuron node (R#/N#) or a route endpoint (N#) to stage runtime actions.";
+        return false;
+    }
+
+    private bool TryResolveRuntimeNeuronTargetRequest(
+        IReadOnlyList<VizActivityCanvasNode> nodes,
+        IReadOnlyList<VizActivityCanvasEdge> edges,
+        out RuntimeNeuronTargetRequest request,
+        out string reason)
+    {
+        var selectedNode = TryGetSelectedCanvasNode(nodes);
+        var selectedEdge = TryGetSelectedCanvasEdge(edges);
+        return TryResolveRuntimeNeuronTargetFromSelection(selectedNode, selectedEdge, out request, out reason);
+    }
+
+    private static bool TryResolveRuntimeNeuronTargetFromEdge(
+        VizActivityCanvasEdge edge,
+        out RuntimeNeuronTargetRequest request)
+    {
+        request = default;
+
+        if (string.IsNullOrWhiteSpace(edge.RouteLabel))
+        {
+            return false;
+        }
+
+        var separatorIndex = edge.RouteLabel.IndexOf("->", StringComparison.Ordinal);
+        if (separatorIndex <= 0 || separatorIndex >= edge.RouteLabel.Length - 2)
+        {
+            return false;
+        }
+
+        var sourceToken = edge.RouteLabel[..separatorIndex].Trim();
+        var targetToken = edge.RouteLabel[(separatorIndex + 2)..].Trim();
+
+        if (edge.SourceRegionId.HasValue && TryParseNeuronRouteToken(sourceToken, out var sourceNeuronId))
+        {
+            request = new RuntimeNeuronTargetRequest(edge.SourceRegionId.Value, sourceNeuronId);
+            return true;
+        }
+
+        if (edge.TargetRegionId.HasValue && TryParseNeuronRouteToken(targetToken, out var targetNeuronId))
+        {
+            request = new RuntimeNeuronTargetRequest(edge.TargetRegionId.Value, targetNeuronId);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseNeuronRouteToken(string token, out uint neuronId)
+    {
+        neuronId = 0;
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return false;
+        }
+
+        var trimmed = token.Trim();
+        if (trimmed.StartsWith("N", StringComparison.OrdinalIgnoreCase))
+        {
+            return uint.TryParse(trimmed.AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out neuronId);
+        }
+
+        var slashNeuron = trimmed.IndexOf("/N", StringComparison.OrdinalIgnoreCase);
+        if (slashNeuron >= 0)
+        {
+            return uint.TryParse(trimmed.AsSpan(slashNeuron + 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out neuronId);
+        }
+
+        return false;
+    }
+
+    private static bool TryParseOptionalRuntimeStateValue(
+        string valueText,
+        string label,
+        out bool hasValue,
+        out float value,
+        out string reason)
+    {
+        hasValue = false;
+        value = 0f;
+        reason = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(valueText))
+        {
+            return true;
+        }
+
+        if (!float.TryParse(valueText, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed))
+        {
+            reason = $"{label} must be a finite float (or blank to skip).";
+            return false;
+        }
+
+        hasValue = true;
+        value = parsed;
         reason = string.Empty;
         return true;
     }
@@ -3736,9 +4033,22 @@ public sealed class VizPanelViewModel : ViewModelBase
         double ProjectionMs,
         double LayoutMs);
 
-    private readonly record struct InputPulseRequest(
-        uint InputIndex,
+    private readonly record struct RuntimeNeuronTargetRequest(
+        uint RegionId,
+        uint NeuronId);
+
+    private readonly record struct RuntimePulseRequest(
+        uint RegionId,
+        uint NeuronId,
         float Value);
+
+    private readonly record struct RuntimeStateWriteRequest(
+        uint RegionId,
+        uint NeuronId,
+        bool SetBuffer,
+        float BufferValue,
+        bool SetAccumulator,
+        float AccumulatorValue);
 
     private sealed class BrainCanvasTopologyState
     {

@@ -625,6 +625,42 @@ public sealed class WorkbenchClient : IAsyncDisposable
         _root.Send(_receiverPid, new InputVectorCommand(brainId, values));
     }
 
+    public void SendRuntimeNeuronPulse(Guid brainId, uint targetRegionId, uint targetNeuronId, float value)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(_receiverPid, new RuntimeNeuronPulseCommand(brainId, targetRegionId, targetNeuronId, value));
+    }
+
+    public void SendRuntimeNeuronStateWrite(
+        Guid brainId,
+        uint targetRegionId,
+        uint targetNeuronId,
+        bool setBuffer,
+        float bufferValue,
+        bool setAccumulator,
+        float accumulatorValue)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(
+            _receiverPid,
+            new RuntimeNeuronStateWriteCommand(
+                brainId,
+                targetRegionId,
+                targetNeuronId,
+                setBuffer,
+                bufferValue,
+                setAccumulator,
+                accumulatorValue));
+    }
+
     public void SendEnergyCredit(Guid brainId, long amount)
     {
         if (_receiverPid is null || _root is null)

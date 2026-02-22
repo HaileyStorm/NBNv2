@@ -130,6 +130,21 @@ public class ProtoCompatibilityTests
         AssertField(inputVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertRepeatedField(inputVector, "values", 2, FieldType.Float);
 
+        var runtimePulse = descriptor.MessageTypes.Single(message => message.Name == "RuntimeNeuronPulse");
+        AssertField(runtimePulse, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(runtimePulse, "target_region_id", 2, FieldType.UInt32);
+        AssertField(runtimePulse, "target_neuron_id", 3, FieldType.UInt32);
+        AssertField(runtimePulse, "value", 4, FieldType.Float);
+
+        var runtimeStateWrite = descriptor.MessageTypes.Single(message => message.Name == "RuntimeNeuronStateWrite");
+        AssertField(runtimeStateWrite, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(runtimeStateWrite, "target_region_id", 2, FieldType.UInt32);
+        AssertField(runtimeStateWrite, "target_neuron_id", 3, FieldType.UInt32);
+        AssertField(runtimeStateWrite, "set_buffer", 4, FieldType.Bool);
+        AssertField(runtimeStateWrite, "buffer_value", 5, FieldType.Float);
+        AssertField(runtimeStateWrite, "set_accumulator", 6, FieldType.Bool);
+        AssertField(runtimeStateWrite, "accumulator_value", 7, FieldType.Float);
+
         var outputEvent = descriptor.MessageTypes.Single(message => message.Name == "OutputEvent");
         AssertField(outputEvent, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(outputEvent, "output_index", 2, FieldType.UInt32);

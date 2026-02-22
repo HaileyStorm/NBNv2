@@ -432,6 +432,89 @@ public sealed class IoPanelViewModel : ViewModelBase
         return true;
     }
 
+    public bool TrySendRuntimeNeuronPulseSelected(uint regionId, uint neuronId, float value, out string status)
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            status = "No brain selected.";
+            return false;
+        }
+
+        if (!float.IsFinite(value))
+        {
+            BrainInfoSummary = "Pulse value invalid.";
+            status = "Pulse value invalid.";
+            return false;
+        }
+
+        _client.SendRuntimeNeuronPulse(brainId, regionId, neuronId, value);
+        status = FormattableString.Invariant($"Runtime pulse queued: brain {brainId:D}, R{regionId}/N{neuronId}, value {value:0.###}.");
+        BrainInfoSummary = status;
+        return true;
+    }
+
+    public bool TrySetRuntimeNeuronStateSelected(
+        uint regionId,
+        uint neuronId,
+        bool setBuffer,
+        float bufferValue,
+        bool setAccumulator,
+        float accumulatorValue,
+        out string status)
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            status = "No brain selected.";
+            return false;
+        }
+
+        if (!setBuffer && !setAccumulator)
+        {
+            status = "Specify at least one runtime value.";
+            BrainInfoSummary = status;
+            return false;
+        }
+
+        if (setBuffer && !float.IsFinite(bufferValue))
+        {
+            status = "Buffer value invalid.";
+            BrainInfoSummary = status;
+            return false;
+        }
+
+        if (setAccumulator && !float.IsFinite(accumulatorValue))
+        {
+            status = "Accumulator value invalid.";
+            BrainInfoSummary = status;
+            return false;
+        }
+
+        _client.SendRuntimeNeuronStateWrite(
+            brainId,
+            regionId,
+            neuronId,
+            setBuffer,
+            bufferValue,
+            setAccumulator,
+            accumulatorValue);
+
+        var updates = new List<string>(2);
+        if (setBuffer)
+        {
+            updates.Add(FormattableString.Invariant($"buffer={bufferValue:0.###}"));
+        }
+
+        if (setAccumulator)
+        {
+            updates.Add(FormattableString.Invariant($"accumulator={accumulatorValue:0.###}"));
+        }
+
+        status = FormattableString.Invariant(
+            $"Runtime state queued: brain {brainId:D}, R{regionId}/N{neuronId}, {string.Join(", ", updates)}.");
+        BrainInfoSummary = status;
+        return true;
+    }
+
     private async Task RequestInfoAsync()
     {
         if (!TryGetBrainId(out var brainId))

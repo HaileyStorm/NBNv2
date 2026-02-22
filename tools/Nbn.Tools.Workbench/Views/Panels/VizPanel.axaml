@@ -284,11 +284,24 @@
                               Command="{Binding FocusSelectedRouteTargetCommand}"
                               IsVisible="{Binding HasSelectedRouteTarget}" />
                     </StackPanel>
-                    <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8" IsVisible="{Binding HasCanvasSelection}">
-                      <TextBlock Text="Input pulse value" Classes="muted" VerticalAlignment="Center" />
-                      <TextBox Grid.Column="1" Width="90" Text="{Binding SelectedInputPulseValueText}" />
-                      <Button Grid.Column="2" Content="Send Runtime Pulse" Command="{Binding PrepareInputPulseCommand}" />
-                    </Grid>
+                    <StackPanel Spacing="6" IsVisible="{Binding HasCanvasSelection}">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Pulse value" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Width="90" Text="{Binding SelectedInputPulseValueText}" />
+                        <Button Content="Send Runtime Pulse" Command="{Binding PrepareInputPulseCommand}" />
+                      </StackPanel>
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="Buffer" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Width="90"
+                                 Text="{Binding SelectedBufferValueText}"
+                                 Watermark="blank = skip" />
+                        <TextBlock Text="Accumulator" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Width="110"
+                                 Text="{Binding SelectedAccumulatorValueText}"
+                                 Watermark="blank = skip" />
+                        <Button Content="Apply Runtime State" Command="{Binding ApplyRuntimeStateCommand}" />
+                      </StackPanel>
+                    </StackPanel>
                     <TextBlock Text="{Binding CanvasSelectionActionHint}" Classes="muted" TextWrapping="Wrap" />
                   </StackPanel>
                 </Border>
