@@ -13,6 +13,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
     <ProjectReference Include="..\Nbn.Shared\Nbn.Shared.csproj" />
   </ItemGroup>
 
