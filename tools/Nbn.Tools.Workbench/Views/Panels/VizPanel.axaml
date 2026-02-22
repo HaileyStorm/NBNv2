@@ -277,8 +277,12 @@
                     </ScrollViewer>
                     <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasCanvasSelection}">
                       <Button Content="Focus Selection" Command="{Binding NavigateCanvasSelectionCommand}" />
-                      <Button Content="Route Source" Command="{Binding FocusSelectedRouteSourceCommand}" />
-                      <Button Content="Route Target" Command="{Binding FocusSelectedRouteTargetCommand}" />
+                      <Button Content="Route Source"
+                              Command="{Binding FocusSelectedRouteSourceCommand}"
+                              IsVisible="{Binding HasSelectedRouteSource}" />
+                      <Button Content="Route Target"
+                              Command="{Binding FocusSelectedRouteTargetCommand}"
+                              IsVisible="{Binding HasSelectedRouteTarget}" />
                     </StackPanel>
                     <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8" IsVisible="{Binding HasCanvasSelection}">
                       <TextBlock Text="Input pulse value" Classes="muted" VerticalAlignment="Center" />

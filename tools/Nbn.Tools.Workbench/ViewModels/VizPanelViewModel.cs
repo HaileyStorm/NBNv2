@@ -511,6 +511,10 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public string TogglePinSelectionLabel => IsCurrentSelectionPinned() ? "Unpin selection" : "Pin selection";
 
+    public bool HasSelectedRouteSource => _selectedRouteSourceRegionId.HasValue;
+
+    public bool HasSelectedRouteTarget => _selectedRouteTargetRegionId.HasValue;
+
     public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Shift+Wheel zoom, Shift+drag or middle-drag pan, double-click empty = fit";
 
     public bool ShowProjectionSnapshot
@@ -2755,6 +2759,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         _selectedRouteSourceRegionId = selectedEdge?.SourceRegionId;
         _selectedRouteTargetRegionId = selectedEdge?.TargetRegionId;
+        OnPropertyChanged(nameof(HasSelectedRouteSource));
+        OnPropertyChanged(nameof(HasSelectedRouteTarget));
 
         HasCanvasSelection = selectedNode is not null || selectedEdge is not null;
         if (selectedNode is not null)

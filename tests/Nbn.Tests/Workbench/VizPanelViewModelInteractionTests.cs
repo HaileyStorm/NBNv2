@@ -361,6 +361,36 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void RouteFocusActions_AreOnlyAvailable_ForSelectedEdge()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 100, top: 100, regionId: 9, neuronId: null, navigateRegionId: 9);
+        var edge = CreateEdge();
+
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge> { edge });
+
+        Assert.False(vm.HasSelectedRouteSource);
+        Assert.False(vm.HasSelectedRouteTarget);
+        Assert.False(vm.FocusSelectedRouteSourceCommand.CanExecute(null));
+        Assert.False(vm.FocusSelectedRouteTargetCommand.CanExecute(null));
+
+        SetCanvasSelection(vm, null, edge.RouteLabel);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge> { edge });
+
+        Assert.True(vm.HasSelectedRouteSource);
+        Assert.True(vm.HasSelectedRouteTarget);
+        Assert.True(vm.FocusSelectedRouteSourceCommand.CanExecute(null));
+        Assert.True(vm.FocusSelectedRouteTargetCommand.CanExecute(null));
+    }
+
+    [Fact]
     public void PrepareInputPulseCommand_IsDisabled_ForNonInputNodeSelection()
     {
         var vm = CreateViewModel();
