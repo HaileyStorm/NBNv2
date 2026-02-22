@@ -4,6 +4,7 @@ using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
+using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Integration;
 
@@ -914,6 +915,86 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task ReproduceByBrainIds_Returns_AbortReport_When_Repro_Is_Unavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+            gateway,
+            new ReproduceByBrainIds
+            {
+                Request = new Repro.ReproduceByBrainIdsRequest
+                {
+                    ParentA = Guid.NewGuid().ToProtoUuid(),
+                    ParentB = Guid.NewGuid().ToProtoUuid(),
+                    Config = new Repro.ReproduceConfig()
+                }
+            });
+
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.False(response.Result.Report.Compatible);
+        Assert.Equal("repro_unavailable", response.Result.Report.AbortReason);
+        Assert.False(response.Result.Spawned);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_Adds_AbortReport_When_Repro_Response_Lacks_Report()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var reproProbe = root.Spawn(Props.FromProducer(() => new ReproEmptyResponseProbe()));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), reproPid: reproProbe)));
+
+        var response = await root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+            gateway,
+            new ReproduceByArtifacts
+            {
+                Request = new Repro.ReproduceByArtifactsRequest()
+            });
+
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.False(response.Result.Report.Compatible);
+        Assert.Equal("repro_missing_report", response.Result.Report.AbortReason);
+        Assert.Equal(0f, response.Result.Report.SimilarityScore);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ReproduceByBrainIds_Returns_AbortReport_When_Repro_Response_Type_Is_Invalid()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var reproProbe = root.Spawn(Props.FromProducer(() => new ReproInvalidResponseProbe()));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), reproPid: reproProbe)));
+
+        var response = await root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+            gateway,
+            new ReproduceByBrainIds
+            {
+                Request = new Repro.ReproduceByBrainIdsRequest
+                {
+                    ParentA = Guid.NewGuid().ToProtoUuid(),
+                    ParentB = Guid.NewGuid().ToProtoUuid(),
+                    Config = new Repro.ReproduceConfig()
+                }
+            });
+
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.False(response.Result.Report.Compatible);
+        Assert.Equal("repro_request_failed", response.Result.Report.AbortReason);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -1090,6 +1171,38 @@ public class IoGatewayArtifactReferenceTests
                     break;
                 case ProtoControl.BrainTerminated brainTerminated:
                     _terminated.TrySetResult(brainTerminated);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ReproEmptyResponseProbe : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Repro.ReproduceByBrainIdsRequest:
+                case Repro.ReproduceByArtifactsRequest:
+                    context.Respond(new Repro.ReproduceResult());
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ReproInvalidResponseProbe : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Repro.ReproduceByBrainIdsRequest:
+                case Repro.ReproduceByArtifactsRequest:
+                    context.Respond("unexpected-response-type");
                     break;
             }
 

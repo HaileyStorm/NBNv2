@@ -790,20 +790,27 @@ public sealed class IoGatewayActor : IActor
     {
         if (_reproPid is null)
         {
-            context.Respond(new Nbn.Proto.Io.ReproduceResult());
+            context.Respond(CreateReproFailure("repro_unavailable"));
             return;
         }
 
         try
         {
             var result = await context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, DefaultRequestTimeout);
+            if (result is null)
+            {
+                context.Respond(CreateReproFailure("repro_empty_response"));
+                return;
+            }
+
+            result.Report ??= CreateAbortReport("repro_missing_report");
             EnsureSimilarityScore(result);
             context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
         }
         catch (Exception ex)
         {
             Console.WriteLine($"ReproduceByBrainIds failed: {ex.Message}");
-            context.Respond(new Nbn.Proto.Io.ReproduceResult());
+            context.Respond(CreateReproFailure("repro_request_failed"));
         }
     }
 
@@ -811,22 +818,51 @@ public sealed class IoGatewayActor : IActor
     {
         if (_reproPid is null)
         {
-            context.Respond(new Nbn.Proto.Io.ReproduceResult());
+            context.Respond(CreateReproFailure("repro_unavailable"));
             return;
         }
 
         try
         {
             var result = await context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, DefaultRequestTimeout);
+            if (result is null)
+            {
+                context.Respond(CreateReproFailure("repro_empty_response"));
+                return;
+            }
+
+            result.Report ??= CreateAbortReport("repro_missing_report");
             EnsureSimilarityScore(result);
             context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
         }
         catch (Exception ex)
         {
             Console.WriteLine($"ReproduceByArtifacts failed: {ex.Message}");
-            context.Respond(new Nbn.Proto.Io.ReproduceResult());
+            context.Respond(CreateReproFailure("repro_request_failed"));
         }
     }
+
+    private static Nbn.Proto.Io.ReproduceResult CreateReproFailure(string reason)
+        => new()
+        {
+            Result = new Nbn.Proto.Repro.ReproduceResult
+            {
+                Report = CreateAbortReport(reason),
+                Summary = new MutationSummary(),
+                Spawned = false
+            }
+        };
+
+    private static SimilarityReport CreateAbortReport(string reason)
+        => new()
+        {
+            Compatible = false,
+            AbortReason = reason,
+            SimilarityScore = 0f,
+            RegionSpanScore = 0f,
+            FunctionScore = 0f,
+            ConnectivityScore = 0f
+        };
 
     private static void EnsureSimilarityScore(Nbn.Proto.Repro.ReproduceResult? result)
     {

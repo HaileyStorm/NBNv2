@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\Nbn.Runtime.Brain\Nbn.Runtime.Brain.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.RegionHost\Nbn.Runtime.RegionHost.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.Reproduction\Nbn.Runtime.Reproduction.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
     <ProjectReference Include="..\..\tools\Nbn.Tools.Workbench\Nbn.Tools.Workbench.csproj" />
   </ItemGroup>
