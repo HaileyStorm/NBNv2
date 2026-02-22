@@ -5,6 +5,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tools.Workbench.Views.Panels;
@@ -68,6 +69,7 @@ public sealed class VizActivityCanvasSurface : Control
         var hoverBrush = ResolveResourceBrush("NbnTealBrush", Colors.Teal);
         var selectedBrush = ResolveResourceBrush("NbnAccentBrush", Colors.DeepSkyBlue);
         var labelBrush = ResolveResourceBrush("NbnInkBrush", Color.FromRgb(0x10, 0x1B, 0x22));
+        var viewScale = ResolveEffectiveViewScale();
 
         var seenRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (edges is not null)
@@ -81,27 +83,54 @@ public sealed class VizActivityCanvasSurface : Control
 
                 var geometry = ResolveEdgeGeometry(edge);
                 var dashStyle = ResolveDashStyle(edge.DirectionDashArray);
-                var directionPen = CreatePen(edge.Stroke, edge.Opacity, edge.StrokeThickness, dashStyle);
-                var activityPen = CreatePen(edge.ActivityStroke, edge.ActivityOpacity, edge.ActivityStrokeThickness, dashStyle: null);
+                var directionPen = CreatePen(
+                    edge.Stroke,
+                    edge.Opacity,
+                    edge.StrokeThickness,
+                    dashStyle,
+                    viewScale,
+                    minVisiblePixels: 1.0);
+                var activityPen = CreatePen(
+                    edge.ActivityStroke,
+                    edge.ActivityOpacity,
+                    edge.ActivityStrokeThickness,
+                    dashStyle: null,
+                    viewScale,
+                    minVisiblePixels: 0.9);
 
                 context.DrawGeometry(null, directionPen, geometry);
                 context.DrawGeometry(null, activityPen, geometry);
 
                 if (edge.IsPinned)
                 {
-                    var pinnedPen = new Pen(pinnedBrush, Math.Max(1.0, edge.StrokeThickness), dashStyle: dashStyle, lineCap: PenLineCap.Round);
+                    var pinnedPen = CreatePen(
+                        pinnedBrush,
+                        Math.Max(1.0, edge.StrokeThickness),
+                        dashStyle,
+                        viewScale,
+                        minVisiblePixels: 1.1);
                     context.DrawGeometry(null, pinnedPen, geometry);
                 }
 
                 if (edge.IsHovered)
                 {
-                    var hoverPen = new Pen(hoverBrush, Math.Max(1.0, edge.StrokeThickness), dashStyle: dashStyle, lineCap: PenLineCap.Round);
+                    var hoverPen = CreatePen(
+                        hoverBrush,
+                        Math.Max(1.0, edge.StrokeThickness),
+                        dashStyle,
+                        viewScale,
+                        minVisiblePixels: 1.1);
                     context.DrawGeometry(null, hoverPen, geometry);
                 }
 
                 if (edge.IsSelected)
                 {
-                    var selectedPen = new Pen(selectedBrush, Math.Max(1.0, edge.StrokeThickness), dashStyle: dashStyle, lineCap: PenLineCap.Round);
+                    var selectedPen = CreatePen(
+                        selectedBrush,
+                        Math.Max(1.0, edge.StrokeThickness),
+                        dashStyle,
+                        viewScale,
+                        minVisiblePixels: 1.2);
                     context.DrawGeometry(null, selectedPen, geometry);
                 }
             }
@@ -120,7 +149,13 @@ public sealed class VizActivityCanvasSurface : Control
             var center = new Point(node.Left + radius, node.Top + radius);
             context.DrawEllipse(ResolveColorBrush(node.Fill, node.FillOpacity), null, center, radius, radius);
 
-            var baseStroke = CreatePen(node.Stroke, node.PulseOpacity, node.StrokeThickness, dashStyle: null);
+            var baseStroke = CreatePen(
+                node.Stroke,
+                node.PulseOpacity,
+                node.StrokeThickness,
+                dashStyle: null,
+                viewScale,
+                minVisiblePixels: 0.95);
             context.DrawEllipse(null, baseStroke, center, radius, radius);
 
             if (node.IsPinned)
@@ -227,10 +262,28 @@ public sealed class VizActivityCanvasSurface : Control
         }
     }
 
-    private Pen CreatePen(string colorCode, double opacity, double thickness, DashStyle? dashStyle)
+    private Pen CreatePen(
+        string colorCode,
+        double opacity,
+        double thickness,
+        DashStyle? dashStyle,
+        double viewScale,
+        double minVisiblePixels)
     {
         var brush = ResolveColorBrush(colorCode, opacity);
-        var safeThickness = Math.Max(0.6, thickness);
+        return CreatePen(brush, thickness, dashStyle, viewScale, minVisiblePixels);
+    }
+
+    private Pen CreatePen(
+        IBrush brush,
+        double thickness,
+        DashStyle? dashStyle,
+        double viewScale,
+        double minVisiblePixels)
+    {
+        var safeScale = Math.Clamp(viewScale, 0.05, 32.0);
+        var minThicknessAtScale = Math.Max(0.0, minVisiblePixels) / safeScale;
+        var safeThickness = Math.Max(0.6, Math.Max(thickness, minThicknessAtScale));
         return new Pen(brush, safeThickness, dashStyle: dashStyle, lineCap: PenLineCap.Round);
     }
 
@@ -334,6 +387,32 @@ public sealed class VizActivityCanvasSurface : Control
 
     private static int Quantize(double value)
         => (int)Math.Round(value * 1000.0, MidpointRounding.AwayFromZero);
+
+    private double ResolveEffectiveViewScale()
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is null)
+        {
+            return 1.0;
+        }
+
+        var transform = this.TransformToVisual(topLevel);
+        if (transform is null)
+        {
+            return 1.0;
+        }
+
+        var matrix = transform.Value;
+        var scaleX = Math.Sqrt((matrix.M11 * matrix.M11) + (matrix.M12 * matrix.M12));
+        var scaleY = Math.Sqrt((matrix.M21 * matrix.M21) + (matrix.M22 * matrix.M22));
+        var scale = Math.Min(scaleX, scaleY);
+        if (!double.IsFinite(scale) || scale <= 0.0)
+        {
+            return 1.0;
+        }
+
+        return scale;
+    }
 
     private readonly record struct EdgeGeometryKey(
         int SourceX,
