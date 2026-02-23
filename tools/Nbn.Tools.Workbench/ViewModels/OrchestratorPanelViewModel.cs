@@ -587,7 +587,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var artifactPath = string.IsNullOrWhiteSpace(artifact.ArtifactRoot) ? artifactRoot : artifact.ArtifactRoot;
-        SampleBrainStatus = "Spawning sample brain via IO...";
+        SampleBrainStatus = "Spawning sample brain via IO/HiveMind worker placement...";
         var spawnAck = await _client.SpawnBrainViaIoAsync(new Nbn.Proto.Control.SpawnBrain
         {
             BrainDef = artifact.Sha256.ToArtifactRef((ulong)Math.Max(0L, artifact.Size), "application/x-nbn", artifactPath)
@@ -606,14 +606,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         SampleBrainStatus = "Waiting for sample brain registration...";
         if (!await WaitForBrainRegistrationAsync(brainId).ConfigureAwait(false))
         {
-            SampleBrainStatus = $"Sample brain failed to register ({brainId:D}).";
+            SampleBrainStatus = $"Sample brain failed to register ({brainId:D}) after IO/HiveMind worker placement.";
             await _client.KillBrainAsync(brainId, "workbench_sample_registration_timeout").ConfigureAwait(false);
             _sampleBrainId = null;
             return;
         }
 
         _brainDiscovered?.Invoke(brainId);
-        SampleBrainStatus = $"Sample brain running ({brainId:D}).";
+        SampleBrainStatus = $"Sample brain running ({brainId:D}). Spawned via IO; worker placement managed by HiveMind.";
         await RefreshAsync(force: true).ConfigureAwait(false);
     }
 

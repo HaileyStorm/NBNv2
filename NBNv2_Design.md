@@ -3110,8 +3110,8 @@ When these packets are available, prefer them over repeated ad-hoc `rg`/`git`/`G
 Use these defaults to avoid recurring Aleph friction:
 
 1. Increase sub-query timeout for real scouting packets (5 minutes recommended):
-   * `configure(sub_query_timeout="300")`
-   * Verify with `exec_python("get_config()")` and confirm `sub_query_timeout_seconds` is `300.0`.
+   * `configure(sub_query_timeout="1000")`
+   * Verify with `exec_python("get_config()")` and confirm `sub_query_timeout_seconds` is `1000.0`.
 2. `configure(...)` argument validation is strict:
    * `sub_query_backend` must be one of `auto`, `codex`, `api`, `claude`, `gemini`, or `kimi` (`cli` is invalid).
    * `output_feedback` must be `full` or `metadata` (boolean-like strings such as `false` are invalid).

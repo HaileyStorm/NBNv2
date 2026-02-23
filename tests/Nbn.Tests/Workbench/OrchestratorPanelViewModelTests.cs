@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using Nbn.Proto.Control;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
@@ -93,9 +92,7 @@ public class OrchestratorPanelViewModelTests
         {
             SettingsConnected = true,
             HiveMindConnected = true,
-            IoConnected = true,
-            SampleBrainPortText = "bad",
-            SampleRegionPortText = "bad"
+            IoConnected = true
         };
         var spawnedBrainId = Guid.NewGuid();
         var client = new FakeWorkbenchClient
@@ -109,15 +106,47 @@ public class OrchestratorPanelViewModelTests
         await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.NotNull(client.LastSpawnRequest);
         Assert.Equal("application/x-nbn", client.LastSpawnRequest!.BrainDef?.MediaType);
         Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
 
         vm.StopSampleBrainCommand.Execute(null);
         await WaitForAsync(() => client.KillBrainCallCount == 1);
 
         Assert.Equal(spawnedBrainId, client.LastKillBrainId);
         Assert.Contains("stop requested", vm.SampleBrainStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SpawnSampleBrainCommand_UsesIoSpawnPath_WithInvalidLocalEndpointText()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.NotNull(client.LastSpawnRequest);
+        Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -199,10 +228,11 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.KillBrainCallCount);
         Assert.Equal(spawnedBrainId, client.LastKillBrainId);
         Assert.Equal("workbench_sample_registration_timeout", client.LastKillReason);
+        Assert.Contains("after IO/HiveMind worker placement.", vm.SampleBrainStatus, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task DesignerSpawn_HiveMindManaged_IgnoresLocalHostPorts_AndUsesIoSpawn()
+    public async Task DesignerSpawn_UsesWorkerFirstIoPath_WithoutLocalHostConfiguration()
     {
         var connections = new ConnectionViewModel
         {
@@ -222,11 +252,6 @@ public class OrchestratorPanelViewModelTests
         };
         var vm = new DesignerPanelViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
-        vm.SelectedSpawnPlacement = vm.SpawnPlacementOptions.First(option => option.Value == SpawnPlacementMode.HiveMindManaged);
-        vm.SelectedRegionHostPolicy = vm.RegionHostPolicies.First(option => option.Value == RegionHostStartPolicy.Never);
-        vm.SpawnBrainPortText = "bad";
-        vm.SpawnRegionPortText = "bad";
-        vm.SpawnRegionHostCountText = "bad";
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
         vm.SpawnBrainCommand.Execute(null);
@@ -236,10 +261,11 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.RequestPlacementCallCount);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task DesignerSpawn_HiveMindManaged_Shows_Actionable_IoSpawnFailureDetails()
+    public async Task DesignerSpawn_Shows_Actionable_IoSpawnFailureDetails()
     {
         var connections = new ConnectionViewModel
         {
@@ -261,8 +287,6 @@ public class OrchestratorPanelViewModelTests
         };
         var vm = new DesignerPanelViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
-        vm.SelectedSpawnPlacement = vm.SpawnPlacementOptions.First(option => option.Value == SpawnPlacementMode.HiveMindManaged);
-        vm.SelectedRegionHostPolicy = vm.RegionHostPolicies.First(option => option.Value == RegionHostStartPolicy.Never);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
         vm.SpawnBrainCommand.Execute(null);
@@ -272,6 +296,41 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.Equal(0, client.KillBrainCallCount);
+    }
+
+    [Fact]
+    public async Task DesignerSpawn_Fails_WithWorkerPlacementRegistrationTimeoutCopy()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            PlacementAck = new PlacementAck { Accepted = true, Message = "ok" },
+            BrainListFactory = static () => new BrainListResponse()
+        };
+        var vm = new DesignerPanelViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(
+            () => vm.Status.Contains("did not register after IO/HiveMind worker placement", StringComparison.Ordinal),
+            timeoutMs: 15_000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(1, client.RequestPlacementCallCount);
+        Assert.Equal(1, client.KillBrainCallCount);
+        Assert.Equal(spawnedBrainId, client.LastKillBrainId);
+        Assert.Equal("designer_managed_spawn_registration_timeout", client.LastKillReason);
     }
 
     private static OrchestratorPanelViewModel CreateViewModel(ConnectionViewModel connections, WorkbenchClient client)

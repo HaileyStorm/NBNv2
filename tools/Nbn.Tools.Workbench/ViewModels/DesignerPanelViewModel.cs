@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -33,7 +32,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 {
     private const string NoDocumentStatus = "No file loaded.";
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
-    private const string OutputCoordinatorPrefix = "io-output-";
     private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private const int DefaultActivationFunctionId = 11; // ACT_TANH (internal)
@@ -116,17 +114,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private bool _snapshotIncludeEnabledBitset = true;
     private bool _snapshotCostEnergyEnabled;
     private bool _snapshotPlasticityEnabled;
-    private readonly IReadOnlyList<SpawnPlacementOption> _spawnPlacementOptions;
-    private SpawnPlacementOption _selectedSpawnPlacement;
-    private readonly IReadOnlyList<RegionHostStartPolicyOption> _regionHostPolicies;
-    private RegionHostStartPolicyOption _selectedRegionHostPolicy;
     private readonly IReadOnlyList<ShardPlanOption> _shardPlanOptions;
     private ShardPlanOption _selectedShardPlan;
-    private string _spawnBindHost = "127.0.0.1";
-    private string _spawnBrainPortText = "12011";
-    private string _spawnRegionPortText = "12040";
     private string _spawnArtifactRoot = BuildDefaultArtifactRoot();
-    private string _spawnRegionHostCountText = "0";
     private string _spawnShardCountText = "1";
     private string _spawnShardTargetNeuronsText = "0";
     private readonly RandomBrainOptionsViewModel _randomOptions;
@@ -135,16 +125,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         _connections = connections;
         _client = client;
-        _spawnBindHost = string.IsNullOrWhiteSpace(connections.LocalBindHost) ? "127.0.0.1" : connections.LocalBindHost;
-        _spawnBrainPortText = connections.SampleBrainPortText;
-        _spawnRegionPortText = connections.SampleRegionPortText;
         _spawnArtifactRoot = BuildDefaultArtifactRoot();
         _randomOptions = new RandomBrainOptionsViewModel();
-        _spawnPlacementOptions = BuildSpawnPlacementOptions();
-        _regionHostPolicies = BuildRegionHostPolicies();
         _shardPlanOptions = BuildShardPlanOptions();
-        _selectedSpawnPlacement = _spawnPlacementOptions[0];
-        _selectedRegionHostPolicy = _regionHostPolicies[0];
         _selectedShardPlan = _shardPlanOptions[0];
         ValidationIssues = new ObservableCollection<string>();
         VisibleNeurons = new ObservableCollection<DesignerNeuronViewModel>();
@@ -517,22 +500,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         set => SetProperty(ref _snapshotPlasticityEnabled, value);
     }
 
-    public IReadOnlyList<SpawnPlacementOption> SpawnPlacementOptions => _spawnPlacementOptions;
-
-    public SpawnPlacementOption SelectedSpawnPlacement
-    {
-        get => _selectedSpawnPlacement;
-        set => SetProperty(ref _selectedSpawnPlacement, value);
-    }
-
-    public IReadOnlyList<RegionHostStartPolicyOption> RegionHostPolicies => _regionHostPolicies;
-
-    public RegionHostStartPolicyOption SelectedRegionHostPolicy
-    {
-        get => _selectedRegionHostPolicy;
-        set => SetProperty(ref _selectedRegionHostPolicy, value);
-    }
-
     public IReadOnlyList<ShardPlanOption> ShardPlanOptions => _shardPlanOptions;
 
     public ShardPlanOption SelectedShardPlan
@@ -541,34 +508,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         set => SetProperty(ref _selectedShardPlan, value);
     }
 
-    public string SpawnBindHost
-    {
-        get => _spawnBindHost;
-        set => SetProperty(ref _spawnBindHost, value);
-    }
-
-    public string SpawnBrainPortText
-    {
-        get => _spawnBrainPortText;
-        set => SetProperty(ref _spawnBrainPortText, value);
-    }
-
-    public string SpawnRegionPortText
-    {
-        get => _spawnRegionPortText;
-        set => SetProperty(ref _spawnRegionPortText, value);
-    }
-
     public string SpawnArtifactRoot
     {
         get => _spawnArtifactRoot;
         set => SetProperty(ref _spawnArtifactRoot, value);
-    }
-
-    public string SpawnRegionHostCountText
-    {
-        get => _spawnRegionHostCountText;
-        set => SetProperty(ref _spawnRegionHostCountText, value);
     }
 
     public string SpawnShardCountText
@@ -1137,7 +1080,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         try
         {
-            var placementMode = SelectedSpawnPlacement.Value;
             var shardPlanMode = SelectedShardPlan.Value;
 
             int? shardCount = null;
@@ -1155,22 +1097,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 if (!TryParseOptionalNonNegativeInt(SpawnShardTargetNeuronsText, out maxNeuronsPerShard))
                 {
                     Status = "Invalid shard target size.";
-                    return;
-                }
-            }
-
-            int? regionHostCount = null;
-            if (placementMode == SpawnPlacementMode.DirectPerRegion)
-            {
-                if (!TryParseOptionalNonNegativeInt(SpawnRegionHostCountText, out regionHostCount))
-                {
-                    Status = "Invalid RegionHost count.";
-                    return;
-                }
-
-                if (SelectedRegionHostPolicy.Value == RegionHostStartPolicy.Never)
-                {
-                    Status = "Direct placement requires starting local RegionHosts.";
                     return;
                 }
             }
@@ -1193,50 +1119,24 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 return;
             }
 
-            var plannedShards = shardPlan.Regions
-                .OrderBy(entry => entry.Key)
-                .SelectMany(entry => entry.Value.OrderBy(span => span.ShardIndex))
-                .ToList();
-
-            if (placementMode == SpawnPlacementMode.DirectPerRegion)
+            var plannedShardCount = shardPlan.Regions.Sum(entry => entry.Value.Count);
+            if (plannedShardCount == 0)
             {
-                var requiredShardCount = plannedShards.Count;
-                if (requiredShardCount == 0)
-                {
-                    Status = "Shard plan produced no shards.";
-                    return;
-                }
-
-                if (regionHostCount is { } count && count > 0 && count < requiredShardCount)
-                {
-                    Status = $"RegionHost count {count} is less than required shard count {requiredShardCount}.";
-                    return;
-                }
+                Status = "Shard plan produced no shards.";
+                return;
             }
 
             var designBrainId = Brain.BrainId;
             if (_spawnedBrains.TryGetValue(designBrainId, out var existing))
             {
-                if (existing.IsManaged)
+                var response = await _client.ListBrainsAsync().ConfigureAwait(false);
+                if (IsBrainRegistered(response, existing.RuntimeBrainId))
                 {
-                    var response = await _client.ListBrainsAsync().ConfigureAwait(false);
-                    if (IsBrainRegistered(response, existing.RuntimeBrainId))
-                    {
-                        Status = $"Brain already spawned ({existing.RuntimeBrainId:D}).";
-                        return;
-                    }
-
-                    _spawnedBrains.Remove(designBrainId);
-                }
-                else if (existing.IsRunning)
-                {
-                    Status = $"Brain already spawned ({designBrainId:D}).";
+                    Status = $"Brain already spawned ({existing.RuntimeBrainId:D}).";
                     return;
                 }
-                else
-                {
-                    _spawnedBrains.Remove(designBrainId);
-                }
+
+                _spawnedBrains.Remove(designBrainId);
             }
 
             var artifactRoot = string.IsNullOrWhiteSpace(SpawnArtifactRoot) ? BuildDefaultArtifactRoot() : SpawnArtifactRoot;
@@ -1253,229 +1153,52 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var inputWidth = Brain.Regions[NbnConstants.InputRegionId].NeuronCount;
             var outputWidth = Brain.Regions[NbnConstants.OutputRegionId].NeuronCount;
 
-            if (placementMode == SpawnPlacementMode.HiveMindManaged)
+            Status = "Spawning brain via IO/HiveMind worker placement...";
+            var spawnAck = await _client.SpawnBrainViaIoAsync(new ProtoControl.SpawnBrain
             {
-                Status = "Spawning via IO...";
-                var spawnAck = await _client.SpawnBrainViaIoAsync(new ProtoControl.SpawnBrain
-                {
-                    BrainDef = artifactRef
-                }).ConfigureAwait(false);
+                BrainDef = artifactRef
+            }).ConfigureAwait(false);
 
-                if (spawnAck?.BrainId is null
-                    || !spawnAck.BrainId.TryToGuid(out var spawnedBrainId)
-                    || spawnedBrainId == Guid.Empty)
-                {
-                    Status = SpawnFailureFormatter.Format(
-                        prefix: "Spawn failed",
-                        ack: spawnAck,
-                        fallbackMessage: "Spawn failed: IO did not return a brain id.");
-                    return;
-                }
-
-                var placementAck = await _client.RequestPlacementAsync(BuildPlacementRequest(
-                    spawnedBrainId,
-                    inputWidth,
-                    outputWidth,
-                    artifactSha,
-                    artifactSize,
-                    shardPlanMode,
-                    shardCount,
-                    maxNeuronsPerShard,
-                    brainArtifactRoot)).ConfigureAwait(false);
-
-                if (placementAck is null || !placementAck.Accepted)
-                {
-                    var message = placementAck?.Message ?? "Placement request failed.";
-                    await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_placement_failed").ConfigureAwait(false);
-                    Status = message;
-                    return;
-                }
-
-                Status = "Waiting for brain registration...";
-                if (!await WaitForBrainRegistrationAsync(spawnedBrainId).ConfigureAwait(false))
-                {
-                    Status = $"Spawn failed: brain {spawnedBrainId:D} did not register.";
-                    await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_registration_timeout").ConfigureAwait(false);
-                    return;
-                }
-
-                _spawnedBrains[designBrainId] = DesignerSpawnState.CreateManaged(spawnedBrainId, brainArtifactRoot);
-                Status = $"Brain spawned ({spawnedBrainId:D}). Worker placement managed via IO/HiveMind.";
-                if (shardPlan.Warnings.Count > 0)
-                {
-                    Status = $"{Status} Plan warnings: {string.Join(" ", shardPlan.Warnings)}";
-                }
-
+            if (spawnAck?.BrainId is null
+                || !spawnAck.BrainId.TryToGuid(out var spawnedBrainId)
+                || spawnedBrainId == Guid.Empty)
+            {
+                Status = SpawnFailureFormatter.Format(
+                    prefix: "Spawn failed",
+                    ack: spawnAck,
+                    fallbackMessage: "Spawn failed: IO did not return a brain id.");
                 return;
             }
 
-            if (!TryParsePort(SpawnBrainPortText, out var brainPort))
+            var placementAck = await _client.RequestPlacementAsync(BuildPlacementRequest(
+                spawnedBrainId,
+                inputWidth,
+                outputWidth,
+                artifactSha,
+                artifactSize,
+                shardPlanMode,
+                shardCount,
+                maxNeuronsPerShard,
+                brainArtifactRoot)).ConfigureAwait(false);
+
+            if (placementAck is null || !placementAck.Accepted)
             {
-                Status = "Invalid BrainHost port.";
+                var message = placementAck?.Message ?? "Placement request failed.";
+                await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_placement_failed").ConfigureAwait(false);
+                Status = message;
                 return;
             }
 
-            if (!TryParsePort(SpawnRegionPortText, out var regionPortBase))
+            Status = "Waiting for brain registration after IO/HiveMind worker placement...";
+            if (!await WaitForBrainRegistrationAsync(spawnedBrainId).ConfigureAwait(false))
             {
-                Status = "Invalid RegionHost port.";
+                Status = $"Spawn failed: brain {spawnedBrainId:D} did not register after IO/HiveMind worker placement.";
+                await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_registration_timeout").ConfigureAwait(false);
                 return;
             }
 
-            if (!TryParsePort(_connections.SettingsPortText, out var settingsPort))
-            {
-                Status = "Invalid Settings port.";
-                return;
-            }
-
-            if (!TryParsePort(_connections.HiveMindPortText, out var hivePort))
-            {
-                Status = "Invalid HiveMind port.";
-                return;
-            }
-
-            if (!TryParsePort(_connections.IoPortText, out var ioPort))
-            {
-                Status = "Invalid IO port.";
-                return;
-            }
-
-            var bindHost = string.IsNullOrWhiteSpace(SpawnBindHost) ? "127.0.0.1" : SpawnBindHost;
-            var reservedPorts = new HashSet<int>();
-            if (!LocalPortAllocator.TryFindAvailablePort(bindHost, brainPort, reservedPorts, out var selectedBrainPort, out var selectedBrainPortError))
-            {
-                Status = selectedBrainPortError ?? "Unable to allocate BrainHost port.";
-                return;
-            }
-
-            reservedPorts.Add(selectedBrainPort);
-            SpawnBrainPortText = selectedBrainPort.ToString();
-
-            var brainHostProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.BrainHost");
-            if (string.IsNullOrWhiteSpace(brainHostProjectPath))
-            {
-                Status = "BrainHost project not found.";
-                return;
-            }
-
-            var hiveAddress = $"{_connections.HiveMindHost}:{hivePort}";
-            var ioAddress = $"{_connections.IoHost}:{ioPort}";
-            var routerId = $"designer-router-{designBrainId:N}";
-            var brainRootId = $"designer-root-{designBrainId:N}";
-            var brainHostArgs = $"--bind-host {bindHost} --port {selectedBrainPort}"
-                                + $" --brain-id {designBrainId:D}"
-                                + $" --router-id {routerId}"
-                                + $" --brain-root-id {brainRootId}"
-                                + $" --hivemind-address {hiveAddress}"
-                                + $" --hivemind-id {_connections.HiveMindName}"
-                                + $" --io-address {ioAddress}"
-                                + $" --io-id {_connections.IoGateway}"
-                                + $" --settings-host {_connections.SettingsHost}"
-                                + $" --settings-port {settingsPort}"
-                                + $" --settings-name {_connections.SettingsName}"
-                                + $" --input-width {inputWidth}"
-                                + $" --output-width {outputWidth}"
-                                + $" --nbn-sha256 {artifactSha}"
-                                + $" --nbn-size {artifactSize}"
-                                + $" --artifact-store-uri \"{brainArtifactRoot}\"";
-            var brainHostInfo = BuildServiceStartInfo(brainHostProjectPath, "Nbn.Runtime.BrainHost", brainHostArgs);
-            var brainHostRunner = new LocalServiceRunner();
-            var brainResult = await brainHostRunner.StartAsync(brainHostInfo, waitForExit: false, label: $"DesignerBrainHost-{designBrainId:N}");
-            if (!brainResult.Success)
-            {
-                Status = $"BrainHost failed: {brainResult.Message}";
-                return;
-            }
-
-            var regionRunners = new List<LocalServiceRunner>();
-            var regionProjectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.RegionHost");
-            if (string.IsNullOrWhiteSpace(regionProjectPath))
-            {
-                Status = "RegionHost project not found.";
-                await brainHostRunner.StopAsync().ConfigureAwait(false);
-                return;
-            }
-
-            var routerAddress = $"{bindHost}:{selectedBrainPort}";
-            var nextRegionPort = regionPortBase;
-            int? firstRegionPort = null;
-            var regionCountRemaining = regionHostCount ?? int.MaxValue;
-            var shardPlanArgs = BuildShardPlanArgs(shardPlanMode, shardCount, maxNeuronsPerShard);
-            foreach (var shard in plannedShards)
-            {
-                if (regionCountRemaining <= 0)
-                {
-                    break;
-                }
-
-                var outputArgs = string.Empty;
-                if (shard.RegionId == NbnConstants.OutputRegionId)
-                {
-                    var outputId = OutputCoordinatorPrefix + designBrainId.ToString("N");
-                    outputArgs = $" --output-address {ioAddress} --output-id {outputId}";
-                }
-
-                if (!LocalPortAllocator.TryFindAvailablePort(bindHost, nextRegionPort, reservedPorts, out var selectedRegionPort, out var selectedRegionPortError))
-                {
-                    Status = selectedRegionPortError ?? $"Unable to allocate RegionHost port for {shard.RegionId}:{shard.ShardIndex}.";
-                    await StopSpawnedAsync(brainHostRunner, regionRunners).ConfigureAwait(false);
-                    return;
-                }
-
-                reservedPorts.Add(selectedRegionPort);
-                nextRegionPort = selectedRegionPort + 1;
-                firstRegionPort ??= selectedRegionPort;
-
-                var regionArgs = $"--bind-host {bindHost} --port {selectedRegionPort}"
-                                 + $" --settings-host {_connections.SettingsHost}"
-                                 + $" --settings-port {settingsPort}"
-                                 + $" --settings-name {_connections.SettingsName}"
-                                 + $" --brain-id {designBrainId:D}"
-                                 + $" --region {shard.RegionId}"
-                                 + $" --neuron-start {shard.NeuronStart}"
-                                 + $" --neuron-count {shard.NeuronCount}"
-                                 + $" --shard-index {shard.ShardIndex}"
-                                 + $" --router-address {routerAddress}"
-                                 + $" --router-id {routerId}"
-                                 + $" --tick-address {hiveAddress}"
-                                 + $" --tick-id {_connections.HiveMindName}"
-                                 + $" --nbn-sha256 {artifactSha}"
-                                 + $" --nbn-size {artifactSize}"
-                                 + $" --artifact-root \"{brainArtifactRoot}\""
-                                 + shardPlanArgs
-                                 + outputArgs;
-
-                var regionInfo = BuildServiceStartInfo(regionProjectPath, "Nbn.Runtime.RegionHost", regionArgs);
-                var regionRunner = new LocalServiceRunner();
-                var regionResult = await regionRunner.StartAsync(
-                    regionInfo,
-                    waitForExit: false,
-                    label: $"DesignerRegion{shard.RegionId}Shard{shard.ShardIndex}-{designBrainId:N}").ConfigureAwait(false);
-                if (!regionResult.Success)
-                {
-                    Status = $"RegionHost {shard.RegionId}:{shard.ShardIndex} failed: {regionResult.Message}";
-                    await StopSpawnedAsync(brainHostRunner, regionRunners).ConfigureAwait(false);
-                    return;
-                }
-
-                regionRunners.Add(regionRunner);
-                regionCountRemaining--;
-            }
-
-            if (firstRegionPort.HasValue)
-            {
-                SpawnRegionPortText = firstRegionPort.Value.ToString();
-            }
-
-            Status = "Waiting for brain registration...";
-            if (!await WaitForBrainRegistrationAsync(designBrainId).ConfigureAwait(false))
-            {
-                Status = $"Spawn failed: brain {designBrainId:D} did not register.";
-                await StopSpawnedAsync(brainHostRunner, regionRunners).ConfigureAwait(false);
-                return;
-            }
-
-            _spawnedBrains[designBrainId] = DesignerSpawnState.CreateLocal(designBrainId, brainHostRunner, regionRunners, brainArtifactRoot);
-            Status = $"Brain spawned ({designBrainId:D}). Region hosts started. Direct placement uses local RegionHosts.";
+            _spawnedBrains[designBrainId] = DesignerSpawnState.Create(spawnedBrainId);
+            Status = $"Brain spawned ({spawnedBrainId:D}). Spawned via IO; worker placement managed by HiveMind.";
             if (shardPlan.Warnings.Count > 0)
             {
                 Status = $"{Status} Plan warnings: {string.Join(" ", shardPlan.Warnings)}";
@@ -4376,59 +4099,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return baseDir;
     }
 
-    private static bool TryParsePort(string value, out int port)
-        => int.TryParse(value, out port) && port > 0 && port < 65536;
-
-    private static ProcessStartInfo BuildServiceStartInfo(string projectPath, string exeName, string serviceArgs)
-    {
-        var exePath = ResolveExecutable(projectPath, exeName);
-        if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
-        {
-            return new ProcessStartInfo
-            {
-                FileName = exePath,
-                Arguments = serviceArgs,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-        }
-
-        var dotnetArgs = $"run --project \"{projectPath}\" -c Release --no-build -- {serviceArgs}";
-        return new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = dotnetArgs,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-    }
-
-    private static string? ResolveExecutable(string projectPath, string exeName)
-    {
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            return null;
-        }
-
-        var output = Path.Combine(projectPath, "bin", "Release", "net8.0");
-        if (OperatingSystem.IsWindows())
-        {
-            return Path.Combine(output, exeName + ".exe");
-        }
-
-        return Path.Combine(output, exeName);
-    }
-
-    private static async Task StopSpawnedAsync(LocalServiceRunner brainHostRunner, List<LocalServiceRunner> regionRunners)
-    {
-        foreach (var runner in regionRunners)
-        {
-            await runner.StopAsync().ConfigureAwait(false);
-        }
-
-        await brainHostRunner.StopAsync().ConfigureAwait(false);
-    }
-
     private async Task<bool> WaitForBrainRegistrationAsync(Guid brainId)
     {
         var deadline = DateTime.UtcNow + SpawnRegistrationTimeout;
@@ -4564,29 +4234,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             _ => ProtoShardPlanMode.ShardPlanSingle
         };
 
-    private static string BuildShardPlanArgs(ShardPlanMode mode, int? shardCount, int? maxNeuronsPerShard)
-    {
-        var planLabel = mode switch
-        {
-            ShardPlanMode.FixedShardCount => "fixed",
-            ShardPlanMode.MaxNeuronsPerShard => "max",
-            _ => "single"
-        };
-
-        var args = $" --shard-plan {planLabel}";
-        if (mode == ShardPlanMode.FixedShardCount && shardCount is { } count && count > 0)
-        {
-            args += $" --shard-count {count}";
-        }
-
-        if (mode == ShardPlanMode.MaxNeuronsPerShard && maxNeuronsPerShard is { } max && max > 0)
-        {
-            args += $" --max-neurons-per-shard {max}";
-        }
-
-        return args;
-    }
-
     private static ProtoControl.RequestPlacement BuildPlacementRequest(
         Guid brainId,
         int inputWidth,
@@ -4627,21 +4274,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return request;
     }
 
-    private static IReadOnlyList<SpawnPlacementOption> BuildSpawnPlacementOptions()
-        => new List<SpawnPlacementOption>
-        {
-            new("HiveMind placement", SpawnPlacementMode.HiveMindManaged, "Spawn through IO/HiveMind and let workers host shards."),
-            new("Direct (local)", SpawnPlacementMode.DirectPerRegion, "Start local RegionHosts for the shard plan (no placement).")
-        };
-
-    private static IReadOnlyList<RegionHostStartPolicyOption> BuildRegionHostPolicies()
-        => new List<RegionHostStartPolicyOption>
-        {
-            new("Start if none running", RegionHostStartPolicy.IfNoneRunning, "Launch local RegionHosts only if none are registered."),
-            new("Always start", RegionHostStartPolicy.Always, "Always launch local RegionHosts before spawning."),
-            new("Never start", RegionHostStartPolicy.Never, "Assume RegionHosts already exist.")
-        };
-
     private static IReadOnlyList<ShardPlanOption> BuildShardPlanOptions()
         => new List<ShardPlanOption>
         {
@@ -4674,40 +4306,15 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private sealed class DesignerSpawnState
     {
-        private DesignerSpawnState(
-            Guid runtimeBrainId,
-            bool isManaged,
-            LocalServiceRunner? brainHostRunner,
-            List<LocalServiceRunner>? regionHostRunners,
-            string artifactRoot)
+        private DesignerSpawnState(Guid runtimeBrainId)
         {
             RuntimeBrainId = runtimeBrainId;
-            IsManaged = isManaged;
-            BrainHostRunner = brainHostRunner;
-            RegionHostRunners = regionHostRunners ?? new List<LocalServiceRunner>();
-            ArtifactRoot = artifactRoot;
         }
 
-        public static DesignerSpawnState CreateLocal(
-            Guid runtimeBrainId,
-            LocalServiceRunner brainHostRunner,
-            List<LocalServiceRunner> regionHostRunners,
-            string artifactRoot)
-            => new(runtimeBrainId, isManaged: false, brainHostRunner, regionHostRunners, artifactRoot);
-
-        public static DesignerSpawnState CreateManaged(Guid runtimeBrainId, string artifactRoot)
-            => new(runtimeBrainId, isManaged: true, brainHostRunner: null, regionHostRunners: null, artifactRoot);
+        public static DesignerSpawnState Create(Guid runtimeBrainId)
+            => new(runtimeBrainId);
 
         public Guid RuntimeBrainId { get; }
-        public bool IsManaged { get; }
-        public LocalServiceRunner? BrainHostRunner { get; }
-        public List<LocalServiceRunner> RegionHostRunners { get; }
-        public string ArtifactRoot { get; }
-
-        public bool IsRunning
-            => IsManaged
-               || (BrainHostRunner?.IsRunning ?? false)
-               || RegionHostRunners.Any(runner => runner.IsRunning);
     }
 
     private static string FormatPath(IStorageItem item)
@@ -4727,29 +4334,12 @@ public enum DesignerDocumentType
     Nbs
 }
 
-public enum SpawnPlacementMode
-{
-    HiveMindManaged,
-    DirectPerRegion
-}
-
-public enum RegionHostStartPolicy
-{
-    IfNoneRunning,
-    Always,
-    Never
-}
-
 public enum ShardPlanMode
 {
     SingleShardPerRegion,
     FixedShardCount,
     MaxNeuronsPerShard
 }
-
-public sealed record SpawnPlacementOption(string Label, SpawnPlacementMode Value, string Description);
-
-public sealed record RegionHostStartPolicyOption(string Label, RegionHostStartPolicy Value, string Description);
 
 public sealed record ShardPlanOption(string Label, ShardPlanMode Value, string Description);
 

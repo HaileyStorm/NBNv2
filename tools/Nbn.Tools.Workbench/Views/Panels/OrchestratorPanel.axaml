@@ -135,12 +135,6 @@
             <Button Content="Stop Sample Brain" Command="{Binding StopSampleBrainCommand}" />
             <TextBlock Text="{Binding SampleBrainStatus}" Classes="muted" VerticalAlignment="Center" />
           </StackPanel>
-          <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" RowDefinitions="Auto" ColumnSpacing="10" RowSpacing="6">
-            <TextBlock Text="Sample Brain Port" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding Connections.SampleBrainPortText}" Width="90" />
-            <TextBlock Grid.Column="2" Text="Region Base Port" Classes="muted" />
-            <TextBox Grid.Column="3" Text="{Binding Connections.SampleRegionPortText}" Width="90" />
-          </Grid>
           <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
             <TextBlock Text="SettingsMonitor" Classes="muted" />
             <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
