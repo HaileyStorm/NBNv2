@@ -28,6 +28,7 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
     private readonly Dictionary<Guid, BrainState> _brains = new();
+    private readonly Dictionary<Guid, PendingSpawnState> _pendingSpawns = new();
     private readonly Dictionary<Guid, WorkerCatalogEntry> _workerCatalog = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
@@ -137,6 +138,9 @@ public sealed class HiveMindActor : IActor
             case ProtoIo.RequestSnapshot message:
                 HandleRequestSnapshot(context, message);
                 break;
+            case ProtoControl.SpawnBrain message:
+                HandleSpawnBrain(context, message);
+                break;
             case ProtoControl.RequestPlacement message:
                 HandleRequestPlacement(context, message);
                 break;
@@ -170,6 +174,9 @@ public sealed class HiveMindActor : IActor
                 break;
             case PlacementReconcileTimeout message:
                 HandlePlacementReconcileTimeout(context, message);
+                break;
+            case SpawnCompletionTimeout message:
+                HandleSpawnCompletionTimeout(context, message);
                 break;
             case ProtoSettings.WorkerInventorySnapshotResponse message:
                 HandleWorkerInventorySnapshotResponse(message);
@@ -300,6 +307,7 @@ public sealed class HiveMindActor : IActor
         RegisterBrainWithIo(context, brainState);
 
         ReportBrainRegistration(context, brainState);
+        TryCompletePendingSpawn(context, brainState);
 
         if (isNew)
         {
@@ -336,6 +344,11 @@ public sealed class HiveMindActor : IActor
         if (!_brains.Remove(brainId))
         {
             return;
+        }
+
+        if (_pendingSpawns.Remove(brainId, out var pendingSpawn))
+        {
+            pendingSpawn.Completion.TrySetResult(false);
         }
 
         if (notifyIoUnregister && _ioPid is not null)
@@ -406,6 +419,7 @@ public sealed class HiveMindActor : IActor
                 ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning,
                 ProtoControl.PlacementFailureReason.PlacementFailureNone);
             brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileMatched;
+            TryCompletePendingSpawn(context, brain);
         }
         EmitVizEvent(
             context,
@@ -678,11 +692,72 @@ public sealed class HiveMindActor : IActor
         RegisterBrainWithIo(context, brain, force: true);
     }
 
+    private void HandleSpawnBrain(IContext context, ProtoControl.SpawnBrain message)
+    {
+        if (message.BrainDef is null
+            || !HasArtifactRef(message.BrainDef)
+            || !string.Equals(message.BrainDef.MediaType, "application/x-nbn", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Respond(new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() });
+            return;
+        }
+
+        Guid brainId;
+        do
+        {
+            brainId = Guid.NewGuid();
+        } while (_brains.ContainsKey(brainId) || _pendingSpawns.ContainsKey(brainId));
+
+        var placementAck = ProcessPlacementRequest(
+            context,
+            new ProtoControl.RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                BaseDef = message.BrainDef.Clone(),
+                RequestId = $"spawn:{brainId:N}",
+                RequestedMs = (ulong)NowMs()
+            });
+
+        if (!placementAck.Accepted || !_brains.TryGetValue(brainId, out var brain))
+        {
+            if (_brains.ContainsKey(brainId))
+            {
+                UnregisterBrain(context, brainId, reason: "spawn_failed");
+            }
+
+            context.Respond(new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() });
+            return;
+        }
+
+        var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch);
+        _pendingSpawns[brain.BrainId] = pending;
+
+        ScheduleSelf(
+            context,
+            TimeSpan.FromMilliseconds(ComputeSpawnCompletionTimeoutMs()),
+            new SpawnCompletionTimeout(brain.BrainId, brain.PlacementEpoch));
+
+        context.ReenterAfter(
+            pending.Completion.Task,
+            task =>
+            {
+                var completed = task.IsCompletedSuccessfully && task.Result;
+                context.Respond(new ProtoControl.SpawnBrainAck
+                {
+                    BrainId = completed ? brain.BrainId.ToProtoUuid() : Guid.Empty.ToProtoUuid()
+                });
+                return Task.CompletedTask;
+            });
+    }
+
     private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
+        => context.Respond(ProcessPlacementRequest(context, message));
+
+    private ProtoControl.PlacementAck ProcessPlacementRequest(IContext context, ProtoControl.RequestPlacement message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
-            context.Respond(new ProtoControl.PlacementAck
+            return new ProtoControl.PlacementAck
             {
                 Accepted = false,
                 Message = "Invalid brain id.",
@@ -690,8 +765,7 @@ public sealed class HiveMindActor : IActor
                 LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
                 FailureReason = ProtoControl.PlacementFailureReason.PlacementFailureInvalidBrain,
                 AcceptedMs = (ulong)NowMs()
-            });
-            return;
+            };
         }
 
         if (!_brains.TryGetValue(brainId, out var brain))
@@ -749,7 +823,7 @@ public sealed class HiveMindActor : IActor
             Log(
                 $"Placement request rejected for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={failedPlanLabel} reason={failureReason}: {failureMessage}");
 
-            context.Respond(new ProtoControl.PlacementAck
+            return new ProtoControl.PlacementAck
             {
                 Accepted = false,
                 Message = failureMessage,
@@ -758,8 +832,7 @@ public sealed class HiveMindActor : IActor
                 FailureReason = brain.PlacementFailureReason,
                 AcceptedMs = (ulong)brain.PlacementUpdatedMs,
                 RequestId = brain.PlacementRequestId
-            });
-            return;
+            };
         }
 
         if (!TryCreatePlacementExecution(context, brain, plannedPlacement, out var executionFailure))
@@ -772,7 +845,7 @@ public sealed class HiveMindActor : IActor
                 ProtoControl.PlacementFailureReason.PlacementFailureInternalError);
             brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
 
-            context.Respond(new ProtoControl.PlacementAck
+            return new ProtoControl.PlacementAck
             {
                 Accepted = false,
                 Message = executionFailure,
@@ -781,8 +854,7 @@ public sealed class HiveMindActor : IActor
                 FailureReason = brain.PlacementFailureReason,
                 AcceptedMs = (ulong)brain.PlacementUpdatedMs,
                 RequestId = brain.PlacementRequestId
-            });
-            return;
+            };
         }
 
         brain.PlannedPlacement = plannedPlacement.Clone();
@@ -803,7 +875,7 @@ public sealed class HiveMindActor : IActor
 
         ScheduleSelf(context, TimeSpan.Zero, new DispatchPlacementPlan(brainId, brain.PlacementEpoch));
 
-        context.Respond(new ProtoControl.PlacementAck
+        return new ProtoControl.PlacementAck
         {
             Accepted = true,
             Message = "Placement request accepted.",
@@ -812,7 +884,7 @@ public sealed class HiveMindActor : IActor
             FailureReason = brain.PlacementFailureReason,
             AcceptedMs = (ulong)brain.PlacementUpdatedMs,
             RequestId = brain.PlacementRequestId
-        });
+        };
     }
 
     private void HandlePlacementAssignmentAck(IContext context, ProtoControl.PlacementAssignmentAck message)
@@ -865,6 +937,7 @@ public sealed class HiveMindActor : IActor
 
                 trackedAssignment.Failed = true;
                 FailPlacementExecution(
+                    context,
                     brain,
                     failureReason,
                     ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -903,10 +976,10 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        HandlePlacementAssignmentAckLegacy(brain, message);
+        HandlePlacementAssignmentAckLegacy(context, brain, message);
     }
 
-    private void HandlePlacementAssignmentAckLegacy(BrainState brain, ProtoControl.PlacementAssignmentAck message)
+    private void HandlePlacementAssignmentAckLegacy(IContext context, BrainState brain, ProtoControl.PlacementAssignmentAck message)
     {
         if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
         {
@@ -915,6 +988,7 @@ public sealed class HiveMindActor : IActor
                 : message.FailureReason;
             UpdatePlacementLifecycle(brain, ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed, failureReason);
             brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
+            TryCompletePendingSpawn(context, brain);
             return;
         }
 
@@ -943,6 +1017,8 @@ public sealed class HiveMindActor : IActor
             default:
                 break;
         }
+
+        TryCompletePendingSpawn(context, brain);
     }
 
     private void HandlePlacementReconcileReport(IContext context, ProtoControl.PlacementReconcileReport message)
@@ -970,10 +1046,10 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        HandlePlacementReconcileReportLegacy(brain, message);
+        HandlePlacementReconcileReportLegacy(context, brain, message);
     }
 
-    private void HandlePlacementReconcileReportLegacy(BrainState brain, ProtoControl.PlacementReconcileReport message)
+    private void HandlePlacementReconcileReportLegacy(IContext context, BrainState brain, ProtoControl.PlacementReconcileReport message)
     {
         brain.PlacementReconcileState = message.ReconcileState;
         switch (message.ReconcileState)
@@ -1001,6 +1077,8 @@ public sealed class HiveMindActor : IActor
                         : message.FailureReason);
                 break;
         }
+
+        TryCompletePendingSpawn(context, brain);
     }
 
     private void HandleDispatchPlacementPlan(IContext context, DispatchPlacementPlan message)
@@ -1021,6 +1099,7 @@ public sealed class HiveMindActor : IActor
         if (brain.PlacementExecution.Assignments.Count == 0)
         {
             FailPlacementExecution(
+                context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureInternalError,
                 ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1090,6 +1169,7 @@ public sealed class HiveMindActor : IActor
         }
 
         FailPlacementExecution(
+            context,
             brain,
             ProtoControl.PlacementFailureReason.PlacementFailureAssignmentTimeout,
             ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1112,6 +1192,7 @@ public sealed class HiveMindActor : IActor
         }
 
         FailPlacementExecution(
+            context,
             brain,
             ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch,
             ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1134,6 +1215,7 @@ public sealed class HiveMindActor : IActor
         {
             case ProtoControl.PlacementReconcileState.PlacementReconcileFailed:
                 FailPlacementExecution(
+                    context,
                     brain,
                     message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
                         ? ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch
@@ -1172,6 +1254,7 @@ public sealed class HiveMindActor : IActor
         if (!TryValidateReconcileMatches(execution, out var mismatch))
         {
             FailPlacementExecution(
+                context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch,
                 ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1197,13 +1280,87 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        ApplyObservedControlAssignments(context, brain, execution);
+
         UpdatePlacementLifecycle(
             brain,
             brain.Shards.Count > 0
                 ? ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
                 : ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
             ProtoControl.PlacementFailureReason.PlacementFailureNone);
+        TryCompletePendingSpawn(context, brain);
     }
+
+    private void ApplyObservedControlAssignments(IContext context, BrainState brain, PlacementExecutionState execution)
+    {
+        var updated = false;
+        if (TryGetObservedControlPid(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot, out var observedRoot)
+            && !PidEquals(brain.BrainRootPid, observedRoot))
+        {
+            brain.BrainRootPid = NormalizePid(context, observedRoot) ?? observedRoot;
+            updated = true;
+        }
+
+        if (TryGetObservedControlPid(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetSignalRouter, out var observedRouter)
+            && !PidEquals(brain.SignalRouterPid, observedRouter))
+        {
+            brain.SignalRouterPid = NormalizePid(context, observedRouter) ?? observedRouter;
+            updated = true;
+        }
+
+        if (brain.SignalRouterPid is not null && string.IsNullOrWhiteSpace(brain.SignalRouterPid.Address))
+        {
+            var fallbackAddress = brain.BrainRootPid?.Address;
+            if (!string.IsNullOrWhiteSpace(fallbackAddress))
+            {
+                brain.SignalRouterPid = new PID(fallbackAddress, brain.SignalRouterPid.Id);
+                updated = true;
+            }
+        }
+
+        if (brain.BrainRootPid is not null && string.IsNullOrWhiteSpace(brain.BrainRootPid.Address))
+        {
+            var fallbackAddress = brain.SignalRouterPid?.Address;
+            if (!string.IsNullOrWhiteSpace(fallbackAddress))
+            {
+                brain.BrainRootPid = new PID(fallbackAddress, brain.BrainRootPid.Id);
+                updated = true;
+            }
+        }
+
+        if (!updated)
+        {
+            return;
+        }
+
+        UpdateRoutingTable(context, brain);
+        ReportBrainRegistration(context, brain);
+    }
+
+    private static bool TryGetObservedControlPid(
+        PlacementExecutionState execution,
+        ProtoControl.PlacementAssignmentTarget target,
+        out PID pid)
+    {
+        foreach (var observed in execution.ObservedAssignments.Values.OrderBy(static value => value.AssignmentId, StringComparer.Ordinal))
+        {
+            if (observed.Target != target || !TryParsePid(observed.ActorPid, out var observedPid))
+            {
+                continue;
+            }
+
+            pid = observedPid;
+            return true;
+        }
+
+        pid = new PID();
+        return false;
+    }
+
+    private static bool PidEquals(PID? left, PID right)
+        => left is not null
+           && string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.Ordinal)
+           && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
 
     private void DispatchPlacementAssignment(
         IContext context,
@@ -1221,6 +1378,7 @@ public sealed class HiveMindActor : IActor
         {
             assignment.Failed = true;
             FailPlacementExecution(
+                context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
                 ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1245,6 +1403,7 @@ public sealed class HiveMindActor : IActor
             assignment.AwaitingAck = false;
             assignment.Failed = true;
             FailPlacementExecution(
+                context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
                 ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1316,6 +1475,7 @@ public sealed class HiveMindActor : IActor
             catch (Exception ex)
             {
                 FailPlacementExecution(
+                    context,
                     brain,
                     ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
                     ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
@@ -1334,6 +1494,7 @@ public sealed class HiveMindActor : IActor
                     ? ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
                     : ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
                 ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            TryCompletePendingSpawn(context, brain);
             return;
         }
 
@@ -1465,6 +1626,7 @@ public sealed class HiveMindActor : IActor
         => assignment.Attempt <= _options.PlacementAssignmentMaxRetries;
 
     private void FailPlacementExecution(
+        IContext context,
         BrainState brain,
         ProtoControl.PlacementFailureReason failureReason,
         ProtoControl.PlacementReconcileState reconcileState)
@@ -1487,6 +1649,68 @@ public sealed class HiveMindActor : IActor
             brain,
             ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
             failureReason);
+        TryCompletePendingSpawn(context, brain);
+    }
+
+    private void HandleSpawnCompletionTimeout(IContext context, SpawnCompletionTimeout message)
+    {
+        if (!_pendingSpawns.TryGetValue(message.BrainId, out var pending)
+            || pending.PlacementEpoch != message.PlacementEpoch)
+        {
+            return;
+        }
+
+        _pendingSpawns.Remove(message.BrainId);
+        pending.Completion.TrySetResult(false);
+        if (_brains.ContainsKey(message.BrainId))
+        {
+            UnregisterBrain(context, message.BrainId, reason: "spawn_timeout");
+        }
+    }
+
+    private void TryCompletePendingSpawn(IContext context, BrainState brain)
+    {
+        if (!_pendingSpawns.TryGetValue(brain.BrainId, out var pending))
+        {
+            return;
+        }
+
+        if (pending.PlacementEpoch != brain.PlacementEpoch)
+        {
+            if (pending.PlacementEpoch < brain.PlacementEpoch)
+            {
+                _pendingSpawns.Remove(brain.BrainId);
+                pending.Completion.TrySetResult(false);
+            }
+
+            return;
+        }
+
+        if (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+            || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning)
+        {
+            _pendingSpawns.Remove(brain.BrainId);
+            pending.Completion.TrySetResult(true);
+            return;
+        }
+
+        if (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed
+            || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleTerminated)
+        {
+            _pendingSpawns.Remove(brain.BrainId);
+            pending.Completion.TrySetResult(false);
+            UnregisterBrain(context, brain.BrainId, reason: "spawn_failed");
+        }
+    }
+
+    private int ComputeSpawnCompletionTimeoutMs()
+    {
+        var attempts = Math.Max(1, _options.PlacementAssignmentMaxRetries + 1);
+        var assignmentWindow = (long)Math.Max(100, _options.PlacementAssignmentTimeoutMs) * attempts;
+        var retryWindow = (long)Math.Max(0, _options.PlacementAssignmentRetryBackoffMs) * Math.Max(0, attempts - 1);
+        var reconcileWindow = Math.Max(100, _options.PlacementReconcileTimeoutMs);
+        var timeoutMs = assignmentWindow + retryWindow + reconcileWindow + 250L;
+        return (int)Math.Min(int.MaxValue, Math.Max(500L, timeoutMs));
     }
 
     private ProtoControl.PlacementLifecycleInfo BuildPlacementLifecycleInfo(Guid brainId)
@@ -3360,6 +3584,7 @@ public sealed class HiveMindActor : IActor
     private sealed record RetryPlacementAssignment(Guid BrainId, ulong PlacementEpoch, string AssignmentId, int Attempt);
     private sealed record PlacementAssignmentTimeout(Guid BrainId, ulong PlacementEpoch, string AssignmentId, int Attempt);
     private sealed record PlacementReconcileTimeout(Guid BrainId, ulong PlacementEpoch);
+    private sealed record SpawnCompletionTimeout(Guid BrainId, ulong PlacementEpoch);
 
     private enum TickPhase
     {
@@ -3437,6 +3662,19 @@ public sealed class HiveMindActor : IActor
             = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
+    }
+
+    private sealed class PendingSpawnState
+    {
+        public PendingSpawnState(Guid brainId, ulong placementEpoch)
+        {
+            BrainId = brainId;
+            PlacementEpoch = placementEpoch;
+        }
+
+        public Guid BrainId { get; }
+        public ulong PlacementEpoch { get; }
+        public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class WorkerCatalogEntry

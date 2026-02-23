@@ -11,6 +11,81 @@ namespace Nbn.Tests.Integration;
 public class IoGatewayArtifactReferenceTests
 {
     [Fact]
+    public async Task SpawnBrainViaIO_Forwards_To_HiveMind_And_Passes_Through_Success_Ack()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expectedBrainId = Guid.NewGuid();
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSpawnProbe(
+            forwarded,
+            new ProtoControl.SpawnBrainAck
+            {
+                BrainId = expectedBrainId.ToProtoUuid()
+            })));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainDef = new string('9', 64).ToArtifactRef(99, "application/x-nbn", "test-store");
+        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+            gateway,
+            new SpawnBrainViaIO
+            {
+                Request = new ProtoControl.SpawnBrain
+                {
+                    BrainDef = brainDef
+                }
+            });
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
+        Assert.Equal(expectedBrainId, actualBrainId);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.NotNull(forwardedRequest.BrainDef);
+        Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SpawnBrainViaIO_Forwards_To_HiveMind_And_Passes_Through_Empty_Ack()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSpawnProbe(
+            forwarded,
+            new ProtoControl.SpawnBrainAck
+            {
+                BrainId = Guid.Empty.ToProtoUuid()
+            })));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainDef = new string('8', 64).ToArtifactRef(98, "application/x-nbn", "test-store");
+        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+            gateway,
+            new SpawnBrainViaIO
+            {
+                Request = new ProtoControl.SpawnBrain
+                {
+                    BrainDef = brainDef
+                }
+            });
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
+        Assert.Equal(Guid.Empty, actualBrainId);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.NotNull(forwardedRequest.BrainDef);
+        Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ExportBrainDefinition_Returns_Registered_BaseDefinition()
     {
         var system = new ActorSystem();
@@ -1079,6 +1154,31 @@ public class IoGatewayArtifactReferenceTests
             HiveMindName: null,
             ReproAddress: null,
             ReproName: null);
+
+    private sealed class HiveSpawnProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.SpawnBrain> _request;
+        private readonly ProtoControl.SpawnBrainAck _ack;
+
+        public HiveSpawnProbe(
+            TaskCompletionSource<ProtoControl.SpawnBrain> request,
+            ProtoControl.SpawnBrainAck ack)
+        {
+            _request = request;
+            _ack = ack;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoControl.SpawnBrain request)
+            {
+                _request.TrySetResult(request.Clone());
+                context.Respond(_ack.Clone());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class ReproFixedResponseProbe : IActor
     {

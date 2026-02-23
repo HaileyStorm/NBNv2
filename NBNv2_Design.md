@@ -148,6 +148,15 @@ Preferred commands:
   * `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
   * (same pattern applies to `dotnet build` when needed)
 
+### 2.5 Workbench UI dispatch lifecycle (required)
+
+To keep operator flows and tests deterministic across desktop and headless environments:
+
+* Workbench view-model command results (status text, counters, summaries, and control state) must not depend on a running Avalonia UI event loop.
+* Dispatcher wrappers must execute inline when no active application lifetime is running (for example, headless tests or startup/shutdown phases), and queue to UI thread only when the UI lifetime is active.
+* Do not make correctness depend on eventual `Dispatcher.UIThread.Post(...)` queue drain.
+* Workbench tests should pass regardless of whether headless Avalonia was initialized earlier in the same process.
+
 ---
 
 ## 3. Distributed architecture and service topology
