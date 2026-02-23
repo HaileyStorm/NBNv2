@@ -84,6 +84,14 @@
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
+            <TextBlock Text="Prune" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox ItemsSource="{Binding PrunePolicies}" SelectedItem="{Binding SelectedPrunePolicy}" Width="210">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
           </StackPanel>
         </StackPanel>
       </Border>
@@ -113,7 +121,7 @@
           <TextBlock Text="Mutation" Classes="card-title" />
 
           <TextBlock Text="Structure + connectivity" Classes="muted row-title" />
-          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel2" />
               <ColumnDefinition Width="*" />
@@ -122,12 +130,38 @@
             <TextBox Grid.Column="1" Text="{Binding ProbAddNeuronToEmptyRegion}" Width="120" />
             <TextBlock Grid.Row="1" Text="Prob remove last neuron" Classes="muted" />
             <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ProbRemoveLastNeuronFromRegion}" Width="120" />
-            <TextBlock Grid.Row="2" Text="Prob add axon" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbAddAxon}" Width="120" />
-            <TextBlock Grid.Row="3" Text="Prob remove axon" Classes="muted" />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProbRemoveAxon}" Width="120" />
-            <TextBlock Grid.Row="4" Text="Prob reroute axon" Classes="muted" />
-            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding ProbRerouteAxon}" Width="120" />
+            <TextBlock Grid.Row="2" Text="Prob disable neuron" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbDisableNeuron}" Width="120" />
+            <TextBlock Grid.Row="3" Text="Prob reactivate neuron" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProbReactivateNeuron}" Width="120" />
+            <TextBlock Grid.Row="4" Text="Prob add axon" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding ProbAddAxon}" Width="120" />
+            <TextBlock Grid.Row="5" Text="Prob remove axon" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding ProbRemoveAxon}" Width="120" />
+            <TextBlock Grid.Row="6" Text="Prob reroute axon" Classes="muted" />
+            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding ProbRerouteAxon}" Width="120" />
+            <TextBlock Grid.Row="7" Text="Prob reroute inbound on delete" Classes="muted" />
+            <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding ProbRerouteInboundAxonOnDelete}" Width="120" />
+          </Grid>
+
+          <TextBlock Text="Value + function selection" Classes="muted row-title" />
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel2" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Prob choose parent A" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding ProbChooseParentA}" Width="120" />
+            <TextBlock Grid.Row="1" Text="Prob choose parent B" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ProbChooseParentB}" Width="120" />
+            <TextBlock Grid.Row="2" Text="Prob average" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ProbAverage}" Width="120" />
+            <TextBlock Grid.Row="3" Text="Prob mutate values" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ProbMutate}" Width="120" />
+            <TextBlock Grid.Row="4" Text="Prob choose func A" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding ProbChooseFuncA}" Width="120" />
+            <TextBlock Grid.Row="5" Text="Prob mutate funcs" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding ProbMutateFunc}" Width="120" />
           </Grid>
 
           <TextBlock Text="Strength mutations" Classes="muted row-title" />
@@ -153,6 +187,34 @@
             <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding StrengthWeightB}" Width="120" />
             <TextBlock Grid.Row="6" Text="Prob mutate" Classes="muted" />
             <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding ProbStrengthMutate}" Width="120" />
+          </Grid>
+
+          <TextBlock Text="Limits (0 means unlimited)" Classes="muted row-title" />
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel2" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Max neurons added abs" Classes="muted" />
+            <TextBox Grid.Column="1" Text="{Binding MaxNeuronsAddedAbs}" Width="120" />
+            <TextBlock Grid.Row="1" Text="Max neurons added pct" Classes="muted" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding MaxNeuronsAddedPct}" Width="120" />
+            <TextBlock Grid.Row="2" Text="Max neurons removed abs" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxNeuronsRemovedAbs}" Width="120" />
+            <TextBlock Grid.Row="3" Text="Max neurons removed pct" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxNeuronsRemovedPct}" Width="120" />
+            <TextBlock Grid.Row="4" Text="Max axons added abs" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding MaxAxonsAddedAbs}" Width="120" />
+            <TextBlock Grid.Row="5" Text="Max axons added pct" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding MaxAxonsAddedPct}" Width="120" />
+            <TextBlock Grid.Row="6" Text="Max axons removed abs" Classes="muted" />
+            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding MaxAxonsRemovedAbs}" Width="120" />
+            <TextBlock Grid.Row="7" Text="Max axons removed pct" Classes="muted" />
+            <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding MaxAxonsRemovedPct}" Width="120" />
+            <TextBlock Grid.Row="8" Text="Max regions added abs" Classes="muted" />
+            <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding MaxRegionsAddedAbs}" Width="120" />
+            <TextBlock Grid.Row="9" Text="Max regions removed abs" Classes="muted" />
+            <TextBox Grid.Row="9" Grid.Column="1" Text="{Binding MaxRegionsRemovedAbs}" Width="120" />
           </Grid>
         </StackPanel>
       </Border>

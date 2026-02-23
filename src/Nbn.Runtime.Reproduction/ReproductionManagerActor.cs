@@ -338,15 +338,17 @@ public sealed class ReproductionManagerActor : IActor
         ulong seed,
         out MutationSummary summary)
     {
-        var chooseAProbability = ResolveSelectionProbability(
-            config?.ProbChooseParentA ?? 0f,
-            config?.ProbChooseParentB ?? 0f);
-
         var sectionsA = BuildSectionMap(parentA.Regions);
         var sectionsB = BuildSectionMap(parentB.Regions);
         var state = seed == 0 ? DefaultSpotCheckSeed : seed;
         var budgets = CreateMutationBudgets(sectionsA, sectionsB, config?.Limits);
-        var mutableRegions = BuildBaseChildRegions(sectionsA, sectionsB, chooseAProbability, ref state, budgets);
+        var mutableRegions = BuildBaseChildRegions(
+            sectionsA,
+            sectionsB,
+            parentA.Header.Quantization,
+            config,
+            ref state,
+            budgets);
         ApplyStructuralMutations(mutableRegions, config, ref state, budgets);
         var childSections = BuildSectionsFromMutableRegions(mutableRegions, parentA.Header.AxonStride, budgets);
 
@@ -357,7 +359,8 @@ public sealed class ReproductionManagerActor : IActor
             AxonsAdded = budgets.AxonsAdded,
             AxonsRemoved = budgets.AxonsRemoved,
             AxonsRerouted = budgets.AxonsRerouted,
-            FunctionsMutated = budgets.FunctionsMutated
+            FunctionsMutated = budgets.FunctionsMutated,
+            StrengthCodesChanged = budgets.StrengthCodesChanged
         };
 
         return childSections;
@@ -366,10 +369,14 @@ public sealed class ReproductionManagerActor : IActor
     private static Dictionary<int, MutableRegion> BuildBaseChildRegions(
         IReadOnlyDictionary<int, NbnRegionSection> sectionsA,
         IReadOnlyDictionary<int, NbnRegionSection> sectionsB,
-        float chooseAProbability,
+        NbnQuantizationSchema quantization,
+        ReproduceConfig? config,
         ref ulong state,
         MutationBudgets budgets)
     {
+        var chooseAProbability = ResolveSelectionProbability(
+            config?.ProbChooseParentA ?? 0f,
+            config?.ProbChooseParentB ?? 0f);
         var regions = new Dictionary<int, MutableRegion>(sectionsA.Count);
 
         for (var regionId = 0; regionId < NbnConstants.RegionCount; regionId++)
@@ -386,23 +393,35 @@ public sealed class ReproductionManagerActor : IActor
 
             for (var neuronId = 0; neuronId < neuronCount; neuronId++)
             {
+                var neuronA = sectionA.NeuronRecords[neuronId];
+                var neuronB = sectionB.NeuronRecords[neuronId];
                 var chooseA = ChooseParentA(chooseAProbability, ref state);
-                var sourceSection = chooseA ? sectionA : sectionB;
-                var sourceStarts = chooseA ? startsA : startsB;
-                var sourceNeuron = sourceSection.NeuronRecords[neuronId];
-                var sourceAxonStart = sourceStarts[neuronId];
-                var sourceAxons = new List<AxonRecord>(sourceNeuron.AxonCount);
-                for (var axonOffset = 0; axonOffset < sourceNeuron.AxonCount; axonOffset++)
-                {
-                    sourceAxons.Add(sourceSection.AxonRecords[sourceAxonStart + axonOffset]);
-                }
+                var sourceAxons = chooseA
+                    ? ReadNeuronAxons(sectionA, startsA, neuronId)
+                    : ReadNeuronAxons(sectionB, startsB, neuronId);
 
-                if (!chooseA && NeuronFunctionsDiffer(sectionA.NeuronRecords[neuronId], sourceNeuron))
+                var template = BuildNeuronTemplate(neuronA, neuronB, chooseA, config, ref state);
+                if (NeuronFunctionsDiffer(neuronA, template))
                 {
                     budgets.FunctionsMutated++;
                 }
 
-                mutableNeurons.Add(new MutableNeuron(sourceNeuron, sourceNeuron.Exists, sourceAxons));
+                if (config is not null && config.StrengthTransformEnabled && sourceAxons.Count > 0)
+                {
+                    var axonsA = ReadNeuronAxons(sectionA, startsA, neuronId);
+                    var axonsB = ReadNeuronAxons(sectionB, startsB, neuronId);
+                    ApplyStrengthTransforms(
+                        sourceAxons,
+                        axonsA,
+                        axonsB,
+                        chooseA,
+                        config,
+                        quantization.Strength,
+                        ref state,
+                        budgets);
+                }
+
+                mutableNeurons.Add(new MutableNeuron(template, template.Exists, sourceAxons));
             }
 
             regions[regionId] = new MutableRegion(regionId, mutableNeurons);
@@ -410,6 +429,318 @@ public sealed class ReproductionManagerActor : IActor
 
         return regions;
     }
+
+    private static List<AxonRecord> ReadNeuronAxons(NbnRegionSection section, IReadOnlyList<int> starts, int neuronId)
+    {
+        var neuron = section.NeuronRecords[neuronId];
+        var start = starts[neuronId];
+        var axons = new List<AxonRecord>(neuron.AxonCount);
+        for (var offset = 0; offset < neuron.AxonCount; offset++)
+        {
+            axons.Add(section.AxonRecords[start + offset]);
+        }
+
+        return axons;
+    }
+
+    private static NeuronRecord BuildNeuronTemplate(
+        NeuronRecord neuronA,
+        NeuronRecord neuronB,
+        bool chooseAByFallback,
+        ReproduceConfig? config,
+        ref ulong state)
+    {
+        var exists = chooseAByFallback ? neuronA.Exists : neuronB.Exists;
+        var paramBCode = SelectValueCode(neuronA.ParamBCode, neuronB.ParamBCode, chooseAByFallback, config, bits: 6, ref state);
+        var paramACode = SelectValueCode(neuronA.ParamACode, neuronB.ParamACode, chooseAByFallback, config, bits: 6, ref state);
+        var activationThresholdCode = SelectValueCode(
+            neuronA.ActivationThresholdCode,
+            neuronB.ActivationThresholdCode,
+            chooseAByFallback,
+            config,
+            bits: 6,
+            ref state);
+        var preActivationThresholdCode = SelectValueCode(
+            neuronA.PreActivationThresholdCode,
+            neuronB.PreActivationThresholdCode,
+            chooseAByFallback,
+            config,
+            bits: 6,
+            ref state);
+
+        var activationFunctionId = SelectFunctionCode(
+            neuronA.ActivationFunctionId,
+            neuronB.ActivationFunctionId,
+            chooseAByFallback,
+            config,
+            bits: 6,
+            ref state);
+        var resetFunctionId = SelectFunctionCode(
+            neuronA.ResetFunctionId,
+            neuronB.ResetFunctionId,
+            chooseAByFallback,
+            config,
+            bits: 6,
+            ref state);
+        var accumulationFunctionId = SelectFunctionCode(
+            neuronA.AccumulationFunctionId,
+            neuronB.AccumulationFunctionId,
+            chooseAByFallback,
+            config,
+            bits: 2,
+            ref state);
+
+        return new NeuronRecord(
+            axonCount: 0,
+            paramBCode: paramBCode,
+            paramACode: paramACode,
+            activationThresholdCode: activationThresholdCode,
+            preActivationThresholdCode: preActivationThresholdCode,
+            resetFunctionId: resetFunctionId,
+            activationFunctionId: activationFunctionId,
+            accumulationFunctionId: accumulationFunctionId,
+            exists: exists);
+    }
+
+    private static byte SelectValueCode(
+        byte codeA,
+        byte codeB,
+        bool chooseAByFallback,
+        ReproduceConfig? config,
+        int bits,
+        ref ulong state)
+    {
+        var maxCode = QuantizationMap.MaxCode(bits);
+        var mode = SelectValueMode(config, chooseAByFallback, ref state);
+        var selected = mode switch
+        {
+            ValueSelectionMode.ParentA => codeA,
+            ValueSelectionMode.ParentB => codeB,
+            ValueSelectionMode.Average => (byte)Math.Clamp((int)MathF.Round((codeA + codeB) * 0.5f), 0, maxCode),
+            ValueSelectionMode.Mutate => (byte)MutateCode(chooseAByFallback ? codeA : codeB, bits, ref state),
+            _ => chooseAByFallback ? codeA : codeB
+        };
+
+        return (byte)Math.Clamp(selected, 0, maxCode);
+    }
+
+    private static ValueSelectionMode SelectValueMode(ReproduceConfig? config, bool chooseAByFallback, ref ulong state)
+    {
+        var chooseAWeight = ClampProbability(config?.ProbChooseParentA ?? 0f);
+        var chooseBWeight = ClampProbability(config?.ProbChooseParentB ?? 0f);
+        var averageWeight = ClampProbability(config?.ProbAverage ?? 0f);
+        var mutateWeight = ClampProbability(config?.ProbMutate ?? 0f);
+        var total = chooseAWeight + chooseBWeight + averageWeight + mutateWeight;
+        if (total <= 0f)
+        {
+            return chooseAByFallback ? ValueSelectionMode.ParentA : ValueSelectionMode.ParentB;
+        }
+
+        var draw = NextUnitFloat(ref state) * total;
+        if (draw < chooseAWeight)
+        {
+            return ValueSelectionMode.ParentA;
+        }
+
+        draw -= chooseAWeight;
+        if (draw < chooseBWeight)
+        {
+            return ValueSelectionMode.ParentB;
+        }
+
+        draw -= chooseBWeight;
+        if (draw < averageWeight)
+        {
+            return ValueSelectionMode.Average;
+        }
+
+        return ValueSelectionMode.Mutate;
+    }
+
+    private static byte SelectFunctionCode(
+        byte functionA,
+        byte functionB,
+        bool chooseAByFallback,
+        ReproduceConfig? config,
+        int bits,
+        ref ulong state)
+    {
+        var maxCode = QuantizationMap.MaxCode(bits);
+        var chooseAProbability = ClampProbability(config?.ProbChooseFuncA ?? 0f);
+        var mutateProbability = ClampProbability(config?.ProbMutateFunc ?? 0f);
+        var selected = chooseAProbability <= 0f && mutateProbability <= 0f
+            ? chooseAByFallback ? functionA : functionB
+            : (ChooseParentA(chooseAProbability, ref state) ? functionA : functionB);
+
+        if (ShouldMutate(mutateProbability, ref state))
+        {
+            selected = (byte)MutateCode(selected, bits, ref state);
+        }
+
+        return (byte)Math.Clamp(selected, 0, maxCode);
+    }
+
+    private static int MutateCode(int code, int bits, ref ulong state)
+    {
+        var maxCode = QuantizationMap.MaxCode(bits);
+        if (maxCode <= 0)
+        {
+            return 0;
+        }
+
+        var direction = (NextRandom(ref state) & 1UL) == 0UL ? -1 : 1;
+        var magnitude = maxCode >= 2 ? 1 + (int)(NextRandom(ref state) % 2UL) : 1;
+        var candidate = code + (direction * magnitude);
+        if (candidate < 0 || candidate > maxCode)
+        {
+            candidate = code - (direction * magnitude);
+        }
+
+        candidate = Math.Clamp(candidate, 0, maxCode);
+        if (candidate == code)
+        {
+            candidate = code >= maxCode ? code - 1 : code + 1;
+        }
+
+        return Math.Clamp(candidate, 0, maxCode);
+    }
+
+    private static void ApplyStrengthTransforms(
+        List<AxonRecord> selectedAxons,
+        IReadOnlyList<AxonRecord> axonsA,
+        IReadOnlyList<AxonRecord> axonsB,
+        bool selectedFromA,
+        ReproduceConfig config,
+        QuantizationMap strengthMap,
+        ref ulong state,
+        MutationBudgets budgets)
+    {
+        var strengthsA = BuildStrengthMap(axonsA);
+        var strengthsB = BuildStrengthMap(axonsB);
+        for (var i = 0; i < selectedAxons.Count; i++)
+        {
+            var current = selectedAxons[i];
+            var key = BuildTargetKey(current.TargetRegionId, current.TargetNeuronId);
+            var hasA = strengthsA.TryGetValue(key, out var strengthA);
+            var hasB = strengthsB.TryGetValue(key, out var strengthB);
+            var transformed = ResolveTransformedStrengthCode(
+                current.StrengthCode,
+                selectedFromA,
+                hasA,
+                strengthA,
+                hasB,
+                strengthB,
+                config,
+                strengthMap,
+                ref state);
+            if (transformed == current.StrengthCode)
+            {
+                continue;
+            }
+
+            selectedAxons[i] = new AxonRecord(transformed, current.TargetNeuronId, current.TargetRegionId);
+            budgets.RecordStrengthCodeChanged();
+        }
+    }
+
+    private static Dictionary<uint, byte> BuildStrengthMap(IReadOnlyList<AxonRecord> axons)
+    {
+        var strengths = new Dictionary<uint, byte>(axons.Count);
+        for (var i = 0; i < axons.Count; i++)
+        {
+            var axon = axons[i];
+            strengths[BuildTargetKey(axon.TargetRegionId, axon.TargetNeuronId)] = axon.StrengthCode;
+        }
+
+        return strengths;
+    }
+
+    private static byte ResolveTransformedStrengthCode(
+        byte selectedStrengthCode,
+        bool selectedFromA,
+        bool hasA,
+        byte strengthA,
+        bool hasB,
+        byte strengthB,
+        ReproduceConfig config,
+        QuantizationMap strengthMap,
+        ref ulong state)
+    {
+        var chooseAWeight = ClampProbability(config.ProbStrengthChooseA);
+        var chooseBWeight = ClampProbability(config.ProbStrengthChooseB);
+        var averageWeight = ClampProbability(config.ProbStrengthAverage);
+        var weightedAverageWeight = ClampProbability(config.ProbStrengthWeightedAverage);
+        var mutateWeight = ClampProbability(config.ProbStrengthMutate);
+        var total = chooseAWeight + chooseBWeight + averageWeight + weightedAverageWeight + mutateWeight;
+        if (total <= 0f)
+        {
+            return selectedStrengthCode;
+        }
+
+        var draw = NextUnitFloat(ref state) * total;
+        if (draw < chooseAWeight)
+        {
+            return hasA ? strengthA : selectedStrengthCode;
+        }
+
+        draw -= chooseAWeight;
+        if (draw < chooseBWeight)
+        {
+            return hasB ? strengthB : selectedStrengthCode;
+        }
+
+        draw -= chooseBWeight;
+        if (draw < averageWeight)
+        {
+            if (!hasA || !hasB)
+            {
+                return selectedStrengthCode;
+            }
+
+            var avg = (strengthMap.Decode(strengthA, bits: 5) + strengthMap.Decode(strengthB, bits: 5)) * 0.5f;
+            return EncodeStrengthCode(avg, strengthMap);
+        }
+
+        draw -= averageWeight;
+        if (draw < weightedAverageWeight)
+        {
+            if (!hasA || !hasB)
+            {
+                return selectedStrengthCode;
+            }
+
+            var weightA = Math.Max(config.StrengthWeightA, 0f);
+            var weightB = Math.Max(config.StrengthWeightB, 0f);
+            if (weightA <= 0f && weightB <= 0f)
+            {
+                weightA = 1f;
+                weightB = 1f;
+            }
+
+            var denominator = weightA + weightB;
+            var valueA = strengthMap.Decode(strengthA, bits: 5);
+            var valueB = strengthMap.Decode(strengthB, bits: 5);
+            var blended = ((valueA * weightA) + (valueB * weightB)) / denominator;
+            return EncodeStrengthCode(blended, strengthMap);
+        }
+
+        var mutateBase = selectedFromA
+            ? hasA ? strengthA : selectedStrengthCode
+            : hasB ? strengthB : selectedStrengthCode;
+        return MutateStrengthCode(mutateBase, strengthMap, ref state);
+    }
+
+    private static byte MutateStrengthCode(byte baseCode, QuantizationMap strengthMap, ref ulong state)
+    {
+        var baseValue = strengthMap.Decode(baseCode, bits: 5);
+        var range = MathF.Max(MathF.Abs(strengthMap.Max - strengthMap.Min), 0.0001f);
+        var jitter = ((NextUnitFloat(ref state) * 2f) - 1f) * (range * 0.05f);
+        var mutatedValue = Math.Clamp(baseValue + jitter, strengthMap.Min, strengthMap.Max);
+        return EncodeStrengthCode(mutatedValue, strengthMap);
+    }
+
+    private static byte EncodeStrengthCode(float value, QuantizationMap strengthMap)
+        => (byte)Math.Clamp(strengthMap.Encode(value, bits: 5), 0, 31);
 
     private static MutationBudgets CreateMutationBudgets(
         IReadOnlyDictionary<int, NbnRegionSection> sectionsA,
@@ -499,6 +830,7 @@ public sealed class ReproductionManagerActor : IActor
         var addAxonProbability = ClampProbability(config.ProbAddAxon);
         var removeAxonProbability = ClampProbability(config.ProbRemoveAxon);
         var rerouteAxonProbability = ClampProbability(config.ProbRerouteAxon);
+        var rerouteInboundOnDeleteProbability = ClampProbability(config.ProbRerouteInboundAxonOnDelete);
 
         for (var regionId = 1; regionId < NbnConstants.OutputRegionId; regionId++)
         {
@@ -552,13 +884,18 @@ public sealed class ReproductionManagerActor : IActor
                 continue;
             }
 
-            var neuron = region.Neurons[existingNeuronId];
-            if (neuron.Axons.Count > 0 || HasInboundAxons(regions, regionId, existingNeuronId))
+            if (!ShouldMutate(removeLastNeuronProbability, ref state))
             {
                 continue;
             }
 
-            if (!ShouldMutate(removeLastNeuronProbability, ref state))
+            if (!HandleNeuronDeletionSideEffects(
+                    regions,
+                    regionId,
+                    existingNeuronId,
+                    rerouteInboundOnDeleteProbability,
+                    ref state,
+                    budgets))
             {
                 continue;
             }
@@ -591,7 +928,18 @@ public sealed class ReproductionManagerActor : IActor
                         continue;
                     }
 
-                    if (neuron.Axons.Count > 0 || HasInboundAxons(regions, regionId, neuronId))
+                    if (existingCount == 1 && !budgets.CanRemoveRegion)
+                    {
+                        continue;
+                    }
+
+                    if (!HandleNeuronDeletionSideEffects(
+                            regions,
+                            regionId,
+                            neuronId,
+                            rerouteInboundOnDeleteProbability,
+                            ref state,
+                            budgets))
                     {
                         continue;
                     }
@@ -1034,29 +1382,188 @@ public sealed class ReproductionManagerActor : IActor
         return true;
     }
 
-    private static bool HasInboundAxons(IReadOnlyDictionary<int, MutableRegion> regions, int targetRegionId, int targetNeuronId)
+    private static bool HandleNeuronDeletionSideEffects(
+        Dictionary<int, MutableRegion> regions,
+        int targetRegionId,
+        int targetNeuronId,
+        float rerouteInboundProbability,
+        ref ulong state,
+        MutationBudgets budgets)
+    {
+        if (!regions.TryGetValue(targetRegionId, out var targetRegion))
+        {
+            return false;
+        }
+
+        if (targetNeuronId < 0 || targetNeuronId >= targetRegion.Neurons.Count)
+        {
+            return false;
+        }
+
+        RerouteOrRemoveInboundAxons(
+            regions,
+            targetRegionId,
+            targetNeuronId,
+            rerouteInboundProbability,
+            ref state,
+            budgets);
+
+        var targetNeuron = targetRegion.Neurons[targetNeuronId];
+        if (targetNeuron.Axons.Count > 0)
+        {
+            budgets.ConsumeAxonsRemoved(targetNeuron.Axons.Count);
+            targetNeuron.Axons.Clear();
+        }
+
+        return true;
+    }
+
+    private static void RerouteOrRemoveInboundAxons(
+        Dictionary<int, MutableRegion> regions,
+        int targetRegionId,
+        int targetNeuronId,
+        float rerouteInboundProbability,
+        ref ulong state,
+        MutationBudgets budgets)
     {
         foreach (var pair in regions)
         {
-            foreach (var neuron in pair.Value.Neurons)
+            var sourceRegionId = pair.Key;
+            var sourceRegion = pair.Value;
+
+            for (var sourceNeuronId = 0; sourceNeuronId < sourceRegion.Neurons.Count; sourceNeuronId++)
             {
-                if (!neuron.Exists)
+                if (sourceRegionId == targetRegionId && sourceNeuronId == targetNeuronId)
                 {
                     continue;
                 }
 
-                for (var i = 0; i < neuron.Axons.Count; i++)
+                var sourceNeuron = sourceRegion.Neurons[sourceNeuronId];
+                if (!sourceNeuron.Exists || sourceNeuron.Axons.Count == 0)
                 {
-                    var axon = neuron.Axons[i];
-                    if (axon.TargetRegionId == targetRegionId && axon.TargetNeuronId == targetNeuronId)
+                    continue;
+                }
+
+                var existingTargets = new HashSet<uint>(sourceNeuron.Axons.Count);
+                for (var i = 0; i < sourceNeuron.Axons.Count; i++)
+                {
+                    existingTargets.Add(BuildTargetKey(sourceNeuron.Axons[i].TargetRegionId, sourceNeuron.Axons[i].TargetNeuronId));
+                }
+
+                for (var axonIndex = sourceNeuron.Axons.Count - 1; axonIndex >= 0; axonIndex--)
+                {
+                    var axon = sourceNeuron.Axons[axonIndex];
+                    if (axon.TargetRegionId != targetRegionId || axon.TargetNeuronId != targetNeuronId)
                     {
-                        return true;
+                        continue;
                     }
+
+                    var currentTargetKey = BuildTargetKey(axon.TargetRegionId, axon.TargetNeuronId);
+                    existingTargets.Remove(currentTargetKey);
+
+                    if (ShouldMutate(rerouteInboundProbability, ref state)
+                        && TrySelectInboundRerouteTarget(
+                            regions,
+                            sourceRegionId,
+                            targetRegionId,
+                            targetNeuronId,
+                            existingTargets,
+                            ref state,
+                            out var rerouteTarget))
+                    {
+                        sourceNeuron.Axons[axonIndex] = new AxonRecord(
+                            axon.StrengthCode,
+                            rerouteTarget.NeuronId,
+                            (byte)rerouteTarget.RegionId);
+                        existingTargets.Add(BuildTargetKey(rerouteTarget.RegionId, rerouteTarget.NeuronId));
+                        budgets.AxonsRerouted++;
+                        continue;
+                    }
+
+                    sourceNeuron.Axons.RemoveAt(axonIndex);
+                    budgets.ConsumeAxonRemoved();
                 }
             }
         }
+    }
 
-        return false;
+    private static bool TrySelectInboundRerouteTarget(
+        IReadOnlyDictionary<int, MutableRegion> regions,
+        int sourceRegionId,
+        int targetRegionId,
+        int deletedNeuronId,
+        HashSet<uint> existingTargets,
+        ref ulong state,
+        out TargetLocus target)
+    {
+        target = default;
+        if (!IsValidTargetRegion(sourceRegionId, targetRegionId))
+        {
+            return false;
+        }
+
+        if (!regions.TryGetValue(targetRegionId, out var targetRegion))
+        {
+            return false;
+        }
+
+        var span = targetRegion.Neurons.Count;
+        if (span <= 1)
+        {
+            return false;
+        }
+
+        var candidates = new List<WeightedTargetCandidate>(span);
+        for (var neuronId = 0; neuronId < span; neuronId++)
+        {
+            if (neuronId == deletedNeuronId || !targetRegion.Neurons[neuronId].Exists)
+            {
+                continue;
+            }
+
+            var targetKey = BuildTargetKey(targetRegionId, neuronId);
+            if (existingTargets.Contains(targetKey))
+            {
+                continue;
+            }
+
+            var delta = Math.Abs(neuronId - deletedNeuronId);
+            var ringDistance = Math.Min(delta, span - delta);
+            var weight = 1f / (1f + ringDistance);
+            candidates.Add(new WeightedTargetCandidate(new TargetLocus(targetRegionId, neuronId), weight));
+        }
+
+        if (candidates.Count == 0)
+        {
+            return false;
+        }
+
+        var totalWeight = 0f;
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            totalWeight += candidates[i].Weight;
+        }
+
+        if (totalWeight <= 0f)
+        {
+            return false;
+        }
+
+        var draw = NextUnitFloat(ref state) * totalWeight;
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+            if (draw <= candidate.Weight)
+            {
+                target = candidate.Target;
+                return true;
+            }
+
+            draw -= candidate.Weight;
+        }
+
+        target = candidates[candidates.Count - 1].Target;
+        return true;
     }
 
     private static int CountExistingNeurons(MutableRegion region)
@@ -2285,6 +2792,7 @@ public sealed class ReproductionManagerActor : IActor
         public uint RegionsRemoved { get; private set; }
         public uint AxonsRerouted { get; set; }
         public uint FunctionsMutated { get; set; }
+        public uint StrengthCodesChanged { get; private set; }
 
         public bool CanAddNeuron => NeuronsAdded < (uint)MaxNeuronsAdded;
         public bool CanRemoveNeuron => NeuronsRemoved < (uint)MaxNeuronsRemoved;
@@ -2353,9 +2861,24 @@ public sealed class ReproductionManagerActor : IActor
                 RegionsRemoved++;
             }
         }
+
+        public void RecordStrengthCodeChanged()
+        {
+            StrengthCodesChanged++;
+        }
+    }
+
+    private enum ValueSelectionMode : byte
+    {
+        ParentA = 0,
+        ParentB = 1,
+        Average = 2,
+        Mutate = 3
     }
 
     private readonly record struct TargetLocus(int RegionId, int NeuronId);
+
+    private readonly record struct WeightedTargetCandidate(TargetLocus Target, float Weight);
 
     private readonly record struct PruneCandidate(
         int SourceRegionId,

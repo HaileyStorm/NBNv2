@@ -35,9 +35,18 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _maxAvgOutDegree = "100";
     private string _probAddNeuronToEmptyRegion = "0.02";
     private string _probRemoveLastNeuronFromRegion = "0.01";
+    private string _probDisableNeuron = "0.01";
+    private string _probReactivateNeuron = "0.01";
     private string _probAddAxon = "0.05";
     private string _probRemoveAxon = "0.02";
     private string _probRerouteAxon = "0.02";
+    private string _probRerouteInboundAxonOnDelete = "0.50";
+    private string _probChooseParentA = "0.45";
+    private string _probChooseParentB = "0.45";
+    private string _probAverage = "0.05";
+    private string _probMutate = "0.05";
+    private string _probChooseFuncA = "0.50";
+    private string _probMutateFunc = "0.02";
     private bool _strengthTransformEnabled;
     private string _probStrengthChooseA = "0.35";
     private string _probStrengthChooseB = "0.35";
@@ -46,8 +55,19 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _strengthWeightA = "0.50";
     private string _strengthWeightB = "0.50";
     private string _probStrengthMutate = "0.05";
+    private string _maxNeuronsAddedAbs = "0";
+    private string _maxNeuronsAddedPct = "0";
+    private string _maxNeuronsRemovedAbs = "0";
+    private string _maxNeuronsRemovedPct = "0";
+    private string _maxAxonsAddedAbs = "0";
+    private string _maxAxonsAddedPct = "0";
+    private string _maxAxonsRemovedAbs = "0";
+    private string _maxAxonsRemovedPct = "0";
+    private string _maxRegionsAddedAbs = "0";
+    private string _maxRegionsRemovedAbs = "0";
     private StrengthSourceOption _selectedStrengthSource;
     private SpawnPolicyOption _selectedSpawnPolicy;
+    private PrunePolicyOption _selectedPrunePolicy;
     private ReproBrainOption? _selectedParentABrain;
     private ReproBrainOption? _selectedParentBBrain;
     private string _status = "Idle";
@@ -64,11 +84,19 @@ public sealed class ReproPanelViewModel : ViewModelBase
         };
         SpawnPolicies = new List<SpawnPolicyOption>
         {
-            new("Yes", SpawnChildPolicy.SpawnChildAlways),
-            new("No", SpawnChildPolicy.SpawnChildNever)
+            new("Default (On)", SpawnChildPolicy.SpawnChildDefaultOn),
+            new("Always", SpawnChildPolicy.SpawnChildAlways),
+            new("Never", SpawnChildPolicy.SpawnChildNever)
+        };
+        PrunePolicies = new List<PrunePolicyOption>
+        {
+            new("Lowest abs strength", PrunePolicy.PruneLowestAbsStrengthFirst),
+            new("New connections first", PrunePolicy.PruneNewConnectionsFirst),
+            new("Random", PrunePolicy.PruneRandom)
         };
         _selectedStrengthSource = StrengthSources[0];
         _selectedSpawnPolicy = SpawnPolicies[0];
+        _selectedPrunePolicy = PrunePolicies[0];
 
         ActiveBrains = new ObservableCollection<ReproBrainOption>();
 
@@ -84,6 +112,8 @@ public sealed class ReproPanelViewModel : ViewModelBase
 
     public IReadOnlyList<SpawnPolicyOption> SpawnPolicies { get; }
 
+    public IReadOnlyList<PrunePolicyOption> PrunePolicies { get; }
+
     public ObservableCollection<ReproBrainOption> ActiveBrains { get; }
 
     public StrengthSourceOption SelectedStrengthSource
@@ -96,6 +126,12 @@ public sealed class ReproPanelViewModel : ViewModelBase
     {
         get => _selectedSpawnPolicy;
         set => SetProperty(ref _selectedSpawnPolicy, value);
+    }
+
+    public PrunePolicyOption SelectedPrunePolicy
+    {
+        get => _selectedPrunePolicy;
+        set => SetProperty(ref _selectedPrunePolicy, value);
     }
 
     public ReproBrainOption? SelectedParentABrain
@@ -194,6 +230,18 @@ public sealed class ReproPanelViewModel : ViewModelBase
         set => SetProperty(ref _probRemoveLastNeuronFromRegion, value);
     }
 
+    public string ProbDisableNeuron
+    {
+        get => _probDisableNeuron;
+        set => SetProperty(ref _probDisableNeuron, value);
+    }
+
+    public string ProbReactivateNeuron
+    {
+        get => _probReactivateNeuron;
+        set => SetProperty(ref _probReactivateNeuron, value);
+    }
+
     public string ProbAddAxon
     {
         get => _probAddAxon;
@@ -210,6 +258,48 @@ public sealed class ReproPanelViewModel : ViewModelBase
     {
         get => _probRerouteAxon;
         set => SetProperty(ref _probRerouteAxon, value);
+    }
+
+    public string ProbRerouteInboundAxonOnDelete
+    {
+        get => _probRerouteInboundAxonOnDelete;
+        set => SetProperty(ref _probRerouteInboundAxonOnDelete, value);
+    }
+
+    public string ProbChooseParentA
+    {
+        get => _probChooseParentA;
+        set => SetProperty(ref _probChooseParentA, value);
+    }
+
+    public string ProbChooseParentB
+    {
+        get => _probChooseParentB;
+        set => SetProperty(ref _probChooseParentB, value);
+    }
+
+    public string ProbAverage
+    {
+        get => _probAverage;
+        set => SetProperty(ref _probAverage, value);
+    }
+
+    public string ProbMutate
+    {
+        get => _probMutate;
+        set => SetProperty(ref _probMutate, value);
+    }
+
+    public string ProbChooseFuncA
+    {
+        get => _probChooseFuncA;
+        set => SetProperty(ref _probChooseFuncA, value);
+    }
+
+    public string ProbMutateFunc
+    {
+        get => _probMutateFunc;
+        set => SetProperty(ref _probMutateFunc, value);
     }
 
     public bool StrengthTransformEnabled
@@ -258,6 +348,66 @@ public sealed class ReproPanelViewModel : ViewModelBase
     {
         get => _probStrengthMutate;
         set => SetProperty(ref _probStrengthMutate, value);
+    }
+
+    public string MaxNeuronsAddedAbs
+    {
+        get => _maxNeuronsAddedAbs;
+        set => SetProperty(ref _maxNeuronsAddedAbs, value);
+    }
+
+    public string MaxNeuronsAddedPct
+    {
+        get => _maxNeuronsAddedPct;
+        set => SetProperty(ref _maxNeuronsAddedPct, value);
+    }
+
+    public string MaxNeuronsRemovedAbs
+    {
+        get => _maxNeuronsRemovedAbs;
+        set => SetProperty(ref _maxNeuronsRemovedAbs, value);
+    }
+
+    public string MaxNeuronsRemovedPct
+    {
+        get => _maxNeuronsRemovedPct;
+        set => SetProperty(ref _maxNeuronsRemovedPct, value);
+    }
+
+    public string MaxAxonsAddedAbs
+    {
+        get => _maxAxonsAddedAbs;
+        set => SetProperty(ref _maxAxonsAddedAbs, value);
+    }
+
+    public string MaxAxonsAddedPct
+    {
+        get => _maxAxonsAddedPct;
+        set => SetProperty(ref _maxAxonsAddedPct, value);
+    }
+
+    public string MaxAxonsRemovedAbs
+    {
+        get => _maxAxonsRemovedAbs;
+        set => SetProperty(ref _maxAxonsRemovedAbs, value);
+    }
+
+    public string MaxAxonsRemovedPct
+    {
+        get => _maxAxonsRemovedPct;
+        set => SetProperty(ref _maxAxonsRemovedPct, value);
+    }
+
+    public string MaxRegionsAddedAbs
+    {
+        get => _maxRegionsAddedAbs;
+        set => SetProperty(ref _maxRegionsAddedAbs, value);
+    }
+
+    public string MaxRegionsRemovedAbs
+    {
+        get => _maxRegionsRemovedAbs;
+        set => SetProperty(ref _maxRegionsRemovedAbs, value);
     }
 
     public string Status
@@ -470,10 +620,20 @@ public sealed class ReproPanelViewModel : ViewModelBase
             MaxConnectivityHistDistance = ParseFloat(MaxConnectivityHistDistance, 0.25f),
             ProbAddNeuronToEmptyRegion = ParseFloat(ProbAddNeuronToEmptyRegion, 0.02f),
             ProbRemoveLastNeuronFromRegion = ParseFloat(ProbRemoveLastNeuronFromRegion, 0.01f),
+            ProbDisableNeuron = ParseFloat(ProbDisableNeuron, 0.01f),
+            ProbReactivateNeuron = ParseFloat(ProbReactivateNeuron, 0.01f),
             ProbAddAxon = ParseFloat(ProbAddAxon, 0.05f),
             ProbRemoveAxon = ParseFloat(ProbRemoveAxon, 0.02f),
             ProbRerouteAxon = ParseFloat(ProbRerouteAxon, 0.02f),
+            ProbRerouteInboundAxonOnDelete = ParseFloat(ProbRerouteInboundAxonOnDelete, 0.50f),
+            ProbChooseParentA = ParseFloat(ProbChooseParentA, 0.45f),
+            ProbChooseParentB = ParseFloat(ProbChooseParentB, 0.45f),
+            ProbAverage = ParseFloat(ProbAverage, 0.05f),
+            ProbMutate = ParseFloat(ProbMutate, 0.05f),
+            ProbChooseFuncA = ParseFloat(ProbChooseFuncA, 0.50f),
+            ProbMutateFunc = ParseFloat(ProbMutateFunc, 0.02f),
             MaxAvgOutDegreeBrain = ParseFloat(MaxAvgOutDegree, 100f),
+            PrunePolicy = SelectedPrunePolicy.Value,
             StrengthTransformEnabled = StrengthTransformEnabled,
             ProbStrengthChooseA = ParseFloat(ProbStrengthChooseA, 0.35f),
             ProbStrengthChooseB = ParseFloat(ProbStrengthChooseB, 0.35f),
@@ -482,6 +642,19 @@ public sealed class ReproPanelViewModel : ViewModelBase
             StrengthWeightA = ParseFloat(StrengthWeightA, 0.50f),
             StrengthWeightB = ParseFloat(StrengthWeightB, 0.50f),
             ProbStrengthMutate = ParseFloat(ProbStrengthMutate, 0.05f),
+            Limits = new ReproduceLimits
+            {
+                MaxNeuronsAddedAbs = ParseUInt(MaxNeuronsAddedAbs, 0),
+                MaxNeuronsAddedPct = ParseFloat(MaxNeuronsAddedPct, 0f),
+                MaxNeuronsRemovedAbs = ParseUInt(MaxNeuronsRemovedAbs, 0),
+                MaxNeuronsRemovedPct = ParseFloat(MaxNeuronsRemovedPct, 0f),
+                MaxAxonsAddedAbs = ParseUInt(MaxAxonsAddedAbs, 0),
+                MaxAxonsAddedPct = ParseFloat(MaxAxonsAddedPct, 0f),
+                MaxAxonsRemovedAbs = ParseUInt(MaxAxonsRemovedAbs, 0),
+                MaxAxonsRemovedPct = ParseFloat(MaxAxonsRemovedPct, 0f),
+                MaxRegionsAddedAbs = ParseUInt(MaxRegionsAddedAbs, 0),
+                MaxRegionsRemovedAbs = ParseUInt(MaxRegionsRemovedAbs, 0)
+            },
             SpawnChild = SelectedSpawnPolicy.Value
         };
     }
@@ -597,6 +770,13 @@ public sealed class ReproPanelViewModel : ViewModelBase
             : fallback;
     }
 
+    private static uint ParseUInt(string value, uint fallback)
+    {
+        return uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
     private static ulong ParseUlong(string value, ulong fallback)
     {
         return ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
@@ -682,3 +862,5 @@ public sealed record ReproBrainOption(Guid BrainId, string Label)
 public sealed record StrengthSourceOption(string Label, StrengthSource Value);
 
 public sealed record SpawnPolicyOption(string Label, SpawnChildPolicy Value);
+
+public sealed record PrunePolicyOption(string Label, PrunePolicy Value);
