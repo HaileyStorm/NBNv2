@@ -293,6 +293,43 @@ FROM nodes
 ORDER BY logical_name, node_id;
 """;
 
+    private const string ListWorkerInventorySnapshotSql = """
+SELECT
+    n.node_id AS NodeId,
+    n.logical_name AS LogicalName,
+    n.address AS Address,
+    n.root_actor_name AS RootActorName,
+    n.last_seen_ms AS LastSeenMs,
+    n.is_alive AS IsAlive,
+    CASE
+        WHEN c.time_ms IS NULL THEN 0
+        ELSE 1
+    END AS HasCapabilities,
+    COALESCE(c.time_ms, 0) AS CapabilityTimeMs,
+    COALESCE(c.cpu_cores, 0) AS CpuCores,
+    COALESCE(c.ram_free_bytes, 0) AS RamFreeBytes,
+    COALESCE(c.has_gpu, 0) AS HasGpu,
+    COALESCE(c.gpu_name, '') AS GpuName,
+    COALESCE(c.vram_free_bytes, 0) AS VramFreeBytes,
+    COALESCE(c.cpu_score, 0.0) AS CpuScore,
+    COALESCE(c.gpu_score, 0.0) AS GpuScore,
+    COALESCE(c.ilgpu_cuda_available, 0) AS IlgpuCudaAvailable,
+    COALESCE(c.ilgpu_opencl_available, 0) AS IlgpuOpenclAvailable,
+    CASE
+        WHEN n.is_alive = 1 AND c.time_ms IS NOT NULL THEN 1
+        ELSE 0
+    END AS IsReady
+FROM nodes AS n
+LEFT JOIN node_capabilities AS c
+    ON c.node_id = n.node_id
+   AND c.time_ms = (
+       SELECT MAX(c2.time_ms)
+       FROM node_capabilities AS c2
+       WHERE c2.node_id = n.node_id
+   )
+ORDER BY n.logical_name, n.node_id;
+""";
+
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
@@ -854,6 +891,15 @@ ORDER BY logical_name, node_id;
         var rows = await connection.QueryAsync<NodeStatus>(
             new CommandDefinition(ListNodesSql, cancellationToken: cancellationToken));
         return rows.AsList();
+    }
+
+    public async Task<WorkerInventorySnapshot> GetWorkerInventorySnapshotAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<WorkerReadinessCapability>(
+            new CommandDefinition(ListWorkerInventorySnapshotSql, cancellationToken: cancellationToken));
+        return new WorkerInventorySnapshot(NowMs(), rows.AsList());
     }
 
     private long NowMs() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();

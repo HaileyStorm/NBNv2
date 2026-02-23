@@ -68,6 +68,26 @@ message NodeListResponse {
   repeated NodeStatus nodes = 1;
 }
 
+message WorkerInventorySnapshotRequest { }
+
+message WorkerReadinessCapability {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+  string address = 3;
+  string root_actor_name = 4;
+  bool is_alive = 5;
+  bool is_ready = 6;
+  fixed64 last_seen_ms = 7;
+  bool has_capabilities = 8;
+  fixed64 capability_time_ms = 9;
+  NodeCapabilities capabilities = 10;
+}
+
+message WorkerInventorySnapshotResponse {
+  repeated WorkerReadinessCapability workers = 1;
+  fixed64 snapshot_ms = 2;
+}
+
 message BrainListRequest { }
 
 message BrainListResponse {

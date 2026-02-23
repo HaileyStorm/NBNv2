@@ -41,6 +41,32 @@ public sealed class NodeStatus
     public bool IsAlive { get; set; }
 }
 
+public sealed class WorkerReadinessCapability
+{
+    public Guid NodeId { get; set; }
+    public string LogicalName { get; set; } = string.Empty;
+    public string Address { get; set; } = string.Empty;
+    public string RootActorName { get; set; } = string.Empty;
+    public bool IsAlive { get; set; }
+    public bool IsReady { get; set; }
+    public long LastSeenMs { get; set; }
+    public bool HasCapabilities { get; set; }
+    public long CapabilityTimeMs { get; set; }
+    public uint CpuCores { get; set; }
+    public long RamFreeBytes { get; set; }
+    public bool HasGpu { get; set; }
+    public string GpuName { get; set; } = string.Empty;
+    public long VramFreeBytes { get; set; }
+    public float CpuScore { get; set; }
+    public float GpuScore { get; set; }
+    public bool IlgpuCudaAvailable { get; set; }
+    public bool IlgpuOpenclAvailable { get; set; }
+}
+
+public sealed record WorkerInventorySnapshot(
+    long SnapshotMs,
+    IReadOnlyList<WorkerReadinessCapability> Workers);
+
 public sealed class BrainControllerStatus
 {
     public Guid BrainId { get; set; }

@@ -432,6 +432,31 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoSettings_WorkerInventorySnapshotFields_AreStable()
+    {
+        var descriptor = NbnSettingsReflection.Descriptor;
+
+        var request = descriptor.MessageTypes.Single(message => message.Name == "WorkerInventorySnapshotRequest");
+        Assert.Empty(request.Fields.InFieldNumberOrder());
+
+        var payload = descriptor.MessageTypes.Single(message => message.Name == "WorkerReadinessCapability");
+        AssertField(payload, "node_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(payload, "logical_name", 2, FieldType.String);
+        AssertField(payload, "address", 3, FieldType.String);
+        AssertField(payload, "root_actor_name", 4, FieldType.String);
+        AssertField(payload, "is_alive", 5, FieldType.Bool);
+        AssertField(payload, "is_ready", 6, FieldType.Bool);
+        AssertField(payload, "last_seen_ms", 7, FieldType.Fixed64);
+        AssertField(payload, "has_capabilities", 8, FieldType.Bool);
+        AssertField(payload, "capability_time_ms", 9, FieldType.Fixed64);
+        AssertField(payload, "capabilities", 10, FieldType.Message, "nbn.settings.NodeCapabilities");
+
+        var response = descriptor.MessageTypes.Single(message => message.Name == "WorkerInventorySnapshotResponse");
+        AssertRepeatedField(response, "workers", 1, FieldType.Message, "nbn.settings.WorkerReadinessCapability");
+        AssertField(response, "snapshot_ms", 2, FieldType.Fixed64);
+    }
+
+    [Fact]
     public void ProtoRepro_RequestFields_AreStable()
     {
         var descriptor = NbnReproReflection.Descriptor;

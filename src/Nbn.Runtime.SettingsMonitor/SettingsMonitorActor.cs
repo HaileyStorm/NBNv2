@@ -34,6 +34,9 @@ public sealed class SettingsMonitorActor : IActor
             case ProtoSettings.NodeListRequest:
                 HandleNodeList(context);
                 break;
+            case ProtoSettings.WorkerInventorySnapshotRequest:
+                HandleWorkerInventorySnapshot(context);
+                break;
             case ProtoSettings.SettingGet message:
                 HandleSettingGet(context, message);
                 break;
@@ -237,6 +240,111 @@ public sealed class SettingsMonitorActor : IActor
             catch (Exception ex)
             {
                 LogError($"NodeList response failed: {ex.GetBaseException().Message}");
+            }
+
+            context.Respond(response);
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleWorkerInventorySnapshot(IContext context)
+    {
+        var task = _store.GetWorkerInventorySnapshotAsync();
+        context.ReenterAfter(task, completed =>
+        {
+            var response = new ProtoSettings.WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)NowMs()
+            };
+
+            try
+            {
+                if (completed.IsFaulted)
+                {
+                    LogError($"WorkerInventorySnapshot failed: {completed.Exception?.GetBaseException().Message}");
+                }
+                else
+                {
+                    response.SnapshotMs = (ulong)completed.Result.SnapshotMs;
+                    var merged = new Dictionary<Guid, WorkerReadinessCapability>();
+                    foreach (var worker in completed.Result.Workers)
+                    {
+                        merged[worker.NodeId] = worker;
+                    }
+
+                    foreach (var snapshot in _nodes.Values)
+                    {
+                        if (merged.TryGetValue(snapshot.NodeId, out var existing))
+                        {
+                            existing.LastSeenMs = Math.Max(existing.LastSeenMs, snapshot.LastSeenMs);
+                            existing.IsAlive = snapshot.IsAlive;
+                            existing.IsReady = existing.IsAlive && existing.HasCapabilities;
+                            if (!string.IsNullOrWhiteSpace(snapshot.LogicalName))
+                            {
+                                existing.LogicalName = snapshot.LogicalName;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(snapshot.Address))
+                            {
+                                existing.Address = snapshot.Address;
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(snapshot.RootActorName))
+                            {
+                                existing.RootActorName = snapshot.RootActorName;
+                            }
+
+                            continue;
+                        }
+
+                        merged[snapshot.NodeId] = new WorkerReadinessCapability
+                        {
+                            NodeId = snapshot.NodeId,
+                            LogicalName = snapshot.LogicalName ?? string.Empty,
+                            Address = snapshot.Address ?? string.Empty,
+                            RootActorName = snapshot.RootActorName ?? string.Empty,
+                            IsAlive = snapshot.IsAlive,
+                            IsReady = false,
+                            LastSeenMs = snapshot.LastSeenMs,
+                            HasCapabilities = false,
+                            CapabilityTimeMs = 0
+                        };
+                    }
+
+                    foreach (var worker in merged.Values
+                                 .OrderBy(static worker => worker.LogicalName, StringComparer.Ordinal)
+                                 .ThenBy(static worker => worker.NodeId))
+                    {
+                        response.Workers.Add(new ProtoSettings.WorkerReadinessCapability
+                        {
+                            NodeId = worker.NodeId.ToProtoUuid(),
+                            LogicalName = worker.LogicalName ?? string.Empty,
+                            Address = worker.Address ?? string.Empty,
+                            RootActorName = worker.RootActorName ?? string.Empty,
+                            IsAlive = worker.IsAlive,
+                            IsReady = worker.IsReady,
+                            LastSeenMs = (ulong)worker.LastSeenMs,
+                            HasCapabilities = worker.HasCapabilities,
+                            CapabilityTimeMs = (ulong)worker.CapabilityTimeMs,
+                            Capabilities = new ProtoSettings.NodeCapabilities
+                            {
+                                CpuCores = worker.CpuCores,
+                                RamFreeBytes = (ulong)worker.RamFreeBytes,
+                                HasGpu = worker.HasGpu,
+                                GpuName = worker.GpuName ?? string.Empty,
+                                VramFreeBytes = (ulong)worker.VramFreeBytes,
+                                CpuScore = worker.CpuScore,
+                                GpuScore = worker.GpuScore,
+                                IlgpuCudaAvailable = worker.IlgpuCudaAvailable,
+                                IlgpuOpenclAvailable = worker.IlgpuOpenclAvailable
+                            }
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"WorkerInventorySnapshot response failed: {ex.GetBaseException().Message}");
             }
 
             context.Respond(response);
