@@ -34,7 +34,11 @@ public sealed record HiveMindOptions(
     string? IoAddress,
     string? IoName,
     int WorkerInventoryRefreshMs = 2000,
-    int WorkerInventoryStaleAfterMs = 15000)
+    int WorkerInventoryStaleAfterMs = 15000,
+    int PlacementAssignmentTimeoutMs = 10000,
+    int PlacementAssignmentRetryBackoffMs = 250,
+    int PlacementAssignmentMaxRetries = 2,
+    int PlacementReconcileTimeoutMs = 10000)
 {
     public static HiveMindOptions FromArgs(string[] args)
     {
@@ -75,6 +79,10 @@ public sealed record HiveMindOptions(
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? SettingsMonitorNames.SettingsMonitor;
         var workerInventoryRefreshMs = GetEnvInt("NBN_HIVE_WORKER_INVENTORY_REFRESH_MS") ?? 2000;
         var workerInventoryStaleAfterMs = GetEnvInt("NBN_HIVE_WORKER_INVENTORY_STALE_AFTER_MS") ?? 15000;
+        var placementAssignmentTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_TIMEOUT_MS") ?? 10000;
+        var placementAssignmentRetryBackoffMs = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_RETRY_BACKOFF_MS") ?? 250;
+        var placementAssignmentMaxRetries = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_MAX_RETRIES") ?? 2;
+        var placementReconcileTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_RECONCILE_TIMEOUT_MS") ?? 10000;
         var ioAddress = GetEnv("NBN_HIVE_IO_ADDRESS");
         var ioName = GetEnv("NBN_HIVE_IO_NAME") ?? "io-gateway";
 
@@ -275,6 +283,30 @@ public sealed record HiveMindOptions(
                         workerInventoryStaleAfterMs = workerInventoryStaleValue;
                     }
                     continue;
+                case "--placement-assignment-timeout-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var placementAssignmentTimeoutValue))
+                    {
+                        placementAssignmentTimeoutMs = placementAssignmentTimeoutValue;
+                    }
+                    continue;
+                case "--placement-assignment-retry-backoff-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var placementAssignmentRetryBackoffValue))
+                    {
+                        placementAssignmentRetryBackoffMs = placementAssignmentRetryBackoffValue;
+                    }
+                    continue;
+                case "--placement-assignment-max-retries":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var placementAssignmentMaxRetriesValue))
+                    {
+                        placementAssignmentMaxRetries = placementAssignmentMaxRetriesValue;
+                    }
+                    continue;
+                case "--placement-reconcile-timeout-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var placementReconcileTimeoutValue))
+                    {
+                        placementReconcileTimeoutMs = placementReconcileTimeoutValue;
+                    }
+                    continue;
                 case "--io-address":
                     if (i + 1 < args.Length)
                     {
@@ -470,6 +502,34 @@ public sealed record HiveMindOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--placement-assignment-timeout-ms=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--placement-assignment-timeout-ms=".Length), out var placementAssignmentTimeoutInline))
+            {
+                placementAssignmentTimeoutMs = placementAssignmentTimeoutInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--placement-assignment-retry-backoff-ms=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--placement-assignment-retry-backoff-ms=".Length), out var placementAssignmentRetryBackoffInline))
+            {
+                placementAssignmentRetryBackoffMs = placementAssignmentRetryBackoffInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--placement-assignment-max-retries=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--placement-assignment-max-retries=".Length), out var placementAssignmentMaxRetriesInline))
+            {
+                placementAssignmentMaxRetries = placementAssignmentMaxRetriesInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--placement-reconcile-timeout-ms=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--placement-reconcile-timeout-ms=".Length), out var placementReconcileTimeoutInline))
+            {
+                placementReconcileTimeoutMs = placementReconcileTimeoutInline;
+                continue;
+            }
+
             if (arg.StartsWith("--io-address=", StringComparison.OrdinalIgnoreCase))
             {
                 ioAddress = arg.Substring("--io-address=".Length);
@@ -511,6 +571,26 @@ public sealed record HiveMindOptions(
         if (workerInventoryStaleAfterMs < workerInventoryRefreshMs)
         {
             workerInventoryStaleAfterMs = workerInventoryRefreshMs;
+        }
+
+        if (placementAssignmentTimeoutMs < 100)
+        {
+            placementAssignmentTimeoutMs = 100;
+        }
+
+        if (placementAssignmentRetryBackoffMs < 0)
+        {
+            placementAssignmentRetryBackoffMs = 0;
+        }
+
+        if (placementAssignmentMaxRetries < 0)
+        {
+            placementAssignmentMaxRetries = 0;
+        }
+
+        if (placementReconcileTimeoutMs < 100)
+        {
+            placementReconcileTimeoutMs = 100;
         }
 
         computeTimeoutMs ??= (int)Math.Ceiling(1000d / minTickHz);
@@ -556,7 +636,11 @@ public sealed record HiveMindOptions(
             string.IsNullOrWhiteSpace(ioAddress) ? null : ioAddress,
             ioName,
             workerInventoryRefreshMs,
-            workerInventoryStaleAfterMs);
+            workerInventoryStaleAfterMs,
+            placementAssignmentTimeoutMs,
+            placementAssignmentRetryBackoffMs,
+            placementAssignmentMaxRetries,
+            placementReconcileTimeoutMs);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -625,6 +709,10 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --worker-inventory-refresh-ms <ms>   Settings snapshot pull interval (default 2000)");
         Console.WriteLine("  --worker-inventory-stale-after-ms <ms> Worker freshness threshold (default 15000)");
+        Console.WriteLine("  --placement-assignment-timeout-ms <ms> Assignment ack timeout (default 10000)");
+        Console.WriteLine("  --placement-assignment-retry-backoff-ms <ms> Retry backoff for retryable assignment failures (default 250)");
+        Console.WriteLine("  --placement-assignment-max-retries <count> Max assignment retries after initial attempt (default 2)");
+        Console.WriteLine("  --placement-reconcile-timeout-ms <ms> Reconcile report timeout after assignments are ready (default 10000)");
         Console.WriteLine("  --no-settings-monitor                Disable SettingsMonitor reporting");
         Console.WriteLine("  --io-address <host:port>             IO Gateway remote address");
         Console.WriteLine("  --io-name <name>                     IO Gateway actor name (default io-gateway)");

@@ -41,7 +41,13 @@ public class HiveMindPlacementLifecycleTests
 
         Assert.Equal(brainId.ToProtoUuid().Value, status.BrainId.Value);
         Assert.Equal<ulong>(1, status.PlacementEpoch);
-        Assert.Equal(1, (int)status.LifecycleState);
+        Assert.Contains(
+            status.LifecycleState,
+            new[]
+            {
+                PlacementLifecycleState.PlacementLifecycleRequested,
+                PlacementLifecycleState.PlacementLifecycleAssigning
+            });
         Assert.Equal(0u, status.RegisteredShards);
         Assert.False(string.IsNullOrWhiteSpace(status.RequestId));
 
@@ -163,7 +169,7 @@ public class HiveMindPlacementLifecycleTests
                     isReady: true,
                     lastSeenMs: nowMs,
                     capabilityTimeMs: nowMs,
-                    address: "placement-worker:12040",
+                    address: string.Empty,
                     rootActorName: "region-host")
             }
         });

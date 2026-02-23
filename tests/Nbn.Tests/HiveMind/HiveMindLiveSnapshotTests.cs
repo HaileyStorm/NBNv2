@@ -438,7 +438,7 @@ public class HiveMindLiveSnapshotTests
                     isReady: true,
                     lastSeenMs: nowMs,
                     capabilityTimeMs: nowMs,
-                    address: "snapshot-worker:12040",
+                    address: string.Empty,
                     rootActorName: "region-host")
             }
         });

@@ -99,7 +99,7 @@ public class HiveMindArtifactReferenceTests
                     isReady: true,
                     lastSeenMs: nowMs,
                     capabilityTimeMs: nowMs,
-                    address: "artifact-worker:12040",
+                    address: string.Empty,
                     rootActorName: "region-host")
             }
         });

@@ -159,6 +159,18 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.PlacementReconcileReport message:
                 HandlePlacementReconcileReport(context, message);
                 break;
+            case DispatchPlacementPlan message:
+                HandleDispatchPlacementPlan(context, message);
+                break;
+            case RetryPlacementAssignment message:
+                HandleRetryPlacementAssignment(context, message);
+                break;
+            case PlacementAssignmentTimeout message:
+                HandlePlacementAssignmentTimeout(context, message);
+                break;
+            case PlacementReconcileTimeout message:
+                HandlePlacementReconcileTimeout(context, message);
+                break;
             case ProtoSettings.WorkerInventorySnapshotResponse message:
                 HandleWorkerInventorySnapshotResponse(message);
                 break;
@@ -724,10 +736,12 @@ public sealed class HiveMindActor : IActor
         if (!TryBuildPlacementPlan(brain, nowMs, out var plannedPlacement, out var failureReason, out var failureMessage))
         {
             brain.PlannedPlacement = null;
+            brain.PlacementExecution = null;
             UpdatePlacementLifecycle(
                 brain,
                 ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
                 failureReason);
+            brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
 
             RegisterBrainWithIo(context, brain, force: true);
 
@@ -748,17 +762,46 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        brain.PlannedPlacement = plannedPlacement;
+        if (!TryCreatePlacementExecution(context, brain, plannedPlacement, out var executionFailure))
+        {
+            brain.PlannedPlacement = null;
+            brain.PlacementExecution = null;
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                ProtoControl.PlacementFailureReason.PlacementFailureInternalError);
+            brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
+
+            context.Respond(new ProtoControl.PlacementAck
+            {
+                Accepted = false,
+                Message = executionFailure,
+                PlacementEpoch = brain.PlacementEpoch,
+                LifecycleState = brain.PlacementLifecycleState,
+                FailureReason = brain.PlacementFailureReason,
+                AcceptedMs = (ulong)brain.PlacementUpdatedMs,
+                RequestId = brain.PlacementRequestId
+            });
+            return;
+        }
+
+        brain.PlannedPlacement = plannedPlacement.Clone();
         UpdatePlacementLifecycle(
             brain,
             ProtoControl.PlacementLifecycleState.PlacementLifecycleRequested,
             ProtoControl.PlacementFailureReason.PlacementFailureNone);
+        brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
 
         RegisterBrainWithIo(context, brain, force: true);
 
         var planLabel = message.ShardPlan is null ? "none" : message.ShardPlan.Mode.ToString();
+        var plannerWarnings = plannedPlacement.PlannerWarnings.Count == 0
+            ? "none"
+            : string.Join("|", plannedPlacement.PlannerWarnings);
         Log(
-            $"Placement requested for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth} assignments={plannedPlacement.Assignments.Count} workers={plannedPlacement.EligibleWorkers.Count}");
+            $"Placement requested for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth} assignments={plannedPlacement.Assignments.Count} workers={plannedPlacement.EligibleWorkers.Count} warnings={plannerWarnings}");
+
+        ScheduleSelf(context, TimeSpan.Zero, new DispatchPlacementPlan(brainId, brain.PlacementEpoch));
 
         context.Respond(new ProtoControl.PlacementAck
         {
@@ -789,6 +832,82 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (brain.PlacementExecution is not null
+            && brain.PlacementExecution.PlacementEpoch == brain.PlacementEpoch
+            && !string.IsNullOrWhiteSpace(message.AssignmentId)
+            && brain.PlacementExecution.Assignments.TryGetValue(message.AssignmentId, out var trackedAssignment))
+        {
+            trackedAssignment.AwaitingAck = false;
+            trackedAssignment.AcceptedMs = NowMs();
+
+            if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
+            {
+                var failureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
+                    ? ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected
+                    : message.FailureReason;
+
+                if (message.Retryable && CanRetryAssignment(trackedAssignment))
+                {
+                    var backoffMs = message.RetryAfterMs > 0
+                        ? (int)Math.Min(int.MaxValue, message.RetryAfterMs)
+                        : _options.PlacementAssignmentRetryBackoffMs;
+                    var nextAttempt = trackedAssignment.Attempt + 1;
+                    ScheduleSelf(
+                        context,
+                        TimeSpan.FromMilliseconds(Math.Max(0, backoffMs)),
+                        new RetryPlacementAssignment(brain.BrainId, brain.PlacementEpoch, trackedAssignment.Assignment.AssignmentId, nextAttempt));
+                    UpdatePlacementLifecycle(
+                        brain,
+                        ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                        ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                    return;
+                }
+
+                trackedAssignment.Failed = true;
+                FailPlacementExecution(
+                    brain,
+                    failureReason,
+                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                return;
+            }
+
+            switch (message.State)
+            {
+                case ProtoControl.PlacementAssignmentState.PlacementAssignmentPending:
+                case ProtoControl.PlacementAssignmentState.PlacementAssignmentAccepted:
+                    UpdatePlacementLifecycle(
+                        brain,
+                        ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                        ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                    trackedAssignment.Accepted = true;
+                    break;
+                case ProtoControl.PlacementAssignmentState.PlacementAssignmentReady:
+                    trackedAssignment.Accepted = true;
+                    trackedAssignment.Ready = true;
+                    trackedAssignment.ReadyMs = NowMs();
+                    UpdatePlacementLifecycle(
+                        brain,
+                        ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                        ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                    MaybeStartReconcile(context, brain);
+                    break;
+                case ProtoControl.PlacementAssignmentState.PlacementAssignmentDraining:
+                    brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
+                    UpdatePlacementLifecycle(
+                        brain,
+                        ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                        ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                    break;
+            }
+
+            return;
+        }
+
+        HandlePlacementAssignmentAckLegacy(brain, message);
+    }
+
+    private void HandlePlacementAssignmentAckLegacy(BrainState brain, ProtoControl.PlacementAssignmentAck message)
+    {
         if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
         {
             var failureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
@@ -843,6 +962,19 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (brain.PlacementExecution is not null
+            && brain.PlacementExecution.PlacementEpoch == brain.PlacementEpoch
+            && brain.PlacementExecution.ReconcileRequested)
+        {
+            HandleTrackedPlacementReconcileReport(context, brain, message);
+            return;
+        }
+
+        HandlePlacementReconcileReportLegacy(brain, message);
+    }
+
+    private void HandlePlacementReconcileReportLegacy(BrainState brain, ProtoControl.PlacementReconcileReport message)
+    {
         brain.PlacementReconcileState = message.ReconcileState;
         switch (message.ReconcileState)
         {
@@ -869,6 +1001,492 @@ public sealed class HiveMindActor : IActor
                         : message.FailureReason);
                 break;
         }
+    }
+
+    private void HandleDispatchPlacementPlan(IContext context, DispatchPlacementPlan message)
+    {
+        if (!_brains.TryGetValue(message.BrainId, out var brain))
+        {
+            return;
+        }
+
+        if (brain.PlacementEpoch == 0
+            || brain.PlacementExecution is null
+            || brain.PlacementExecution.PlacementEpoch != message.PlacementEpoch
+            || brain.PlacementExecution.Completed)
+        {
+            return;
+        }
+
+        if (brain.PlacementExecution.Assignments.Count == 0)
+        {
+            FailPlacementExecution(
+                brain,
+                ProtoControl.PlacementFailureReason.PlacementFailureInternalError,
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+            return;
+        }
+
+        UpdatePlacementLifecycle(
+            brain,
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+            ProtoControl.PlacementFailureReason.PlacementFailureNone);
+
+        foreach (var assignment in brain.PlacementExecution.Assignments.Values.OrderBy(static entry => entry.Assignment.AssignmentId, StringComparer.Ordinal))
+        {
+            DispatchPlacementAssignment(context, brain, assignment, 1);
+        }
+    }
+
+    private void HandleRetryPlacementAssignment(IContext context, RetryPlacementAssignment message)
+    {
+        if (!_brains.TryGetValue(message.BrainId, out var brain)
+            || brain.PlacementExecution is null
+            || brain.PlacementExecution.PlacementEpoch != message.PlacementEpoch
+            || brain.PlacementExecution.Completed)
+        {
+            return;
+        }
+
+        if (!brain.PlacementExecution.Assignments.TryGetValue(message.AssignmentId, out var assignment)
+            || assignment.Ready
+            || assignment.Failed)
+        {
+            return;
+        }
+
+        DispatchPlacementAssignment(context, brain, assignment, message.Attempt);
+    }
+
+    private void HandlePlacementAssignmentTimeout(IContext context, PlacementAssignmentTimeout message)
+    {
+        if (!_brains.TryGetValue(message.BrainId, out var brain)
+            || brain.PlacementExecution is null
+            || brain.PlacementExecution.PlacementEpoch != message.PlacementEpoch
+            || brain.PlacementExecution.Completed)
+        {
+            return;
+        }
+
+        if (!brain.PlacementExecution.Assignments.TryGetValue(message.AssignmentId, out var assignment))
+        {
+            return;
+        }
+
+        if (!assignment.AwaitingAck || assignment.Attempt != message.Attempt || assignment.Ready || assignment.Failed)
+        {
+            return;
+        }
+
+        assignment.AwaitingAck = false;
+        if (CanRetryAssignment(assignment))
+        {
+            var nextAttempt = assignment.Attempt + 1;
+            ScheduleSelf(
+                context,
+                TimeSpan.FromMilliseconds(Math.Max(0, _options.PlacementAssignmentRetryBackoffMs)),
+                new RetryPlacementAssignment(brain.BrainId, brain.PlacementEpoch, assignment.Assignment.AssignmentId, nextAttempt));
+            return;
+        }
+
+        FailPlacementExecution(
+            brain,
+            ProtoControl.PlacementFailureReason.PlacementFailureAssignmentTimeout,
+            ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+    }
+
+    private void HandlePlacementReconcileTimeout(IContext context, PlacementReconcileTimeout message)
+    {
+        if (!_brains.TryGetValue(message.BrainId, out var brain)
+            || brain.PlacementExecution is null
+            || brain.PlacementExecution.PlacementEpoch != message.PlacementEpoch
+            || !brain.PlacementExecution.ReconcileRequested
+            || brain.PlacementExecution.Completed)
+        {
+            return;
+        }
+
+        if (brain.PlacementExecution.PendingReconcileWorkers.Count == 0)
+        {
+            return;
+        }
+
+        FailPlacementExecution(
+            brain,
+            ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch,
+            ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+        EmitDebug(
+            context,
+            ProtoSeverity.SevWarn,
+            "placement.reconcile.timeout",
+            $"Placement reconcile timed out for brain {brain.BrainId} epoch={brain.PlacementEpoch} pendingWorkers={brain.PlacementExecution.PendingReconcileWorkers.Count}.");
+    }
+
+    private void HandleTrackedPlacementReconcileReport(IContext context, BrainState brain, ProtoControl.PlacementReconcileReport message)
+    {
+        var execution = brain.PlacementExecution;
+        if (execution is null)
+        {
+            return;
+        }
+
+        switch (message.ReconcileState)
+        {
+            case ProtoControl.PlacementReconcileState.PlacementReconcileFailed:
+                FailPlacementExecution(
+                    brain,
+                    message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
+                        ? ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch
+                        : message.FailureReason,
+                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                return;
+            case ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction:
+                execution.RequiresReconcileAction = true;
+                break;
+            case ProtoControl.PlacementReconcileState.PlacementReconcileMatched:
+                break;
+        }
+
+        foreach (var observed in message.Assignments)
+        {
+            if (!string.IsNullOrWhiteSpace(observed.AssignmentId))
+            {
+                execution.ObservedAssignments[observed.AssignmentId] = observed.Clone();
+            }
+        }
+
+        if (TryResolveReconcileWorkerNodeId(context.Sender, execution, message, out var workerId))
+        {
+            execution.PendingReconcileWorkers.Remove(workerId);
+        }
+
+        if (execution.PendingReconcileWorkers.Count > 0)
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            return;
+        }
+
+        if (!TryValidateReconcileMatches(execution, out var mismatch))
+        {
+            FailPlacementExecution(
+                brain,
+                ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch,
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+            EmitDebug(
+                context,
+                ProtoSeverity.SevWarn,
+                "placement.reconcile.mismatch",
+                $"Placement reconcile mismatch for brain {brain.BrainId}: {mismatch}");
+            return;
+        }
+
+        execution.Completed = true;
+        brain.PlacementReconcileState = execution.RequiresReconcileAction
+            ? ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction
+            : ProtoControl.PlacementReconcileState.PlacementReconcileMatched;
+
+        if (execution.RequiresReconcileAction)
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            return;
+        }
+
+        UpdatePlacementLifecycle(
+            brain,
+            brain.Shards.Count > 0
+                ? ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
+                : ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
+            ProtoControl.PlacementFailureReason.PlacementFailureNone);
+    }
+
+    private void DispatchPlacementAssignment(
+        IContext context,
+        BrainState brain,
+        PlacementAssignmentExecutionState assignment,
+        int attempt)
+    {
+        if (brain.PlacementExecution is null)
+        {
+            return;
+        }
+
+        if (!TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId)
+            || !brain.PlacementExecution.WorkerTargets.TryGetValue(workerNodeId, out var workerPid))
+        {
+            assignment.Failed = true;
+            FailPlacementExecution(
+                brain,
+                ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+            return;
+        }
+
+        assignment.Attempt = Math.Max(1, attempt);
+        assignment.AwaitingAck = true;
+        assignment.LastDispatchMs = NowMs();
+
+        try
+        {
+            context.Request(
+                workerPid,
+                new ProtoControl.PlacementAssignmentRequest
+                {
+                    Assignment = assignment.Assignment.Clone()
+                });
+        }
+        catch (Exception ex)
+        {
+            assignment.AwaitingAck = false;
+            assignment.Failed = true;
+            FailPlacementExecution(
+                brain,
+                ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+            LogError($"Failed to dispatch placement assignment {assignment.Assignment.AssignmentId} for brain {brain.BrainId}: {ex.Message}");
+            return;
+        }
+
+        ScheduleSelf(
+            context,
+            TimeSpan.FromMilliseconds(Math.Max(100, _options.PlacementAssignmentTimeoutMs)),
+            new PlacementAssignmentTimeout(
+                brain.BrainId,
+                brain.PlacementEpoch,
+                assignment.Assignment.AssignmentId,
+                assignment.Attempt));
+    }
+
+    private void MaybeStartReconcile(IContext context, BrainState brain)
+    {
+        var execution = brain.PlacementExecution;
+        if (execution is null || execution.Completed || execution.ReconcileRequested)
+        {
+            return;
+        }
+
+        if (execution.Assignments.Values.Any(static assignment => !assignment.Ready))
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            return;
+        }
+
+        execution.ReconcileRequested = true;
+        execution.PendingReconcileWorkers.Clear();
+        execution.ObservedAssignments.Clear();
+        execution.RequiresReconcileAction = false;
+        foreach (var assignment in execution.Assignments.Values)
+        {
+            if (TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId))
+            {
+                execution.PendingReconcileWorkers.Add(workerNodeId);
+            }
+        }
+
+        UpdatePlacementLifecycle(
+            brain,
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+            ProtoControl.PlacementFailureReason.PlacementFailureNone);
+
+        foreach (var workerNodeId in execution.PendingReconcileWorkers.ToArray())
+        {
+            if (!execution.WorkerTargets.TryGetValue(workerNodeId, out var workerPid))
+            {
+                continue;
+            }
+
+            try
+            {
+                context.Request(
+                    workerPid,
+                    new ProtoControl.PlacementReconcileRequest
+                    {
+                        BrainId = brain.BrainId.ToProtoUuid(),
+                        PlacementEpoch = brain.PlacementEpoch
+                    });
+            }
+            catch (Exception ex)
+            {
+                FailPlacementExecution(
+                    brain,
+                    ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                LogError($"Failed to dispatch reconcile request for brain {brain.BrainId}: {ex.Message}");
+                return;
+            }
+        }
+
+        if (execution.PendingReconcileWorkers.Count == 0)
+        {
+            execution.Completed = true;
+            brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileMatched;
+            UpdatePlacementLifecycle(
+                brain,
+                brain.Shards.Count > 0
+                    ? ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
+                    : ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
+                ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            return;
+        }
+
+        ScheduleSelf(
+            context,
+            TimeSpan.FromMilliseconds(Math.Max(100, _options.PlacementReconcileTimeoutMs)),
+            new PlacementReconcileTimeout(brain.BrainId, brain.PlacementEpoch));
+    }
+
+    private static bool TryResolveReconcileWorkerNodeId(
+        PID? sender,
+        PlacementExecutionState execution,
+        ProtoControl.PlacementReconcileReport message,
+        out Guid workerId)
+    {
+        foreach (var observed in message.Assignments)
+        {
+            if (TryGetGuid(observed.WorkerNodeId, out var observedWorkerId)
+                && execution.PendingReconcileWorkers.Contains(observedWorkerId))
+            {
+                workerId = observedWorkerId;
+                return true;
+            }
+        }
+
+        if (sender is not null)
+        {
+            foreach (var target in execution.WorkerTargets)
+            {
+                if (target.Value.Equals(sender))
+                {
+                    workerId = target.Key;
+                    return true;
+                }
+            }
+        }
+
+        if (execution.PendingReconcileWorkers.Count == 1)
+        {
+            workerId = execution.PendingReconcileWorkers.First();
+            return true;
+        }
+
+        workerId = Guid.Empty;
+        return false;
+    }
+
+    private static bool TryValidateReconcileMatches(PlacementExecutionState execution, out string mismatch)
+    {
+        foreach (var assignment in execution.Assignments.Values)
+        {
+            var assignmentId = assignment.Assignment.AssignmentId;
+            if (!execution.ObservedAssignments.TryGetValue(assignmentId, out var observed))
+            {
+                mismatch = $"missing assignment '{assignmentId}'";
+                return false;
+            }
+
+            if (observed.Target != assignment.Assignment.Target)
+            {
+                mismatch = $"target mismatch for '{assignmentId}'";
+                return false;
+            }
+
+            if (!TryGetGuid(observed.WorkerNodeId, out var observedWorker)
+                || !TryGetGuid(assignment.Assignment.WorkerNodeId, out var plannedWorker)
+                || observedWorker != plannedWorker)
+            {
+                mismatch = $"worker mismatch for '{assignmentId}'";
+                return false;
+            }
+
+            if (observed.RegionId != assignment.Assignment.RegionId || observed.ShardIndex != assignment.Assignment.ShardIndex)
+            {
+                mismatch = $"shard mismatch for '{assignmentId}'";
+                return false;
+            }
+        }
+
+        mismatch = string.Empty;
+        return true;
+    }
+
+    private bool TryCreatePlacementExecution(
+        IContext context,
+        BrainState brain,
+        PlacementPlanner.PlacementPlanningResult plan,
+        out string failureMessage)
+    {
+        var workerTargets = new Dictionary<Guid, PID>();
+        foreach (var worker in plan.EligibleWorkers)
+        {
+            if (string.IsNullOrWhiteSpace(worker.WorkerRootActorName))
+            {
+                failureMessage = $"Worker {worker.NodeId} has no root actor name for placement orchestration.";
+                return false;
+            }
+
+            var workerPid = string.IsNullOrWhiteSpace(worker.WorkerAddress)
+                ? new PID(string.Empty, worker.WorkerRootActorName)
+                : new PID(worker.WorkerAddress, worker.WorkerRootActorName);
+
+            workerTargets[worker.NodeId] = NormalizePid(context, workerPid) ?? workerPid;
+        }
+
+        var execution = new PlacementExecutionState(brain.PlacementEpoch, workerTargets);
+        foreach (var assignment in plan.Assignments)
+        {
+            if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
+            {
+                continue;
+            }
+
+            execution.Assignments[assignment.AssignmentId] = new PlacementAssignmentExecutionState(assignment.Clone());
+        }
+
+        if (execution.Assignments.Count == 0)
+        {
+            failureMessage = "Placement plan produced no assignments.";
+            return false;
+        }
+
+        brain.PlacementExecution = execution;
+        failureMessage = string.Empty;
+        return true;
+    }
+
+    private bool CanRetryAssignment(PlacementAssignmentExecutionState assignment)
+        => assignment.Attempt <= _options.PlacementAssignmentMaxRetries;
+
+    private void FailPlacementExecution(
+        BrainState brain,
+        ProtoControl.PlacementFailureReason failureReason,
+        ProtoControl.PlacementReconcileState reconcileState)
+    {
+        brain.PlacementReconcileState = reconcileState;
+        if (brain.PlacementExecution is not null)
+        {
+            brain.PlacementExecution.Completed = true;
+            foreach (var assignment in brain.PlacementExecution.Assignments.Values)
+            {
+                assignment.AwaitingAck = false;
+                if (!assignment.Ready)
+                {
+                    assignment.Failed = true;
+                }
+            }
+        }
+
+        UpdatePlacementLifecycle(
+            brain,
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+            failureReason);
     }
 
     private ProtoControl.PlacementLifecycleInfo BuildPlacementLifecycleInfo(Guid brainId)
@@ -914,6 +1532,22 @@ public sealed class HiveMindActor : IActor
     {
         RefreshWorkerCatalogFreshness(nowMs);
 
+        if (!TryResolvePlacementRegions(brain, out var regions, out var shardStride, out var regionWarning, out var regionFailure))
+        {
+            plan = new PlacementPlanner.PlacementPlanningResult(
+                brain.PlacementEpoch,
+                brain.PlacementRequestId,
+                brain.PlacementRequestedMs,
+                nowMs,
+                _workerCatalogSnapshotMs > 0 ? (ulong)_workerCatalogSnapshotMs : (ulong)nowMs,
+                Array.Empty<PlacementPlanner.WorkerCandidate>(),
+                Array.Empty<ProtoControl.PlacementAssignment>(),
+                regionFailure is null ? Array.Empty<string>() : new[] { regionFailure });
+            failureReason = ProtoControl.PlacementFailureReason.PlacementFailureInternalError;
+            failureMessage = regionFailure ?? "Unable to derive placement regions from request metadata.";
+            return false;
+        }
+
         var snapshotMs = _workerCatalogSnapshotMs > 0 ? (ulong)_workerCatalogSnapshotMs : (ulong)nowMs;
         var workers = _workerCatalog.Values
             .Select(static entry => new PlacementPlanner.WorkerCandidate(
@@ -922,20 +1556,157 @@ public sealed class HiveMindActor : IActor
                 entry.WorkerRootActorName,
                 entry.IsAlive,
                 entry.IsReady,
-                entry.IsFresh))
+                entry.IsFresh,
+                entry.CpuCores,
+                entry.RamFreeBytes,
+                entry.HasGpu,
+                entry.VramFreeBytes,
+                entry.CpuScore,
+                entry.GpuScore))
             .ToArray();
 
-        return PlacementPlanner.TryBuildPlan(
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
             brain.BrainId,
             brain.PlacementEpoch,
             brain.PlacementRequestId,
             brain.PlacementRequestedMs,
             nowMs,
             snapshotMs,
+            shardStride,
+            brain.RequestedShardPlan,
+            regions);
+        var planned = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
             workers,
             out plan,
             out failureReason,
             out failureMessage);
+        if (!planned)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(regionWarning))
+        {
+            var warnings = plan.PlannerWarnings.Concat(new[] { regionWarning }).ToArray();
+            plan = new PlacementPlanner.PlacementPlanningResult(
+                plan.PlacementEpoch,
+                plan.RequestId,
+                plan.RequestedMs,
+                plan.PlannedMs,
+                plan.WorkerSnapshotMs,
+                plan.EligibleWorkers,
+                plan.Assignments,
+                warnings);
+        }
+
+        return true;
+    }
+
+    private bool TryResolvePlacementRegions(
+        BrainState brain,
+        out IReadOnlyList<PlacementPlanner.RegionSpan> regions,
+        out int shardStride,
+        out string? warningMessage,
+        out string? failureMessage)
+    {
+        if (HasArtifactRef(brain.BaseDefinition)
+            && TryReadPlacementHeader(brain.BaseDefinition!, out var header))
+        {
+            var fromHeader = new List<PlacementPlanner.RegionSpan>();
+            for (var regionId = 0; regionId < header.Regions.Length; regionId++)
+            {
+                var neuronSpan = (int)header.Regions[regionId].NeuronSpan;
+                if (neuronSpan <= 0)
+                {
+                    continue;
+                }
+
+                fromHeader.Add(new PlacementPlanner.RegionSpan(regionId, neuronSpan));
+            }
+
+            if (fromHeader.Count > 0)
+            {
+                regions = fromHeader;
+                shardStride = (int)Math.Max(1u, header.AxonStride);
+                warningMessage = null;
+                failureMessage = null;
+                return true;
+            }
+        }
+
+        var fallback = new List<PlacementPlanner.RegionSpan>();
+        if (brain.InputWidth > 0)
+        {
+            fallback.Add(new PlacementPlanner.RegionSpan(NbnConstants.InputRegionId, brain.InputWidth));
+        }
+
+        if (brain.OutputWidth > 0)
+        {
+            fallback.Add(new PlacementPlanner.RegionSpan(NbnConstants.OutputRegionId, brain.OutputWidth));
+        }
+
+        if (fallback.Count == 0)
+        {
+            regions = Array.Empty<PlacementPlanner.RegionSpan>();
+            shardStride = NbnConstants.DefaultAxonStride;
+            warningMessage = null;
+            failureMessage = "Placement planning requires either resolvable base definition metadata or non-zero input/output widths.";
+            return false;
+        }
+
+        regions = fallback;
+        shardStride = NbnConstants.DefaultAxonStride;
+        warningMessage = "Placement planner used fallback IO-only regions because base definition metadata was unavailable.";
+        failureMessage = null;
+        return true;
+    }
+
+    private static bool TryReadPlacementHeader(Nbn.Proto.ArtifactRef baseDefinition, out NbnHeaderV2 header)
+    {
+        header = default!;
+        if (!baseDefinition.TryToSha256Bytes(out var baseHashBytes))
+        {
+            return false;
+        }
+
+        var storeRoot = ResolveArtifactRoot(baseDefinition.StoreUri);
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(storeRoot));
+
+        try
+        {
+            var stream = store.TryOpenArtifactAsync(new Sha256Hash(baseHashBytes))
+                .ConfigureAwait(false)
+                .GetAwaiter()
+                .GetResult();
+            if (stream is null)
+            {
+                return false;
+            }
+
+            using (stream)
+            {
+                var headerBytes = new byte[NbnBinary.NbnHeaderBytes];
+                var offset = 0;
+                while (offset < headerBytes.Length)
+                {
+                    var read = stream.Read(headerBytes, offset, headerBytes.Length - offset);
+                    if (read <= 0)
+                    {
+                        return false;
+                    }
+
+                    offset += read;
+                }
+
+                header = NbnBinary.ReadNbnHeader(headerBytes);
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void UpdatePlacementLifecycle(
@@ -2585,6 +3356,10 @@ public sealed class HiveMindActor : IActor
     private sealed record RefreshWorkerInventoryTick;
     private sealed record RescheduleNow(string Reason);
     private sealed record RescheduleCompleted(string Reason, bool Success);
+    private sealed record DispatchPlacementPlan(Guid BrainId, ulong PlacementEpoch);
+    private sealed record RetryPlacementAssignment(Guid BrainId, ulong PlacementEpoch, string AssignmentId, int Attempt);
+    private sealed record PlacementAssignmentTimeout(Guid BrainId, ulong PlacementEpoch, string AssignmentId, int Attempt);
+    private sealed record PlacementReconcileTimeout(Guid BrainId, ulong PlacementEpoch);
 
     private enum TickPhase
     {
@@ -2653,6 +3428,7 @@ public sealed class HiveMindActor : IActor
         public string PlacementRequestId { get; set; } = string.Empty;
         public ProtoControl.ShardPlan? RequestedShardPlan { get; set; }
         public PlacementPlanner.PlacementPlanningResult? PlannedPlacement { get; set; }
+        public PlacementExecutionState? PlacementExecution { get; set; }
         public ProtoControl.PlacementLifecycleState PlacementLifecycleState { get; set; }
             = ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown;
         public ProtoControl.PlacementFailureReason PlacementFailureReason { get; set; }
@@ -2685,6 +3461,42 @@ public sealed class HiveMindActor : IActor
         public long VramFreeBytes { get; set; }
         public float CpuScore { get; set; }
         public float GpuScore { get; set; }
+    }
+
+    private sealed class PlacementExecutionState
+    {
+        public PlacementExecutionState(ulong placementEpoch, Dictionary<Guid, PID> workerTargets)
+        {
+            PlacementEpoch = placementEpoch;
+            WorkerTargets = workerTargets;
+        }
+
+        public ulong PlacementEpoch { get; }
+        public Dictionary<Guid, PID> WorkerTargets { get; }
+        public Dictionary<string, PlacementAssignmentExecutionState> Assignments { get; } = new(StringComparer.Ordinal);
+        public Dictionary<string, ProtoControl.PlacementObservedAssignment> ObservedAssignments { get; } = new(StringComparer.Ordinal);
+        public HashSet<Guid> PendingReconcileWorkers { get; } = new();
+        public bool ReconcileRequested { get; set; }
+        public bool RequiresReconcileAction { get; set; }
+        public bool Completed { get; set; }
+    }
+
+    private sealed class PlacementAssignmentExecutionState
+    {
+        public PlacementAssignmentExecutionState(ProtoControl.PlacementAssignment assignment)
+        {
+            Assignment = assignment;
+        }
+
+        public ProtoControl.PlacementAssignment Assignment { get; }
+        public int Attempt { get; set; }
+        public bool AwaitingAck { get; set; }
+        public bool Accepted { get; set; }
+        public bool Ready { get; set; }
+        public bool Failed { get; set; }
+        public long LastDispatchMs { get; set; }
+        public long AcceptedMs { get; set; }
+        public long ReadyMs { get; set; }
     }
 
     private sealed record SnapshotBuildRequest(

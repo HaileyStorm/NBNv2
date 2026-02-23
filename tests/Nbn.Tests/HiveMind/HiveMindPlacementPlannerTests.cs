@@ -135,7 +135,7 @@ public sealed class HiveMindPlacementPlannerTests
         Assert.Equal(ack.PlacementEpoch, stored.PlacementEpoch);
         Assert.Equal(requestId, stored.RequestId);
         Assert.Single(stored.EligibleWorkers);
-        Assert.Equal(4, stored.Assignments.Count);
+        Assert.Equal(6, stored.Assignments.Count);
 
         foreach (var assignment in stored.Assignments)
         {
@@ -163,31 +163,42 @@ public sealed class HiveMindPlacementPlannerTests
 
         var workers = new[]
         {
-            new PlacementPlanner.WorkerCandidate(workerB, "worker-b:12040", "region-host", true, true, true),
-            new PlacementPlanner.WorkerCandidate(staleWorker, "worker-c:12040", "region-host", true, true, false),
-            new PlacementPlanner.WorkerCandidate(workerA, "worker-a:12040", "region-host", true, true, true),
-            new PlacementPlanner.WorkerCandidate(offlineWorker, "worker-d:12040", "region-host", false, true, true),
-            new PlacementPlanner.WorkerCandidate(unreadyWorker, "worker-e:12040", "region-host", true, false, true)
+            new PlacementPlanner.WorkerCandidate(workerB, "worker-b:12040", "region-host", true, true, true, 8, 8L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 20f, 70f),
+            new PlacementPlanner.WorkerCandidate(staleWorker, "worker-c:12040", "region-host", true, true, false, 8, 8L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 30f, 65f),
+            new PlacementPlanner.WorkerCandidate(workerA, "worker-a:12040", "region-host", true, true, true, 16, 16L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 40f, 50f),
+            new PlacementPlanner.WorkerCandidate(offlineWorker, "worker-d:12040", "region-host", false, true, true, 16, 16L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 45f, 80f),
+            new PlacementPlanner.WorkerCandidate(unreadyWorker, "worker-e:12040", "region-host", true, false, true, 16, 16L * 1024 * 1024 * 1024, false, 0, 35f, 0f)
         };
 
+        var shardPlan = new ShardPlan
+        {
+            Mode = (ShardPlanMode)1,
+            ShardCount = 2
+        };
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: brainId,
+            PlacementEpoch: 2,
+            RequestId: "req-42",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: shardPlan,
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 4096),
+                new PlacementPlanner.RegionSpan(31, 2)
+            });
+
         var builtFirst = PlacementPlanner.TryBuildPlan(
-            brainId,
-            placementEpoch: 2,
-            requestId: "req-42",
-            requestedMs: 100,
-            plannedMs: 101,
-            workerSnapshotMs: 99,
+            plannerInputs,
             workers,
             out var firstPlan,
             out var firstFailureReason,
             out _);
         var builtSecond = PlacementPlanner.TryBuildPlan(
-            brainId,
-            placementEpoch: 2,
-            requestId: "req-42",
-            requestedMs: 100,
-            plannedMs: 101,
-            workerSnapshotMs: 99,
+            plannerInputs,
             workers.Reverse().ToArray(),
             out var secondPlan,
             out var secondFailureReason,
@@ -200,13 +211,20 @@ public sealed class HiveMindPlacementPlannerTests
 
         Assert.Equal(new[] { workerA, workerB }, firstPlan.EligibleWorkers.Select(static worker => worker.NodeId).ToArray());
         Assert.Equal(firstPlan.Assignments.Count, secondPlan.Assignments.Count);
+        Assert.Equal(8, firstPlan.Assignments.Count);
 
         var firstSignatures = firstPlan.Assignments.Select(AssignmentSignature).ToArray();
         var secondSignatures = secondPlan.Assignments.Select(AssignmentSignature).ToArray();
         Assert.Equal(firstSignatures, secondSignatures);
 
         var assignedWorkers = firstPlan.Assignments.Select(AssignmentWorkerId).ToArray();
-        Assert.Equal(new[] { workerA, workerB, workerA, workerB }, assignedWorkers);
+        Assert.Contains(workerA, assignedWorkers);
+        Assert.Contains(workerB, assignedWorkers);
+        Assert.Equal(1, firstPlan.Assignments.Count(assignment =>
+            assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
+            && assignment.RegionId == 1
+            && assignment.ShardIndex == 1
+            && AssignmentWorkerId(assignment) == workerB));
     }
 
     private static PlacementPlanner.PlacementPlanningResult? GetPlannedPlacement(HiveMindActor actor, Guid brainId)
