@@ -3,6 +3,7 @@ using Nbn.Proto.Io;
 using Nbn.Runtime.HiveMind;
 using Nbn.Shared;
 using Proto;
+using ProtoSettings = Nbn.Proto.Settings;
 
 namespace Nbn.Tests.HiveMind;
 
@@ -14,6 +15,7 @@ public class HiveMindArtifactReferenceTests
         var system = new ActorSystem();
         var root = system.Root;
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
 
         var brainId = Guid.NewGuid();
         var baseDef = new string('A', 64).ToLowerInvariant().ToArtifactRef(128, "application/x-nbn", "test-store");
@@ -50,6 +52,7 @@ public class HiveMindArtifactReferenceTests
         var system = new ActorSystem();
         var root = system.Root;
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
 
         var brainId = Guid.NewGuid();
         var baseDef = new string('C', 64).ToLowerInvariant().ToArtifactRef(128, "application/x-nbn", "test-store");
@@ -81,6 +84,52 @@ public class HiveMindArtifactReferenceTests
 
         await system.ShutdownAsync();
     }
+
+    private static void PrimeEligibleWorker(IRootContext root, PID hiveMind)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    Guid.NewGuid(),
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "artifact-worker:12040",
+                    rootActorName: "region-host")
+            }
+        });
+    }
+
+    private static ProtoSettings.WorkerReadinessCapability BuildWorker(
+        Guid nodeId,
+        bool isAlive,
+        bool isReady,
+        long lastSeenMs,
+        long capabilityTimeMs,
+        string address,
+        string rootActorName)
+        => new()
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            Address = address,
+            RootActorName = rootActorName,
+            IsAlive = isAlive,
+            IsReady = isReady,
+            LastSeenMs = (ulong)lastSeenMs,
+            HasCapabilities = true,
+            CapabilityTimeMs = (ulong)capabilityTimeMs,
+            Capabilities = new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 4,
+                RamFreeBytes = 2UL * 1024 * 1024 * 1024,
+                CpuScore = 10f
+            }
+        };
 
     private static HiveMindOptions CreateOptions()
         => new(

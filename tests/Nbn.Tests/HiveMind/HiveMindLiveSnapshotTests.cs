@@ -8,6 +8,7 @@ using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Tests.Format;
 using Proto;
+using ProtoSettings = Nbn.Proto.Settings;
 using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
@@ -31,6 +32,7 @@ public class HiveMindLiveSnapshotTests
             var system = new ActorSystem();
             var root = system.Root;
             var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+            PrimeEligibleWorker(root, hiveMind);
 
             var brainId = Guid.NewGuid();
             var placement = await root.RequestAsync<PlacementAck>(
@@ -196,6 +198,7 @@ public class HiveMindLiveSnapshotTests
             var system = new ActorSystem();
             var root = system.Root;
             var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+            PrimeEligibleWorker(root, hiveMind);
 
             var brainId = Guid.NewGuid();
             var placement = await root.RequestAsync<PlacementAck>(
@@ -420,6 +423,55 @@ public class HiveMindLiveSnapshotTests
 
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static void PrimeEligibleWorker(IRootContext root, PID hiveMind)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    Guid.NewGuid(),
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "snapshot-worker:12040",
+                    rootActorName: "region-host")
+            }
+        });
+    }
+
+    private static ProtoSettings.WorkerReadinessCapability BuildWorker(
+        Guid nodeId,
+        bool isAlive,
+        bool isReady,
+        long lastSeenMs,
+        long capabilityTimeMs,
+        string address,
+        string rootActorName)
+        => new()
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            Address = address,
+            RootActorName = rootActorName,
+            IsAlive = isAlive,
+            IsReady = isReady,
+            LastSeenMs = (ulong)lastSeenMs,
+            HasCapabilities = true,
+            CapabilityTimeMs = (ulong)capabilityTimeMs,
+            Capabilities = new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 8,
+                RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                HasGpu = true,
+                VramFreeBytes = 8UL * 1024 * 1024 * 1024,
+                CpuScore = 40f,
+                GpuScore = 80f
+            }
+        };
 
     private static HiveMindOptions CreateOptions()
         => new(

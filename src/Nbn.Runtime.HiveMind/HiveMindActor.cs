@@ -719,7 +719,36 @@ public sealed class HiveMindActor : IActor
             brain.OutputWidth = Math.Max(brain.OutputWidth, (int)message.OutputWidth);
         }
 
-        brain.RequestedShardPlan = message.ShardPlan;
+        brain.RequestedShardPlan = message.ShardPlan is null ? null : message.ShardPlan.Clone();
+
+        if (!TryBuildPlacementPlan(brain, nowMs, out var plannedPlacement, out var failureReason, out var failureMessage))
+        {
+            brain.PlannedPlacement = null;
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                failureReason);
+
+            RegisterBrainWithIo(context, brain, force: true);
+
+            var failedPlanLabel = message.ShardPlan is null ? "none" : message.ShardPlan.Mode.ToString();
+            Log(
+                $"Placement request rejected for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={failedPlanLabel} reason={failureReason}: {failureMessage}");
+
+            context.Respond(new ProtoControl.PlacementAck
+            {
+                Accepted = false,
+                Message = failureMessage,
+                PlacementEpoch = brain.PlacementEpoch,
+                LifecycleState = brain.PlacementLifecycleState,
+                FailureReason = brain.PlacementFailureReason,
+                AcceptedMs = (ulong)brain.PlacementUpdatedMs,
+                RequestId = brain.PlacementRequestId
+            });
+            return;
+        }
+
+        brain.PlannedPlacement = plannedPlacement;
         UpdatePlacementLifecycle(
             brain,
             ProtoControl.PlacementLifecycleState.PlacementLifecycleRequested,
@@ -729,7 +758,7 @@ public sealed class HiveMindActor : IActor
 
         var planLabel = message.ShardPlan is null ? "none" : message.ShardPlan.Mode.ToString();
         Log(
-            $"Placement requested for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth}");
+            $"Placement requested for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth} assignments={plannedPlacement.Assignments.Count} workers={plannedPlacement.EligibleWorkers.Count}");
 
         context.Respond(new ProtoControl.PlacementAck
         {
@@ -874,6 +903,39 @@ public sealed class HiveMindActor : IActor
         }
 
         return info;
+    }
+
+    private bool TryBuildPlacementPlan(
+        BrainState brain,
+        long nowMs,
+        out PlacementPlanner.PlacementPlanningResult plan,
+        out ProtoControl.PlacementFailureReason failureReason,
+        out string failureMessage)
+    {
+        RefreshWorkerCatalogFreshness(nowMs);
+
+        var snapshotMs = _workerCatalogSnapshotMs > 0 ? (ulong)_workerCatalogSnapshotMs : (ulong)nowMs;
+        var workers = _workerCatalog.Values
+            .Select(static entry => new PlacementPlanner.WorkerCandidate(
+                entry.NodeId,
+                entry.WorkerAddress,
+                entry.WorkerRootActorName,
+                entry.IsAlive,
+                entry.IsReady,
+                entry.IsFresh))
+            .ToArray();
+
+        return PlacementPlanner.TryBuildPlan(
+            brain.BrainId,
+            brain.PlacementEpoch,
+            brain.PlacementRequestId,
+            brain.PlacementRequestedMs,
+            nowMs,
+            snapshotMs,
+            workers,
+            out plan,
+            out failureReason,
+            out failureMessage);
     }
 
     private void UpdatePlacementLifecycle(
@@ -2590,6 +2652,7 @@ public sealed class HiveMindActor : IActor
         public long PlacementUpdatedMs { get; set; }
         public string PlacementRequestId { get; set; } = string.Empty;
         public ProtoControl.ShardPlan? RequestedShardPlan { get; set; }
+        public PlacementPlanner.PlacementPlanningResult? PlannedPlacement { get; set; }
         public ProtoControl.PlacementLifecycleState PlacementLifecycleState { get; set; }
             = ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown;
         public ProtoControl.PlacementFailureReason PlacementFailureReason { get; set; }
