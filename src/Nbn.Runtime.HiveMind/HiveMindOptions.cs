@@ -32,7 +32,9 @@ public sealed record HiveMindOptions(
     int SettingsPort,
     string SettingsName,
     string? IoAddress,
-    string? IoName)
+    string? IoName,
+    int WorkerInventoryRefreshMs = 2000,
+    int WorkerInventoryStaleAfterMs = 15000)
 {
     public static HiveMindOptions FromArgs(string[] args)
     {
@@ -71,6 +73,8 @@ public sealed record HiveMindOptions(
         var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? SettingsMonitorNames.SettingsMonitor;
+        var workerInventoryRefreshMs = GetEnvInt("NBN_HIVE_WORKER_INVENTORY_REFRESH_MS") ?? 2000;
+        var workerInventoryStaleAfterMs = GetEnvInt("NBN_HIVE_WORKER_INVENTORY_STALE_AFTER_MS") ?? 15000;
         var ioAddress = GetEnv("NBN_HIVE_IO_ADDRESS");
         var ioName = GetEnv("NBN_HIVE_IO_NAME") ?? "io-gateway";
 
@@ -258,6 +262,19 @@ public sealed record HiveMindOptions(
                         settingsName = args[++i];
                     }
                     continue;
+                case "--worker-inventory-refresh-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var workerInventoryRefreshValue))
+                    {
+                        workerInventoryRefreshMs = workerInventoryRefreshValue;
+                    }
+                    continue;
+                case "--worker-inventory-stale-after-ms":
+                case "--worker-inventory-stale-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var workerInventoryStaleValue))
+                    {
+                        workerInventoryStaleAfterMs = workerInventoryStaleValue;
+                    }
+                    continue;
                 case "--io-address":
                     if (i + 1 < args.Length)
                     {
@@ -432,6 +449,27 @@ public sealed record HiveMindOptions(
                 settingsName = arg.Substring("--settings-name=".Length);
             }
 
+            if (arg.StartsWith("--worker-inventory-refresh-ms=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--worker-inventory-refresh-ms=".Length), out var workerInventoryRefreshInline))
+            {
+                workerInventoryRefreshMs = workerInventoryRefreshInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--worker-inventory-stale-after-ms=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--worker-inventory-stale-after-ms=".Length), out var workerInventoryStaleInline))
+            {
+                workerInventoryStaleAfterMs = workerInventoryStaleInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--worker-inventory-stale-ms=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(arg.Substring("--worker-inventory-stale-ms=".Length), out var workerInventoryStaleAliasInline))
+            {
+                workerInventoryStaleAfterMs = workerInventoryStaleAliasInline;
+                continue;
+            }
+
             if (arg.StartsWith("--io-address=", StringComparison.OrdinalIgnoreCase))
             {
                 ioAddress = arg.Substring("--io-address=".Length);
@@ -463,6 +501,16 @@ public sealed record HiveMindOptions(
         if (lateBackpressureThreshold < 1)
         {
             lateBackpressureThreshold = 1;
+        }
+
+        if (workerInventoryRefreshMs < 100)
+        {
+            workerInventoryRefreshMs = 100;
+        }
+
+        if (workerInventoryStaleAfterMs < workerInventoryRefreshMs)
+        {
+            workerInventoryStaleAfterMs = workerInventoryRefreshMs;
         }
 
         computeTimeoutMs ??= (int)Math.Ceiling(1000d / minTickHz);
@@ -506,7 +554,9 @@ public sealed record HiveMindOptions(
             settingsPort,
             settingsName,
             string.IsNullOrWhiteSpace(ioAddress) ? null : ioAddress,
-            ioName);
+            ioName,
+            workerInventoryRefreshMs,
+            workerInventoryStaleAfterMs);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -573,6 +623,8 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --settings-host <host>               SettingsMonitor host (default 127.0.0.1)");
         Console.WriteLine("  --settings-port <port>               SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
+        Console.WriteLine("  --worker-inventory-refresh-ms <ms>   Settings snapshot pull interval (default 2000)");
+        Console.WriteLine("  --worker-inventory-stale-after-ms <ms> Worker freshness threshold (default 15000)");
         Console.WriteLine("  --no-settings-monitor                Disable SettingsMonitor reporting");
         Console.WriteLine("  --io-address <host:port>             IO Gateway remote address");
         Console.WriteLine("  --io-name <name>                     IO Gateway actor name (default io-gateway)");

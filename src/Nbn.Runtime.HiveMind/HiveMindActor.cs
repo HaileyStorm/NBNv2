@@ -28,9 +28,11 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
     private readonly Dictionary<Guid, BrainState> _brains = new();
+    private readonly Dictionary<Guid, WorkerCatalogEntry> _workerCatalog = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
     private ulong _vizSequence;
+    private long _workerCatalogSnapshotMs;
     private static readonly TimeSpan SnapshotShardRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
 
@@ -44,12 +46,17 @@ public sealed class HiveMindActor : IActor
     private string? _queuedRescheduleReason;
     private ulong _lastCompletedTickId;
 
-    public HiveMindActor(HiveMindOptions options, PID? debugHubPid = null, PID? vizHubPid = null, PID? ioPid = null)
+    public HiveMindActor(
+        HiveMindOptions options,
+        PID? debugHubPid = null,
+        PID? vizHubPid = null,
+        PID? ioPid = null,
+        PID? settingsPid = null)
     {
         _options = options;
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
-        _settingsPid = BuildSettingsPid(options);
+        _settingsPid = settingsPid ?? BuildSettingsPid(options);
         _ioPid = ioPid ?? BuildIoPid(options);
         var resolvedObs = ObservabilityTargets.Resolve(options.SettingsHost);
         _debugHubPid = debugHubPid ?? resolvedObs.DebugHub;
@@ -64,6 +71,11 @@ public sealed class HiveMindActor : IActor
                 if (_tickLoopEnabled)
                 {
                     ScheduleNextTick(context, TimeSpan.Zero);
+                }
+
+                if (_settingsPid is not null)
+                {
+                    ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerInventoryTick());
                 }
                 break;
             case StartTickLoop:
@@ -138,11 +150,17 @@ public sealed class HiveMindActor : IActor
                     context.Respond(new ProtoControl.PlacementLifecycleInfo());
                 }
                 break;
+            case ProtoControl.PlacementWorkerInventoryRequest:
+                context.Respond(BuildPlacementWorkerInventory());
+                break;
             case ProtoControl.PlacementAssignmentAck message:
                 HandlePlacementAssignmentAck(context, message);
                 break;
             case ProtoControl.PlacementReconcileReport message:
                 HandlePlacementReconcileReport(context, message);
+                break;
+            case ProtoSettings.WorkerInventorySnapshotResponse message:
+                HandleWorkerInventorySnapshotResponse(message);
                 break;
             case PauseBrainRequest message:
                 PauseBrain(context, message.BrainId, message.Reason);
@@ -176,6 +194,9 @@ public sealed class HiveMindActor : IActor
                 break;
             case TickPhaseTimeout message:
                 HandleTickPhaseTimeout(context, message);
+                break;
+            case RefreshWorkerInventoryTick:
+                RefreshWorkerInventory(context);
                 break;
             case RescheduleNow message:
                 BeginReschedule(context, message);
@@ -863,6 +884,133 @@ public sealed class HiveMindActor : IActor
         brain.PlacementLifecycleState = state;
         brain.PlacementFailureReason = failureReason;
         brain.PlacementUpdatedMs = NowMs();
+    }
+
+    private void RefreshWorkerInventory(IContext context)
+    {
+        if (_settingsPid is null)
+        {
+            return;
+        }
+
+        try
+        {
+            context.Request(_settingsPid, new ProtoSettings.WorkerInventorySnapshotRequest());
+        }
+        catch (Exception ex)
+        {
+            LogError($"WorkerInventorySnapshot request failed: {ex.Message}");
+        }
+        finally
+        {
+            ScheduleSelf(
+                context,
+                TimeSpan.FromMilliseconds(_options.WorkerInventoryRefreshMs),
+                new RefreshWorkerInventoryTick());
+        }
+    }
+
+    private void HandleWorkerInventorySnapshotResponse(ProtoSettings.WorkerInventorySnapshotResponse message)
+    {
+        var snapshotMs = message.SnapshotMs > 0 ? (long)message.SnapshotMs : NowMs();
+        _workerCatalogSnapshotMs = snapshotMs;
+
+        foreach (var worker in message.Workers)
+        {
+            if (!TryGetGuid(worker.NodeId, out var nodeId))
+            {
+                continue;
+            }
+
+            if (!_workerCatalog.TryGetValue(nodeId, out var entry))
+            {
+                entry = new WorkerCatalogEntry(nodeId);
+                _workerCatalog[nodeId] = entry;
+            }
+
+            var capabilities = worker.Capabilities ?? new ProtoSettings.NodeCapabilities();
+            var hasCapabilities = worker.HasCapabilities;
+            var capabilitySnapshotMs = hasCapabilities
+                ? (worker.CapabilityTimeMs > 0 ? (long)worker.CapabilityTimeMs : snapshotMs)
+                : 0;
+
+            entry.WorkerAddress = worker.Address ?? string.Empty;
+            entry.WorkerRootActorName = worker.RootActorName ?? string.Empty;
+            entry.IsAlive = worker.IsAlive;
+            entry.IsReady = worker.IsReady;
+            entry.LastSeenMs = worker.LastSeenMs > 0 ? (long)worker.LastSeenMs : 0;
+            entry.CpuCores = hasCapabilities ? capabilities.CpuCores : 0;
+            entry.RamFreeBytes = hasCapabilities ? (long)capabilities.RamFreeBytes : 0;
+            entry.HasGpu = hasCapabilities && capabilities.HasGpu;
+            entry.VramFreeBytes = hasCapabilities ? (long)capabilities.VramFreeBytes : 0;
+            entry.CpuScore = hasCapabilities ? capabilities.CpuScore : 0f;
+            entry.GpuScore = hasCapabilities ? capabilities.GpuScore : 0f;
+            entry.CapabilitySnapshotMs = capabilitySnapshotMs;
+            entry.LastUpdatedMs = snapshotMs;
+        }
+
+        RefreshWorkerCatalogFreshness(snapshotMs);
+    }
+
+    private ProtoControl.PlacementWorkerInventory BuildPlacementWorkerInventory()
+    {
+        var nowMs = NowMs();
+        RefreshWorkerCatalogFreshness(nowMs);
+
+        var snapshotMs = _workerCatalogSnapshotMs > 0 ? _workerCatalogSnapshotMs : nowMs;
+        var inventory = new ProtoControl.PlacementWorkerInventory
+        {
+            SnapshotMs = (ulong)snapshotMs
+        };
+
+        foreach (var entry in _workerCatalog.Values
+                     .Where(static worker => worker.IsAlive && worker.IsReady && worker.IsFresh)
+                     .OrderBy(static worker => worker.WorkerAddress, StringComparer.Ordinal)
+                     .ThenBy(static worker => worker.NodeId))
+        {
+            inventory.Workers.Add(new ProtoControl.PlacementWorkerInventoryEntry
+            {
+                WorkerNodeId = entry.NodeId.ToProtoUuid(),
+                WorkerAddress = entry.WorkerAddress,
+                WorkerRootActorName = entry.WorkerRootActorName,
+                IsAlive = entry.IsAlive,
+                LastSeenMs = ToProtoMs(entry.LastSeenMs),
+                CpuCores = entry.CpuCores,
+                RamFreeBytes = ToProtoBytes(entry.RamFreeBytes),
+                HasGpu = entry.HasGpu,
+                VramFreeBytes = ToProtoBytes(entry.VramFreeBytes),
+                CpuScore = entry.CpuScore,
+                GpuScore = entry.GpuScore,
+                CapabilityEpoch = ToProtoMs(entry.CapabilitySnapshotMs)
+            });
+        }
+
+        return inventory;
+    }
+
+    private void RefreshWorkerCatalogFreshness(long nowMs)
+    {
+        foreach (var worker in _workerCatalog.Values)
+        {
+            worker.IsFresh = IsWorkerFresh(worker, nowMs);
+        }
+    }
+
+    private bool IsWorkerFresh(WorkerCatalogEntry worker, long nowMs)
+    {
+        var staleAfterMs = Math.Max(1, _options.WorkerInventoryStaleAfterMs);
+        return IsFreshTimestamp(worker.LastSeenMs, nowMs, staleAfterMs)
+               && IsFreshTimestamp(worker.CapabilitySnapshotMs, nowMs, staleAfterMs);
+    }
+
+    private static bool IsFreshTimestamp(long timestampMs, long nowMs, int staleAfterMs)
+    {
+        if (timestampMs <= 0)
+        {
+            return false;
+        }
+
+        return nowMs - timestampMs <= staleAfterMs;
     }
 
     private void PauseBrain(IContext context, Guid brainId, string? reason)
@@ -2372,6 +2520,7 @@ public sealed class HiveMindActor : IActor
 
     private sealed record TickStart;
     private sealed record TickPhaseTimeout(ulong TickId, TickPhase Phase);
+    private sealed record RefreshWorkerInventoryTick;
     private sealed record RescheduleNow(string Reason);
     private sealed record RescheduleCompleted(string Reason, bool Success);
 
@@ -2449,6 +2598,30 @@ public sealed class HiveMindActor : IActor
             = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
+    }
+
+    private sealed class WorkerCatalogEntry
+    {
+        public WorkerCatalogEntry(Guid nodeId)
+        {
+            NodeId = nodeId;
+        }
+
+        public Guid NodeId { get; }
+        public string WorkerAddress { get; set; } = string.Empty;
+        public string WorkerRootActorName { get; set; } = string.Empty;
+        public bool IsAlive { get; set; }
+        public bool IsReady { get; set; }
+        public bool IsFresh { get; set; }
+        public long LastSeenMs { get; set; }
+        public long CapabilitySnapshotMs { get; set; }
+        public long LastUpdatedMs { get; set; }
+        public uint CpuCores { get; set; }
+        public long RamFreeBytes { get; set; }
+        public bool HasGpu { get; set; }
+        public long VramFreeBytes { get; set; }
+        public float CpuScore { get; set; }
+        public float GpuScore { get; set; }
     }
 
     private sealed record SnapshotBuildRequest(
@@ -2568,6 +2741,12 @@ public sealed class HiveMindActor : IActor
     }
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private static ulong ToProtoMs(long value)
+        => value > 0 ? (ulong)value : 0;
+
+    private static ulong ToProtoBytes(long value)
+        => value > 0 ? (ulong)value : 0;
 
     private static string ResolveNodeAddress(IContext context, PID pid)
     {
