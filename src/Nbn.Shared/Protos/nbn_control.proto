@@ -152,6 +152,128 @@ message ShardPlan {
   uint32 max_neurons_per_shard = 3;
 }
 
+// Requested -> Assigning -> Assigned -> Running.
+// Reconcile paths temporarily use Reconciling; any hard failure enters Failed.
+enum PlacementLifecycleState {
+  PLACEMENT_LIFECYCLE_UNKNOWN = 0;
+  PLACEMENT_LIFECYCLE_REQUESTED = 1;
+  PLACEMENT_LIFECYCLE_ASSIGNING = 2;
+  PLACEMENT_LIFECYCLE_ASSIGNED = 3;
+  PLACEMENT_LIFECYCLE_RUNNING = 4;
+  PLACEMENT_LIFECYCLE_RECONCILING = 5;
+  PLACEMENT_LIFECYCLE_FAILED = 6;
+  PLACEMENT_LIFECYCLE_TERMINATED = 7;
+}
+
+enum PlacementFailureReason {
+  PLACEMENT_FAILURE_NONE = 0;
+  PLACEMENT_FAILURE_INVALID_BRAIN = 1;
+  PLACEMENT_FAILURE_WORKER_UNAVAILABLE = 2;
+  PLACEMENT_FAILURE_ASSIGNMENT_REJECTED = 3;
+  PLACEMENT_FAILURE_ASSIGNMENT_TIMEOUT = 4;
+  PLACEMENT_FAILURE_RECONCILE_MISMATCH = 5;
+  PLACEMENT_FAILURE_INTERNAL_ERROR = 6;
+}
+
+enum PlacementAssignmentTarget {
+  PLACEMENT_TARGET_UNKNOWN = 0;
+  PLACEMENT_TARGET_BRAIN_ROOT = 1;
+  PLACEMENT_TARGET_SIGNAL_ROUTER = 2;
+  PLACEMENT_TARGET_REGION_SHARD = 3;
+  PLACEMENT_TARGET_INPUT_COORDINATOR = 4;
+  PLACEMENT_TARGET_OUTPUT_COORDINATOR = 5;
+}
+
+enum PlacementAssignmentState {
+  PLACEMENT_ASSIGNMENT_UNKNOWN = 0;
+  PLACEMENT_ASSIGNMENT_PENDING = 1;
+  PLACEMENT_ASSIGNMENT_ACCEPTED = 2;
+  PLACEMENT_ASSIGNMENT_READY = 3;
+  PLACEMENT_ASSIGNMENT_FAILED = 4;
+  PLACEMENT_ASSIGNMENT_DRAINING = 5;
+}
+
+enum PlacementReconcileState {
+  PLACEMENT_RECONCILE_UNKNOWN = 0;
+  PLACEMENT_RECONCILE_MATCHED = 1;
+  PLACEMENT_RECONCILE_REQUIRES_ACTION = 2;
+  PLACEMENT_RECONCILE_FAILED = 3;
+}
+
+message PlacementWorkerInventoryRequest { }
+
+message PlacementWorkerInventoryEntry {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+  bool is_alive = 4;
+  fixed64 last_seen_ms = 5;
+  uint32 cpu_cores = 6;
+  fixed64 ram_free_bytes = 7;
+  bool has_gpu = 8;
+  fixed64 vram_free_bytes = 9;
+  float cpu_score = 10;
+  float gpu_score = 11;
+  fixed64 capability_epoch = 12;
+}
+
+message PlacementWorkerInventory {
+  repeated PlacementWorkerInventoryEntry workers = 1;
+  fixed64 snapshot_ms = 2;
+}
+
+message PlacementAssignment {
+  string assignment_id = 1;
+  nbn.Uuid brain_id = 2;
+  fixed64 placement_epoch = 3;
+  PlacementAssignmentTarget target = 4;
+  nbn.Uuid worker_node_id = 5;
+  uint32 region_id = 6;
+  uint32 shard_index = 7;
+  uint32 neuron_start = 8;
+  uint32 neuron_count = 9;
+  string actor_name = 10;
+}
+
+message PlacementAssignmentRequest {
+  PlacementAssignment assignment = 1;
+}
+
+message PlacementAssignmentAck {
+  string assignment_id = 1;
+  nbn.Uuid brain_id = 2;
+  fixed64 placement_epoch = 3;
+  PlacementAssignmentState state = 4;
+  bool accepted = 5;
+  bool retryable = 6;
+  PlacementFailureReason failure_reason = 7;
+  string message = 8;
+  fixed64 retry_after_ms = 9;
+}
+
+message PlacementReconcileRequest {
+  nbn.Uuid brain_id = 1;
+  fixed64 placement_epoch = 2;
+}
+
+message PlacementObservedAssignment {
+  string assignment_id = 1;
+  PlacementAssignmentTarget target = 2;
+  nbn.Uuid worker_node_id = 3;
+  uint32 region_id = 4;
+  uint32 shard_index = 5;
+  string actor_pid = 6;
+}
+
+message PlacementReconcileReport {
+  nbn.Uuid brain_id = 1;
+  fixed64 placement_epoch = 2;
+  PlacementReconcileState reconcile_state = 3;
+  repeated PlacementObservedAssignment assignments = 4;
+  PlacementFailureReason failure_reason = 5;
+  string message = 6;
+}
+
 message RequestPlacement {
   nbn.Uuid brain_id = 1;
   nbn.ArtifactRef base_def = 2;
@@ -159,11 +281,36 @@ message RequestPlacement {
   ShardPlan shard_plan = 4;
   uint32 input_width = 5;
   uint32 output_width = 6;
+  string request_id = 7;
+  fixed64 requested_ms = 8;
+  bool is_recovery = 9;
 }
 
 message PlacementAck {
   bool accepted = 1;
   string message = 2;
+  fixed64 placement_epoch = 3;
+  PlacementLifecycleState lifecycle_state = 4;
+  PlacementFailureReason failure_reason = 5;
+  fixed64 accepted_ms = 6;
+  string request_id = 7;
+}
+
+message GetPlacementLifecycle {
+  nbn.Uuid brain_id = 1;
+}
+
+message PlacementLifecycleInfo {
+  nbn.Uuid brain_id = 1;
+  fixed64 placement_epoch = 2;
+  PlacementLifecycleState lifecycle_state = 3;
+  PlacementFailureReason failure_reason = 4;
+  PlacementReconcileState reconcile_state = 5;
+  fixed64 requested_ms = 6;
+  fixed64 updated_ms = 7;
+  string request_id = 8;
+  ShardPlan shard_plan = 9;
+  uint32 registered_shards = 10;
 }
 
 message KillBrain {

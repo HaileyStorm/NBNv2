@@ -128,6 +128,22 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.RequestPlacement message:
                 HandleRequestPlacement(context, message);
                 break;
+            case ProtoControl.GetPlacementLifecycle message:
+                if (message.BrainId is not null && message.BrainId.TryToGuid(out var placementBrainId))
+                {
+                    context.Respond(BuildPlacementLifecycleInfo(placementBrainId));
+                }
+                else
+                {
+                    context.Respond(new ProtoControl.PlacementLifecycleInfo());
+                }
+                break;
+            case ProtoControl.PlacementAssignmentAck message:
+                HandlePlacementAssignmentAck(context, message);
+                break;
+            case ProtoControl.PlacementReconcileReport message:
+                HandlePlacementReconcileReport(context, message);
+                break;
             case PauseBrainRequest message:
                 PauseBrain(context, message.BrainId, message.Reason);
                 break;
@@ -236,6 +252,17 @@ public sealed class HiveMindActor : IActor
             brainState.SignalRouterPid = routerPid;
         }
 
+        if (brainState.PlacementEpoch > 0
+            && (brainState.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRequested
+                || brainState.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning
+                || brainState.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown))
+        {
+            UpdatePlacementLifecycle(
+                brainState,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
+                ProtoControl.PlacementFailureReason.PlacementFailureNone);
+        }
+
         UpdateRoutingTable(context, brainState);
         RegisterBrainWithIo(context, brainState);
 
@@ -339,6 +366,14 @@ public sealed class HiveMindActor : IActor
             brain.PlasticityRate,
             brain.PlasticityProbabilisticUpdates);
         UpdateRoutingTable(context, brain);
+        if (brain.PlacementEpoch > 0)
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning,
+                ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileMatched;
+        }
         EmitVizEvent(
             context,
             VizEventType.VizShardSpawned,
@@ -392,6 +427,14 @@ public sealed class HiveMindActor : IActor
 
             brain.Shards.Remove(shardId);
             UpdateRoutingTable(context, brain);
+            if (brain.PlacementEpoch > 0 && brain.Shards.Count == 0)
+            {
+                brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+            }
         }
 
         if (_phase != TickPhase.Compute || _tick is null)
@@ -609,7 +652,11 @@ public sealed class HiveMindActor : IActor
             context.Respond(new ProtoControl.PlacementAck
             {
                 Accepted = false,
-                Message = "Invalid brain id."
+                Message = "Invalid brain id.",
+                PlacementEpoch = 0,
+                LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                FailureReason = ProtoControl.PlacementFailureReason.PlacementFailureInvalidBrain,
+                AcceptedMs = (ulong)NowMs()
             });
             return;
         }
@@ -622,6 +669,14 @@ public sealed class HiveMindActor : IActor
             };
             _brains[brainId] = brain;
         }
+
+        var nowMs = NowMs();
+        brain.PlacementEpoch = brain.PlacementEpoch >= ulong.MaxValue ? 1UL : brain.PlacementEpoch + 1UL;
+        brain.PlacementRequestedMs = nowMs;
+        brain.PlacementRequestId = string.IsNullOrWhiteSpace(message.RequestId)
+            ? $"{brainId:N}:{brain.PlacementEpoch}"
+            : message.RequestId;
+        brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
 
         if (message.BaseDef is not null && message.BaseDef.Sha256 is not null && message.BaseDef.Sha256.Value.Length == 32)
         {
@@ -643,19 +698,171 @@ public sealed class HiveMindActor : IActor
             brain.OutputWidth = Math.Max(brain.OutputWidth, (int)message.OutputWidth);
         }
 
-        brain.PlacementRequestedMs = NowMs();
         brain.RequestedShardPlan = message.ShardPlan;
+        UpdatePlacementLifecycle(
+            brain,
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleRequested,
+            ProtoControl.PlacementFailureReason.PlacementFailureNone);
 
         RegisterBrainWithIo(context, brain, force: true);
 
         var planLabel = message.ShardPlan is null ? "none" : message.ShardPlan.Mode.ToString();
-        Log($"Placement requested for brain {brainId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth}");
+        Log(
+            $"Placement requested for brain {brainId} epoch={brain.PlacementEpoch} request={brain.PlacementRequestId} plan={planLabel} input={message.InputWidth} output={message.OutputWidth}");
 
         context.Respond(new ProtoControl.PlacementAck
         {
             Accepted = true,
-            Message = "Placement request accepted."
+            Message = "Placement request accepted.",
+            PlacementEpoch = brain.PlacementEpoch,
+            LifecycleState = brain.PlacementLifecycleState,
+            FailureReason = brain.PlacementFailureReason,
+            AcceptedMs = (ulong)brain.PlacementUpdatedMs,
+            RequestId = brain.PlacementRequestId
         });
+    }
+
+    private void HandlePlacementAssignmentAck(IContext context, ProtoControl.PlacementAssignmentAck message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId) || !_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        if (brain.PlacementEpoch == 0 || message.PlacementEpoch != brain.PlacementEpoch)
+        {
+            EmitDebug(
+                context,
+                ProtoSeverity.SevDebug,
+                "placement.assignment_ack.ignored",
+                $"Ignored assignment ack for brain {brainId}; epoch={message.PlacementEpoch} current={brain.PlacementEpoch}.");
+            return;
+        }
+
+        if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
+        {
+            var failureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
+                ? ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected
+                : message.FailureReason;
+            UpdatePlacementLifecycle(brain, ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed, failureReason);
+            brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
+            return;
+        }
+
+        switch (message.State)
+        {
+            case ProtoControl.PlacementAssignmentState.PlacementAssignmentPending:
+            case ProtoControl.PlacementAssignmentState.PlacementAssignmentAccepted:
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                break;
+            case ProtoControl.PlacementAssignmentState.PlacementAssignmentReady:
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                break;
+            case ProtoControl.PlacementAssignmentState.PlacementAssignmentDraining:
+                brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void HandlePlacementReconcileReport(IContext context, ProtoControl.PlacementReconcileReport message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId) || !_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        if (brain.PlacementEpoch == 0 || message.PlacementEpoch != brain.PlacementEpoch)
+        {
+            EmitDebug(
+                context,
+                ProtoSeverity.SevDebug,
+                "placement.reconcile.ignored",
+                $"Ignored reconcile report for brain {brainId}; epoch={message.PlacementEpoch} current={brain.PlacementEpoch}.");
+            return;
+        }
+
+        brain.PlacementReconcileState = message.ReconcileState;
+        switch (message.ReconcileState)
+        {
+            case ProtoControl.PlacementReconcileState.PlacementReconcileMatched:
+                UpdatePlacementLifecycle(
+                    brain,
+                    brain.Shards.Count > 0
+                        ? ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
+                        : ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                break;
+            case ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction:
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                break;
+            case ProtoControl.PlacementReconcileState.PlacementReconcileFailed:
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                    message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
+                        ? ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch
+                        : message.FailureReason);
+                break;
+        }
+    }
+
+    private ProtoControl.PlacementLifecycleInfo BuildPlacementLifecycleInfo(Guid brainId)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return new ProtoControl.PlacementLifecycleInfo
+            {
+                BrainId = brainId.ToProtoUuid(),
+                LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown,
+                FailureReason = ProtoControl.PlacementFailureReason.PlacementFailureNone,
+                ReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown
+            };
+        }
+
+        var info = new ProtoControl.PlacementLifecycleInfo
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = brain.PlacementEpoch,
+            LifecycleState = brain.PlacementLifecycleState,
+            FailureReason = brain.PlacementFailureReason,
+            ReconcileState = brain.PlacementReconcileState,
+            RequestedMs = brain.PlacementRequestedMs > 0 ? (ulong)brain.PlacementRequestedMs : 0,
+            UpdatedMs = brain.PlacementUpdatedMs > 0 ? (ulong)brain.PlacementUpdatedMs : 0,
+            RequestId = brain.PlacementRequestId,
+            RegisteredShards = (uint)brain.Shards.Count
+        };
+
+        if (brain.RequestedShardPlan is not null)
+        {
+            info.ShardPlan = brain.RequestedShardPlan.Clone();
+        }
+
+        return info;
+    }
+
+    private void UpdatePlacementLifecycle(
+        BrainState brain,
+        ProtoControl.PlacementLifecycleState state,
+        ProtoControl.PlacementFailureReason failureReason)
+    {
+        brain.PlacementLifecycleState = state;
+        brain.PlacementFailureReason = failureReason;
+        brain.PlacementUpdatedMs = NowMs();
     }
 
     private void PauseBrain(IContext context, Guid brainId, string? reason)
@@ -2229,8 +2436,17 @@ public sealed class HiveMindActor : IActor
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }
+        public ulong PlacementEpoch { get; set; }
         public long PlacementRequestedMs { get; set; }
+        public long PlacementUpdatedMs { get; set; }
+        public string PlacementRequestId { get; set; } = string.Empty;
         public ProtoControl.ShardPlan? RequestedShardPlan { get; set; }
+        public ProtoControl.PlacementLifecycleState PlacementLifecycleState { get; set; }
+            = ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown;
+        public ProtoControl.PlacementFailureReason PlacementFailureReason { get; set; }
+            = ProtoControl.PlacementFailureReason.PlacementFailureNone;
+        public ProtoControl.PlacementReconcileState PlacementReconcileState { get; set; }
+            = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
     }

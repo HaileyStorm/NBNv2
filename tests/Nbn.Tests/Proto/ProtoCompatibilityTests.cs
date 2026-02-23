@@ -137,6 +137,143 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoControl_PlacementLifecycleContracts_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+
+        var requestPlacement = descriptor.MessageTypes.Single(message => message.Name == "RequestPlacement");
+        AssertField(requestPlacement, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(requestPlacement, "base_def", 2, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(requestPlacement, "last_snapshot", 3, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(requestPlacement, "shard_plan", 4, FieldType.Message, "nbn.control.ShardPlan");
+        AssertField(requestPlacement, "input_width", 5, FieldType.UInt32);
+        AssertField(requestPlacement, "output_width", 6, FieldType.UInt32);
+        AssertField(requestPlacement, "request_id", 7, FieldType.String);
+        AssertField(requestPlacement, "requested_ms", 8, FieldType.Fixed64);
+        AssertField(requestPlacement, "is_recovery", 9, FieldType.Bool);
+
+        var placementAck = descriptor.MessageTypes.Single(message => message.Name == "PlacementAck");
+        AssertField(placementAck, "accepted", 1, FieldType.Bool);
+        AssertField(placementAck, "message", 2, FieldType.String);
+        AssertField(placementAck, "placement_epoch", 3, FieldType.Fixed64);
+        AssertField(placementAck, "lifecycle_state", 4, FieldType.Enum, "nbn.control.PlacementLifecycleState");
+        AssertField(placementAck, "failure_reason", 5, FieldType.Enum, "nbn.control.PlacementFailureReason");
+        AssertField(placementAck, "accepted_ms", 6, FieldType.Fixed64);
+        AssertField(placementAck, "request_id", 7, FieldType.String);
+
+        var getLifecycle = descriptor.MessageTypes.Single(message => message.Name == "GetPlacementLifecycle");
+        AssertField(getLifecycle, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
+        var lifecycleInfo = descriptor.MessageTypes.Single(message => message.Name == "PlacementLifecycleInfo");
+        AssertField(lifecycleInfo, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(lifecycleInfo, "placement_epoch", 2, FieldType.Fixed64);
+        AssertField(lifecycleInfo, "lifecycle_state", 3, FieldType.Enum, "nbn.control.PlacementLifecycleState");
+        AssertField(lifecycleInfo, "failure_reason", 4, FieldType.Enum, "nbn.control.PlacementFailureReason");
+        AssertField(lifecycleInfo, "reconcile_state", 5, FieldType.Enum, "nbn.control.PlacementReconcileState");
+        AssertField(lifecycleInfo, "requested_ms", 6, FieldType.Fixed64);
+        AssertField(lifecycleInfo, "updated_ms", 7, FieldType.Fixed64);
+        AssertField(lifecycleInfo, "request_id", 8, FieldType.String);
+        AssertField(lifecycleInfo, "shard_plan", 9, FieldType.Message, "nbn.control.ShardPlan");
+        AssertField(lifecycleInfo, "registered_shards", 10, FieldType.UInt32);
+
+        var workerInventoryEntry = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventoryEntry");
+        AssertField(workerInventoryEntry, "worker_node_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(workerInventoryEntry, "worker_address", 2, FieldType.String);
+        AssertField(workerInventoryEntry, "worker_root_actor_name", 3, FieldType.String);
+        AssertField(workerInventoryEntry, "is_alive", 4, FieldType.Bool);
+        AssertField(workerInventoryEntry, "last_seen_ms", 5, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "cpu_cores", 6, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "ram_free_bytes", 7, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "has_gpu", 8, FieldType.Bool);
+        AssertField(workerInventoryEntry, "vram_free_bytes", 9, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "cpu_score", 10, FieldType.Float);
+        AssertField(workerInventoryEntry, "gpu_score", 11, FieldType.Float);
+        AssertField(workerInventoryEntry, "capability_epoch", 12, FieldType.Fixed64);
+
+        var workerInventory = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventory");
+        AssertRepeatedField(workerInventory, "workers", 1, FieldType.Message, "nbn.control.PlacementWorkerInventoryEntry");
+        AssertField(workerInventory, "snapshot_ms", 2, FieldType.Fixed64);
+
+        var assignment = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignment");
+        AssertField(assignment, "assignment_id", 1, FieldType.String);
+        AssertField(assignment, "brain_id", 2, FieldType.Message, "nbn.Uuid");
+        AssertField(assignment, "placement_epoch", 3, FieldType.Fixed64);
+        AssertField(assignment, "target", 4, FieldType.Enum, "nbn.control.PlacementAssignmentTarget");
+        AssertField(assignment, "worker_node_id", 5, FieldType.Message, "nbn.Uuid");
+        AssertField(assignment, "region_id", 6, FieldType.UInt32);
+        AssertField(assignment, "shard_index", 7, FieldType.UInt32);
+        AssertField(assignment, "neuron_start", 8, FieldType.UInt32);
+        AssertField(assignment, "neuron_count", 9, FieldType.UInt32);
+        AssertField(assignment, "actor_name", 10, FieldType.String);
+
+        var assignmentAck = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignmentAck");
+        AssertField(assignmentAck, "assignment_id", 1, FieldType.String);
+        AssertField(assignmentAck, "brain_id", 2, FieldType.Message, "nbn.Uuid");
+        AssertField(assignmentAck, "placement_epoch", 3, FieldType.Fixed64);
+        AssertField(assignmentAck, "state", 4, FieldType.Enum, "nbn.control.PlacementAssignmentState");
+        AssertField(assignmentAck, "accepted", 5, FieldType.Bool);
+        AssertField(assignmentAck, "retryable", 6, FieldType.Bool);
+        AssertField(assignmentAck, "failure_reason", 7, FieldType.Enum, "nbn.control.PlacementFailureReason");
+        AssertField(assignmentAck, "message", 8, FieldType.String);
+        AssertField(assignmentAck, "retry_after_ms", 9, FieldType.Fixed64);
+
+        var reconcileReport = descriptor.MessageTypes.Single(message => message.Name == "PlacementReconcileReport");
+        AssertField(reconcileReport, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(reconcileReport, "placement_epoch", 2, FieldType.Fixed64);
+        AssertField(reconcileReport, "reconcile_state", 3, FieldType.Enum, "nbn.control.PlacementReconcileState");
+        AssertRepeatedField(reconcileReport, "assignments", 4, FieldType.Message, "nbn.control.PlacementObservedAssignment");
+        AssertField(reconcileReport, "failure_reason", 5, FieldType.Enum, "nbn.control.PlacementFailureReason");
+        AssertField(reconcileReport, "message", 6, FieldType.String);
+    }
+
+    [Fact]
+    public void ProtoControl_PlacementEnums_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+
+        var lifecycle = descriptor.EnumTypes.Single(@enum => @enum.Name == "PlacementLifecycleState");
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_UNKNOWN", 0);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_REQUESTED", 1);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_ASSIGNING", 2);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_ASSIGNED", 3);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_RUNNING", 4);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_RECONCILING", 5);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_FAILED", 6);
+        AssertEnumValue(lifecycle, "PLACEMENT_LIFECYCLE_TERMINATED", 7);
+
+        var failure = descriptor.EnumTypes.Single(@enum => @enum.Name == "PlacementFailureReason");
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_NONE", 0);
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_INVALID_BRAIN", 1);
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_WORKER_UNAVAILABLE", 2);
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_ASSIGNMENT_REJECTED", 3);
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_ASSIGNMENT_TIMEOUT", 4);
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_RECONCILE_MISMATCH", 5);
+        AssertEnumValue(failure, "PLACEMENT_FAILURE_INTERNAL_ERROR", 6);
+
+        var assignmentTarget = descriptor.EnumTypes.Single(@enum => @enum.Name == "PlacementAssignmentTarget");
+        AssertEnumValue(assignmentTarget, "PLACEMENT_TARGET_UNKNOWN", 0);
+        AssertEnumValue(assignmentTarget, "PLACEMENT_TARGET_BRAIN_ROOT", 1);
+        AssertEnumValue(assignmentTarget, "PLACEMENT_TARGET_SIGNAL_ROUTER", 2);
+        AssertEnumValue(assignmentTarget, "PLACEMENT_TARGET_REGION_SHARD", 3);
+        AssertEnumValue(assignmentTarget, "PLACEMENT_TARGET_INPUT_COORDINATOR", 4);
+        AssertEnumValue(assignmentTarget, "PLACEMENT_TARGET_OUTPUT_COORDINATOR", 5);
+
+        var assignmentState = descriptor.EnumTypes.Single(@enum => @enum.Name == "PlacementAssignmentState");
+        AssertEnumValue(assignmentState, "PLACEMENT_ASSIGNMENT_UNKNOWN", 0);
+        AssertEnumValue(assignmentState, "PLACEMENT_ASSIGNMENT_PENDING", 1);
+        AssertEnumValue(assignmentState, "PLACEMENT_ASSIGNMENT_ACCEPTED", 2);
+        AssertEnumValue(assignmentState, "PLACEMENT_ASSIGNMENT_READY", 3);
+        AssertEnumValue(assignmentState, "PLACEMENT_ASSIGNMENT_FAILED", 4);
+        AssertEnumValue(assignmentState, "PLACEMENT_ASSIGNMENT_DRAINING", 5);
+
+        var reconcileState = descriptor.EnumTypes.Single(@enum => @enum.Name == "PlacementReconcileState");
+        AssertEnumValue(reconcileState, "PLACEMENT_RECONCILE_UNKNOWN", 0);
+        AssertEnumValue(reconcileState, "PLACEMENT_RECONCILE_MATCHED", 1);
+        AssertEnumValue(reconcileState, "PLACEMENT_RECONCILE_REQUIRES_ACTION", 2);
+        AssertEnumValue(reconcileState, "PLACEMENT_RECONCILE_FAILED", 3);
+    }
+
+    [Fact]
     public void ProtoSignals_BatchFields_AreStable()
     {
         var descriptor = NbnSignalsReflection.Descriptor;
@@ -367,6 +504,13 @@ public class ProtoCompatibilityTests
         }
 
         Assert.Equal(typeName, GetTypeName(actual));
+    }
+
+    private static void AssertEnumValue(EnumDescriptor @enum, string valueName, int number)
+    {
+        var value = @enum.FindValueByName(valueName);
+        Assert.NotNull(value);
+        Assert.Equal(number, value!.Number);
     }
 
     private static string? GetTypeName(FieldDescriptor field)
