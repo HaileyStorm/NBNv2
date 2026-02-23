@@ -60,8 +60,15 @@ public sealed class WorkbenchProcessRegistry
         lock (_gate)
         {
             Load();
+            var pid = SafeProcessId(process);
+            if (!pid.HasValue)
+            {
+                return;
+            }
+
+            var processName = SafeProcessName(process) ?? string.Empty;
             var startUtc = SafeStartTimeUtc(process);
-            var entry = new ProcessEntry(process.Id, process.ProcessName, startUtc?.Ticks ?? 0, label ?? string.Empty);
+            var entry = new ProcessEntry(pid.Value, processName, startUtc?.Ticks ?? 0, label ?? string.Empty);
             _entries.RemoveAll(item => item.Pid == entry.Pid);
             _entries.Add(entry);
             Save();
@@ -117,9 +124,14 @@ public sealed class WorkbenchProcessRegistry
 
     private static bool Matches(Process process, ProcessEntry entry)
     {
-        if (!string.Equals(process.ProcessName, entry.ProcessName, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(entry.ProcessName))
         {
-            return false;
+            var processName = SafeProcessName(process);
+            if (string.IsNullOrWhiteSpace(processName)
+                || !string.Equals(processName, entry.ProcessName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
         }
 
         if (entry.StartTicksUtc == 0)
@@ -142,6 +154,30 @@ public sealed class WorkbenchProcessRegistry
         try
         {
             return process.StartTime.ToUniversalTime();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int? SafeProcessId(Process process)
+    {
+        try
+        {
+            return process.Id;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? SafeProcessName(Process process)
+    {
+        try
+        {
+            return process.ProcessName;
         }
         catch
         {

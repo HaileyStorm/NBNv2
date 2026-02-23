@@ -57,19 +57,15 @@ public sealed class LocalServiceRunner
         }
 
         await Task.Delay(StartupProbeDelayMs).ConfigureAwait(false);
-        if (process.HasExited)
+        if (TryBuildStartupExitResult(process, processLabel, logFiles, removeFromRegistry: false, out var startupFailure))
         {
-            try
-            {
-                process.WaitForExit(StartupExitDrainMs);
-            }
-            catch
-            {
-            }
+            return startupFailure;
+        }
 
-            var failureMessage = BuildStartupFailureMessage(process, logFiles);
-            WorkbenchLog.Warn($"Local launch exited during startup: {processLabel} (pid {process.Id}). {failureMessage}");
-            return new ServiceStartResult(false, failureMessage);
+        WorkbenchProcessRegistry.Default.Record(process, processLabel);
+        if (TryBuildStartupExitResult(process, processLabel, logFiles, removeFromRegistry: true, out startupFailure))
+        {
+            return startupFailure;
         }
 
         lock (_gate)
@@ -77,16 +73,50 @@ public sealed class LocalServiceRunner
             _process = process;
         }
 
-        WorkbenchProcessRegistry.Default.Record(process, processLabel);
         var message = logFiles is null
             ? $"Running (pid {process.Id})."
             : $"Running (pid {process.Id}). Logs: {logFiles.StdoutPath}";
         return new ServiceStartResult(true, message);
     }
 
+    private static bool TryBuildStartupExitResult(
+        Process process,
+        string processLabel,
+        ProcessLogFiles? logFiles,
+        bool removeFromRegistry,
+        out ServiceStartResult result)
+    {
+        if (!HasProcessExited(process))
+        {
+            result = new ServiceStartResult(false, string.Empty);
+            return false;
+        }
+
+        try
+        {
+            process.WaitForExit(StartupExitDrainMs);
+        }
+        catch
+        {
+        }
+
+        if (removeFromRegistry)
+        {
+            WorkbenchProcessRegistry.Default.Remove(process.Id);
+        }
+
+        var failureMessage = BuildStartupFailureMessage(process, logFiles);
+        WorkbenchLog.Warn($"Local launch exited during startup: {processLabel} (pid {process.Id}). {failureMessage}");
+        result = new ServiceStartResult(false, failureMessage);
+        return true;
+    }
+
     private static string BuildStartupFailureMessage(Process process, ProcessLogFiles? logFiles)
     {
-        var message = $"Process exited during startup (code {process.ExitCode}).";
+        var exitCode = TryGetExitCode(process);
+        var message = exitCode.HasValue
+            ? $"Process exited during startup (code {exitCode.Value})."
+            : "Process exited during startup.";
         var stderrTail = TryReadLastLogLine(logFiles?.StderrPath);
         if (!string.IsNullOrWhiteSpace(stderrTail))
         {
@@ -94,6 +124,30 @@ public sealed class LocalServiceRunner
         }
 
         return message;
+    }
+
+    private static bool HasProcessExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static int? TryGetExitCode(Process process)
+    {
+        try
+        {
+            return process.ExitCode;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? TryReadLastLogLine(string? path)
