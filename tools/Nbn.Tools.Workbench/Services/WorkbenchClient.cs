@@ -285,7 +285,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<SettingListResponse?> ListSettingsAsync()
+    public virtual async Task<SettingListResponse?> ListSettingsAsync()
     {
         if (_root is null || _settingsPid is null)
         {
@@ -327,7 +327,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<NodeListResponse?> ListNodesAsync()
+    public virtual async Task<NodeListResponse?> ListNodesAsync()
     {
         if (_root is null || _settingsPid is null)
         {
@@ -348,7 +348,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<BrainListResponse?> ListBrainsAsync()
+    public virtual async Task<BrainListResponse?> ListBrainsAsync()
     {
         if (_root is null || _settingsPid is null)
         {

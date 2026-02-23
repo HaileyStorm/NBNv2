@@ -13,6 +13,10 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _reproHost = "127.0.0.1";
     private string _reproPortText = "12070";
     private string _reproManager = "ReproductionManager";
+    private string _workerHost = "127.0.0.1";
+    private string _workerPortText = "12041";
+    private string _workerRootName = "worker-node";
+    private string _workerLogicalName = "nbn.worker";
     private string _obsHost = "127.0.0.1";
     private string _obsPort = "12060";
     private string _debugHub = "DebugHub";
@@ -31,11 +35,13 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _hiveMindStatus = "Disconnected";
     private string _ioStatus = "Disconnected";
     private string _reproStatus = "Disconnected";
+    private string _workerStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
     private bool _workbenchLoggingEnabled;
     private bool _ioConnected;
     private bool _reproConnected;
+    private bool _workerConnected;
     private bool _obsConnected;
     private bool _settingsConnected;
     private bool _hiveMindConnected;
@@ -86,6 +92,30 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _reproManager;
         set => SetProperty(ref _reproManager, value);
+    }
+
+    public string WorkerHost
+    {
+        get => _workerHost;
+        set => SetProperty(ref _workerHost, value);
+    }
+
+    public string WorkerPortText
+    {
+        get => _workerPortText;
+        set => SetProperty(ref _workerPortText, value);
+    }
+
+    public string WorkerRootName
+    {
+        get => _workerRootName;
+        set => SetProperty(ref _workerRootName, value);
+    }
+
+    public string WorkerLogicalName
+    {
+        get => _workerLogicalName;
+        set => SetProperty(ref _workerLogicalName, value);
     }
 
     public string ObsHost
@@ -213,6 +243,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _reproStatus, value);
     }
 
+    public string WorkerStatus
+    {
+        get => _workerStatus;
+        set => SetProperty(ref _workerStatus, value);
+    }
+
     public string SettingsStatus
     {
         get => _settingsStatus;
@@ -275,6 +311,20 @@ public sealed class ConnectionViewModel : ViewModelBase
         }
     }
 
+    public bool WorkerConnected
+    {
+        get => _workerConnected;
+        set
+        {
+            if (SetProperty(ref _workerConnected, value))
+            {
+                OnPropertyChanged(nameof(WorkerChipBackground));
+                OnPropertyChanged(nameof(WorkerChipBorder));
+                OnPropertyChanged(nameof(WorkerStatusLabel));
+            }
+        }
+    }
+
     public bool ObsConnected
     {
         get => _obsConnected;
@@ -301,6 +351,10 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public IBrush ReproChipBorder => ReproConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
+    public IBrush WorkerChipBackground => WorkerConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush WorkerChipBorder => WorkerConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
     public IBrush SettingsChipBackground => SettingsConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
     public IBrush SettingsChipBorder => SettingsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
@@ -314,6 +368,8 @@ public sealed class ConnectionViewModel : ViewModelBase
     public string ObsStatusLabel => ObsConnected ? "Obs connected" : "Obs disconnected";
 
     public string ReproStatusLabel => ReproConnected ? "Repro connected" : "Repro disconnected";
+
+    public string WorkerStatusLabel => WorkerConnected ? "Worker connected" : "Worker disconnected";
 
     public string SettingsStatusLabel => SettingsConnected ? "Settings connected" : "Settings disconnected";
 

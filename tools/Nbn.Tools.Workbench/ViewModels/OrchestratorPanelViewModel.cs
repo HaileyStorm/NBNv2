@@ -33,6 +33,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
     private readonly LocalServiceRunner _reproRunner = new();
+    private readonly LocalServiceRunner _workerRunner = new();
     private readonly LocalServiceRunner _obsRunner = new();
     private readonly LocalServiceRunner _sampleBrainRunner = new();
     private readonly LocalServiceRunner _sampleRegionRunner = new();
@@ -48,6 +49,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _hiveMindLaunchStatus = "Idle";
     private string _ioLaunchStatus = "Idle";
     private string _reproLaunchStatus = "Idle";
+    private string _workerLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _sampleBrainStatus = "Not running.";
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
@@ -84,6 +86,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopIoCommand = new AsyncRelayCommand(() => StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value));
         StartReproCommand = new AsyncRelayCommand(StartReproAsync);
         StopReproCommand = new AsyncRelayCommand(() => StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value));
+        StartWorkerCommand = new AsyncRelayCommand(StartWorkerAsync);
+        StopWorkerCommand = new AsyncRelayCommand(() => StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value));
         StartObsCommand = new AsyncRelayCommand(StartObsAsync);
         StopObsCommand = new AsyncRelayCommand(() => StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value));
         StartAllCommand = new AsyncRelayCommand(StartAllAsync);
@@ -125,6 +129,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand StopReproCommand { get; }
 
+    public AsyncRelayCommand StartWorkerCommand { get; }
+
+    public AsyncRelayCommand StopWorkerCommand { get; }
+
     public AsyncRelayCommand StartObsCommand { get; }
 
     public AsyncRelayCommand StopObsCommand { get; }
@@ -158,6 +166,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _reproLaunchStatus;
         set => SetProperty(ref _reproLaunchStatus, value);
+    }
+
+    public string WorkerLaunchStatus
+    {
+        get => _workerLaunchStatus;
+        set => SetProperty(ref _workerLaunchStatus, value);
     }
 
     public string ObsLaunchStatus
@@ -204,6 +218,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _refreshCts.Cancel();
         _disconnectAll?.Invoke();
         await StopSampleBrainAsync().ConfigureAwait(false);
+        await StopRunnerAsync(_workerRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
@@ -332,6 +347,37 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Reproduction", args);
         var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
         ReproLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
+    }
+
+    private async Task StartWorkerAsync()
+    {
+        if (!TryParsePort(Connections.WorkerPortText, out var workerPort))
+        {
+            WorkerLaunchStatus = "Invalid worker port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
+        {
+            WorkerLaunchStatus = "Invalid Settings port.";
+            return;
+        }
+
+        var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            WorkerLaunchStatus = "WorkerNode project not found.";
+            return;
+        }
+
+        var args = $"--bind-host {Connections.WorkerHost} --port {workerPort}"
+                 + $" --logical-name {Connections.WorkerLogicalName}"
+                 + $" --root-name {Connections.WorkerRootName}"
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.WorkerNode", args);
+        var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
+        WorkerLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -504,6 +550,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         await StartSettingsMonitorAsync().ConfigureAwait(false);
         await StartHiveMindAsync().ConfigureAwait(false);
+        await StartWorkerAsync().ConfigureAwait(false);
         await StartReproAsync().ConfigureAwait(false);
         await StartIoAsync().ConfigureAwait(false);
         await StartObsAsync().ConfigureAwait(false);
@@ -516,6 +563,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
     }
@@ -994,14 +1042,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var hiveAlive = false;
         var ioAlive = false;
         var reproAlive = false;
+        var workerAlive = false;
         var obsAlive = false;
         foreach (var node in nodes)
         {
-            if (string.IsNullOrWhiteSpace(node.RootActorName))
-            {
-                continue;
-            }
-
             var fresh = node.IsAlive && IsFresh(node.LastSeenMs, nowMs);
             if (string.Equals(node.RootActorName, Connections.HiveMindName, StringComparison.OrdinalIgnoreCase))
             {
@@ -1016,6 +1060,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             if (string.Equals(node.RootActorName, Connections.ReproManager, StringComparison.OrdinalIgnoreCase))
             {
                 reproAlive = reproAlive || fresh;
+            }
+
+            if (IsWorkerNode(node))
+            {
+                workerAlive = workerAlive || fresh;
             }
 
             if (string.Equals(node.RootActorName, Connections.DebugHub, StringComparison.OrdinalIgnoreCase)
@@ -1036,9 +1085,25 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ReproConnected = reproAlive;
             Connections.ReproStatus = reproAlive ? "Connected" : "Offline";
 
+            Connections.WorkerConnected = workerAlive;
+            Connections.WorkerStatus = workerAlive ? "Connected" : "Offline";
+
             Connections.ObsConnected = obsAlive;
             Connections.ObsStatus = obsAlive ? "Connected" : "Offline";
         });
+    }
+
+    private bool IsWorkerNode(Nbn.Proto.Settings.NodeStatus node)
+    {
+        if (node is null)
+        {
+            return false;
+        }
+
+        return (!string.IsNullOrWhiteSpace(Connections.WorkerRootName)
+                && string.Equals(node.RootActorName, Connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
+               || (!string.IsNullOrWhiteSpace(Connections.WorkerLogicalName)
+                   && string.Equals(node.LogicalName, Connections.WorkerLogicalName, StringComparison.OrdinalIgnoreCase));
     }
 
     private void RecordBrainTerminations(IReadOnlyList<BrainListItem> current)
