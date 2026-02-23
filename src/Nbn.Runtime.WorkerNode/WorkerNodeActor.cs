@@ -1,4 +1,6 @@
 ﻿
+using System.Diagnostics;
+using Google.Protobuf;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
@@ -108,56 +110,56 @@ public sealed class WorkerNodeActor : IActor
         var assignment = request.Assignment;
         if (assignment is null)
         {
-            context.Respond(FailedAck(
+            RespondFailedPlacement(context, FailedAck(
                 assignmentId: string.Empty,
                 brainId: null,
                 placementEpoch: 0,
                 PlacementFailureReason.PlacementFailureInternalError,
-                "assignment payload was empty"));
+                "assignment payload was empty"), PlacementAssignmentTarget.PlacementTargetUnknown);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
         {
-            context.Respond(FailedAck(
+            RespondFailedPlacement(context, FailedAck(
                 assignmentId: string.Empty,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureInternalError,
-                "assignment_id is required"));
+                "assignment_id is required"), assignment.Target);
             return;
         }
 
         if (assignment.BrainId is null || !assignment.BrainId.TryToGuid(out var brainId))
         {
-            context.Respond(FailedAck(
+            RespondFailedPlacement(context, FailedAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureInternalError,
-                "brain_id was invalid"));
+                "brain_id was invalid"), assignment.Target);
             return;
         }
 
         if (!assignment.WorkerNodeId.TryToGuid(out var targetWorkerNodeId))
         {
-            context.Respond(FailedAck(
+            RespondFailedPlacement(context, FailedAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureInternalError,
-                "worker_node_id was invalid"));
+                "worker_node_id was invalid"), assignment.Target);
             return;
         }
 
         if (targetWorkerNodeId != _workerNodeId)
         {
-            context.Respond(FailedAck(
+            RespondFailedPlacement(context, FailedAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}"));
+                $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}"), assignment.Target);
             return;
         }
 
@@ -172,12 +174,12 @@ public sealed class WorkerNodeActor : IActor
 
         if (assignment.PlacementEpoch < brain.PlacementEpoch)
         {
-            context.Respond(FailedAck(
+            RespondFailedPlacement(context, FailedAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureInternalError,
-                $"assignment epoch {assignment.PlacementEpoch} is older than hosted epoch {brain.PlacementEpoch}"));
+                $"assignment epoch {assignment.PlacementEpoch} is older than hosted epoch {brain.PlacementEpoch}"), assignment.Target);
             return;
         }
 
@@ -194,22 +196,33 @@ public sealed class WorkerNodeActor : IActor
         if (_assignments.TryGetValue(assignment.AssignmentId, out var existing))
         {
             var existingAssignment = existing.Assignment;
-            if (existingAssignment.BrainId.TryToGuid(out var existingBrainId)
-                && existingBrainId == brainId
-                && existingAssignment.PlacementEpoch == assignment.PlacementEpoch
-                && existing.State == PlacementAssignmentState.PlacementAssignmentReady)
+            if (existing.State == PlacementAssignmentState.PlacementAssignmentReady
+                && AssignmentSemanticallyMatches(existingAssignment, assignment))
             {
-                context.Respond(BuildReadyAck(existing.Assignment, "already_ready"));
+                RespondReadyPlacement(context, existing.Assignment, "already_ready", hostingMs: 0);
+                return;
+            }
+
+            if (existing.State == PlacementAssignmentState.PlacementAssignmentReady)
+            {
+                RespondFailedPlacement(context, FailedAck(
+                    assignment.AssignmentId,
+                    assignment.BrainId,
+                    assignment.PlacementEpoch,
+                    PlacementFailureReason.PlacementFailureAssignmentRejected,
+                    "assignment_id conflicts with an existing ready assignment"), assignment.Target);
                 return;
             }
         }
 
         await EnsureRuntimeInfoAsync(context, brain).ConfigureAwait(false);
 
+        var hostingStarted = Stopwatch.GetTimestamp();
         var hosted = await HostAssignmentAsync(context, brain, assignment.Clone()).ConfigureAwait(false);
+        var hostingMs = Stopwatch.GetElapsedTime(hostingStarted).TotalMilliseconds;
         if (!hosted.Success)
         {
-            context.Respond(hosted.FailedAck!);
+            RespondFailedPlacement(context, hosted.FailedAck!, assignment.Target);
             return;
         }
 
@@ -228,7 +241,7 @@ public sealed class WorkerNodeActor : IActor
         PushIoGatewayRegistration(context, brain);
         RegisterOutputSink(context, brain);
 
-        context.Respond(BuildReadyAck(hosted.Assignment!, "ready"));
+        RespondReadyPlacement(context, hosted.Assignment!, "ready", hostingMs);
     }
 
     private void HandlePlacementReconcile(IContext context, PlacementReconcileRequest request)
@@ -889,6 +902,86 @@ public sealed class WorkerNodeActor : IActor
                 }
             }
         }
+    }
+
+    private void RespondFailedPlacement(
+        IContext context,
+        PlacementAssignmentAck ack,
+        PlacementAssignmentTarget target)
+    {
+        WorkerNodeTelemetry.RecordPlacementAssignmentHostedFailed(
+            _workerNodeId,
+            ack.BrainId.ToGuidOrEmpty(),
+            ack.PlacementEpoch,
+            ToPlacementTargetLabel(target),
+            ToFailureReasonLabel(ack.FailureReason));
+        context.Respond(ack);
+    }
+
+    private void RespondReadyPlacement(
+        IContext context,
+        PlacementAssignment assignment,
+        string message,
+        double hostingMs)
+    {
+        WorkerNodeTelemetry.RecordPlacementAssignmentHostedAccepted(
+            _workerNodeId,
+            assignment.BrainId.ToGuidOrEmpty(),
+            assignment.PlacementEpoch,
+            ToPlacementTargetLabel(assignment.Target),
+            string.IsNullOrWhiteSpace(message) ? "ready" : message,
+            hostingMs);
+        context.Respond(BuildReadyAck(assignment, message));
+    }
+
+    private static string ToPlacementTargetLabel(PlacementAssignmentTarget target)
+        => target switch
+        {
+            PlacementAssignmentTarget.PlacementTargetBrainRoot => "brain_root",
+            PlacementAssignmentTarget.PlacementTargetSignalRouter => "signal_router",
+            PlacementAssignmentTarget.PlacementTargetInputCoordinator => "input_coordinator",
+            PlacementAssignmentTarget.PlacementTargetOutputCoordinator => "output_coordinator",
+            PlacementAssignmentTarget.PlacementTargetRegionShard => "region_shard",
+            _ => "unknown"
+        };
+
+    private static string ToFailureReasonLabel(PlacementFailureReason reason)
+        => reason switch
+        {
+            PlacementFailureReason.PlacementFailureNone => "none",
+            PlacementFailureReason.PlacementFailureInvalidBrain => "invalid_brain",
+            PlacementFailureReason.PlacementFailureWorkerUnavailable => "worker_unavailable",
+            PlacementFailureReason.PlacementFailureAssignmentRejected => "assignment_rejected",
+            PlacementFailureReason.PlacementFailureAssignmentTimeout => "assignment_timeout",
+            PlacementFailureReason.PlacementFailureReconcileMismatch => "reconcile_mismatch",
+            PlacementFailureReason.PlacementFailureInternalError => "internal_error",
+            _ => "unknown"
+        };
+
+    private static bool AssignmentSemanticallyMatches(PlacementAssignment existing, PlacementAssignment incoming)
+    {
+        if (!UuidEqual(existing.BrainId, incoming.BrainId)
+            || !UuidEqual(existing.WorkerNodeId, incoming.WorkerNodeId)
+            || existing.PlacementEpoch != incoming.PlacementEpoch
+            || existing.Target != incoming.Target
+            || existing.RegionId != incoming.RegionId
+            || existing.ShardIndex != incoming.ShardIndex
+            || existing.NeuronStart != incoming.NeuronStart
+            || existing.NeuronCount != incoming.NeuronCount)
+        {
+            return false;
+        }
+
+        var existingName = existing.ActorName ?? string.Empty;
+        var incomingName = incoming.ActorName ?? string.Empty;
+        return string.Equals(existingName, incomingName, StringComparison.Ordinal);
+    }
+
+    private static bool UuidEqual(Uuid? left, Uuid? right)
+    {
+        var leftValue = left?.Value ?? ByteString.Empty;
+        var rightValue = right?.Value ?? ByteString.Empty;
+        return leftValue.Span.SequenceEqual(rightValue.Span);
     }
 
     private static PlacementAssignmentAck FailedAck(

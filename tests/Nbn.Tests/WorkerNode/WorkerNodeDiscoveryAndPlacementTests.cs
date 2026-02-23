@@ -2,6 +2,7 @@ using Nbn.Proto.Control;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
+using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
 
@@ -68,6 +69,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     [Fact]
     public async Task PlacementAssignmentRequest_TargetingWorker_ReturnsReadyAck()
     {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
         await using var harness = await WorkerHarness.CreateAsync();
 
         var workerNodeId = Guid.NewGuid();
@@ -99,6 +101,293 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             workerPid,
             new WorkerNodeActor.GetWorkerNodeSnapshot());
         Assert.Equal(1, state.TrackedAssignmentCount);
+
+        var brainTag = brainId.ToString("D");
+        Assert.Equal(1, metrics.SumLong("nbn.workernode.placement.assignment.hosted.accepted", "brain_id", brainTag));
+        Assert.Equal(0, metrics.SumLong("nbn.workernode.placement.assignment.hosted.failed", "brain_id", brainTag));
+        Assert.True(metrics.CountDouble("nbn.workernode.placement.assignment.hosting.ms", "brain_id", brainTag) >= 1);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_TargetingOtherWorker_ReturnsFailedAck_And_EmitsFailedTelemetry()
+    {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        var request = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "assign-other-worker",
+                brainId: brainId,
+                workerNodeId: Guid.NewGuid(),
+                placementEpoch: 7,
+                regionId: 1,
+                shardIndex: 2)
+        };
+
+        var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(workerPid, request);
+        Assert.Equal("assign-other-worker", ack.AssignmentId);
+        Assert.False(ack.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, ack.State);
+        Assert.Equal(PlacementFailureReason.PlacementFailureWorkerUnavailable, ack.FailureReason);
+
+        var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(0, state.TrackedAssignmentCount);
+
+        var brainTag = brainId.ToString("D");
+        Assert.Equal(1, metrics.SumLong("nbn.workernode.placement.assignment.hosted.failed", "brain_id", brainTag));
+        Assert.Equal(0, metrics.SumLong("nbn.workernode.placement.assignment.hosted.accepted", "brain_id", brainTag));
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_DuplicateReadyAssignment_IsIdempotent()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        var request = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "assign-dup",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 5,
+                regionId: 2,
+                shardIndex: 0)
+        };
+
+        var firstAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(workerPid, request);
+        var secondAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(workerPid, request);
+        Assert.True(firstAck.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, firstAck.State);
+        Assert.True(secondAck.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, secondAck.State);
+        Assert.Equal("already_ready", secondAck.Message);
+
+        var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(1, state.TrackedAssignmentCount);
+
+        var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 5
+            });
+        var observed = Assert.Single(reconcile.Assignments);
+        Assert.Equal("assign-dup", observed.AssignmentId);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_StaleEpoch_ReturnsFailedAck_And_PreservesTrackedAssignments()
+    {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        var active = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "assign-active",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 8,
+                regionId: 2,
+                shardIndex: 0)
+        };
+
+        var stale = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "assign-stale",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 7,
+                regionId: 3,
+                shardIndex: 0)
+        };
+
+        var firstAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(workerPid, active);
+        var staleAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(workerPid, stale);
+        Assert.True(firstAck.Accepted);
+        Assert.False(staleAck.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, staleAck.State);
+        Assert.Equal(PlacementFailureReason.PlacementFailureInternalError, staleAck.FailureReason);
+        Assert.Contains("older than hosted epoch", staleAck.Message, StringComparison.OrdinalIgnoreCase);
+
+        var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(1, state.TrackedAssignmentCount);
+
+        var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 8
+            });
+        var observed = Assert.Single(reconcile.Assignments);
+        Assert.Equal("assign-active", observed.AssignmentId);
+
+        var brainTag = brainId.ToString("D");
+        Assert.Equal(1, metrics.SumLong("nbn.workernode.placement.assignment.hosted.failed", "brain_id", brainTag));
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_NewerEpoch_ResetsPriorBrainAssignments()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-old-a",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 3,
+                    regionId: 4,
+                    shardIndex: 0)
+            });
+        await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-old-b",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 3,
+                    regionId: 5,
+                    shardIndex: 1)
+            });
+
+        var promotedAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-new",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 4,
+                    regionId: 6,
+                    shardIndex: 0)
+            });
+        Assert.True(promotedAck.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, promotedAck.State);
+
+        var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(1, state.TrackedAssignmentCount);
+
+        var oldEpochReport = await harness.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 3
+            });
+        Assert.Empty(oldEpochReport.Assignments);
+
+        var newEpochReport = await harness.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 4
+            });
+        var observed = Assert.Single(newEpochReport.Assignments);
+        Assert.Equal("assign-new", observed.AssignmentId);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_AssignmentIdConflict_IsRejected_And_PreservesOriginalAssignment()
+    {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        var accepted = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-conflict",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 6,
+                    regionId: 7,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetRegionShard)
+            });
+        Assert.True(accepted.Accepted);
+
+        var conflictAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-conflict",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 6,
+                    regionId: 0,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetInputCoordinator)
+            });
+        Assert.False(conflictAck.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, conflictAck.State);
+        Assert.Equal(PlacementFailureReason.PlacementFailureAssignmentRejected, conflictAck.FailureReason);
+        Assert.Contains("conflicts with an existing ready assignment", conflictAck.Message, StringComparison.OrdinalIgnoreCase);
+
+        var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(1, state.TrackedAssignmentCount);
+
+        var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 6
+            });
+        var observed = Assert.Single(reconcile.Assignments);
+        Assert.Equal(PlacementAssignmentTarget.PlacementTargetRegionShard, observed.Target);
+        Assert.Equal((uint)7, observed.RegionId);
+
+        var brainTag = brainId.ToString("D");
+        Assert.Equal(1, metrics.SumLong("nbn.workernode.placement.assignment.hosted.failed", "brain_id", brainTag));
     }
 
     [Fact]
