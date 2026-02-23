@@ -341,13 +341,26 @@ public sealed class HiveMindActor : IActor
 
     private void UnregisterBrain(IContext context, Guid brainId, string reason = "unregistered", bool notifyIoUnregister = true)
     {
-        if (!_brains.Remove(brainId))
+        if (!_brains.TryGetValue(brainId, out var brain))
         {
             return;
         }
 
+        _brains.Remove(brainId);
+
         if (_pendingSpawns.Remove(brainId, out var pendingSpawn))
         {
+            var reasonCode = string.Equals(reason, "spawn_timeout", StringComparison.OrdinalIgnoreCase)
+                ? "spawn_timeout"
+                : !string.IsNullOrWhiteSpace(brain.SpawnFailureReasonCode)
+                    ? brain.SpawnFailureReasonCode
+                    : ToSpawnFailureReasonCode(brain.PlacementFailureReason);
+            var failureMessage = string.Equals(reason, "spawn_timeout", StringComparison.OrdinalIgnoreCase)
+                ? "Spawn timed out while waiting for placement completion."
+                : !string.IsNullOrWhiteSpace(brain.SpawnFailureMessage)
+                    ? brain.SpawnFailureMessage
+                    : BuildSpawnFailureMessage(brain.PlacementFailureReason, detail: null, fallbackReasonCode: reasonCode);
+            pendingSpawn.SetFailure(reasonCode, failureMessage);
             pendingSpawn.Completion.TrySetResult(false);
         }
 
@@ -698,7 +711,9 @@ public sealed class HiveMindActor : IActor
             || !HasArtifactRef(message.BrainDef)
             || !string.Equals(message.BrainDef.MediaType, "application/x-nbn", StringComparison.OrdinalIgnoreCase))
         {
-            context.Respond(new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() });
+            context.Respond(BuildSpawnFailureAck(
+                reasonCode: "spawn_invalid_request",
+                failureMessage: "Spawn request rejected: brain definition must be a valid application/x-nbn artifact reference."));
             return;
         }
 
@@ -725,7 +740,14 @@ public sealed class HiveMindActor : IActor
                 UnregisterBrain(context, brainId, reason: "spawn_failed");
             }
 
-            context.Respond(new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() });
+            var reasonCode = ToSpawnFailureReasonCode(placementAck.FailureReason);
+            var failureMessage = !string.IsNullOrWhiteSpace(placementAck.Message)
+                ? placementAck.Message
+                : BuildSpawnFailureMessage(
+                    placementAck.FailureReason,
+                    detail: null,
+                    fallbackReasonCode: reasonCode);
+            context.Respond(BuildSpawnFailureAck(reasonCode, failureMessage));
             return;
         }
 
@@ -742,10 +764,18 @@ public sealed class HiveMindActor : IActor
             task =>
             {
                 var completed = task.IsCompletedSuccessfully && task.Result;
-                context.Respond(new ProtoControl.SpawnBrainAck
+                if (completed)
                 {
-                    BrainId = completed ? brain.BrainId.ToProtoUuid() : Guid.Empty.ToProtoUuid()
-                });
+                    context.Respond(new ProtoControl.SpawnBrainAck
+                    {
+                        BrainId = brain.BrainId.ToProtoUuid()
+                    });
+                    return Task.CompletedTask;
+                }
+
+                context.Respond(BuildSpawnFailureAck(
+                    reasonCode: pending.FailureReasonCode,
+                    failureMessage: pending.FailureMessage));
                 return Task.CompletedTask;
             });
     }
@@ -788,6 +818,8 @@ public sealed class HiveMindActor : IActor
             ? $"{brainId:N}:{brain.PlacementEpoch}"
             : message.RequestId;
         brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
+        brain.SpawnFailureReasonCode = string.Empty;
+        brain.SpawnFailureMessage = string.Empty;
 
         if (message.BaseDef is not null && message.BaseDef.Sha256 is not null && message.BaseDef.Sha256.Value.Length == 32)
         {
@@ -820,6 +852,10 @@ public sealed class HiveMindActor : IActor
                 ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
                 failureReason);
             brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
+            SetSpawnFailureDetails(
+                brain,
+                ToSpawnFailureReasonCode(failureReason),
+                BuildSpawnFailureMessage(failureReason, failureMessage));
 
             RegisterBrainWithIo(context, brain, force: true);
 
@@ -857,6 +893,12 @@ public sealed class HiveMindActor : IActor
                 ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
                 ProtoControl.PlacementFailureReason.PlacementFailureInternalError);
             brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
+            SetSpawnFailureDetails(
+                brain,
+                ToSpawnFailureReasonCode(ProtoControl.PlacementFailureReason.PlacementFailureInternalError),
+                BuildSpawnFailureMessage(
+                    ProtoControl.PlacementFailureReason.PlacementFailureInternalError,
+                    executionFailure));
             HiveMindTelemetry.RecordPlacementRequestRejected(
                 brainId,
                 brain.PlacementEpoch,
@@ -1012,7 +1054,9 @@ public sealed class HiveMindActor : IActor
                     context,
                     brain,
                     failureReason,
-                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                    ToSpawnFailureReasonCode(failureReason),
+                    BuildSpawnFailureMessage(failureReason, message.Message));
                 return;
             }
 
@@ -1293,7 +1337,9 @@ public sealed class HiveMindActor : IActor
             context,
             brain,
             ProtoControl.PlacementFailureReason.PlacementFailureAssignmentTimeout,
-            ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+            ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+            "spawn_assignment_timeout",
+            "Spawn failed: placement assignment acknowledgements timed out and retry budget was exhausted.");
     }
 
     private void HandlePlacementReconcileTimeout(IContext context, PlacementReconcileTimeout message)
@@ -1324,7 +1370,9 @@ public sealed class HiveMindActor : IActor
             context,
             brain,
             ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch,
-            ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+            ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+            "spawn_reconcile_timeout",
+            "Spawn failed: placement reconcile timed out before all workers reported.");
         EmitDebug(
             context,
             ProtoSeverity.SevWarn,
@@ -1359,7 +1407,9 @@ public sealed class HiveMindActor : IActor
                     context,
                     brain,
                     reconcileFailureReason,
-                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                    ToSpawnFailureReasonCode(reconcileFailureReason),
+                    BuildSpawnFailureMessage(reconcileFailureReason, message.Message));
                 return;
             case ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction:
                 execution.RequiresReconcileAction = true;
@@ -1400,7 +1450,9 @@ public sealed class HiveMindActor : IActor
                 context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch,
-                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                "spawn_reconcile_mismatch",
+                $"Spawn failed: placement reconcile mismatch ({mismatch}).");
             EmitDebug(
                 context,
                 ProtoSeverity.SevWarn,
@@ -1549,6 +1601,80 @@ public sealed class HiveMindActor : IActor
             _ => "unknown"
         };
 
+    private static string ToSpawnFailureReasonCode(ProtoControl.PlacementFailureReason reason)
+        => reason switch
+        {
+            ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable => "spawn_worker_unavailable",
+            ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected => "spawn_assignment_rejected",
+            ProtoControl.PlacementFailureReason.PlacementFailureAssignmentTimeout => "spawn_assignment_timeout",
+            ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch => "spawn_reconcile_mismatch",
+            ProtoControl.PlacementFailureReason.PlacementFailureInternalError => "spawn_internal_error",
+            ProtoControl.PlacementFailureReason.PlacementFailureInvalidBrain => "spawn_invalid_request",
+            _ => "spawn_failed"
+        };
+
+    private static string BuildSpawnFailureMessage(
+        ProtoControl.PlacementFailureReason reason,
+        string? detail,
+        string? fallbackReasonCode = null)
+    {
+        if (!string.IsNullOrWhiteSpace(detail))
+        {
+            return detail.Trim();
+        }
+
+        var reasonCode = string.IsNullOrWhiteSpace(fallbackReasonCode)
+            ? ToSpawnFailureReasonCode(reason)
+            : fallbackReasonCode.Trim();
+
+        return reasonCode switch
+        {
+            "spawn_invalid_request" => "Spawn request rejected: invalid brain definition request.",
+            "spawn_timeout" => "Spawn timed out while waiting for placement completion.",
+            "spawn_worker_unavailable" => "Spawn failed: no eligible worker was available for the placement plan.",
+            "spawn_assignment_rejected" => "Spawn failed: a worker rejected one or more placement assignments.",
+            "spawn_assignment_timeout" => "Spawn failed: placement assignment acknowledgements timed out and retry budget was exhausted.",
+            "spawn_reconcile_timeout" => "Spawn failed: placement reconcile timed out before workers reported final assignments.",
+            "spawn_reconcile_mismatch" => "Spawn failed: reconcile results did not match planned assignments.",
+            "spawn_internal_error" => "Spawn failed: an internal placement error occurred.",
+            _ => "Spawn failed before placement completed."
+        };
+    }
+
+    private static void SetSpawnFailureDetails(BrainState brain, string reasonCode, string failureMessage)
+    {
+        var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
+            ? "spawn_failed"
+            : reasonCode.Trim();
+        var normalizedFailureMessage = string.IsNullOrWhiteSpace(failureMessage)
+            ? BuildSpawnFailureMessage(
+                ProtoControl.PlacementFailureReason.PlacementFailureNone,
+                detail: null,
+                fallbackReasonCode: normalizedReasonCode)
+            : failureMessage.Trim();
+        brain.SpawnFailureReasonCode = normalizedReasonCode;
+        brain.SpawnFailureMessage = normalizedFailureMessage;
+    }
+
+    private static ProtoControl.SpawnBrainAck BuildSpawnFailureAck(string? reasonCode, string? failureMessage)
+    {
+        var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
+            ? "spawn_failed"
+            : reasonCode.Trim();
+        var normalizedFailureMessage = string.IsNullOrWhiteSpace(failureMessage)
+            ? BuildSpawnFailureMessage(
+                ProtoControl.PlacementFailureReason.PlacementFailureNone,
+                detail: null,
+                fallbackReasonCode: normalizedReasonCode)
+            : failureMessage.Trim();
+        return new ProtoControl.SpawnBrainAck
+        {
+            BrainId = Guid.Empty.ToProtoUuid(),
+            FailureReasonCode = normalizedReasonCode,
+            FailureMessage = normalizedFailureMessage
+        };
+    }
+
     private void DispatchPlacementAssignment(
         IContext context,
         BrainState brain,
@@ -1580,7 +1706,9 @@ public sealed class HiveMindActor : IActor
                 context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                "spawn_worker_unavailable",
+                "Spawn failed: worker target was unavailable while dispatching placement assignments.");
             return;
         }
 
@@ -1626,7 +1754,9 @@ public sealed class HiveMindActor : IActor
                 context,
                 brain,
                 ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                "spawn_worker_unavailable",
+                "Spawn failed: placement assignment dispatch threw while contacting a worker.");
             LogError($"Failed to dispatch placement assignment {assignment.Assignment.AssignmentId} for brain {brain.BrainId}: {ex.Message}");
             return;
         }
@@ -1712,7 +1842,9 @@ public sealed class HiveMindActor : IActor
                     context,
                     brain,
                     ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed);
+                    ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                    "spawn_worker_unavailable",
+                    "Spawn failed: placement reconcile dispatch could not reach a worker.");
                 LogError($"Failed to dispatch reconcile request for brain {brain.BrainId}: {ex.Message}");
                 return;
             }
@@ -1872,9 +2004,17 @@ public sealed class HiveMindActor : IActor
         IContext context,
         BrainState brain,
         ProtoControl.PlacementFailureReason failureReason,
-        ProtoControl.PlacementReconcileState reconcileState)
+        ProtoControl.PlacementReconcileState reconcileState,
+        string? spawnFailureReasonCode = null,
+        string? spawnFailureMessage = null)
     {
         brain.PlacementReconcileState = reconcileState;
+        SetSpawnFailureDetails(
+            brain,
+            spawnFailureReasonCode ?? ToSpawnFailureReasonCode(failureReason),
+            string.IsNullOrWhiteSpace(spawnFailureMessage)
+                ? BuildSpawnFailureMessage(failureReason, detail: null)
+                : spawnFailureMessage);
         if (brain.PlacementExecution is not null)
         {
             brain.PlacementExecution.Completed = true;
@@ -1904,6 +2044,9 @@ public sealed class HiveMindActor : IActor
         }
 
         _pendingSpawns.Remove(message.BrainId);
+        pending.SetFailure(
+            reasonCode: "spawn_timeout",
+            failureMessage: "Spawn timed out while waiting for placement completion.");
         pending.Completion.TrySetResult(false);
         if (_brains.ContainsKey(message.BrainId))
         {
@@ -1923,6 +2066,9 @@ public sealed class HiveMindActor : IActor
             if (pending.PlacementEpoch < brain.PlacementEpoch)
             {
                 _pendingSpawns.Remove(brain.BrainId);
+                pending.SetFailure(
+                    reasonCode: "spawn_failed",
+                    failureMessage: "Spawn failed: placement epoch changed before completion.");
                 pending.Completion.TrySetResult(false);
             }
 
@@ -1941,6 +2087,13 @@ public sealed class HiveMindActor : IActor
             || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleTerminated)
         {
             _pendingSpawns.Remove(brain.BrainId);
+            pending.SetFailure(
+                reasonCode: string.IsNullOrWhiteSpace(brain.SpawnFailureReasonCode)
+                    ? ToSpawnFailureReasonCode(brain.PlacementFailureReason)
+                    : brain.SpawnFailureReasonCode,
+                failureMessage: string.IsNullOrWhiteSpace(brain.SpawnFailureMessage)
+                    ? BuildSpawnFailureMessage(brain.PlacementFailureReason, detail: null)
+                    : brain.SpawnFailureMessage);
             pending.Completion.TrySetResult(false);
             UnregisterBrain(context, brain.BrainId, reason: "spawn_failed");
         }
@@ -3901,6 +4054,8 @@ public sealed class HiveMindActor : IActor
             = ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown;
         public ProtoControl.PlacementFailureReason PlacementFailureReason { get; set; }
             = ProtoControl.PlacementFailureReason.PlacementFailureNone;
+        public string SpawnFailureReasonCode { get; set; } = string.Empty;
+        public string SpawnFailureMessage { get; set; } = string.Empty;
         public ProtoControl.PlacementReconcileState PlacementReconcileState { get; set; }
             = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
@@ -3917,7 +4072,17 @@ public sealed class HiveMindActor : IActor
 
         public Guid BrainId { get; }
         public ulong PlacementEpoch { get; }
+        public string FailureReasonCode { get; private set; } = "spawn_failed";
+        public string FailureMessage { get; private set; } = "Spawn failed before placement completed.";
         public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void SetFailure(string reasonCode, string failureMessage)
+        {
+            FailureReasonCode = string.IsNullOrWhiteSpace(reasonCode) ? "spawn_failed" : reasonCode.Trim();
+            FailureMessage = string.IsNullOrWhiteSpace(failureMessage)
+                ? "Spawn failed before placement completed."
+                : failureMessage.Trim();
+        }
     }
 
     private sealed class WorkerCatalogEntry

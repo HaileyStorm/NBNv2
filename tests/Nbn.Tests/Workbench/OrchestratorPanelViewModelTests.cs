@@ -143,6 +143,65 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task SpawnSampleBrainCommand_Fails_With_ActionableIoSpawnFailureDetails()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true
+        };
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck
+            {
+                BrainId = Guid.Empty.ToProtoUuid(),
+                FailureReasonCode = "spawn_worker_unavailable",
+                FailureMessage = "Spawn failed: no eligible worker was available for the placement plan."
+            }
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("spawn_worker_unavailable", StringComparison.Ordinal));
+
+        Assert.Contains("no eligible worker", vm.SampleBrainStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+    }
+
+    [Fact]
+    public async Task SpawnSampleBrainCommand_TimesOut_WhenBrainDoesNotRegister()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck
+            {
+                BrainId = spawnedBrainId.ToProtoUuid()
+            },
+            BrainListFactory = static () => new BrainListResponse()
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(
+            () => vm.SampleBrainStatus.Contains("failed to register", StringComparison.OrdinalIgnoreCase),
+            timeoutMs: 15_000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(1, client.KillBrainCallCount);
+        Assert.Equal(spawnedBrainId, client.LastKillBrainId);
+        Assert.Equal("workbench_sample_registration_timeout", client.LastKillReason);
+    }
+
+    [Fact]
     public async Task DesignerSpawn_HiveMindManaged_IgnoresLocalHostPorts_AndUsesIoSpawn()
     {
         var connections = new ConnectionViewModel
@@ -177,6 +236,42 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.RequestPlacementCallCount);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DesignerSpawn_HiveMindManaged_Shows_Actionable_IoSpawnFailureDetails()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck
+            {
+                BrainId = Guid.Empty.ToProtoUuid(),
+                FailureReasonCode = "spawn_assignment_timeout",
+                FailureMessage = "Spawn failed: placement assignment acknowledgements timed out and retry budget was exhausted."
+            }
+        };
+        var vm = new DesignerPanelViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SelectedSpawnPlacement = vm.SpawnPlacementOptions.First(option => option.Value == SpawnPlacementMode.HiveMindManaged);
+        vm.SelectedRegionHostPolicy = vm.RegionHostPolicies.First(option => option.Value == RegionHostStartPolicy.Never);
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.Status.Contains("spawn_assignment_timeout", StringComparison.Ordinal), timeoutMs: 5000);
+
+        Assert.Contains("timed out", vm.Status, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
     }
 
     private static OrchestratorPanelViewModel CreateViewModel(ConnectionViewModel connections, WorkbenchClient client)

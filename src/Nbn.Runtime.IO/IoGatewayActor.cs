@@ -133,9 +133,14 @@ public sealed class IoGatewayActor : IActor
     {
         if (_hiveMindPid is null)
         {
+            var ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn failed: HiveMind endpoint is not configured.");
             context.Respond(new SpawnBrainViaIOAck
             {
-                Ack = new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
             });
             return;
         }
@@ -143,14 +148,31 @@ public sealed class IoGatewayActor : IActor
         try
         {
             var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, DefaultRequestTimeout);
-            context.Respond(new SpawnBrainViaIOAck { Ack = ack });
+            if (ack is null)
+            {
+                ack = BuildSpawnFailureAck(
+                    reasonCode: "spawn_empty_response",
+                    failureMessage: "Spawn failed: HiveMind returned an empty spawn acknowledgment.");
+            }
+
+            context.Respond(new SpawnBrainViaIOAck
+            {
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
+            });
         }
         catch (Exception ex)
         {
             Console.WriteLine($"SpawnBrainViaIO failed: {ex.Message}");
+            var ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_request_failed",
+                failureMessage: $"Spawn failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).");
             context.Respond(new SpawnBrainViaIOAck
             {
-                Ack = new ProtoControl.SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
             });
         }
     }
@@ -778,6 +800,22 @@ public sealed class IoGatewayActor : IActor
 
             context.Respond(new SnapshotReady { BrainId = message.BrainId });
         }
+    }
+
+    private static ProtoControl.SpawnBrainAck BuildSpawnFailureAck(string reasonCode, string failureMessage)
+    {
+        var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
+            ? "spawn_failed"
+            : reasonCode.Trim();
+        var normalizedFailureMessage = string.IsNullOrWhiteSpace(failureMessage)
+            ? "Spawn failed."
+            : failureMessage.Trim();
+        return new ProtoControl.SpawnBrainAck
+        {
+            BrainId = Guid.Empty.ToProtoUuid(),
+            FailureReasonCode = normalizedReasonCode,
+            FailureMessage = normalizedFailureMessage
+        };
     }
 
     private static bool HasArtifactRef(ArtifactRef? reference)

@@ -39,6 +39,10 @@ public class IoGatewayArtifactReferenceTests
         Assert.NotNull(response.Ack);
         Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
         Assert.Equal(expectedBrainId, actualBrainId);
+        Assert.True(string.IsNullOrEmpty(response.Ack.FailureReasonCode));
+        Assert.True(string.IsNullOrEmpty(response.Ack.FailureMessage));
+        Assert.True(string.IsNullOrEmpty(response.FailureReasonCode));
+        Assert.True(string.IsNullOrEmpty(response.FailureMessage));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
@@ -58,7 +62,9 @@ public class IoGatewayArtifactReferenceTests
             forwarded,
             new ProtoControl.SpawnBrainAck
             {
-                BrainId = Guid.Empty.ToProtoUuid()
+                BrainId = Guid.Empty.ToProtoUuid(),
+                FailureReasonCode = "spawn_worker_unavailable",
+                FailureMessage = "Spawn failed: no eligible worker was available for the placement plan."
             })));
         var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
 
@@ -76,11 +82,44 @@ public class IoGatewayArtifactReferenceTests
         Assert.NotNull(response.Ack);
         Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
         Assert.Equal(Guid.Empty, actualBrainId);
+        Assert.Equal("spawn_worker_unavailable", response.Ack.FailureReasonCode);
+        Assert.Equal("Spawn failed: no eligible worker was available for the placement plan.", response.Ack.FailureMessage);
+        Assert.Equal(response.Ack.FailureReasonCode, response.FailureReasonCode);
+        Assert.Equal(response.Ack.FailureMessage, response.FailureMessage);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
         Assert.NotNull(forwardedRequest.BrainDef);
         Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SpawnBrainViaIO_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainDef = new string('7', 64).ToArtifactRef(97, "application/x-nbn", "test-store");
+        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+            gateway,
+            new SpawnBrainViaIO
+            {
+                Request = new ProtoControl.SpawnBrain
+                {
+                    BrainDef = brainDef
+                }
+            });
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
+        Assert.Equal(Guid.Empty, actualBrainId);
+        Assert.Equal("spawn_unavailable", response.Ack.FailureReasonCode);
+        Assert.Equal("Spawn failed: HiveMind endpoint is not configured.", response.Ack.FailureMessage);
+        Assert.Equal(response.Ack.FailureReasonCode, response.FailureReasonCode);
+        Assert.Equal(response.Ack.FailureMessage, response.FailureMessage);
 
         await system.ShutdownAsync();
     }

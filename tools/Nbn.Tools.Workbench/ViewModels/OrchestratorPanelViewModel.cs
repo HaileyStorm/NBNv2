@@ -594,7 +594,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }).ConfigureAwait(false);
         if (spawnAck?.BrainId is null || !spawnAck.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
         {
-            SampleBrainStatus = "Sample spawn failed: IO did not return a brain id.";
+            SampleBrainStatus = SpawnFailureFormatter.Format(
+                prefix: "Sample spawn failed",
+                ack: spawnAck,
+                fallbackMessage: "Sample spawn failed: IO did not return a brain id.");
             return;
         }
 

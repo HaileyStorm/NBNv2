@@ -80,6 +80,46 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
+    public async Task SpawnBrain_Returns_WorkerUnavailable_Details_When_NoWorkers_AreAvailable()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 10,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 250))));
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                });
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.Equal(Guid.Empty, brainId);
+            Assert.Equal("spawn_worker_unavailable", spawnAck.FailureReasonCode);
+            Assert.Contains("No eligible workers are available for placement", spawnAck.FailureMessage, StringComparison.Ordinal);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrain_Returns_Empty_BrainId_When_Assignment_Lifecycle_Fails()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
@@ -109,6 +149,8 @@ public sealed class HiveMindSpawnBrainTests
 
             Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
             Assert.Equal(Guid.Empty, brainId);
+            Assert.Equal("spawn_assignment_timeout", spawnAck.FailureReasonCode);
+            Assert.Contains("timed out", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
             Assert.True(workerProbe.AssignmentRequestCount >= 2);
 
             await WaitForAsync(
@@ -118,6 +160,102 @@ public sealed class HiveMindSpawnBrainTests
                     return status.RegisteredBrains == 0;
                 },
                 timeoutMs: 2_000);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_Returns_ReconcileMismatch_Details_When_Reconcile_Does_Not_Match_Assignments()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                reconcileBehavior: SpawnReconcileBehavior.Mismatch);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 10,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 300))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                });
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.Equal(Guid.Empty, brainId);
+            Assert.Equal("spawn_reconcile_mismatch", spawnAck.FailureReasonCode);
+            Assert.Contains("mismatch", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_Returns_ReconcileTimeout_Details_When_Reconcile_Reports_Do_Not_Arrive()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                reconcileBehavior: SpawnReconcileBehavior.Drop);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 10,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 100))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                });
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.Equal(Guid.Empty, brainId);
+            Assert.Equal("spawn_reconcile_timeout", spawnAck.FailureReasonCode);
+            Assert.Contains("timed out", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
 
             await system.ShutdownAsync();
         }
@@ -258,16 +396,28 @@ public sealed class HiveMindSpawnBrainTests
         throw new XunitException($"Condition was not met within {timeoutMs} ms.");
     }
 
+    private enum SpawnReconcileBehavior
+    {
+        Matched,
+        Mismatch,
+        Drop
+    }
+
     private sealed class SpawnPlacementWorkerProbe : IActor
     {
         private readonly Guid _workerId;
         private readonly bool _dropAcks;
+        private readonly SpawnReconcileBehavior _reconcileBehavior;
         private readonly Dictionary<string, PlacementAssignment> _knownAssignments = new(StringComparer.Ordinal);
 
-        public SpawnPlacementWorkerProbe(Guid workerId, bool dropAcks)
+        public SpawnPlacementWorkerProbe(
+            Guid workerId,
+            bool dropAcks,
+            SpawnReconcileBehavior reconcileBehavior = SpawnReconcileBehavior.Matched)
         {
             _workerId = workerId;
             _dropAcks = dropAcks;
+            _reconcileBehavior = reconcileBehavior;
         }
 
         public int AssignmentRequestCount { get; private set; }
@@ -320,6 +470,11 @@ public sealed class HiveMindSpawnBrainTests
         private void HandlePlacementReconcileRequest(IContext context, PlacementReconcileRequest request)
         {
             ReconcileRequestCount++;
+            if (_reconcileBehavior == SpawnReconcileBehavior.Drop)
+            {
+                return;
+            }
+
             var report = new PlacementReconcileReport
             {
                 BrainId = request.BrainId,
@@ -327,7 +482,15 @@ public sealed class HiveMindSpawnBrainTests
                 ReconcileState = PlacementReconcileState.PlacementReconcileMatched
             };
 
-            foreach (var assignment in _knownAssignments.Values.OrderBy(static value => value.AssignmentId, StringComparer.Ordinal))
+            var assignments = _knownAssignments.Values
+                .OrderBy(static value => value.AssignmentId, StringComparer.Ordinal)
+                .ToList();
+            if (_reconcileBehavior == SpawnReconcileBehavior.Mismatch && assignments.Count > 0)
+            {
+                assignments.RemoveAt(0);
+            }
+
+            foreach (var assignment in assignments)
             {
                 var actorPid = assignment.Target switch
                 {

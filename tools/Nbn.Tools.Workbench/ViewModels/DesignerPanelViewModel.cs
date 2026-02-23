@@ -1265,7 +1265,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     || !spawnAck.BrainId.TryToGuid(out var spawnedBrainId)
                     || spawnedBrainId == Guid.Empty)
                 {
-                    Status = "Spawn failed: IO did not return a brain id.";
+                    Status = SpawnFailureFormatter.Format(
+                        prefix: "Spawn failed",
+                        ack: spawnAck,
+                        fallbackMessage: "Spawn failed: IO did not return a brain id.");
                     return;
                 }
 

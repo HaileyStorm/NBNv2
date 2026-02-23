@@ -56,6 +56,17 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoControl_SpawnBrainAck_Fields_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+        var spawnAck = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrainAck");
+
+        AssertField(spawnAck, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(spawnAck, "failure_reason_code", 2, FieldType.String);
+        AssertField(spawnAck, "failure_message", 3, FieldType.String);
+    }
+
+    [Fact]
     public void ProtoControl_TickComputeFields_AreStable()
     {
         var descriptor = NbnControlReflection.Descriptor;
@@ -301,6 +312,17 @@ public class ProtoCompatibilityTests
         AssertField(outboxBatch, "dest_region_id", 3, FieldType.UInt32);
         AssertField(outboxBatch, "dest_shard_id", 4, FieldType.Message, "nbn.ShardId32");
         AssertRepeatedField(outboxBatch, "contribs", 5, FieldType.Message, "nbn.signal.Contribution");
+    }
+
+    [Fact]
+    public void ProtoIo_SpawnBrainViaIOAck_Fields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var spawnAck = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrainViaIOAck");
+
+        AssertField(spawnAck, "ack", 1, FieldType.Message, "nbn.control.SpawnBrainAck");
+        AssertField(spawnAck, "failure_reason_code", 2, FieldType.String);
+        AssertField(spawnAck, "failure_message", 3, FieldType.String);
     }
 
     [Fact]
