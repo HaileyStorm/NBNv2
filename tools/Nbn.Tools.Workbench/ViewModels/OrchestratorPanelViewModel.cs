@@ -32,6 +32,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _settingsRunner = new();
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
+    private readonly LocalServiceRunner _reproRunner = new();
     private readonly LocalServiceRunner _obsRunner = new();
     private readonly LocalServiceRunner _sampleBrainRunner = new();
     private readonly LocalServiceRunner _sampleRegionRunner = new();
@@ -46,6 +47,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _settingsLaunchStatus = "Idle";
     private string _hiveMindLaunchStatus = "Idle";
     private string _ioLaunchStatus = "Idle";
+    private string _reproLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _sampleBrainStatus = "Not running.";
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
@@ -80,6 +82,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopHiveMindCommand = new AsyncRelayCommand(() => StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value));
         StartIoCommand = new AsyncRelayCommand(StartIoAsync);
         StopIoCommand = new AsyncRelayCommand(() => StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value));
+        StartReproCommand = new AsyncRelayCommand(StartReproAsync);
+        StopReproCommand = new AsyncRelayCommand(() => StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value));
         StartObsCommand = new AsyncRelayCommand(StartObsAsync);
         StopObsCommand = new AsyncRelayCommand(() => StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value));
         StartAllCommand = new AsyncRelayCommand(StartAllAsync);
@@ -117,6 +121,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand StopIoCommand { get; }
 
+    public AsyncRelayCommand StartReproCommand { get; }
+
+    public AsyncRelayCommand StopReproCommand { get; }
+
     public AsyncRelayCommand StartObsCommand { get; }
 
     public AsyncRelayCommand StopObsCommand { get; }
@@ -144,6 +152,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _ioLaunchStatus;
         set => SetProperty(ref _ioLaunchStatus, value);
+    }
+
+    public string ReproLaunchStatus
+    {
+        get => _reproLaunchStatus;
+        set => SetProperty(ref _reproLaunchStatus, value);
     }
 
     public string ObsLaunchStatus
@@ -193,6 +207,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_settingsRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_reproRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_obsRunner, _ => { }).ConfigureAwait(false);
     }
 
@@ -263,6 +278,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParsePort(Connections.ReproPortText, out var reproPort))
+        {
+            IoLaunchStatus = "Invalid Reproduction port.";
+            return;
+        }
+
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.IO");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -271,12 +292,46 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var hiveAddress = $"{Connections.HiveMindHost}:{hivePort}";
+        var reproAddress = $"{Connections.ReproHost}:{reproPort}";
         var args = $"--bind-host {Connections.IoHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
-                 + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}";
+                 + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}"
+                 + $" --repro-address {reproAddress} --repro-name {Connections.ReproManager}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.IO", args);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
         IoLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
+    }
+
+    private async Task StartReproAsync()
+    {
+        if (!TryParsePort(Connections.ReproPortText, out var reproPort))
+        {
+            ReproLaunchStatus = "Invalid Reproduction port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.IoPortText, out var ioPort))
+        {
+            ReproLaunchStatus = "Invalid IO port.";
+            return;
+        }
+
+        var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Reproduction");
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            ReproLaunchStatus = "Repo root not found.";
+            return;
+        }
+
+        var ioAddress = $"{Connections.IoHost}:{ioPort}";
+        var args = $"--bind-host {Connections.ReproHost} --port {reproPort}"
+                 + $" --manager-name {Connections.ReproManager}"
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
+                 + $" --io-address {ioAddress} --io-name {Connections.IoGateway}";
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Reproduction", args);
+        var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
+        ReproLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -449,6 +504,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         await StartSettingsMonitorAsync().ConfigureAwait(false);
         await StartHiveMindAsync().ConfigureAwait(false);
+        await StartReproAsync().ConfigureAwait(false);
         await StartIoAsync().ConfigureAwait(false);
         await StartObsAsync().ConfigureAwait(false);
     }
@@ -459,6 +515,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopSampleBrainAsync().ConfigureAwait(false);
         await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
     }
@@ -936,6 +993,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         var hiveAlive = false;
         var ioAlive = false;
+        var reproAlive = false;
         var obsAlive = false;
         foreach (var node in nodes)
         {
@@ -955,6 +1013,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 ioAlive = ioAlive || fresh;
             }
 
+            if (string.Equals(node.RootActorName, Connections.ReproManager, StringComparison.OrdinalIgnoreCase))
+            {
+                reproAlive = reproAlive || fresh;
+            }
+
             if (string.Equals(node.RootActorName, Connections.DebugHub, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(node.RootActorName, Connections.VizHub, StringComparison.OrdinalIgnoreCase))
             {
@@ -969,6 +1032,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             Connections.IoConnected = ioAlive;
             Connections.IoStatus = ioAlive ? "Connected" : "Offline";
+
+            Connections.ReproConnected = reproAlive;
+            Connections.ReproStatus = reproAlive ? "Connected" : "Offline";
 
             Connections.ObsConnected = obsAlive;
             Connections.ObsStatus = obsAlive ? "Connected" : "Offline";

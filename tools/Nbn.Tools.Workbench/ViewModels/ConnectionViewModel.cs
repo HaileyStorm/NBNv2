@@ -10,6 +10,9 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _ioHost = "127.0.0.1";
     private string _ioPort = "12050";
     private string _ioGateway = "io-gateway";
+    private string _reproHost = "127.0.0.1";
+    private string _reproPortText = "12070";
+    private string _reproManager = "ReproductionManager";
     private string _obsHost = "127.0.0.1";
     private string _obsPort = "12060";
     private string _debugHub = "DebugHub";
@@ -27,10 +30,12 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _sampleRegionPortText = "12040";
     private string _hiveMindStatus = "Disconnected";
     private string _ioStatus = "Disconnected";
+    private string _reproStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
     private bool _workbenchLoggingEnabled;
     private bool _ioConnected;
+    private bool _reproConnected;
     private bool _obsConnected;
     private bool _settingsConnected;
     private bool _hiveMindConnected;
@@ -63,6 +68,24 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _ioGateway;
         set => SetProperty(ref _ioGateway, value);
+    }
+
+    public string ReproHost
+    {
+        get => _reproHost;
+        set => SetProperty(ref _reproHost, value);
+    }
+
+    public string ReproPortText
+    {
+        get => _reproPortText;
+        set => SetProperty(ref _reproPortText, value);
+    }
+
+    public string ReproManager
+    {
+        get => _reproManager;
+        set => SetProperty(ref _reproManager, value);
     }
 
     public string ObsHost
@@ -184,6 +207,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _obsStatus, value);
     }
 
+    public string ReproStatus
+    {
+        get => _reproStatus;
+        set => SetProperty(ref _reproStatus, value);
+    }
+
     public string SettingsStatus
     {
         get => _settingsStatus;
@@ -232,6 +261,20 @@ public sealed class ConnectionViewModel : ViewModelBase
         }
     }
 
+    public bool ReproConnected
+    {
+        get => _reproConnected;
+        set
+        {
+            if (SetProperty(ref _reproConnected, value))
+            {
+                OnPropertyChanged(nameof(ReproChipBackground));
+                OnPropertyChanged(nameof(ReproChipBorder));
+                OnPropertyChanged(nameof(ReproStatusLabel));
+            }
+        }
+    }
+
     public bool ObsConnected
     {
         get => _obsConnected;
@@ -254,6 +297,10 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public IBrush ObsChipBorder => ObsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
+    public IBrush ReproChipBackground => ReproConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush ReproChipBorder => ReproConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
     public IBrush SettingsChipBackground => SettingsConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
     public IBrush SettingsChipBorder => SettingsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
@@ -265,6 +312,8 @@ public sealed class ConnectionViewModel : ViewModelBase
     public string IoStatusLabel => IoConnected ? "IO connected" : "IO disconnected";
 
     public string ObsStatusLabel => ObsConnected ? "Obs connected" : "Obs disconnected";
+
+    public string ReproStatusLabel => ReproConnected ? "Repro connected" : "Repro disconnected";
 
     public string SettingsStatusLabel => SettingsConnected ? "Settings connected" : "Settings disconnected";
 
