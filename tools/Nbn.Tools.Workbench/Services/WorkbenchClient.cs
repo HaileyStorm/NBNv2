@@ -202,7 +202,7 @@ public class WorkbenchClient : IAsyncDisposable
         _sink.OnHiveMindStatus("Disconnected", false);
     }
 
-    public async Task<PlacementAck?> RequestPlacementAsync(RequestPlacement request)
+    public virtual async Task<PlacementAck?> RequestPlacementAsync(RequestPlacement request)
     {
         if (_root is null || _hiveMindPid is null)
         {
@@ -218,6 +218,52 @@ public class WorkbenchClient : IAsyncDisposable
         {
             _sink.OnHiveMindStatus($"Placement request failed: {ex.Message}", true);
             return null;
+        }
+    }
+
+    public virtual async Task<SpawnBrainAck?> SpawnBrainViaIoAsync(SpawnBrain request)
+    {
+        if (_root is null || _ioGatewayPid is null || request is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var response = await _root.RequestAsync<SpawnBrainViaIOAck>(
+                    _ioGatewayPid,
+                    new SpawnBrainViaIO { Request = request },
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+            return response?.Ack;
+        }
+        catch (Exception ex)
+        {
+            _sink.OnIoStatus($"Spawn request failed: {ex.Message}", true);
+            return null;
+        }
+    }
+
+    public virtual Task<bool> KillBrainAsync(Guid brainId, string reason)
+    {
+        if (_root is null || _hiveMindPid is null || brainId == Guid.Empty)
+        {
+            return Task.FromResult(false);
+        }
+
+        try
+        {
+            _root.Send(_hiveMindPid, new KillBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = reason ?? string.Empty
+            });
+            return Task.FromResult(true);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnHiveMindStatus($"Kill request failed: {ex.Message}", true);
+            return Task.FromResult(false);
         }
     }
 

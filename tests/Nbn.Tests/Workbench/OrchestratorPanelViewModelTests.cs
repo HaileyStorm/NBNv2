@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using Nbn.Proto.Control;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -83,6 +86,99 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("online", workerNode.Status);
     }
 
+    [Fact]
+    public async Task SpawnSampleBrainCommand_UsesIoSpawnPath_OnSuccess()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SampleBrainPortText = "bad",
+            SampleRegionPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.NotNull(client.LastSpawnRequest);
+        Assert.Equal("application/x-nbn", client.LastSpawnRequest!.BrainDef?.MediaType);
+        Assert.Equal(0, client.KillBrainCallCount);
+
+        vm.StopSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => client.KillBrainCallCount == 1);
+
+        Assert.Equal(spawnedBrainId, client.LastKillBrainId);
+        Assert.Contains("stop requested", vm.SampleBrainStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SpawnSampleBrainCommand_Fails_WhenIoSpawnReturnsEmptyId()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true
+        };
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = Guid.Empty.ToProtoUuid() }
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("IO did not return a brain id", StringComparison.Ordinal));
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+    }
+
+    [Fact]
+    public async Task DesignerSpawn_HiveMindManaged_IgnoresLocalHostPorts_AndUsesIoSpawn()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            PlacementAck = new PlacementAck { Accepted = true, Message = "ok" },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
+        };
+        var vm = new DesignerPanelViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SelectedSpawnPlacement = vm.SpawnPlacementOptions.First(option => option.Value == SpawnPlacementMode.HiveMindManaged);
+        vm.SelectedRegionHostPolicy = vm.RegionHostPolicies.First(option => option.Value == RegionHostStartPolicy.Never);
+        vm.SpawnBrainPortText = "bad";
+        vm.SpawnRegionPortText = "bad";
+        vm.SpawnRegionHostCountText = "bad";
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.Status.Contains("Brain spawned", StringComparison.Ordinal), timeoutMs: 5000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(1, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static OrchestratorPanelViewModel CreateViewModel(ConnectionViewModel connections, WorkbenchClient client)
     {
         return new OrchestratorPanelViewModel(
@@ -109,11 +205,37 @@ public class OrchestratorPanelViewModelTests
         Assert.True(predicate());
     }
 
+    private static BrainListResponse BuildBrainList(Guid brainId, string state)
+        => new()
+        {
+            Brains =
+            {
+                new BrainStatus
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    SpawnedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    LastTickId = 0,
+                    State = state
+                }
+            }
+        };
+
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
         public NodeListResponse? NodesResponse { get; init; }
-        public BrainListResponse? BrainsResponse { get; init; }
+        public BrainListResponse? BrainsResponse { get; set; }
+        public Func<BrainListResponse?>? BrainListFactory { get; set; }
         public SettingListResponse? SettingsResponse { get; init; }
+        public SpawnBrainAck? SpawnBrainAck { get; set; }
+        public PlacementAck? PlacementAck { get; set; }
+        public bool KillBrainResult { get; set; } = true;
+        public int SpawnViaIoCallCount { get; private set; }
+        public int RequestPlacementCallCount { get; private set; }
+        public int KillBrainCallCount { get; private set; }
+        public SpawnBrain? LastSpawnRequest { get; private set; }
+        public RequestPlacement? LastPlacementRequest { get; private set; }
+        public Guid? LastKillBrainId { get; private set; }
+        public string? LastKillReason { get; private set; }
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -124,10 +246,32 @@ public class OrchestratorPanelViewModelTests
             => Task.FromResult(NodesResponse);
 
         public override Task<BrainListResponse?> ListBrainsAsync()
-            => Task.FromResult(BrainsResponse);
+            => Task.FromResult(BrainListFactory?.Invoke() ?? BrainsResponse);
 
         public override Task<SettingListResponse?> ListSettingsAsync()
             => Task.FromResult(SettingsResponse);
+
+        public override Task<SpawnBrainAck?> SpawnBrainViaIoAsync(SpawnBrain request)
+        {
+            SpawnViaIoCallCount++;
+            LastSpawnRequest = request;
+            return Task.FromResult(SpawnBrainAck);
+        }
+
+        public override Task<PlacementAck?> RequestPlacementAsync(RequestPlacement request)
+        {
+            RequestPlacementCallCount++;
+            LastPlacementRequest = request;
+            return Task.FromResult(PlacementAck);
+        }
+
+        public override Task<bool> KillBrainAsync(Guid brainId, string reason)
+        {
+            KillBrainCallCount++;
+            LastKillBrainId = brainId;
+            LastKillReason = reason;
+            return Task.FromResult(KillBrainResult);
+        }
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink
