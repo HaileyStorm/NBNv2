@@ -310,9 +310,15 @@ public class ProtoCompatibilityTests
         AssertField(config, "max_region_span_diff_ratio", 1, FieldType.Float);
         AssertField(config, "max_function_hist_distance", 2, FieldType.Float);
         AssertField(config, "max_connectivity_hist_distance", 3, FieldType.Float);
+        AssertField(config, "inbound_reroute_max_ring_distance", 24, FieldType.UInt32);
         AssertField(config, "strength_transform_enabled", 50, FieldType.Bool);
+        AssertRepeatedField(config, "per_region_out_degree_caps", 62, FieldType.Message, "nbn.repro.RegionOutDegreeCap");
         AssertField(config, "limits", 70, FieldType.Message, "nbn.repro.ReproduceLimits");
         AssertField(config, "spawn_child", 80, FieldType.Enum, "nbn.repro.SpawnChildPolicy");
+
+        var regionCap = descriptor.MessageTypes.Single(message => message.Name == "RegionOutDegreeCap");
+        AssertField(regionCap, "region_id", 1, FieldType.UInt32);
+        AssertField(regionCap, "max_avg_out_degree", 2, FieldType.Float);
 
         var report = descriptor.MessageTypes.Single(message => message.Name == "SimilarityReport");
         AssertField(report, "similarity_score", 13, FieldType.Float);

@@ -927,7 +927,7 @@ Strength is not used as a reproduction gate.
 Hard per-neuron axon count is limited by file format (0..511). Reproduction additionally enforces average out-degree constraints:
 
 * `max_avg_out_degree_brain`
-* optionally per-region max average
+* optionally per-region max average (`per_region_out_degree_caps`)
 
 Pruning policies:
 
@@ -2310,6 +2310,11 @@ enum PrunePolicy {
   PRUNE_RANDOM = 2;
 }
 
+message RegionOutDegreeCap {
+  uint32 region_id = 1;
+  float max_avg_out_degree = 2;
+}
+
 message ReproduceLimits {
   // Limits can be specified as absolute and/or percentage.
   // If both are present for the same dimension, the smallest effective limit applies.
@@ -2349,7 +2354,7 @@ message ReproduceConfig {
   float prob_remove_axon = 21;
   float prob_reroute_axon = 22; // reroute an axon (where inbound and outbound neurons both exist), instead of choosing one parents' route
   float prob_reroute_inbound_axon_on_delete = 23; // inbound to deleted neuron
-  //float prob_delete_inbound_axon_on_delete = 24; // implicit (1-prob_reroute_inbound_axon_on_delete)
+  uint32 inbound_reroute_max_ring_distance = 24; // 0 means unlimited ring distance
 
   // Value selection for neuron parameter codes
   float prob_choose_parentA = 30;
@@ -2375,6 +2380,7 @@ message ReproduceConfig {
   // Out-degree control
   float max_avg_out_degree_brain = 60;
   PrunePolicy prune_policy = 61;
+  repeated RegionOutDegreeCap per_region_out_degree_caps = 62;
 
   // Limits
   ReproduceLimits limits = 70;

@@ -99,7 +99,7 @@
       <Border Classes="card">
         <StackPanel Spacing="8" Grid.IsSharedSizeScope="True">
           <TextBlock Text="Similarity" Classes="card-title" />
-          <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel" />
               <ColumnDefinition Width="*" />
@@ -112,6 +112,8 @@
             <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding MaxConnectivityHistDistance}" Width="120" />
             <TextBlock Grid.Row="3" Text="Max avg out" Classes="muted" />
             <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxAvgOutDegree}" Width="120" />
+            <TextBlock Grid.Row="4" Text="Per-region avg caps" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PerRegionOutDegreeCaps}" Width="320" Watermark="region:cap, region:cap" />
           </Grid>
         </StackPanel>
       </Border>
@@ -121,7 +123,7 @@
           <TextBlock Text="Mutation" Classes="card-title" />
 
           <TextBlock Text="Structure + connectivity" Classes="muted row-title" />
-          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" SharedSizeGroup="reproLabel2" />
               <ColumnDefinition Width="*" />
@@ -142,6 +144,8 @@
             <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding ProbRerouteAxon}" Width="120" />
             <TextBlock Grid.Row="7" Text="Prob reroute inbound on delete" Classes="muted" />
             <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding ProbRerouteInboundAxonOnDelete}" Width="120" />
+            <TextBlock Grid.Row="8" Text="Inbound reroute max distance" Classes="muted" />
+            <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding InboundRerouteMaxRingDistance}" Width="120" />
           </Grid>
 
           <TextBlock Text="Value + function selection" Classes="muted row-title" />

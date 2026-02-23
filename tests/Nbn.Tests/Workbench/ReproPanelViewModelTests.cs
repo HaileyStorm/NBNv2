@@ -156,6 +156,7 @@ public class ReproPanelViewModelTests
         vm.MaxFunctionHistDistance = "0.22";
         vm.MaxConnectivityHistDistance = "0.33";
         vm.MaxAvgOutDegree = "123";
+        vm.PerRegionOutDegreeCaps = "1:12.5, 4:7.25, 99:4.0, bad";
         vm.ProbAddNeuronToEmptyRegion = "0.01";
         vm.ProbRemoveLastNeuronFromRegion = "0.02";
         vm.ProbDisableNeuron = "0.03";
@@ -164,6 +165,7 @@ public class ReproPanelViewModelTests
         vm.ProbRemoveAxon = "0.06";
         vm.ProbRerouteAxon = "0.07";
         vm.ProbRerouteInboundAxonOnDelete = "0.08";
+        vm.InboundRerouteMaxRingDistance = "3";
         vm.ProbChooseParentA = "0.41";
         vm.ProbChooseParentB = "0.42";
         vm.ProbAverage = "0.09";
@@ -202,6 +204,18 @@ public class ReproPanelViewModelTests
         Assert.Equal(0.22f, request.Config.MaxFunctionHistDistance, 3);
         Assert.Equal(0.33f, request.Config.MaxConnectivityHistDistance, 3);
         Assert.Equal(123f, request.Config.MaxAvgOutDegreeBrain, 3);
+        Assert.Collection(
+            request.Config.PerRegionOutDegreeCaps,
+            first =>
+            {
+                Assert.Equal((uint)1, first.RegionId);
+                Assert.Equal(12.5f, first.MaxAvgOutDegree, 3);
+            },
+            second =>
+            {
+                Assert.Equal((uint)4, second.RegionId);
+                Assert.Equal(7.25f, second.MaxAvgOutDegree, 3);
+            });
         Assert.Equal(0.01f, request.Config.ProbAddNeuronToEmptyRegion, 3);
         Assert.Equal(0.02f, request.Config.ProbRemoveLastNeuronFromRegion, 3);
         Assert.Equal(0.03f, request.Config.ProbDisableNeuron, 3);
@@ -210,6 +224,7 @@ public class ReproPanelViewModelTests
         Assert.Equal(0.06f, request.Config.ProbRemoveAxon, 3);
         Assert.Equal(0.07f, request.Config.ProbRerouteAxon, 3);
         Assert.Equal(0.08f, request.Config.ProbRerouteInboundAxonOnDelete, 3);
+        Assert.Equal((uint)3, request.Config.InboundRerouteMaxRingDistance);
         Assert.Equal(0.41f, request.Config.ProbChooseParentA, 3);
         Assert.Equal(0.42f, request.Config.ProbChooseParentB, 3);
         Assert.Equal(0.09f, request.Config.ProbAverage, 3);

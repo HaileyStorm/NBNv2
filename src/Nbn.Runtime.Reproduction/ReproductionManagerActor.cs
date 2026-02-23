@@ -831,6 +831,9 @@ public sealed class ReproductionManagerActor : IActor
         var removeAxonProbability = ClampProbability(config.ProbRemoveAxon);
         var rerouteAxonProbability = ClampProbability(config.ProbRerouteAxon);
         var rerouteInboundOnDeleteProbability = ClampProbability(config.ProbRerouteInboundAxonOnDelete);
+        var inboundRerouteMaxRingDistance = config.InboundRerouteMaxRingDistance > 0
+            ? (int)Math.Min(config.InboundRerouteMaxRingDistance, int.MaxValue)
+            : 0;
 
         for (var regionId = 1; regionId < NbnConstants.OutputRegionId; regionId++)
         {
@@ -894,6 +897,7 @@ public sealed class ReproductionManagerActor : IActor
                     regionId,
                     existingNeuronId,
                     rerouteInboundOnDeleteProbability,
+                    inboundRerouteMaxRingDistance,
                     ref state,
                     budgets))
             {
@@ -938,6 +942,7 @@ public sealed class ReproductionManagerActor : IActor
                             regionId,
                             neuronId,
                             rerouteInboundOnDeleteProbability,
+                            inboundRerouteMaxRingDistance,
                             ref state,
                             budgets))
                     {
@@ -1061,48 +1066,67 @@ public sealed class ReproductionManagerActor : IActor
         MutationBudgets budgets,
         HashSet<ulong> addedConnections)
     {
-        if (config.MaxAvgOutDegreeBrain <= 0f || float.IsNaN(config.MaxAvgOutDegreeBrain))
+        var normalizedGlobalCap = NormalizeOutDegreeCap(config.MaxAvgOutDegreeBrain);
+        var perRegionCaps = ResolvePerRegionOutDegreeCaps(config);
+        if (!normalizedGlobalCap.HasValue && perRegionCaps.Count == 0)
         {
             return;
         }
 
-        var existingNeurons = 0;
-        var totalAxons = 0;
-        foreach (var region in regions.Values)
+        if (normalizedGlobalCap.HasValue)
         {
-            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
-            {
-                var neuron = region.Neurons[neuronId];
-                if (!neuron.Exists)
-                {
-                    continue;
-                }
-
-                existingNeurons++;
-                totalAxons += neuron.Axons.Count;
-            }
+            EnforceAverageOutDegreeLimit(
+                regions,
+                normalizedGlobalCap.Value,
+                sourceRegionIdFilter: null,
+                config.PrunePolicy,
+                ref state,
+                budgets,
+                addedConnections);
         }
 
-        if (existingNeurons <= 0)
+        if (perRegionCaps.Count == 0)
         {
             return;
         }
 
-        var allowedAxons = (int)Math.Floor(config.MaxAvgOutDegreeBrain * existingNeurons);
-        if (allowedAxons < 0)
+        foreach (var regionCap in perRegionCaps.OrderBy(static pair => pair.Key))
         {
-            allowedAxons = 0;
+            EnforceAverageOutDegreeLimit(
+                regions,
+                regionCap.Value,
+                regionCap.Key,
+                config.PrunePolicy,
+                ref state,
+                budgets,
+                addedConnections);
+        }
+    }
+
+    private static void EnforceAverageOutDegreeLimit(
+        Dictionary<int, MutableRegion> regions,
+        float maxAvgOutDegree,
+        int? sourceRegionIdFilter,
+        PrunePolicy prunePolicy,
+        ref ulong state,
+        MutationBudgets budgets,
+        HashSet<ulong> addedConnections)
+    {
+        if (!TryGetOutDegreeTotals(regions, sourceRegionIdFilter, out var existingNeurons, out var totalAxons))
+        {
+            return;
         }
 
+        var allowedAxons = ResolveAllowedAxons(maxAvgOutDegree, existingNeurons);
         while (totalAxons > allowedAxons)
         {
-            var candidates = CollectPruneCandidates(regions, addedConnections);
+            var candidates = CollectPruneCandidates(regions, addedConnections, sourceRegionIdFilter);
             if (candidates.Count == 0)
             {
                 break;
             }
 
-            var selected = SelectPruneCandidate(candidates, config.PrunePolicy, ref state);
+            var selected = SelectPruneCandidate(candidates, prunePolicy, ref state);
             if (!regions.TryGetValue(selected.SourceRegionId, out var region))
             {
                 break;
@@ -1120,14 +1144,102 @@ public sealed class ReproductionManagerActor : IActor
         }
     }
 
+    private static int ResolveAllowedAxons(float maxAvgOutDegree, int existingNeurons)
+    {
+        var allowedAxons = (int)Math.Floor(maxAvgOutDegree * existingNeurons);
+        if (allowedAxons < 0)
+        {
+            allowedAxons = 0;
+        }
+
+        return allowedAxons;
+    }
+
+    private static bool TryGetOutDegreeTotals(
+        IReadOnlyDictionary<int, MutableRegion> regions,
+        int? sourceRegionIdFilter,
+        out int existingNeurons,
+        out int totalAxons)
+    {
+        existingNeurons = 0;
+        totalAxons = 0;
+        foreach (var pair in regions)
+        {
+            if (sourceRegionIdFilter.HasValue && pair.Key != sourceRegionIdFilter.Value)
+            {
+                continue;
+            }
+
+            var region = pair.Value;
+            for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
+            {
+                var neuron = region.Neurons[neuronId];
+                if (!neuron.Exists)
+                {
+                    continue;
+                }
+
+                existingNeurons++;
+                totalAxons += neuron.Axons.Count;
+            }
+        }
+
+        return existingNeurons > 0;
+    }
+
+    private static float? NormalizeOutDegreeCap(float cap)
+    {
+        if (cap <= 0f || float.IsNaN(cap) || float.IsInfinity(cap))
+        {
+            return null;
+        }
+
+        return cap;
+    }
+
+    private static Dictionary<int, float> ResolvePerRegionOutDegreeCaps(ReproduceConfig config)
+    {
+        var caps = new Dictionary<int, float>();
+        foreach (var cap in config.PerRegionOutDegreeCaps)
+        {
+            if (cap.RegionId > NbnConstants.RegionMaxId)
+            {
+                continue;
+            }
+
+            var normalized = NormalizeOutDegreeCap(cap.MaxAvgOutDegree);
+            if (!normalized.HasValue)
+            {
+                continue;
+            }
+
+            var regionId = (int)cap.RegionId;
+            if (caps.TryGetValue(regionId, out var existing))
+            {
+                caps[regionId] = Math.Min(existing, normalized.Value);
+                continue;
+            }
+
+            caps.Add(regionId, normalized.Value);
+        }
+
+        return caps;
+    }
+
     private static List<PruneCandidate> CollectPruneCandidates(
         Dictionary<int, MutableRegion> regions,
-        HashSet<ulong> addedConnections)
+        HashSet<ulong> addedConnections,
+        int? sourceRegionIdFilter = null)
     {
         var candidates = new List<PruneCandidate>();
         foreach (var pair in regions)
         {
             var regionId = pair.Key;
+            if (sourceRegionIdFilter.HasValue && regionId != sourceRegionIdFilter.Value)
+            {
+                continue;
+            }
+
             var region = pair.Value;
             for (var neuronId = 0; neuronId < region.Neurons.Count; neuronId++)
             {
@@ -1387,6 +1499,7 @@ public sealed class ReproductionManagerActor : IActor
         int targetRegionId,
         int targetNeuronId,
         float rerouteInboundProbability,
+        int inboundRerouteMaxRingDistance,
         ref ulong state,
         MutationBudgets budgets)
     {
@@ -1405,6 +1518,7 @@ public sealed class ReproductionManagerActor : IActor
             targetRegionId,
             targetNeuronId,
             rerouteInboundProbability,
+            inboundRerouteMaxRingDistance,
             ref state,
             budgets);
 
@@ -1423,6 +1537,7 @@ public sealed class ReproductionManagerActor : IActor
         int targetRegionId,
         int targetNeuronId,
         float rerouteInboundProbability,
+        int inboundRerouteMaxRingDistance,
         ref ulong state,
         MutationBudgets budgets)
     {
@@ -1467,6 +1582,7 @@ public sealed class ReproductionManagerActor : IActor
                             sourceRegionId,
                             targetRegionId,
                             targetNeuronId,
+                            inboundRerouteMaxRingDistance,
                             existingTargets,
                             ref state,
                             out var rerouteTarget))
@@ -1492,6 +1608,7 @@ public sealed class ReproductionManagerActor : IActor
         int sourceRegionId,
         int targetRegionId,
         int deletedNeuronId,
+        int inboundRerouteMaxRingDistance,
         HashSet<uint> existingTargets,
         ref ulong state,
         out TargetLocus target)
@@ -1529,6 +1646,11 @@ public sealed class ReproductionManagerActor : IActor
 
             var delta = Math.Abs(neuronId - deletedNeuronId);
             var ringDistance = Math.Min(delta, span - delta);
+            if (inboundRerouteMaxRingDistance > 0 && ringDistance > inboundRerouteMaxRingDistance)
+            {
+                continue;
+            }
+
             var weight = 1f / (1f + ringDistance);
             candidates.Add(new WeightedTargetCandidate(new TargetLocus(targetRegionId, neuronId), weight));
         }

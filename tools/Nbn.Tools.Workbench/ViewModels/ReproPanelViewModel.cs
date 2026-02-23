@@ -33,6 +33,7 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _maxFunctionHistDistance = "0.25";
     private string _maxConnectivityHistDistance = "0.25";
     private string _maxAvgOutDegree = "100";
+    private string _perRegionOutDegreeCaps = string.Empty;
     private string _probAddNeuronToEmptyRegion = "0.02";
     private string _probRemoveLastNeuronFromRegion = "0.01";
     private string _probDisableNeuron = "0.01";
@@ -41,6 +42,7 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _probRemoveAxon = "0.02";
     private string _probRerouteAxon = "0.02";
     private string _probRerouteInboundAxonOnDelete = "0.50";
+    private string _inboundRerouteMaxRingDistance = "0";
     private string _probChooseParentA = "0.45";
     private string _probChooseParentB = "0.45";
     private string _probAverage = "0.05";
@@ -218,6 +220,12 @@ public sealed class ReproPanelViewModel : ViewModelBase
         set => SetProperty(ref _maxAvgOutDegree, value);
     }
 
+    public string PerRegionOutDegreeCaps
+    {
+        get => _perRegionOutDegreeCaps;
+        set => SetProperty(ref _perRegionOutDegreeCaps, value);
+    }
+
     public string ProbAddNeuronToEmptyRegion
     {
         get => _probAddNeuronToEmptyRegion;
@@ -264,6 +272,12 @@ public sealed class ReproPanelViewModel : ViewModelBase
     {
         get => _probRerouteInboundAxonOnDelete;
         set => SetProperty(ref _probRerouteInboundAxonOnDelete, value);
+    }
+
+    public string InboundRerouteMaxRingDistance
+    {
+        get => _inboundRerouteMaxRingDistance;
+        set => SetProperty(ref _inboundRerouteMaxRingDistance, value);
     }
 
     public string ProbChooseParentA
@@ -626,6 +640,7 @@ public sealed class ReproPanelViewModel : ViewModelBase
             ProbRemoveAxon = ParseFloat(ProbRemoveAxon, 0.02f),
             ProbRerouteAxon = ParseFloat(ProbRerouteAxon, 0.02f),
             ProbRerouteInboundAxonOnDelete = ParseFloat(ProbRerouteInboundAxonOnDelete, 0.50f),
+            InboundRerouteMaxRingDistance = ParseUInt(InboundRerouteMaxRingDistance, 0),
             ProbChooseParentA = ParseFloat(ProbChooseParentA, 0.45f),
             ProbChooseParentB = ParseFloat(ProbChooseParentB, 0.45f),
             ProbAverage = ParseFloat(ProbAverage, 0.05f),
@@ -634,6 +649,7 @@ public sealed class ReproPanelViewModel : ViewModelBase
             ProbMutateFunc = ParseFloat(ProbMutateFunc, 0.02f),
             MaxAvgOutDegreeBrain = ParseFloat(MaxAvgOutDegree, 100f),
             PrunePolicy = SelectedPrunePolicy.Value,
+            PerRegionOutDegreeCaps = { ParsePerRegionOutDegreeCaps(PerRegionOutDegreeCaps) },
             StrengthTransformEnabled = StrengthTransformEnabled,
             ProbStrengthChooseA = ParseFloat(ProbStrengthChooseA, 0.35f),
             ProbStrengthChooseB = ParseFloat(ProbStrengthChooseB, 0.35f),
@@ -782,6 +798,48 @@ public sealed class ReproPanelViewModel : ViewModelBase
         return ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : fallback;
+    }
+
+    private static IEnumerable<RegionOutDegreeCap> ParsePerRegionOutDegreeCaps(string rawValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            yield break;
+        }
+
+        var parsedCaps = new Dictionary<uint, float>();
+        var segments = rawValue.Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        foreach (var segment in segments)
+        {
+            var pair = segment.Split([':', '='], 2, StringSplitOptions.RemoveEmptyEntries);
+            if (pair.Length != 2
+                || !uint.TryParse(pair[0].Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var regionId)
+                || !float.TryParse(pair[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var maxAvgOutDegree)
+                || regionId > NbnConstants.RegionMaxId
+                || maxAvgOutDegree <= 0f
+                || float.IsNaN(maxAvgOutDegree)
+                || float.IsInfinity(maxAvgOutDegree))
+            {
+                continue;
+            }
+
+            if (parsedCaps.TryGetValue(regionId, out var existing))
+            {
+                parsedCaps[regionId] = Math.Min(existing, maxAvgOutDegree);
+                continue;
+            }
+
+            parsedCaps.Add(regionId, maxAvgOutDegree);
+        }
+
+        foreach (var pair in parsedCaps.OrderBy(static entry => entry.Key))
+        {
+            yield return new RegionOutDegreeCap
+            {
+                RegionId = pair.Key,
+                MaxAvgOutDegree = pair.Value
+            };
+        }
     }
 
     private static float Clamp01(float value)
