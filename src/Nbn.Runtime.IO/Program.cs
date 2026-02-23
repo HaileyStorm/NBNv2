@@ -27,6 +27,18 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ServerName,
     options.GatewayName);
 
+var publishedIoEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    ServiceEndpointSettings.IoGatewayKey,
+    new ServiceEndpoint(nodeAddress, options.GatewayName));
+if (!publishedIoEndpoint)
+{
+    Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.IoGatewayKey}'.");
+}
+
 Console.WriteLine("NBN IO Gateway online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");

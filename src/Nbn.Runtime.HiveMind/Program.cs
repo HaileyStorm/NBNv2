@@ -33,6 +33,18 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ServiceName,
     HiveMindNames.HiveMind);
 
+var publishedHiveEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    ServiceEndpointSettings.HiveMindKey,
+    new ServiceEndpoint(nodeAddress, HiveMindNames.HiveMind));
+if (!publishedHiveEndpoint)
+{
+    Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.HiveMindKey}'.");
+}
+
 Console.WriteLine("NBN HiveMind node online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");
