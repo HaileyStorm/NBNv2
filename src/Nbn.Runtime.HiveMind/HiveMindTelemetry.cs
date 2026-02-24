@@ -38,6 +38,7 @@ public static class HiveMindTelemetry
     private static readonly Counter<long> PlacementReconcileMatched = Meter.CreateCounter<long>("nbn.hivemind.placement.reconcile.matched");
     private static readonly Counter<long> PlacementReconcileFailed = Meter.CreateCounter<long>("nbn.hivemind.placement.reconcile.failed");
     private static readonly Counter<long> PlacementReconcileTimeout = Meter.CreateCounter<long>("nbn.hivemind.placement.reconcile.timeout");
+    private static readonly Counter<long> PlacementReconcileIgnored = Meter.CreateCounter<long>("nbn.hivemind.placement.reconcile.ignored");
     private static readonly Histogram<double> PlacementAssignmentAckLatencyMs = Meter.CreateHistogram<double>("nbn.hivemind.placement.assignment.ack_latency.ms");
     private static readonly Histogram<double> PlacementAssignmentReadyLatencyMs = Meter.CreateHistogram<double>("nbn.hivemind.placement.assignment.ready_latency.ms");
     private static readonly Counter<long> OutputSinkMutationRejected = Meter.CreateCounter<long>("nbn.hivemind.control.output_sink.rejected");
@@ -236,21 +237,32 @@ public static class HiveMindTelemetry
         activity?.SetTag("placement.failure_reason", reason);
     }
 
-    public static void RecordPlacementAssignmentDispatch(Guid brainId, ulong placementEpoch, string target, int attempt)
+    public static void RecordPlacementAssignmentDispatch(
+        Guid brainId,
+        ulong placementEpoch,
+        string target,
+        int attempt,
+        Guid? workerNodeId = null)
     {
         var brain = brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var assignmentTarget = NormalizeTarget(target);
+        var reason = "none";
         PlacementAssignmentDispatch.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
             new KeyValuePair<string, object?>("target", assignmentTarget),
+            new KeyValuePair<string, object?>("failure_reason", reason),
             new KeyValuePair<string, object?>("attempt", attempt));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.assignment.dispatch");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
         activity?.SetTag("placement.target", assignmentTarget);
+        activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("placement.attempt", attempt);
     }
 
@@ -259,14 +271,17 @@ public static class HiveMindTelemetry
         ulong placementEpoch,
         string target,
         int attempt,
-        string failureReason)
+        string failureReason,
+        Guid? workerNodeId = null)
     {
         var brain = brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
-        var reason = string.IsNullOrWhiteSpace(failureReason) ? "unknown" : failureReason;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var assignmentTarget = NormalizeTarget(target);
+        var reason = NormalizeReason(failureReason, "unknown");
         PlacementAssignmentDispatchFailed.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
             new KeyValuePair<string, object?>("target", assignmentTarget),
             new KeyValuePair<string, object?>("attempt", attempt),
@@ -274,6 +289,7 @@ public static class HiveMindTelemetry
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.assignment.dispatch_failed");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
         activity?.SetTag("placement.target", assignmentTarget);
         activity?.SetTag("placement.attempt", attempt);
@@ -287,39 +303,54 @@ public static class HiveMindTelemetry
         string state,
         bool accepted,
         bool retryable,
-        double latencyMs)
+        double latencyMs,
+        Guid? workerNodeId = null,
+        string failureReason = "none")
     {
         var brain = brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var assignmentTarget = NormalizeTarget(target);
         var assignmentState = string.IsNullOrWhiteSpace(state) ? "unknown" : state;
+        var reason = NormalizeReason(failureReason, "none");
         var normalizedLatencyMs = Math.Max(0, latencyMs);
         PlacementAssignmentAck.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
             new KeyValuePair<string, object?>("target", assignmentTarget),
             new KeyValuePair<string, object?>("state", assignmentState),
+            new KeyValuePair<string, object?>("failure_reason", reason),
             new KeyValuePair<string, object?>("accepted", accepted),
             new KeyValuePair<string, object?>("retryable", retryable));
 
         PlacementAssignmentAckLatencyMs.Record(
             normalizedLatencyMs,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
             new KeyValuePair<string, object?>("target", assignmentTarget),
+            new KeyValuePair<string, object?>("failure_reason", reason),
             new KeyValuePair<string, object?>("state", assignmentState));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.assignment.ack");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
         activity?.SetTag("placement.target", assignmentTarget);
         activity?.SetTag("placement.state", assignmentState);
+        activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("placement.accepted", accepted);
         activity?.SetTag("placement.retryable", retryable);
         activity?.SetTag("placement.ack_latency_ms", normalizedLatencyMs);
     }
 
-    public static void RecordPlacementAssignmentReadyLatency(Guid brainId, ulong placementEpoch, string target, double latencyMs)
+    public static void RecordPlacementAssignmentReadyLatency(
+        Guid brainId,
+        ulong placementEpoch,
+        string target,
+        double latencyMs,
+        Guid? workerNodeId = null)
     {
         if (latencyMs < 0)
         {
@@ -327,97 +358,201 @@ public static class HiveMindTelemetry
         }
 
         var brain = brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var assignmentTarget = NormalizeTarget(target);
         PlacementAssignmentReadyLatencyMs.Record(
             latencyMs,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", assignmentTarget));
+            new KeyValuePair<string, object?>("target", assignmentTarget),
+            new KeyValuePair<string, object?>("failure_reason", "none"));
     }
 
-    public static void RecordPlacementAssignmentRetry(Guid brainId, ulong placementEpoch, string target, int nextAttempt, string reason)
+    public static void RecordPlacementAssignmentRetry(
+        Guid brainId,
+        ulong placementEpoch,
+        string target,
+        int nextAttempt,
+        string reason,
+        Guid? workerNodeId = null)
     {
         var brain = brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
-        var retryReason = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var assignmentTarget = NormalizeTarget(target);
+        var retryReason = NormalizeReason(reason, "unknown");
         PlacementAssignmentRetry.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
             new KeyValuePair<string, object?>("target", assignmentTarget),
             new KeyValuePair<string, object?>("attempt", nextAttempt),
-            new KeyValuePair<string, object?>("reason", retryReason));
+            new KeyValuePair<string, object?>("reason", retryReason),
+            new KeyValuePair<string, object?>("failure_reason", retryReason));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.assignment.retry");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
         activity?.SetTag("placement.target", assignmentTarget);
         activity?.SetTag("placement.attempt", nextAttempt);
         activity?.SetTag("placement.retry_reason", retryReason);
+        activity?.SetTag("placement.failure_reason", retryReason);
     }
 
-    public static void RecordPlacementAssignmentTimeout(Guid brainId, ulong placementEpoch, string target, int attempt, bool willRetry)
+    public static void RecordPlacementAssignmentTimeout(
+        Guid brainId,
+        ulong placementEpoch,
+        string target,
+        int attempt,
+        bool willRetry,
+        Guid? workerNodeId = null)
     {
         var brain = brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var assignmentTarget = NormalizeTarget(target);
+        var reason = willRetry ? "timeout_retryable" : "timeout_exhausted";
         PlacementAssignmentTimeout.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
             new KeyValuePair<string, object?>("target", assignmentTarget),
             new KeyValuePair<string, object?>("attempt", attempt),
-            new KeyValuePair<string, object?>("will_retry", willRetry));
+            new KeyValuePair<string, object?>("will_retry", willRetry),
+            new KeyValuePair<string, object?>("failure_reason", reason));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.assignment.timeout");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
         activity?.SetTag("placement.target", assignmentTarget);
         activity?.SetTag("placement.attempt", attempt);
         activity?.SetTag("placement.will_retry", willRetry);
+        activity?.SetTag("placement.failure_reason", reason);
     }
 
-    public static void RecordPlacementReconcileMatched(Guid brainId, ulong placementEpoch, int observedAssignments)
+    public static void RecordPlacementReconcileMatched(
+        Guid brainId,
+        ulong placementEpoch,
+        int observedAssignments,
+        Guid? workerNodeId = null,
+        string target = "reconcile")
     {
         var brain = brainId.ToString("D");
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var reconcileTarget = NormalizeTarget(target);
+        var reason = "none";
         PlacementReconcileMatched.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
+            new KeyValuePair<string, object?>("target", reconcileTarget),
+            new KeyValuePair<string, object?>("failure_reason", reason),
             new KeyValuePair<string, object?>("observed_assignments", observedAssignments));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.reconcile.matched");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
+        activity?.SetTag("placement.target", reconcileTarget);
+        activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("placement.observed_assignments", observedAssignments);
     }
 
-    public static void RecordPlacementReconcileFailed(Guid brainId, ulong placementEpoch, string failureReason)
+    public static void RecordPlacementReconcileFailed(
+        Guid brainId,
+        ulong placementEpoch,
+        string failureReason,
+        Guid? workerNodeId = null,
+        string target = "reconcile")
     {
         var brain = brainId.ToString("D");
-        var reason = string.IsNullOrWhiteSpace(failureReason) ? "unknown" : failureReason;
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var reconcileTarget = NormalizeTarget(target);
+        var reason = NormalizeReason(failureReason, "unknown");
         PlacementReconcileFailed.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
+            new KeyValuePair<string, object?>("target", reconcileTarget),
             new KeyValuePair<string, object?>("failure_reason", reason));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.reconcile.failed");
         activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
+        activity?.SetTag("placement.target", reconcileTarget);
         activity?.SetTag("placement.failure_reason", reason);
     }
 
-    public static void RecordPlacementReconcileTimeout(Guid brainId, ulong placementEpoch, int pendingWorkers)
+    public static void RecordPlacementReconcileTimeout(
+        Guid brainId,
+        ulong placementEpoch,
+        int pendingWorkers,
+        Guid? workerNodeId = null,
+        string target = "reconcile")
     {
+        var brain = brainId.ToString("D");
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var reconcileTarget = NormalizeTarget(target);
+        const string reason = "reconcile_timeout";
         PlacementReconcileTimeout.Add(
             1,
-            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")),
+            new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
             new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
+            new KeyValuePair<string, object?>("target", reconcileTarget),
+            new KeyValuePair<string, object?>("failure_reason", reason),
             new KeyValuePair<string, object?>("pending_workers", pendingWorkers));
 
         using var activity = ActivitySource.StartActivity("hivemind.placement.reconcile.timeout");
-        activity?.SetTag("brain.id", brainId.ToString("D"));
+        activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
         activity?.SetTag("placement.epoch", (long)placementEpoch);
+        activity?.SetTag("placement.target", reconcileTarget);
+        activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("placement.pending_workers", pendingWorkers);
     }
+
+    public static void RecordPlacementReconcileIgnored(
+        Guid brainId,
+        ulong placementEpoch,
+        string failureReason,
+        Guid? workerNodeId = null,
+        string target = "reconcile")
+    {
+        var brain = brainId.ToString("D");
+        var worker = FormatWorkerNodeId(workerNodeId);
+        var reconcileTarget = NormalizeTarget(target);
+        var reason = NormalizeReason(failureReason, "unknown");
+        PlacementReconcileIgnored.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("worker_node_id", worker),
+            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
+            new KeyValuePair<string, object?>("target", reconcileTarget),
+            new KeyValuePair<string, object?>("failure_reason", reason));
+
+        using var activity = ActivitySource.StartActivity("hivemind.placement.reconcile.ignored");
+        activity?.SetTag("brain.id", brain);
+        activity?.SetTag("worker_node.id", worker);
+        activity?.SetTag("placement.epoch", (long)placementEpoch);
+        activity?.SetTag("placement.target", reconcileTarget);
+        activity?.SetTag("placement.failure_reason", reason);
+    }
+
+    private static string FormatWorkerNodeId(Guid? workerNodeId)
+        => workerNodeId.HasValue && workerNodeId.Value != Guid.Empty
+            ? workerNodeId.Value.ToString("D")
+            : string.Empty;
+
+    private static string NormalizeTarget(string target)
+        => string.IsNullOrWhiteSpace(target) ? "unknown" : target;
+
+    private static string NormalizeReason(string reason, string fallback)
+        => string.IsNullOrWhiteSpace(reason) ? fallback : reason;
 }

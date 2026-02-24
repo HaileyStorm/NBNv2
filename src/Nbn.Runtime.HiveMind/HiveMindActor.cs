@@ -1418,6 +1418,11 @@ public sealed class HiveMindActor : IActor
             trackedAssignment.AwaitingAck = false;
             trackedAssignment.AcceptedMs = NowMs();
             var target = ToPlacementTargetLabel(trackedAssignment.Assignment.Target);
+            var ackFailureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
+                ? (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed
+                    ? ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected)
+                    : "none")
+                : ToFailureReasonLabel(message.FailureReason);
             var ackLatencyMs = trackedAssignment.LastDispatchMs > 0
                 ? trackedAssignment.AcceptedMs - trackedAssignment.LastDispatchMs
                 : 0;
@@ -1428,7 +1433,9 @@ public sealed class HiveMindActor : IActor
                 ToAssignmentStateLabel(message.State),
                 message.Accepted,
                 message.Retryable,
-                ackLatencyMs > 0 ? ackLatencyMs : 0);
+                ackLatencyMs > 0 ? ackLatencyMs : 0,
+                plannedWorkerId,
+                ackFailureReason);
 
             if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
             {
@@ -1451,7 +1458,8 @@ public sealed class HiveMindActor : IActor
                         brain.PlacementEpoch,
                         target,
                         nextAttempt,
-                        "ack_retryable");
+                        "ack_retryable",
+                        plannedWorkerId);
                     EmitDebug(
                         context,
                         ProtoSeverity.SevInfo,
@@ -1500,7 +1508,8 @@ public sealed class HiveMindActor : IActor
                             brain.BrainId,
                             brain.PlacementEpoch,
                             target,
-                            trackedAssignment.ReadyMs - trackedAssignment.LastDispatchMs);
+                            trackedAssignment.ReadyMs - trackedAssignment.LastDispatchMs,
+                            plannedWorkerId);
                     }
                     UpdatePlacementLifecycle(
                         brain,
@@ -1567,8 +1576,34 @@ public sealed class HiveMindActor : IActor
 
     private void HandlePlacementReconcileReport(IContext context, ProtoControl.PlacementReconcileReport message)
     {
-        if (!TryGetGuid(message.BrainId, out var brainId) || !_brains.TryGetValue(brainId, out var brain))
+        var reconcileTarget = ResolveReconcileTargetLabel(message);
+        var observedWorkerId = TryResolveObservedWorkerNodeId(message, out var parsedWorkerId)
+            ? parsedWorkerId
+            : (Guid?)null;
+
+        if (!TryGetGuid(message.BrainId, out var brainId))
         {
+            EmitDebug(
+                context,
+                ProtoSeverity.SevDebug,
+                "placement.reconcile.ignored",
+                $"Ignored reconcile report with invalid brain id; epoch={message.PlacementEpoch}.");
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            HiveMindTelemetry.RecordPlacementReconcileIgnored(
+                brainId,
+                message.PlacementEpoch,
+                "brain_not_tracked",
+                observedWorkerId,
+                reconcileTarget);
+            EmitDebug(
+                context,
+                ProtoSeverity.SevDebug,
+                "placement.reconcile.ignored",
+                $"Ignored reconcile report for brain {brainId}; reason=brain_not_tracked epoch={message.PlacementEpoch}.");
             return;
         }
 
@@ -1576,6 +1611,12 @@ public sealed class HiveMindActor : IActor
 
         if (brain.PlacementEpoch == 0 || message.PlacementEpoch != brain.PlacementEpoch)
         {
+            HiveMindTelemetry.RecordPlacementReconcileIgnored(
+                brain.BrainId,
+                message.PlacementEpoch,
+                "placement_epoch_mismatch",
+                observedWorkerId,
+                reconcileTarget);
             EmitDebug(
                 context,
                 ProtoSeverity.SevDebug,
@@ -1588,6 +1629,12 @@ public sealed class HiveMindActor : IActor
             && execution.PlacementEpoch == brain.PlacementEpoch
             && execution.Completed)
         {
+            HiveMindTelemetry.RecordPlacementReconcileIgnored(
+                brain.BrainId,
+                message.PlacementEpoch,
+                "execution_completed",
+                observedWorkerId,
+                reconcileTarget);
             EmitDebug(
                 context,
                 ProtoSeverity.SevDebug,
@@ -1600,6 +1647,12 @@ public sealed class HiveMindActor : IActor
         {
             if (!execution.ReconcileRequested)
             {
+                HiveMindTelemetry.RecordPlacementReconcileIgnored(
+                    brain.BrainId,
+                    message.PlacementEpoch,
+                    "reconcile_not_requested",
+                    observedWorkerId,
+                    reconcileTarget);
                 EmitDebug(
                     context,
                     ProtoSeverity.SevDebug,
@@ -1724,6 +1777,9 @@ public sealed class HiveMindActor : IActor
         }
 
         var target = ToPlacementTargetLabel(assignment.Assignment.Target);
+        var assignmentWorkerId = TryGetGuid(assignment.Assignment.WorkerNodeId, out var parsedWorkerId)
+            ? parsedWorkerId
+            : (Guid?)null;
         assignment.AwaitingAck = false;
         if (CanRetryAssignment(assignment))
         {
@@ -1733,13 +1789,15 @@ public sealed class HiveMindActor : IActor
                 brain.PlacementEpoch,
                 target,
                 assignment.Attempt,
-                willRetry: true);
+                willRetry: true,
+                assignmentWorkerId);
             HiveMindTelemetry.RecordPlacementAssignmentRetry(
                 brain.BrainId,
                 brain.PlacementEpoch,
                 target,
                 nextAttempt,
-                "timeout");
+                "timeout",
+                assignmentWorkerId);
             EmitDebug(
                 context,
                 ProtoSeverity.SevWarn,
@@ -1757,7 +1815,8 @@ public sealed class HiveMindActor : IActor
             brain.PlacementEpoch,
             target,
             assignment.Attempt,
-            willRetry: false);
+            willRetry: false,
+            assignmentWorkerId);
         EmitDebug(
             context,
             ProtoSeverity.SevWarn,
@@ -1795,7 +1854,7 @@ public sealed class HiveMindActor : IActor
         HiveMindTelemetry.RecordPlacementReconcileFailed(
             brain.BrainId,
             brain.PlacementEpoch,
-            ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch));
+            "reconcile_timeout");
         FailPlacementExecution(
             context,
             brain,
@@ -1818,14 +1877,34 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var reconcileTarget = ResolveReconcileTargetLabel(message);
         if (!TryResolveReconcileWorkerNodeId(context.Sender, execution, message, out var workerId, out var attributionReason))
         {
             var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+            var telemetryWorkerId = workerId != Guid.Empty
+                ? workerId
+                : TryResolveObservedWorkerNodeId(message, out var observedWorkerId)
+                    ? observedWorkerId
+                    : (Guid?)null;
+            HiveMindTelemetry.RecordPlacementReconcileIgnored(
+                brain.BrainId,
+                message.PlacementEpoch,
+                attributionReason,
+                telemetryWorkerId,
+                reconcileTarget);
             EmitDebug(
                 context,
                 ProtoSeverity.SevDebug,
                 "placement.reconcile.ignored",
                 $"Ignored reconcile report for brain {brain.BrainId}; reason={attributionReason} sender={senderLabel} epoch={message.PlacementEpoch}.");
+            if (IsReconcileAttributionMismatchReason(attributionReason))
+            {
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevWarn,
+                    "placement.reconcile.response_mismatch",
+                    $"Reconcile attribution mismatch for brain {brain.BrainId}; reason={attributionReason} sender={senderLabel} epoch={message.PlacementEpoch}.");
+            }
             return;
         }
 
@@ -1840,7 +1919,9 @@ public sealed class HiveMindActor : IActor
                 HiveMindTelemetry.RecordPlacementReconcileFailed(
                     brain.BrainId,
                     brain.PlacementEpoch,
-                    ToFailureReasonLabel(reconcileFailureReason));
+                    ToFailureReasonLabel(reconcileFailureReason),
+                    workerId,
+                    reconcileTarget);
                 EmitDebug(
                     context,
                     ProtoSeverity.SevWarn,
@@ -1883,7 +1964,9 @@ public sealed class HiveMindActor : IActor
             HiveMindTelemetry.RecordPlacementReconcileFailed(
                 brain.BrainId,
                 brain.PlacementEpoch,
-                ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch));
+                ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureReconcileMismatch),
+                workerId,
+                reconcileTarget);
             FailPlacementExecution(
                 context,
                 brain,
@@ -1917,7 +2000,9 @@ public sealed class HiveMindActor : IActor
         HiveMindTelemetry.RecordPlacementReconcileMatched(
             brain.BrainId,
             brain.PlacementEpoch,
-            execution.ObservedAssignments.Count);
+            execution.ObservedAssignments.Count,
+            workerId,
+            reconcileTarget);
         EmitDebug(
             context,
             ProtoSeverity.SevInfo,
@@ -2135,7 +2220,9 @@ public sealed class HiveMindActor : IActor
         }
 
         var target = ToPlacementTargetLabel(assignment.Assignment.Target);
-        if (!TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId)
+        var hasWorkerNodeId = TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId);
+        var telemetryWorkerNodeId = hasWorkerNodeId ? workerNodeId : (Guid?)null;
+        if (!hasWorkerNodeId
             || !brain.PlacementExecution.WorkerTargets.TryGetValue(workerNodeId, out var workerPid))
         {
             assignment.Failed = true;
@@ -2144,7 +2231,8 @@ public sealed class HiveMindActor : IActor
                 brain.PlacementEpoch,
                 target,
                 Math.Max(1, attempt),
-                ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable));
+                ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable),
+                telemetryWorkerNodeId);
             EmitDebug(
                 context,
                 ProtoSeverity.SevWarn,
@@ -2167,7 +2255,8 @@ public sealed class HiveMindActor : IActor
             brain.BrainId,
             brain.PlacementEpoch,
             target,
-            assignment.Attempt);
+            assignment.Attempt,
+            telemetryWorkerNodeId);
         EmitDebug(
             context,
             ProtoSeverity.SevDebug,
@@ -2192,7 +2281,8 @@ public sealed class HiveMindActor : IActor
                 brain.PlacementEpoch,
                 target,
                 assignment.Attempt,
-                ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable));
+                ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable),
+                telemetryWorkerNodeId);
             EmitDebug(
                 context,
                 ProtoSeverity.SevWarn,
@@ -2280,7 +2370,8 @@ public sealed class HiveMindActor : IActor
                 HiveMindTelemetry.RecordPlacementReconcileFailed(
                     brain.BrainId,
                     brain.PlacementEpoch,
-                    ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable));
+                    ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable),
+                    workerNodeId);
                 EmitDebug(
                     context,
                     ProtoSeverity.SevWarn,
@@ -2375,15 +2466,15 @@ public sealed class HiveMindActor : IActor
 
             if (!TryGetGuid(observed.WorkerNodeId, out var observedWorkerId))
             {
-                workerId = Guid.Empty;
+                workerId = senderWorkerId;
                 reason = "payload_worker_invalid";
                 return false;
             }
 
             if (observedWorkerId != senderWorkerId)
             {
-                workerId = Guid.Empty;
-                reason = $"payload_worker_mismatch observed={observedWorkerId:D} sender={senderWorkerId:D}";
+                workerId = senderWorkerId;
+                reason = "payload_worker_mismatch";
                 return false;
             }
         }
@@ -2391,6 +2482,41 @@ public sealed class HiveMindActor : IActor
         workerId = senderWorkerId;
         reason = string.Empty;
         return true;
+    }
+
+    private static string ResolveReconcileTargetLabel(ProtoControl.PlacementReconcileReport message)
+    {
+        if (message.Assignments.Count == 0)
+        {
+            return "reconcile";
+        }
+
+        return ToPlacementTargetLabel(message.Assignments[0].Target);
+    }
+
+    private static bool TryResolveObservedWorkerNodeId(ProtoControl.PlacementReconcileReport message, out Guid workerNodeId)
+    {
+        foreach (var observed in message.Assignments)
+        {
+            if (observed.WorkerNodeId is not null && TryGetGuid(observed.WorkerNodeId, out workerNodeId))
+            {
+                return true;
+            }
+        }
+
+        workerNodeId = Guid.Empty;
+        return false;
+    }
+
+    private static bool IsReconcileAttributionMismatchReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return false;
+        }
+
+        return reason.StartsWith("sender_", StringComparison.Ordinal)
+               || reason.StartsWith("payload_", StringComparison.Ordinal);
     }
 
     private static bool TryValidateReconcileMatches(PlacementExecutionState execution, out string mismatch)

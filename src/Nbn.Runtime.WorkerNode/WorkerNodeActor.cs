@@ -53,7 +53,7 @@ public sealed class WorkerNodeActor : IActor
                 ApplyDiscoverySnapshot(snapshot);
                 break;
             case EndpointRegistrationObserved endpoint:
-                ApplyEndpoint(endpoint.Registration);
+                ApplyEndpoint(endpoint.Registration, source: "update");
                 break;
             case PlacementAssignmentRequest request:
                 await HandlePlacementAssignmentAsync(context, request).ConfigureAwait(false);
@@ -87,23 +87,48 @@ public sealed class WorkerNodeActor : IActor
     {
         if (snapshot.Registrations is null)
         {
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                _workerNodeId,
+                DiscoveryTargetLabel,
+                "snapshot_ignored",
+                "snapshot_missing");
             return;
+        }
+
+        if (snapshot.Registrations.Count == 0)
+        {
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                _workerNodeId,
+                DiscoveryTargetLabel,
+                "snapshot_empty",
+                "none");
         }
 
         foreach (var entry in snapshot.Registrations)
         {
-            ApplyEndpoint(entry.Value);
+            ApplyEndpoint(entry.Value, source: "snapshot");
         }
     }
 
-    private void ApplyEndpoint(ServiceEndpointRegistration registration)
+    private void ApplyEndpoint(ServiceEndpointRegistration registration, string source)
     {
         if (!ServiceEndpointSettings.IsKnownKey(registration.Key))
         {
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                _workerNodeId,
+                string.IsNullOrWhiteSpace(registration.Key) ? DiscoveryTargetLabel : registration.Key,
+                $"{NormalizeSource(source)}_ignored",
+                "unknown_key");
             return;
         }
 
+        var existed = _endpoints.ContainsKey(registration.Key);
         _endpoints[registration.Key] = registration;
+        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+            _workerNodeId,
+            registration.Key,
+            existed ? $"{NormalizeSource(source)}_updated" : $"{NormalizeSource(source)}_registered",
+            "none");
     }
     private async Task HandlePlacementAssignmentAsync(IContext context, PlacementAssignmentRequest request)
     {
@@ -246,6 +271,12 @@ public sealed class WorkerNodeActor : IActor
 
     private void HandlePlacementReconcile(IContext context, PlacementReconcileRequest request)
     {
+        var requestHasBrainId = request.BrainId.TryToGuid(out var requestBrainId);
+        WorkerNodeTelemetry.RecordPlacementReconcileRequested(
+            _workerNodeId,
+            requestHasBrainId ? requestBrainId : null,
+            request.PlacementEpoch);
+
         var report = new PlacementReconcileReport
         {
             BrainId = request.BrainId,
@@ -269,6 +300,19 @@ public sealed class WorkerNodeActor : IActor
                 ActorPid = BuildObservedActorPid(context, assignment)
             });
         }
+
+        var failureReason = ResolveReconcileFailureReason(
+            requestHasBrainId,
+            requestHasBrainId ? requestBrainId : Guid.Empty,
+            request.PlacementEpoch,
+            report.Assignments.Count);
+        WorkerNodeTelemetry.RecordPlacementReconcileReported(
+            _workerNodeId,
+            requestHasBrainId ? requestBrainId : null,
+            request.PlacementEpoch,
+            report.Assignments.Count,
+            report.Assignments.Count > 0 ? "matched" : "empty",
+            failureReason);
 
         context.Respond(report);
     }
@@ -1063,6 +1107,13 @@ public sealed class WorkerNodeActor : IActor
 
         if (_hiveMindHintPid is not null)
         {
+            WorkerNodeTelemetry.RecordDiscoveryEndpointResolve(
+                _workerNodeId,
+                brainId: null,
+                placementEpoch: 0,
+                target: ServiceEndpointSettings.HiveMindKey,
+                outcome: "resolved_hint",
+                failureReason: "endpoint_missing");
             return _hiveMindHintPid;
         }
 
@@ -1074,12 +1125,55 @@ public sealed class WorkerNodeActor : IActor
         if (_endpoints.TryGetValue(key, out var registration))
         {
             pid = registration.Endpoint.ToPid();
+            WorkerNodeTelemetry.RecordDiscoveryEndpointResolve(
+                _workerNodeId,
+                brainId: null,
+                placementEpoch: 0,
+                target: key,
+                outcome: "resolved",
+                failureReason: "none");
             return true;
         }
 
+        WorkerNodeTelemetry.RecordDiscoveryEndpointResolve(
+            _workerNodeId,
+            brainId: null,
+            placementEpoch: 0,
+            target: key,
+            outcome: "missing",
+            failureReason: "endpoint_missing");
         pid = new PID();
         return false;
     }
+
+    private string ResolveReconcileFailureReason(
+        bool requestHasBrainId,
+        Guid requestBrainId,
+        ulong placementEpoch,
+        int assignmentCount)
+    {
+        if (!requestHasBrainId)
+        {
+            return "brain_id_invalid";
+        }
+
+        if (!_brains.TryGetValue(requestBrainId, out var brain))
+        {
+            return assignmentCount > 0 ? "none" : "brain_not_hosted";
+        }
+
+        if (brain.PlacementEpoch != placementEpoch)
+        {
+            return "placement_epoch_mismatch";
+        }
+
+        return assignmentCount > 0 ? "none" : "no_assignments";
+    }
+
+    private const string DiscoveryTargetLabel = "discovery";
+
+    private static string NormalizeSource(string source)
+        => string.IsNullOrWhiteSpace(source) ? "update" : source.Trim().ToLowerInvariant();
 
     private PID ToRemotePid(IContext context, PID pid)
     {

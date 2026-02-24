@@ -43,6 +43,27 @@ internal sealed class MeterCollector : IDisposable
         }
     }
 
+    public long SumLong(string instrumentName, params (string Key, string Value)[] requiredTags)
+    {
+        lock (_gate)
+        {
+            return _longSamples
+                .Where(sample => string.Equals(sample.Name, instrumentName, StringComparison.Ordinal))
+                .Where(sample => MatchesTags(sample.Tags, requiredTags))
+                .Sum(sample => sample.Value);
+        }
+    }
+
+    public int CountLong(string instrumentName, params (string Key, string Value)[] requiredTags)
+    {
+        lock (_gate)
+        {
+            return _longSamples.Count(sample =>
+                string.Equals(sample.Name, instrumentName, StringComparison.Ordinal)
+                && MatchesTags(sample.Tags, requiredTags));
+        }
+    }
+
     public int CountDouble(string instrumentName, string? tagKey = null, string? tagValue = null)
     {
         lock (_gate)
@@ -50,6 +71,16 @@ internal sealed class MeterCollector : IDisposable
             return _doubleSamples.Count(sample =>
                 string.Equals(sample.Name, instrumentName, StringComparison.Ordinal)
                 && MatchesTag(sample.Tags, tagKey, tagValue));
+        }
+    }
+
+    public int CountDouble(string instrumentName, params (string Key, string Value)[] requiredTags)
+    {
+        lock (_gate)
+        {
+            return _doubleSamples.Count(sample =>
+                string.Equals(sample.Name, instrumentName, StringComparison.Ordinal)
+                && MatchesTags(sample.Tags, requiredTags));
         }
     }
 
@@ -112,6 +143,32 @@ internal sealed class MeterCollector : IDisposable
         }
 
         return string.Equals(value, tagValue, StringComparison.Ordinal);
+    }
+
+    private static bool MatchesTags(
+        IReadOnlyDictionary<string, string> tags,
+        IReadOnlyList<(string Key, string Value)> requiredTags)
+    {
+        for (var i = 0; i < requiredTags.Count; i++)
+        {
+            var required = requiredTags[i];
+            if (string.IsNullOrWhiteSpace(required.Key))
+            {
+                continue;
+            }
+
+            if (!tags.TryGetValue(required.Key, out var actualValue))
+            {
+                return false;
+            }
+
+            if (!string.Equals(actualValue, required.Value, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private sealed record LongSample(string Name, long Value, IReadOnlyDictionary<string, string> Tags);

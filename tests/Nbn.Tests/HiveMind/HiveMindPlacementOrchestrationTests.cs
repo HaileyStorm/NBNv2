@@ -379,6 +379,13 @@ public sealed class HiveMindPlacementOrchestrationTests
         var brainTag = brainId.ToString("D");
         Assert.True(metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag) >= 1);
         Assert.True(metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag) >= 1);
+        Assert.True(
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.failed",
+                ("brain_id", brainTag),
+                ("placement_epoch", ack.PlacementEpoch.ToString()),
+                ("target", "reconcile"),
+                ("failure_reason", "reconcile_timeout")) >= 1);
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.reconcile.timeout") >= 1);
 
@@ -503,6 +510,7 @@ public sealed class HiveMindPlacementOrchestrationTests
         var baselineReconcileMatched = metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag);
         var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
         var baselineTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineIgnored = metrics.SumLong("nbn.hivemind.placement.reconcile.ignored", "brain_id", brainTag);
         var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
 
@@ -530,6 +538,14 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(baselineReconcileMatched, metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag));
         Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
         Assert.Equal(baselineTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+        Assert.Equal(
+            baselineIgnored + 1,
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.ignored",
+                ("brain_id", brainTag),
+                ("placement_epoch", baselineStatus.PlacementEpoch.ToString()),
+                ("target", "reconcile"),
+                ("failure_reason", "execution_completed")));
 
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
@@ -579,6 +595,7 @@ public sealed class HiveMindPlacementOrchestrationTests
         var baselineReconcileMatched = metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag);
         var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
         var baselineTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineIgnoredMetric = metrics.SumLong("nbn.hivemind.placement.reconcile.ignored", "brain_id", brainTag);
         var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var assignmentIgnoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
         var reconcileIgnoredBefore = baselineDebug.Count("placement.reconcile.ignored");
@@ -620,6 +637,14 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(baselineReconcileMatched, metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag));
         Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
         Assert.Equal(baselineTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+        Assert.Equal(
+            baselineIgnoredMetric + 1,
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.ignored",
+                ("brain_id", brainTag),
+                ("placement_epoch", staleEpoch.ToString()),
+                ("target", "reconcile"),
+                ("failure_reason", "placement_epoch_mismatch")));
 
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") > assignmentIgnoredBefore);
@@ -1182,8 +1207,10 @@ public sealed class HiveMindPlacementOrchestrationTests
         var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
         var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
         var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineIgnoredMetric = metrics.SumLong("nbn.hivemind.placement.reconcile.ignored", "brain_id", brainTag);
         var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+        var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
         root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
 
@@ -1235,10 +1262,20 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
         Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
         Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+        Assert.Equal(
+            baselineIgnoredMetric + 1,
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.ignored",
+                ("brain_id", brainTag),
+                ("placement_epoch", ack.PlacementEpoch.ToString()),
+                ("target", "reconcile"),
+                ("failure_reason", "sender_not_pending_worker")));
 
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
         Assert.Equal(0, debugSnapshot.Count("placement.reconcile.failed"));
+        Assert.True(debugSnapshot.Count("placement.reconcile.response_mismatch") > responseMismatchBefore);
+        Assert.True(debugSnapshot.CountMessageContains("placement.reconcile.response_mismatch", "sender_not_pending_worker") >= 1);
 
         await system.ShutdownAsync();
     }
@@ -1296,8 +1333,10 @@ public sealed class HiveMindPlacementOrchestrationTests
         var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
         var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
         var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineIgnoredMetric = metrics.SumLong("nbn.hivemind.placement.reconcile.ignored", "brain_id", brainTag);
         var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+        var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
         root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
 
@@ -1359,11 +1398,22 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
         Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
         Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+        Assert.Equal(
+            baselineIgnoredMetric + 1,
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.ignored",
+                ("brain_id", brainTag),
+                ("worker_node_id", workerId.ToString("D")),
+                ("placement_epoch", ack.PlacementEpoch.ToString()),
+                ("target", "brain_root"),
+                ("failure_reason", "sender_not_pending_worker")));
 
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
         Assert.Equal(0, debugSnapshot.Count("placement.reconcile.failed"));
         Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+        Assert.True(debugSnapshot.Count("placement.reconcile.response_mismatch") > responseMismatchBefore);
+        Assert.True(debugSnapshot.CountMessageContains("placement.reconcile.response_mismatch", "sender_not_pending_worker") >= 1);
 
         await system.ShutdownAsync();
     }
@@ -1420,8 +1470,10 @@ public sealed class HiveMindPlacementOrchestrationTests
         var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
         var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
         var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineIgnoredMetric = metrics.SumLong("nbn.hivemind.placement.reconcile.ignored", "brain_id", brainTag);
         var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+        var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
         root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
 
@@ -1483,11 +1535,22 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
         Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
         Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+        Assert.Equal(
+            baselineIgnoredMetric + 1,
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.ignored",
+                ("brain_id", brainTag),
+                ("worker_node_id", workerId.ToString("D")),
+                ("placement_epoch", ack.PlacementEpoch.ToString()),
+                ("target", "brain_root"),
+                ("failure_reason", "payload_worker_mismatch")));
 
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
         Assert.Equal(0, debugSnapshot.Count("placement.reconcile.failed"));
         Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+        Assert.True(debugSnapshot.Count("placement.reconcile.response_mismatch") > responseMismatchBefore);
+        Assert.True(debugSnapshot.CountMessageContains("placement.reconcile.response_mismatch", "payload_worker_mismatch") >= 1);
 
         await system.ShutdownAsync();
     }
@@ -1544,8 +1607,10 @@ public sealed class HiveMindPlacementOrchestrationTests
         var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
         var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
         var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineIgnoredMetric = metrics.SumLong("nbn.hivemind.placement.reconcile.ignored", "brain_id", brainTag);
         var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+        var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
         root.Send(hiveMind, new PlacementReconcileReport
         {
@@ -1591,10 +1656,19 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
         Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
         Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+        Assert.Equal(
+            baselineIgnoredMetric + 1,
+            metrics.SumLong(
+                "nbn.hivemind.placement.reconcile.ignored",
+                ("brain_id", brainTag),
+                ("placement_epoch", ack.PlacementEpoch.ToString()),
+                ("target", "reconcile"),
+                ("failure_reason", "reconcile_not_requested")));
 
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
         Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+        Assert.Equal(responseMismatchBefore, debugSnapshot.Count("placement.reconcile.response_mismatch"));
 
         await system.ShutdownAsync();
     }
@@ -1756,15 +1830,38 @@ public sealed class HiveMindPlacementOrchestrationTests
     private sealed record ReleaseDeferredAssignmentAcks;
     private sealed record ReleaseDeferredReconcileReports;
 
-    private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts)
+    private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts, IReadOnlyList<DebugProbeEvent> Events)
     {
         public int Count(string category)
             => Counts.TryGetValue(category, out var value) ? value : 0;
+
+        public int CountMessageContains(string category, string fragment)
+        {
+            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(fragment))
+            {
+                return 0;
+            }
+
+            var count = 0;
+            foreach (var entry in Events)
+            {
+                if (string.Equals(entry.Summary, category, StringComparison.Ordinal)
+                    && entry.Message.Contains(fragment, StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
     }
+
+    private sealed record DebugProbeEvent(string Summary, string Message);
 
     private sealed class DebugProbeActor : IActor
     {
         private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
+        private readonly List<DebugProbeEvent> _events = new();
 
         public Task ReceiveAsync(IContext context)
         {
@@ -1775,10 +1872,13 @@ public sealed class HiveMindPlacementOrchestrationTests
                     if (summary.Length > 0)
                     {
                         _counts[summary] = _counts.TryGetValue(summary, out var count) ? count + 1 : 1;
+                        _events.Add(new DebugProbeEvent(summary, outbound.Message ?? string.Empty));
                     }
                     break;
                 case GetDebugProbeSnapshot:
-                    context.Respond(new DebugProbeSnapshot(new Dictionary<string, int>(_counts, StringComparer.Ordinal)));
+                    context.Respond(new DebugProbeSnapshot(
+                        new Dictionary<string, int>(_counts, StringComparer.Ordinal),
+                        _events.ToArray()));
                     break;
             }
 

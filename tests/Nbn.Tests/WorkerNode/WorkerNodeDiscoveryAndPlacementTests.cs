@@ -13,6 +13,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     [Fact]
     public async Task DiscoveryBootstrap_And_LiveUpdate_AppliesKnownEndpoints()
     {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
         await using var harness = await WorkerHarness.CreateAsync();
 
         var workerNodeId = Guid.NewGuid();
@@ -37,6 +38,14 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         Assert.NotNull(initialState.IoGatewayEndpoint);
         Assert.Equal(initialHiveMind, initialState.HiveMindEndpoint!.Value.Endpoint);
         Assert.Equal(initialIo, initialState.IoGatewayEndpoint!.Value.Endpoint);
+        var workerTag = workerNodeId.ToString("D");
+        Assert.Equal(
+            2,
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.observed",
+                ("worker_node_id", workerTag),
+                ("failure_reason", "none"),
+                ("outcome", "snapshot_registered")));
 
         var updatedIo = new ServiceEndpoint("127.0.0.1:12051", "io-gateway");
         var updateSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -64,6 +73,15 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
                        && state.IoGatewayEndpoint.Value.Endpoint == updatedIo;
             },
             timeoutMs: 5_000);
+
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.observed",
+                ("worker_node_id", workerTag),
+                ("target", ServiceEndpointSettings.IoGatewayKey),
+                ("failure_reason", "none"),
+                ("outcome", "update_updated")));
     }
 
     [Fact]
@@ -254,6 +272,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     [Fact]
     public async Task PlacementAssignmentRequest_NewerEpoch_ResetsPriorBrainAssignments()
     {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
         await using var harness = await WorkerHarness.CreateAsync();
 
         var workerNodeId = Guid.NewGuid();
@@ -324,6 +343,31 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             });
         var observed = Assert.Single(newEpochReport.Assignments);
         Assert.Equal("assign-new", observed.AssignmentId);
+
+        var workerTag = workerNodeId.ToString("D");
+        var brainTag = brainId.ToString("D");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.placement.reconcile.reported",
+                ("worker_node_id", workerTag),
+                ("brain_id", brainTag),
+                ("placement_epoch", "3"),
+                ("target", "reconcile"),
+                ("failure_reason", "placement_epoch_mismatch"),
+                ("outcome", "empty"),
+                ("assignment_count", "0")));
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.placement.reconcile.reported",
+                ("worker_node_id", workerTag),
+                ("brain_id", brainTag),
+                ("placement_epoch", "4"),
+                ("target", "reconcile"),
+                ("failure_reason", "none"),
+                ("outcome", "matched"),
+                ("assignment_count", "1")));
     }
 
     [Fact]
@@ -393,6 +437,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     [Fact]
     public async Task PlacementReconcileRequest_ReturnsTrackedAssignments()
     {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
         await using var harness = await WorkerHarness.CreateAsync();
 
         var workerNodeId = Guid.NewGuid();
@@ -439,11 +484,35 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         Assert.Equal(2, report.Assignments.Count);
         Assert.Equal(new[] { "assign-a", "assign-b" }, report.Assignments.Select(static entry => entry.AssignmentId).ToArray());
         Assert.All(report.Assignments, assignment => Assert.Equal(workerNodeId.ToProtoUuid().Value, assignment.WorkerNodeId.Value));
+
+        var workerTag = workerNodeId.ToString("D");
+        var brainTag = brainId.ToString("D");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.placement.reconcile.requested",
+                ("worker_node_id", workerTag),
+                ("brain_id", brainTag),
+                ("placement_epoch", "3"),
+                ("target", "reconcile"),
+                ("failure_reason", "none")));
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.placement.reconcile.reported",
+                ("worker_node_id", workerTag),
+                ("brain_id", brainTag),
+                ("placement_epoch", "3"),
+                ("target", "reconcile"),
+                ("failure_reason", "none"),
+                ("outcome", "matched"),
+                ("assignment_count", "2")));
     }
 
     [Fact]
     public async Task PlacementAssignments_BrainRoot_And_Router_AreHosted_And_Wired()
     {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
         await using var harness = await WorkerHarness.CreateAsync();
 
         var workerNodeId = Guid.NewGuid();
@@ -503,6 +572,14 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         var routerObserved = Assert.Single(reconcile.Assignments, static entry => entry.AssignmentId == "assign-router");
         Assert.EndsWith($"/{rootName}", rootObserved.ActorPid, StringComparison.Ordinal);
         Assert.EndsWith($"/{routerName}", routerObserved.ActorPid, StringComparison.Ordinal);
+
+        var workerTag = workerNodeId.ToString("D");
+        Assert.True(
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.resolve",
+                ("worker_node_id", workerTag),
+                ("target", ServiceEndpointSettings.HiveMindKey),
+                ("failure_reason", "endpoint_missing")) >= 1);
     }
 
     [Fact]
