@@ -41,6 +41,12 @@ public static class HiveMindTelemetry
     private static readonly Histogram<double> PlacementAssignmentAckLatencyMs = Meter.CreateHistogram<double>("nbn.hivemind.placement.assignment.ack_latency.ms");
     private static readonly Histogram<double> PlacementAssignmentReadyLatencyMs = Meter.CreateHistogram<double>("nbn.hivemind.placement.assignment.ready_latency.ms");
     private static readonly Counter<long> OutputSinkMutationRejected = Meter.CreateCounter<long>("nbn.hivemind.control.output_sink.rejected");
+    private static readonly Counter<long> SetBrainVisualizationRejected = Meter.CreateCounter<long>("nbn.hivemind.control.set_brain_visualization.rejected");
+    private static readonly Counter<long> SetBrainCostEnergyRejected = Meter.CreateCounter<long>("nbn.hivemind.control.set_brain_cost_energy.rejected");
+    private static readonly Counter<long> SetBrainPlasticityRejected = Meter.CreateCounter<long>("nbn.hivemind.control.set_brain_plasticity.rejected");
+    private static readonly Counter<long> PauseBrainRejected = Meter.CreateCounter<long>("nbn.hivemind.control.pause_brain.rejected");
+    private static readonly Counter<long> ResumeBrainRejected = Meter.CreateCounter<long>("nbn.hivemind.control.resume_brain.rejected");
+    private static readonly Counter<long> KillBrainRejected = Meter.CreateCounter<long>("nbn.hivemind.control.kill_brain.rejected");
 
     public static void RecordTickOutcome(TickOutcome outcome, float targetTickHz)
     {
@@ -86,8 +92,43 @@ public static class HiveMindTelemetry
 
     public static void RecordOutputSinkMutationRejected(Guid brainId, string reason)
     {
+        RecordControlMutationRejected(OutputSinkMutationRejected, brainId, reason);
+    }
+
+    public static void RecordSetBrainVisualizationRejected(Guid brainId, string reason)
+    {
+        RecordControlMutationRejected(SetBrainVisualizationRejected, brainId, reason);
+    }
+
+    public static void RecordSetBrainCostEnergyRejected(Guid brainId, string reason)
+    {
+        RecordControlMutationRejected(SetBrainCostEnergyRejected, brainId, reason);
+    }
+
+    public static void RecordSetBrainPlasticityRejected(Guid brainId, string reason)
+    {
+        RecordControlMutationRejected(SetBrainPlasticityRejected, brainId, reason);
+    }
+
+    public static void RecordPauseBrainRejected(Guid brainId, string reason)
+    {
+        RecordControlMutationRejected(PauseBrainRejected, brainId, reason);
+    }
+
+    public static void RecordResumeBrainRejected(Guid brainId, string reason)
+    {
+        RecordControlMutationRejected(ResumeBrainRejected, brainId, reason);
+    }
+
+    public static void RecordKillBrainRejected(Guid brainId, string reason)
+    {
+        RecordControlMutationRejected(KillBrainRejected, brainId, reason);
+    }
+
+    private static void RecordControlMutationRejected(Counter<long> counter, Guid brainId, string reason)
+    {
         var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
-        OutputSinkMutationRejected.Add(
+        counter.Add(
             1,
             new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")),
             new KeyValuePair<string, object?>("reason", normalizedReason));

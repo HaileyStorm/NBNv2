@@ -2994,7 +2994,7 @@ If scope expands mid-task, switch to Aleph immediately.
   * stable/primary family alias (GPT-5)
   * fast scouting family alias (GPT-5-Spark / `gpt-5.3-codex-spark`)
 * Spark usage policy:
-  * Use Spark only for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory).
+  * Use Spark only for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory) and similar fairly simple tasks. But DO use it for those situations.
   * Do **not** use Spark for code reasoning, synthesis, architectural decisions, or non-rote code writing.
 
 ### 21.5 Reasoning-effort policy

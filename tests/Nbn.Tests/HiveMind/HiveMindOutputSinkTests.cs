@@ -297,6 +297,451 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task ControlPlaneMutations_Senderless_Are_Ignored()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        const string senderMissingReason = "sender_missing";
+        const string visualizationRejectedMetric = "nbn.hivemind.control.set_brain_visualization.rejected";
+        const string costEnergyRejectedMetric = "nbn.hivemind.control.set_brain_cost_energy.rejected";
+        const string plasticityRejectedMetric = "nbn.hivemind.control.set_brain_plasticity.rejected";
+        const string pauseRejectedMetric = "nbn.hivemind.control.pause_brain.rejected";
+        const string resumeRejectedMetric = "nbn.hivemind.control.resume_brain.rejected";
+        const string killRejectedMetric = "nbn.hivemind.control.kill_brain.rejected";
+
+        var rescheduleBefore = metrics.SumLong("nbn.hivemind.reschedule.requested");
+        var pauseBefore = metrics.SumLong("nbn.hivemind.pause.requested");
+        var computeTimeoutBefore = metrics.SumLong("nbn.hivemind.tick.compute.timeouts");
+        var deliverTimeoutBefore = metrics.SumLong("nbn.hivemind.tick.deliver.timeouts");
+        var visualizationRejectedBefore = metrics.SumLong(visualizationRejectedMetric, "reason", senderMissingReason);
+        var costEnergyRejectedBefore = metrics.SumLong(costEnergyRejectedMetric, "reason", senderMissingReason);
+        var plasticityRejectedBefore = metrics.SumLong(plasticityRejectedMetric, "reason", senderMissingReason);
+        var pauseRejectedBefore = metrics.SumLong(pauseRejectedMetric, "reason", senderMissingReason);
+        var resumeRejectedBefore = metrics.SumLong(resumeRejectedMetric, "reason", senderMissingReason);
+        var killRejectedBefore = metrics.SumLong(killRejectedMetric, "reason", senderMissingReason);
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var terminatedTcs = new TaskCompletionSource<BrainTerminated>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unregisterTcs = new TaskCompletionSource<ProtoIo.UnregisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioProbe = root.Spawn(Props.FromProducer(() => new IoTerminationProbe(terminatedTcs, unregisterTcs)));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe, debugHubPid: debugProbePid)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        var visualizationShardA = ShardId32.From(13, 0);
+        var initialVisualization = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initialVisualizationExtra = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var visualizationShardAPid = root.Spawn(Props.FromProducer(() => new VisualizationProbe(
+            visualizationShardA,
+            initialVisualization,
+            initialVisualizationExtra)));
+        await root.RequestAsync<SendMessageAck>(visualizationShardAPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)visualizationShardA.RegionId,
+            ShardIndex = (uint)visualizationShardA.ShardIndex,
+            ShardPid = PidLabel(visualizationShardAPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var initialVisualizationUpdate = await initialVisualization.Task.WaitAsync(cts.Token);
+        Assert.False(initialVisualizationUpdate.Enabled);
+        Assert.False(initialVisualizationUpdate.HasFocusRegion);
+
+        var runtimeShardA = ShardId32.From(14, 0);
+        var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtimeShardAPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(runtimeShardA, initialRuntime, _ => true)));
+        await root.RequestAsync<SendMessageAck>(runtimeShardAPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)runtimeShardA.RegionId,
+            ShardIndex = (uint)runtimeShardA.ShardIndex,
+            ShardPid = PidLabel(runtimeShardAPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var initialRuntimeUpdate = await initialRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(initialRuntimeUpdate.CostEnabled);
+        Assert.False(initialRuntimeUpdate.EnergyEnabled);
+        Assert.False(initialRuntimeUpdate.PlasticityEnabled);
+
+        var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var visualizationIgnoredBefore = debugBefore.Count("control.set_brain_visualization.ignored");
+        var costEnergyIgnoredBefore = debugBefore.Count("control.set_brain_cost_energy.ignored");
+        var plasticityIgnoredBefore = debugBefore.Count("control.set_brain_plasticity.ignored");
+        var pauseIgnoredBefore = debugBefore.Count("control.pause_brain.ignored");
+        var resumeIgnoredBefore = debugBefore.Count("control.resume_brain.ignored");
+        var killIgnoredBefore = debugBefore.Count("control.kill_brain.ignored");
+        var brainPausedBefore = debugBefore.Count("brain.paused");
+        var brainResumedBefore = debugBefore.Count("brain.resumed");
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13
+        });
+        root.Send(hiveMind, new SetBrainCostEnergy
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = true
+        });
+        root.Send(hiveMind, new SetBrainPlasticity
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.3f,
+            ProbabilisticUpdates = true
+        });
+        root.Send(hiveMind, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "senderless_poison"
+        });
+        root.Send(hiveMind, new ResumeBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        root.Send(hiveMind, new KillBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "senderless_poison"
+        });
+
+        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_visualization.ignored", visualizationIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_cost_energy.ignored", costEnergyIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_plasticity.ignored", plasticityIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.pause_brain.ignored", pauseIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.resume_brain.ignored", resumeIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.kill_brain.ignored", killIgnoredBefore + 1, timeoutMs: 2_000);
+
+        var debugAfter = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.Equal(brainPausedBefore, debugAfter.Count("brain.paused"));
+        Assert.Equal(brainResumedBefore, debugAfter.Count("brain.resumed"));
+
+        Assert.Equal(visualizationRejectedBefore + 1, metrics.SumLong(visualizationRejectedMetric, "reason", senderMissingReason));
+        Assert.Equal(costEnergyRejectedBefore + 1, metrics.SumLong(costEnergyRejectedMetric, "reason", senderMissingReason));
+        Assert.Equal(plasticityRejectedBefore + 1, metrics.SumLong(plasticityRejectedMetric, "reason", senderMissingReason));
+        Assert.Equal(pauseRejectedBefore + 1, metrics.SumLong(pauseRejectedMetric, "reason", senderMissingReason));
+        Assert.Equal(resumeRejectedBefore + 1, metrics.SumLong(resumeRejectedMetric, "reason", senderMissingReason));
+        Assert.Equal(killRejectedBefore + 1, metrics.SumLong(killRejectedMetric, "reason", senderMissingReason));
+
+        var visualizationShardB = ShardId32.From(13, 1);
+        var rejectedVisualization = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rejectedVisualizationExtra = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var visualizationShardBPid = root.Spawn(Props.FromProducer(() => new VisualizationProbe(
+            visualizationShardB,
+            rejectedVisualization,
+            rejectedVisualizationExtra)));
+        await root.RequestAsync<SendMessageAck>(visualizationShardBPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)visualizationShardB.RegionId,
+            ShardIndex = (uint)visualizationShardB.ShardIndex,
+            ShardPid = PidLabel(visualizationShardBPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var rejectedVisualizationUpdate = await rejectedVisualization.Task.WaitAsync(cts.Token);
+        Assert.False(rejectedVisualizationUpdate.Enabled);
+        Assert.False(rejectedVisualizationUpdate.HasFocusRegion);
+
+        var runtimeShardB = ShardId32.From(14, 1);
+        var rejectedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtimeShardBPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(runtimeShardB, rejectedRuntime, _ => true)));
+        await root.RequestAsync<SendMessageAck>(runtimeShardBPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)runtimeShardB.RegionId,
+            ShardIndex = (uint)runtimeShardB.ShardIndex,
+            ShardPid = PidLabel(runtimeShardBPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var rejectedRuntimeUpdate = await rejectedRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(rejectedRuntimeUpdate.CostEnabled);
+        Assert.False(rejectedRuntimeUpdate.EnergyEnabled);
+        Assert.False(rejectedRuntimeUpdate.PlasticityEnabled);
+
+        await Task.Delay(100);
+        Assert.False(terminatedTcs.Task.IsCompleted);
+        Assert.False(unregisterTcs.Task.IsCompleted);
+
+        var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+        Assert.Equal((uint)1, status.RegisteredBrains);
+
+        await AssertNoTickOrRescheduleSideEffects(
+            root,
+            hiveMind,
+            metrics,
+            rescheduleBefore,
+            pauseBefore,
+            computeTimeoutBefore,
+            deliverTimeoutBefore);
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ControlPlaneMutations_ForeignSender_Are_Ignored()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        const string unauthorizedReason = "sender_not_authorized";
+        const string visualizationRejectedMetric = "nbn.hivemind.control.set_brain_visualization.rejected";
+        const string costEnergyRejectedMetric = "nbn.hivemind.control.set_brain_cost_energy.rejected";
+        const string plasticityRejectedMetric = "nbn.hivemind.control.set_brain_plasticity.rejected";
+        const string pauseRejectedMetric = "nbn.hivemind.control.pause_brain.rejected";
+        const string resumeRejectedMetric = "nbn.hivemind.control.resume_brain.rejected";
+        const string killRejectedMetric = "nbn.hivemind.control.kill_brain.rejected";
+
+        var rescheduleBefore = metrics.SumLong("nbn.hivemind.reschedule.requested");
+        var pauseBefore = metrics.SumLong("nbn.hivemind.pause.requested");
+        var computeTimeoutBefore = metrics.SumLong("nbn.hivemind.tick.compute.timeouts");
+        var deliverTimeoutBefore = metrics.SumLong("nbn.hivemind.tick.deliver.timeouts");
+        var visualizationRejectedBefore = metrics.SumLong(visualizationRejectedMetric, "reason", unauthorizedReason);
+        var costEnergyRejectedBefore = metrics.SumLong(costEnergyRejectedMetric, "reason", unauthorizedReason);
+        var plasticityRejectedBefore = metrics.SumLong(plasticityRejectedMetric, "reason", unauthorizedReason);
+        var pauseRejectedBefore = metrics.SumLong(pauseRejectedMetric, "reason", unauthorizedReason);
+        var resumeRejectedBefore = metrics.SumLong(resumeRejectedMetric, "reason", unauthorizedReason);
+        var killRejectedBefore = metrics.SumLong(killRejectedMetric, "reason", unauthorizedReason);
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var terminatedTcs = new TaskCompletionSource<BrainTerminated>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unregisterTcs = new TaskCompletionSource<ProtoIo.UnregisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioProbe = root.Spawn(Props.FromProducer(() => new IoTerminationProbe(terminatedTcs, unregisterTcs)));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe, debugHubPid: debugProbePid)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var foreignSender = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        var visualizationShardA = ShardId32.From(13, 0);
+        var initialVisualization = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var initialVisualizationExtra = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var visualizationShardAPid = root.Spawn(Props.FromProducer(() => new VisualizationProbe(
+            visualizationShardA,
+            initialVisualization,
+            initialVisualizationExtra)));
+        await root.RequestAsync<SendMessageAck>(visualizationShardAPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)visualizationShardA.RegionId,
+            ShardIndex = (uint)visualizationShardA.ShardIndex,
+            ShardPid = PidLabel(visualizationShardAPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var initialVisualizationUpdate = await initialVisualization.Task.WaitAsync(cts.Token);
+        Assert.False(initialVisualizationUpdate.Enabled);
+        Assert.False(initialVisualizationUpdate.HasFocusRegion);
+
+        var runtimeShardA = ShardId32.From(14, 0);
+        var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtimeShardAPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(runtimeShardA, initialRuntime, _ => true)));
+        await root.RequestAsync<SendMessageAck>(runtimeShardAPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)runtimeShardA.RegionId,
+            ShardIndex = (uint)runtimeShardA.ShardIndex,
+            ShardPid = PidLabel(runtimeShardAPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var initialRuntimeUpdate = await initialRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(initialRuntimeUpdate.CostEnabled);
+        Assert.False(initialRuntimeUpdate.EnergyEnabled);
+        Assert.False(initialRuntimeUpdate.PlasticityEnabled);
+
+        var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var visualizationIgnoredBefore = debugBefore.Count("control.set_brain_visualization.ignored");
+        var costEnergyIgnoredBefore = debugBefore.Count("control.set_brain_cost_energy.ignored");
+        var plasticityIgnoredBefore = debugBefore.Count("control.set_brain_plasticity.ignored");
+        var pauseIgnoredBefore = debugBefore.Count("control.pause_brain.ignored");
+        var resumeIgnoredBefore = debugBefore.Count("control.resume_brain.ignored");
+        var killIgnoredBefore = debugBefore.Count("control.kill_brain.ignored");
+        var brainPausedBefore = debugBefore.Count("brain.paused");
+        var brainResumedBefore = debugBefore.Count("brain.resumed");
+
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13
+        }));
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, new SetBrainCostEnergy
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = true
+        }));
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, new SetBrainPlasticity
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.3f,
+            ProbabilisticUpdates = true
+        }));
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "foreign_poison"
+        }));
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, new ResumeBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        }));
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, new KillBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "foreign_poison"
+        }));
+
+        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_visualization.ignored", visualizationIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_cost_energy.ignored", costEnergyIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_plasticity.ignored", plasticityIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.pause_brain.ignored", pauseIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.resume_brain.ignored", resumeIgnoredBefore + 1, timeoutMs: 2_000);
+        await WaitForDebugCountAsync(root, debugProbePid, "control.kill_brain.ignored", killIgnoredBefore + 1, timeoutMs: 2_000);
+
+        var debugAfter = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.Equal(brainPausedBefore, debugAfter.Count("brain.paused"));
+        Assert.Equal(brainResumedBefore, debugAfter.Count("brain.resumed"));
+
+        Assert.Equal(visualizationRejectedBefore + 1, metrics.SumLong(visualizationRejectedMetric, "reason", unauthorizedReason));
+        Assert.Equal(costEnergyRejectedBefore + 1, metrics.SumLong(costEnergyRejectedMetric, "reason", unauthorizedReason));
+        Assert.Equal(plasticityRejectedBefore + 1, metrics.SumLong(plasticityRejectedMetric, "reason", unauthorizedReason));
+        Assert.Equal(pauseRejectedBefore + 1, metrics.SumLong(pauseRejectedMetric, "reason", unauthorizedReason));
+        Assert.Equal(resumeRejectedBefore + 1, metrics.SumLong(resumeRejectedMetric, "reason", unauthorizedReason));
+        Assert.Equal(killRejectedBefore + 1, metrics.SumLong(killRejectedMetric, "reason", unauthorizedReason));
+
+        var visualizationShardB = ShardId32.From(13, 1);
+        var rejectedVisualization = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rejectedVisualizationExtra = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var visualizationShardBPid = root.Spawn(Props.FromProducer(() => new VisualizationProbe(
+            visualizationShardB,
+            rejectedVisualization,
+            rejectedVisualizationExtra)));
+        await root.RequestAsync<SendMessageAck>(visualizationShardBPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)visualizationShardB.RegionId,
+            ShardIndex = (uint)visualizationShardB.ShardIndex,
+            ShardPid = PidLabel(visualizationShardBPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var rejectedVisualizationUpdate = await rejectedVisualization.Task.WaitAsync(cts.Token);
+        Assert.False(rejectedVisualizationUpdate.Enabled);
+        Assert.False(rejectedVisualizationUpdate.HasFocusRegion);
+
+        var runtimeShardB = ShardId32.From(14, 1);
+        var rejectedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtimeShardBPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(runtimeShardB, rejectedRuntime, _ => true)));
+        await root.RequestAsync<SendMessageAck>(runtimeShardBPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)runtimeShardB.RegionId,
+            ShardIndex = (uint)runtimeShardB.ShardIndex,
+            ShardPid = PidLabel(runtimeShardBPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+        var rejectedRuntimeUpdate = await rejectedRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(rejectedRuntimeUpdate.CostEnabled);
+        Assert.False(rejectedRuntimeUpdate.EnergyEnabled);
+        Assert.False(rejectedRuntimeUpdate.PlasticityEnabled);
+
+        await Task.Delay(100);
+        Assert.False(terminatedTcs.Task.IsCompleted);
+        Assert.False(unregisterTcs.Task.IsCompleted);
+
+        var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+        Assert.Equal((uint)1, status.RegisteredBrains);
+
+        await AssertNoTickOrRescheduleSideEffects(
+            root,
+            hiveMind,
+            metrics,
+            rescheduleBefore,
+            pauseBefore,
+            computeTimeoutBefore,
+            deliverTimeoutBefore);
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task PauseResume_TrustedSender_Still_Works()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), debugHubPid: debugProbePid)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var pausedBefore = debugBefore.Count("brain.paused");
+        var resumedBefore = debugBefore.Count("brain.resumed");
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "trusted_pause"
+        }));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new ResumeBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        }));
+
+        var pausedAfter = await WaitForDebugCountAsync(
+            root,
+            debugProbePid,
+            "brain.paused",
+            pausedBefore + 1,
+            timeoutMs: 2_000);
+        Assert.Equal(pausedBefore + 1, pausedAfter.Count("brain.paused"));
+
+        var resumedAfter = await WaitForDebugCountAsync(
+            root,
+            debugProbePid,
+            "brain.resumed",
+            resumedBefore + 1,
+            timeoutMs: 2_000);
+        Assert.Equal(resumedBefore + 1, resumedAfter.Count("brain.resumed"));
+
+        var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+        Assert.Equal((uint)1, status.RegisteredBrains);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SetBrainVisualization_Updates_Shards_With_FocusScope()
     {
         var system = new ActorSystem();
@@ -331,13 +776,13 @@ public class HiveMindOutputSinkTests
         Assert.False(initial.Enabled);
         Assert.False(initial.HasFocusRegion);
 
-        root.Send(hiveMind, new SetBrainVisualization
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainVisualization
         {
             BrainId = brainId.ToProtoUuid(),
             Enabled = true,
             HasFocusRegion = true,
             FocusRegionId = 13
-        });
+        }));
 
         var focused = await secondUpdate.Task.WaitAsync(cts.Token);
         Assert.True(focused.Enabled);
@@ -392,20 +837,20 @@ public class HiveMindOutputSinkTests
         Assert.False(initialUpdate.EnergyEnabled);
         Assert.False(initialUpdate.PlasticityEnabled);
 
-        root.Send(hiveMind, new SetBrainCostEnergy
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
         {
             BrainId = brainId.ToProtoUuid(),
             CostEnabled = true,
             EnergyEnabled = true
-        });
+        }));
 
-        root.Send(hiveMind, new SetBrainPlasticity
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainPlasticity
         {
             BrainId = brainId.ToProtoUuid(),
             PlasticityEnabled = true,
             PlasticityRate = 0.2f,
             ProbabilisticUpdates = false
-        });
+        }));
 
         var configuredUpdate = await configuredA.Task.WaitAsync(cts.Token);
         Assert.True(configuredUpdate.CostEnabled);
@@ -493,20 +938,20 @@ public class HiveMindOutputSinkTests
             NeuronCount = 1
         }));
 
-        root.Send(hiveMind, new SetBrainCostEnergy
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
         {
             BrainId = brainId.ToProtoUuid(),
             CostEnabled = true,
             EnergyEnabled = true
-        });
+        }));
 
-        root.Send(hiveMind, new SetBrainPlasticity
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainPlasticity
         {
             BrainId = brainId.ToProtoUuid(),
             PlasticityEnabled = true,
             PlasticityRate = 0.4f,
             ProbabilisticUpdates = false
-        });
+        }));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var register = await registerTcs.Task.WaitAsync(cts.Token);
@@ -540,11 +985,11 @@ public class HiveMindOutputSinkTests
             BrainRootPid = PidLabel(brainRoot)
         }));
 
-        root.Send(hiveMind, new KillBrain
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new KillBrain
         {
             BrainId = brainId.ToProtoUuid(),
             Reason = "energy_exhausted"
-        });
+        }));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var terminated = await terminatedTcs.Task.WaitAsync(cts.Token);

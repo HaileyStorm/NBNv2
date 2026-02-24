@@ -190,22 +190,13 @@ public sealed class HiveMindActor : IActor
                 ResumeBrain(context, message.BrainId);
                 break;
             case ProtoControl.PauseBrain message:
-                if (message.BrainId.TryToGuid(out var pauseId))
-                {
-                    PauseBrain(context, pauseId, message.Reason);
-                }
+                HandlePauseBrainControl(context, message);
                 break;
             case ProtoControl.ResumeBrain message:
-                if (message.BrainId.TryToGuid(out var resumeId))
-                {
-                    ResumeBrain(context, resumeId);
-                }
+                HandleResumeBrainControl(context, message);
                 break;
             case ProtoControl.KillBrain message:
-                if (message.BrainId.TryToGuid(out var killId))
-                {
-                    KillBrain(context, killId, message.Reason);
-                }
+                HandleKillBrainControl(context, message);
                 break;
             case ProtoControl.TickComputeDone message:
                 HandleTickComputeDone(context, message);
@@ -814,7 +805,7 @@ public sealed class HiveMindActor : IActor
         return false;
     }
 
-    private bool IsRegisterOutputSinkAuthorized(
+    private bool IsControlPlaneBrainMutationAuthorized(
         IContext context,
         Guid brainId,
         out BrainState brain,
@@ -941,7 +932,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!IsRegisterOutputSinkAuthorized(context, brainId, out var brain, out var reason))
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out var brain, out var reason))
         {
             EmitControlPlaneMutationIgnored(context, "control.register_output_sink", brainId, reason);
             HiveMindTelemetry.RecordOutputSinkMutationRejected(brainId, reason);
@@ -965,13 +956,11 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!_brains.TryGetValue(brainId, out var brain))
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out var brain, out var reason))
         {
-            brain = new BrainState(brainId)
-            {
-                SpawnedMs = NowMs()
-            };
-            _brains[brainId] = brain;
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_visualization", brainId, reason);
+            HiveMindTelemetry.RecordSetBrainVisualizationRejected(brainId, reason);
+            return;
         }
 
         var focusRegionId = message.HasFocusRegion ? (uint?)message.FocusRegionId : null;
@@ -985,8 +974,10 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!_brains.TryGetValue(brainId, out var brain))
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out var brain, out var reason))
         {
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_cost_energy", brainId, reason);
+            HiveMindTelemetry.RecordSetBrainCostEnergyRejected(brainId, reason);
             return;
         }
 
@@ -1008,8 +999,10 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!_brains.TryGetValue(brainId, out var brain))
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out var brain, out var reason))
         {
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_plasticity", brainId, reason);
+            HiveMindTelemetry.RecordSetBrainPlasticityRejected(brainId, reason);
             return;
         }
 
@@ -1025,6 +1018,57 @@ public sealed class HiveMindActor : IActor
         brain.PlasticityProbabilisticUpdates = message.ProbabilisticUpdates;
         UpdateShardRuntimeConfig(context, brain);
         RegisterBrainWithIo(context, brain, force: true);
+    }
+
+    private void HandlePauseBrainControl(IContext context, ProtoControl.PauseBrain message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out _, out var reason))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.pause_brain", brainId, reason);
+            HiveMindTelemetry.RecordPauseBrainRejected(brainId, reason);
+            return;
+        }
+
+        PauseBrain(context, brainId, message.Reason);
+    }
+
+    private void HandleResumeBrainControl(IContext context, ProtoControl.ResumeBrain message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out _, out var reason))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.resume_brain", brainId, reason);
+            HiveMindTelemetry.RecordResumeBrainRejected(brainId, reason);
+            return;
+        }
+
+        ResumeBrain(context, brainId);
+    }
+
+    private void HandleKillBrainControl(IContext context, ProtoControl.KillBrain message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out _, out var reason))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.kill_brain", brainId, reason);
+            HiveMindTelemetry.RecordKillBrainRejected(brainId, reason);
+            return;
+        }
+
+        KillBrain(context, brainId, message.Reason);
     }
 
     private void HandleSpawnBrain(IContext context, ProtoControl.SpawnBrain message)

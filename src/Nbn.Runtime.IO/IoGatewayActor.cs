@@ -373,7 +373,7 @@ public sealed class IoGatewayActor : IActor
         var ackMessage = "applied";
         if (_hiveMindPid is not null)
         {
-            context.Send(_hiveMindPid, new ProtoControl.SetBrainCostEnergy
+            context.Request(_hiveMindPid, new ProtoControl.SetBrainCostEnergy
             {
                 BrainId = message.BrainId,
                 CostEnabled = message.CostEnabled,
@@ -407,7 +407,7 @@ public sealed class IoGatewayActor : IActor
         var ackMessage = "applied";
         if (_hiveMindPid is not null)
         {
-            context.Send(_hiveMindPid, new ProtoControl.SetBrainPlasticity
+            context.Request(_hiveMindPid, new ProtoControl.SetBrainPlasticity
             {
                 BrainId = message.BrainId,
                 PlasticityEnabled = message.PlasticityEnabled,
@@ -463,7 +463,7 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        context.Send(_hiveMindPid, new ProtoControl.KillBrain
+        context.Request(_hiveMindPid, new ProtoControl.KillBrain
         {
             BrainId = entry.BrainId.ToProtoUuid(),
             Reason = "energy_exhausted"
