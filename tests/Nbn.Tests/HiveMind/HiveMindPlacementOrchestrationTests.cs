@@ -385,6 +385,1220 @@ public sealed class HiveMindPlacementOrchestrationTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task Completed_Placement_Ignores_Late_Failed_AssignmentAck_For_Same_Epoch()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var baselineStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        var brainTag = brainId.ToString("D");
+        var baselineAck = metrics.SumLong("nbn.hivemind.placement.assignment.ack", "brain_id", brainTag);
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineReconcileMatched = metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
+
+        root.Send(hiveMind, new PlacementAssignmentAck
+        {
+            AssignmentId = "late-failed-assignment",
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = baselineStatus.PlacementEpoch,
+            State = PlacementAssignmentState.PlacementAssignmentFailed,
+            Accepted = false,
+            Retryable = false,
+            FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
+            Message = "late failed ack"
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.assignment_ack.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(baselineStatus.PlacementEpoch, finalStatus.PlacementEpoch);
+
+        Assert.Equal(baselineAck, metrics.SumLong("nbn.hivemind.placement.assignment.ack", "brain_id", brainTag));
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileMatched, metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.assignment.failed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task Completed_Placement_Ignores_Late_Failed_ReconcileReport_For_Same_Epoch()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var baselineStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        var brainTag = brainId.ToString("D");
+        var baselineReconcileMatched = metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+
+        root.Send(hiveMind, new PlacementReconcileReport
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = baselineStatus.PlacementEpoch,
+            ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+            FailureReason = PlacementFailureReason.PlacementFailureReconcileMismatch,
+            Message = "late failed reconcile"
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.reconcile.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(baselineStatus.PlacementEpoch, finalStatus.PlacementEpoch);
+
+        Assert.Equal(baselineReconcileMatched, metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task Stale_Epoch_AssignmentAck_And_ReconcileReport_Are_Ignored_Without_Lifecycle_Regression()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var baselineStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        var staleEpoch = baselineStatus.PlacementEpoch > 0 ? baselineStatus.PlacementEpoch - 1UL : baselineStatus.PlacementEpoch + 1UL;
+        var brainTag = brainId.ToString("D");
+        var baselineAck = metrics.SumLong("nbn.hivemind.placement.assignment.ack", "brain_id", brainTag);
+        var baselineReconcileMatched = metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var assignmentIgnoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
+        var reconcileIgnoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+
+        root.Send(hiveMind, new PlacementAssignmentAck
+        {
+            AssignmentId = "stale-failed-assignment",
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = staleEpoch,
+            State = PlacementAssignmentState.PlacementAssignmentFailed,
+            Accepted = false,
+            Retryable = false,
+            FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
+            Message = "stale failed ack"
+        });
+        root.Send(hiveMind, new PlacementReconcileReport
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = staleEpoch,
+            ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+            FailureReason = PlacementFailureReason.PlacementFailureReconcileMismatch,
+            Message = "stale failed reconcile"
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.assignment_ack.ignored") > assignmentIgnoredBefore
+                       && snapshot.Count("placement.reconcile.ignored") > reconcileIgnoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(baselineStatus.PlacementEpoch, finalStatus.PlacementEpoch);
+
+        Assert.Equal(baselineAck, metrics.SumLong("nbn.hivemind.placement.assignment.ack", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileMatched, metrics.SumLong("nbn.hivemind.placement.reconcile.matched", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") > assignmentIgnoredBefore);
+        Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > reconcileIgnoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.assignment.failed"));
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Placement_Ignores_Unknown_And_Missing_AssignmentAck_And_Completes_Reconcile()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == ack.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
+
+        root.Send(hiveMind, new PlacementAssignmentAck
+        {
+            AssignmentId = "unknown-inflight-assignment",
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = ack.PlacementEpoch,
+            State = PlacementAssignmentState.PlacementAssignmentFailed,
+            Accepted = false,
+            Retryable = false,
+            FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
+            Message = "unknown assignment id while assigning"
+        });
+        root.Send(hiveMind, new PlacementAssignmentAck
+        {
+            AssignmentId = string.Empty,
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = ack.PlacementEpoch,
+            State = PlacementAssignmentState.PlacementAssignmentFailed,
+            Accepted = false,
+            Retryable = false,
+            FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
+            Message = "missing assignment id while assigning"
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.assignment_ack.ignored") >= ignoredBefore + 2;
+            },
+            timeoutMs: 4_000);
+
+        var inFlightStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, inFlightStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, inFlightStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") >= ignoredBefore + 2);
+        Assert.Equal(0, debugSnapshot.Count("placement.assignment.failed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Assigning_Ignores_Duplicate_Failed_Ack_For_Ready_Assignment_And_Completes_Reconcile()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == ack.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineAck = metrics.SumLong("nbn.hivemind.placement.assignment.ack", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
+
+        var released = await root.RequestAsync<ReleaseNextDeferredAssignmentAckResult>(workerPid, new ReleaseNextDeferredAssignmentAck());
+        Assert.True(released.Released);
+        Assert.False(string.IsNullOrWhiteSpace(released.AssignmentId));
+
+        await WaitForAsync(
+            () => Task.FromResult(metrics.SumLong("nbn.hivemind.placement.assignment.ack", "brain_id", brainTag) >= baselineAck + 1),
+            timeoutMs: 4_000);
+
+        var preNoiseStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, preNoiseStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, preNoiseStatus.FailureReason);
+
+        root.Send(hiveMind, new PlacementAssignmentAck
+        {
+            AssignmentId = released.AssignmentId,
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = ack.PlacementEpoch,
+            State = PlacementAssignmentState.PlacementAssignmentFailed,
+            Accepted = false,
+            Retryable = false,
+            FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
+            Message = "duplicate failed ack for already-ready assignment"
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.assignment_ack.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var assigningStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        var reconcilingStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, reconcilingStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, reconcilingStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.assignment.failed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Assigning_Ignores_Foreign_Failed_Ack_For_Tracked_Assignment_And_Completes_Reconcile()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var foreignSenderPid = root.Spawn(Props.FromProducer(static () => new ForwardControlPlaneActor()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                if (workerProbe.AssignmentRequestCount == 0
+                    || status.PlacementEpoch != ack.PlacementEpoch
+                    || status.LifecycleState != PlacementLifecycleState.PlacementLifecycleAssigning)
+                {
+                    return false;
+                }
+
+                var pendingAcks = await root.RequestAsync<DeferredAssignmentAckSnapshot>(workerPid, new GetDeferredAssignmentAckSnapshot());
+                return pendingAcks.AssignmentIds.Count > 0;
+            },
+            timeoutMs: 4_000);
+
+        var trackedAssignmentId = (await root.RequestAsync<DeferredAssignmentAckSnapshot>(
+            workerPid,
+            new GetDeferredAssignmentAckSnapshot())).AssignmentIds.First();
+        Assert.False(string.IsNullOrWhiteSpace(trackedAssignmentId));
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
+
+        root.Send(foreignSenderPid, new ForwardControlPlaneMessage(
+            hiveMind,
+            new PlacementAssignmentAck
+            {
+                AssignmentId = trackedAssignmentId,
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = ack.PlacementEpoch,
+                State = PlacementAssignmentState.PlacementAssignmentFailed,
+                Accepted = false,
+                Retryable = false,
+                FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                Message = "foreign failed ack for tracked assignment while assigning"
+            }));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.assignment_ack.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var assigningStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.assignment.failed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Assigning_Ignores_Foreign_Ready_Ack_For_Tracked_Assignments_And_Does_Not_Prematurely_Reconcile()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var foreignSenderPid = root.Spawn(Props.FromProducer(static () => new ForwardControlPlaneActor()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                if (workerProbe.AssignmentRequestCount == 0
+                    || status.PlacementEpoch != ack.PlacementEpoch
+                    || status.LifecycleState != PlacementLifecycleState.PlacementLifecycleAssigning)
+                {
+                    return false;
+                }
+
+                var pendingAcks = await root.RequestAsync<DeferredAssignmentAckSnapshot>(workerPid, new GetDeferredAssignmentAckSnapshot());
+                return pendingAcks.AssignmentIds.Count > 0;
+            },
+            timeoutMs: 4_000);
+
+        var trackedAssignmentIds = (await root.RequestAsync<DeferredAssignmentAckSnapshot>(
+            workerPid,
+            new GetDeferredAssignmentAckSnapshot())).AssignmentIds.ToArray();
+        Assert.NotEmpty(trackedAssignmentIds);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.assignment_ack.ignored");
+
+        foreach (var assignmentId in trackedAssignmentIds)
+        {
+            root.Send(foreignSenderPid, new ForwardControlPlaneMessage(
+                hiveMind,
+                new PlacementAssignmentAck
+                {
+                    AssignmentId = assignmentId,
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = ack.PlacementEpoch,
+                    State = PlacementAssignmentState.PlacementAssignmentReady,
+                    Accepted = true,
+                    Retryable = false,
+                    FailureReason = PlacementFailureReason.PlacementFailureNone,
+                    Message = "foreign ready ack for tracked assignment while assigning"
+                }));
+        }
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.assignment_ack.ignored") >= ignoredBefore + trackedAssignmentIds.Length;
+            },
+            timeoutMs: 4_000);
+
+        var assigningStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
+        Assert.Equal(0, workerProbe.ReconcileRequestCount);
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.assignment_ack.ignored") >= ignoredBefore + trackedAssignmentIds.Length);
+        Assert.Equal(0, debugSnapshot.Count("placement.assignment.failed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Reconciling_Ignores_Foreign_Failed_Report_And_Completes_Matched()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var foreignSenderPid = root.Spawn(Props.FromProducer(static () => new ForwardControlPlaneActor()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == ack.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        var preNoiseStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, preNoiseStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, preNoiseStatus.FailureReason);
+
+        root.Send(foreignSenderPid, new ForwardControlPlaneMessage(
+            hiveMind,
+            new PlacementReconcileReport
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = ack.PlacementEpoch,
+                ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+                FailureReason = PlacementFailureReason.PlacementFailureReconcileMismatch,
+                Message = "foreign failed reconcile while reconciling"
+            }));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.reconcile.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var reconcilingStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, reconcilingStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, reconcilingStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.failed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Reconciling_Ignores_Foreign_Failed_Report_Forging_Pending_Worker_And_Completes_Matched()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var foreignSenderPid = root.Spawn(Props.FromProducer(static () => new ForwardControlPlaneActor()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == ack.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        var preNoiseStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, preNoiseStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, preNoiseStatus.FailureReason);
+
+        root.Send(foreignSenderPid, new ForwardControlPlaneMessage(
+            hiveMind,
+            new PlacementReconcileReport
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = ack.PlacementEpoch,
+                ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+                FailureReason = PlacementFailureReason.PlacementFailureReconcileMismatch,
+                Message = "foreign failed reconcile while forging pending worker",
+                Assignments =
+                {
+                    new PlacementObservedAssignment
+                    {
+                        AssignmentId = "forged-worker-attribution",
+                        Target = PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                        WorkerNodeId = workerId.ToProtoUuid(),
+                        ActorPid = foreignSenderPid.Id
+                    }
+                }
+            }));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.reconcile.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var reconcilingStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, reconcilingStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, reconcilingStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.failed"));
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Reconciling_Ignores_Worker_Sender_When_Observed_Worker_Does_Not_Match_And_Completes_Matched()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == ack.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        var preNoiseStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, preNoiseStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, preNoiseStatus.FailureReason);
+
+        root.Send(workerPid, new ForwardControlPlaneMessage(
+            hiveMind,
+            new PlacementReconcileReport
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = ack.PlacementEpoch,
+                ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+                FailureReason = PlacementFailureReason.PlacementFailureReconcileMismatch,
+                Message = "worker sender mismatched observed worker attribution",
+                Assignments =
+                {
+                    new PlacementObservedAssignment
+                    {
+                        AssignmentId = "observed-worker-mismatch",
+                        Target = PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                        WorkerNodeId = Guid.NewGuid().ToProtoUuid(),
+                        ActorPid = workerPid.Id
+                    }
+                }
+            }));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.reconcile.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var reconcilingStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleReconciling, reconcilingStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, reconcilingStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.failed"));
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task InFlight_Placement_Ignores_Early_ReconcileReport_Before_Reconcile_Start_And_Completes()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000),
+            debugHubPid: debugProbePid)));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(ack.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == ack.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var brainTag = brainId.ToString("D");
+        var baselineRetry = metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag);
+        var baselineAssignmentTimeout = metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag);
+        var baselineReconcileFailed = metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag);
+        var baselineReconcileTimeout = metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag);
+        var baselineDebug = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
+
+        root.Send(hiveMind, new PlacementReconcileReport
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = ack.PlacementEpoch,
+            ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+            FailureReason = PlacementFailureReason.PlacementFailureReconcileMismatch,
+            Message = "early failed reconcile"
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+                return snapshot.Count("placement.reconcile.ignored") > ignoredBefore;
+            },
+            timeoutMs: 4_000);
+
+        var assigningStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
+
+        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return status.LifecycleState == PlacementLifecycleState.PlacementLifecycleReconciling;
+            },
+            timeoutMs: 4_000);
+
+        root.Send(workerPid, new ReleaseDeferredReconcileReports());
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        AssertPlacementStable(finalStatus);
+        Assert.Equal(ack.PlacementEpoch, finalStatus.PlacementEpoch);
+        Assert.True(workerProbe.ReconcileRequestCount >= 1);
+
+        Assert.Equal(baselineRetry, metrics.SumLong("nbn.hivemind.placement.assignment.retry", "brain_id", brainTag));
+        Assert.Equal(baselineAssignmentTimeout, metrics.SumLong("nbn.hivemind.placement.assignment.timeout", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileFailed, metrics.SumLong("nbn.hivemind.placement.reconcile.failed", "brain_id", brainTag));
+        Assert.Equal(baselineReconcileTimeout, metrics.SumLong("nbn.hivemind.placement.reconcile.timeout", "brain_id", brainTag));
+
+        var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.True(debugSnapshot.Count("placement.reconcile.ignored") > ignoredBefore);
+        Assert.Equal(0, debugSnapshot.Count("placement.reconcile.mismatch"));
+
+        await system.ShutdownAsync();
+    }
+
     private static void PrimeWorkers(IRootContext root, PID hiveMind, PID workerPid, Guid workerId)
     {
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -427,6 +1641,39 @@ public sealed class HiveMindPlacementOrchestrationTests
 
         throw new XunitException($"Condition was not met within {timeoutMs} ms.");
     }
+
+    private static async Task WaitForPlacementMatchedAsync(IRootContext root, PID hiveMind, Guid brainId, int timeoutMs)
+    {
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return IsAssignedOrRunning(status.LifecycleState)
+                       && status.ReconcileState == PlacementReconcileState.PlacementReconcileMatched;
+            },
+            timeoutMs: timeoutMs);
+    }
+
+    private static async Task<PlacementLifecycleInfo> GetPlacementLifecycleAsync(IRootContext root, PID hiveMind, Guid brainId)
+        => await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+    private static void AssertPlacementStable(PlacementLifecycleInfo status)
+    {
+        Assert.True(
+            IsAssignedOrRunning(status.LifecycleState),
+            $"Expected placement lifecycle to remain Assigned/Running, actual={status.LifecycleState}.");
+        Assert.Equal(PlacementReconcileState.PlacementReconcileMatched, status.ReconcileState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, status.FailureReason);
+    }
+
+    private static bool IsAssignedOrRunning(PlacementLifecycleState state)
+        => state == PlacementLifecycleState.PlacementLifecycleAssigned
+           || state == PlacementLifecycleState.PlacementLifecycleRunning;
 
     private static ProtoSettings.WorkerReadinessCapability BuildWorker(
         Guid nodeId,
@@ -501,6 +1748,13 @@ public sealed class HiveMindPlacementOrchestrationTests
             PlacementReconcileTimeoutMs: reconcileTimeoutMs);
 
     private sealed record GetDebugProbeSnapshot;
+    private sealed record ForwardControlPlaneMessage(PID Target, object Message);
+    private sealed record ReleaseNextDeferredAssignmentAck;
+    private sealed record ReleaseNextDeferredAssignmentAckResult(string AssignmentId, bool Released);
+    private sealed record GetDeferredAssignmentAckSnapshot;
+    private sealed record DeferredAssignmentAckSnapshot(IReadOnlyList<string> AssignmentIds);
+    private sealed record ReleaseDeferredAssignmentAcks;
+    private sealed record ReleaseDeferredReconcileReports;
 
     private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts)
     {
@@ -532,6 +1786,19 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
     }
 
+    private sealed class ForwardControlPlaneActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ForwardControlPlaneMessage forward)
+            {
+                context.Request(forward.Target, forward.Message);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class PlacementWorkerProbe : IActor
     {
         private readonly Guid _workerId;
@@ -539,22 +1806,30 @@ public sealed class HiveMindPlacementOrchestrationTests
         private readonly bool _failFirstRetryable;
         private readonly bool _failFirstNonRetryable;
         private readonly ReconcileBehavior _reconcileBehavior;
+        private readonly bool _autoRespondAssignments;
+        private readonly bool _autoRespondReconcile;
         private bool _failedOne;
         private readonly Dictionary<string, int> _attempts = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PlacementAssignment> _knownAssignments = new(StringComparer.Ordinal);
+        private readonly List<(PID Sender, PlacementAssignmentAck Ack)> _deferredAssignmentAcks = new();
+        private readonly List<(PID Sender, PlacementReconcileReport Report)> _deferredReconcileReports = new();
 
         public PlacementWorkerProbe(
             Guid workerId,
             bool dropAcks,
             bool failFirstRetryable,
             bool failFirstNonRetryable = false,
-            ReconcileBehavior reconcileBehavior = ReconcileBehavior.Matched)
+            ReconcileBehavior reconcileBehavior = ReconcileBehavior.Matched,
+            bool autoRespondAssignments = true,
+            bool autoRespondReconcile = true)
         {
             _workerId = workerId;
             _dropAcks = dropAcks;
             _failFirstRetryable = failFirstRetryable;
             _failFirstNonRetryable = failFirstNonRetryable;
             _reconcileBehavior = reconcileBehavior;
+            _autoRespondAssignments = autoRespondAssignments;
+            _autoRespondReconcile = autoRespondReconcile;
         }
 
         public int AssignmentRequestCount { get; private set; }
@@ -570,6 +1845,25 @@ public sealed class HiveMindPlacementOrchestrationTests
                     break;
                 case PlacementReconcileRequest request:
                     HandlePlacementReconcileRequest(context, request);
+                    break;
+                case ForwardControlPlaneMessage forward:
+                    context.Request(forward.Target, forward.Message);
+                    break;
+                case ReleaseNextDeferredAssignmentAck:
+                    FlushNextDeferredAssignmentAck(context);
+                    break;
+                case GetDeferredAssignmentAckSnapshot:
+                    context.Respond(new DeferredAssignmentAckSnapshot(
+                        _deferredAssignmentAcks
+                            .Select(static pending => pending.Ack.AssignmentId ?? string.Empty)
+                            .Where(static assignmentId => !string.IsNullOrWhiteSpace(assignmentId))
+                            .ToArray()));
+                    break;
+                case ReleaseDeferredAssignmentAcks:
+                    FlushDeferredAssignmentAcks(context);
+                    break;
+                case ReleaseDeferredReconcileReports:
+                    FlushDeferredReconcileReports(context);
                     break;
             }
 
@@ -599,10 +1893,11 @@ public sealed class HiveMindPlacementOrchestrationTests
                 return;
             }
 
+            PlacementAssignmentAck ack;
             if (_failFirstRetryable && !_failedOne)
             {
                 _failedOne = true;
-                context.Respond(new PlacementAssignmentAck
+                ack = new PlacementAssignmentAck
                 {
                     AssignmentId = assignment.AssignmentId,
                     BrainId = assignment.BrainId,
@@ -613,14 +1908,12 @@ public sealed class HiveMindPlacementOrchestrationTests
                     FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
                     RetryAfterMs = 0,
                     Message = "retry once"
-                });
-                return;
+                };
             }
-
-            if (_failFirstNonRetryable && !_failedOne)
+            else if (_failFirstNonRetryable && !_failedOne)
             {
                 _failedOne = true;
-                context.Respond(new PlacementAssignmentAck
+                ack = new PlacementAssignmentAck
                 {
                     AssignmentId = assignment.AssignmentId,
                     BrainId = assignment.BrainId,
@@ -631,21 +1924,36 @@ public sealed class HiveMindPlacementOrchestrationTests
                     FailureReason = PlacementFailureReason.PlacementFailureWorkerUnavailable,
                     RetryAfterMs = 0,
                     Message = "rejected"
-                });
+                };
+            }
+            else
+            {
+                ack = new PlacementAssignmentAck
+                {
+                    AssignmentId = assignment.AssignmentId,
+                    BrainId = assignment.BrainId,
+                    PlacementEpoch = assignment.PlacementEpoch,
+                    State = PlacementAssignmentState.PlacementAssignmentReady,
+                    Accepted = true,
+                    Retryable = false,
+                    FailureReason = PlacementFailureReason.PlacementFailureNone,
+                    Message = "ready"
+                };
+            }
+
+            if (context.Sender is null)
+            {
                 return;
             }
 
-            context.Respond(new PlacementAssignmentAck
+            if (_autoRespondAssignments)
             {
-                AssignmentId = assignment.AssignmentId,
-                BrainId = assignment.BrainId,
-                PlacementEpoch = assignment.PlacementEpoch,
-                State = PlacementAssignmentState.PlacementAssignmentReady,
-                Accepted = true,
-                Retryable = false,
-                FailureReason = PlacementFailureReason.PlacementFailureNone,
-                Message = "ready"
-            });
+                context.Request(context.Sender, ack);
+            }
+            else
+            {
+                _deferredAssignmentAcks.Add((context.Sender, ack));
+            }
         }
 
         private void HandlePlacementReconcileRequest(IContext context, PlacementReconcileRequest request)
@@ -684,7 +1992,53 @@ public sealed class HiveMindPlacementOrchestrationTests
                 index++;
             }
 
-            context.Respond(report);
+            if (context.Sender is null)
+            {
+                return;
+            }
+
+            if (_autoRespondReconcile)
+            {
+                context.Request(context.Sender, report);
+            }
+            else
+            {
+                _deferredReconcileReports.Add((context.Sender, report));
+            }
+        }
+
+        private void FlushDeferredAssignmentAcks(IContext context)
+        {
+            foreach (var pending in _deferredAssignmentAcks)
+            {
+                context.Request(pending.Sender, pending.Ack.Clone());
+            }
+
+            _deferredAssignmentAcks.Clear();
+        }
+
+        private void FlushNextDeferredAssignmentAck(IContext context)
+        {
+            if (_deferredAssignmentAcks.Count == 0)
+            {
+                context.Respond(new ReleaseNextDeferredAssignmentAckResult(string.Empty, false));
+                return;
+            }
+
+            var pending = _deferredAssignmentAcks[0];
+            _deferredAssignmentAcks.RemoveAt(0);
+            context.Request(pending.Sender, pending.Ack.Clone());
+            context.Respond(new ReleaseNextDeferredAssignmentAckResult(pending.Ack.AssignmentId ?? string.Empty, true));
+        }
+
+        private void FlushDeferredReconcileReports(IContext context)
+        {
+            foreach (var pending in _deferredReconcileReports)
+            {
+                context.Request(pending.Sender, pending.Report.Clone());
+            }
+
+            _deferredReconcileReports.Clear();
         }
     }
 

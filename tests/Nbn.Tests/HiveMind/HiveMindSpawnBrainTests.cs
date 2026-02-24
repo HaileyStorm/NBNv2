@@ -454,7 +454,12 @@ public sealed class HiveMindSpawnBrainTests
                 return;
             }
 
-            context.Respond(new PlacementAssignmentAck
+            if (context.Sender is null)
+            {
+                return;
+            }
+
+            context.Request(context.Sender, new PlacementAssignmentAck
             {
                 AssignmentId = assignment.AssignmentId,
                 BrainId = assignment.BrainId,
@@ -510,7 +515,12 @@ public sealed class HiveMindSpawnBrainTests
                 });
             }
 
-            context.Respond(report);
+            if (context.Sender is null)
+            {
+                return;
+            }
+
+            context.Request(context.Sender, report);
         }
     }
 }

@@ -112,7 +112,7 @@ public class HiveMindPlacementLifecycleTests
     }
 
     [Fact]
-    public async Task PlacementAssignmentAck_Failure_Marks_Placement_Failed()
+    public async Task PlacementAssignmentAck_Failure_With_Unknown_AssignmentId_Is_Ignored()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -148,9 +148,9 @@ public class HiveMindPlacementLifecycleTests
                 BrainId = brainId.ToProtoUuid()
             });
 
-        Assert.Equal(6, (int)status.LifecycleState);
-        Assert.Equal(3, (int)status.FailureReason);
-        Assert.Equal(3, (int)status.ReconcileState);
+        Assert.NotEqual(PlacementLifecycleState.PlacementLifecycleFailed, status.LifecycleState);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, status.FailureReason);
+        Assert.NotEqual(PlacementReconcileState.PlacementReconcileFailed, status.ReconcileState);
 
         await system.ShutdownAsync();
     }
