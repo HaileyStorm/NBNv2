@@ -2958,16 +2958,18 @@ Aleph is the default workflow for deep codebase analysis in this repo:
 Use Aleph to reduce context bloat while still collecting concrete evidence (paths, symbols, message contracts, and behavior edges).
 
 For non-trivial tasks, Aleph-first is the expected posture: do minimal shell scouting, then move quickly into Aleph contexts and delegated sub-query packets for analysis.
+For moderate multi-file work, prefer Aleph unless the change is clearly mechanical and bounded.
 
 ### 21.2 When Aleph use is expected (strong default)
 
 Use Aleph before substantial edits when **any** of the following is true:
 
-* task touches 3+ files, or likely spans UI + ViewModel + service/protocol layers
+* task touches 2+ files, or likely spans UI + ViewModel + service/protocol layers
 * any target file is large (roughly 500+ LOC) or dense/low-cohesion
-* request explicitly asks for a careful sweep, architecture review, or “fine-tooth comb” pass
+* request explicitly asks for a careful sweep, architecture review, or "fine-tooth comb" pass
 * ownership/call path/invariant location is not obvious from a quick file scan
 * you need to synthesize behavior across modules before changing code
+* scope is likely to expand while you are still discovering ownership and invariants
 
 If you skip Aleph despite these triggers, provide a one-line reason in your progress update.
 
@@ -2990,34 +2992,43 @@ If scope expands mid-task, switch to Aleph immediately.
 * Do not hard-pin version numbers when an alias/channel is available.
 * For explicit model routing, prefer family aliases so upgrades happen automatically as new versions release:
   * stable/primary family alias (GPT-5)
-  * fast scouting family alias (GPT-5-Spark)
-* Never reduce reasoning effort below **medium** for either primary or Spark family calls.
+  * fast scouting family alias (GPT-5-Spark / `gpt-5.3-codex-spark`)
+* Spark usage policy:
+  * Use Spark only for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory).
+  * Do **not** use Spark for code reasoning, synthesis, architectural decisions, or non-rote code writing.
 
 ### 21.5 Reasoning-effort policy
 
-* **Medium (default):**
+* **Primary model, medium (default):**
   * repository scouting
   * finding relevant files/types/messages
   * assembling focused snippets
   * simple, low-risk refactors
-* **High:**
+* **Primary model, high:**
   * cross-module behavior changes
   * protocol/schema or lifecycle changes
   * recovery, ordering, concurrency, or correctness-critical logic
+* **Spark (`gpt-5.3-codex-spark`):**
+  * use **high** by default
+  * use **xhigh** for noisy or cross-file evidence collection
+  * never run Spark below **high**
 
 ### 21.6 Sub-query routing guidance
 
-Use Spark-family sub-queries at **medium** for bounded discovery tasks:
+Use Spark-family sub-queries at **high/xhigh** for bounded discovery tasks:
 
 * locate ownership of a workflow
 * map call paths and message types
-* collect candidate edit files and tests
+* collect candidate edit files, snippets, and tests/references
 
 Use primary-model sub-queries (medium/high as needed) for:
 
 * ambiguous architectural reasoning
 * synthesis across many findings
 * risky refactors where subtle regressions are likely
+* non-rote code writing and final implementation decisions
+
+Do not use Spark for synthesis/decision prompts; hand off Spark findings to the primary model for reasoning and final decisions.
 
 For cross-file implementation work, sub-queries are expected (not optional): run a small pack of focused sub-queries before first major edit.
 
@@ -3069,6 +3080,7 @@ Before making substantial edits, run this quick gate:
 3. Would a mistake likely create broad regressions or expensive rework?
 
 If any answer is "yes", Aleph should be used first (per 21.2 + 21.7).
+Spark is an evidence-collection tool in this workflow, not a decision engine.
 
 Minimum sub-query pack for these cases:
 
