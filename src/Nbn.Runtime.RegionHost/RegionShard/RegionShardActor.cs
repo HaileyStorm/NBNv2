@@ -77,6 +77,12 @@ public sealed class RegionShardActor : IActor
             case TickCompute tick:
                 HandleTickCompute(context, tick);
                 break;
+            case RegisterShard registerShard:
+                ForwardRegisterShard(context, registerShard);
+                break;
+            case UnregisterShard unregisterShard:
+                ForwardUnregisterShard(context, unregisterShard);
+                break;
             case RuntimeNeuronPulse pulse:
                 HandleRuntimeNeuronPulse(pulse);
                 break;
@@ -98,6 +104,22 @@ public sealed class RegionShardActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private void ForwardRegisterShard(IContext context, RegisterShard message)
+    {
+        if (_tickSink is not null)
+        {
+            context.Request(_tickSink, message);
+        }
+    }
+
+    private void ForwardUnregisterShard(IContext context, UnregisterShard message)
+    {
+        if (_tickSink is not null)
+        {
+            context.Request(_tickSink, message);
+        }
     }
 
     private void HandleUpdateOutputSink(UpdateShardOutputSink message)

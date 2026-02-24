@@ -147,7 +147,7 @@ public sealed class BrainRootActor : IActor
 
         if (forceRegister)
         {
-            context.Send(_hiveMindPid, new ProtoControl.RegisterBrain
+            context.Request(_hiveMindPid, new ProtoControl.RegisterBrain
             {
                 BrainId = _brainId.ToProtoUuid(),
                 BrainRootPid = PidToString(brainRootPid),
@@ -158,7 +158,7 @@ public sealed class BrainRootActor : IActor
 
         if (routerPid is not null)
         {
-            context.Send(_hiveMindPid, new ProtoControl.UpdateBrainSignalRouter
+            context.Request(_hiveMindPid, new ProtoControl.UpdateBrainSignalRouter
             {
                 BrainId = _brainId.ToProtoUuid(),
                 SignalRouterPid = PidToString(routerPid)
@@ -192,7 +192,7 @@ public sealed class BrainRootActor : IActor
             return;
         }
 
-        context.Send(_hiveMindPid, new ProtoControl.UnregisterBrain
+        context.Request(_hiveMindPid, new ProtoControl.UnregisterBrain
         {
             BrainId = _brainId.ToProtoUuid()
         });

@@ -40,6 +40,7 @@ public static class HiveMindTelemetry
     private static readonly Counter<long> PlacementReconcileTimeout = Meter.CreateCounter<long>("nbn.hivemind.placement.reconcile.timeout");
     private static readonly Histogram<double> PlacementAssignmentAckLatencyMs = Meter.CreateHistogram<double>("nbn.hivemind.placement.assignment.ack_latency.ms");
     private static readonly Histogram<double> PlacementAssignmentReadyLatencyMs = Meter.CreateHistogram<double>("nbn.hivemind.placement.assignment.ready_latency.ms");
+    private static readonly Counter<long> OutputSinkMutationRejected = Meter.CreateCounter<long>("nbn.hivemind.control.output_sink.rejected");
 
     public static void RecordTickOutcome(TickOutcome outcome, float targetTickHz)
     {
@@ -81,6 +82,15 @@ public static class HiveMindTelemetry
         PauseRequested.Add(1);
         using var activity = ActivitySource.StartActivity("hivemind.pause");
         activity?.SetTag("reason", reason);
+    }
+
+    public static void RecordOutputSinkMutationRejected(Guid brainId, string reason)
+    {
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
+        OutputSinkMutationRejected.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")),
+            new KeyValuePair<string, object?>("reason", normalizedReason));
     }
 
     public static void RecordLateComputeAfterCompletion(int count = 1)

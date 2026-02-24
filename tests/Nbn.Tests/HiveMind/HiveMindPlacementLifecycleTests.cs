@@ -73,12 +73,13 @@ public class HiveMindPlacementLifecycleTests
             });
         Assert.True(placement.Accepted);
 
-        root.Send(hiveMind, new RegisterBrain
+        var controllerSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(controllerSender, new SendMessage(hiveMind, new RegisterBrain
         {
             BrainId = brainId.ToProtoUuid(),
-            BrainRootPid = "127.0.0.1:12011/brain-root",
-            SignalRouterPid = "127.0.0.1:12011/signal-router"
-        });
+            BrainRootPid = PidLabel(controllerSender),
+            SignalRouterPid = PidLabel(controllerSender)
+        }));
 
         var assigned = await root.RequestAsync<PlacementLifecycleInfo>(
             hiveMind,
@@ -88,15 +89,16 @@ public class HiveMindPlacementLifecycleTests
             });
         Assert.Equal(3, (int)assigned.LifecycleState);
 
-        root.Send(hiveMind, new RegisterShard
+        var shardSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 1,
             ShardIndex = 0,
-            ShardPid = "127.0.0.1:12040/region-1-0",
+            ShardPid = PidLabel(shardSender),
             NeuronStart = 0,
             NeuronCount = 8
-        });
+        }));
 
         var running = await root.RequestAsync<PlacementLifecycleInfo>(
             hiveMind,
@@ -200,6 +202,27 @@ public class HiveMindPlacementLifecycleTests
                 CpuScore = 15f
             }
         };
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private sealed record SendMessage(PID Target, object Message);
+    private sealed record SendMessageAck;
+
+    private sealed class ManualSenderActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not SendMessage send)
+            {
+                return Task.CompletedTask;
+            }
+
+            context.Request(send.Target, send.Message);
+            context.Respond(new SendMessageAck());
+            return Task.CompletedTask;
+        }
+    }
 
     private static HiveMindOptions CreateOptions()
         => new(

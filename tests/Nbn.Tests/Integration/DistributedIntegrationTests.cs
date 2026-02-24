@@ -56,7 +56,7 @@ public class DistributedIntegrationTests
             Props.FromProducer(() => new RemoteShardActor(brainId, shardId, routerRemote, sink, hiveMindRemote)));
         var shardRemote = EnsureAddress(shardActor, shardNode.Address);
 
-        shardNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
+        await shardNode.Root.RequestAsync<SendMessageAck>(shardActor, new SendMessage(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
@@ -64,7 +64,7 @@ public class DistributedIntegrationTests
             ShardPid = PidLabel(shardRemote),
             NeuronStart = 0,
             NeuronCount = 1
-        });
+        }));
 
         await WaitForStatus(hiveNode.Root, hiveMindLocal, s => s.RegisteredBrains == 1, TimeSpan.FromSeconds(5));
         await WaitForRoutingTable(brainNode.Root, router, table => table.Count == 1, TimeSpan.FromSeconds(5));
@@ -145,7 +145,7 @@ public class DistributedIntegrationTests
             Props.FromProducer(() => new NoAckRemoteShardActor(brainId, shardId, routerRemote, hiveMindRemote)));
         var shardRemote = EnsureAddress(shardActor, shardNode.Address);
 
-        shardNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
+        await shardNode.Root.RequestAsync<SendMessageAck>(shardActor, new SendMessage(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
@@ -153,7 +153,7 @@ public class DistributedIntegrationTests
             ShardPid = PidLabel(shardRemote),
             NeuronStart = 0,
             NeuronCount = 1
-        });
+        }));
 
         await WaitForStatus(hiveNode.Root, hiveMindLocal, s => s.RegisteredBrains == 1, TimeSpan.FromSeconds(5));
         await WaitForRoutingTable(brainNode.Root, router, table => table.Count == 1, TimeSpan.FromSeconds(5));
@@ -403,6 +403,10 @@ public class DistributedIntegrationTests
         {
             switch (context.Message)
             {
+                case SendMessage send:
+                    context.Request(send.Target, send.Message);
+                    context.Respond(new SendMessageAck());
+                    break;
                 case TickCompute tick:
                     HandleTickCompute(context, tick);
                     break;
@@ -481,6 +485,13 @@ public class DistributedIntegrationTests
 
         public Task ReceiveAsync(IContext context)
         {
+            if (context.Message is SendMessage send)
+            {
+                context.Request(send.Target, send.Message);
+                context.Respond(new SendMessageAck());
+                return Task.CompletedTask;
+            }
+
             if (context.Message is not TickCompute tick)
             {
                 return Task.CompletedTask;

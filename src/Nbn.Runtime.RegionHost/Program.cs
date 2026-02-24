@@ -84,7 +84,7 @@ var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, confi
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 var shardRemotePid = new PID(GetAdvertisedAddress(remoteConfig), shardPid.Id);
 
-system.Root.Send(tickPid, new ProtoControl.RegisterShard
+system.Root.Send(shardPid, new ProtoControl.RegisterShard
 {
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,
@@ -129,7 +129,7 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
 
-system.Root.Send(tickPid, new ProtoControl.UnregisterShard
+system.Root.Send(shardPid, new ProtoControl.UnregisterShard
 {
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,

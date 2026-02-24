@@ -76,7 +76,7 @@ public class HiveMindLiveSnapshotTests
                 enabledBitset: new byte[] { 0b0000_0001 },
                 overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-            root.Send(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 0,
@@ -84,8 +84,8 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
                 NeuronCount = 3
-            });
-            root.Send(hiveMind, new RegisterShard
+            }));
+            await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 1,
@@ -93,8 +93,8 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
                 NeuronCount = 4
-            });
-            root.Send(hiveMind, new RegisterShard
+            }));
+            await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 31,
@@ -102,7 +102,7 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
                 NeuronCount = 2
-            });
+            }));
 
             var ready = await root.RequestAsync<SnapshotReady>(
                 hiveMind,
@@ -242,7 +242,7 @@ public class HiveMindLiveSnapshotTests
                 enabledBitset: new byte[] { 0b0000_0011 },
                 overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-            root.Send(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 0,
@@ -250,8 +250,8 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
                 NeuronCount = 3
-            });
-            root.Send(hiveMind, new RegisterShard
+            }));
+            await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 1,
@@ -259,8 +259,8 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
                 NeuronCount = 4
-            });
-            root.Send(hiveMind, new RegisterShard
+            }));
+            await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 31,
@@ -268,7 +268,7 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
                 NeuronCount = 2
-            });
+            }));
 
             var rebasedReady = await root.RequestAsync<BrainDefinitionReady>(
                 hiveMind,
@@ -321,6 +321,9 @@ public class HiveMindLiveSnapshotTests
         }
     }
 
+    private sealed record SendMessage(PID Target, object Message);
+    private sealed record SendMessageAck;
+
     private sealed class SnapshotShardProbe : IActor
     {
         private readonly Guid _brainId;
@@ -348,6 +351,13 @@ public class HiveMindLiveSnapshotTests
 
         public Task ReceiveAsync(IContext context)
         {
+            if (context.Message is SendMessage send)
+            {
+                context.Request(send.Target, send.Message);
+                context.Respond(new SendMessageAck());
+                return Task.CompletedTask;
+            }
+
             if (context.Message is not CaptureShardSnapshot capture)
             {
                 return Task.CompletedTask;

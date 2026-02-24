@@ -536,7 +536,7 @@ public sealed class WorkerNodeActor : IActor
         }
 
         var remoteShardPid = ToRemotePid(context, shardPid);
-        context.Send(hiveMindPid, new ProtoControl.RegisterShard
+        context.Request(hiveMindPid, new ProtoControl.RegisterShard
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
@@ -560,7 +560,7 @@ public sealed class WorkerNodeActor : IActor
             return;
         }
 
-        context.Send(hiveMindPid, new ProtoControl.RegisterOutputSink
+        context.Request(hiveMindPid, new ProtoControl.RegisterOutputSink
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             OutputPid = PidLabel(ToRemotePid(context, brain.OutputCoordinatorPid))

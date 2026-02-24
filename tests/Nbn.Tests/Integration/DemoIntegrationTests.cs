@@ -110,27 +110,8 @@ public class DemoIntegrationTests
                 routing);
             var region31Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region31Load.State, region31Config)));
 
-            var region1Remote = EnsureAddress(region1Pid, regionNode.Address);
-            var region31Remote = EnsureAddress(region31Pid, regionNode.Address);
-
-            regionNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
-            {
-                BrainId = brainId.ToProtoUuid(),
-                RegionId = 1,
-                ShardIndex = 0,
-                ShardPid = PidLabel(region1Remote),
-                NeuronStart = 0,
-                NeuronCount = 1
-            });
-            regionNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
-            {
-                BrainId = brainId.ToProtoUuid(),
-                RegionId = (uint)NbnConstants.OutputRegionId,
-                ShardIndex = 0,
-                ShardPid = PidLabel(region31Remote),
-                NeuronStart = 0,
-                NeuronCount = 1
-            });
+            RegisterShard(regionNode, region1Pid, regionNode.Address, brainId, 1);
+            RegisterShard(regionNode, region31Pid, regionNode.Address, brainId, NbnConstants.OutputRegionId);
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -188,7 +169,7 @@ public class DemoIntegrationTests
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
             var nbnRef = BuildArtifactRef(manifest);
 
-            var options = CreateOptions(hiveNode.Port);
+            var options = CreateOptions(hiveNode.Port, ioAddress: ioNode.Address, ioName: IoNames.Gateway);
             var hiveMindLocal = hiveNode.Root.SpawnNamed(
                 Props.FromProducer(() => new HiveMindActor(options)),
                 HiveMindNames.HiveMind);
@@ -262,9 +243,9 @@ public class DemoIntegrationTests
                 routing);
             var region31Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region31Load.State, region31Config)));
 
-            RegisterShard(regionNode, hiveMindRemote, region0Pid, regionNode.Address, brainId, 0);
-            RegisterShard(regionNode, hiveMindRemote, region1Pid, regionNode.Address, brainId, 1);
-            RegisterShard(regionNode, hiveMindRemote, region31Pid, regionNode.Address, brainId, NbnConstants.OutputRegionId);
+            RegisterShard(regionNode, region0Pid, regionNode.Address, brainId, 0);
+            RegisterShard(regionNode, region1Pid, regionNode.Address, brainId, 1);
+            RegisterShard(regionNode, region31Pid, regionNode.Address, brainId, NbnConstants.OutputRegionId);
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -509,14 +490,13 @@ public class DemoIntegrationTests
 
     private static void RegisterShard(
         RemoteTestNode node,
-        PID hiveMind,
         PID shardPid,
         string address,
         Guid brainId,
         int regionId)
     {
         var remote = EnsureAddress(shardPid, address);
-        node.Root.Send(hiveMind, new Nbn.Proto.Control.RegisterShard
+        node.Root.Send(shardPid, new Nbn.Proto.Control.RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = (uint)regionId,
@@ -699,7 +679,9 @@ public class DemoIntegrationTests
         int deliverTimeoutMs = 500,
         float backpressureDecay = 0.9f,
         float backpressureRecovery = 1.1f,
-        int lateBackpressureThreshold = 2)
+        int lateBackpressureThreshold = 2,
+        string? ioAddress = null,
+        string? ioName = null)
         => new(
             BindHost: "127.0.0.1",
             Port: port,
@@ -729,8 +711,8 @@ public class DemoIntegrationTests
             SettingsHost: null,
             SettingsPort: 0,
             SettingsName: "SettingsMonitor",
-            IoAddress: null,
-            IoName: null);
+            IoAddress: ioAddress,
+            IoName: ioName);
 
     private sealed class OutputSinkActor : IActor
     {

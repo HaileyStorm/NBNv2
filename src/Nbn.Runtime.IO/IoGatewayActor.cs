@@ -1029,7 +1029,7 @@ public sealed class IoGatewayActor : IActor
         try
         {
             var outputLabel = PidLabel(ToRemotePid(context, outputPid));
-            context.Send(_hiveMindPid, new ProtoControl.RegisterOutputSink
+            context.Request(_hiveMindPid, new ProtoControl.RegisterOutputSink
             {
                 BrainId = brainId.ToProtoUuid(),
                 OutputPid = outputLabel
