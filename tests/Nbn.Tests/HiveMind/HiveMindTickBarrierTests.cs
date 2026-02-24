@@ -241,7 +241,7 @@ public class HiveMindTickBarrierTests
         await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
 
         var shardId = ShardId32.From(1, 0);
-        var shardPid = root.Spawn(Props.FromProducer(() => new NoAckShardActor(brainId, shardId, router)));
+        var shardPid = root.Spawn(Props.FromProducer(() => new NoAckShardActor(brainId, shardId, router, hiveMind)));
         root.Send(hiveMind, new Nbn.Proto.Control.RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
@@ -266,6 +266,351 @@ public class HiveMindTickBarrierTests
 
         Assert.True(status.TargetTickHz < options.TargetTickHz);
 
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_ComputeDone_ForeignSenderWithValidPayload_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        root.Send(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 1 && s.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        var foreignSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        var forgedDone = new TickComputeDone
+        {
+            TickId = 1,
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            ComputeMs = 1
+        };
+
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, forgedDone));
+        await Task.Delay(100);
+        await AssertBarrierStillWaiting(
+            root,
+            hiveMind,
+            options,
+            expectedPendingCompute: 1,
+            expectedPendingDeliver: 0);
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_ComputeDone_SameIdDifferentAddressSender_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var senderId = $"Shard{Guid.NewGuid():N}";
+        var expectedSender = new PID("127.0.0.1:12040", senderId);
+        root.Send(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(expectedSender),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 1 && s.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        var forgedSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), senderId);
+        var forgedDone = new TickComputeDone
+        {
+            TickId = 1,
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            ComputeMs = 1
+        };
+
+        await root.RequestAsync<SendMessageAck>(forgedSender, new SendMessage(hiveMind, forgedDone));
+        await Task.Delay(100);
+        await AssertBarrierStillWaiting(
+            root,
+            hiveMind,
+            options,
+            expectedPendingCompute: 1,
+            expectedPendingDeliver: 0);
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_ComputeDone_RealShardSenderWithMismatchedPayload_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        root.Send(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 1 && s.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        var forgedDone = new TickComputeDone
+        {
+            TickId = 1,
+            BrainId = Guid.NewGuid().ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            ComputeMs = 1
+        };
+
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, forgedDone));
+        await Task.Delay(100);
+        await AssertBarrierStillWaiting(
+            root,
+            hiveMind,
+            options,
+            expectedPendingCompute: 1,
+            expectedPendingDeliver: 0);
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_DeliverDone_ForeignSenderWithValidPayload_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new NoAckShardActor(brainId, shardId, router, hiveMind)));
+        root.Send(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 0 && s.PendingDeliver == 1,
+            TimeSpan.FromSeconds(2));
+
+        var foreignSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        var forgedDone = new TickDeliverDone
+        {
+            TickId = 1,
+            BrainId = brainId.ToProtoUuid(),
+            DeliverMs = 1,
+            DeliveredBatches = 0,
+            DeliveredContribs = 0
+        };
+
+        await root.RequestAsync<SendMessageAck>(foreignSender, new SendMessage(hiveMind, forgedDone));
+        await Task.Delay(100);
+        await AssertBarrierStillWaiting(
+            root,
+            hiveMind,
+            options,
+            expectedPendingCompute: 0,
+            expectedPendingDeliver: 1);
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_DeliverDone_RealControllerSenderWithMismatchedPayload_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new NoAckShardActor(brainId, shardId, router, hiveMind)));
+        root.Send(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 0 && s.PendingDeliver == 1,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(brainRoot, new TickDeliverDone
+        {
+            TickId = 1,
+            BrainId = Guid.NewGuid().ToProtoUuid(),
+            DeliverMs = 1,
+            DeliveredBatches = 0,
+            DeliveredContribs = 0
+        });
+
+        await Task.Delay(100);
+        await AssertBarrierStillWaiting(
+            root,
+            hiveMind,
+            options,
+            expectedPendingCompute: 0,
+            expectedPendingDeliver: 1);
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickBarrier_ForgedRouterSignalAck_DoesNotCompleteDeliverBarrier()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new NoAckShardActor(brainId, shardId, router, hiveMind)));
+        root.Send(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 0 && s.PendingDeliver == 1,
+            TimeSpan.FromSeconds(2));
+
+        var foreign = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        var forgedAck = new SignalBatchAck
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            TickId = 1
+        };
+
+        await root.RequestAsync<SendMessageAck>(foreign, new SendMessage(router, forgedAck));
+        await Task.Delay(100);
+        await AssertBarrierStillWaiting(
+            root,
+            hiveMind,
+            options,
+            expectedPendingCompute: 0,
+            expectedPendingDeliver: 1);
+
+        root.Send(hiveMind, new StopTickLoop());
         await system.ShutdownAsync();
     }
 
@@ -335,6 +680,24 @@ public class HiveMindTickBarrierTests
         Assert.Equal(options.TargetTickHz, status.TargetTickHz, 3);
 
         await system.ShutdownAsync();
+    }
+
+    private static async Task AssertBarrierStillWaiting(
+        IRootContext root,
+        PID hiveMind,
+        HiveMindOptions options,
+        uint expectedPendingCompute,
+        uint expectedPendingDeliver)
+    {
+        var status = await root.RequestAsync<ProtoControl.HiveMindStatus>(
+            hiveMind,
+            new ProtoControl.GetHiveMindStatus());
+
+        Assert.Equal((ulong)0, status.LastCompletedTickId);
+        Assert.Equal(expectedPendingCompute, status.PendingCompute);
+        Assert.Equal(expectedPendingDeliver, status.PendingDeliver);
+        Assert.Equal(options.TargetTickHz, status.TargetTickHz, 3);
+        Assert.False(status.RescheduleInProgress);
     }
 
     private static async Task<PID> WaitForSignalRouter(IRootContext root, PID brainRoot, TimeSpan timeout)
@@ -428,7 +791,23 @@ public class HiveMindTickBarrierTests
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+    private sealed record SendMessage(PID Target, object Message);
+    private sealed record SendMessageAck;
     private sealed record TestSignalReceived;
+
+    private sealed class ManualSenderActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is SendMessage send)
+            {
+                context.Request(send.Target, send.Message);
+                context.Respond(new SendMessageAck());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class SignalSinkActor : IActor
     {
@@ -525,7 +904,7 @@ public class HiveMindTickBarrierTests
             var target = _tickSink ?? context.Sender ?? _router;
             if (target is not null)
             {
-                context.Send(target, done);
+                context.Request(target, done);
             }
         }
 
@@ -542,7 +921,7 @@ public class HiveMindTickBarrierTests
             var target = context.Sender ?? _router;
             if (target is not null)
             {
-                context.Send(target, ack);
+                context.Request(target, ack);
             }
 
             context.Send(_signalSink, new TestSignalReceived());
@@ -576,7 +955,7 @@ public class HiveMindTickBarrierTests
                     TickId = batch.TickId
                 };
 
-                context.Send(context.Sender ?? _router, ack);
+                context.Request(context.Sender ?? _router, ack);
             }
 
             return Task.CompletedTask;
@@ -589,13 +968,15 @@ public class HiveMindTickBarrierTests
         private readonly ShardId32 _shardId;
         private readonly uint _regionId;
         private readonly PID _router;
+        private readonly PID? _tickSink;
 
-        public NoAckShardActor(Guid brainId, ShardId32 shardId, PID router)
+        public NoAckShardActor(Guid brainId, ShardId32 shardId, PID router, PID? tickSink = null)
         {
             _brainId = brainId;
             _shardId = shardId;
             _regionId = (uint)shardId.RegionId;
             _router = router;
+            _tickSink = tickSink;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -630,7 +1011,11 @@ public class HiveMindTickBarrierTests
                     OutContribs = 1
                 };
 
-                context.Send(context.Sender ?? _router, done);
+                var target = _tickSink ?? context.Sender ?? _router;
+                if (target is not null)
+                {
+                    context.Request(target, done);
+                }
             }
 
             return Task.CompletedTask;

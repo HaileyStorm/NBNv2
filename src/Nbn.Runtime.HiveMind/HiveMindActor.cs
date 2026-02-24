@@ -31,7 +31,9 @@ public sealed class HiveMindActor : IActor
     private readonly Dictionary<Guid, PendingSpawnState> _pendingSpawns = new();
     private readonly Dictionary<Guid, WorkerCatalogEntry> _workerCatalog = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
+    private readonly Dictionary<ShardKey, PID> _pendingComputeSenders = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
+    private readonly Dictionary<Guid, PID> _pendingDeliverSenders = new();
     private ulong _vizSequence;
     private long _workerCatalogSnapshotMs;
     private static readonly TimeSpan SnapshotShardRequestTimeout = TimeSpan.FromSeconds(5);
@@ -384,7 +386,7 @@ public sealed class HiveMindActor : IActor
 
         if (_phase == TickPhase.Deliver)
         {
-            if (_pendingDeliver.Remove(brainId))
+            if (RemovePendingDeliver(brainId))
             {
                 MaybeCompleteDeliver(context);
             }
@@ -503,7 +505,7 @@ public sealed class HiveMindActor : IActor
         }
 
         if (ShardId32.TryFrom(regionId, shardIndex, out var pendingShardId)
-            && _pendingCompute.Remove(new ShardKey(brainId, pendingShardId)))
+            && RemovePendingCompute(new ShardKey(brainId, pendingShardId)))
         {
             _tick.ExpectedComputeCount = Math.Max(_tick.CompletedComputeCount, _tick.ExpectedComputeCount - 1);
             MaybeCompleteCompute(context);
@@ -968,6 +970,8 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var execution = brain.PlacementExecution;
+
         if (brain.PlacementEpoch == 0 || message.PlacementEpoch != brain.PlacementEpoch)
         {
             EmitDebug(
@@ -978,9 +982,9 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (brain.PlacementExecution is not null
-            && brain.PlacementExecution.PlacementEpoch == brain.PlacementEpoch
-            && brain.PlacementExecution.Completed)
+        if (execution is not null
+            && execution.PlacementEpoch == brain.PlacementEpoch
+            && execution.Completed)
         {
             EmitDebug(
                 context,
@@ -990,11 +994,63 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (brain.PlacementExecution is not null
-            && brain.PlacementExecution.PlacementEpoch == brain.PlacementEpoch
-            && !string.IsNullOrWhiteSpace(message.AssignmentId)
-            && brain.PlacementExecution.Assignments.TryGetValue(message.AssignmentId, out var trackedAssignment))
+        if (execution is not null && execution.PlacementEpoch == brain.PlacementEpoch)
         {
+            if (string.IsNullOrWhiteSpace(message.AssignmentId)
+                || !execution.Assignments.TryGetValue(message.AssignmentId, out var trackedAssignment))
+            {
+                var assignmentId = string.IsNullOrWhiteSpace(message.AssignmentId)
+                    ? "<missing>"
+                    : message.AssignmentId;
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.assignment_ack.ignored",
+                    $"Ignored assignment ack for brain {brainId}; assignment={assignmentId} is not tracked for epoch={message.PlacementEpoch}.");
+                return;
+            }
+
+            if (trackedAssignment.Ready || trackedAssignment.Failed || !trackedAssignment.AwaitingAck)
+            {
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.assignment_ack.ignored",
+                    $"Ignored assignment ack for brain {brainId}; assignment={trackedAssignment.Assignment.AssignmentId} is not awaiting ack for epoch={message.PlacementEpoch}.");
+                return;
+            }
+
+            if (!TryGetGuid(trackedAssignment.Assignment.WorkerNodeId, out var plannedWorkerId))
+            {
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.assignment_ack.ignored",
+                    $"Ignored assignment ack for brain {brainId}; assignment={trackedAssignment.Assignment.AssignmentId} reason=planned_worker_invalid.");
+                return;
+            }
+
+            if (!execution.WorkerTargets.TryGetValue(plannedWorkerId, out var plannedWorkerPid))
+            {
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.assignment_ack.ignored",
+                    $"Ignored assignment ack for brain {brainId}; assignment={trackedAssignment.Assignment.AssignmentId} reason=planned_worker_unresolved plannedWorker={plannedWorkerId:D}.");
+                return;
+            }
+
+            if (!SenderMatchesPid(context.Sender, plannedWorkerPid))
+            {
+                var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.assignment_ack.ignored",
+                    $"Ignored assignment ack for brain {brainId}; assignment={trackedAssignment.Assignment.AssignmentId} reason=sender_worker_mismatch sender={senderLabel} plannedWorker={plannedWorkerId:D} plannedPid={PidLabel(plannedWorkerPid)}.");
+                return;
+            }
+
             trackedAssignment.AwaitingAck = false;
             trackedAssignment.AcceptedMs = NowMs();
             var target = ToPlacementTargetLabel(trackedAssignment.Assignment.Target);
@@ -1152,6 +1208,8 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var execution = brain.PlacementExecution;
+
         if (brain.PlacementEpoch == 0 || message.PlacementEpoch != brain.PlacementEpoch)
         {
             EmitDebug(
@@ -1162,9 +1220,9 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (brain.PlacementExecution is not null
-            && brain.PlacementExecution.PlacementEpoch == brain.PlacementEpoch
-            && brain.PlacementExecution.Completed)
+        if (execution is not null
+            && execution.PlacementEpoch == brain.PlacementEpoch
+            && execution.Completed)
         {
             EmitDebug(
                 context,
@@ -1174,10 +1232,18 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (brain.PlacementExecution is not null
-            && brain.PlacementExecution.PlacementEpoch == brain.PlacementEpoch
-            && brain.PlacementExecution.ReconcileRequested)
+        if (execution is not null && execution.PlacementEpoch == brain.PlacementEpoch)
         {
+            if (!execution.ReconcileRequested)
+            {
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.reconcile.ignored",
+                    $"Ignored reconcile report for brain {brainId}; reconcile has not started for epoch={message.PlacementEpoch}.");
+                return;
+            }
+
             HandleTrackedPlacementReconcileReport(context, brain, message);
             return;
         }
@@ -1388,6 +1454,19 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (!TryResolveReconcileWorkerNodeId(context.Sender, execution, message, out var workerId, out var attributionReason))
+        {
+            var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+            EmitDebug(
+                context,
+                ProtoSeverity.SevDebug,
+                "placement.reconcile.ignored",
+                $"Ignored reconcile report for brain {brain.BrainId}; reason={attributionReason} sender={senderLabel} epoch={message.PlacementEpoch}.");
+            return;
+        }
+
+        execution.PendingReconcileWorkers.Remove(workerId);
+
         switch (message.ReconcileState)
         {
             case ProtoControl.PlacementReconcileState.PlacementReconcileFailed:
@@ -1424,11 +1503,6 @@ public sealed class HiveMindActor : IActor
             {
                 execution.ObservedAssignments[observed.AssignmentId] = observed.Clone();
             }
-        }
-
-        if (TryResolveReconcileWorkerNodeId(context.Sender, execution, message, out var workerId))
-        {
-            execution.PendingReconcileWorkers.Remove(workerId);
         }
 
         if (execution.PendingReconcileWorkers.Count > 0)
@@ -1565,6 +1639,16 @@ public sealed class HiveMindActor : IActor
         => left is not null
            && string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.Ordinal)
            && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
+
+    private static bool SenderMatchesPid(PID? sender, PID expected)
+    {
+        if (sender is null)
+        {
+            return false;
+        }
+
+        return expected.Equals(sender) || PidEquals(sender, expected);
+    }
 
     private static string ToPlacementTargetLabel(ProtoControl.PlacementAssignmentTarget target)
         => target switch
@@ -1883,38 +1967,66 @@ public sealed class HiveMindActor : IActor
         PID? sender,
         PlacementExecutionState execution,
         ProtoControl.PlacementReconcileReport message,
-        out Guid workerId)
+        out Guid workerId,
+        out string reason)
     {
-        foreach (var observed in message.Assignments)
+        if (sender is null)
         {
-            if (TryGetGuid(observed.WorkerNodeId, out var observedWorkerId)
-                && execution.PendingReconcileWorkers.Contains(observedWorkerId))
-            {
-                workerId = observedWorkerId;
-                return true;
-            }
+            workerId = Guid.Empty;
+            reason = "sender_missing";
+            return false;
         }
 
-        if (sender is not null)
+        var senderWorkerId = Guid.Empty;
+        var senderWorkerMatches = 0;
+        foreach (var target in execution.WorkerTargets)
         {
-            foreach (var target in execution.WorkerTargets)
+            if (execution.PendingReconcileWorkers.Contains(target.Key)
+                && SenderMatchesPid(sender, target.Value))
             {
-                if (target.Value.Equals(sender))
+                senderWorkerId = target.Key;
+                senderWorkerMatches++;
+                if (senderWorkerMatches > 1)
                 {
-                    workerId = target.Key;
-                    return true;
+                    workerId = Guid.Empty;
+                    reason = "sender_worker_ambiguous";
+                    return false;
                 }
             }
         }
 
-        if (execution.PendingReconcileWorkers.Count == 1)
+        if (senderWorkerMatches == 0)
         {
-            workerId = execution.PendingReconcileWorkers.First();
-            return true;
+            workerId = Guid.Empty;
+            reason = "sender_not_pending_worker";
+            return false;
         }
 
-        workerId = Guid.Empty;
-        return false;
+        foreach (var observed in message.Assignments)
+        {
+            if (observed.WorkerNodeId is null)
+            {
+                continue;
+            }
+
+            if (!TryGetGuid(observed.WorkerNodeId, out var observedWorkerId))
+            {
+                workerId = Guid.Empty;
+                reason = "payload_worker_invalid";
+                return false;
+            }
+
+            if (observedWorkerId != senderWorkerId)
+            {
+                workerId = Guid.Empty;
+                reason = $"payload_worker_mismatch observed={observedWorkerId:D} sender={senderWorkerId:D}";
+                return false;
+            }
+        }
+
+        workerId = senderWorkerId;
+        reason = string.Empty;
+        return true;
     }
 
     private static bool TryValidateReconcileMatches(PlacementExecutionState execution, out string mismatch)
@@ -2482,7 +2594,7 @@ public sealed class HiveMindActor : IActor
             MaybeCompleteCompute(context);
         }
 
-        if (_phase == TickPhase.Deliver && _pendingDeliver.Remove(brainId))
+        if (_phase == TickPhase.Deliver && RemovePendingDeliver(brainId))
         {
             MaybeCompleteDeliver(context);
         }
@@ -2509,8 +2621,8 @@ public sealed class HiveMindActor : IActor
         _tick = new TickState(_lastCompletedTickId + 1, DateTime.UtcNow);
         EmitVizEvent(context, VizEventType.VizTick, tickId: _tick.TickId);
         _phase = TickPhase.Compute;
-        _pendingCompute.Clear();
-        _pendingDeliver.Clear();
+        ClearPendingCompute();
+        ClearPendingDeliver();
 
         _tick.ComputeStartedUtc = _tick.StartedUtc;
 
@@ -2533,9 +2645,11 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
-            foreach (var shardId in brain.Shards.Keys)
+            foreach (var (shardId, senderPid) in brain.Shards)
             {
-                _pendingCompute.Add(new ShardKey(brain.BrainId, shardId));
+                var key = new ShardKey(brain.BrainId, shardId);
+                _pendingCompute.Add(key);
+                _pendingComputeSenders[key] = senderPid;
             }
 
             context.Send(
@@ -2580,15 +2694,28 @@ public sealed class HiveMindActor : IActor
 
         if (!message.BrainId.TryToGuid(out var brainId) || message.ShardId is null)
         {
+            EmitTickComputeDoneIgnored(context, message, "invalid_payload");
             return;
         }
 
         var shardId = message.ShardId.ToShardId32();
         var key = new ShardKey(brainId, shardId);
 
-        if (!_pendingCompute.Remove(key))
+        if (!_pendingComputeSenders.TryGetValue(key, out var expectedSender))
         {
-            _tick.LateComputeCount++;
+            EmitTickComputeDoneIgnored(context, message, "untracked_payload");
+            return;
+        }
+
+        if (!SenderMatchesPid(context.Sender, expectedSender))
+        {
+            EmitTickComputeDoneIgnored(context, message, "sender_mismatch", expectedSender);
+            return;
+        }
+
+        if (!RemovePendingCompute(key))
+        {
+            EmitTickComputeDoneIgnored(context, message, "untracked_payload", expectedSender);
             return;
         }
 
@@ -2629,12 +2756,25 @@ public sealed class HiveMindActor : IActor
 
         if (!message.BrainId.TryToGuid(out var brainId))
         {
+            EmitTickDeliverDoneIgnored(context, message, "invalid_payload");
             return;
         }
 
-        if (!_pendingDeliver.Remove(brainId))
+        if (!_pendingDeliverSenders.TryGetValue(brainId, out var expectedSender))
         {
-            _tick.LateDeliverCount++;
+            EmitTickDeliverDoneIgnored(context, message, "untracked_payload");
+            return;
+        }
+
+        if (!SenderMatchesPid(context.Sender, expectedSender))
+        {
+            EmitTickDeliverDoneIgnored(context, message, "sender_mismatch", expectedSender);
+            return;
+        }
+
+        if (!RemovePendingDeliver(brainId))
+        {
+            EmitTickDeliverDoneIgnored(context, message, "untracked_payload", expectedSender);
             return;
         }
 
@@ -2663,7 +2803,7 @@ public sealed class HiveMindActor : IActor
                         "tick.compute.timeout",
                         $"Tick {_tick.TickId} compute timeout pending={_pendingCompute.Count}");
                 }
-                _pendingCompute.Clear();
+                ClearPendingCompute();
                 CompleteComputePhase(context);
                 break;
             case TickPhase.Deliver:
@@ -2678,7 +2818,7 @@ public sealed class HiveMindActor : IActor
                         "tick.deliver.timeout",
                         $"Tick {_tick.TickId} deliver timeout pendingBrains={pendingBrains}");
                 }
-                _pendingDeliver.Clear();
+                ClearPendingDeliver();
                 CompleteTick(context);
                 break;
         }
@@ -2722,6 +2862,7 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
             _pendingDeliver.Add(brain.BrainId);
+            _pendingDeliverSenders[brain.BrainId] = deliverTarget;
             context.Send(deliverTarget, new ProtoControl.TickDeliver { TickId = _tick.TickId });
         }
 
@@ -2839,6 +2980,30 @@ public sealed class HiveMindActor : IActor
         ScheduleSelf(context, TimeSpan.FromMilliseconds(timeoutMs), new TickPhaseTimeout(tickId, phase));
     }
 
+    private bool RemovePendingCompute(ShardKey key)
+    {
+        _pendingComputeSenders.Remove(key);
+        return _pendingCompute.Remove(key);
+    }
+
+    private bool RemovePendingDeliver(Guid brainId)
+    {
+        _pendingDeliverSenders.Remove(brainId);
+        return _pendingDeliver.Remove(brainId);
+    }
+
+    private void ClearPendingCompute()
+    {
+        _pendingCompute.Clear();
+        _pendingComputeSenders.Clear();
+    }
+
+    private void ClearPendingDeliver()
+    {
+        _pendingDeliver.Clear();
+        _pendingDeliverSenders.Clear();
+    }
+
     private void RemovePendingComputeForBrain(Guid brainId)
     {
         if (_pendingCompute.Count == 0)
@@ -2859,7 +3024,7 @@ public sealed class HiveMindActor : IActor
         {
             foreach (var key in removeKeys)
             {
-                _pendingCompute.Remove(key);
+                RemovePendingCompute(key);
             }
 
             return;
@@ -2867,7 +3032,7 @@ public sealed class HiveMindActor : IActor
 
         foreach (var key in removeKeys)
         {
-            if (_pendingCompute.Remove(key))
+            if (RemovePendingCompute(key))
             {
                 _tick.ExpectedComputeCount = Math.Max(_tick.CompletedComputeCount, _tick.ExpectedComputeCount - 1);
             }
@@ -2884,13 +3049,13 @@ public sealed class HiveMindActor : IActor
 
         if (_phase == TickPhase.Compute)
         {
-            _pendingCompute.Clear();
+            ClearPendingCompute();
             MaybeCompleteCompute(context);
         }
 
         if (_phase == TickPhase.Deliver)
         {
-            _pendingDeliver.Clear();
+            ClearPendingDeliver();
             MaybeCompleteDeliver(context);
         }
 
@@ -3010,6 +3175,45 @@ public sealed class HiveMindActor : IActor
 
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private void EmitTickComputeDoneIgnored(
+        IContext context,
+        ProtoControl.TickComputeDone message,
+        string reason,
+        PID? expectedSender = null)
+    {
+        var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+        var expectedLabel = expectedSender is null ? string.Empty : $" expectedSender={PidLabel(expectedSender)}";
+        var brainLabel = message.BrainId is null || !message.BrainId.TryToGuid(out var brainId)
+            ? "<invalid>"
+            : brainId.ToString("D");
+        var shardLabel = message.ShardId is null
+            ? "<missing>"
+            : message.ShardId.ToShardId32().ToString();
+        EmitDebug(
+            context,
+            ProtoSeverity.SevDebug,
+            "tick.compute_done.ignored",
+            $"Ignored TickComputeDone. reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}.");
+    }
+
+    private void EmitTickDeliverDoneIgnored(
+        IContext context,
+        ProtoControl.TickDeliverDone message,
+        string reason,
+        PID? expectedSender = null)
+    {
+        var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+        var expectedLabel = expectedSender is null ? string.Empty : $" expectedSender={PidLabel(expectedSender)}";
+        var brainLabel = message.BrainId is null || !message.BrainId.TryToGuid(out var brainId)
+            ? "<invalid>"
+            : brainId.ToString("D");
+        EmitDebug(
+            context,
+            ProtoSeverity.SevDebug,
+            "tick.deliver_done.ignored",
+            $"Ignored TickDeliverDone. reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}.");
+    }
 
     private static PID? NormalizePid(IContext context, PID? pid)
     {

@@ -213,13 +213,13 @@ public sealed class BrainRootActor : IActor
     {
         if (_hiveMindPid is not null)
         {
-            context.Send(_hiveMindPid, message);
+            context.Request(_hiveMindPid, message);
             return;
         }
 
         if (context.Parent is not null)
         {
-            context.Send(context.Parent, message);
+            context.Request(context.Parent, message);
         }
     }
 

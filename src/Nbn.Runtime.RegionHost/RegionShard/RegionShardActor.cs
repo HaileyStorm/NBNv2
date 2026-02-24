@@ -291,7 +291,7 @@ public sealed class RegionShardActor : IActor
             return;
         }
 
-        context.Send(target, ack);
+        context.Request(target, ack);
     }
 
     private void HandleTickCompute(IContext context, TickCompute tick)
@@ -505,7 +505,7 @@ public sealed class RegionShardActor : IActor
         var doneTarget = _tickSink ?? context.Sender ?? _router;
         if (doneTarget is not null)
         {
-            context.Send(doneTarget, done);
+            context.Request(doneTarget, done);
         }
     }
 

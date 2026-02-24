@@ -157,8 +157,29 @@ public sealed class BrainSignalRouterActor : IActor
             return;
         }
 
-        pending.AckCount++;
-        if (pending.AckCount < pending.ExpectedAcks)
+        if (ack.ShardId is null)
+        {
+            EmitSignalBatchAckIgnored(context, ack, "missing_shard");
+            return;
+        }
+
+        var key = new PendingAckKey(ack.RegionId, ack.ShardId.ToShardId32());
+        if (!pending.PendingAckSenders.TryGetValue(key, out var expectedSender))
+        {
+            var reason = pending.AckedKeys.Contains(key) ? "duplicate" : "untracked_payload";
+            EmitSignalBatchAckIgnored(context, ack, reason);
+            return;
+        }
+
+        if (!SenderMatchesPid(context.Sender, expectedSender))
+        {
+            EmitSignalBatchAckIgnored(context, ack, "sender_mismatch", expectedSender);
+            return;
+        }
+
+        pending.PendingAckSenders.Remove(key);
+        pending.AckedKeys.Add(key);
+        if (pending.PendingAckSenders.Count > 0)
         {
             return;
         }
@@ -178,7 +199,7 @@ public sealed class BrainSignalRouterActor : IActor
         var replyTo = pending.ReplyTo ?? context.Parent;
         if (replyTo is not null)
         {
-            context.Send(replyTo, deliverDone);
+            context.Request(replyTo, deliverDone);
         }
     }
 
@@ -304,7 +325,7 @@ public sealed class BrainSignalRouterActor : IActor
     {
         var deliveredBatches = 0u;
         var deliveredContribs = 0u;
-        var expectedAcks = 0;
+        var expectedAckSenders = new Dictionary<PendingAckKey, PID>();
         var fallbackRoutes = 0;
         var missingRouteLogged = false;
         var inputRoutes = Array.Empty<ShardRoute>();
@@ -346,10 +367,10 @@ public sealed class BrainSignalRouterActor : IActor
                 signalBatch.Contribs.AddRange(entry.Value.Contribs);
                 // Use Request so RegionShard can reply with SignalBatchAck to this router.
                 context.Request(pid, signalBatch);
+                expectedAckSenders[new PendingAckKey(entry.Value.RegionId, entry.Key)] = pid;
 
                 deliveredBatches++;
                 deliveredContribs += (uint)entry.Value.Contribs.Count;
-                expectedAcks++;
             }
 
             _pendingOutboxes.Remove(tickId);
@@ -375,13 +396,15 @@ public sealed class BrainSignalRouterActor : IActor
 
                     signalBatch.Contribs.AddRange(inputContribs);
                     context.Request(route.Pid, signalBatch);
+                    expectedAckSenders[new PendingAckKey((uint)NbnConstants.InputRegionId, route.ShardId)] = route.Pid;
 
                     deliveredBatches++;
                     deliveredContribs += (uint)inputContribs.Count;
-                    expectedAcks++;
                 }
             }
         }
+
+        var expectedAcks = expectedAckSenders.Count;
 
         if (LogDelivery)
         {
@@ -401,7 +424,7 @@ public sealed class BrainSignalRouterActor : IActor
 
             if (replyTo is not null)
             {
-                context.Send(replyTo, deliverDone);
+                context.Request(replyTo, deliverDone);
             }
             else if (LogDelivery)
             {
@@ -417,7 +440,7 @@ public sealed class BrainSignalRouterActor : IActor
             stopwatch,
             deliveredBatches,
             deliveredContribs,
-            expectedAcks);
+            expectedAckSenders);
 
         _pendingDeliveries[tickId] = pending;
     }
@@ -581,6 +604,38 @@ public sealed class BrainSignalRouterActor : IActor
         return string.Join(",", routes);
     }
 
+    private static bool SenderMatchesPid(PID? sender, PID expected)
+    {
+        if (sender is null)
+        {
+            return false;
+        }
+
+        var expectedAddress = expected.Address ?? string.Empty;
+        var senderAddress = sender.Address ?? string.Empty;
+        var expectedId = expected.Id ?? string.Empty;
+        var senderId = sender.Id ?? string.Empty;
+
+        return string.Equals(expectedAddress, senderAddress, StringComparison.Ordinal)
+               && string.Equals(expectedId, senderId, StringComparison.Ordinal);
+    }
+
+    private void EmitSignalBatchAckIgnored(
+        IContext context,
+        SignalBatchAck ack,
+        string reason,
+        PID? expectedSender = null)
+    {
+        var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+        var expectedLabel = expectedSender is null ? string.Empty : $" expectedSender={PidLabel(expectedSender)}";
+        var shardLabel = ack.ShardId is null ? "<missing>" : ack.ShardId.ToShardId32().ToString();
+        Log(
+            $"SignalBatchAck ignored tick={ack.TickId} reason={reason} region={ack.RegionId} shard={shardLabel} sender={senderLabel}{expectedLabel}");
+    }
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
     private static void ForwardToParent(IContext context, object message)
     {
         if (context.Parent is null)
@@ -588,7 +643,7 @@ public sealed class BrainSignalRouterActor : IActor
             return;
         }
 
-        context.Send(context.Parent, message);
+        context.Request(context.Parent, message);
     }
 
     private bool IsForBrain(Nbn.Proto.Uuid? brainId)
@@ -648,14 +703,14 @@ public sealed class BrainSignalRouterActor : IActor
             Stopwatch stopwatch,
             uint deliveredBatches,
             uint deliveredContribs,
-            int expectedAcks)
+            Dictionary<PendingAckKey, PID> pendingAckSenders)
         {
             TickId = tickId;
             ReplyTo = replyTo;
             Stopwatch = stopwatch;
             DeliveredBatches = deliveredBatches;
             DeliveredContribs = deliveredContribs;
-            ExpectedAcks = expectedAcks;
+            PendingAckSenders = pendingAckSenders;
         }
 
         public ulong TickId { get; }
@@ -663,9 +718,11 @@ public sealed class BrainSignalRouterActor : IActor
         public Stopwatch Stopwatch { get; }
         public uint DeliveredBatches { get; }
         public uint DeliveredContribs { get; }
-        public int ExpectedAcks { get; }
-        public int AckCount { get; set; }
+        public Dictionary<PendingAckKey, PID> PendingAckSenders { get; }
+        public HashSet<PendingAckKey> AckedKeys { get; } = new();
     }
+
+    private readonly record struct PendingAckKey(uint RegionId, ShardId32 ShardId);
 
     private sealed class PendingInputDrain
     {

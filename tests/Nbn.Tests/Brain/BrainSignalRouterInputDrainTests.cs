@@ -124,6 +124,231 @@ public class BrainSignalRouterInputDrainTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task TickDeliver_ForeignSenderForgedAck_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var shardId = ShardId32.From(1, 0);
+
+        var batchTcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shard = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, shardId, batchTcs)));
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardId.Value, shard)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardId, targetNeuronId: 0, value: 1f));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        await batchTcs.Task.WaitAsync(timeoutCts.Token);
+
+        var foreign = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(
+            foreign,
+            new SendMessage(router, CreateAck(brainId, shardId, 1)));
+
+        await AssertTaskStillPending(deliverTask, TimeSpan.FromMilliseconds(150));
+
+        await root.RequestAsync<EmitAckAck>(
+            shard,
+            new EmitAck(router, CreateAck(brainId, shardId, 1)));
+
+        var deliverDone = await deliverTask.WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, deliverDone.TickId);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_SameIdDifferentAddressSenderAck_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var shardId = ShardId32.From(1, 0);
+        var senderId = $"AckSender{Guid.NewGuid():N}";
+        var expectedRemotePid = new PID("127.0.0.1:12041", senderId);
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardId.Value, expectedRemotePid)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardId, targetNeuronId: 0, value: 1f));
+
+        var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        var forgedSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), senderId);
+        await root.RequestAsync<SendMessageAck>(
+            forgedSender,
+            new SendMessage(router, CreateAck(brainId, shardId, 1)));
+
+        await AssertTaskStillPending(deliverTask, TimeSpan.FromMilliseconds(150));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_ExpectedSenderWithMismatchedPayload_IsIgnored()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var shardId = ShardId32.From(1, 0);
+
+        var batchTcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shard = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, shardId, batchTcs)));
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardId.Value, shard)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardId, targetNeuronId: 0, value: 1f));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        await batchTcs.Task.WaitAsync(timeoutCts.Token);
+
+        await root.RequestAsync<EmitAckAck>(
+            shard,
+            new EmitAck(router, CreateAck(Guid.NewGuid(), shardId, 1)));
+
+        await AssertTaskStillPending(deliverTask, TimeSpan.FromMilliseconds(150));
+
+        await root.RequestAsync<EmitAckAck>(
+            shard,
+            new EmitAck(router, CreateAck(brainId, shardId, 1)));
+
+        var deliverDone = await deliverTask.WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, deliverDone.TickId);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_DuplicateAckFromSameShard_DoesNotDoubleCount()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var shardAId = ShardId32.From(1, 0);
+        var shardBId = ShardId32.From(1, 1);
+
+        var batchATcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var batchBTcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardA = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, shardAId, batchATcs)));
+        var shardB = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, shardBId, batchBTcs)));
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardAId.Value, shardA),
+            new ShardRoute(shardBId.Value, shardB)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardAId, targetNeuronId: 0, value: 1f));
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardBId, targetNeuronId: 0, value: 1f));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        await batchATcs.Task.WaitAsync(timeoutCts.Token);
+        await batchBTcs.Task.WaitAsync(timeoutCts.Token);
+
+        var shardAAck = CreateAck(brainId, shardAId, 1);
+        await root.RequestAsync<EmitAckAck>(shardA, new EmitAck(router, shardAAck));
+        await root.RequestAsync<EmitAckAck>(shardA, new EmitAck(router, shardAAck));
+
+        await AssertTaskStillPending(deliverTask, TimeSpan.FromMilliseconds(150));
+
+        await root.RequestAsync<EmitAckAck>(
+            shardB,
+            new EmitAck(router, CreateAck(brainId, shardBId, 1)));
+
+        var deliverDone = await deliverTask.WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, deliverDone.TickId);
+        Assert.Equal((uint)2, deliverDone.DeliveredBatches);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_Completes_WhenExpectedShardSendersAck()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var shardAId = ShardId32.From(1, 0);
+        var shardBId = ShardId32.From(1, 1);
+
+        var batchATcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var batchBTcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardA = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, shardAId, batchATcs)));
+        var shardB = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, shardBId, batchBTcs)));
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardAId.Value, shardA),
+            new ShardRoute(shardBId.Value, shardB)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardAId, targetNeuronId: 0, value: 1f));
+        root.Send(router, CreateOutboxBatch(brainId, 1, shardBId, targetNeuronId: 0, value: 1f));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        await batchATcs.Task.WaitAsync(timeoutCts.Token);
+        await batchBTcs.Task.WaitAsync(timeoutCts.Token);
+
+        await root.RequestAsync<EmitAckAck>(
+            shardA,
+            new EmitAck(router, CreateAck(brainId, shardAId, 1)));
+        await root.RequestAsync<EmitAckAck>(
+            shardB,
+            new EmitAck(router, CreateAck(brainId, shardBId, 1)));
+
+        var deliverDone = await deliverTask.WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, deliverDone.TickId);
+        Assert.Equal((uint)2, deliverDone.DeliveredBatches);
+
+        await system.ShutdownAsync();
+    }
+
+    private static OutboxBatch CreateOutboxBatch(Guid brainId, ulong tickId, ShardId32 destination, uint targetNeuronId, float value)
+    {
+        var outbox = new OutboxBatch
+        {
+            BrainId = brainId.ToProtoUuid(),
+            TickId = tickId,
+            DestRegionId = (uint)destination.RegionId,
+            DestShardId = destination.ToProtoShardId32()
+        };
+        outbox.Contribs.Add(new Contribution
+        {
+            TargetNeuronId = targetNeuronId,
+            Value = value
+        });
+        return outbox;
+    }
+
+    private static SignalBatchAck CreateAck(Guid brainId, ShardId32 shardId, ulong tickId)
+        => new()
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            TickId = tickId
+        };
+
+    private static async Task AssertTaskStillPending(Task task, TimeSpan timeout)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeout));
+        Assert.NotSame(task, completed);
+    }
+
     private sealed class IoDrainActor : IActor
     {
         private readonly Guid _brainId;
@@ -187,8 +412,60 @@ public class BrainSignalRouterInputDrainTests
                 };
                 if (context.Sender is not null)
                 {
-                    context.Send(context.Sender, ack);
+                    context.Request(context.Sender, ack);
                 }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed record SendMessage(PID Target, object Message);
+    private sealed record SendMessageAck;
+    private sealed record EmitAck(PID Target, SignalBatchAck Ack);
+    private sealed record EmitAckAck;
+
+    private sealed class ManualSenderActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is SendMessage send)
+            {
+                context.Request(send.Target, send.Message);
+                context.Respond(new SendMessageAck());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ControlledAckShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly TaskCompletionSource<SignalBatch> _batchTcs;
+
+        public ControlledAckShardActor(Guid brainId, ShardId32 shardId, TaskCompletionSource<SignalBatch> batchTcs)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _batchTcs = batchTcs;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SignalBatch batch when Matches(batch.BrainId):
+                    _batchTcs.TrySetResult(batch);
+                    break;
+                case EmitAck emitAck:
+                    context.Request(emitAck.Target, emitAck.Ack);
+                    context.Respond(new EmitAckAck());
+                    break;
             }
 
             return Task.CompletedTask;

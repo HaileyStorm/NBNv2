@@ -113,6 +113,83 @@ public class DistributedIntegrationTests
         Assert.StartsWith(brainNode.Address + "/", info.SignalRouterPid);
     }
 
+    [Fact]
+    public async Task TickBarrier_DeliverDone_ForeignSameIdDifferentAddressSender_IsIgnored()
+    {
+        var hivePort = GetFreePort();
+        var brainPort = GetFreePort();
+        var shardPort = GetFreePort();
+        var foreignPort = GetFreePort();
+
+        await using var hiveNode = await RemoteTestNode.StartAsync(BuildHiveMindConfig(hivePort));
+        await using var brainNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(brainPort));
+        await using var shardNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(shardPort));
+        await using var foreignNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(foreignPort));
+
+        var options = CreateOptions(hivePort, computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+        var hiveMindLocal = hiveNode.Root.SpawnNamed(
+            Props.FromProducer(() => new HiveMindActor(options)),
+            HiveMindNames.HiveMind);
+        var hiveMindRemote = new PID(hiveNode.Address, hiveMindLocal.Id);
+
+        var brainId = Guid.NewGuid();
+        var brainRootName = $"brain-root-{Guid.NewGuid():N}";
+        var brainRoot = brainNode.Root.SpawnNamed(
+            Props.FromProducer(() => new BrainRootActor(brainId, hiveMindRemote)),
+            brainRootName);
+        var router = await WaitForSignalRouter(brainNode.Root, brainRoot, TimeSpan.FromSeconds(5));
+        var routerRemote = EnsureAddress(router, brainNode.Address);
+
+        var shardId = ShardId32.From(1, 0);
+        var shardActor = shardNode.Root.Spawn(
+            Props.FromProducer(() => new NoAckRemoteShardActor(brainId, shardId, routerRemote, hiveMindRemote)));
+        var shardRemote = EnsureAddress(shardActor, shardNode.Address);
+
+        shardNode.Root.Send(hiveMindRemote, new Nbn.Proto.Control.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardRemote),
+            NeuronStart = 0,
+            NeuronCount = 1
+        });
+
+        await WaitForStatus(hiveNode.Root, hiveMindLocal, s => s.RegisteredBrains == 1, TimeSpan.FromSeconds(5));
+        await WaitForRoutingTable(brainNode.Root, router, table => table.Count == 1, TimeSpan.FromSeconds(5));
+
+        hiveNode.Root.Send(hiveMindLocal, new StartTickLoop());
+        await WaitForStatus(
+            hiveNode.Root,
+            hiveMindLocal,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 0 && s.PendingDeliver == 1,
+            TimeSpan.FromSeconds(5));
+
+        var forgedSender = foreignNode.Root.SpawnNamed(
+            Props.FromProducer(() => new ManualSenderActor()),
+            brainRootName);
+        var forgedDone = new TickDeliverDone
+        {
+            TickId = 1,
+            BrainId = brainId.ToProtoUuid(),
+            DeliverMs = 1,
+            DeliveredBatches = 0,
+            DeliveredContribs = 0
+        };
+
+        await foreignNode.Root.RequestAsync<SendMessageAck>(forgedSender, new SendMessage(hiveMindRemote, forgedDone));
+        await Task.Delay(150);
+
+        var status = await hiveNode.Root.RequestAsync<ProtoControl.HiveMindStatus>(
+            hiveMindLocal,
+            new ProtoControl.GetHiveMindStatus());
+        Assert.Equal((ulong)0, status.LastCompletedTickId);
+        Assert.Equal((uint)0, status.PendingCompute);
+        Assert.Equal((uint)1, status.PendingDeliver);
+
+        hiveNode.Root.Send(hiveMindLocal, new StopTickLoop());
+    }
+
     private static RemoteConfig BuildHiveMindConfig(int port)
     {
         var options = CreateOptions(port);
@@ -274,6 +351,8 @@ public class DistributedIntegrationTests
             IoName: null);
 
     private sealed record SignalDelivered;
+    private sealed record SendMessage(PID Target, object Message);
+    private sealed record SendMessageAck;
 
     private sealed class SignalSinkActor : IActor
     {
@@ -365,7 +444,7 @@ public class DistributedIntegrationTests
                 OutContribs = 1
             };
 
-            context.Send(_tickSink, done);
+            context.Request(_tickSink, done);
         }
 
         private void HandleSignalBatch(IContext context, SignalBatch batch)
@@ -378,8 +457,80 @@ public class DistributedIntegrationTests
                 TickId = batch.TickId
             };
 
-            context.Send(context.Sender ?? _router, ack);
+            context.Request(context.Sender ?? _router, ack);
             context.Send(_signalSink, new SignalDelivered());
+        }
+    }
+
+    private sealed class NoAckRemoteShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly uint _regionId;
+        private readonly PID _router;
+        private readonly PID _tickSink;
+
+        public NoAckRemoteShardActor(Guid brainId, ShardId32 shardId, PID router, PID tickSink)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _regionId = (uint)shardId.RegionId;
+            _router = router;
+            _tickSink = tickSink;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not TickCompute tick)
+            {
+                return Task.CompletedTask;
+            }
+
+            var outbox = new OutboxBatch
+            {
+                BrainId = _brainId.ToProtoUuid(),
+                TickId = tick.TickId,
+                DestRegionId = _regionId,
+                DestShardId = _shardId.ToProtoShardId32()
+            };
+            outbox.Contribs.Add(new Contribution { TargetNeuronId = 0, Value = 1f });
+            context.Send(_router, outbox);
+
+            var done = new TickComputeDone
+            {
+                TickId = tick.TickId,
+                BrainId = _brainId.ToProtoUuid(),
+                RegionId = _regionId,
+                ShardId = _shardId.ToProtoShardId32(),
+                ComputeMs = 1,
+                TickCostTotal = 0,
+                CostAccum = 0,
+                CostActivation = 0,
+                CostReset = 0,
+                CostDistance = 0,
+                CostRemote = 0,
+                FiredCount = 0,
+                OutBatches = 1,
+                OutContribs = 1
+            };
+
+            context.Request(_tickSink, done);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ManualSenderActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not SendMessage send)
+            {
+                return Task.CompletedTask;
+            }
+
+            context.Request(send.Target, send.Message);
+            context.Respond(new SendMessageAck());
+            return Task.CompletedTask;
         }
     }
 
