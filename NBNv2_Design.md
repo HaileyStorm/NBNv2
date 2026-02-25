@@ -3005,6 +3005,10 @@ If scope expands mid-task, switch to Aleph immediately.
 * For explicit model routing, prefer family aliases so upgrades happen automatically as new versions release:
   * stable/primary family alias (GPT-5)
   * fast scouting family alias (GPT-5-Spark / `gpt-5.3-codex-spark`)
+* Model-override scope policy:
+  * Prefer per-call overrides for mixed workloads (for example: `sub_query("...", model="gpt-5.3-codex-spark", reasoning_effort="high")`).
+  * Use `configure(sub_query_model=..., sub_query_reasoning_effort=...)` only when running a sustained batch of same-model sub-queries.
+  * After batch overrides, clear them (`configure(sub_query_model="", sub_query_reasoning_effort="")`) so inheritance from the main model resumes.
 * Spark usage policy:
   * Use Spark only for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory) and similar fairly simple tasks. But DO use it for those situations.
   * Do **not** use Spark for code reasoning, synthesis, architectural decisions, or non-rote code writing.
@@ -3043,6 +3047,7 @@ Use primary-model sub-queries (medium/high as needed) for:
 Do not use Spark for synthesis/decision prompts; hand off Spark findings to the primary model for reasoning and final decisions.
 
 For cross-file implementation work, sub-queries are expected (not optional): run a small pack of focused sub-queries before first major edit.
+For mixed sessions, keep default inheritance on and route only bounded evidence calls to Spark at the individual `sub_query(...)` call site.
 
 ### 21.7 Minimum Aleph workflow (required when section 21.2 triggers)
 
@@ -3069,6 +3074,7 @@ Aleph supports explicit sub-query controls when needed:
 
 * `--sub-query-model`
 * `--sub-query-reasoning-effort`
+* per-call `sub_query(..., model=..., reasoning_effort=...)` overrides
 
 If omitted, defaults should inherit from the main session model/settings.
 
@@ -3178,7 +3184,9 @@ Use these defaults to avoid recurring Aleph friction:
    * `bd comment add ...` is deprecated/invalid in this environment and can fail with `issue add not found`.
 11. Codex model override compatibility:
    * Some Codex-account modes reject explicit Spark overrides (for example `gpt-5-spark`) even when default Codex runs fine.
-   * For sub-queries, prefer inherited/default model unless you have confirmed the override is supported in that account/session.
+   * Prefer per-call model overrides first; avoid setting global `configure(sub_query_model=...)` unless you are intentionally running a long same-model batch.
+   * If override support is uncertain, run a tiny smoke query with the intended `model=...` in `sub_query(...)` before wider use.
+   * If the override fails, fall back to inherited/default model and continue evidence collection.
 12. Aleph `exec_python(sub_query(...))` timeout behavior:
    * In some MCP sessions, tool-call timeout can occur around ~60s even when `sub_query_timeout` is larger.
    * Keep delegated prompts narrow (single concrete ask) and prefer concise output shape to avoid MCP timeout before sub-query completion.
