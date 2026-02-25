@@ -19,7 +19,7 @@ namespace Nbn.Runtime.WorkerNode;
 
 public sealed class WorkerNodeActor : IActor
 {
-    private static readonly TimeSpan BrainInfoTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan BrainInfoTimeout = TimeSpan.FromMilliseconds(500);
 
     private readonly Guid _workerNodeId;
     private readonly string _workerAddress;
@@ -284,12 +284,7 @@ public sealed class WorkerNodeActor : IActor
             return;
         }
 
-        if (context.Sender is not null
-            && !string.IsNullOrWhiteSpace(context.Sender.Id)
-            && !context.Sender.Id.StartsWith("$", StringComparison.Ordinal))
-        {
-            _hiveMindHintPid = context.Sender;
-        }
+        MaybeCaptureHiveMindHint(context.Sender);
 
         var brain = GetOrCreateBrainState(brainId);
 
@@ -336,7 +331,10 @@ public sealed class WorkerNodeActor : IActor
             }
         }
 
-        await EnsureRuntimeInfoAsync(context, brain).ConfigureAwait(false);
+        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard)
+        {
+            await EnsureRuntimeInfoAsync(context, brain).ConfigureAwait(false);
+        }
 
         var hostingStarted = Stopwatch.GetTimestamp();
         var hosted = await HostAssignmentAsync(context, brain, assignment.Clone()).ConfigureAwait(false);
@@ -370,7 +368,7 @@ public sealed class WorkerNodeActor : IActor
         var assignment = request.Assignment;
         if (assignment is null)
         {
-            context.Respond(FailedUnassignmentAck(
+            ReplyToSender(context, FailedUnassignmentAck(
                 assignmentId: string.Empty,
                 brainId: null,
                 placementEpoch: 0,
@@ -381,7 +379,7 @@ public sealed class WorkerNodeActor : IActor
 
         if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
         {
-            context.Respond(FailedUnassignmentAck(
+            ReplyToSender(context, FailedUnassignmentAck(
                 assignmentId: string.Empty,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
@@ -392,7 +390,7 @@ public sealed class WorkerNodeActor : IActor
 
         if (assignment.BrainId is null || !assignment.BrainId.TryToGuid(out var brainId))
         {
-            context.Respond(FailedUnassignmentAck(
+            ReplyToSender(context, FailedUnassignmentAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
@@ -403,7 +401,7 @@ public sealed class WorkerNodeActor : IActor
 
         if (!assignment.WorkerNodeId.TryToGuid(out var targetWorkerNodeId))
         {
-            context.Respond(FailedUnassignmentAck(
+            ReplyToSender(context, FailedUnassignmentAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
@@ -414,7 +412,7 @@ public sealed class WorkerNodeActor : IActor
 
         if (targetWorkerNodeId != _workerNodeId)
         {
-            context.Respond(FailedUnassignmentAck(
+            ReplyToSender(context, FailedUnassignmentAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
@@ -423,22 +421,17 @@ public sealed class WorkerNodeActor : IActor
             return;
         }
 
-        if (context.Sender is not null
-            && !string.IsNullOrWhiteSpace(context.Sender.Id)
-            && !context.Sender.Id.StartsWith("$", StringComparison.Ordinal))
-        {
-            _hiveMindHintPid = context.Sender;
-        }
+        MaybeCaptureHiveMindHint(context.Sender);
 
         if (!_assignments.TryGetValue(assignment.AssignmentId, out var hostedState))
         {
-            context.Respond(BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
+            ReplyToSender(context, BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
             return;
         }
 
         if (!AssignmentSemanticallyMatches(hostedState.Assignment, assignment))
         {
-            context.Respond(FailedUnassignmentAck(
+            ReplyToSender(context, FailedUnassignmentAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
@@ -450,14 +443,14 @@ public sealed class WorkerNodeActor : IActor
         if (!_brains.TryGetValue(brainId, out var brain))
         {
             _assignments.Remove(assignment.AssignmentId);
-            context.Respond(BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
+            ReplyToSender(context, BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
             return;
         }
 
         var outcome = UnassignHostedAssignment(context, brain, hostedState, notifyHiveMind: true)
             ? "unassigned"
             : "already_unassigned";
-        context.Respond(BuildUnassignmentAck(assignment, accepted: true, outcome));
+        ReplyToSender(context, BuildUnassignmentAck(assignment, accepted: true, outcome));
     }
 
     private bool UnassignHostedAssignment(
@@ -579,7 +572,7 @@ public sealed class WorkerNodeActor : IActor
             report.Assignments.Count > 0 ? "matched" : "empty",
             failureReason);
 
-        context.Respond(report);
+        ReplyToSender(context, report);
     }
 
     private WorkerNodeSnapshot BuildSnapshot()
@@ -626,12 +619,15 @@ public sealed class WorkerNodeActor : IActor
         }
         catch (Exception ex)
         {
+            var detail = string.IsNullOrWhiteSpace(ex.Message)
+                ? ex.GetBaseException().Message
+                : ex.Message;
             return HostingResult.Failed(FailedAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureInternalError,
-                ex.GetBaseException().Message));
+                detail));
         }
     }
 
@@ -754,10 +750,10 @@ public sealed class WorkerNodeActor : IActor
         var runtime = brain.RuntimeInfo;
         if (runtime is not null && HasArtifactRef(runtime.BaseDefinition))
         {
+            var nbnRef = runtime.BaseDefinition!.Clone();
+            var nbsRef = HasArtifactRef(runtime.LastSnapshot) ? runtime.LastSnapshot!.Clone() : null;
             try
             {
-                var nbnRef = runtime.BaseDefinition!.Clone();
-                var nbsRef = HasArtifactRef(runtime.LastSnapshot) ? runtime.LastSnapshot!.Clone() : null;
                 return await RegionShardArtifactLoader.CreatePropsAsync(
                     _artifactStore,
                     nbnRef,
@@ -770,7 +766,11 @@ public sealed class WorkerNodeActor : IActor
             }
             catch (Exception ex)
             {
-                runtime.LastArtifactLoadError = ex.GetBaseException().Message;
+                var detail = ex.GetBaseException().Message;
+                runtime.LastArtifactLoadError = detail;
+                throw new InvalidOperationException(
+                    $"Artifact-backed shard load failed for brain {brain.BrainId} region {assignment.RegionId} shard {assignment.ShardIndex}: {detail}",
+                    ex);
             }
         }
 
@@ -849,7 +849,7 @@ public sealed class WorkerNodeActor : IActor
         }
 
         var remoteShardPid = ToRemotePid(context, shardPid);
-        context.Request(hiveMindPid, new ProtoControl.RegisterShard
+        TryRequest(context, hiveMindPid, new ProtoControl.RegisterShard
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
@@ -876,7 +876,7 @@ public sealed class WorkerNodeActor : IActor
             return;
         }
 
-        context.Request(hiveMindPid, new ProtoControl.RegisterOutputSink
+        TryRequest(context, hiveMindPid, new ProtoControl.RegisterOutputSink
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             OutputPid = brain.OutputCoordinatorPid is null
@@ -896,7 +896,7 @@ public sealed class WorkerNodeActor : IActor
             return;
         }
 
-        context.Request(hiveMindPid, new ProtoControl.UnregisterShard
+        TryRequest(context, hiveMindPid, new ProtoControl.UnregisterShard
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
@@ -984,44 +984,88 @@ public sealed class WorkerNodeActor : IActor
 
         if (!TryResolveEndpointPid(ServiceEndpointSettings.IoGatewayKey, out var ioPid))
         {
+            brain.RuntimeInfo.LastIoError = "io_gateway_unavailable";
             return;
         }
 
+        var candidatePids = new List<PID>(2);
+        var systemAddress = context.System.Address;
+        if (string.IsNullOrWhiteSpace(ioPid.Address) && !string.IsNullOrWhiteSpace(systemAddress))
+        {
+            candidatePids.Add(new PID(systemAddress, ioPid.Id));
+        }
+
+        candidatePids.Add(ioPid);
+
+        Exception? lastRequestException = null;
+        BrainInfo? info = null;
+
         try
         {
-            var info = await context.RequestAsync<BrainInfo>(
-                ioPid,
-                new BrainInfoRequest
+            foreach (var candidate in candidatePids)
+            {
+                try
                 {
-                    BrainId = brain.BrainId.ToProtoUuid()
-                },
-                BrainInfoTimeout).ConfigureAwait(false);
+                    info = await context.RequestAsync<BrainInfo>(
+                        candidate,
+                        new BrainInfoRequest
+                        {
+                            BrainId = brain.BrainId.ToProtoUuid()
+                        },
+                        BrainInfoTimeout).ConfigureAwait(false);
+
+                    if (info is not null)
+                    {
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastRequestException = ex;
+                }
+            }
+
             if (info is null)
             {
+                if (lastRequestException is not null)
+                {
+                    throw lastRequestException;
+                }
+
                 return;
             }
 
+            var hasMetadata = false;
             if (info.InputWidth > 0)
             {
                 brain.RuntimeInfo.InputWidth = Math.Max(brain.RuntimeInfo.InputWidth, checked((int)info.InputWidth));
+                hasMetadata = true;
             }
 
             if (info.OutputWidth > 0)
             {
                 brain.RuntimeInfo.OutputWidth = Math.Max(brain.RuntimeInfo.OutputWidth, checked((int)info.OutputWidth));
+                hasMetadata = true;
             }
 
             if (HasArtifactRef(info.BaseDefinition))
             {
                 brain.RuntimeInfo.BaseDefinition = info.BaseDefinition.Clone();
+                hasMetadata = true;
             }
 
             if (HasArtifactRef(info.LastSnapshot))
             {
                 brain.RuntimeInfo.LastSnapshot = info.LastSnapshot.Clone();
+                hasMetadata = true;
             }
 
-            brain.RuntimeInfo.HasIoMetadata = true;
+            if (hasMetadata)
+            {
+                brain.RuntimeInfo.HasIoMetadata = true;
+                brain.RuntimeInfo.LastIoError = string.Empty;
+            }
+
             UpdateRuntimeWidthsFromShards(brain);
         }
         catch (Exception ex)
@@ -1188,6 +1232,7 @@ public sealed class WorkerNodeActor : IActor
         brain.SignalRouterPid = null;
         brain.InputCoordinatorPid = null;
         brain.OutputCoordinatorPid = null;
+        brain.RuntimeInfo = null;
     }
 
     private static void AddPid(Dictionary<string, PID> toStop, PID? pid)
@@ -1252,7 +1297,7 @@ public sealed class WorkerNodeActor : IActor
             ack.PlacementEpoch,
             ToPlacementTargetLabel(target),
             ToFailureReasonLabel(ack.FailureReason));
-        context.Respond(ack);
+        ReplyToSender(context, ack);
     }
 
     private void RespondReadyPlacement(
@@ -1268,7 +1313,47 @@ public sealed class WorkerNodeActor : IActor
             ToPlacementTargetLabel(assignment.Target),
             string.IsNullOrWhiteSpace(message) ? "ready" : message,
             hostingMs);
-        context.Respond(BuildReadyAck(assignment, message));
+        ReplyToSender(context, BuildReadyAck(assignment, message));
+    }
+
+    private void ReplyToSender(IContext context, object message)
+    {
+        if (context.Sender is null)
+        {
+            return;
+        }
+
+        TryRequest(context, context.Sender, message);
+    }
+
+    private static void TryRequest(IContext context, PID target, object message)
+    {
+        try
+        {
+            context.Request(target, message);
+            return;
+        }
+        catch
+        {
+            // Retry with local system address for address-less local endpoints.
+        }
+
+        if (string.IsNullOrWhiteSpace(target.Address))
+        {
+            var systemAddress = context.System.Address;
+            if (!string.IsNullOrWhiteSpace(systemAddress))
+            {
+                try
+                {
+                    context.Request(new PID(systemAddress, target.Id), message);
+                    return;
+                }
+                catch
+                {
+                    // Best-effort control-plane notifications should not crash placement hosting.
+                }
+            }
+        }
     }
 
     private static string ToPlacementTargetLabel(PlacementAssignmentTarget target)
@@ -1416,6 +1501,23 @@ public sealed class WorkerNodeActor : IActor
 
     private string BuildObservedActorPid(IContext context, HostedAssignmentState assignment)
     {
+        var configuredActorName = assignment.Assignment.ActorName?.Trim();
+        if (!string.IsNullOrWhiteSpace(configuredActorName))
+        {
+            var slash = configuredActorName.LastIndexOf('/');
+            if (slash >= 0 && slash < configuredActorName.Length - 1)
+            {
+                configuredActorName = configuredActorName[(slash + 1)..];
+            }
+
+            if (!string.IsNullOrWhiteSpace(configuredActorName))
+            {
+                return string.IsNullOrWhiteSpace(_workerAddress)
+                    ? configuredActorName
+                    : $"{_workerAddress}/{configuredActorName}";
+            }
+        }
+
         if (assignment.HostedPid is not null)
         {
             return PidLabel(ToRemotePid(context, assignment.HostedPid));
@@ -1432,10 +1534,34 @@ public sealed class WorkerNodeActor : IActor
         return string.IsNullOrWhiteSpace(_workerAddress) ? actor : $"{_workerAddress}/{actor}";
     }
 
+    private void MaybeCaptureHiveMindHint(PID? sender)
+    {
+        if (sender is null
+            || string.IsNullOrWhiteSpace(sender.Id)
+            || sender.Id.StartsWith("$", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _hiveMindHintPid = sender;
+    }
+
     private PID? ResolveHiveMindPid(IContext context)
     {
         if (TryResolveEndpointPid(ServiceEndpointSettings.HiveMindKey, out var endpointPid))
         {
+            if (!string.IsNullOrWhiteSpace(endpointPid.Address))
+            {
+                return endpointPid;
+            }
+
+            if (_hiveMindHintPid is not null
+                && !string.IsNullOrWhiteSpace(_hiveMindHintPid.Address)
+                && string.Equals(_hiveMindHintPid.Id, endpointPid.Id, StringComparison.Ordinal))
+            {
+                return _hiveMindHintPid;
+            }
+
             return endpointPid;
         }
 
@@ -1514,17 +1640,23 @@ public sealed class WorkerNodeActor : IActor
 
     private PID ToRemotePid(IContext context, PID pid)
     {
+        var systemAddress = context.System.Address;
+
+        if (!string.IsNullOrWhiteSpace(_workerAddress))
+        {
+            if (string.IsNullOrWhiteSpace(pid.Address)
+                || string.Equals(pid.Address, systemAddress, StringComparison.Ordinal)
+                || string.Equals(pid.Address, "nonhost", StringComparison.OrdinalIgnoreCase))
+            {
+                return new PID(_workerAddress, pid.Id);
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(pid.Address))
         {
             return pid;
         }
 
-        if (!string.IsNullOrWhiteSpace(_workerAddress))
-        {
-            return new PID(_workerAddress, pid.Id);
-        }
-
-        var systemAddress = context.System.Address;
         if (string.IsNullOrWhiteSpace(systemAddress))
         {
             return pid;

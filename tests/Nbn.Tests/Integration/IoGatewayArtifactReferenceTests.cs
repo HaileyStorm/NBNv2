@@ -1,9 +1,15 @@
+using Microsoft.Data.Sqlite;
 using Nbn.Proto;
 using Nbn.Proto.Io;
+using Nbn.Runtime.Artifacts;
+using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
+using Nbn.Tests.Format;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoSettings = Nbn.Proto.Settings;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Integration;
@@ -13,43 +19,148 @@ public class IoGatewayArtifactReferenceTests
     [Fact]
     public async Task SpawnBrainViaIO_Forwards_To_HiveMind_And_Passes_Through_Success_Ack()
     {
-        var system = new ActorSystem();
-        var root = system.Root;
-        var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var expectedBrainId = Guid.NewGuid();
-        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSpawnProbe(
-            forwarded,
-            new ProtoControl.SpawnBrainAck
-            {
-                BrainId = expectedBrainId.ToProtoUuid()
-            })));
-        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
 
-        var brainDef = new string('9', 64).ToArtifactRef(99, "application/x-nbn", "test-store");
-        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
-            gateway,
-            new SpawnBrainViaIO
-            {
-                Request = new ProtoControl.SpawnBrain
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+
+            var ioPid = new PID(string.Empty, ioName);
+            var hiveMind = root.Spawn(
+                Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(), ioPid: ioPid)));
+            var gateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            var metadata = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+            var worker = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "worker.local", artifactRootPath: artifactRoot)));
+
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, metadata.Id);
+            PrimeWorkers(root, hiveMind, worker, workerNodeId);
+
+            var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+                gateway,
+                new SpawnBrainViaIO
                 {
-                    BrainDef = brainDef
-                }
-            });
+                    Request = new ProtoControl.SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(70));
 
-        Assert.NotNull(response.Ack);
-        Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
-        Assert.Equal(expectedBrainId, actualBrainId);
-        Assert.True(string.IsNullOrEmpty(response.Ack.FailureReasonCode));
-        Assert.True(string.IsNullOrEmpty(response.Ack.FailureMessage));
-        Assert.True(string.IsNullOrEmpty(response.FailureReasonCode));
-        Assert.True(string.IsNullOrEmpty(response.FailureMessage));
+            Assert.NotNull(response.Ack);
+            Assert.True(response.Ack.BrainId.TryToGuid(out var brainId));
+            Assert.True(
+                brainId != Guid.Empty,
+                $"Expected non-empty brain id but received failure={response.Ack.FailureReasonCode} message={response.Ack.FailureMessage}");
+            Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureMessage));
+            Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
-        Assert.NotNull(forwardedRequest.BrainDef);
-        Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+            await WaitForAsync(
+                async () =>
+                {
+                    var lifecycle = await root.RequestAsync<ProtoControl.PlacementLifecycleInfo>(
+                        hiveMind,
+                        new ProtoControl.GetPlacementLifecycle
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        });
 
-        await system.ShutdownAsync();
+                    return lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+                           || lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning;
+                },
+                timeoutMs: 5_000);
+
+            var routing = await root.RequestAsync<ProtoControl.BrainRoutingInfo>(
+                hiveMind,
+                new ProtoControl.GetBrainRouting
+                {
+                    BrainId = brainId.ToProtoUuid()
+                });
+            Assert.Equal($"worker.local/brain-{brainId:N}-root", routing.BrainRootPid);
+            Assert.Equal($"worker.local/brain-{brainId:N}-router", routing.SignalRouterPid);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrainViaIO_EndToEnd_WhenWorkerArtifactLoadFails_Returns_Actionable_Failure()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+
+            var ioPid = new PID(string.Empty, ioName);
+            var hiveMind = root.Spawn(
+                Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(), ioPid: ioPid)));
+            var gateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            var metadata = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+            var worker = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: new ThrowingArtifactStore("simulated artifact store load failure"))));
+
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, metadata.Id);
+            PrimeWorkers(root, hiveMind, worker, workerNodeId);
+
+            var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+                gateway,
+                new SpawnBrainViaIO
+                {
+                    Request = new ProtoControl.SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(70));
+
+            Assert.NotNull(response.Ack);
+            Assert.True(response.Ack.BrainId.TryToGuid(out var brainId));
+            Assert.Equal(Guid.Empty, brainId);
+            Assert.Equal("spawn_internal_error", response.Ack.FailureReasonCode);
+            Assert.Contains("artifact-backed shard load failed", response.Ack.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(response.Ack.FailureReasonCode, response.FailureReasonCode);
+            Assert.Equal(response.Ack.FailureMessage, response.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -1178,6 +1289,151 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    private static async Task<(string ArtifactRoot, ArtifactRef BrainDef)> StoreBrainDefinitionAsync()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-io-spawn-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+        var minimalNbn = NbnTestVectors.CreateMinimalNbn();
+        var manifest = await store.StoreAsync(new MemoryStream(minimalNbn), "application/x-nbn");
+        var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+        return (artifactRoot, brainDef);
+    }
+
+    private static HiveMindOptions CreateHiveOptions(
+        int assignmentTimeoutMs = 1_000,
+        int retryBackoffMs = 10,
+        int maxRetries = 1,
+        int reconcileTimeoutMs = 1_000)
+        => new(
+            BindHost: "127.0.0.1",
+            Port: 0,
+            AdvertisedHost: null,
+            AdvertisedPort: null,
+            TargetTickHz: 50f,
+            MinTickHz: 10f,
+            ComputeTimeoutMs: 500,
+            DeliverTimeoutMs: 500,
+            BackpressureDecay: 0.9f,
+            BackpressureRecovery: 1.1f,
+            LateBackpressureThreshold: 2,
+            TimeoutRescheduleThreshold: 3,
+            TimeoutPauseThreshold: 6,
+            RescheduleMinTicks: 10,
+            RescheduleMinMinutes: 1,
+            RescheduleQuietMs: 50,
+            RescheduleSimulatedMs: 50,
+            AutoStart: false,
+            EnableOpenTelemetry: false,
+            EnableOtelMetrics: false,
+            EnableOtelTraces: false,
+            EnableOtelConsoleExporter: false,
+            OtlpEndpoint: null,
+            ServiceName: "nbn.hivemind.tests",
+            SettingsDbPath: null,
+            SettingsHost: null,
+            SettingsPort: 0,
+            SettingsName: "SettingsMonitor",
+            IoAddress: null,
+            IoName: null,
+            WorkerInventoryRefreshMs: 2_000,
+            WorkerInventoryStaleAfterMs: 10_000,
+            PlacementAssignmentTimeoutMs: assignmentTimeoutMs,
+            PlacementAssignmentRetryBackoffMs: retryBackoffMs,
+            PlacementAssignmentMaxRetries: maxRetries,
+            PlacementReconcileTimeoutMs: reconcileTimeoutMs);
+
+    private static void PrimeWorkerDiscoveryEndpoints(IRootContext root, PID workerPid, string hiveName, string ioName)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+        {
+            [ServiceEndpointSettings.HiveMindKey] = new ServiceEndpointRegistration(
+                ServiceEndpointSettings.HiveMindKey,
+                new ServiceEndpoint(string.Empty, hiveName),
+                nowMs),
+            [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                ServiceEndpointSettings.IoGatewayKey,
+                new ServiceEndpoint(string.Empty, ioName),
+                nowMs)
+        };
+
+        root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+    }
+
+    private static void PrimeWorkers(IRootContext root, PID hiveMind, PID workerPid, Guid workerId)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: string.Empty,
+                    rootActorName: workerPid.Id)
+            }
+        });
+    }
+
+    private static ProtoSettings.WorkerReadinessCapability BuildWorker(
+        Guid nodeId,
+        bool isAlive,
+        bool isReady,
+        long lastSeenMs,
+        long capabilityTimeMs,
+        string address,
+        string rootActorName)
+        => new()
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            Address = address,
+            RootActorName = rootActorName,
+            IsAlive = isAlive,
+            IsReady = isReady,
+            LastSeenMs = lastSeenMs > 0 ? (ulong)lastSeenMs : 0,
+            HasCapabilities = capabilityTimeMs > 0,
+            CapabilityTimeMs = capabilityTimeMs > 0 ? (ulong)capabilityTimeMs : 0,
+            Capabilities = new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 8,
+                RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                HasGpu = true,
+                VramFreeBytes = 8UL * 1024 * 1024 * 1024,
+                CpuScore = 40f,
+                GpuScore = 80f
+            }
+        };
+
+    private static async Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        while (true)
+        {
+            if (await predicate().ConfigureAwait(false))
+            {
+                return;
+            }
+
+            try
+            {
+                await Task.Delay(20, cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        throw new TimeoutException($"Condition was not met within {timeoutMs} ms.");
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -1193,6 +1449,65 @@ public class IoGatewayArtifactReferenceTests
             HiveMindName: null,
             ReproAddress: null,
             ReproName: null);
+
+    private sealed class ThrowingArtifactStore : IArtifactStore
+    {
+        private readonly string _message;
+
+        public ThrowingArtifactStore(string message)
+        {
+            _message = string.IsNullOrWhiteSpace(message) ? "artifact store failure" : message;
+        }
+
+        public Task<ArtifactManifest> StoreAsync(
+            Stream content,
+            string mediaType,
+            ArtifactStoreWriteOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+
+        public Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+
+        public Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+
+        public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+    }
+
+    private sealed class FixedBrainInfoActor : IActor
+    {
+        private readonly ArtifactRef _baseDefinition;
+        private readonly uint _inputWidth;
+        private readonly uint _outputWidth;
+
+        public FixedBrainInfoActor(ArtifactRef baseDefinition, uint inputWidth, uint outputWidth)
+        {
+            _baseDefinition = baseDefinition.Clone();
+            _inputWidth = inputWidth;
+            _outputWidth = outputWidth;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not BrainInfoRequest request)
+            {
+                return Task.CompletedTask;
+            }
+
+            context.Respond(new BrainInfo
+            {
+                BrainId = request.BrainId,
+                InputWidth = _inputWidth,
+                OutputWidth = _outputWidth,
+                BaseDefinition = _baseDefinition.Clone(),
+                LastSnapshot = new ArtifactRef()
+            });
+
+            return Task.CompletedTask;
+        }
+    }
 
     private sealed class HiveSpawnProbe : IActor
     {

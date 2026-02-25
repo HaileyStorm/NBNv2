@@ -70,174 +70,174 @@ public sealed class HiveMindActor : IActor
     {
         switch (context.Message)
         {
-            case Started:
-                if (_tickLoopEnabled)
-                {
-                    ScheduleNextTick(context, TimeSpan.Zero);
-                }
+                case Started:
+                    if (_tickLoopEnabled)
+                    {
+                        ScheduleNextTick(context, TimeSpan.Zero);
+                    }
 
-                if (_settingsPid is not null)
-                {
-                    ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerInventoryTick());
-                }
-                break;
-            case StartTickLoop:
-                _tickLoopEnabled = true;
-                if (_phase == TickPhase.Idle && !_rescheduleInProgress)
-                {
-                    ScheduleNextTick(context, TimeSpan.Zero);
-                }
-                break;
-            case StopTickLoop:
-                _tickLoopEnabled = false;
-                break;
-            case TickStart:
-                if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle)
-                {
-                    StartTick(context);
-                }
-                break;
-            case ProtoControl.RegisterBrain message:
-                HandleRegisterBrain(context, message);
-                break;
-            case ProtoControl.UpdateBrainSignalRouter message:
-                HandleUpdateBrainSignalRouter(context, message);
-                break;
-            case ProtoControl.UnregisterBrain message:
-                HandleUnregisterBrain(context, message);
-                break;
-            case ProtoControl.RegisterShard message:
-                HandleRegisterShard(context, message);
-                break;
-            case ProtoControl.UnregisterShard message:
-                HandleUnregisterShard(context, message);
-                break;
-            case ProtoControl.RegisterOutputSink message:
-                HandleRegisterOutputSink(context, message);
-                break;
-            case ProtoControl.SetBrainVisualization message:
-                HandleSetBrainVisualization(context, message);
-                break;
-            case ProtoControl.SetBrainCostEnergy message:
-                HandleSetBrainCostEnergy(context, message);
-                break;
-            case ProtoControl.SetBrainPlasticity message:
-                HandleSetBrainPlasticity(context, message);
-                break;
-            case ProtoControl.GetBrainIoInfo message:
-                if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
-                {
-                    context.Respond(BuildBrainIoInfo(ioBrainId));
-                }
-                else
-                {
-                    context.Respond(new ProtoControl.BrainIoInfo());
-                }
-                break;
-            case ProtoIo.ExportBrainDefinition message:
-                HandleExportBrainDefinition(context, message);
-                break;
-            case ProtoIo.RequestSnapshot message:
-                HandleRequestSnapshot(context, message);
-                break;
-            case ProtoControl.SpawnBrain message:
-                HandleSpawnBrain(context, message);
-                break;
-            case ProtoControl.RequestPlacement message:
-                HandleRequestPlacement(context, message);
-                break;
-            case ProtoControl.GetPlacementLifecycle message:
-                if (message.BrainId is not null && message.BrainId.TryToGuid(out var placementBrainId))
-                {
-                    context.Respond(BuildPlacementLifecycleInfo(placementBrainId));
-                }
-                else
-                {
-                    context.Respond(new ProtoControl.PlacementLifecycleInfo());
-                }
-                break;
-            case ProtoControl.PlacementWorkerInventoryRequest:
-                context.Respond(BuildPlacementWorkerInventory());
-                break;
-            case ProtoControl.PlacementAssignmentAck message:
-                HandlePlacementAssignmentAck(context, message);
-                break;
-            case ProtoControl.PlacementUnassignmentAck message:
-                HandlePlacementUnassignmentAck(context, message);
-                break;
-            case ProtoControl.PlacementReconcileReport message:
-                HandlePlacementReconcileReport(context, message);
-                break;
-            case DispatchPlacementPlan message:
-                HandleDispatchPlacementPlan(context, message);
-                break;
-            case RetryPlacementAssignment message:
-                HandleRetryPlacementAssignment(context, message);
-                break;
-            case PlacementAssignmentTimeout message:
-                HandlePlacementAssignmentTimeout(context, message);
-                break;
-            case PlacementReconcileTimeout message:
-                HandlePlacementReconcileTimeout(context, message);
-                break;
-            case SpawnCompletionTimeout message:
-                HandleSpawnCompletionTimeout(context, message);
-                break;
-            case ProtoSettings.WorkerInventorySnapshotResponse message:
-                HandleWorkerInventorySnapshotResponse(message);
-                break;
-            case PauseBrainRequest message:
-                PauseBrain(context, message.BrainId, message.Reason);
-                break;
-            case ResumeBrainRequest message:
-                ResumeBrain(context, message.BrainId);
-                break;
-            case ProtoControl.PauseBrain message:
-                HandlePauseBrainControl(context, message);
-                break;
-            case ProtoControl.ResumeBrain message:
-                HandleResumeBrainControl(context, message);
-                break;
-            case ProtoControl.KillBrain message:
-                HandleKillBrainControl(context, message);
-                break;
-            case ProtoControl.TickComputeDone message:
-                HandleTickComputeDone(context, message);
-                break;
-            case ProtoControl.TickDeliverDone message:
-                HandleTickDeliverDone(context, message);
-                break;
-            case TickPhaseTimeout message:
-                HandleTickPhaseTimeout(context, message);
-                break;
-            case RefreshWorkerInventoryTick:
-                RefreshWorkerInventory(context);
-                break;
-            case RescheduleNow message:
-                BeginReschedule(context, message);
-                break;
-            case RescheduleCompleted message:
-                CompleteReschedule(context, message);
-                break;
-            case ProtoControl.GetHiveMindStatus:
-                context.Respond(BuildStatus());
-                break;
-            case ProtoControl.SetTickRateOverride message:
-                HandleSetTickRateOverride(context, message);
-                break;
-            case GetBrainRouting message:
-                context.Respond(BuildRoutingInfo(message.BrainId));
-                break;
-            case ProtoControl.GetBrainRouting message:
-                if (message.BrainId is not null && message.BrainId.TryToGuid(out var routingBrainId))
-                {
-                    context.Respond(BuildRoutingInfoProto(routingBrainId));
-                }
-                else
-                {
-                    context.Respond(new ProtoControl.BrainRoutingInfo());
-                }
-                break;
+                    if (_settingsPid is not null)
+                    {
+                        ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerInventoryTick());
+                    }
+                    break;
+                case StartTickLoop:
+                    _tickLoopEnabled = true;
+                    if (_phase == TickPhase.Idle && !_rescheduleInProgress)
+                    {
+                        ScheduleNextTick(context, TimeSpan.Zero);
+                    }
+                    break;
+                case StopTickLoop:
+                    _tickLoopEnabled = false;
+                    break;
+                case TickStart:
+                    if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle)
+                    {
+                        StartTick(context);
+                    }
+                    break;
+                case ProtoControl.RegisterBrain message:
+                    HandleRegisterBrain(context, message);
+                    break;
+                case ProtoControl.UpdateBrainSignalRouter message:
+                    HandleUpdateBrainSignalRouter(context, message);
+                    break;
+                case ProtoControl.UnregisterBrain message:
+                    HandleUnregisterBrain(context, message);
+                    break;
+                case ProtoControl.RegisterShard message:
+                    HandleRegisterShard(context, message);
+                    break;
+                case ProtoControl.UnregisterShard message:
+                    HandleUnregisterShard(context, message);
+                    break;
+                case ProtoControl.RegisterOutputSink message:
+                    HandleRegisterOutputSink(context, message);
+                    break;
+                case ProtoControl.SetBrainVisualization message:
+                    HandleSetBrainVisualization(context, message);
+                    break;
+                case ProtoControl.SetBrainCostEnergy message:
+                    HandleSetBrainCostEnergy(context, message);
+                    break;
+                case ProtoControl.SetBrainPlasticity message:
+                    HandleSetBrainPlasticity(context, message);
+                    break;
+                case ProtoControl.GetBrainIoInfo message:
+                    if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
+                    {
+                        context.Respond(BuildBrainIoInfo(ioBrainId));
+                    }
+                    else
+                    {
+                        context.Respond(new ProtoControl.BrainIoInfo());
+                    }
+                    break;
+                case ProtoIo.ExportBrainDefinition message:
+                    HandleExportBrainDefinition(context, message);
+                    break;
+                case ProtoIo.RequestSnapshot message:
+                    HandleRequestSnapshot(context, message);
+                    break;
+                case ProtoControl.SpawnBrain message:
+                    HandleSpawnBrain(context, message);
+                    break;
+                case ProtoControl.RequestPlacement message:
+                    HandleRequestPlacement(context, message);
+                    break;
+                case ProtoControl.GetPlacementLifecycle message:
+                    if (message.BrainId is not null && message.BrainId.TryToGuid(out var placementBrainId))
+                    {
+                        context.Respond(BuildPlacementLifecycleInfo(placementBrainId));
+                    }
+                    else
+                    {
+                        context.Respond(new ProtoControl.PlacementLifecycleInfo());
+                    }
+                    break;
+                case ProtoControl.PlacementWorkerInventoryRequest:
+                    context.Respond(BuildPlacementWorkerInventory());
+                    break;
+                case ProtoControl.PlacementAssignmentAck message:
+                    HandlePlacementAssignmentAck(context, message);
+                    break;
+                case ProtoControl.PlacementUnassignmentAck message:
+                    HandlePlacementUnassignmentAck(context, message);
+                    break;
+                case ProtoControl.PlacementReconcileReport message:
+                    HandlePlacementReconcileReport(context, message);
+                    break;
+                case DispatchPlacementPlan message:
+                    HandleDispatchPlacementPlan(context, message);
+                    break;
+                case RetryPlacementAssignment message:
+                    HandleRetryPlacementAssignment(context, message);
+                    break;
+                case PlacementAssignmentTimeout message:
+                    HandlePlacementAssignmentTimeout(context, message);
+                    break;
+                case PlacementReconcileTimeout message:
+                    HandlePlacementReconcileTimeout(context, message);
+                    break;
+                case SpawnCompletionTimeout message:
+                    HandleSpawnCompletionTimeout(context, message);
+                    break;
+                case ProtoSettings.WorkerInventorySnapshotResponse message:
+                    HandleWorkerInventorySnapshotResponse(message);
+                    break;
+                case PauseBrainRequest message:
+                    PauseBrain(context, message.BrainId, message.Reason);
+                    break;
+                case ResumeBrainRequest message:
+                    ResumeBrain(context, message.BrainId);
+                    break;
+                case ProtoControl.PauseBrain message:
+                    HandlePauseBrainControl(context, message);
+                    break;
+                case ProtoControl.ResumeBrain message:
+                    HandleResumeBrainControl(context, message);
+                    break;
+                case ProtoControl.KillBrain message:
+                    HandleKillBrainControl(context, message);
+                    break;
+                case ProtoControl.TickComputeDone message:
+                    HandleTickComputeDone(context, message);
+                    break;
+                case ProtoControl.TickDeliverDone message:
+                    HandleTickDeliverDone(context, message);
+                    break;
+                case TickPhaseTimeout message:
+                    HandleTickPhaseTimeout(context, message);
+                    break;
+                case RefreshWorkerInventoryTick:
+                    RefreshWorkerInventory(context);
+                    break;
+                case RescheduleNow message:
+                    BeginReschedule(context, message);
+                    break;
+                case RescheduleCompleted message:
+                    CompleteReschedule(context, message);
+                    break;
+                case ProtoControl.GetHiveMindStatus:
+                    context.Respond(BuildStatus());
+                    break;
+                case ProtoControl.SetTickRateOverride message:
+                    HandleSetTickRateOverride(context, message);
+                    break;
+                case GetBrainRouting message:
+                    context.Respond(BuildRoutingInfo(message.BrainId));
+                    break;
+                case ProtoControl.GetBrainRouting message:
+                    if (message.BrainId is not null && message.BrainId.TryToGuid(out var routingBrainId))
+                    {
+                        context.Respond(BuildRoutingInfoProto(routingBrainId));
+                    }
+                    else
+                    {
+                        context.Respond(new ProtoControl.BrainRoutingInfo());
+                    }
+                    break;
         }
 
         return Task.CompletedTask;
@@ -363,7 +363,8 @@ public sealed class HiveMindActor : IActor
 
         if (notifyIoUnregister && _ioPid is not null)
         {
-            context.Send(_ioPid, new ProtoIo.UnregisterBrain
+            var ioPid = ResolveSendTargetPid(context, _ioPid);
+            context.Send(ioPid, new ProtoIo.UnregisterBrain
             {
                 BrainId = brainId.ToProtoUuid(),
                 Reason = reason
@@ -572,7 +573,8 @@ public sealed class HiveMindActor : IActor
 
         if (_ioPid is not null)
         {
-            context.Send(_ioPid, new ProtoControl.BrainTerminated
+            var ioPid = ResolveSendTargetPid(context, _ioPid);
+            context.Send(ioPid, new ProtoControl.BrainTerminated
             {
                 BrainId = brainId.ToProtoUuid(),
                 Reason = terminationReason,
@@ -1090,77 +1092,111 @@ public sealed class HiveMindActor : IActor
 
     private void HandleSpawnBrain(IContext context, ProtoControl.SpawnBrain message)
     {
-        if (message.BrainDef is null
-            || !HasArtifactRef(message.BrainDef)
-            || !string.Equals(message.BrainDef.MediaType, "application/x-nbn", StringComparison.OrdinalIgnoreCase))
+        Guid brainId = Guid.Empty;
+        try
         {
-            context.Respond(BuildSpawnFailureAck(
-                reasonCode: "spawn_invalid_request",
-                failureMessage: "Spawn request rejected: brain definition must be a valid application/x-nbn artifact reference."));
-            return;
-        }
-
-        Guid brainId;
-        do
-        {
-            brainId = Guid.NewGuid();
-        } while (_brains.ContainsKey(brainId) || _pendingSpawns.ContainsKey(brainId));
-
-        var placementAck = ProcessPlacementRequest(
-            context,
-            new ProtoControl.RequestPlacement
+            if (message.BrainDef is null
+                || !HasArtifactRef(message.BrainDef)
+                || !string.Equals(message.BrainDef.MediaType, "application/x-nbn", StringComparison.OrdinalIgnoreCase))
             {
-                BrainId = brainId.ToProtoUuid(),
-                BaseDef = message.BrainDef.Clone(),
-                RequestId = $"spawn:{brainId:N}",
-                RequestedMs = (ulong)NowMs()
-            });
-
-        if (!placementAck.Accepted || !_brains.TryGetValue(brainId, out var brain))
-        {
-            if (_brains.ContainsKey(brainId))
-            {
-                UnregisterBrain(context, brainId, reason: "spawn_failed");
+                context.Respond(BuildSpawnFailureAck(
+                    reasonCode: "spawn_invalid_request",
+                    failureMessage: "Spawn request rejected: brain definition must be a valid application/x-nbn artifact reference."));
+                return;
             }
 
-            var reasonCode = ToSpawnFailureReasonCode(placementAck.FailureReason);
-            var failureMessage = !string.IsNullOrWhiteSpace(placementAck.Message)
-                ? placementAck.Message
-                : BuildSpawnFailureMessage(
-                    placementAck.FailureReason,
-                    detail: null,
-                    fallbackReasonCode: reasonCode);
-            context.Respond(BuildSpawnFailureAck(reasonCode, failureMessage));
-            return;
-        }
-
-        var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch);
-        _pendingSpawns[brain.BrainId] = pending;
-
-        ScheduleSelf(
-            context,
-            TimeSpan.FromMilliseconds(ComputeSpawnCompletionTimeoutMs()),
-            new SpawnCompletionTimeout(brain.BrainId, brain.PlacementEpoch));
-
-        context.ReenterAfter(
-            pending.Completion.Task,
-            task =>
+            do
             {
-                var completed = task.IsCompletedSuccessfully && task.Result;
-                if (completed)
+                brainId = Guid.NewGuid();
+            } while (_brains.ContainsKey(brainId) || _pendingSpawns.ContainsKey(brainId));
+
+            var placementAck = ProcessPlacementRequest(
+                context,
+                new ProtoControl.RequestPlacement
                 {
-                    context.Respond(new ProtoControl.SpawnBrainAck
-                    {
-                        BrainId = brain.BrainId.ToProtoUuid()
-                    });
-                    return Task.CompletedTask;
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = message.BrainDef.Clone(),
+                    RequestId = $"spawn:{brainId:N}",
+                    RequestedMs = (ulong)NowMs()
+                });
+
+            if (!placementAck.Accepted || !_brains.TryGetValue(brainId, out var brain))
+            {
+                if (_brains.ContainsKey(brainId))
+                {
+                    UnregisterBrain(context, brainId, reason: "spawn_failed");
                 }
 
-                context.Respond(BuildSpawnFailureAck(
-                    reasonCode: pending.FailureReasonCode,
-                    failureMessage: pending.FailureMessage));
-                return Task.CompletedTask;
-            });
+                var reasonCode = ToSpawnFailureReasonCode(placementAck.FailureReason);
+                var failureMessage = !string.IsNullOrWhiteSpace(placementAck.Message)
+                    ? placementAck.Message
+                    : BuildSpawnFailureMessage(
+                        placementAck.FailureReason,
+                        detail: null,
+                        fallbackReasonCode: reasonCode);
+                context.Respond(BuildSpawnFailureAck(reasonCode, failureMessage));
+                return;
+            }
+
+            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch);
+            _pendingSpawns[brain.BrainId] = pending;
+
+            ScheduleSelf(
+                context,
+                TimeSpan.FromMilliseconds(ComputeSpawnCompletionTimeoutMs()),
+                new SpawnCompletionTimeout(brain.BrainId, brain.PlacementEpoch));
+
+            context.ReenterAfter(
+                pending.Completion.Task,
+                task =>
+                {
+                    var completed = task.IsCompletedSuccessfully && task.Result;
+                    if (completed)
+                    {
+                        context.Respond(new ProtoControl.SpawnBrainAck
+                        {
+                            BrainId = brain.BrainId.ToProtoUuid()
+                        });
+                        return Task.CompletedTask;
+                    }
+
+                    context.Respond(BuildSpawnFailureAck(
+                        reasonCode: pending.FailureReasonCode,
+                        failureMessage: pending.FailureMessage));
+                    return Task.CompletedTask;
+                });
+        }
+        catch (Exception ex)
+        {
+            if (brainId != Guid.Empty)
+            {
+                if (_pendingSpawns.Remove(brainId, out var pending))
+                {
+                    pending.SetFailure(
+                        reasonCode: "spawn_internal_error",
+                        failureMessage: $"Spawn failed: internal error while preparing placement ({ex.GetBaseException().Message}).");
+                    pending.Completion.TrySetResult(false);
+                }
+
+                if (_brains.ContainsKey(brainId))
+                {
+                    try
+                    {
+                        UnregisterBrain(context, brainId, reason: "spawn_internal_error");
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        LogError($"Spawn cleanup failed for brain {brainId}: {cleanupEx.GetBaseException().Message}");
+                        _brains.Remove(brainId);
+                    }
+                }
+            }
+
+            LogError($"Spawn failed while preparing brain {brainId}: {ex}");
+            context.Respond(BuildSpawnFailureAck(
+                reasonCode: "spawn_internal_error",
+                failureMessage: $"Spawn failed: internal error while preparing placement ({ex.GetBaseException().Message})."));
+        }
     }
 
     private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
@@ -1311,6 +1347,7 @@ public sealed class HiveMindActor : IActor
         }
 
         brain.PlannedPlacement = plannedPlacement.Clone();
+        UpdateBrainIoWidthsFromPlannedAssignments(brain, plannedPlacement);
         UpdatePlacementLifecycle(
             brain,
             ProtoControl.PlacementLifecycleState.PlacementLifecycleRequested,
@@ -2685,6 +2722,37 @@ public sealed class HiveMindActor : IActor
         return true;
     }
 
+    private static void UpdateBrainIoWidthsFromPlannedAssignments(
+        BrainState brain,
+        PlacementPlanner.PlacementPlanningResult plannedPlacement)
+    {
+        foreach (var assignment in plannedPlacement.Assignments)
+        {
+            if (assignment.Target != ProtoControl.PlacementAssignmentTarget.PlacementTargetRegionShard
+                || assignment.NeuronCount == 0)
+            {
+                continue;
+            }
+
+            var span64 = (long)assignment.NeuronStart + assignment.NeuronCount;
+            if (span64 <= 0)
+            {
+                continue;
+            }
+
+            var span = span64 > int.MaxValue ? int.MaxValue : (int)span64;
+            if (assignment.RegionId == NbnConstants.InputRegionId && span > brain.InputWidth)
+            {
+                brain.InputWidth = span;
+            }
+
+            if (assignment.RegionId == NbnConstants.OutputRegionId && span > brain.OutputWidth)
+            {
+                brain.OutputWidth = span;
+            }
+        }
+    }
+
     private bool CanRetryAssignment(PlacementAssignmentExecutionState assignment)
         => assignment.Attempt <= _options.PlacementAssignmentMaxRetries;
 
@@ -2760,6 +2828,14 @@ public sealed class HiveMindActor : IActor
                 pending.Completion.TrySetResult(false);
             }
 
+            return;
+        }
+
+        var execution = brain.PlacementExecution;
+        if (execution is not null
+            && execution.PlacementEpoch == pending.PlacementEpoch
+            && !execution.Completed)
+        {
             return;
         }
 
@@ -3518,6 +3594,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var ioPid = ResolveSendTargetPid(context, _ioPid);
         foreach (var entry in costs)
         {
             var cost = entry.Value;
@@ -3532,7 +3609,7 @@ public sealed class HiveMindActor : IActor
             }
 
             HiveMindTelemetry.RecordBrainTickCost(entry.Key, cost);
-            context.Send(_ioPid, new ApplyTickCost(entry.Key, tickId, cost));
+            context.Send(ioPid, new ApplyTickCost(entry.Key, tickId, cost));
         }
     }
 
@@ -3812,6 +3889,22 @@ public sealed class HiveMindActor : IActor
         return pid;
     }
 
+    private static PID ResolveSendTargetPid(IContext context, PID pid)
+    {
+        if (!string.IsNullOrWhiteSpace(pid.Address))
+        {
+            return pid;
+        }
+
+        var systemAddress = context.System.Address;
+        if (string.IsNullOrWhiteSpace(systemAddress))
+        {
+            return pid;
+        }
+
+        return new PID(systemAddress, pid.Id);
+    }
+
     private static bool TryGetGuid(Nbn.Proto.Uuid? uuid, out Guid guid)
     {
         if (uuid is null)
@@ -4057,7 +4150,8 @@ public sealed class HiveMindActor : IActor
                     liveBrain.LastSnapshot = snapshot;
                     if (_ioPid is not null)
                     {
-                        context.Send(_ioPid, new UpdateBrainSnapshot(brainId, snapshot));
+                        var ioPid = ResolveSendTargetPid(context, _ioPid);
+                        context.Send(ioPid, new UpdateBrainSnapshot(brainId, snapshot));
                     }
 
                     RegisterBrainWithIo(context, liveBrain, force: true);
@@ -4653,7 +4747,8 @@ public sealed class HiveMindActor : IActor
             register.LastSnapshot = brain.LastSnapshot;
         }
 
-        context.Send(_ioPid, register);
+        var ioPid = ResolveSendTargetPid(context, _ioPid);
+        context.Send(ioPid, register);
 
         brain.IoRegistered = true;
         brain.IoRegisteredInputWidth = inputWidth;

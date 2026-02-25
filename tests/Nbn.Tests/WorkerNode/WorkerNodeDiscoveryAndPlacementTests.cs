@@ -1,7 +1,11 @@
+using Microsoft.Data.Sqlite;
 using Nbn.Proto.Control;
+using Nbn.Runtime.Artifacts;
+using Nbn.Runtime.IO;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
+using Nbn.Tests.Format;
 using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
@@ -1011,6 +1015,121 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         Assert.EndsWith($"/{shardName}", shardObserved.ActorPid, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task PlacementAssignmentRequest_ArtifactBackedShardLoadFailure_ReturnsFailedAck()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-artifact-load-fail-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: new ThrowingArtifactStore("simulated artifact store load failure"))),
+                workerName);
+            var ioPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateIoOptions())),
+                ioName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var minimalNbn = NbnTestVectors.CreateMinimalNbn();
+            var manifest = await store.StoreAsync(new MemoryStream(minimalNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            harness.Root.Send(ioPid, new Nbn.Proto.Io.RegisterBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 4,
+                OutputWidth = 4,
+                BaseDefinition = brainDef
+            });
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var info = await harness.Root.RequestAsync<Nbn.Proto.Io.BrainInfo>(
+                        ioPid,
+                        new Nbn.Proto.Io.BrainInfoRequest
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        });
+
+                    return info.BaseDefinition is not null
+                           && info.BaseDefinition.TryToSha256Hex(out var infoSha)
+                           && string.Equals(infoSha, brainDef.ToSha256Hex(), StringComparison.OrdinalIgnoreCase);
+                },
+                timeoutMs: 2_000);
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-artifact-load-fail",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 0,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 2)
+                });
+
+            Assert.False(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, ack.State);
+            Assert.Equal(PlacementFailureReason.PlacementFailureInternalError, ack.FailureReason);
+            Assert.Contains("artifact-backed shard load failed", ack.Message, StringComparison.OrdinalIgnoreCase);
+
+            var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                workerPid,
+                new WorkerNodeActor.GetWorkerNodeSnapshot());
+            Assert.Equal(0, snapshot.TrackedAssignmentCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    private static IoOptions CreateIoOptions()
+        => new(
+            BindHost: "127.0.0.1",
+            Port: 0,
+            AdvertisedHost: null,
+            AdvertisedPort: null,
+            GatewayName: IoNames.Gateway,
+            ServerName: "nbn.io.tests",
+            SettingsHost: null,
+            SettingsPort: 0,
+            SettingsName: "SettingsMonitor",
+            HiveMindAddress: null,
+            HiveMindName: null,
+            ReproAddress: null,
+            ReproName: null);
+
     private static PlacementAssignment BuildAssignment(
         string assignmentId,
         Guid brainId,
@@ -1110,6 +1229,32 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
 
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class ThrowingArtifactStore : IArtifactStore
+    {
+        private readonly string _message;
+
+        public ThrowingArtifactStore(string message)
+        {
+            _message = string.IsNullOrWhiteSpace(message) ? "artifact store failure" : message;
+        }
+
+        public Task<ArtifactManifest> StoreAsync(
+            Stream content,
+            string mediaType,
+            ArtifactStoreWriteOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+
+        public Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+
+        public Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
+
+        public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(_message);
     }
 
     private sealed class WorkerHarness : IAsyncDisposable
