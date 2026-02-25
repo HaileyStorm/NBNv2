@@ -156,6 +156,7 @@ public sealed class SettingsMonitorActor : IActor
             new Nbn.Runtime.SettingsMonitor.NodeCapabilities(
                 caps.CpuCores,
                 (long)caps.RamFreeBytes,
+                (long)caps.StorageFreeBytes,
                 caps.HasGpu,
                 string.IsNullOrWhiteSpace(caps.GpuName) ? null : caps.GpuName,
                 (long)caps.VramFreeBytes,
@@ -330,6 +331,7 @@ public sealed class SettingsMonitorActor : IActor
                             {
                                 CpuCores = worker.CpuCores,
                                 RamFreeBytes = (ulong)worker.RamFreeBytes,
+                                StorageFreeBytes = (ulong)worker.StorageFreeBytes,
                                 HasGpu = worker.HasGpu,
                                 GpuName = worker.GpuName ?? string.Empty,
                                 VramFreeBytes = (ulong)worker.VramFreeBytes,

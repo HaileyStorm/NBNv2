@@ -151,6 +151,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         {
             CpuCores = (uint)Math.Max(1, Environment.ProcessorCount),
             RamFreeBytes = 0,
+            StorageFreeBytes = 0,
             HasGpu = false,
             GpuName = string.Empty,
             VramFreeBytes = 0,

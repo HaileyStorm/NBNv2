@@ -1,5 +1,6 @@
 using Nbn.Proto.Control;
 using Nbn.Runtime.HiveMind;
+using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
@@ -23,6 +24,18 @@ public sealed class HiveMindWorkerInventoryTests
         var staleWorkerId = Guid.NewGuid();
         var unreadyWorkerId = Guid.NewGuid();
         var offlineWorkerId = Guid.NewGuid();
+        var scaled = WorkerCapabilityScaling.ApplyScale(
+            new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 24,
+                RamFreeBytes = 16UL * 1024 * 1024 * 1024,
+                StorageFreeBytes = 100UL * 1024 * 1024 * 1024,
+                HasGpu = true,
+                VramFreeBytes = 24UL * 1024 * 1024 * 1024,
+                CpuScore = 89f,
+                GpuScore = 88f
+            },
+            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 50, storagePercent: 50, gpuPercent: 50));
 
         root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
         {
@@ -37,12 +50,13 @@ public sealed class HiveMindWorkerInventoryTests
                     capabilityTimeMs: nowMs,
                     address: "worker-a:12040",
                     rootActorName: "region-host",
-                    cpuCores: 12,
-                    ramFreeBytes: 8L * 1024 * 1024 * 1024,
-                    hasGpu: true,
-                    vramFreeBytes: 12L * 1024 * 1024 * 1024,
-                    cpuScore: 44.5f,
-                    gpuScore: 88.0f),
+                    cpuCores: scaled.CpuCores,
+                    ramFreeBytes: (long)scaled.RamFreeBytes,
+                    storageFreeBytes: (long)scaled.StorageFreeBytes,
+                    hasGpu: scaled.HasGpu,
+                    vramFreeBytes: (long)scaled.VramFreeBytes,
+                    cpuScore: scaled.CpuScore,
+                    gpuScore: scaled.GpuScore),
                 BuildWorker(
                     staleWorkerId,
                     isAlive: true,
@@ -82,10 +96,13 @@ public sealed class HiveMindWorkerInventoryTests
         Assert.True(worker.IsAlive);
         Assert.Equal("worker-a:12040", worker.WorkerAddress);
         Assert.Equal("region-host", worker.WorkerRootActorName);
-        Assert.Equal(12u, worker.CpuCores);
-        Assert.Equal(44.5f, worker.CpuScore);
-        Assert.Equal(88.0f, worker.GpuScore);
+        Assert.Equal(scaled.CpuCores, worker.CpuCores);
+        Assert.Equal(scaled.RamFreeBytes, worker.RamFreeBytes);
+        Assert.Equal(scaled.StorageFreeBytes, worker.StorageFreeBytes);
+        Assert.Equal(scaled.CpuScore, worker.CpuScore);
+        Assert.Equal(scaled.GpuScore, worker.GpuScore);
         Assert.True(worker.HasGpu);
+        Assert.Equal(scaled.VramFreeBytes, worker.VramFreeBytes);
 
         await system.ShutdownAsync();
     }
@@ -123,6 +140,13 @@ public sealed class HiveMindWorkerInventoryTests
         Assert.Single(inventory.Workers);
         Assert.Equal(workerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
         Assert.True(inventory.Workers[0].IsAlive);
+        Assert.Equal(4u, inventory.Workers[0].CpuCores);
+        Assert.Equal(2UL * 1024 * 1024 * 1024, inventory.Workers[0].RamFreeBytes);
+        Assert.Equal(25UL * 1024 * 1024 * 1024, inventory.Workers[0].StorageFreeBytes);
+        Assert.False(inventory.Workers[0].HasGpu);
+        Assert.Equal(0UL, inventory.Workers[0].VramFreeBytes);
+        Assert.Equal(10f, inventory.Workers[0].CpuScore);
+        Assert.Equal(0f, inventory.Workers[0].GpuScore);
 
         await system.ShutdownAsync();
     }
@@ -137,6 +161,7 @@ public sealed class HiveMindWorkerInventoryTests
         string rootActorName,
         uint cpuCores = 4,
         long ramFreeBytes = 2L * 1024 * 1024 * 1024,
+        long storageFreeBytes = 25L * 1024 * 1024 * 1024,
         bool hasGpu = false,
         long vramFreeBytes = 0,
         float cpuScore = 10f,
@@ -157,6 +182,7 @@ public sealed class HiveMindWorkerInventoryTests
             {
                 CpuCores = cpuCores,
                 RamFreeBytes = ramFreeBytes > 0 ? (ulong)ramFreeBytes : 0,
+                StorageFreeBytes = storageFreeBytes > 0 ? (ulong)storageFreeBytes : 0,
                 HasGpu = hasGpu,
                 VramFreeBytes = vramFreeBytes > 0 ? (ulong)vramFreeBytes : 0,
                 CpuScore = cpuScore,

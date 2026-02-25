@@ -9,6 +9,7 @@ public sealed record NodeRegistration(
 public sealed record NodeCapabilities(
     uint CpuCores,
     long RamFreeBytes,
+    long StorageFreeBytes,
     bool HasGpu,
     string? GpuName,
     long VramFreeBytes,
@@ -54,6 +55,7 @@ public sealed class WorkerReadinessCapability
     public long CapabilityTimeMs { get; set; }
     public uint CpuCores { get; set; }
     public long RamFreeBytes { get; set; }
+    public long StorageFreeBytes { get; set; }
     public bool HasGpu { get; set; }
     public string GpuName { get; set; } = string.Empty;
     public long VramFreeBytes { get; set; }

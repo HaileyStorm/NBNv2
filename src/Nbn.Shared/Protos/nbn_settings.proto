@@ -36,6 +36,7 @@ message NodeCapabilities {
 
   bool ilgpu_cuda_available = 8;
   bool ilgpu_opencl_available = 9;
+  fixed64 storage_free_bytes = 10;
 }
 
 message NodeStatus {

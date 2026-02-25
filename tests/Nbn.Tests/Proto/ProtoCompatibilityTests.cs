@@ -200,6 +200,7 @@ public class ProtoCompatibilityTests
         AssertField(workerInventoryEntry, "cpu_score", 10, FieldType.Float);
         AssertField(workerInventoryEntry, "gpu_score", 11, FieldType.Float);
         AssertField(workerInventoryEntry, "capability_epoch", 12, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "storage_free_bytes", 13, FieldType.Fixed64);
 
         var workerInventory = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventory");
         AssertRepeatedField(workerInventory, "workers", 1, FieldType.Message, "nbn.control.PlacementWorkerInventoryEntry");
@@ -444,6 +445,7 @@ public class ProtoCompatibilityTests
 
         AssertField(caps, "cpu_cores", 1, FieldType.UInt32);
         AssertField(caps, "ram_free_bytes", 2, FieldType.Fixed64);
+        AssertField(caps, "storage_free_bytes", 10, FieldType.Fixed64);
         AssertField(caps, "has_gpu", 3, FieldType.Bool);
         AssertField(caps, "gpu_name", 4, FieldType.String);
         AssertField(caps, "vram_free_bytes", 5, FieldType.Fixed64);

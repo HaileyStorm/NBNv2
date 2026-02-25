@@ -1,6 +1,7 @@
 using System.Reflection;
 using Nbn.Proto.Control;
 using Nbn.Runtime.HiveMind;
+using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
@@ -88,6 +89,15 @@ public sealed class HiveMindPlacementPlannerTests
 
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var eligibleWorkerId = Guid.NewGuid();
+        var scaled = WorkerCapabilityScaling.ApplyScale(
+            new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 12,
+                RamFreeBytes = 24UL * 1024 * 1024 * 1024,
+                StorageFreeBytes = 140UL * 1024 * 1024 * 1024,
+                CpuScore = 80f
+            },
+            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 25, storagePercent: 30, gpuPercent: 100));
         root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
         {
             SnapshotMs = (ulong)nowMs,
@@ -100,7 +110,11 @@ public sealed class HiveMindPlacementPlannerTests
                     lastSeenMs: nowMs,
                     capabilityTimeMs: nowMs,
                     address: "worker-a:12040",
-                    rootActorName: "region-host"),
+                    rootActorName: "region-host",
+                    cpuCores: scaled.CpuCores,
+                    ramFreeBytes: (long)scaled.RamFreeBytes,
+                    storageFreeBytes: (long)scaled.StorageFreeBytes,
+                    cpuScore: scaled.CpuScore),
                 BuildWorker(
                     Guid.NewGuid(),
                     isAlive: true,
@@ -136,6 +150,10 @@ public sealed class HiveMindPlacementPlannerTests
         Assert.Equal(requestId, stored.RequestId);
         Assert.Single(stored.EligibleWorkers);
         Assert.Equal(6, stored.Assignments.Count);
+        Assert.Equal(scaled.CpuCores, stored.EligibleWorkers[0].CpuCores);
+        Assert.Equal((long)scaled.RamFreeBytes, stored.EligibleWorkers[0].RamFreeBytes);
+        Assert.Equal((long)scaled.StorageFreeBytes, stored.EligibleWorkers[0].StorageFreeBytes);
+        Assert.Equal(scaled.CpuScore, stored.EligibleWorkers[0].CpuScore);
 
         foreach (var assignment in stored.Assignments)
         {
@@ -163,11 +181,11 @@ public sealed class HiveMindPlacementPlannerTests
 
         var workers = new[]
         {
-            new PlacementPlanner.WorkerCandidate(workerB, "worker-b:12040", "region-host", true, true, true, 8, 8L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 20f, 70f),
-            new PlacementPlanner.WorkerCandidate(staleWorker, "worker-c:12040", "region-host", true, true, false, 8, 8L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 30f, 65f),
-            new PlacementPlanner.WorkerCandidate(workerA, "worker-a:12040", "region-host", true, true, true, 16, 16L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 40f, 50f),
-            new PlacementPlanner.WorkerCandidate(offlineWorker, "worker-d:12040", "region-host", false, true, true, 16, 16L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 45f, 80f),
-            new PlacementPlanner.WorkerCandidate(unreadyWorker, "worker-e:12040", "region-host", true, false, true, 16, 16L * 1024 * 1024 * 1024, false, 0, 35f, 0f)
+            new PlacementPlanner.WorkerCandidate(workerB, "worker-b:12040", "region-host", true, true, true, 8, 8L * 1024 * 1024 * 1024, 40L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 20f, 70f),
+            new PlacementPlanner.WorkerCandidate(staleWorker, "worker-c:12040", "region-host", true, true, false, 8, 8L * 1024 * 1024 * 1024, 40L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 30f, 65f),
+            new PlacementPlanner.WorkerCandidate(workerA, "worker-a:12040", "region-host", true, true, true, 16, 16L * 1024 * 1024 * 1024, 80L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 40f, 50f),
+            new PlacementPlanner.WorkerCandidate(offlineWorker, "worker-d:12040", "region-host", false, true, true, 16, 16L * 1024 * 1024 * 1024, 80L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 45f, 80f),
+            new PlacementPlanner.WorkerCandidate(unreadyWorker, "worker-e:12040", "region-host", true, false, true, 16, 16L * 1024 * 1024 * 1024, 80L * 1024 * 1024 * 1024, false, 0, 35f, 0f)
         };
 
         var shardPlan = new ShardPlan
@@ -268,7 +286,11 @@ public sealed class HiveMindPlacementPlannerTests
         long lastSeenMs,
         long capabilityTimeMs,
         string address,
-        string rootActorName)
+        string rootActorName,
+        uint cpuCores = 8,
+        long ramFreeBytes = 8L * 1024 * 1024 * 1024,
+        long storageFreeBytes = 40L * 1024 * 1024 * 1024,
+        float cpuScore = 30f)
         => new()
         {
             NodeId = nodeId.ToProtoUuid(),
@@ -281,9 +303,10 @@ public sealed class HiveMindPlacementPlannerTests
             CapabilityTimeMs = capabilityTimeMs > 0 ? (ulong)capabilityTimeMs : 0,
             Capabilities = new ProtoSettings.NodeCapabilities
             {
-                CpuCores = 8,
-                RamFreeBytes = 8UL * 1024 * 1024 * 1024,
-                CpuScore = 30f
+                CpuCores = cpuCores,
+                RamFreeBytes = ramFreeBytes > 0 ? (ulong)ramFreeBytes : 0,
+                StorageFreeBytes = storageFreeBytes > 0 ? (ulong)storageFreeBytes : 0,
+                CpuScore = cpuScore
             }
         };
 

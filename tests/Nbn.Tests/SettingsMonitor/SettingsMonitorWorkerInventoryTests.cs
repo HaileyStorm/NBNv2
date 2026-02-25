@@ -1,4 +1,5 @@
 using Nbn.Runtime.SettingsMonitor;
+using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
@@ -26,6 +27,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
             new NodeCapabilities(
                 CpuCores: 8,
                 RamFreeBytes: 1_024,
+                StorageFreeBytes: 10_240,
                 HasGpu: true,
                 GpuName: "GPU-old",
                 VramFreeBytes: 2_048,
@@ -40,6 +42,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
             new NodeCapabilities(
                 CpuCores: 16,
                 RamFreeBytes: 4_096,
+                StorageFreeBytes: 20_480,
                 HasGpu: true,
                 GpuName: "GPU-new",
                 VramFreeBytes: 8_192,
@@ -62,6 +65,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
         Assert.Equal(250, rowA.CapabilityTimeMs);
         Assert.Equal((uint)16, rowA.CpuCores);
         Assert.Equal(4_096, rowA.RamFreeBytes);
+        Assert.Equal(20_480, rowA.StorageFreeBytes);
         Assert.True(rowA.HasGpu);
         Assert.Equal("GPU-new", rowA.GpuName);
         Assert.Equal(8_192, rowA.VramFreeBytes);
@@ -93,6 +97,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
             new NodeCapabilities(
                 CpuCores: 12,
                 RamFreeBytes: 2_048,
+                StorageFreeBytes: 8_192,
                 HasGpu: false,
                 GpuName: null,
                 VramFreeBytes: 0,
@@ -120,6 +125,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
             {
                 CpuCores = 4,
                 RamFreeBytes = 512,
+                StorageFreeBytes = 4_096,
                 HasGpu = false,
                 GpuName = string.Empty,
                 VramFreeBytes = 0,
@@ -145,6 +151,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
         Assert.False(persisted.IsReady);
         Assert.Equal((ulong)120, persisted.CapabilityTimeMs);
         Assert.Equal((uint)12, persisted.Capabilities.CpuCores);
+        Assert.Equal((ulong)8_192, persisted.Capabilities.StorageFreeBytes);
 
         var transient = response.Workers.Single(worker => worker.NodeId.TryToGuid(out var id) && id == transientWorker);
         Assert.True(transient.IsAlive);
@@ -152,6 +159,63 @@ public sealed class SettingsMonitorWorkerInventoryTests
         Assert.False(transient.IsReady);
         Assert.Equal((ulong)0, transient.CapabilityTimeMs);
         Assert.Equal((uint)0, transient.Capabilities.CpuCores);
+        Assert.Equal((ulong)0, transient.Capabilities.StorageFreeBytes);
+    }
+
+    [Fact]
+    public async Task StoreSnapshotQuery_PreservesScaledWorkerCapabilities()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SettingsMonitorStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var worker = Guid.NewGuid();
+        await store.UpsertNodeAsync(new NodeRegistration(worker, "scaled-worker", "127.0.0.1:14040", "worker-node"), timeMs: 100);
+
+        var scaled = WorkerCapabilityScaling.ApplyScale(
+            new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 16,
+                RamFreeBytes = 40_000,
+                StorageFreeBytes = 80_000,
+                HasGpu = true,
+                GpuName = "gpu0",
+                VramFreeBytes = 20_000,
+                CpuScore = 100f,
+                GpuScore = 50f,
+                IlgpuCudaAvailable = true,
+                IlgpuOpenclAvailable = true
+            },
+            new WorkerResourceAvailability(cpuPercent: 25, ramPercent: 50, storagePercent: 10, gpuPercent: 0));
+
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(
+            worker,
+            200,
+            new NodeCapabilities(
+                CpuCores: scaled.CpuCores,
+                RamFreeBytes: (long)scaled.RamFreeBytes,
+                StorageFreeBytes: (long)scaled.StorageFreeBytes,
+                HasGpu: scaled.HasGpu,
+                GpuName: scaled.GpuName,
+                VramFreeBytes: (long)scaled.VramFreeBytes,
+                CpuScore: scaled.CpuScore,
+                GpuScore: scaled.GpuScore,
+                IlgpuCudaAvailable: scaled.IlgpuCudaAvailable,
+                IlgpuOpenclAvailable: scaled.IlgpuOpenclAvailable)));
+
+        var snapshot = await store.GetWorkerInventorySnapshotAsync();
+        var row = snapshot.Workers.Single(entry => entry.NodeId == worker);
+
+        Assert.Equal((uint)4, row.CpuCores);
+        Assert.Equal(20_000, row.RamFreeBytes);
+        Assert.Equal(8_000, row.StorageFreeBytes);
+        Assert.False(row.HasGpu);
+        Assert.Equal(string.Empty, row.GpuName);
+        Assert.Equal(0, row.VramFreeBytes);
+        Assert.Equal(25f, row.CpuScore);
+        Assert.Equal(0f, row.GpuScore);
+        Assert.False(row.IlgpuCudaAvailable);
+        Assert.False(row.IlgpuOpenclAvailable);
     }
 
     private sealed class TempDatabaseScope : IDisposable

@@ -40,9 +40,14 @@ if (workerNodeId == Guid.Empty)
 }
 
 var workerPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new WorkerNodeActor(workerNodeId, nodeAddress, enabledRoles: options.ServiceRoles)),
+    Props.FromProducer(() => new WorkerNodeActor(
+        workerNodeId,
+        nodeAddress,
+        enabledRoles: options.ServiceRoles,
+        resourceAvailability: options.ResourceAvailability)),
     options.RootActorName);
 
+var heartbeatCapabilities = WorkerCapabilityScaling.BuildScaledCapabilities(options.ResourceAvailability);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -50,7 +55,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.LogicalName,
-    options.RootActorName);
+    options.RootActorName,
+    capabilities: heartbeatCapabilities);
 
 ServiceEndpointDiscoveryClient? discoveryClient = null;
 using var discoveryLoopCancellation = new CancellationTokenSource();
@@ -104,6 +110,7 @@ Console.WriteLine($"Advertised: {advertisedHost}:{advertisedPort}");
 Console.WriteLine($"WorkerNodeId: {startupState.WorkerNodeId}");
 Console.WriteLine($"RootActor: {PidLabel(workerPid)}");
 Console.WriteLine($"ServiceRoles: {WorkerServiceRoles.ToOptionValue(startupState.EnabledRoles)}");
+Console.WriteLine($"ResourceAvailability: {startupState.ResourceAvailability.ToDisplayString()}");
 Console.WriteLine($"Discovered HiveMind: {FormatEndpoint(startupState.HiveMindEndpoint)}");
 Console.WriteLine($"Discovered IO: {FormatEndpoint(startupState.IoGatewayEndpoint)}");
 Console.WriteLine("Press Ctrl+C to shut down.");

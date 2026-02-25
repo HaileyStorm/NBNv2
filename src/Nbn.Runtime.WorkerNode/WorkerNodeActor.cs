@@ -29,13 +29,15 @@ public sealed class WorkerNodeActor : IActor
     private readonly Dictionary<Guid, BrainHostingState> _brains = new();
     private PID? _hiveMindHintPid;
     private readonly WorkerServiceRole _enabledRoles;
+    private readonly WorkerResourceAvailability _resourceAvailability;
 
     public WorkerNodeActor(
         Guid workerNodeId,
         string workerAddress,
         string? artifactRootPath = null,
         IArtifactStore? artifactStore = null,
-        WorkerServiceRole enabledRoles = WorkerServiceRole.All)
+        WorkerServiceRole enabledRoles = WorkerServiceRole.All,
+        WorkerResourceAvailability? resourceAvailability = null)
     {
         if (workerNodeId == Guid.Empty)
         {
@@ -46,6 +48,7 @@ public sealed class WorkerNodeActor : IActor
         _workerAddress = workerAddress ?? string.Empty;
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(ResolveArtifactRoot(artifactRootPath)));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
+        _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
     }
 
     public async Task ReceiveAsync(IContext context)
@@ -93,7 +96,8 @@ public sealed class WorkerNodeActor : IActor
         ServiceEndpointRegistration? HiveMindEndpoint,
         ServiceEndpointRegistration? IoGatewayEndpoint,
         WorkerServiceRole EnabledRoles,
-        int TrackedAssignmentCount);
+        int TrackedAssignmentCount,
+        WorkerResourceAvailability ResourceAvailability);
 
     private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
     {
@@ -606,7 +610,8 @@ public sealed class WorkerNodeActor : IActor
             hiveMindEndpoint,
             ioEndpoint,
             _enabledRoles,
-            _assignments.Count);
+            _assignments.Count,
+            _resourceAvailability);
     }
     private async Task<HostingResult> HostAssignmentAsync(
         IContext context,

@@ -217,6 +217,7 @@ message PlacementWorkerInventoryEntry {
   float cpu_score = 10;
   float gpu_score = 11;
   fixed64 capability_epoch = 12;
+  fixed64 storage_free_bytes = 13;
 }
 
 message PlacementWorkerInventory {

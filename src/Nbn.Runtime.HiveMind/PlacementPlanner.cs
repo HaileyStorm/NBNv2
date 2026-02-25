@@ -18,6 +18,7 @@ public static class PlacementPlanner
         bool IsFresh,
         uint CpuCores,
         long RamFreeBytes,
+        long StorageFreeBytes,
         bool HasGpu,
         long VramFreeBytes,
         float CpuScore,

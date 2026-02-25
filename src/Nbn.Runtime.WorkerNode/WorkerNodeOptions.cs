@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Nbn.Runtime.WorkerNode;
 
 public sealed record WorkerNodeOptions(
@@ -11,7 +13,8 @@ public sealed record WorkerNodeOptions(
     int SettingsPort,
     string SettingsName,
     Guid? WorkerNodeId,
-    WorkerServiceRole ServiceRoles)
+    WorkerServiceRole ServiceRoles,
+    WorkerResourceAvailability ResourceAvailability)
 {
     public static WorkerNodeOptions FromArgs(string[] args)
     {
@@ -27,6 +30,10 @@ public sealed record WorkerNodeOptions(
         var workerNodeId = GetEnvGuid("NBN_WORKER_NODE_ID");
         var serviceRoles = WorkerServiceRole.All;
         var serviceRolesRaw = GetEnv("NBN_WORKER_SERVICE_ROLES");
+        var cpuPercent = GetEnvPercent("NBN_WORKER_CPU_PCT", WorkerResourceAvailability.DefaultPercent);
+        var ramPercent = GetEnvPercent("NBN_WORKER_RAM_PCT", WorkerResourceAvailability.DefaultPercent);
+        var storagePercent = GetEnvPercent("NBN_WORKER_STORAGE_PCT", WorkerResourceAvailability.DefaultPercent);
+        var gpuPercent = GetEnvPercent("NBN_WORKER_GPU_PCT", WorkerResourceAvailability.DefaultPercent);
         if (!string.IsNullOrWhiteSpace(serviceRolesRaw))
         {
             serviceRoles = WorkerServiceRoles.ParseRoleSet(serviceRolesRaw, "NBN_WORKER_SERVICE_ROLES");
@@ -124,6 +131,22 @@ public sealed record WorkerNodeOptions(
                     {
                         serviceRoles &= ~WorkerServiceRoles.ParseRoleSet(args[++index], "--disable-service-role");
                     }
+                    continue;
+                case "--cpu-pct":
+                case "--cpu_pct":
+                    cpuPercent = ParseCliPercent(args, ref index, arg);
+                    continue;
+                case "--ram-pct":
+                case "--ram_pct":
+                    ramPercent = ParseCliPercent(args, ref index, arg);
+                    continue;
+                case "--storage-pct":
+                case "--storage_pct":
+                    storagePercent = ParseCliPercent(args, ref index, arg);
+                    continue;
+                case "--gpu-pct":
+                case "--gpu_pct":
+                    gpuPercent = ParseCliPercent(args, ref index, arg);
                     continue;
             }
 
@@ -238,6 +261,54 @@ public sealed record WorkerNodeOptions(
                 serviceRoles &= ~WorkerServiceRoles.ParseRoleSet(
                     arg.Substring("--disable-service-role=".Length),
                     "--disable-service-role");
+                continue;
+            }
+
+            if (arg.StartsWith("--cpu-pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                cpuPercent = ParsePercent(arg.Substring("--cpu-pct=".Length), "--cpu-pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--cpu_pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                cpuPercent = ParsePercent(arg.Substring("--cpu_pct=".Length), "--cpu_pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--ram-pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                ramPercent = ParsePercent(arg.Substring("--ram-pct=".Length), "--ram-pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--ram_pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                ramPercent = ParsePercent(arg.Substring("--ram_pct=".Length), "--ram_pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--storage-pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                storagePercent = ParsePercent(arg.Substring("--storage-pct=".Length), "--storage-pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--storage_pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                storagePercent = ParsePercent(arg.Substring("--storage_pct=".Length), "--storage_pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--gpu-pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                gpuPercent = ParsePercent(arg.Substring("--gpu-pct=".Length), "--gpu-pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--gpu_pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                gpuPercent = ParsePercent(arg.Substring("--gpu_pct=".Length), "--gpu_pct");
             }
         }
 
@@ -277,7 +348,8 @@ public sealed record WorkerNodeOptions(
             settingsPort,
             settingsName,
             workerNodeId,
-            WorkerServiceRoles.Sanitize(serviceRoles));
+            WorkerServiceRoles.Sanitize(serviceRoles),
+            new WorkerResourceAvailability(cpuPercent, ramPercent, storagePercent, gpuPercent));
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -292,6 +364,49 @@ public sealed record WorkerNodeOptions(
     {
         var value = GetEnv(key);
         return Guid.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static int GetEnvPercent(string key, int defaultValue)
+    {
+        var value = GetEnv(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return defaultValue;
+        }
+
+        return ParsePercent(value, key);
+    }
+
+    private static int ParseCliPercent(string[] args, ref int index, string option)
+    {
+        if (index + 1 >= args.Length)
+        {
+            throw new ArgumentException($"{option} requires a value.");
+        }
+
+        index++;
+        return ParsePercent(args[index], option);
+    }
+
+    private static int ParsePercent(string rawValue, string source)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            throw new ArgumentException($"{source} requires a non-empty integer percentage.");
+        }
+
+        var normalized = rawValue.Trim();
+        if (normalized.EndsWith('%'))
+        {
+            normalized = normalized[..^1].Trim();
+        }
+
+        if (!int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            throw new ArgumentException($"{source} must be an integer percentage.");
+        }
+
+        return WorkerResourceAvailability.ClampPercent(parsed);
     }
 
     public static void PrintHelp()
@@ -312,6 +427,14 @@ public sealed record WorkerNodeOptions(
         Console.WriteLine("  --disable-service-role <role>    Disable one or more roles (repeatable)");
         Console.WriteLine("                                   Role tokens: all, none, brain-root, signal-router,");
         Console.WriteLine("                                                input-coordinator, output-coordinator, region-shard");
+        Console.WriteLine($"  --cpu-pct <0-100>                CPU availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
+        Console.WriteLine($"  --ram-pct <0-100>                RAM availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
+        Console.WriteLine($"  --storage-pct <0-100>            Storage availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
+        Console.WriteLine($"  --gpu-pct <0-100>                GPU availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
         Console.WriteLine("  env: NBN_WORKER_SERVICE_ROLES    Same role token list as --service-roles");
+        Console.WriteLine("  env: NBN_WORKER_CPU_PCT          CPU availability percentage");
+        Console.WriteLine("  env: NBN_WORKER_RAM_PCT          RAM availability percentage");
+        Console.WriteLine("  env: NBN_WORKER_STORAGE_PCT      Storage availability percentage");
+        Console.WriteLine("  env: NBN_WORKER_GPU_PCT          GPU availability percentage");
     }
 }

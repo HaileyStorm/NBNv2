@@ -2943,6 +2943,7 @@ public sealed class HiveMindActor : IActor
                 entry.IsFresh,
                 entry.CpuCores,
                 entry.RamFreeBytes,
+                entry.StorageFreeBytes,
                 entry.HasGpu,
                 entry.VramFreeBytes,
                 entry.CpuScore,
@@ -3158,6 +3159,7 @@ public sealed class HiveMindActor : IActor
             entry.LastSeenMs = worker.LastSeenMs > 0 ? (long)worker.LastSeenMs : 0;
             entry.CpuCores = hasCapabilities ? capabilities.CpuCores : 0;
             entry.RamFreeBytes = hasCapabilities ? (long)capabilities.RamFreeBytes : 0;
+            entry.StorageFreeBytes = hasCapabilities ? (long)capabilities.StorageFreeBytes : 0;
             entry.HasGpu = hasCapabilities && capabilities.HasGpu;
             entry.VramFreeBytes = hasCapabilities ? (long)capabilities.VramFreeBytes : 0;
             entry.CpuScore = hasCapabilities ? capabilities.CpuScore : 0f;
@@ -3198,7 +3200,8 @@ public sealed class HiveMindActor : IActor
                 VramFreeBytes = ToProtoBytes(entry.VramFreeBytes),
                 CpuScore = entry.CpuScore,
                 GpuScore = entry.GpuScore,
-                CapabilityEpoch = ToProtoMs(entry.CapabilitySnapshotMs)
+                CapabilityEpoch = ToProtoMs(entry.CapabilitySnapshotMs),
+                StorageFreeBytes = ToProtoBytes(entry.StorageFreeBytes)
             });
         }
 
@@ -4977,6 +4980,7 @@ public sealed class HiveMindActor : IActor
         public long LastUpdatedMs { get; set; }
         public uint CpuCores { get; set; }
         public long RamFreeBytes { get; set; }
+        public long StorageFreeBytes { get; set; }
         public bool HasGpu { get; set; }
         public long VramFreeBytes { get; set; }
         public float CpuScore { get; set; }

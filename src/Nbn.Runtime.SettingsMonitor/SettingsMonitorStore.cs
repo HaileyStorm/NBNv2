@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS node_capabilities (
     time_ms INTEGER NOT NULL,
     cpu_cores INTEGER NOT NULL,
     ram_free_bytes INTEGER NOT NULL,
+    storage_free_bytes INTEGER NOT NULL DEFAULT 0,
     has_gpu INTEGER NOT NULL,
     gpu_name TEXT NOT NULL,
     vram_free_bytes INTEGER NOT NULL,
@@ -102,6 +103,7 @@ INSERT INTO node_capabilities (
     time_ms,
     cpu_cores,
     ram_free_bytes,
+    storage_free_bytes,
     has_gpu,
     gpu_name,
     vram_free_bytes,
@@ -114,6 +116,7 @@ INSERT INTO node_capabilities (
     @time_ms,
     @cpu_cores,
     @ram_free_bytes,
+    @storage_free_bytes,
     @has_gpu,
     @gpu_name,
     @vram_free_bytes,
@@ -308,6 +311,7 @@ SELECT
     COALESCE(c.time_ms, 0) AS CapabilityTimeMs,
     COALESCE(c.cpu_cores, 0) AS CpuCores,
     COALESCE(c.ram_free_bytes, 0) AS RamFreeBytes,
+    COALESCE(c.storage_free_bytes, 0) AS StorageFreeBytes,
     COALESCE(c.has_gpu, 0) AS HasGpu,
     COALESCE(c.gpu_name, '') AS GpuName,
     COALESCE(c.vram_free_bytes, 0) AS VramFreeBytes,
@@ -328,6 +332,13 @@ LEFT JOIN node_capabilities AS c
        WHERE c2.node_id = n.node_id
    )
 ORDER BY n.logical_name, n.node_id;
+""";
+
+    private const string NodeCapabilitiesTableInfoSql = "PRAGMA table_info(node_capabilities);";
+
+    private const string AddStorageFreeBytesColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN storage_free_bytes INTEGER NOT NULL DEFAULT 0;
 """;
 
     private readonly string _databasePath;
@@ -429,6 +440,11 @@ ORDER BY n.logical_name, n.node_id;
         }
     }
 
+    private sealed class TableInfoRow
+    {
+        public string Name { get; set; } = string.Empty;
+    }
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         var directory = Path.GetDirectoryName(_databasePath);
@@ -439,6 +455,22 @@ ORDER BY n.logical_name, n.node_id;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(CreateSchemaSql, cancellationToken: cancellationToken));
+        await EnsureNodeCapabilitiesStorageColumnAsync(connection, cancellationToken);
+    }
+
+    private static async Task EnsureNodeCapabilitiesStorageColumnAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var tableInfo = (await connection.QueryAsync<TableInfoRow>(
+                new CommandDefinition(NodeCapabilitiesTableInfoSql, cancellationToken: cancellationToken)))
+            .ToArray();
+        if (tableInfo.Any(static column => column.Name.Equals("storage_free_bytes", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(AddStorageFreeBytesColumnSql, cancellationToken: cancellationToken));
     }
 
     public async Task UpsertNodeAsync(
@@ -539,6 +571,7 @@ ORDER BY n.logical_name, n.node_id;
             time_ms = heartbeat.TimeMs,
             cpu_cores = capabilities.CpuCores,
             ram_free_bytes = capabilities.RamFreeBytes,
+            storage_free_bytes = capabilities.StorageFreeBytes,
             has_gpu = capabilities.HasGpu ? 1 : 0,
             gpu_name = capabilities.GpuName ?? string.Empty,
             vram_free_bytes = capabilities.VramFreeBytes,
