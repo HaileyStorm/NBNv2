@@ -34,6 +34,9 @@ switch (command)
     case "init-artifacts":
         await InitArtifactsAsync(remaining);
         break;
+    case "spawn-brain":
+        await RunSpawnBrainAsync(remaining);
+        break;
     case "io-scenario":
         await RunIoScenarioAsync(remaining);
         break;
@@ -164,6 +167,150 @@ static async Task RunBrainAsync(string[] args)
 
     await system.Remote().ShutdownAsync(true);
     await system.ShutdownAsync();
+}
+
+static async Task RunSpawnBrainAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12073;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var ioAddress = GetArg(args, "--io-address") ?? throw new InvalidOperationException("--io-address is required.");
+    var ioId = GetArg(args, "--io-id") ?? "io-gateway";
+    var nbnSha = GetArg(args, "--nbn-sha256") ?? GetArg(args, "--brain-def-sha256") ?? throw new InvalidOperationException("--nbn-sha256 is required.");
+    var nbnSize = GetULongArg(args, "--nbn-size") ?? GetULongArg(args, "--brain-def-size") ?? throw new InvalidOperationException("--nbn-size is required.");
+    var storeUri = GetArg(args, "--store-uri") ?? GetArg(args, "--artifact-root");
+    var mediaType = GetArg(args, "--media-type") ?? "application/x-nbn";
+    var timeoutSeconds = GetIntArg(args, "--timeout-seconds") ?? 70;
+    var waitSeconds = Math.Max(0, GetIntArg(args, "--wait-seconds") ?? 20);
+    var jsonOnly = HasFlag(args, "--json");
+    var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+    var brainDef = nbnSha.ToArtifactRef(nbnSize, mediaType, storeUri);
+
+    SpawnBrainViaIOAck? response = null;
+    SpawnBrainAck? ack = null;
+    Guid brainId = Guid.Empty;
+    bool registrationObserved = false;
+    string? registrationStatus = null;
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var ioPid = new PID(ioAddress, ioId);
+
+        try
+        {
+            response = await system.Root.RequestAsync<SpawnBrainViaIOAck>(
+                ioPid,
+                new SpawnBrainViaIO
+                {
+                    Request = new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                timeout);
+        }
+        catch (Exception ex)
+        {
+            ack = new SpawnBrainAck
+            {
+                FailureReasonCode = "spawn_request_failed",
+                FailureMessage = $"Spawn request failed: {ex.GetBaseException().Message}"
+            };
+        }
+
+        ack ??= response?.Ack ?? new SpawnBrainAck
+        {
+            FailureReasonCode = "spawn_empty_response",
+            FailureMessage = "Spawn request failed: IO returned an empty acknowledgment."
+        };
+
+        if (ack.BrainId.TryToGuid(out var parsedBrainId))
+        {
+            brainId = parsedBrainId;
+        }
+
+        if (brainId == Guid.Empty)
+        {
+            registrationStatus = "spawn_failed";
+        }
+        else if (waitSeconds == 0)
+        {
+            registrationStatus = "wait_skipped";
+        }
+        else
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(waitSeconds);
+            while (DateTime.UtcNow <= deadline)
+            {
+                BrainInfo? info = null;
+                try
+                {
+                    info = await system.Root.RequestAsync<BrainInfo>(
+                        ioPid,
+                        new BrainInfoRequest
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        },
+                        timeout);
+                }
+                catch
+                {
+                    // Keep waiting until deadline; transient startup races are expected.
+                }
+
+                if (info is not null && (info.InputWidth > 0 || info.OutputWidth > 0))
+                {
+                    registrationObserved = true;
+                    break;
+                }
+
+                await Task.Delay(250).ConfigureAwait(false);
+            }
+
+            registrationStatus = registrationObserved ? "registered" : "registration_timeout";
+        }
+
+        var brainIdText = brainId == Guid.Empty ? string.Empty : brainId.ToString("D");
+        var payload = new
+        {
+            io_address = ioAddress,
+            io_id = ioId,
+            wait_seconds = waitSeconds,
+            brain_def = ToArtifactPayload(brainDef),
+            spawn_ack = new
+            {
+                brain_id = brainIdText,
+                failure_reason_code = ack.FailureReasonCode ?? string.Empty,
+                failure_message = ack.FailureMessage ?? string.Empty
+            },
+            failure_reason_code = response?.FailureReasonCode ?? ack.FailureReasonCode ?? string.Empty,
+            failure_message = response?.FailureMessage ?? ack.FailureMessage ?? string.Empty,
+            registration_observed = registrationObserved,
+            registration_status = registrationStatus ?? string.Empty
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"Spawn requested via {ioAddress}/{ioId}");
+            Console.WriteLine($"BrainId: {(string.IsNullOrWhiteSpace(brainIdText) ? "(empty)" : brainIdText)}");
+            Console.WriteLine($"Failure: {(string.IsNullOrWhiteSpace(payload.failure_reason_code) ? "(none)" : payload.failure_reason_code)}");
+            Console.WriteLine($"Registration: {payload.registration_status}");
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
 }
 
 static async Task RunIoScenarioAsync(string[] args)
@@ -1317,6 +1464,8 @@ static void PrintHelp()
 {
     Console.WriteLine("NBN DemoHost usage:");
     Console.WriteLine("  init-artifacts --artifact-root <path> [--json]");
+    Console.WriteLine("  spawn-brain --io-address <host:port> [--io-id <name>] --nbn-sha256 <hex> --nbn-size <bytes>");
+    Console.WriteLine("              [--store-uri <path|file://uri>] [--media-type <mime>] [--timeout-seconds <int>] [--wait-seconds <int>] [--json]");
     Console.WriteLine("  io-scenario --io-address <host:port> --io-id <name> --brain-id <guid>");
     Console.WriteLine("             [--credit <int64>] [--rate <int64>] [--cost-enabled <bool>] [--energy-enabled <bool>]");
     Console.WriteLine("             [--plasticity-enabled <bool>] [--plasticity-rate <float>] [--probabilistic <bool>] [--json]");

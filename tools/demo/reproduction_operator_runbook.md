@@ -4,7 +4,11 @@
 This runbook covers reproduction requests sent through IO Gateway (`ReproduceByBrainIds` and `ReproduceByArtifacts`) and handled by `ReproductionManager`.
 
 ## Quick Start (Deterministic Artifact Flow)
-Run the local PowerShell demo script (starts SettingsMonitor, HiveMind, BrainHost, RegionHosts, IO, Reproduction, and Observability):
+Run the local PowerShell demo script (worker-node-first bring-up):
+- starts `SettingsMonitor`
+- starts worker nodes and waits for worker/service heartbeats
+- starts `HiveMind`, `IO`, `Reproduction`, and `Observability`
+- spawns the demo brain through IO/HiveMind placement (`SpawnBrainViaIO`)
 
 ```powershell
 tools/demo/run_local_hivemind_demo.ps1
@@ -96,10 +100,16 @@ dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
 | `repro_spot_check_overlap_mismatch` | ReproductionManager | Spot-check overlap below required threshold | Use closer parents and stable seed for repeatability |
 | `repro_child_validation_failed` | ReproductionManager | Synthesized child failed NBN validation | Tighten mutation limits/probabilities; inspect logs and mutation summary |
 | `repro_spawn_unavailable` | ReproductionManager | Spawn requested but repro actor has no IO PID | Start repro node with `--io-address/--io-name` |
-| `repro_spawn_failed` | ReproductionManager | Spawn ack missing/invalid BrainId | Inspect HiveMind/IO logs for spawn lifecycle failures |
-| `repro_spawn_request_failed` | ReproductionManager | Spawn request threw/timeout | Verify IO and HiveMind health and network reachability |
+| `repro_spawn_failed` | ReproductionManager | Spawn ack missing/invalid BrainId | Inspect HiveMind/IO logs plus worker logs for assignment/lifecycle failures |
+| `repro_spawn_request_failed` | ReproductionManager | Spawn request threw/timeout | Verify IO/HiveMind health and worker-node reachability/heartbeat freshness |
 
 ## Operational Checks
+- Confirm worker-node inventory first:
+  - worker processes are online in SettingsMonitor (`is_alive=true`, recent heartbeats, expected capabilities)
+  - worker roles include placement targets needed for spawn (`brain-root`, `signal-router`, coordinators, `region-shard`)
+- Confirm placement path is healthy:
+  - HiveMind is reachable and has eligible workers (no `worker_unavailable` placement condition)
+  - no active reschedule/recovery pause is blocking placement completion
 - Confirm IO has repro routing:
   - IO launched with `--repro-address <host:port> --repro-name ReproductionManager`.
 - Confirm repro actor has IO routing:

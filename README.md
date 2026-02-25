@@ -9,6 +9,24 @@ Distributed neural simulation framework based on the NBNv2 design spec in
 
 The solution file is `NBNv2.sln`.
 
+## Worker-first local bring-up (recommended)
+
+Use this startup order for operator flows and local demos:
+
+1. `SettingsMonitor` (registry + settings)
+2. One or more `WorkerNode` processes (heartbeat/capability inventory)
+3. `HiveMind` (placement + tick control)
+4. `IO Gateway` (and optional `Reproduction` / `Observability`)
+5. Spawn brains through IO (`SpawnBrainViaIO`) and let HiveMind place work on workers
+
+## SettingsMonitor quickstart (CLI)
+
+```bash
+dotnet run --project src/Nbn.Runtime.SettingsMonitor -- \
+  --db settingsmonitor.db \
+  --bind-host 127.0.0.1 --port 12010
+```
+
 ## HiveMind quickstart (CLI)
 
 ```bash
@@ -29,7 +47,7 @@ OpenTelemetry env vars (alternatives to CLI flags):
 - `NBN_HIVE_OTEL_ENDPOINT` (falls back to `OTEL_EXPORTER_OTLP_ENDPOINT`)
 - `NBN_HIVE_OTEL_SERVICE_NAME` (falls back to `OTEL_SERVICE_NAME`)
 
-## RegionHost quickstart (CLI)
+## RegionHost advanced manual quickstart (debug-only)
 
 Example invocation (replace IDs/ports/sha/size with real values):
 
@@ -50,6 +68,7 @@ Notes:
 - `--nbs-*` flags are optional (omit for no snapshot overlays).
 - Output region shards (`region 31`) require a valid `--output-*` PID.
 - RegionHost registers/unregisters its shard with the HiveMind PID provided via `--tick-*`.
+- This path is for manual shard debugging only; the normal runtime flow is `WorkerNode` placement via HiveMind.
 
 ## WorkerNode quickstart (CLI)
 
@@ -101,6 +120,10 @@ by default:
 tools/demo/run_local_hivemind_demo.ps1
 ```
 
+The script now follows worker-node-first bootstrap:
+- starts `SettingsMonitor`, worker nodes, then central services (`HiveMind`, `IO`, `Reproduction`, `Observability`)
+- spawns the demo brain through `SpawnBrainViaIO` (no manual BrainHost/RegionHost wiring)
+
 The scenario uses `Nbn.Tools.DemoHost io-scenario` to apply:
 - `EnergyCredit`
 - `EnergyRate`
@@ -129,8 +152,9 @@ Useful telemetry names for this workflow:
 - `nbn.hivemind.rebase.overlay.records`
 
 Quick troubleshooting:
-- `brain_not_found` in ack: verify the demo `BrainId` and IO registration in `io.log`.
+- `brain_not_found` in ack: inspect `spawn.log` for spawn/registration status, then verify worker logs and placement availability.
 - request timeout: verify `--io-address`/`--io-id` and that IO Gateway is running.
+- spawn failures with worker errors: verify worker nodes are online in SettingsMonitor and advertising required service roles.
 
 ## Reproduction Runtime + Operator Runbook
 
@@ -151,7 +175,7 @@ Operator runbook:
 - `tools/demo/reproduction_operator_runbook.md`
 
 Local deterministic repro demo flow:
-- `tools/demo/run_local_hivemind_demo.ps1` now starts `Nbn.Runtime.Reproduction`, wires IO with `--repro-address/--repro-name`, and runs `Nbn.Tools.DemoHost repro-scenario`.
+- `tools/demo/run_local_hivemind_demo.ps1` starts worker nodes first, then central services, spawns a brain through IO/HiveMind placement, and runs `Nbn.Tools.DemoHost repro-scenario`.
 - The scenario log is written to `tools/demo/local-demo/<timestamp>/logs/repro-scenario.log`.
 - The script also runs `Nbn.Tools.DemoHost repro-suite` and writes `tools/demo/local-demo/<timestamp>/logs/repro-suite.log` with per-case pass/fail checks.
 - Default expected fields are:
