@@ -107,6 +107,46 @@ public class NbnBinaryValidatorTests
     }
 
     [Fact]
+    public void ValidateNbn_DetectsAxonTargetRegionAbsentFromDirectory()
+    {
+        var stride = (uint)NbnConstants.DefaultAxonStride;
+        var inputNeurons = new[]
+        {
+            new NeuronRecord(1, 0, 0, 0, 0, 0, 0, 0, true)
+        };
+        var inputAxons = new[]
+        {
+            new AxonRecord(1, 0, 1)
+        };
+        var inputCheckpoints = NbnBinary.BuildCheckpoints(inputNeurons, stride);
+        var region0 = new NbnRegionSection(0, 1, 1, stride, (uint)inputCheckpoints.Length, inputCheckpoints, inputNeurons, inputAxons);
+
+        var outputNeurons = new[] { new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true) };
+        var outputCheckpoints = NbnBinary.BuildCheckpoints(outputNeurons, stride);
+        var region31 = new NbnRegionSection(31, 1, 0, stride, (uint)outputCheckpoints.Length, outputCheckpoints, outputNeurons, Array.Empty<AxonRecord>());
+
+        var regions = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
+        regions[0] = new NbnRegionDirectoryEntry(1, 1, (ulong)NbnBinary.NbnHeaderBytes, 0);
+        regions[31] = new NbnRegionDirectoryEntry(1, 0, (ulong)NbnBinary.NbnHeaderBytes + 128, 0);
+
+        var header = new NbnHeaderV2(
+            "NBN2",
+            2,
+            1,
+            10,
+            0,
+            stride,
+            0,
+            QuantizationSchemas.DefaultNbn,
+            regions);
+
+        var result = NbnBinaryValidator.ValidateNbn(header, new[] { region0, region31 });
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, issue => issue.Message.Contains("target region is absent from the region directory", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void ValidateNbn_ZeroStride_ReturnsValidationIssue()
     {
         var neurons = new[] { new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true) };

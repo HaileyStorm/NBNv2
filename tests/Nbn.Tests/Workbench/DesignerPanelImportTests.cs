@@ -90,6 +90,26 @@ public class DesignerPanelImportTests
         Assert.Contains("destination region span", vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void TryImportNbnFromBytes_WhenMultipleValidationIssues_ReportsIssueCountSummary()
+    {
+        var vm = CreateViewModel();
+        var brainBefore = vm.Brain;
+        var summaryBefore = vm.LoadedSummary;
+
+        var imported = vm.TryImportNbnFromBytes(
+            CreateInvalidMultiIssueNbn(),
+            "invalid-multi-issue.nbn");
+
+        Assert.False(imported);
+        Assert.Same(brainBefore, vm.Brain);
+        Assert.Equal(summaryBefore, vm.LoadedSummary);
+        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+        Assert.Contains("invalid-multi-issue.nbn", vm.Status, StringComparison.Ordinal);
+        Assert.Contains("(+", vm.Status, StringComparison.Ordinal);
+        Assert.Contains("more issue(s))", vm.Status, StringComparison.Ordinal);
+    }
+
     private static DesignerPanelViewModel CreateViewModel()
     {
         EnsureAvaloniaInitialized();
@@ -186,7 +206,31 @@ public class DesignerPanelImportTests
             new RegionSpec((byte)NbnConstants.OutputRegionId, region31Neurons, Array.Empty<AxonRecord>()));
     }
 
+    private static byte[] CreateInvalidMultiIssueNbn()
+    {
+        var region0Neurons = new[]
+        {
+            new NeuronRecord(1, 0, 0, 0, 0, 0, 0, 0, true)
+        };
+        var region0Axons = new[]
+        {
+            new AxonRecord(9, 0, (byte)NbnConstants.InputRegionId)
+        };
+        var region31Neurons = new[]
+        {
+            new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true)
+        };
+
+        return BuildNbnWithHeaderFlags(
+            headerFlags: 1,
+            new RegionSpec((byte)NbnConstants.InputRegionId, region0Neurons, region0Axons),
+            new RegionSpec((byte)NbnConstants.OutputRegionId, region31Neurons, Array.Empty<AxonRecord>()));
+    }
+
     private static byte[] BuildNbn(params RegionSpec[] regionSpecs)
+        => BuildNbnWithHeaderFlags(0, regionSpecs);
+
+    private static byte[] BuildNbnWithHeaderFlags(uint headerFlags, params RegionSpec[] regionSpecs)
     {
         var stride = (uint)NbnConstants.DefaultAxonStride;
         var sections = new List<NbnRegionSection>(regionSpecs.Length);
@@ -223,7 +267,7 @@ public class DesignerPanelImportTests
             10,
             0,
             stride,
-            0,
+            headerFlags,
             QuantizationSchemas.DefaultNbn,
             directory);
 

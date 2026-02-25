@@ -105,6 +105,68 @@ public sealed class OutputCoordinatorActorTests
     }
 
     [Fact]
+    public async Task OutputVector_CompletedTickSegment_IsRejected_AndDoesNotEmitDuplicateVector()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var brainId = Guid.NewGuid();
+        var root = system.Root;
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
+            var vectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(brainId, coordinator, vectors.Writer)));
+
+            await Task.Delay(100);
+
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 3f, 4f }, 7));
+            var first = await ReadVectorAsync(vectors.Reader, TimeSpan.FromSeconds(2));
+            Assert.Equal((ulong)7, first.TickId);
+            Assert.Equal(new[] { 3f, 4f }, first.Values);
+
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 9f, 9f }, 7));
+            await AssertNoVectorAsync(vectors.Reader, TimeSpan.FromMilliseconds(150));
+
+            await WaitForMetricSumAsync(
+                () => metrics.SumLong(
+                    "nbn.io.output.vector.published",
+                    ("brain_id", brainId.ToString("D")),
+                    ("output_width", "2")),
+                minValue: 1,
+                timeout: TimeSpan.FromSeconds(2));
+
+            await WaitForMetricSumAsync(
+                () => metrics.SumLong(
+                    "nbn.io.output.vector.rejected",
+                    ("brain_id", brainId.ToString("D")),
+                    ("reason", "tick_already_completed"),
+                    ("output_width", "2")),
+                minValue: 1,
+                timeout: TimeSpan.FromSeconds(2));
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.io.output.vector.published",
+                    ("brain_id", brainId.ToString("D")),
+                    ("output_width", "2")));
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.io.output.vector.rejected",
+                    ("brain_id", brainId.ToString("D")),
+                    ("reason", "tick_already_completed"),
+                    ("output_width", "2")));
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task OutputVector_OverlappingShardPayload_IsRejected_AndSurfacedViaTelemetry()
     {
         using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
@@ -158,6 +220,22 @@ public sealed class OutputCoordinatorActorTests
         catch (OperationCanceledException)
         {
         }
+    }
+
+    private static async Task WaitForMetricSumAsync(Func<long> readMetric, long minValue, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        while (!cts.IsCancellationRequested)
+        {
+            if (readMetric() >= minValue)
+            {
+                return;
+            }
+
+            await Task.Delay(25, cts.Token);
+        }
+
+        Assert.Fail($"Timed out waiting for metric sum to reach {minValue}.");
     }
 
     private sealed class VectorSubscriberProbe : IActor

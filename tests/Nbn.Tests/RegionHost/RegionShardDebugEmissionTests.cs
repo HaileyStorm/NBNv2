@@ -208,6 +208,78 @@ public class RegionShardDebugEmissionTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task HandleSignalBatch_WhenLateThenCurrentTick_OnlyCurrentContributionIsApplied()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var ackProbePid = root.Spawn(Props.FromProducer(static () => new SignalAckProbeActor()));
+        var brainId = Guid.NewGuid();
+        var shardId = ShardId32.From(regionId: 5, shardIndex: 0);
+        var state = CreateState(regionId: 5, neuronStart: 0, neuronCount: 2);
+
+        var actor = root.Spawn(Props.FromProducer(() => new RegionShardActor(
+            state,
+            new RegionShardActorConfig(
+                BrainId: brainId,
+                ShardId: shardId,
+                Router: ackProbePid,
+                OutputSink: null,
+                TickSink: null,
+                Routing: RegionShardRoutingTable.CreateSingleShard(state.RegionId, state.NeuronCount),
+                DebugHub: debugProbePid,
+                DebugEnabled: true,
+                DebugMinSeverity: Severity.SevWarn))));
+
+        await root.RequestAsync<TickComputeDone>(actor, new TickCompute { TickId = 31 });
+
+        root.Send(actor, new SignalBatch
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)state.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            TickId = 30,
+            Contribs =
+            {
+                new Contribution
+                {
+                    TargetNeuronId = 0,
+                    Value = 0.25f
+                }
+            }
+        });
+
+        root.Send(actor, new SignalBatch
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)state.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            TickId = 31,
+            Contribs =
+            {
+                new Contribution
+                {
+                    TargetNeuronId = 0,
+                    Value = 0.75f
+                }
+            }
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var debugSnapshot = await WaitForDebugCountAsync(root, debugProbePid, "signal.late", minCount: 1, cts.Token);
+        var ackSnapshot = await WaitForAckCountAsync(root, ackProbePid, minCount: 2, cts.Token);
+        await root.RequestAsync<TickComputeDone>(actor, new TickCompute { TickId = 32 });
+
+        Assert.True(debugSnapshot.Count("signal.late") >= 1);
+        Assert.Equal(2, ackSnapshot.Acks.Count);
+        Assert.Contains(ackSnapshot.Acks, ack => ack.TickId == (ulong)30);
+        Assert.Contains(ackSnapshot.Acks, ack => ack.TickId == (ulong)31);
+        Assert.InRange(state.Buffer[0], 0.749f, 0.751f);
+
+        await system.ShutdownAsync();
+    }
+
     private static async Task<DebugProbeSnapshot> WaitForDebugCountAsync(
         IRootContext root,
         PID debugProbePid,
