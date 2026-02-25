@@ -7,6 +7,8 @@ namespace Nbn.Shared.Validation;
 
 public static class NbnBinaryValidator
 {
+    private const uint NbsAllowedFlagsMask = 0x1Fu;
+
     public static NbnValidationResult ValidateNbn(NbnHeaderV2 header, IReadOnlyList<NbnRegionSection> regions)
     {
         var result = new NbnValidationResult();
@@ -29,6 +31,16 @@ public static class NbnBinaryValidator
         if (header.HeaderByteCount != NbnBinary.NbnHeaderBytes)
         {
             result.Add("NBN header size must be 1024 bytes.", "header");
+        }
+
+        if (header.Flags != 0)
+        {
+            result.Add("NBN header flags contain reserved bits.", "header");
+        }
+
+        if (header.AxonStride == 0)
+        {
+            result.Add("NBN header stride must be greater than zero.", "header");
         }
 
         if (header.Regions.Length != NbnConstants.RegionCount)
@@ -54,9 +66,19 @@ public static class NbnBinaryValidator
             var entry = header.Regions[regionId];
             if (entry.NeuronSpan == 0)
             {
+                if (entry.TotalAxons != 0)
+                {
+                    result.Add("Absent region directory entry must have total axons 0.", $"region {regionId}");
+                }
+
                 if (entry.Offset != 0)
                 {
                     result.Add("Absent region directory entry must have offset 0.", $"region {regionId}");
+                }
+
+                if (entry.Flags != 0)
+                {
+                    result.Add("Region directory flags must be zero (reserved).", $"region {regionId}");
                 }
 
                 continue;
@@ -65,6 +87,11 @@ public static class NbnBinaryValidator
             if (entry.NeuronSpan > NbnConstants.MaxAxonTargetNeuronId)
             {
                 result.Add("Region neuron span exceeds 22-bit limit.", $"region {regionId}");
+            }
+
+            if (entry.Flags != 0)
+            {
+                result.Add("Region directory flags must be zero (reserved).", $"region {regionId}");
             }
 
             if (entry.Offset == 0)
@@ -127,8 +154,32 @@ public static class NbnBinaryValidator
             result.Add("NBS header size must be 512 bytes.", "header");
         }
 
+        if ((header.Flags & ~NbsAllowedFlagsMask) != 0)
+        {
+            result.Add("NBS header flags contain reserved bits.", "header");
+        }
+
+        if (header.BaseNbnSha256 is null || header.BaseNbnSha256.Length != 32)
+        {
+            result.Add("NBS header base NBN hash must be 32 bytes.", "header");
+        }
+
+        var seenRegions = new HashSet<byte>();
+        var previousRegionId = -1;
         foreach (var region in regions)
         {
+            if (!seenRegions.Add(region.RegionId))
+            {
+                result.Add("Duplicate NBS region section encountered.", $"region {region.RegionId}");
+            }
+
+            if (previousRegionId >= 0 && region.RegionId <= previousRegionId)
+            {
+                result.Add("NBS region sections must be sorted by ascending region id.", "regions");
+            }
+
+            previousRegionId = region.RegionId;
+
             if (!NbnInvariants.IsValidRegionId(region.RegionId))
             {
                 result.Add("NBS region id is out of range.", $"region {region.RegionId}");
@@ -199,10 +250,17 @@ public static class NbnBinaryValidator
             result.Add("Region stride does not match header stride.", context);
         }
 
-        var expectedCheckpointCount = (uint)((section.NeuronSpan + section.Stride - 1) / section.Stride + 1);
-        if (section.CheckpointCount != expectedCheckpointCount)
+        if (section.Stride == 0)
         {
-            result.Add("Checkpoint count does not match stride rules.", context);
+            result.Add("Region stride must be greater than zero.", context);
+        }
+        else
+        {
+            var expectedCheckpointCount = (uint)((section.NeuronSpan + section.Stride - 1) / section.Stride + 1);
+            if (section.CheckpointCount != expectedCheckpointCount)
+            {
+                result.Add("Checkpoint count does not match stride rules.", context);
+            }
         }
 
         if ((uint)section.Checkpoints.Length != section.CheckpointCount)
@@ -263,10 +321,10 @@ public static class NbnBinaryValidator
             }
         }
 
-        ValidateAxonLists(result, section, regionId);
+        ValidateAxonLists(result, header, section, regionId);
     }
 
-    private static void ValidateAxonLists(NbnValidationResult result, NbnRegionSection section, int regionId)
+    private static void ValidateAxonLists(NbnValidationResult result, NbnHeaderV2 header, NbnRegionSection section, int regionId)
     {
         var axonIndex = 0;
         for (var neuronIndex = 0; neuronIndex < section.NeuronRecords.Length; neuronIndex++)
@@ -284,6 +342,31 @@ public static class NbnBinaryValidator
                 if (!NbnInvariants.TryValidateAxonList(span, regionId, null, out var error))
                 {
                     result.Add(error ?? "Invalid axon list.", $"region {regionId} neuron {neuronIndex}");
+                }
+
+                for (var axonOffset = 0; axonOffset < span.Length; axonOffset++)
+                {
+                    var record = span[axonOffset];
+                    if (!NbnInvariants.IsValidRegionId(record.TargetRegionId))
+                    {
+                        continue;
+                    }
+
+                    var destinationSpan = header.Regions[record.TargetRegionId].NeuronSpan;
+                    if (destinationSpan == 0)
+                    {
+                        result.Add(
+                            "Axon target region is absent from the region directory.",
+                            $"region {regionId} neuron {neuronIndex} axon {axonOffset}");
+                        continue;
+                    }
+
+                    if ((uint)record.TargetNeuronId >= destinationSpan)
+                    {
+                        result.Add(
+                            "Target neuron id exceeds the destination region span.",
+                            $"region {regionId} neuron {neuronIndex} axon {axonOffset}");
+                    }
                 }
             }
 
