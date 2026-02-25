@@ -880,15 +880,44 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         try
         {
             var bytes = await ReadAllBytesAsync(file);
+            _ = TryImportNbnFromBytes(bytes, file.Name, FormatPath(file));
+        }
+        catch (Exception ex)
+        {
+            Status = $"Import failed: {ex.Message}";
+        }
+    }
+
+    internal bool TryImportNbnFromBytes(byte[] bytes, string fileName, string? documentPath = null)
+    {
+        if (bytes is null)
+        {
+            throw new ArgumentNullException(nameof(bytes));
+        }
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = "Imported";
+        }
+
+        try
+        {
             var header = NbnBinary.ReadNbnHeader(bytes);
             var regions = ReadNbnRegions(bytes, header);
-            var brain = BuildDesignerBrainFromNbn(header, regions, Path.GetFileNameWithoutExtension(file.Name));
+            var validation = NbnBinaryValidator.ValidateNbn(header, regions);
+            if (!validation.IsValid)
+            {
+                Status = $"Import failed: Invalid .nbn ({fileName}): {FormatValidationIssueSummary(validation)}";
+                return false;
+            }
+
+            var brain = BuildDesignerBrainFromNbn(header, regions, Path.GetFileNameWithoutExtension(fileName));
             var normalizedFunctions = NormalizeBrainFunctionConstraints(brain);
 
             SetDocumentType(DesignerDocumentType.Nbn);
             Brain = brain;
             _snapshotBytes = null;
-            _documentPath = FormatPath(file);
+            _documentPath = documentPath ?? fileName;
             _nbsHeader = null;
             _nbsRegions = null;
             _nbsOverlay = null;
@@ -897,7 +926,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             SelectRegion(region0);
             SelectNeuron(region0.Neurons.FirstOrDefault());
 
-            LoadedSummary = BuildDesignSummary(brain, file.Name);
+            LoadedSummary = BuildDesignSummary(brain, fileName);
             Status = normalizedFunctions == 0
                 ? "NBN imported."
                 : $"NBN imported. Normalized {normalizedFunctions} neuron function setting(s) for IO constraints.";
@@ -908,10 +937,12 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             ValidateCommand.RaiseCanExecuteChanged();
             SpawnBrainCommand.RaiseCanExecuteChanged();
             ResetBrainCommand.RaiseCanExecuteChanged();
+            return true;
         }
         catch (Exception ex)
         {
             Status = $"Import failed: {ex.Message}";
+            return false;
         }
     }
 
@@ -2513,6 +2544,19 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         ValidationSummary = "Validation not run.";
         _validationHasRun = false;
         _validationPassed = false;
+    }
+
+    private static string FormatValidationIssueSummary(NbnValidationResult result)
+    {
+        if (result.Issues.Count == 0)
+        {
+            return "Validation failed.";
+        }
+
+        var firstIssue = result.Issues[0].ToString();
+        return result.Issues.Count == 1
+            ? firstIssue
+            : $"{firstIssue} (+{result.Issues.Count - 1} more issue(s))";
     }
 
     private void SetDesignDirty(bool isDirty)

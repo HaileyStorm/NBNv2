@@ -226,14 +226,24 @@ public class DesignerEdgeInteractionTests
     {
         lock (AvaloniaInitGate)
         {
-            if (s_avaloniaInitialized)
+            if (s_avaloniaInitialized || Application.Current is not null)
             {
+                s_avaloniaInitialized = true;
                 return;
             }
 
-            AppBuilder.Configure<Application>()
-                .UseHeadless(new AvaloniaHeadlessPlatformOptions())
-                .SetupWithoutStarting();
+            try
+            {
+                AppBuilder.Configure<Application>()
+                    .UseHeadless(new AvaloniaHeadlessPlatformOptions())
+                    .SetupWithoutStarting();
+            }
+            catch (InvalidOperationException ex)
+                when (ex.Message.Contains("Setup was already called", StringComparison.Ordinal))
+            {
+                // Another test class initialized Avalonia first; reuse that process-level setup.
+            }
+
             s_avaloniaInitialized = true;
         }
     }
