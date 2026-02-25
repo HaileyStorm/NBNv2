@@ -273,7 +273,8 @@ public sealed class RegionShardActor : IActor
             return;
         }
 
-        if (_hasComputed && batch.TickId < _lastComputeTickId)
+        var isLateBatch = _hasComputed && batch.TickId < _lastComputeTickId;
+        if (isLateBatch)
         {
             RegionHostTelemetry.RecordSignalBatchLate();
             EmitDebug(context, ProtoSeverity.SevWarn, "signal.late", $"Late SignalBatch tick={batch.TickId} lastCompute={_lastComputeTickId}");
@@ -282,10 +283,12 @@ public sealed class RegionShardActor : IActor
                 Console.WriteLine($"[RegionShard] SignalBatch late. tick={batch.TickId} lastCompute={_lastComputeTickId}");
             }
         }
-
-        foreach (var contrib in batch.Contribs)
+        else
         {
-            _state.ApplyContribution(contrib.TargetNeuronId, contrib.Value);
+            foreach (var contrib in batch.Contribs)
+            {
+                _state.ApplyContribution(contrib.TargetNeuronId, contrib.Value);
+            }
         }
 
         var ack = new SignalBatchAck
