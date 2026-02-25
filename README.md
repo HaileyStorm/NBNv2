@@ -126,6 +126,13 @@ Workbench can mirror these via SettingsMonitor keys:
 - `debug.stream.include_summary_prefixes`
 - `debug.stream.exclude_summary_prefixes`
 
+Emitter-side debug flow is also opt-in:
+- HiveMind emits debug only when `debug.stream.enabled=true`, and only at/above `debug.stream.min_severity`.
+- HiveMind propagates those runtime debug settings to RegionShards via `UpdateShardRuntimeConfig`.
+- RegionHost/WorkerNode startup defaults debug emission off, with env fallbacks:
+  - `NBN_DEBUG_STREAM_ENABLED` (`true|false`)
+  - `NBN_DEBUG_STREAM_MIN_SEVERITY` (`SevTrace|SevDebug|SevInfo|SevWarn|SevError|SevFatal`)
+
 ## Energy + Plasticity Demo Scenario
 
 The local PowerShell demo script now includes an energy/plasticity scenario step

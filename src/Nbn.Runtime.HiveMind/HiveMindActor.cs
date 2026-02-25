@@ -27,6 +27,9 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _ioPid;
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
+    private bool _debugStreamEnabled;
+    private ProtoSeverity _debugMinSeverity;
+    private bool _debugSettingsSubscribed;
     private readonly Dictionary<Guid, BrainState> _brains = new();
     private readonly Dictionary<Guid, PendingSpawnState> _pendingSpawns = new();
     private readonly Dictionary<Guid, WorkerCatalogEntry> _workerCatalog = new();
@@ -54,7 +57,9 @@ public sealed class HiveMindActor : IActor
         PID? debugHubPid = null,
         PID? vizHubPid = null,
         PID? ioPid = null,
-        PID? settingsPid = null)
+        PID? settingsPid = null,
+        bool? debugStreamEnabled = null,
+        ProtoSeverity? debugMinSeverity = null)
     {
         _options = options;
         _backpressure = new BackpressureController(options);
@@ -64,6 +69,8 @@ public sealed class HiveMindActor : IActor
         var resolvedObs = ObservabilityTargets.Resolve(options.SettingsHost);
         _debugHubPid = debugHubPid ?? resolvedObs.DebugHub;
         _vizHubPid = vizHubPid ?? resolvedObs.VizHub;
+        _debugStreamEnabled = debugStreamEnabled ?? _settingsPid is null;
+        _debugMinSeverity = NormalizeDebugSeverity(debugMinSeverity ?? ProtoSeverity.SevDebug);
     }
 
     public Task ReceiveAsync(IContext context)
@@ -78,6 +85,8 @@ public sealed class HiveMindActor : IActor
 
                     if (_settingsPid is not null)
                     {
+                        EnsureDebugSettingsSubscription(context);
+                        RefreshDebugSettings(context);
                         ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerInventoryTick());
                     }
                     break;
@@ -186,6 +195,12 @@ public sealed class HiveMindActor : IActor
                 case ProtoSettings.WorkerInventorySnapshotResponse message:
                     HandleWorkerInventorySnapshotResponse(message);
                     break;
+                case ProtoSettings.SettingValue message:
+                    HandleSettingValue(context, message);
+                    break;
+                case ProtoSettings.SettingChanged message:
+                    HandleSettingChanged(context, message);
+                    break;
                 case PauseBrainRequest message:
                     PauseBrain(context, message.BrainId, message.Reason);
                     break;
@@ -241,6 +256,148 @@ public sealed class HiveMindActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private void EnsureDebugSettingsSubscription(IContext context)
+    {
+        if (_settingsPid is null || _debugSettingsSubscribed)
+        {
+            return;
+        }
+
+        context.Send(_settingsPid, new ProtoSettings.SettingSubscribe
+        {
+            SubscriberActor = PidLabel(context.Self)
+        });
+        _debugSettingsSubscribed = true;
+    }
+
+    private void RefreshDebugSettings(IContext context)
+    {
+        if (_settingsPid is null)
+        {
+            return;
+        }
+
+        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.EnabledKey });
+        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.MinSeverityKey });
+    }
+
+    private void HandleSettingValue(IContext context, ProtoSettings.SettingValue message)
+    {
+        if (message is null)
+        {
+            return;
+        }
+
+        if (TryApplyDebugSetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+        }
+    }
+
+    private void HandleSettingChanged(IContext context, ProtoSettings.SettingChanged message)
+    {
+        if (message is null)
+        {
+            return;
+        }
+
+        if (TryApplyDebugSetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+        }
+    }
+
+    private bool TryApplyDebugSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.EnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseDebugEnabledSetting(value, _debugStreamEnabled);
+            if (parsed == _debugStreamEnabled)
+            {
+                return false;
+            }
+
+            _debugStreamEnabled = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.MinSeverityKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseDebugSeveritySetting(value, _debugMinSeverity);
+            if (parsed == _debugMinSeverity)
+            {
+                return false;
+            }
+
+            _debugMinSeverity = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void UpdateAllShardRuntimeConfig(IContext context)
+    {
+        foreach (var brain in _brains.Values)
+        {
+            UpdateShardRuntimeConfig(context, brain);
+        }
+    }
+
+    private static bool ParseDebugEnabledSetting(string? value, bool fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => fallback
+        };
+    }
+
+    private static ProtoSeverity ParseDebugSeveritySetting(string? value, ProtoSeverity fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        if (Enum.TryParse<ProtoSeverity>(value, ignoreCase: true, out var direct))
+        {
+            return NormalizeDebugSeverity(direct);
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "trace" or "sev_trace" => ProtoSeverity.SevTrace,
+            "debug" or "sev_debug" => ProtoSeverity.SevDebug,
+            "info" or "sev_info" => ProtoSeverity.SevInfo,
+            "warn" or "warning" or "sev_warn" => ProtoSeverity.SevWarn,
+            "error" or "sev_error" => ProtoSeverity.SevError,
+            "fatal" or "sev_fatal" => ProtoSeverity.SevFatal,
+            _ => fallback
+        };
+    }
+
+    private static ProtoSeverity NormalizeDebugSeverity(ProtoSeverity severity)
+    {
+        return severity switch
+        {
+            ProtoSeverity.SevTrace or ProtoSeverity.SevDebug or ProtoSeverity.SevInfo or ProtoSeverity.SevWarn or ProtoSeverity.SevError or ProtoSeverity.SevFatal => severity,
+            _ => ProtoSeverity.SevInfo
+        };
     }
 
     private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid)
@@ -421,7 +578,9 @@ public sealed class HiveMindActor : IActor
             brain.EnergyEnabled,
             brain.PlasticityEnabled,
             brain.PlasticityRate,
-            brain.PlasticityProbabilisticUpdates);
+            brain.PlasticityProbabilisticUpdates,
+            _debugStreamEnabled,
+            _debugMinSeverity);
         UpdateRoutingTable(context, brain);
         if (brain.PlacementEpoch > 0)
         {
@@ -4703,7 +4862,9 @@ public sealed class HiveMindActor : IActor
                 brain.EnergyEnabled,
                 brain.PlasticityEnabled,
                 brain.PlasticityRate,
-                brain.PlasticityProbabilisticUpdates);
+                brain.PlasticityProbabilisticUpdates,
+                _debugStreamEnabled,
+                _debugMinSeverity);
         }
     }
 
@@ -4811,7 +4972,9 @@ public sealed class HiveMindActor : IActor
         bool energyEnabled,
         bool plasticityEnabled,
         float plasticityRate,
-        bool plasticityProbabilisticUpdates)
+        bool plasticityProbabilisticUpdates,
+        bool debugEnabled,
+        ProtoSeverity debugMinSeverity)
     {
         try
         {
@@ -4824,7 +4987,9 @@ public sealed class HiveMindActor : IActor
                 EnergyEnabled = energyEnabled,
                 PlasticityEnabled = plasticityEnabled,
                 PlasticityRate = plasticityRate,
-                ProbabilisticUpdates = plasticityProbabilisticUpdates
+                ProbabilisticUpdates = plasticityProbabilisticUpdates,
+                DebugEnabled = debugEnabled,
+                DebugMinSeverity = debugMinSeverity
             });
         }
         catch (Exception ex)
@@ -5218,6 +5383,11 @@ public sealed class HiveMindActor : IActor
 
     private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)
     {
+        if (!_debugStreamEnabled || severity < _debugMinSeverity)
+        {
+            return;
+        }
+
         if (_debugHubPid is null || !ObservabilityTargets.CanSend(context, _debugHubPid))
         {
             return;

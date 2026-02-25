@@ -28,6 +28,8 @@ public sealed class RegionShardActor : IActor
     private PID? _tickSink;
     private PID? _vizHub;
     private PID? _debugHub;
+    private bool _debugEnabled;
+    private ProtoSeverity _debugMinSeverity;
     private bool _vizEnabled;
     private uint? _vizFocusRegionId;
     private bool _costEnabled;
@@ -50,6 +52,8 @@ public sealed class RegionShardActor : IActor
         _tickSink = config.TickSink;
         _vizHub = config.VizHub;
         _debugHub = config.DebugHub;
+        _debugEnabled = config.DebugEnabled;
+        _debugMinSeverity = config.DebugMinSeverity;
         _vizEnabled = config.VizEnabled;
         _vizFocusRegionId = null;
         _routing = config.Routing ?? RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
@@ -181,6 +185,8 @@ public sealed class RegionShardActor : IActor
         _plasticityEnabled = message.PlasticityEnabled;
         _plasticityRate = message.PlasticityRate;
         _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+        _debugEnabled = message.DebugEnabled;
+        _debugMinSeverity = message.DebugMinSeverity;
     }
 
     private void HandleCaptureShardSnapshot(IContext context, CaptureShardSnapshot message)
@@ -632,6 +638,11 @@ public sealed class RegionShardActor : IActor
 
     private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)
     {
+        if (!_debugEnabled || severity < _debugMinSeverity)
+        {
+            return;
+        }
+
         if (_debugHub is null || !ObservabilityTargets.CanSend(context, _debugHub))
         {
             return;

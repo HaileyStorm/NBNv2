@@ -743,6 +743,44 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task DebugStreamDisabled_Suppresses_HiveMind_Emission()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            debugHubPid: debugProbePid,
+            debugStreamEnabled: false)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "debug_disabled"
+        }));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new ResumeBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        }));
+
+        await Task.Delay(150);
+        var snapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        Assert.Equal(0, snapshot.Count("brain.spawned"));
+        Assert.Equal(0, snapshot.Count("brain.paused"));
+        Assert.Equal(0, snapshot.Count("brain.resumed"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SetBrainVisualization_Updates_Shards_With_FocusScope()
     {
         var system = new ActorSystem();
@@ -820,7 +858,9 @@ public class HiveMindOutputSinkTests
                       && update.EnergyEnabled
                       && update.PlasticityEnabled
                       && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f
-                      && !update.ProbabilisticUpdates)));
+                      && !update.ProbabilisticUpdates
+                      && update.DebugEnabled
+                      && update.DebugMinSeverity == Nbn.Proto.Severity.SevDebug)));
 
         await root.RequestAsync<SendMessageAck>(shardAPid, new SendMessage(hiveMind, new RegisterShard
         {
@@ -837,6 +877,8 @@ public class HiveMindOutputSinkTests
         Assert.False(initialUpdate.CostEnabled);
         Assert.False(initialUpdate.EnergyEnabled);
         Assert.False(initialUpdate.PlasticityEnabled);
+        Assert.True(initialUpdate.DebugEnabled);
+        Assert.Equal(Nbn.Proto.Severity.SevDebug, initialUpdate.DebugMinSeverity);
 
         await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
         {
@@ -859,6 +901,8 @@ public class HiveMindOutputSinkTests
         Assert.True(configuredUpdate.PlasticityEnabled);
         Assert.Equal(0.2f, configuredUpdate.PlasticityRate);
         Assert.False(configuredUpdate.ProbabilisticUpdates);
+        Assert.True(configuredUpdate.DebugEnabled);
+        Assert.Equal(Nbn.Proto.Severity.SevDebug, configuredUpdate.DebugMinSeverity);
 
         var shardB = ShardId32.From(14, 0);
         var configuredB = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -869,7 +913,9 @@ public class HiveMindOutputSinkTests
                       && update.EnergyEnabled
                       && update.PlasticityEnabled
                       && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f
-                      && !update.ProbabilisticUpdates)));
+                      && !update.ProbabilisticUpdates
+                      && update.DebugEnabled
+                      && update.DebugMinSeverity == Nbn.Proto.Severity.SevDebug)));
 
         await root.RequestAsync<SendMessageAck>(shardBPid, new SendMessage(hiveMind, new RegisterShard
         {
@@ -887,6 +933,51 @@ public class HiveMindOutputSinkTests
         Assert.True(newShardUpdate.PlasticityEnabled);
         Assert.Equal(0.2f, newShardUpdate.PlasticityRate);
         Assert.False(newShardUpdate.ProbabilisticUpdates);
+        Assert.True(newShardUpdate.DebugEnabled);
+        Assert.Equal(Nbn.Proto.Severity.SevDebug, newShardUpdate.DebugMinSeverity);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RuntimeConfig_Propagates_DebugStream_Settings()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            debugStreamEnabled: false,
+            debugMinSeverity: Nbn.Proto.Severity.SevWarn)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(13, 0);
+        var runtimeUpdate = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shard,
+            runtimeUpdate,
+            update => !update.DebugEnabled && update.DebugMinSeverity == Nbn.Proto.Severity.SevWarn)));
+
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var update = await runtimeUpdate.Task.WaitAsync(cts.Token);
+        Assert.False(update.DebugEnabled);
+        Assert.Equal(Nbn.Proto.Severity.SevWarn, update.DebugMinSeverity);
 
         await system.ShutdownAsync();
     }

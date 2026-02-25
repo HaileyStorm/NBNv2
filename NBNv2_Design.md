@@ -989,6 +989,13 @@ Debug level is configurable in Workbench and/or settings:
 * severity threshold
 * context filters
 * throttling rates
+* emitter-side enable/min-severity gates (`debug.stream.enabled`, `debug.stream.min_severity`)
+
+Runtime behavior:
+
+* HiveMind applies `debug.stream.enabled` + `debug.stream.min_severity` before sending `DebugOutbound`.
+* HiveMind propagates those gates to RegionShards via `UpdateShardRuntimeConfig` (`debug_enabled`, `debug_min_severity`).
+* RegionShards apply the same emitter-side gate before sending debug events to DebugHub.
 
 ### 15.2 OpenTelemetry (NBN-managed)
 

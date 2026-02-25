@@ -30,6 +30,8 @@ public sealed class WorkerNodeActor : IActor
     private PID? _hiveMindHintPid;
     private readonly WorkerServiceRole _enabledRoles;
     private readonly WorkerResourceAvailability _resourceAvailability;
+    private readonly Severity _debugMinSeverityDefault;
+    private readonly bool _debugStreamEnabledDefault;
 
     public WorkerNodeActor(
         Guid workerNodeId,
@@ -49,6 +51,8 @@ public sealed class WorkerNodeActor : IActor
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(ResolveArtifactRoot(artifactRootPath)));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
         _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
+        _debugStreamEnabledDefault = ResolveDebugStreamEnabled(defaultValue: false);
+        _debugMinSeverityDefault = ResolveDebugMinSeverity(Severity.SevDebug);
     }
 
     public async Task ReceiveAsync(IContext context)
@@ -751,7 +755,9 @@ public sealed class WorkerNodeActor : IActor
             brain.SignalRouterPid,
             regionId == NbnConstants.OutputRegionId ? brain.OutputCoordinatorPid : null,
             ResolveHiveMindPid(context),
-            routing);
+            routing,
+            DebugEnabled: _debugStreamEnabledDefault,
+            DebugMinSeverity: _debugMinSeverityDefault);
 
         var props = await BuildRegionShardPropsAsync(brain, assignment, neuronStart, neuronCount, config).ConfigureAwait(false);
         var existingPid = brain.RegionShards.TryGetValue(shardId, out var existing) ? existing.Pid : null;
@@ -1722,6 +1728,56 @@ public sealed class WorkerNodeActor : IActor
         }
 
         return Path.Combine(Environment.CurrentDirectory, "artifacts");
+    }
+
+    private static bool ResolveDebugStreamEnabled(bool defaultValue)
+    {
+        var value = Environment.GetEnvironmentVariable("NBN_DEBUG_STREAM_ENABLED");
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return defaultValue;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => defaultValue
+        };
+    }
+
+    private static Severity ResolveDebugMinSeverity(Severity defaultValue)
+    {
+        var value = Environment.GetEnvironmentVariable("NBN_DEBUG_STREAM_MIN_SEVERITY");
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return defaultValue;
+        }
+
+        if (Enum.TryParse<Severity>(value, ignoreCase: true, out var parsed))
+        {
+            return NormalizeDebugSeverity(parsed);
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "trace" or "sev_trace" => Severity.SevTrace,
+            "debug" or "sev_debug" => Severity.SevDebug,
+            "info" or "sev_info" => Severity.SevInfo,
+            "warn" or "warning" or "sev_warn" => Severity.SevWarn,
+            "error" or "sev_error" => Severity.SevError,
+            "fatal" or "sev_fatal" => Severity.SevFatal,
+            _ => defaultValue
+        };
+    }
+
+    private static Severity NormalizeDebugSeverity(Severity severity)
+    {
+        return severity switch
+        {
+            Severity.SevTrace or Severity.SevDebug or Severity.SevInfo or Severity.SevWarn or Severity.SevError or Severity.SevFatal => severity,
+            _ => Severity.SevInfo
+        };
     }
 
     private sealed class BrainHostingState

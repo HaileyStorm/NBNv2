@@ -68,6 +68,34 @@ public sealed class DebugHubActorTests
         Assert.Equal(Severity.SevWarn, snapshot.Events[0].Severity);
     }
 
+    [Fact]
+    public async Task Unsubscribe_StopsDelivery()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var hub = root.Spawn(Props.FromProducer(() => new DebugHubActor()));
+        var probe = root.Spawn(Props.FromProducer(static () => new DebugInboundProbeActor()));
+        var subscriber = PidLabel(probe);
+
+        root.Send(hub, new DebugSubscribe
+        {
+            SubscriberActor = subscriber,
+            MinSeverity = Severity.SevTrace
+        });
+
+        root.Send(hub, NewOutbound(Severity.SevInfo, "hivemind.brain.spawned", "brain.spawned"));
+        var firstSnapshot = await WaitForEventsAsync(root, probe, minEventCount: 1, TimeSpan.FromSeconds(2));
+        Assert.Single(firstSnapshot.Events);
+
+        root.Send(hub, new DebugUnsubscribe { SubscriberActor = subscriber });
+        root.Send(hub, NewOutbound(Severity.SevWarn, "hivemind.brain.paused", "brain.paused"));
+
+        await Task.Delay(150);
+        var finalSnapshot = await root.RequestAsync<DebugProbeSnapshot>(probe, new GetDebugProbeSnapshot(), TimeSpan.FromSeconds(2));
+        Assert.Single(finalSnapshot.Events);
+    }
+
     private static DebugOutbound NewOutbound(Severity severity, string context, string summary)
         => new()
         {

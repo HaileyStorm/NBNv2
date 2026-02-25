@@ -122,6 +122,8 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "plasticity_enabled", 6, FieldType.Bool);
         AssertField(shardRuntime, "plasticity_rate", 7, FieldType.Float);
         AssertField(shardRuntime, "probabilistic_updates", 8, FieldType.Bool);
+        AssertField(shardRuntime, "debug_enabled", 9, FieldType.Bool);
+        AssertField(shardRuntime, "debug_min_severity", 10, FieldType.Enum, "nbn.Severity");
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);

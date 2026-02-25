@@ -104,6 +104,8 @@ message UpdateShardRuntimeConfig {
   bool plasticity_enabled = 6;
   float plasticity_rate = 7;
   bool probabilistic_updates = 8;
+  bool debug_enabled = 9;
+  nbn.Severity debug_min_severity = 10;
 }
 
 message SnapshotOverlayRecord {
