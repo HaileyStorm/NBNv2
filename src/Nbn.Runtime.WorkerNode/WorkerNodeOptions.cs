@@ -10,7 +10,8 @@ public sealed record WorkerNodeOptions(
     string? SettingsHost,
     int SettingsPort,
     string SettingsName,
-    Guid? WorkerNodeId)
+    Guid? WorkerNodeId,
+    WorkerServiceRole ServiceRoles)
 {
     public static WorkerNodeOptions FromArgs(string[] args)
     {
@@ -24,6 +25,12 @@ public sealed record WorkerNodeOptions(
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
         var workerNodeId = GetEnvGuid("NBN_WORKER_NODE_ID");
+        var serviceRoles = WorkerServiceRole.All;
+        var serviceRolesRaw = GetEnv("NBN_WORKER_SERVICE_ROLES");
+        if (!string.IsNullOrWhiteSpace(serviceRolesRaw))
+        {
+            serviceRoles = WorkerServiceRoles.ParseRoleSet(serviceRolesRaw, "NBN_WORKER_SERVICE_ROLES");
+        }
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -97,6 +104,25 @@ public sealed record WorkerNodeOptions(
                     if (index + 1 < args.Length && Guid.TryParse(args[++index], out var workerNodeIdValue))
                     {
                         workerNodeId = workerNodeIdValue;
+                    }
+                    continue;
+                case "--service-roles":
+                    if (index + 1 < args.Length)
+                    {
+                        serviceRoles = WorkerServiceRoles.ParseRoleSet(args[++index], "--service-roles");
+                    }
+                    continue;
+                case "--service-role":
+                case "--enable-service-role":
+                    if (index + 1 < args.Length)
+                    {
+                        serviceRoles |= WorkerServiceRoles.ParseRoleSet(args[++index], arg);
+                    }
+                    continue;
+                case "--disable-service-role":
+                    if (index + 1 < args.Length)
+                    {
+                        serviceRoles &= ~WorkerServiceRoles.ParseRoleSet(args[++index], "--disable-service-role");
                     }
                     continue;
             }
@@ -180,6 +206,38 @@ public sealed record WorkerNodeOptions(
                 && Guid.TryParse(arg.Substring("--worker-node-id=".Length), out var workerNodeIdInline))
             {
                 workerNodeId = workerNodeIdInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--service-roles=", StringComparison.OrdinalIgnoreCase))
+            {
+                serviceRoles = WorkerServiceRoles.ParseRoleSet(
+                    arg.Substring("--service-roles=".Length),
+                    "--service-roles");
+                continue;
+            }
+
+            if (arg.StartsWith("--service-role=", StringComparison.OrdinalIgnoreCase))
+            {
+                serviceRoles |= WorkerServiceRoles.ParseRoleSet(
+                    arg.Substring("--service-role=".Length),
+                    "--service-role");
+                continue;
+            }
+
+            if (arg.StartsWith("--enable-service-role=", StringComparison.OrdinalIgnoreCase))
+            {
+                serviceRoles |= WorkerServiceRoles.ParseRoleSet(
+                    arg.Substring("--enable-service-role=".Length),
+                    "--enable-service-role");
+                continue;
+            }
+
+            if (arg.StartsWith("--disable-service-role=", StringComparison.OrdinalIgnoreCase))
+            {
+                serviceRoles &= ~WorkerServiceRoles.ParseRoleSet(
+                    arg.Substring("--disable-service-role=".Length),
+                    "--disable-service-role");
             }
         }
 
@@ -218,7 +276,8 @@ public sealed record WorkerNodeOptions(
             string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
             settingsPort,
             settingsName,
-            workerNodeId);
+            workerNodeId,
+            WorkerServiceRoles.Sanitize(serviceRoles));
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -235,7 +294,7 @@ public sealed record WorkerNodeOptions(
         return Guid.TryParse(value, out var parsed) ? parsed : null;
     }
 
-    private static void PrintHelp()
+    public static void PrintHelp()
     {
         Console.WriteLine("NBN WorkerNode options:");
         Console.WriteLine("  --bind, --bind-host <host>       Host/interface to bind (default 127.0.0.1)");
@@ -248,5 +307,11 @@ public sealed record WorkerNodeOptions(
         Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --worker-node-id <guid>          Optional stable worker node id (default derives from advertised address)");
+        Console.WriteLine("  --service-roles <list>           Enabled worker roles (default all)");
+        Console.WriteLine("  --service-role <role>            Enable one or more roles (repeatable)");
+        Console.WriteLine("  --disable-service-role <role>    Disable one or more roles (repeatable)");
+        Console.WriteLine("                                   Role tokens: all, none, brain-root, signal-router,");
+        Console.WriteLine("                                                input-coordinator, output-coordinator, region-shard");
+        Console.WriteLine("  env: NBN_WORKER_SERVICE_ROLES    Same role token list as --service-roles");
     }
 }

@@ -28,12 +28,14 @@ public sealed class WorkerNodeActor : IActor
     private readonly Dictionary<string, HostedAssignmentState> _assignments = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, BrainHostingState> _brains = new();
     private PID? _hiveMindHintPid;
+    private readonly WorkerServiceRole _enabledRoles;
 
     public WorkerNodeActor(
         Guid workerNodeId,
         string workerAddress,
         string? artifactRootPath = null,
-        IArtifactStore? artifactStore = null)
+        IArtifactStore? artifactStore = null,
+        WorkerServiceRole enabledRoles = WorkerServiceRole.All)
     {
         if (workerNodeId == Guid.Empty)
         {
@@ -43,6 +45,7 @@ public sealed class WorkerNodeActor : IActor
         _workerNodeId = workerNodeId;
         _workerAddress = workerAddress ?? string.Empty;
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(ResolveArtifactRoot(artifactRootPath)));
+        _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
     }
 
     public async Task ReceiveAsync(IContext context)
@@ -89,6 +92,7 @@ public sealed class WorkerNodeActor : IActor
         string WorkerAddress,
         ServiceEndpointRegistration? HiveMindEndpoint,
         ServiceEndpointRegistration? IoGatewayEndpoint,
+        WorkerServiceRole EnabledRoles,
         int TrackedAssignmentCount);
 
     private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
@@ -281,6 +285,19 @@ public sealed class WorkerNodeActor : IActor
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureWorkerUnavailable,
                 $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}"), assignment.Target);
+            return;
+        }
+
+        if (!IsTargetRoleEnabled(assignment.Target, out var requiredRole))
+        {
+            var roleToken = WorkerServiceRoles.ToRoleToken(requiredRole);
+            var targetToken = ToPlacementTargetLabel(assignment.Target);
+            RespondFailedPlacement(context, FailedAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureAssignmentRejected,
+                $"assignment target '{targetToken}' requires service role '{roleToken}', but that role is disabled on worker {_workerNodeId}. Enable it with --service-role {roleToken} or --service-roles all."), assignment.Target);
             return;
         }
 
@@ -588,6 +605,7 @@ public sealed class WorkerNodeActor : IActor
             _workerAddress,
             hiveMindEndpoint,
             ioEndpoint,
+            _enabledRoles,
             _assignments.Count);
     }
     private async Task<HostingResult> HostAssignmentAsync(
@@ -1366,6 +1384,17 @@ public sealed class WorkerNodeActor : IActor
             PlacementAssignmentTarget.PlacementTargetRegionShard => "region_shard",
             _ => "unknown"
         };
+
+    private bool IsTargetRoleEnabled(PlacementAssignmentTarget target, out WorkerServiceRole requiredRole)
+    {
+        if (!WorkerServiceRoles.TryMapAssignmentTarget(target, out requiredRole))
+        {
+            requiredRole = WorkerServiceRole.None;
+            return true;
+        }
+
+        return WorkerServiceRoles.IsEnabled(_enabledRoles, requiredRole);
+    }
 
     private static string ToFailureReasonLabel(PlacementFailureReason reason)
         => reason switch

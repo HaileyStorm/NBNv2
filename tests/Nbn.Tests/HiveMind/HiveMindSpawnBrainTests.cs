@@ -142,6 +142,94 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
+    public async Task SpawnBrain_Returns_AssignmentRejected_Details_When_WorkerRole_DisablesBrainRoot()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+            var workerAddress = "worker.local";
+            var ioPid = new PID(string.Empty, ioName);
+
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 1_000,
+                    retryBackoffMs: 10,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 1_000),
+                ioPid: ioPid)));
+            var ioGateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            var metadata = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+            var workerRoles = WorkerServiceRole.All & ~WorkerServiceRole.BrainRoot;
+            var workerPid = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerId,
+                    workerAddress,
+                    artifactRootPath: artifactRoot,
+                    enabledRoles: workerRoles)));
+
+            PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMind.Id, metadata.Id);
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var worker = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                        workerPid,
+                        new WorkerNodeActor.GetWorkerNodeSnapshot());
+                    return worker.IoGatewayEndpoint.HasValue;
+                },
+                timeoutMs: 2_000);
+
+            var response = await root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                ioGateway,
+                new ProtoIo.SpawnBrainViaIO
+                {
+                    Request = new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(70));
+
+            Assert.NotNull(response.Ack);
+            var spawnAck = response.Ack;
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.Equal(Guid.Empty, brainId);
+            Assert.Equal("spawn_assignment_rejected", spawnAck.FailureReasonCode);
+            Assert.Contains("service role 'brain-root'", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("disabled", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("spawn_assignment_rejected", response.FailureReasonCode);
+            Assert.Equal(spawnAck.FailureMessage, response.FailureMessage);
+
+            var workerSnapshot = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                workerPid,
+                new WorkerNodeActor.GetWorkerNodeSnapshot());
+            Assert.Equal(0, workerSnapshot.TrackedAssignmentCount);
+            Assert.Equal(workerRoles, workerSnapshot.EnabledRoles);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrain_Returns_WorkerUnavailable_Details_When_NoWorkers_AreAvailable()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();

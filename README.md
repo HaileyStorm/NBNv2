@@ -51,6 +51,35 @@ Notes:
 - Output region shards (`region 31`) require a valid `--output-*` PID.
 - RegionHost registers/unregisters its shard with the HiveMind PID provided via `--tick-*`.
 
+## WorkerNode quickstart (CLI)
+
+Example invocation:
+
+```bash
+dotnet run --project src/Nbn.Runtime.WorkerNode -- \
+  --bind-host 127.0.0.1 --port 12041 \
+  --logical-name nbn.worker --root-name worker-node \
+  --settings-host 127.0.0.1 --settings-port 12010 --settings-name SettingsMonitor \
+  --service-roles all
+```
+
+Service-role controls:
+- `--service-roles <list>` sets enabled worker roles.
+- `--service-role <role>` enables role(s) incrementally.
+- `--disable-service-role <role>` disables role(s) incrementally.
+- Role tokens: `all`, `none`, `brain-root`, `signal-router`, `input-coordinator`, `output-coordinator`, `region-shard`.
+- Environment override: `NBN_WORKER_SERVICE_ROLES`.
+
+Worker distributable publish scripts (single-file, self-contained by default):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/dist/publish_worker_node.ps1
+```
+
+```bash
+bash tools/dist/publish_worker_node.sh linux-x64 win-x64
+```
+
 ## Observability Event Routing
 
 Runtime services now emit `VisualizationEvent` and `DebugOutbound` messages (for

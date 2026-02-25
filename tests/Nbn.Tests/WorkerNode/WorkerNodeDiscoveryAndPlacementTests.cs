@@ -1016,6 +1016,139 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementAssignments_DefaultWorkerRoles_AcceptFullPlacementSet()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        var placementEpoch = 10UL;
+
+        async Task<PlacementAssignmentAck> SendAsync(
+            string assignmentId,
+            PlacementAssignmentTarget target,
+            uint regionId,
+            uint shardIndex,
+            uint neuronStart,
+            uint neuronCount,
+            string actorName)
+            => await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: assignmentId,
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: placementEpoch,
+                        regionId: regionId,
+                        shardIndex: shardIndex,
+                        target: target,
+                        actorName: actorName,
+                        neuronStart: neuronStart,
+                        neuronCount: neuronCount)
+                });
+
+        var rootAck = await SendAsync(
+            assignmentId: "assign-all-root",
+            target: PlacementAssignmentTarget.PlacementTargetBrainRoot,
+            regionId: 0,
+            shardIndex: 0,
+            neuronStart: 0,
+            neuronCount: 0,
+            actorName: $"brain-{brainId:N}-root-fullset");
+        var routerAck = await SendAsync(
+            assignmentId: "assign-all-router",
+            target: PlacementAssignmentTarget.PlacementTargetSignalRouter,
+            regionId: 0,
+            shardIndex: 0,
+            neuronStart: 0,
+            neuronCount: 0,
+            actorName: $"brain-{brainId:N}-router-fullset");
+        var inputAck = await SendAsync(
+            assignmentId: "assign-all-input",
+            target: PlacementAssignmentTarget.PlacementTargetInputCoordinator,
+            regionId: 0,
+            shardIndex: 0,
+            neuronStart: 0,
+            neuronCount: 0,
+            actorName: $"brain-{brainId:N}-input-fullset");
+        var outputAck = await SendAsync(
+            assignmentId: "assign-all-output",
+            target: PlacementAssignmentTarget.PlacementTargetOutputCoordinator,
+            regionId: 31,
+            shardIndex: 0,
+            neuronStart: 0,
+            neuronCount: 0,
+            actorName: $"brain-{brainId:N}-output-fullset");
+        var shardAck = await SendAsync(
+            assignmentId: "assign-all-shard",
+            target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+            regionId: 5,
+            shardIndex: 0,
+            neuronStart: 0,
+            neuronCount: 8,
+            actorName: $"brain-{brainId:N}-r5-s0-fullset");
+
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, rootAck.State);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, routerAck.State);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, inputAck.State);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, outputAck.State);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, shardAck.State);
+
+        var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(5, snapshot.TrackedAssignmentCount);
+        Assert.Equal(WorkerServiceRole.All, snapshot.EnabledRoles);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_DisabledServiceRole_IsRejected_WithActionableReason()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var enabledRoles = WorkerServiceRole.All & ~WorkerServiceRole.RegionShard;
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(
+                workerNodeId,
+                "127.0.0.1:12041",
+                enabledRoles: enabledRoles)));
+
+        var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-disabled-shard",
+                    brainId: Guid.NewGuid(),
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 5,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                    neuronStart: 0,
+                    neuronCount: 8)
+            });
+
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, ack.State);
+        Assert.False(ack.Accepted);
+        Assert.Equal(PlacementFailureReason.PlacementFailureAssignmentRejected, ack.FailureReason);
+        Assert.Contains("service role 'region-shard'", ack.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("--service-role region-shard", ack.Message, StringComparison.OrdinalIgnoreCase);
+
+        var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(0, snapshot.TrackedAssignmentCount);
+        Assert.Equal(enabledRoles, snapshot.EnabledRoles);
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_ArtifactBackedShardLoadFailure_ReturnsFailedAck()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-artifact-load-fail-{Guid.NewGuid():N}");

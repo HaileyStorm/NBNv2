@@ -12,7 +12,18 @@ using Proto.Remote.GrpcNet;
 Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
 Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
 
-var options = WorkerNodeOptions.FromArgs(args);
+WorkerNodeOptions options;
+try
+{
+    options = WorkerNodeOptions.FromArgs(args);
+}
+catch (ArgumentException ex)
+{
+    Console.Error.WriteLine($"[ERROR] {ex.Message}");
+    WorkerNodeOptions.PrintHelp();
+    Environment.ExitCode = 1;
+    return;
+}
 
 var system = new ActorSystem();
 var remoteConfig = BuildRemoteConfig(options);
@@ -29,7 +40,7 @@ if (workerNodeId == Guid.Empty)
 }
 
 var workerPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new WorkerNodeActor(workerNodeId, nodeAddress)),
+    Props.FromProducer(() => new WorkerNodeActor(workerNodeId, nodeAddress, enabledRoles: options.ServiceRoles)),
     options.RootActorName);
 
 var settingsReporter = SettingsMonitorReporter.Start(
@@ -92,6 +103,7 @@ Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {advertisedHost}:{advertisedPort}");
 Console.WriteLine($"WorkerNodeId: {startupState.WorkerNodeId}");
 Console.WriteLine($"RootActor: {PidLabel(workerPid)}");
+Console.WriteLine($"ServiceRoles: {WorkerServiceRoles.ToOptionValue(startupState.EnabledRoles)}");
 Console.WriteLine($"Discovered HiveMind: {FormatEndpoint(startupState.HiveMindEndpoint)}");
 Console.WriteLine($"Discovered IO: {FormatEndpoint(startupState.IoGatewayEndpoint)}");
 Console.WriteLine("Press Ctrl+C to shut down.");
