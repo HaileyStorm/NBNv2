@@ -11,6 +11,7 @@ using Xunit;
 
 namespace Nbn.Tests.HiveMind;
 
+[Collection("HiveMindSerial")]
 public class HiveMindOutputSinkTests
 {
     [Fact]

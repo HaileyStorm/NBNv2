@@ -9,6 +9,7 @@ using Xunit.Sdk;
 
 namespace Nbn.Tests.HiveMind;
 
+[Collection("HiveMindSerial")]
 public sealed class HiveMindPlacementOrchestrationTests
 {
     [Fact]
@@ -70,6 +71,106 @@ public sealed class HiveMindPlacementOrchestrationTests
         var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         Assert.True(debugSnapshot.Count("placement.requested") >= 1);
         Assert.True(debugSnapshot.Count("placement.reconcile.matched") >= 1);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task UnregisterBrain_Dispatches_Unassignments_And_CleansWorkerAssignments()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000))));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var placementAck = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(placementAck.Accepted);
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        root.Send(hiveMind, new UnregisterBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        await WaitForAsync(
+            () => Task.FromResult(workerProbe.UnassignmentRequestCount >= 6 && workerProbe.ActiveAssignmentCount == 0),
+            timeoutMs: 4_000);
+
+        var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleUnknown, finalStatus.LifecycleState);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RequestPlacement_Replacement_Dispatches_Unassignments_For_PreviousEpoch()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000))));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var firstAck = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(firstAck.Accepted);
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        var secondAck = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 3,
+                OutputWidth = 2
+            });
+        Assert.True(secondAck.Accepted);
+        Assert.True(secondAck.PlacementEpoch > firstAck.PlacementEpoch);
+
+        await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+        await WaitForAsync(
+            () => Task.FromResult(workerProbe.CountUnassignmentsForEpoch(firstAck.PlacementEpoch) >= 6),
+            timeoutMs: 4_000);
+
+        Assert.True(workerProbe.AssignmentRequestCount >= 12);
+        Assert.Equal(6, workerProbe.ActiveAssignmentCount);
+        Assert.All(workerProbe.ActivePlacementEpochs, epoch => Assert.Equal(secondAck.PlacementEpoch, epoch));
 
         await system.ShutdownAsync();
     }
@@ -1911,6 +2012,7 @@ public sealed class HiveMindPlacementOrchestrationTests
         private bool _failedOne;
         private readonly Dictionary<string, int> _attempts = new(StringComparer.Ordinal);
         private readonly Dictionary<string, PlacementAssignment> _knownAssignments = new(StringComparer.Ordinal);
+        private readonly List<ulong> _unassignmentEpochs = new();
         private readonly List<(PID Sender, PlacementAssignmentAck Ack)> _deferredAssignmentAcks = new();
         private readonly List<(PID Sender, PlacementReconcileReport Report)> _deferredReconcileReports = new();
 
@@ -1935,6 +2037,13 @@ public sealed class HiveMindPlacementOrchestrationTests
         public int AssignmentRequestCount { get; private set; }
         public int RetryDispatchCount { get; private set; }
         public int ReconcileRequestCount { get; private set; }
+        public int UnassignmentRequestCount { get; private set; }
+        public int ActiveAssignmentCount => _knownAssignments.Count;
+        public IReadOnlyList<ulong> ActivePlacementEpochs
+            => _knownAssignments.Values.Select(static value => value.PlacementEpoch).Distinct().OrderBy(static value => value).ToArray();
+
+        public int CountUnassignmentsForEpoch(ulong placementEpoch)
+            => _unassignmentEpochs.Count(epoch => epoch == placementEpoch);
 
         public Task ReceiveAsync(IContext context)
         {
@@ -1942,6 +2051,9 @@ public sealed class HiveMindPlacementOrchestrationTests
             {
                 case PlacementAssignmentRequest request:
                     HandlePlacementAssignmentRequest(context, request);
+                    break;
+                case PlacementUnassignmentRequest request:
+                    HandlePlacementUnassignmentRequest(context, request);
                     break;
                 case PlacementReconcileRequest request:
                     HandlePlacementReconcileRequest(context, request);
@@ -2054,6 +2166,37 @@ public sealed class HiveMindPlacementOrchestrationTests
             {
                 _deferredAssignmentAcks.Add((context.Sender, ack));
             }
+        }
+
+        private void HandlePlacementUnassignmentRequest(IContext context, PlacementUnassignmentRequest request)
+        {
+            if (request.Assignment is null)
+            {
+                return;
+            }
+
+            var assignment = request.Assignment.Clone();
+            UnassignmentRequestCount++;
+            _unassignmentEpochs.Add(assignment.PlacementEpoch);
+            var removed = _knownAssignments.Remove(assignment.AssignmentId);
+            _attempts.Remove(assignment.AssignmentId);
+
+            if (context.Sender is null)
+            {
+                return;
+            }
+
+            context.Request(context.Sender, new PlacementUnassignmentAck
+            {
+                AssignmentId = assignment.AssignmentId,
+                BrainId = assignment.BrainId,
+                PlacementEpoch = assignment.PlacementEpoch,
+                Accepted = true,
+                Retryable = false,
+                FailureReason = PlacementFailureReason.PlacementFailureNone,
+                Message = removed ? "unassigned" : "already_unassigned",
+                RetryAfterMs = 0
+            });
         }
 
         private void HandlePlacementReconcileRequest(IContext context, PlacementReconcileRequest request)

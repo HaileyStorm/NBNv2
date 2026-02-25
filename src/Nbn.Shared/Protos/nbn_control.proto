@@ -253,6 +253,21 @@ message PlacementAssignmentAck {
   fixed64 retry_after_ms = 9;
 }
 
+message PlacementUnassignmentRequest {
+  PlacementAssignment assignment = 1;
+}
+
+message PlacementUnassignmentAck {
+  string assignment_id = 1;
+  nbn.Uuid brain_id = 2;
+  fixed64 placement_epoch = 3;
+  bool accepted = 4;
+  bool retryable = 5;
+  PlacementFailureReason failure_reason = 6;
+  string message = 7;
+  fixed64 retry_after_ms = 8;
+}
+
 message PlacementReconcileRequest {
   nbn.Uuid brain_id = 1;
   fixed64 placement_epoch = 2;

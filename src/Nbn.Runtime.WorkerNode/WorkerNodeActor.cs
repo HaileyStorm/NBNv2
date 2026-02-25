@@ -61,6 +61,9 @@ public sealed class WorkerNodeActor : IActor
             case PlacementAssignmentRequest request:
                 await HandlePlacementAssignmentAsync(context, request).ConfigureAwait(false);
                 break;
+            case PlacementUnassignmentRequest request:
+                HandlePlacementUnassignment(context, request);
+                break;
             case PlacementReconcileRequest request:
                 HandlePlacementReconcile(context, request);
                 break;
@@ -360,6 +363,175 @@ public sealed class WorkerNodeActor : IActor
         RegisterOutputSink(context, brain);
 
         RespondReadyPlacement(context, hosted.Assignment!, "ready", hostingMs);
+    }
+
+    private void HandlePlacementUnassignment(IContext context, PlacementUnassignmentRequest request)
+    {
+        var assignment = request.Assignment;
+        if (assignment is null)
+        {
+            context.Respond(FailedUnassignmentAck(
+                assignmentId: string.Empty,
+                brainId: null,
+                placementEpoch: 0,
+                PlacementFailureReason.PlacementFailureInternalError,
+                "assignment payload was empty"));
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
+        {
+            context.Respond(FailedUnassignmentAck(
+                assignmentId: string.Empty,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureInternalError,
+                "assignment_id is required"));
+            return;
+        }
+
+        if (assignment.BrainId is null || !assignment.BrainId.TryToGuid(out var brainId))
+        {
+            context.Respond(FailedUnassignmentAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureInternalError,
+                "brain_id was invalid"));
+            return;
+        }
+
+        if (!assignment.WorkerNodeId.TryToGuid(out var targetWorkerNodeId))
+        {
+            context.Respond(FailedUnassignmentAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureInternalError,
+                "worker_node_id was invalid"));
+            return;
+        }
+
+        if (targetWorkerNodeId != _workerNodeId)
+        {
+            context.Respond(FailedUnassignmentAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}"));
+            return;
+        }
+
+        if (context.Sender is not null
+            && !string.IsNullOrWhiteSpace(context.Sender.Id)
+            && !context.Sender.Id.StartsWith("$", StringComparison.Ordinal))
+        {
+            _hiveMindHintPid = context.Sender;
+        }
+
+        if (!_assignments.TryGetValue(assignment.AssignmentId, out var hostedState))
+        {
+            context.Respond(BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
+            return;
+        }
+
+        if (!AssignmentSemanticallyMatches(hostedState.Assignment, assignment))
+        {
+            context.Respond(FailedUnassignmentAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureAssignmentRejected,
+                "assignment_id conflicts with an existing hosted assignment"));
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            _assignments.Remove(assignment.AssignmentId);
+            context.Respond(BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
+            return;
+        }
+
+        var outcome = UnassignHostedAssignment(context, brain, hostedState, notifyHiveMind: true)
+            ? "unassigned"
+            : "already_unassigned";
+        context.Respond(BuildUnassignmentAck(assignment, accepted: true, outcome));
+    }
+
+    private bool UnassignHostedAssignment(
+        IContext context,
+        BrainHostingState brain,
+        HostedAssignmentState hosted,
+        bool notifyHiveMind)
+    {
+        var assignment = hosted.Assignment;
+        var removed = _assignments.Remove(assignment.AssignmentId);
+        removed |= brain.Assignments.Remove(assignment.AssignmentId);
+
+        var hostedPid = hosted.HostedPid;
+        if (hostedPid is not null)
+        {
+            context.Stop(hostedPid);
+        }
+
+        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetBrainRoot
+            && hostedPid is not null
+            && PidEquals(brain.BrainRootPid, hostedPid))
+        {
+            brain.BrainRootPid = null;
+            removed = true;
+        }
+
+        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetSignalRouter
+            && hostedPid is not null
+            && PidEquals(brain.SignalRouterPid, hostedPid))
+        {
+            brain.SignalRouterPid = null;
+            removed = true;
+        }
+
+        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetInputCoordinator
+            && hostedPid is not null
+            && PidEquals(brain.InputCoordinatorPid, hostedPid))
+        {
+            brain.InputCoordinatorPid = null;
+            removed = true;
+        }
+
+        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetOutputCoordinator
+            && hostedPid is not null
+            && PidEquals(brain.OutputCoordinatorPid, hostedPid))
+        {
+            brain.OutputCoordinatorPid = null;
+            removed = true;
+        }
+
+        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
+            && SharedShardId32.TryFrom(checked((int)assignment.RegionId), checked((int)assignment.ShardIndex), out var shardId))
+        {
+            if (brain.RegionShards.TryGetValue(shardId, out var shard)
+                && (string.Equals(shard.AssignmentId, assignment.AssignmentId, StringComparison.Ordinal)
+                    || (hostedPid is not null && PidEquals(shard.Pid, hostedPid))))
+            {
+                brain.RegionShards.Remove(shardId);
+                removed = true;
+            }
+
+            if (notifyHiveMind)
+            {
+                UnregisterShard(context, brain, shardId);
+            }
+        }
+
+        UpdateRuntimeWidthsFromShards(brain);
+        PushRouting(context, brain);
+        PushShardEndpoints(context, brain);
+        PushIoGatewayRegistration(context, brain);
+        RegisterOutputSink(context, brain, allowClear: true);
+
+        return removed;
     }
 
     private void HandlePlacementReconcile(IContext context, PlacementReconcileRequest request)
@@ -689,8 +861,11 @@ public sealed class WorkerNodeActor : IActor
     }
 
     private void RegisterOutputSink(IContext context, BrainHostingState brain)
+        => RegisterOutputSink(context, brain, allowClear: false);
+
+    private void RegisterOutputSink(IContext context, BrainHostingState brain, bool allowClear)
     {
-        if (brain.OutputCoordinatorPid is null)
+        if (brain.OutputCoordinatorPid is null && !allowClear)
         {
             return;
         }
@@ -704,7 +879,28 @@ public sealed class WorkerNodeActor : IActor
         context.Request(hiveMindPid, new ProtoControl.RegisterOutputSink
         {
             BrainId = brain.BrainId.ToProtoUuid(),
-            OutputPid = PidLabel(ToRemotePid(context, brain.OutputCoordinatorPid))
+            OutputPid = brain.OutputCoordinatorPid is null
+                ? string.Empty
+                : PidLabel(ToRemotePid(context, brain.OutputCoordinatorPid))
+        });
+    }
+
+    private void UnregisterShard(
+        IContext context,
+        BrainHostingState brain,
+        SharedShardId32 shardId)
+    {
+        var hiveMindPid = ResolveHiveMindPid(context);
+        if (hiveMindPid is null)
+        {
+            return;
+        }
+
+        context.Request(hiveMindPid, new ProtoControl.UnregisterShard
+        {
+            BrainId = brain.BrainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex
         });
     }
 
@@ -1125,6 +1321,11 @@ public sealed class WorkerNodeActor : IActor
         return leftValue.Span.SequenceEqual(rightValue.Span);
     }
 
+    private static bool PidEquals(PID? left, PID right)
+        => left is not null
+           && string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.Ordinal)
+           && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
+
     private static PlacementAssignmentAck FailedAck(
         string assignmentId,
         Uuid? brainId,
@@ -1140,6 +1341,42 @@ public sealed class WorkerNodeActor : IActor
             Accepted = false,
             Retryable = false,
             FailureReason = reason,
+            Message = message ?? string.Empty,
+            RetryAfterMs = 0
+        };
+
+    private static PlacementUnassignmentAck FailedUnassignmentAck(
+        string assignmentId,
+        Uuid? brainId,
+        ulong placementEpoch,
+        PlacementFailureReason reason,
+        string message)
+        => new()
+        {
+            AssignmentId = assignmentId ?? string.Empty,
+            BrainId = brainId ?? new Uuid(),
+            PlacementEpoch = placementEpoch,
+            Accepted = false,
+            Retryable = false,
+            FailureReason = reason,
+            Message = message ?? string.Empty,
+            RetryAfterMs = 0
+        };
+
+    private static PlacementUnassignmentAck BuildUnassignmentAck(
+        PlacementAssignment assignment,
+        bool accepted,
+        string message)
+        => new()
+        {
+            AssignmentId = assignment.AssignmentId ?? string.Empty,
+            BrainId = assignment.BrainId ?? new Uuid(),
+            PlacementEpoch = assignment.PlacementEpoch,
+            Accepted = accepted,
+            Retryable = false,
+            FailureReason = accepted
+                ? PlacementFailureReason.PlacementFailureNone
+                : PlacementFailureReason.PlacementFailureInternalError,
             Message = message ?? string.Empty,
             RetryAfterMs = 0
         };

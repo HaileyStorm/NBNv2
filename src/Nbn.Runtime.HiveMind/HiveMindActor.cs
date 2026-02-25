@@ -162,6 +162,9 @@ public sealed class HiveMindActor : IActor
             case ProtoControl.PlacementAssignmentAck message:
                 HandlePlacementAssignmentAck(context, message);
                 break;
+            case ProtoControl.PlacementUnassignmentAck message:
+                HandlePlacementUnassignmentAck(context, message);
+                break;
             case ProtoControl.PlacementReconcileReport message:
                 HandlePlacementReconcileReport(context, message);
                 break;
@@ -339,6 +342,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        DispatchPlacementUnassignments(context, brain, brain.PlacementExecution, reason);
         _brains.Remove(brainId);
 
         if (_pendingSpawns.Remove(brainId, out var pendingSpawn))
@@ -939,14 +943,27 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!TryParsePid(message.OutputPid, out var outputPid))
+        PID? outputPid = null;
+        if (!string.IsNullOrWhiteSpace(message.OutputPid))
         {
-            return;
+            if (!TryParsePid(message.OutputPid, out var parsed))
+            {
+                return;
+            }
+
+            outputPid = parsed;
         }
 
         brain.OutputSinkPid = outputPid;
         UpdateOutputSinks(context, brain);
-        Log($"Output sink registered for brain {brainId}: {PidLabel(outputPid)}");
+        if (outputPid is null)
+        {
+            Log($"Output sink cleared for brain {brainId}.");
+        }
+        else
+        {
+            Log($"Output sink registered for brain {brainId}: {PidLabel(outputPid)}");
+        }
     }
 
     private void HandleSetBrainVisualization(IContext context, ProtoControl.SetBrainVisualization message)
@@ -1177,6 +1194,12 @@ public sealed class HiveMindActor : IActor
             _brains[brainId] = brain;
         }
 
+        var previousExecution = brain.PlacementExecution;
+        if (previousExecution is not null)
+        {
+            DispatchPlacementUnassignments(context, brain, previousExecution, reason: "placement_replaced");
+        }
+
         var nowMs = NowMs();
         brain.PlacementEpoch = brain.PlacementEpoch >= ulong.MaxValue ? 1UL : brain.PlacementEpoch + 1UL;
         brain.PlacementRequestedMs = nowMs;
@@ -1325,6 +1348,23 @@ public sealed class HiveMindActor : IActor
             AcceptedMs = (ulong)brain.PlacementUpdatedMs,
             RequestId = brain.PlacementRequestId
         };
+    }
+
+    private void HandlePlacementUnassignmentAck(IContext context, ProtoControl.PlacementUnassignmentAck message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        var result = message.Accepted ? "accepted" : "rejected";
+        var assignmentId = string.IsNullOrWhiteSpace(message.AssignmentId) ? "<missing>" : message.AssignmentId;
+        var failure = ToFailureReasonLabel(message.FailureReason);
+        EmitDebug(
+            context,
+            ProtoSeverity.SevDebug,
+            "placement.unassignment.ack",
+            $"Placement unassignment ack for brain {brainId} assignment={assignmentId} epoch={message.PlacementEpoch} result={result} failure={failure}.");
     }
 
     private void HandlePlacementAssignmentAck(IContext context, ProtoControl.PlacementAssignmentAck message)
@@ -2206,6 +2246,52 @@ public sealed class HiveMindActor : IActor
             FailureReasonCode = normalizedReasonCode,
             FailureMessage = normalizedFailureMessage
         };
+    }
+
+    private void DispatchPlacementUnassignments(
+        IContext context,
+        BrainState brain,
+        PlacementExecutionState? execution,
+        string reason)
+    {
+        if (execution is null || execution.Assignments.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var trackedAssignment in execution.Assignments.Values.OrderBy(static entry => entry.Assignment.AssignmentId, StringComparer.Ordinal))
+        {
+            var assignment = trackedAssignment.Assignment;
+            if (!TryGetGuid(assignment.WorkerNodeId, out var workerNodeId)
+                || !execution.WorkerTargets.TryGetValue(workerNodeId, out var workerPid))
+            {
+                continue;
+            }
+
+            try
+            {
+                context.Request(
+                    workerPid,
+                    new ProtoControl.PlacementUnassignmentRequest
+                    {
+                        Assignment = assignment.Clone()
+                    });
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevDebug,
+                    "placement.unassignment.dispatch",
+                    $"Placement unassignment {assignment.AssignmentId} for brain {brain.BrainId} dispatched reason={reason} target={ToPlacementTargetLabel(assignment.Target)}.");
+            }
+            catch (Exception ex)
+            {
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevWarn,
+                    "placement.unassignment.dispatch_failed",
+                    $"Placement unassignment {assignment.AssignmentId} for brain {brain.BrainId} dispatch failed reason={reason}: {ex.GetBaseException().Message}");
+                LogError($"Failed to dispatch placement unassignment {assignment.AssignmentId} for brain {brain.BrainId}: {ex.Message}");
+            }
+        }
     }
 
     private void DispatchPlacementAssignment(
@@ -4464,12 +4550,6 @@ public sealed class HiveMindActor : IActor
 
     private void UpdateOutputSinks(IContext context, BrainState brain)
     {
-        if (brain.OutputSinkPid is null)
-        {
-            Log($"Output sink missing for brain {brain.BrainId}; output shards will not emit until registered.");
-            return;
-        }
-
         foreach (var entry in brain.Shards)
         {
             if (entry.Key.RegionId != NbnConstants.OutputRegionId)
@@ -4478,6 +4558,11 @@ public sealed class HiveMindActor : IActor
             }
 
             SendOutputSinkUpdate(context, brain.BrainId, entry.Key, entry.Value, brain.OutputSinkPid);
+        }
+
+        if (brain.OutputSinkPid is null)
+        {
+            Log($"Output sink missing for brain {brain.BrainId}; output shards were cleared.");
         }
     }
 
@@ -4575,7 +4660,7 @@ public sealed class HiveMindActor : IActor
         brain.IoRegisteredOutputWidth = outputWidth;
     }
 
-    private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID outputSink)
+    private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID? outputSink)
     {
         try
         {
@@ -4584,7 +4669,7 @@ public sealed class HiveMindActor : IActor
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = (uint)shardId.RegionId,
                 ShardIndex = (uint)shardId.ShardIndex,
-                OutputPid = PidLabel(outputSink)
+                OutputPid = outputSink is null ? string.Empty : PidLabel(outputSink)
             });
         }
         catch (Exception ex)
