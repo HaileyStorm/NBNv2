@@ -111,6 +111,21 @@ axon-sent, and timeout anomalies). Emission target can be configured with:
 - `NBN_OBS_VIZ_HUB` (default `VisualizationHub`)
 - `NBN_OBS_DISABLED=true` to disable emission
 
+Debug delivery is subscriber opt-in. `DebugSubscribe` supports scoped filters:
+- `min_severity`
+- `context_regex`
+- `include_context_prefixes` / `exclude_context_prefixes` (location-style scopes, e.g. `hivemind.` or `region.`)
+- `include_summary_prefixes` / `exclude_summary_prefixes` (log-type/category scopes, e.g. `brain.` or `tick.`)
+
+Workbench can mirror these via SettingsMonitor keys:
+- `debug.stream.enabled`
+- `debug.stream.min_severity`
+- `debug.stream.context_regex`
+- `debug.stream.include_context_prefixes`
+- `debug.stream.exclude_context_prefixes`
+- `debug.stream.include_summary_prefixes`
+- `debug.stream.exclude_summary_prefixes`
+
 ## Energy + Plasticity Demo Scenario
 
 The local PowerShell demo script now includes an energy/plasticity scenario step

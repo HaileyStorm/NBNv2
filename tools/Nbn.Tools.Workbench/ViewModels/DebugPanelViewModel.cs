@@ -11,6 +11,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
 using Nbn.Proto.Viz;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -23,8 +24,13 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private readonly WorkbenchClient _client;
     private readonly List<DebugEventItem> _allEvents = new();
     private readonly List<VizEventItem> _allVizEvents = new();
+    private bool _streamEnabled;
     private SeverityOption _selectedSeverity;
     private string _contextRegex = string.Empty;
+    private string _includeContextPrefixes = string.Empty;
+    private string _excludeContextPrefixes = string.Empty;
+    private string _includeSummaryPrefixes = string.Empty;
+    private string _excludeSummaryPrefixes = string.Empty;
     private string _textFilter = string.Empty;
     private string _status = "Idle";
     private DebugEventItem? _selectedEvent;
@@ -62,6 +68,20 @@ public sealed class DebugPanelViewModel : ViewModelBase
 
     public ObservableCollection<VizTypeOption> VizTypeOptions { get; }
 
+    public event Action? SubscriptionSettingsChanged;
+
+    public bool StreamEnabled
+    {
+        get => _streamEnabled;
+        set
+        {
+            if (SetProperty(ref _streamEnabled, value))
+            {
+                SubscriptionSettingsChanged?.Invoke();
+            }
+        }
+    }
+
     public SeverityOption SelectedSeverity
     {
         get => _selectedSeverity;
@@ -72,6 +92,30 @@ public sealed class DebugPanelViewModel : ViewModelBase
     {
         get => _contextRegex;
         set => SetProperty(ref _contextRegex, value);
+    }
+
+    public string IncludeContextPrefixes
+    {
+        get => _includeContextPrefixes;
+        set => SetProperty(ref _includeContextPrefixes, value);
+    }
+
+    public string ExcludeContextPrefixes
+    {
+        get => _excludeContextPrefixes;
+        set => SetProperty(ref _excludeContextPrefixes, value);
+    }
+
+    public string IncludeSummaryPrefixes
+    {
+        get => _includeSummaryPrefixes;
+        set => SetProperty(ref _includeSummaryPrefixes, value);
+    }
+
+    public string ExcludeSummaryPrefixes
+    {
+        get => _excludeSummaryPrefixes;
+        set => SetProperty(ref _excludeSummaryPrefixes, value);
     }
 
     public string TextFilter
@@ -200,10 +244,78 @@ public sealed class DebugPanelViewModel : ViewModelBase
         });
     }
 
+    public DebugSubscriptionFilter BuildSubscriptionFilter()
+        => new(
+            StreamEnabled: StreamEnabled,
+            MinSeverity: SelectedSeverity.Severity,
+            ContextRegex: ContextRegex ?? string.Empty,
+            IncludeContextPrefixes: SplitList(IncludeContextPrefixes),
+            ExcludeContextPrefixes: SplitList(ExcludeContextPrefixes),
+            IncludeSummaryPrefixes: SplitList(IncludeSummaryPrefixes),
+            ExcludeSummaryPrefixes: SplitList(ExcludeSummaryPrefixes));
+
+    public bool ApplySetting(SettingItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.Key))
+        {
+            return false;
+        }
+
+        var key = item.Key.Trim();
+        if (string.Equals(key, DebugSettingsKeys.EnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() => StreamEnabled = ParseBool(item.Value));
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.MinSeverityKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() =>
+            {
+                var parsed = ParseSeverity(item.Value);
+                var selected = SeverityOptions.FirstOrDefault(option => option.Severity == parsed) ?? SeverityOptions[2];
+                SelectedSeverity = selected;
+            });
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.ContextRegexKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() => ContextRegex = item.Value ?? string.Empty);
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.IncludeContextPrefixesKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() => IncludeContextPrefixes = item.Value ?? string.Empty);
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.ExcludeContextPrefixesKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() => ExcludeContextPrefixes = item.Value ?? string.Empty);
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.IncludeSummaryPrefixesKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() => IncludeSummaryPrefixes = item.Value ?? string.Empty);
+            return true;
+        }
+
+        if (string.Equals(key, DebugSettingsKeys.ExcludeSummaryPrefixesKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _dispatcher.Post(() => ExcludeSummaryPrefixes = item.Value ?? string.Empty);
+            return true;
+        }
+
+        return false;
+    }
+
     private async Task ApplyFilterAsync()
     {
         Status = "Applying filter...";
-        await _client.RefreshDebugFilterAsync(SelectedSeverity.Severity, ContextRegex);
+        await _client.RefreshDebugFilterAsync(BuildSubscriptionFilter());
         Status = "Filter updated.";
     }
 
@@ -379,6 +491,59 @@ public sealed class DebugPanelViewModel : ViewModelBase
         }
 
         return true;
+    }
+
+    private static IReadOnlyList<string> SplitList(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Array.Empty<string>();
+        }
+
+        var entries = value
+            .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static entry => entry.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return entries.Length == 0 ? Array.Empty<string>() : entries;
+    }
+
+    private static bool ParseBool(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false
+        };
+    }
+
+    private static Nbn.Proto.Severity ParseSeverity(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Nbn.Proto.Severity.SevInfo;
+        }
+
+        if (Enum.TryParse<Nbn.Proto.Severity>(value, ignoreCase: true, out var direct))
+        {
+            return direct;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "trace" or "sev_trace" => Nbn.Proto.Severity.SevTrace,
+            "debug" or "sev_debug" => Nbn.Proto.Severity.SevDebug,
+            "info" or "sev_info" => Nbn.Proto.Severity.SevInfo,
+            "warn" or "warning" or "sev_warn" => Nbn.Proto.Severity.SevWarn,
+            "error" or "sev_error" => Nbn.Proto.Severity.SevError,
+            "fatal" or "sev_fatal" => Nbn.Proto.Severity.SevFatal,
+            _ => Nbn.Proto.Severity.SevInfo
+        };
     }
 
     private static bool ContainsIgnoreCase(string? haystack, string needle)

@@ -54,7 +54,14 @@ public sealed class DebugHubActor : IActor
 
         var key = PidKey(pid);
         var regex = CompileRegex(subscribe.ContextRegex);
-        var subscriber = new DebugSubscriber(pid, subscribe.MinSeverity, regex);
+        var subscriber = new DebugSubscriber(
+            pid,
+            subscribe.MinSeverity,
+            regex,
+            ParsePrefixes(subscribe.IncludeContextPrefixes),
+            ParsePrefixes(subscribe.ExcludeContextPrefixes),
+            ParsePrefixes(subscribe.IncludeSummaryPrefixes),
+            ParsePrefixes(subscribe.ExcludeSummaryPrefixes));
 
         if (_subscribers.TryAdd(key, subscriber))
         {
@@ -137,11 +144,12 @@ public sealed class DebugHubActor : IActor
         activity?.SetTag("debug.context", outbound?.Context ?? string.Empty);
 
         var contextValue = outbound?.Context ?? string.Empty;
+        var summaryValue = outbound?.Summary ?? string.Empty;
         var delivered = 0;
 
         foreach (var subscriber in _subscribers.Values)
         {
-            if (!subscriber.Accepts(severity, contextValue))
+            if (!subscriber.Accepts(severity, contextValue, summaryValue))
             {
                 continue;
             }
@@ -220,21 +228,90 @@ public sealed class DebugHubActor : IActor
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
-    private sealed record DebugSubscriber(PID Pid, Severity MinSeverity, Regex? ContextRegex)
+    private static string[] ParsePrefixes(IEnumerable<string> prefixes)
     {
-        public bool Accepts(Severity severity, string context)
+        var normalized = new List<string>();
+        foreach (var prefix in prefixes)
+        {
+            if (string.IsNullOrWhiteSpace(prefix))
+            {
+                continue;
+            }
+
+            normalized.Add(prefix.Trim());
+        }
+
+        return normalized.Count == 0 ? Array.Empty<string>() : normalized.ToArray();
+    }
+
+    private sealed record DebugSubscriber(
+        PID Pid,
+        Severity MinSeverity,
+        Regex? ContextRegex,
+        IReadOnlyList<string> IncludeContextPrefixes,
+        IReadOnlyList<string> ExcludeContextPrefixes,
+        IReadOnlyList<string> IncludeSummaryPrefixes,
+        IReadOnlyList<string> ExcludeSummaryPrefixes)
+    {
+        public bool Accepts(Severity severity, string context, string summary)
         {
             if (severity < MinSeverity)
             {
                 return false;
             }
 
-            if (ContextRegex is null)
+            if (ContextRegex is not null && !ContextRegex.IsMatch(context))
+            {
+                return false;
+            }
+
+            if (!MatchesIncludedPrefixes(context, IncludeContextPrefixes))
+            {
+                return false;
+            }
+
+            if (MatchesExcludedPrefixes(context, ExcludeContextPrefixes))
+            {
+                return false;
+            }
+
+            if (!MatchesIncludedPrefixes(summary, IncludeSummaryPrefixes))
+            {
+                return false;
+            }
+
+            return !MatchesExcludedPrefixes(summary, ExcludeSummaryPrefixes);
+        }
+
+        private static bool MatchesIncludedPrefixes(string value, IReadOnlyList<string> prefixes)
+        {
+            if (prefixes.Count == 0)
             {
                 return true;
             }
 
-            return ContextRegex.IsMatch(context);
+            foreach (var prefix in prefixes)
+            {
+                if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool MatchesExcludedPrefixes(string value, IReadOnlyList<string> prefixes)
+        {
+            foreach (var prefix in prefixes)
+            {
+                if (value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

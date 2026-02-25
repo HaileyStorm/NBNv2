@@ -2239,6 +2239,10 @@ message DebugSubscribe {
   string subscriber_actor = 1; // actor name/path
   nbn.Severity min_severity = 2;
   string context_regex = 3;
+  repeated string include_context_prefixes = 4;
+  repeated string exclude_context_prefixes = 5;
+  repeated string include_summary_prefixes = 6;
+  repeated string exclude_summary_prefixes = 7;
 }
 
 message DebugUnsubscribe {

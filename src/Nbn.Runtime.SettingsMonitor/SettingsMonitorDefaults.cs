@@ -1,4 +1,5 @@
 using System.Globalization;
+using Nbn.Shared;
 
 namespace Nbn.Runtime.SettingsMonitor;
 
@@ -18,6 +19,13 @@ public static class SettingsMonitorDefaults
             { ArtifactChunkCompressionKindKey, ArtifactCompressionDefaults.Kind },
             { ArtifactChunkCompressionLevelKey, ArtifactCompressionDefaults.Level.ToString(CultureInfo.InvariantCulture) },
             { ArtifactChunkCompressionMinBytesKey, ArtifactCompressionDefaults.MinBytes.ToString(CultureInfo.InvariantCulture) },
-            { ArtifactChunkCompressionOnlyIfSmallerKey, ArtifactCompressionDefaults.OnlyIfSmaller ? "true" : "false" }
+            { ArtifactChunkCompressionOnlyIfSmallerKey, ArtifactCompressionDefaults.OnlyIfSmaller ? "true" : "false" },
+            { DebugSettingsKeys.EnabledKey, "false" },
+            { DebugSettingsKeys.MinSeverityKey, "SevInfo" },
+            { DebugSettingsKeys.ContextRegexKey, string.Empty },
+            { DebugSettingsKeys.IncludeContextPrefixesKey, string.Empty },
+            { DebugSettingsKeys.ExcludeContextPrefixesKey, string.Empty },
+            { DebugSettingsKeys.IncludeSummaryPrefixesKey, string.Empty },
+            { DebugSettingsKeys.ExcludeSummaryPrefixesKey, string.Empty }
         };
 }

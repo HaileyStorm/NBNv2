@@ -8,6 +8,7 @@ using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Proto.Control;
 using Nbn.Shared;
+using Nbn.Tools.Workbench.Models;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
@@ -434,22 +435,18 @@ public class WorkbenchClient : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    public void SetDebugSubscription(bool enabled, Nbn.Proto.Severity minSeverity, string contextRegex)
+    public void SetDebugSubscription(bool enabled, DebugSubscriptionFilter filter)
     {
         if (_root is null || _receiverPid is null || _debugHubPid is null)
         {
             return;
         }
 
+        filter ??= DebugSubscriptionFilter.Default;
         var subscriber = PidLabel(_receiverPid);
         if (enabled)
         {
-            _root.Send(_debugHubPid, new DebugSubscribe
-            {
-                SubscriberActor = subscriber,
-                MinSeverity = minSeverity,
-                ContextRegex = contextRegex ?? string.Empty
-            });
+            _root.Send(_debugHubPid, BuildDebugSubscribe(subscriber, filter));
             _debugSubscribed = true;
             return;
         }
@@ -553,19 +550,15 @@ public class WorkbenchClient : IAsyncDisposable
         _sink.OnObsStatus("Disconnected", false);
     }
 
-    public Task RefreshDebugFilterAsync(Nbn.Proto.Severity minSeverity, string contextRegex)
+    public Task RefreshDebugFilterAsync(DebugSubscriptionFilter filter)
     {
         if (_root is null || _receiverPid is null || _debugHubPid is null || !_debugSubscribed)
         {
             return Task.CompletedTask;
         }
 
-        _root.Send(_debugHubPid, new DebugSubscribe
-        {
-            SubscriberActor = PidLabel(_receiverPid),
-            MinSeverity = minSeverity,
-            ContextRegex = contextRegex ?? string.Empty
-        });
+        filter ??= DebugSubscriptionFilter.Default;
+        _root.Send(_debugHubPid, BuildDebugSubscribe(PidLabel(_receiverPid), filter));
 
         return Task.CompletedTask;
     }
@@ -926,6 +919,22 @@ public class WorkbenchClient : IAsyncDisposable
     {
         await StopAsync().ConfigureAwait(false);
         _gate.Dispose();
+    }
+
+    private static DebugSubscribe BuildDebugSubscribe(string subscriber, DebugSubscriptionFilter filter)
+    {
+        var request = new DebugSubscribe
+        {
+            SubscriberActor = subscriber,
+            MinSeverity = filter.MinSeverity,
+            ContextRegex = filter.ContextRegex ?? string.Empty
+        };
+
+        request.IncludeContextPrefixes.Add(filter.IncludeContextPrefixes ?? Array.Empty<string>());
+        request.ExcludeContextPrefixes.Add(filter.ExcludeContextPrefixes ?? Array.Empty<string>());
+        request.IncludeSummaryPrefixes.Add(filter.IncludeSummaryPrefixes ?? Array.Empty<string>());
+        request.ExcludeSummaryPrefixes.Add(filter.ExcludeSummaryPrefixes ?? Array.Empty<string>());
+        return request;
     }
 
     private string PidLabel(PID pid)

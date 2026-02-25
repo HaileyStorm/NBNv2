@@ -10,6 +10,7 @@
           <StackPanel Spacing="8">
             <TextBlock Text="Filters" Classes="card-title" />
             <StackPanel Orientation="Horizontal" Spacing="8">
+              <CheckBox IsChecked="{Binding StreamEnabled}" Content="Enable stream" VerticalAlignment="Center" />
               <TextBlock Text="Min severity" Classes="muted" VerticalAlignment="Center" />
               <ComboBox ItemsSource="{Binding SeverityOptions}" SelectedItem="{Binding SelectedSeverity}" Width="160">
                 <ComboBox.ItemTemplate>
@@ -22,6 +23,16 @@
               <TextBox Width="220" Text="{Binding ContextRegex}" Watermark="tick|io|brain" />
               <TextBlock Text="Search" Classes="muted" VerticalAlignment="Center" />
               <TextBox Width="220" Text="{Binding TextFilter}" Watermark="message or context" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Include locations" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Width="220" Text="{Binding IncludeContextPrefixes}" Watermark="hivemind., region." />
+              <TextBlock Text="Exclude locations" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Width="220" Text="{Binding ExcludeContextPrefixes}" Watermark="hivemind.tick" />
+              <TextBlock Text="Include types" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Width="180" Text="{Binding IncludeSummaryPrefixes}" Watermark="brain., placement." />
+              <TextBlock Text="Exclude types" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Width="180" Text="{Binding ExcludeSummaryPrefixes}" Watermark="tick.duplicate" />
             </StackPanel>
           </StackPanel>
           <StackPanel Spacing="8" HorizontalAlignment="Right">

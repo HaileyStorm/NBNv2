@@ -2,6 +2,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -29,6 +30,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Viz.VisualizationSelectionChanged += UpdateObservabilitySubscriptions;
         Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, OnBrainDiscovered, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
         Debug = new DebugPanelViewModel(_client, _dispatcher);
+        Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel(Connections, _client);
 
@@ -246,6 +248,10 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public void OnSettingChanged(SettingItem item)
     {
         Orchestrator.UpdateSetting(item);
+        if (Debug.ApplySetting(item))
+        {
+            _dispatcher.Post(UpdateObservabilitySubscriptions);
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -340,6 +346,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 if (!token.IsCancellationRequested)
                 {
                     await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
+                    await SyncDebugSettingsFromSettingsMonitorAsync().ConfigureAwait(false);
                 }
 
                 WorkbenchLog.Info($"Settings connected to {Connections.SettingsHost}:{settingsPort}/{Connections.SettingsName}");
@@ -441,14 +448,34 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         });
     }
 
+    private async Task SyncDebugSettingsFromSettingsMonitorAsync()
+    {
+        foreach (var key in DebugSettingsKeys.AllKeys)
+        {
+            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
+            if (setting is null)
+            {
+                continue;
+            }
+
+            Debug.ApplySetting(new SettingItem(
+                key,
+                setting.Value ?? string.Empty,
+                setting.UpdatedMs.ToString()));
+        }
+
+        _dispatcher.Post(UpdateObservabilitySubscriptions);
+    }
+
     private void UpdateObservabilitySubscriptions()
     {
         var isVisualizerTab = SelectedNav?.Panel is VizPanelViewModel;
         var shouldSubscribeViz = isVisualizerTab && Viz.HasSelectedBrain;
         var vizBrainId = shouldSubscribeViz ? Viz.SelectedBrain?.BrainId : null;
         var vizFocusRegionId = shouldSubscribeViz ? Viz.ActiveFocusRegionId : null;
-        var shouldSubscribeDebug = SelectedNav?.Panel is DebugPanelViewModel;
-        _client.SetDebugSubscription(shouldSubscribeDebug, Debug.SelectedSeverity.Severity, Debug.ContextRegex);
+        var debugFilter = Debug.BuildSubscriptionFilter();
+        var shouldSubscribeDebug = SelectedNav?.Panel is DebugPanelViewModel && debugFilter.StreamEnabled;
+        _client.SetDebugSubscription(shouldSubscribeDebug, debugFilter);
         _client.SetVizSubscription(shouldSubscribeViz);
         _client.SetActiveVisualizationBrain(vizBrainId, vizFocusRegionId);
     }
