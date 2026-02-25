@@ -16,6 +16,20 @@ public readonly record struct ServiceEndpointRegistration(
     ServiceEndpoint Endpoint,
     long UpdatedMs);
 
+public enum ServiceEndpointObservationKind
+{
+    Upserted = 0,
+    Removed = 1,
+    Invalid = 2
+}
+
+public readonly record struct ServiceEndpointObservation(
+    string Key,
+    ServiceEndpointObservationKind Kind,
+    ServiceEndpointRegistration? Registration,
+    string FailureReason,
+    ulong UpdatedMs);
+
 public static class ServiceEndpointSettings
 {
     public const string EndpointPrefix = "service.endpoint.";

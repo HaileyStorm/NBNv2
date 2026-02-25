@@ -42,6 +42,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.RootActorName);
 
 ServiceEndpointDiscoveryClient? discoveryClient = null;
+using var discoveryLoopCancellation = new CancellationTokenSource();
+Task discoveryLoopTask = Task.CompletedTask;
 try
 {
     discoveryClient = ServiceEndpointDiscoveryClient.Create(
@@ -53,20 +55,32 @@ try
     if (discoveryClient is null)
     {
         Console.WriteLine("[WARN] WorkerNode endpoint discovery is disabled because SettingsMonitor coordinates were not configured.");
+        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+            workerNodeId,
+            target: "discovery",
+            outcome: "disabled",
+            failureReason: "settings_unconfigured");
     }
     else
     {
-        discoveryClient.EndpointChanged += registration =>
-            system.Root.Send(workerPid, new WorkerNodeActor.EndpointRegistrationObserved(registration));
-
-        var known = await discoveryClient.ResolveKnownAsync();
-        system.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
-        await discoveryClient.SubscribeAsync([ServiceEndpointSettings.HiveMindKey, ServiceEndpointSettings.IoGatewayKey]);
+        discoveryClient.EndpointObserved += observation =>
+            system.Root.Send(workerPid, new WorkerNodeActor.EndpointStateObserved(observation));
+        discoveryLoopTask = RunDiscoveryBootstrapLoopAsync(
+            system,
+            workerPid,
+            workerNodeId,
+            discoveryClient,
+            discoveryLoopCancellation.Token);
     }
 }
 catch (Exception ex)
 {
     Console.WriteLine($"[WARN] WorkerNode endpoint discovery setup failed: {ex.GetBaseException().Message}");
+    WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+        workerNodeId,
+        target: "discovery",
+        outcome: "bootstrap_failed",
+        failureReason: ToDiscoveryFailureReason(ex));
 }
 
 var startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
@@ -93,6 +107,15 @@ Console.CancelKeyPress += (_, eventArgs) =>
 AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdown.TrySetResult();
 
 await shutdown.Task;
+
+discoveryLoopCancellation.Cancel();
+try
+{
+    await discoveryLoopTask.ConfigureAwait(false);
+}
+catch (OperationCanceledException) when (discoveryLoopCancellation.IsCancellationRequested)
+{
+}
 
 if (discoveryClient is not null)
 {
@@ -166,4 +189,83 @@ static string FormatEndpoint(ServiceEndpointRegistration? registration)
 
     var value = registration.Value;
     return $"{value.Key}={value.Endpoint.ToSettingValue()}";
+}
+
+static async Task RunDiscoveryBootstrapLoopAsync(
+    ActorSystem system,
+    PID workerPid,
+    Guid workerNodeId,
+    ServiceEndpointDiscoveryClient discoveryClient,
+    CancellationToken cancellationToken)
+{
+    string[] watchedKeys = [ServiceEndpointSettings.HiveMindKey, ServiceEndpointSettings.IoGatewayKey];
+    var refreshInterval = TimeSpan.FromSeconds(15);
+    var attempt = 0;
+    var bootstrapped = false;
+
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        try
+        {
+            var known = await discoveryClient.ResolveKnownAsync(cancellationToken).ConfigureAwait(false);
+            system.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            await discoveryClient.SubscribeAsync(watchedKeys, cancellationToken).ConfigureAwait(false);
+
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                workerNodeId,
+                target: "discovery",
+                outcome: bootstrapped ? "refresh_succeeded" : "bootstrap_succeeded",
+                failureReason: "none");
+
+            bootstrapped = true;
+            attempt = 0;
+
+            await Task.Delay(refreshInterval, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            break;
+        }
+        catch (Exception ex)
+        {
+            attempt++;
+            var failureReason = ToDiscoveryFailureReason(ex);
+            var retryDelay = ComputeDiscoveryRetryDelay(attempt);
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                workerNodeId,
+                target: "discovery",
+                outcome: "retry_scheduled",
+                failureReason: failureReason);
+            Console.WriteLine(
+                $"[WARN] WorkerNode discovery transition target=discovery outcome=retry_scheduled failure_reason={failureReason} attempt={attempt} retry_ms={(long)retryDelay.TotalMilliseconds}: {ex.GetBaseException().Message}");
+
+            await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+        workerNodeId,
+        target: "discovery",
+        outcome: "stopped",
+        failureReason: "shutdown");
+}
+
+static TimeSpan ComputeDiscoveryRetryDelay(int attempt)
+{
+    var clampedAttempt = Math.Clamp(attempt, 1, 6);
+    var exponent = clampedAttempt - 1;
+    var delayMs = 500d * Math.Pow(2d, exponent);
+    return TimeSpan.FromMilliseconds(Math.Min(delayMs, 30_000d));
+}
+
+static string ToDiscoveryFailureReason(Exception exception)
+{
+    var root = exception.GetBaseException();
+    return root switch
+    {
+        TimeoutException => "settings_timeout",
+        OperationCanceledException => "operation_canceled",
+        _ => "settings_request_failed"
+    };
 }

@@ -89,6 +89,90 @@ public sealed class ServiceEndpointDiscoveryClientTests
         await client.DisposeAsync();
     }
 
+    [Fact]
+    public async Task SubscribeAsync_EmitsEndpointObservedWhenWatchedKeyIsRemoved()
+    {
+        await using var harness = await SettingsMonitorHarness.CreateAsync();
+        var client = new ServiceEndpointDiscoveryClient(harness.System, harness.SettingsPid);
+
+        var key = ServiceEndpointSettings.IoGatewayKey;
+        await client.PublishAsync(key, new ServiceEndpoint("127.0.0.1:12050", "io-gateway"));
+
+        var changedTriggered = false;
+        var observedTask = new TaskCompletionSource<ServiceEndpointObservation>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.EndpointChanged += _ => changedTriggered = true;
+        client.EndpointObserved += observation =>
+        {
+            if (observation.Key == key && observation.Kind == ServiceEndpointObservationKind.Removed)
+            {
+                observedTask.TrySetResult(observation);
+            }
+        };
+
+        await client.SubscribeAsync([key]);
+        await Task.Delay(50);
+        await harness.Root.RequestAsync<ProtoSettings.SettingValue>(
+            harness.SettingsPid,
+            new ProtoSettings.SettingSet
+            {
+                Key = key,
+                Value = string.Empty
+            });
+
+        var observation = await observedTask.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(key, observation.Key);
+        Assert.Equal(ServiceEndpointObservationKind.Removed, observation.Kind);
+        Assert.Null(observation.Registration);
+        Assert.Equal("endpoint_removed", observation.FailureReason);
+        Assert.True(observation.UpdatedMs > 0);
+        Assert.False(changedTriggered);
+
+        await client.UnsubscribeAsync();
+        await client.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_EmitsEndpointObservedWhenWatchedKeyValueIsInvalid()
+    {
+        await using var harness = await SettingsMonitorHarness.CreateAsync();
+        var client = new ServiceEndpointDiscoveryClient(harness.System, harness.SettingsPid);
+
+        var key = ServiceEndpointSettings.IoGatewayKey;
+        await client.PublishAsync(key, new ServiceEndpoint("127.0.0.1:12050", "io-gateway"));
+
+        var changedTriggered = false;
+        var observedTask = new TaskCompletionSource<ServiceEndpointObservation>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.EndpointChanged += _ => changedTriggered = true;
+        client.EndpointObserved += observation =>
+        {
+            if (observation.Key == key && observation.Kind == ServiceEndpointObservationKind.Invalid)
+            {
+                observedTask.TrySetResult(observation);
+            }
+        };
+
+        await client.SubscribeAsync([key]);
+        await Task.Delay(50);
+        await harness.Root.RequestAsync<ProtoSettings.SettingValue>(
+            harness.SettingsPid,
+            new ProtoSettings.SettingSet
+            {
+                Key = key,
+                Value = "127.0.0.1:12050"
+            });
+
+        var observation = await observedTask.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(key, observation.Key);
+        Assert.Equal(ServiceEndpointObservationKind.Invalid, observation.Kind);
+        Assert.Null(observation.Registration);
+        Assert.Equal("endpoint_parse_failed", observation.FailureReason);
+        Assert.True(observation.UpdatedMs > 0);
+        Assert.False(changedTriggered);
+
+        await client.UnsubscribeAsync();
+        await client.DisposeAsync();
+    }
+
     private sealed class SettingsMonitorHarness : IAsyncDisposable
     {
         private readonly TempDatabaseScope _databaseScope;

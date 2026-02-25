@@ -85,6 +85,195 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task DiscoverySnapshot_MissingEndpoint_ClearsStaleRegistration()
+    {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        await using var discovery = new ServiceEndpointDiscoveryClient(harness.System, harness.SettingsPid);
+        await discovery.PublishAsync(
+            ServiceEndpointSettings.HiveMindKey,
+            new ServiceEndpoint("127.0.0.1:12020", "HiveMind"));
+        await discovery.PublishAsync(
+            ServiceEndpointSettings.IoGatewayKey,
+            new ServiceEndpoint("127.0.0.1:12050", "io-gateway"));
+
+        var known = await discovery.ResolveKnownAsync();
+        harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+        var hiveOnly = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+        {
+            [ServiceEndpointSettings.HiveMindKey] = known[ServiceEndpointSettings.HiveMindKey]
+        };
+        harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(hiveOnly));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                    workerPid,
+                    new WorkerNodeActor.GetWorkerNodeSnapshot());
+                return state.HiveMindEndpoint.HasValue && state.IoGatewayEndpoint is null;
+            },
+            timeoutMs: 5_000);
+
+        var workerTag = workerNodeId.ToString("D");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.observed",
+                ("worker_node_id", workerTag),
+                ("target", ServiceEndpointSettings.IoGatewayKey),
+                ("failure_reason", "endpoint_missing"),
+                ("outcome", "snapshot_missing")));
+    }
+
+    [Fact]
+    public async Task DiscoveryUpdate_RemovedHiveMind_ClearsEndpoint_And_ResolveFallsBackToHint()
+    {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        await using var discovery = new ServiceEndpointDiscoveryClient(harness.System, harness.SettingsPid);
+        await discovery.PublishAsync(
+            ServiceEndpointSettings.HiveMindKey,
+            new ServiceEndpoint("127.0.0.1:12020", "HiveMind"));
+        await discovery.PublishAsync(
+            ServiceEndpointSettings.IoGatewayKey,
+            new ServiceEndpoint("127.0.0.1:12050", "io-gateway"));
+
+        var known = await discovery.ResolveKnownAsync();
+        harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+        var seedAck = await SendPlacementRequestViaNamedSenderAsync(
+            harness.System,
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "seed-hint",
+                    brainId: Guid.NewGuid(),
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 0,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                    actorName: $"brain-{Guid.NewGuid():N}-root")
+            });
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, seedAck.State);
+
+        harness.Root.Send(workerPid, new WorkerNodeActor.EndpointStateObserved(
+            new ServiceEndpointObservation(
+                ServiceEndpointSettings.HiveMindKey,
+                ServiceEndpointObservationKind.Removed,
+                null,
+                "endpoint_removed",
+                (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                    workerPid,
+                    new WorkerNodeActor.GetWorkerNodeSnapshot());
+                return state.HiveMindEndpoint is null;
+            },
+            timeoutMs: 5_000);
+
+        var fallbackAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "after-removal",
+                    brainId: Guid.NewGuid(),
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 2,
+                    regionId: 0,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                    actorName: $"brain-{Guid.NewGuid():N}-root")
+            });
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, fallbackAck.State);
+
+        var workerTag = workerNodeId.ToString("D");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.observed",
+                ("worker_node_id", workerTag),
+                ("target", ServiceEndpointSettings.HiveMindKey),
+                ("failure_reason", "endpoint_removed"),
+                ("outcome", "update_removed")));
+
+        Assert.True(
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.resolve",
+                ("worker_node_id", workerTag),
+                ("target", ServiceEndpointSettings.HiveMindKey),
+                ("failure_reason", "endpoint_missing"),
+                ("outcome", "resolved_hint")) >= 1);
+    }
+
+    [Fact]
+    public async Task DiscoveryUpdate_InvalidHiveMind_InvalidateEndpoint_And_EmitsTelemetry()
+    {
+        using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        await using var discovery = new ServiceEndpointDiscoveryClient(harness.System, harness.SettingsPid);
+        await discovery.PublishAsync(
+            ServiceEndpointSettings.HiveMindKey,
+            new ServiceEndpoint("127.0.0.1:12020", "HiveMind"));
+        await discovery.PublishAsync(
+            ServiceEndpointSettings.IoGatewayKey,
+            new ServiceEndpoint("127.0.0.1:12050", "io-gateway"));
+
+        var known = await discovery.ResolveKnownAsync();
+        harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+        harness.Root.Send(workerPid, new WorkerNodeActor.EndpointStateObserved(
+            new ServiceEndpointObservation(
+                ServiceEndpointSettings.HiveMindKey,
+                ServiceEndpointObservationKind.Invalid,
+                null,
+                "endpoint_parse_failed",
+                (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var state = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                    workerPid,
+                    new WorkerNodeActor.GetWorkerNodeSnapshot());
+                return state.HiveMindEndpoint is null;
+            },
+            timeoutMs: 5_000);
+
+        var workerTag = workerNodeId.ToString("D");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.workernode.discovery.endpoint.observed",
+                ("worker_node_id", workerTag),
+                ("target", ServiceEndpointSettings.HiveMindKey),
+                ("failure_reason", "endpoint_parse_failed"),
+                ("outcome", "update_invalidated")));
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_TargetingWorker_ReturnsReadyAck()
     {
         using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
@@ -713,6 +902,59 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         }
 
         throw new Xunit.Sdk.XunitException($"Condition was not met within {timeoutMs} ms.");
+    }
+
+    private static async Task<PlacementAssignmentAck> SendPlacementRequestViaNamedSenderAsync(
+        ActorSystem system,
+        PID workerPid,
+        PlacementAssignmentRequest request)
+    {
+        var completion = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var senderPid = system.Root.SpawnNamed(
+            Props.FromProducer(() => new PlacementRequestProbeActor(workerPid, request, completion)),
+            $"worker-test-probe-{Guid.NewGuid():N}");
+
+        try
+        {
+            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            system.Root.Stop(senderPid);
+        }
+    }
+
+    private sealed class PlacementRequestProbeActor : IActor
+    {
+        private readonly PID _workerPid;
+        private readonly PlacementAssignmentRequest _request;
+        private readonly TaskCompletionSource<PlacementAssignmentAck> _completion;
+
+        public PlacementRequestProbeActor(
+            PID workerPid,
+            PlacementAssignmentRequest request,
+            TaskCompletionSource<PlacementAssignmentAck> completion)
+        {
+            _workerPid = workerPid;
+            _request = request;
+            _completion = completion;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_workerPid, _request);
+                    break;
+                case PlacementAssignmentAck ack:
+                    _completion.TrySetResult(ack);
+                    context.Stop(context.Self);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class WorkerHarness : IAsyncDisposable

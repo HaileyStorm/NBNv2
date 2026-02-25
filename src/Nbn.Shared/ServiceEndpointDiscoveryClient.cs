@@ -21,6 +21,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     }
 
     public event Action<ServiceEndpointRegistration>? EndpointChanged;
+    public event Action<ServiceEndpointObservation>? EndpointObserved;
 
     public static ServiceEndpointDiscoveryClient? Create(
         ActorSystem? system,
@@ -171,17 +172,28 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         return resolved;
     }
 
-    public Task SubscribeAsync(IEnumerable<string>? keys = null)
+    public async Task SubscribeAsync(
+        IEnumerable<string>? keys = null,
+        CancellationToken cancellationToken = default)
     {
         var keyFilter = BuildKeyFilter(keys);
         var subscriberPid = EnsureSubscriber(keyFilter);
+
+        // Verify the settings endpoint is reachable before registering the watcher.
+        // Without this check, startup degrades into fire-and-forget subscribe attempts.
+        using var timeoutCts = CreateTimeoutToken(cancellationToken);
+        await _system.Root.RequestAsync<SettingValue>(
+            _settingsPid,
+            new SettingGet
+            {
+                Key = ServiceEndpointSettings.HiveMindKey
+            },
+            timeoutCts.Token).ConfigureAwait(false);
 
         _system.Root.Send(_settingsPid, new SettingSubscribe
         {
             SubscriberActor = PidLabel(subscriberPid)
         });
-
-        return Task.CompletedTask;
     }
 
     public Task UnsubscribeAsync()
@@ -238,30 +250,71 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         }
 
         Action<ServiceEndpointRegistration>? callback;
+        Action<ServiceEndpointObservation>? observationCallback;
         HashSet<string>? watchedKeys;
         lock (_gate)
         {
             callback = EndpointChanged;
+            observationCallback = EndpointObserved;
             watchedKeys = _watchedKeys;
         }
 
-        if (callback is null || watchedKeys is null || !watchedKeys.Contains(changed.Key))
+        if (watchedKeys is null || !watchedKeys.Contains(changed.Key))
         {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(changed.Key))
+        {
+            NotifyEndpointObserved(
+                observationCallback,
+                new ServiceEndpointObservation(
+                    string.Empty,
+                    ServiceEndpointObservationKind.Invalid,
+                    null,
+                    "unknown_key",
+                    changed.UpdatedMs));
             return;
         }
 
         if (!ServiceEndpointSettings.TryParseSetting(changed.Key, changed.Value, changed.UpdatedMs, out var registration))
         {
+            var kind = string.IsNullOrWhiteSpace(changed.Value)
+                ? ServiceEndpointObservationKind.Removed
+                : ServiceEndpointObservationKind.Invalid;
+            var failureReason = kind == ServiceEndpointObservationKind.Removed
+                ? "endpoint_removed"
+                : "endpoint_parse_failed";
+            NotifyEndpointObserved(
+                observationCallback,
+                new ServiceEndpointObservation(
+                    changed.Key.Trim(),
+                    kind,
+                    null,
+                    failureReason,
+                    changed.UpdatedMs));
             return;
         }
 
-        try
+        if (callback is not null)
         {
-            callback(registration);
+            try
+            {
+                callback(registration);
+            }
+            catch
+            {
+            }
         }
-        catch
-        {
-        }
+
+        NotifyEndpointObserved(
+            observationCallback,
+            new ServiceEndpointObservation(
+                registration.Key,
+                ServiceEndpointObservationKind.Upserted,
+                registration,
+                "none",
+                changed.UpdatedMs));
     }
 
     private static HashSet<string> BuildKeyFilter(IEnumerable<string>? keys)
@@ -302,6 +355,24 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         timeoutCts.CancelAfter(DefaultRequestTimeout);
         return timeoutCts;
+    }
+
+    private static void NotifyEndpointObserved(
+        Action<ServiceEndpointObservation>? callback,
+        ServiceEndpointObservation observation)
+    {
+        if (callback is null)
+        {
+            return;
+        }
+
+        try
+        {
+            callback(observation);
+        }
+        catch
+        {
+        }
     }
 
     private sealed class SettingChangedRelayActor : IActor

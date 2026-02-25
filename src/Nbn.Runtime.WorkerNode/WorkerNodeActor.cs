@@ -52,6 +52,9 @@ public sealed class WorkerNodeActor : IActor
             case DiscoverySnapshotApplied snapshot:
                 ApplyDiscoverySnapshot(snapshot);
                 break;
+            case EndpointStateObserved endpointState:
+                ApplyObservedEndpoint(endpointState.Observation, source: "update");
+                break;
             case EndpointRegistrationObserved endpoint:
                 ApplyEndpoint(endpoint.Registration, source: "update");
                 break;
@@ -71,6 +74,8 @@ public sealed class WorkerNodeActor : IActor
     }
 
     public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
+
+    public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
 
     public sealed record EndpointRegistrationObserved(ServiceEndpointRegistration Registration);
 
@@ -104,9 +109,77 @@ public sealed class WorkerNodeActor : IActor
                 "none");
         }
 
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in snapshot.Registrations)
         {
             ApplyEndpoint(entry.Value, source: "snapshot");
+            if (ServiceEndpointSettings.IsKnownKey(entry.Value.Key))
+            {
+                seenKeys.Add(entry.Value.Key);
+            }
+        }
+
+        foreach (var knownKey in ServiceEndpointSettings.AllKeys)
+        {
+            if (!seenKeys.Contains(knownKey))
+            {
+                RemoveEndpoint(
+                    knownKey,
+                    source: "snapshot",
+                    outcome: "missing",
+                    failureReason: "endpoint_missing");
+            }
+        }
+    }
+
+    private void ApplyObservedEndpoint(ServiceEndpointObservation observation, string source)
+    {
+        if (!ServiceEndpointSettings.IsKnownKey(observation.Key))
+        {
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                _workerNodeId,
+                string.IsNullOrWhiteSpace(observation.Key) ? DiscoveryTargetLabel : observation.Key,
+                $"{NormalizeSource(source)}_ignored",
+                "unknown_key");
+            return;
+        }
+
+        switch (observation.Kind)
+        {
+            case ServiceEndpointObservationKind.Upserted:
+                if (observation.Registration is ServiceEndpointRegistration registration)
+                {
+                    ApplyEndpoint(registration, source);
+                    return;
+                }
+
+                WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                    _workerNodeId,
+                    observation.Key,
+                    $"{NormalizeSource(source)}_ignored",
+                    "registration_missing");
+                return;
+            case ServiceEndpointObservationKind.Removed:
+                RemoveEndpoint(
+                    observation.Key,
+                    source,
+                    outcome: "removed",
+                    failureReason: NormalizeFailureReason(observation.FailureReason, "endpoint_removed"));
+                return;
+            case ServiceEndpointObservationKind.Invalid:
+                RemoveEndpoint(
+                    observation.Key,
+                    source,
+                    outcome: "invalidated",
+                    failureReason: NormalizeFailureReason(observation.FailureReason, "endpoint_parse_failed"));
+                return;
+            default:
+                WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                    _workerNodeId,
+                    observation.Key,
+                    $"{NormalizeSource(source)}_ignored",
+                    "unknown_update_kind");
+                return;
         }
     }
 
@@ -129,6 +202,26 @@ public sealed class WorkerNodeActor : IActor
             registration.Key,
             existed ? $"{NormalizeSource(source)}_updated" : $"{NormalizeSource(source)}_registered",
             "none");
+    }
+
+    private void RemoveEndpoint(string key, string source, string outcome, string failureReason)
+    {
+        if (!ServiceEndpointSettings.IsKnownKey(key))
+        {
+            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+                _workerNodeId,
+                string.IsNullOrWhiteSpace(key) ? DiscoveryTargetLabel : key,
+                $"{NormalizeSource(source)}_ignored",
+                "unknown_key");
+            return;
+        }
+
+        _endpoints.Remove(key);
+        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+            _workerNodeId,
+            key,
+            $"{NormalizeSource(source)}_{outcome}",
+            NormalizeFailureReason(failureReason, "none"));
     }
     private async Task HandlePlacementAssignmentAsync(IContext context, PlacementAssignmentRequest request)
     {
@@ -319,8 +412,12 @@ public sealed class WorkerNodeActor : IActor
 
     private WorkerNodeSnapshot BuildSnapshot()
     {
-        _endpoints.TryGetValue(ServiceEndpointSettings.HiveMindKey, out var hiveMindEndpoint);
-        _endpoints.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var ioEndpoint);
+        var hiveMindEndpoint = _endpoints.TryGetValue(ServiceEndpointSettings.HiveMindKey, out var hiveValue)
+            ? hiveValue
+            : (ServiceEndpointRegistration?)null;
+        var ioEndpoint = _endpoints.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var ioValue)
+            ? ioValue
+            : (ServiceEndpointRegistration?)null;
         return new WorkerNodeSnapshot(
             _workerNodeId,
             _workerAddress,
@@ -1174,6 +1271,9 @@ public sealed class WorkerNodeActor : IActor
 
     private static string NormalizeSource(string source)
         => string.IsNullOrWhiteSpace(source) ? "update" : source.Trim().ToLowerInvariant();
+
+    private static string NormalizeFailureReason(string failureReason, string fallback)
+        => string.IsNullOrWhiteSpace(failureReason) ? fallback : failureReason.Trim().ToLowerInvariant();
 
     private PID ToRemotePid(IContext context, PID pid)
     {
