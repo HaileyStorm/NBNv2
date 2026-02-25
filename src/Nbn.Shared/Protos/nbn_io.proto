@@ -151,6 +151,8 @@ message UnsubscribeOutputsVector {
 message OutputVectorEvent {
   nbn.Uuid brain_id = 1;
   fixed64 tick_id = 2;
+  // Published by IO as a full brain-level vector ordered by output_index (0..output_width-1).
+  // For sharded output regions, IO assembles shard-local segments before publication.
   repeated float values = 3;
 }
 

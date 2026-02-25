@@ -792,11 +792,12 @@ Outputs come from neurons in region 31.
 * `neuron_id = i`
 
 Output width equals the number of neurons in region 31.
+For a running brain, this width is fixed from registration/definition metadata and is not mutated by observed output events.
 
 Output events are emitted per tick and delivered to subscribed clients.
 
 * **OutputEvent (single):** emitted when an output neuron fires (abs(potential) > ActivationThreshold).
-* **OutputVectorEvent (vector):** emitted every tick for output region shards; values are activation potentials for each output neuron (0 if gated by pre-activation/disabled).
+* **OutputVectorEvent (vector):** emitted by IO as one full brain-level vector per tick with deterministic ordering by `output_index` (`0..output_width-1`). For sharded output regions, shard-local vectors are merged by absolute output-index ranges before publication. Invalid vector payloads (width/range/overlap/late-tick violations) are rejected and surfaced via deterministic IO telemetry/debug paths.
 
 External World may subscribe, per Brain, to individual and/or vector outputs.
 

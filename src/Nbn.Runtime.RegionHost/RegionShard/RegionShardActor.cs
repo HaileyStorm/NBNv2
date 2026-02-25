@@ -7,6 +7,7 @@ using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
+using Nbn.Shared.IO;
 using Nbn.Shared.Quantization;
 using Proto;
 using ProtoSeverity = Nbn.Proto.Severity;
@@ -443,13 +444,9 @@ public sealed class RegionShardActor : IActor
 
             if (result.OutputVector.Count > 0)
             {
-                var vector = new OutputVectorEvent
-                {
-                    BrainId = _brainId.ToProtoUuid(),
-                    TickId = tick.TickId
-                };
-                vector.Values.Add(result.OutputVector);
-                context.Send(_outputSink, vector);
+                context.Send(
+                    _outputSink,
+                    new EmitOutputVectorSegment((uint)_state.NeuronStart, result.OutputVector, tick.TickId));
             }
         }
 
