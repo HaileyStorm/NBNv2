@@ -370,6 +370,33 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_SubscriptionAndDrainFields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var subscribeOutputs = descriptor.MessageTypes.Single(message => message.Name == "SubscribeOutputs");
+        AssertField(subscribeOutputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
+        var unsubscribeOutputs = descriptor.MessageTypes.Single(message => message.Name == "UnsubscribeOutputs");
+        AssertField(unsubscribeOutputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
+        var subscribeOutputsVector = descriptor.MessageTypes.Single(message => message.Name == "SubscribeOutputsVector");
+        AssertField(subscribeOutputsVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
+        var unsubscribeOutputsVector = descriptor.MessageTypes.Single(message => message.Name == "UnsubscribeOutputsVector");
+        AssertField(unsubscribeOutputsVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
+        var drainInputs = descriptor.MessageTypes.Single(message => message.Name == "DrainInputs");
+        AssertField(drainInputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(drainInputs, "tick_id", 2, FieldType.Fixed64);
+
+        var inputDrain = descriptor.MessageTypes.Single(message => message.Name == "InputDrain");
+        AssertField(inputDrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(inputDrain, "tick_id", 2, FieldType.Fixed64);
+        AssertRepeatedField(inputDrain, "contribs", 3, FieldType.Message, "nbn.signal.Contribution");
+    }
+
+    [Fact]
     public void ProtoIo_BrainInfo_Fields_AreStable()
     {
         var descriptor = NbnIoReflection.Descriptor;

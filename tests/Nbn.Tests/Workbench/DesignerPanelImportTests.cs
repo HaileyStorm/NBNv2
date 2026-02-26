@@ -110,6 +110,25 @@ public class DesignerPanelImportTests
         Assert.Contains("more issue(s))", vm.Status, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TryImportNbnFromBytes_RejectsMissingRequiredOutputRegion()
+    {
+        var vm = CreateViewModel();
+        var brainBefore = vm.Brain;
+        var summaryBefore = vm.LoadedSummary;
+
+        var imported = vm.TryImportNbnFromBytes(
+            CreateInvalidMissingOutputRegionNbn(),
+            "invalid-missing-output-region.nbn");
+
+        Assert.False(imported);
+        Assert.Same(brainBefore, vm.Brain);
+        Assert.Equal(summaryBefore, vm.LoadedSummary);
+        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+        Assert.Contains("invalid-missing-output-region.nbn", vm.Status, StringComparison.Ordinal);
+        Assert.Contains("output region must be present", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static DesignerPanelViewModel CreateViewModel()
     {
         EnsureAvaloniaInitialized();
@@ -225,6 +244,16 @@ public class DesignerPanelImportTests
             headerFlags: 1,
             new RegionSpec((byte)NbnConstants.InputRegionId, region0Neurons, region0Axons),
             new RegionSpec((byte)NbnConstants.OutputRegionId, region31Neurons, Array.Empty<AxonRecord>()));
+    }
+
+    private static byte[] CreateInvalidMissingOutputRegionNbn()
+    {
+        var region0Neurons = new[]
+        {
+            new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true)
+        };
+
+        return BuildNbn(new RegionSpec((byte)NbnConstants.InputRegionId, region0Neurons, Array.Empty<AxonRecord>()));
     }
 
     private static byte[] BuildNbn(params RegionSpec[] regionSpecs)

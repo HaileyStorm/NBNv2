@@ -210,6 +210,34 @@ public class NbnBinaryValidatorTests
     }
 
     [Fact]
+    public void ValidateNbn_DetectsMissingRequiredOutputRegion()
+    {
+        var stride = (uint)NbnConstants.DefaultAxonStride;
+        var neurons = new[] { new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true) };
+        var checkpoints = NbnBinary.BuildCheckpoints(neurons, stride);
+        var region0 = new NbnRegionSection(0, 1, 0, stride, (uint)checkpoints.Length, checkpoints, neurons, Array.Empty<AxonRecord>());
+
+        var regions = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
+        regions[0] = new NbnRegionDirectoryEntry(1, 0, (ulong)NbnBinary.NbnHeaderBytes, 0);
+
+        var header = new NbnHeaderV2(
+            "NBN2",
+            2,
+            1,
+            10,
+            0,
+            stride,
+            0,
+            QuantizationSchemas.DefaultNbn,
+            regions);
+
+        var result = NbnBinaryValidator.ValidateNbn(header, new[] { region0 });
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, issue => issue.Message.Contains("output region must be present", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void ValidateNbs_DetectsReservedFlagsAndUnorderedRegions()
     {
         var header = new NbsHeaderV2(

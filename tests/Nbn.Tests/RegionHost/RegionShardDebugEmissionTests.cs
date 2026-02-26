@@ -5,6 +5,7 @@ using Nbn.Proto.Signal;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using Nbn.Shared.Quantization;
+using Nbn.Tests.TestSupport;
 using Proto;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
@@ -98,6 +99,7 @@ public class RegionShardDebugEmissionTests
     [Fact]
     public async Task HandleSignalBatch_WhenLate_DropsContributions_AndStillAcks()
     {
+        using var metrics = new MeterCollector(RegionHostTelemetry.MeterNameValue);
         var system = new ActorSystem();
         var root = system.Root;
         var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
@@ -146,6 +148,8 @@ public class RegionShardDebugEmissionTests
         Assert.Single(ackSnapshot.Acks);
         Assert.Equal((ulong)10, ackSnapshot.Acks[0].TickId);
         Assert.InRange(state.Buffer[0], -1e-6f, 1e-6f);
+        Assert.Equal(1, metrics.SumLong("nbn.regionhost.signal.batch.late"));
+        Assert.Equal(0, metrics.SumLong("nbn.regionhost.signal.batch.rejected"));
 
         await system.ShutdownAsync();
     }

@@ -203,6 +203,56 @@ public sealed class OutputCoordinatorActorTests
         }
     }
 
+    [Fact]
+    public async Task OutputVector_UnsubscribedVectorSubscriber_StopsReceiving_WhileOthersContinue()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var brainId = Guid.NewGuid();
+        var root = system.Root;
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
+            var firstSubscriberVectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            var secondSubscriberVectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            var firstSubscriber = root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(brainId, coordinator, firstSubscriberVectors.Writer)));
+            root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(brainId, coordinator, secondSubscriberVectors.Writer)));
+
+            await Task.Delay(100);
+
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 1f, 2f }, 40));
+
+            var firstA = await ReadVectorAsync(firstSubscriberVectors.Reader, TimeSpan.FromSeconds(2));
+            var firstB = await ReadVectorAsync(secondSubscriberVectors.Reader, TimeSpan.FromSeconds(2));
+            Assert.Equal((ulong)40, firstA.TickId);
+            Assert.Equal((ulong)40, firstB.TickId);
+            Assert.Equal(new[] { 1f, 2f }, firstA.Values);
+            Assert.Equal(new[] { 1f, 2f }, firstB.Values);
+
+            root.Send(firstSubscriber, new UnsubscribeVectorOutputs());
+            await Task.Delay(100);
+
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 3f, 4f }, 41));
+
+            await AssertNoVectorAsync(firstSubscriberVectors.Reader, TimeSpan.FromMilliseconds(200));
+            var secondB = await ReadVectorAsync(secondSubscriberVectors.Reader, TimeSpan.FromSeconds(2));
+            Assert.Equal((ulong)41, secondB.TickId);
+            Assert.Equal(new[] { 3f, 4f }, secondB.Values);
+
+            Assert.Equal(
+                2,
+                metrics.SumLong(
+                    "nbn.io.output.vector.published",
+                    ("brain_id", brainId.ToString("D")),
+                    ("output_width", "2")));
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
     private static async Task<OutputVectorEvent> ReadVectorAsync(ChannelReader<OutputVectorEvent> reader, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
@@ -258,6 +308,9 @@ public sealed class OutputCoordinatorActorTests
                 case Started:
                     context.Request(_outputCoordinator, new SubscribeOutputsVector { BrainId = _brainId.ToProtoUuid() });
                     break;
+                case UnsubscribeVectorOutputs:
+                    context.Request(_outputCoordinator, new UnsubscribeOutputsVector { BrainId = _brainId.ToProtoUuid() });
+                    break;
                 case OutputVectorEvent output
                     when output.BrainId is not null
                          && output.BrainId.TryToGuid(out var brain)
@@ -269,4 +322,6 @@ public sealed class OutputCoordinatorActorTests
             return Task.CompletedTask;
         }
     }
+
+    private sealed record UnsubscribeVectorOutputs;
 }
