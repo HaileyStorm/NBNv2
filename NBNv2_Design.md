@@ -3015,8 +3015,8 @@ If scope expands mid-task, switch to Aleph immediately.
   * Use `configure(sub_query_model=..., sub_query_reasoning_effort=...)` only when running a sustained batch of same-model sub-queries.
   * After batch overrides, clear them (`configure(sub_query_model="", sub_query_reasoning_effort="")`) so inheritance from the main model resumes.
 * Spark usage policy:
-  * Use Spark only for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory) and similar fairly simple tasks. But DO use it for those situations.
-  * Do **not** use Spark for code reasoning, synthesis, architectural decisions, or non-rote code writing.
+  * Use Spark for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory), similar fairly simple tasks, and simple mechanical code edits that do not require deep code reasoning.
+  * Do **not** use Spark for code reasoning, synthesis, architectural decisions, or complex/risky code writing.
 
 ### 21.5 Reasoning-effort policy
 
@@ -3041,6 +3041,7 @@ Use Spark-family sub-queries at **high/xhigh** for bounded discovery tasks:
 * locate ownership of a workflow
 * map call paths and message types
 * collect candidate edit files, snippets, and tests/references
+* execute tightly scoped, low-risk code edits when the change is mechanical and reasoning-light
 
 Use primary-model sub-queries (medium/high as needed) for:
 
