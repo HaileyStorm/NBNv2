@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Reflection;
 using Nbn.Proto.Io;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -8,6 +10,35 @@ namespace Nbn.Tests.Workbench;
 
 public class IoPanelViewModelTests
 {
+    [Fact]
+    public void BuildSuggestedVector_UsesBoundedBiasedRandomValues()
+    {
+        var method = typeof(IoPanelViewModel).GetMethod("BuildSuggestedVector", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var raw = Assert.IsType<string>(method!.Invoke(null, new object[] { 32 }));
+        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Equal(32, parts.Length);
+
+        foreach (var part in parts)
+        {
+            Assert.True(float.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out var value));
+            Assert.InRange(value, -1f, 1f);
+            Assert.True(MathF.Abs(value) >= 0.15f, $"Expected |value| >= 0.15 but found {value.ToString(CultureInfo.InvariantCulture)}");
+        }
+    }
+
+    [Fact]
+    public void BuildSuggestedVector_CapsSuggestedLengthAt256()
+    {
+        var method = typeof(IoPanelViewModel).GetMethod("BuildSuggestedVector", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var raw = Assert.IsType<string>(method!.Invoke(null, new object[] { 300 }));
+        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.Equal(256, parts.Length);
+    }
+
     [Fact]
     public async Task ApplyCostEnergy_Uses_Independent_Flag_Values()
     {

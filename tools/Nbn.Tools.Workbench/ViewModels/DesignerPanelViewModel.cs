@@ -3970,13 +3970,28 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         outputNeuron.ParamBCode = 0;
 
         var candidateRegions = brain.Regions
-            .Where(region => region.RegionId != NbnConstants.OutputRegionId && region.NeuronCount > 0)
-            .OrderBy(region => region.RegionId == NbnConstants.InputRegionId ? 1 : 0)
+            .Where(region => region.RegionId != NbnConstants.InputRegionId
+                             && region.RegionId != NbnConstants.OutputRegionId
+                             && region.NeuronCount > 0)
             .ToList();
 
         if (candidateRegions.Count == 0)
         {
-            return;
+            var fallbackRegion = brain.Regions.FirstOrDefault(region =>
+                region.RegionId != NbnConstants.InputRegionId
+                && region.RegionId != NbnConstants.OutputRegionId);
+            if (fallbackRegion is null)
+            {
+                return;
+            }
+
+            if (fallbackRegion.NeuronCount == 0)
+            {
+                fallbackRegion.Neurons.Add(CreateDefaultNeuron(fallbackRegion, 0));
+                fallbackRegion.UpdateCounts();
+            }
+
+            candidateRegions.Add(fallbackRegion);
         }
 
         var sourceRegion = candidateRegions[rng.Next(candidateRegions.Count)];

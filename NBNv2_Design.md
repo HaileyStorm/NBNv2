@@ -3188,12 +3188,16 @@ Use these defaults to avoid recurring Aleph friction:
    * `bd comment add ...` is deprecated/invalid in this environment and can fail with `issue add not found`.
 11. Codex model override compatibility:
    * Some Codex-account modes reject explicit Spark overrides (for example `gpt-5-spark`) even when default Codex runs fine.
-   * A common Spark failure in this repo is: `unsupported_parameter: reasoning.summary` when using `gpt-5.3-codex-spark` through `exec_python(sub_query(...))`.
-   * If that error appears, treat Spark override as unavailable for the session and continue with inherited/default model (do not keep retrying the same override).
+   * A common Spark failure in this repo is: `unsupported_parameter: reasoning.summary` when using `gpt-5.3-codex-spark` through `exec_python(sub_query(...))` while Codex is configured with `model_reasoning_summary="detailed"` or `"concise"`.
+   * Spark works when reasoning summary is `auto` or `none`. Set `%USERPROFILE%\.codex\config.toml` to `model_reasoning_summary = "auto"` (or `"none"`), then retry the Spark smoke query.
+   * Verified on February 27, 2026: with `model_reasoning_summary = "auto"`, `exec_python("print(sub_query('Return exactly OK.', model='gpt-5.3-codex-spark', reasoning_effort='high').strip())")` returns `OK`.
    * Prefer per-call model overrides first; avoid setting global `configure(sub_query_model=...)` unless you are intentionally running a long same-model batch.
    * If override support is uncertain, run a tiny smoke query with the intended `model=...` in `sub_query(...)` before wider use.
    * If the override fails, fall back to inherited/default model and continue evidence collection.
 12. Aleph `exec_python(sub_query(...))` timeout behavior:
+   * If `exec_python(...)` returns `No event loop available for async bridge`, reset or use an explicit Aleph context before retrying sub-query calls:
+     `load_context(context_id="default", content="reset", format="text")`
+     (or use a non-default `context_id`).
    * In some MCP sessions, tool-call timeout can occur around ~60s even when `sub_query_timeout` is larger.
    * Keep delegated prompts narrow (single concrete ask) and prefer concise output shape to avoid MCP timeout before sub-query completion.
    * If repeated timeout persists, run a minimal smoke check prompt first (`Return exactly OK.`), then split larger requests into multiple sub-queries.

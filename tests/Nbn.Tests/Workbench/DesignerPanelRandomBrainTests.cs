@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -9,6 +10,44 @@ namespace Nbn.Tests.Workbench;
 
 public class DesignerPanelRandomBrainTests
 {
+    [Fact]
+    public void NewRandomBrain_AlwaysSeedsBaselineDriverOutsideInputRegion()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+
+            for (var seed = 1; seed <= 128; seed++)
+            {
+                vm.RandomOptions.SeedText = seed.ToString(CultureInfo.InvariantCulture);
+                vm.NewRandomBrainCommand.Execute(null);
+
+                var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+                var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+                var outputNeuron = outputRegion.Neurons.First(neuron => neuron.Exists);
+                var hasDriver = brain.Regions
+                    .Where(region => region.RegionId != NbnConstants.InputRegionId && region.RegionId != NbnConstants.OutputRegionId)
+                    .SelectMany(region => region.Neurons.Where(neuron => neuron.Exists))
+                    .Any(neuron =>
+                        neuron.ActivationFunctionId == 17
+                        && neuron.ResetFunctionId == 0
+                        && neuron.AccumulationFunctionId == 0
+                        && neuron.PreActivationThresholdCode == 0
+                        && neuron.ActivationThresholdCode == 0
+                        && neuron.ParamACode == 63
+                        && neuron.Axons.Any(axon =>
+                            axon.TargetRegionId == NbnConstants.OutputRegionId
+                            && axon.TargetNeuronId == outputNeuron.NeuronId
+                            && axon.StrengthCode == 31));
+
+                Assert.True(hasDriver, $"Seed {seed} failed to retain a non-input baseline driver.");
+            }
+        });
+    }
+
     [Fact]
     public void NewRandomBrain_SeedsBaselineOutputActivityPath()
     {

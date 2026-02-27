@@ -6,10 +6,12 @@ using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
+using Nbn.Proto.Viz;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Brain;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.Observability;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -307,6 +309,169 @@ public class DemoIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task DemoStyle_InputVector_Produces_VisualizationActivity()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-demo-viz-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var hiveNode = await RemoteTestNode.StartAsync(BuildHiveMindConfig(GetFreePort()));
+            await using var brainNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+            await using var regionNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+            await using var ioNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+            await using var obsNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var nbnBytes = BuildDemoNbnWithInput();
+            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
+            var nbnRef = BuildArtifactRef(manifest);
+
+            var vizHubLocal = obsNode.Root.SpawnNamed(
+                Props.FromProducer(() => new VizHubActor()),
+                ObservabilityNames.VizHub);
+            var vizHubRemote = new PID(obsNode.Address, vizHubLocal.Id);
+
+            var options = CreateOptions(hiveNode.Port, ioAddress: ioNode.Address, ioName: IoNames.Gateway);
+            var hiveMindLocal = hiveNode.Root.SpawnNamed(
+                Props.FromProducer(() => new HiveMindActor(options, vizHubPid: vizHubRemote)),
+                HiveMindNames.HiveMind);
+            var hiveMindRemote = new PID(hiveNode.Address, hiveMindLocal.Id);
+
+            var brainId = Guid.NewGuid();
+            var routerPid = brainNode.Root.SpawnNamed(
+                Props.FromProducer(() => new BrainSignalRouterActor(brainId)),
+                "demo-router");
+            var brainRootPid = brainNode.Root.SpawnNamed(
+                Props.FromProducer(() => new BrainRootActor(brainId, hiveMindRemote, autoSpawnSignalRouter: false)),
+                "BrainRoot");
+            brainNode.Root.Send(brainRootPid, new SetSignalRouter(routerPid));
+
+            var router = await WaitForSignalRouter(brainNode.Root, brainRootPid, TimeSpan.FromSeconds(5));
+            var routerRemote = EnsureAddress(router, brainNode.Address);
+
+            var routing = await BuildRoutingTable(store, nbnRef, brainId);
+
+            var region0Load = await RegionShardArtifactLoader.LoadAsync(
+                store,
+                nbnRef,
+                nbsRef: null,
+                regionId: 0,
+                neuronStart: 0,
+                neuronCount: 1,
+                expectedBrainId: brainId);
+
+            var region0Config = new RegionShardActorConfig(
+                brainId,
+                ShardId32.From(0, 0),
+                routerRemote,
+                OutputSink: null,
+                TickSink: hiveMindRemote,
+                routing,
+                VizHub: vizHubRemote);
+            var region0Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region0Load.State, region0Config)));
+
+            var region1Load = await RegionShardArtifactLoader.LoadAsync(
+                store,
+                nbnRef,
+                nbsRef: null,
+                regionId: 1,
+                neuronStart: 0,
+                neuronCount: 1,
+                expectedBrainId: brainId);
+
+            var region1Config = new RegionShardActorConfig(
+                brainId,
+                ShardId32.From(1, 0),
+                routerRemote,
+                OutputSink: null,
+                TickSink: hiveMindRemote,
+                routing,
+                VizHub: vizHubRemote);
+            var region1Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region1Load.State, region1Config)));
+
+            var region31Load = await RegionShardArtifactLoader.LoadAsync(
+                store,
+                nbnRef,
+                nbsRef: null,
+                regionId: NbnConstants.OutputRegionId,
+                neuronStart: 0,
+                neuronCount: 1,
+                expectedBrainId: brainId);
+
+            var region31Config = new RegionShardActorConfig(
+                brainId,
+                ShardId32.From(NbnConstants.OutputRegionId, 0),
+                routerRemote,
+                OutputSink: null,
+                TickSink: hiveMindRemote,
+                routing,
+                VizHub: vizHubRemote);
+            var region31Pid = regionNode.Root.Spawn(Props.FromProducer(() => new RegionShardActor(region31Load.State, region31Config)));
+
+            RegisterShard(regionNode, region0Pid, regionNode.Address, brainId, 0);
+            RegisterShard(regionNode, region1Pid, regionNode.Address, brainId, 1);
+            RegisterShard(regionNode, region31Pid, regionNode.Address, brainId, NbnConstants.OutputRegionId);
+
+            await WaitForStatus(
+                hiveNode.Root,
+                hiveMindLocal,
+                status => status.RegisteredBrains == 1 && status.RegisteredShards >= 3,
+                TimeSpan.FromSeconds(5));
+
+            await WaitForRoutingTable(brainNode.Root, router, table => table.Count >= 3, TimeSpan.FromSeconds(5));
+
+            var ioOptions = new IoOptions(
+                BindHost: "127.0.0.1",
+                Port: ioNode.Port,
+                AdvertisedHost: null,
+                AdvertisedPort: null,
+                GatewayName: IoNames.Gateway,
+                ServerName: "nbn.io.tests",
+                SettingsHost: null,
+                SettingsPort: 0,
+                SettingsName: "SettingsMonitor",
+                HiveMindAddress: hiveNode.Address,
+                HiveMindName: HiveMindNames.HiveMind,
+                ReproAddress: null,
+                ReproName: null);
+
+            var ioGateway = ioNode.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
+                IoNames.Gateway);
+            var ioPid = new PID(ioNode.Address, ioGateway.Id);
+
+            var vizTcs = new TaskCompletionSource<VisualizationEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+            obsNode.Root.Spawn(Props.FromProducer(() => new VizActivitySubscriberActor(brainId, hiveMindRemote, vizHubRemote, vizTcs)));
+
+            ioNode.Root.Send(ioPid, new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 1f }
+            });
+
+            hiveNode.Root.Send(hiveMindLocal, new StartTickLoop());
+
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var vizEvent = await vizTcs.Task.WaitAsync(timeoutCts.Token);
+
+            hiveNode.Root.Send(hiveMindLocal, new StopTickLoop());
+
+            Assert.True(vizEvent.BrainId.TryToGuid(out var vizBrain) && vizBrain == brainId);
+            Assert.NotEqual(VizEventType.VizTick, vizEvent.Type);
+            Assert.True(vizEvent.TickId >= 1);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
     private static ArtifactRef BuildArtifactRef(ArtifactManifest manifest)
     {
         return new ArtifactRef
@@ -590,7 +755,8 @@ public class DemoIntegrationTests
                 NbnCommonReflection.Descriptor,
                 NbnControlReflection.Descriptor,
                 NbnSignalsReflection.Descriptor,
-                NbnIoReflection.Descriptor);
+                NbnIoReflection.Descriptor,
+                NbnVizReflection.Descriptor);
     }
 
     private static int GetFreePort()
@@ -764,6 +930,72 @@ public class DemoIntegrationTests
             }
 
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class VizActivitySubscriberActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly PID _hiveMind;
+        private readonly PID _vizHub;
+        private readonly TaskCompletionSource<VisualizationEvent> _tcs;
+        private string? _subscriberActor;
+
+        public VizActivitySubscriberActor(
+            Guid brainId,
+            PID hiveMind,
+            PID vizHub,
+            TaskCompletionSource<VisualizationEvent> tcs)
+        {
+            _brainId = brainId;
+            _hiveMind = hiveMind;
+            _vizHub = vizHub;
+            _tcs = tcs;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    _subscriberActor = BuildSubscriberActor(context);
+                    context.Send(_vizHub, new VizSubscribe { SubscriberActor = _subscriberActor });
+                    context.Send(_hiveMind, new SetBrainVisualization
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        Enabled = true,
+                        SubscriberActor = _subscriberActor
+                    });
+                    break;
+                case Stopping:
+                case Stopped:
+                    if (!string.IsNullOrWhiteSpace(_subscriberActor))
+                    {
+                        context.Send(_vizHub, new VizUnsubscribe { SubscriberActor = _subscriberActor });
+                        context.Send(_hiveMind, new SetBrainVisualization
+                        {
+                            BrainId = _brainId.ToProtoUuid(),
+                            Enabled = false,
+                            SubscriberActor = _subscriberActor
+                        });
+                    }
+                    break;
+                case VisualizationEvent vizEvent
+                    when vizEvent.BrainId.TryToGuid(out var brainId)
+                         && brainId == _brainId
+                         && vizEvent.Type != VizEventType.VizTick:
+                    _tcs.TrySetResult(vizEvent);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private static string BuildSubscriberActor(IContext context)
+        {
+            var self = context.Self;
+            var address = string.IsNullOrWhiteSpace(self.Address) ? context.System.Address : self.Address;
+            return string.IsNullOrWhiteSpace(address) ? self.Id : $"{address}/{self.Id}";
         }
     }
 

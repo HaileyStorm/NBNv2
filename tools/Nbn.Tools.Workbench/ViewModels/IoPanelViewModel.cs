@@ -906,7 +906,16 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         const int maxSuggestedInputs = 256;
         var count = Math.Min(inputWidth, maxSuggestedInputs);
-        var values = Enumerable.Range(1, count).Select(index => index.ToString(CultureInfo.InvariantCulture));
+        const double minMagnitude = 0.15d;
+        var values = new string[count];
+        for (var i = 0; i < count; i++)
+        {
+            var magnitude = minMagnitude + ((1d - minMagnitude) * Math.Sqrt(Random.Shared.NextDouble()));
+            var sign = Random.Shared.Next(0, 2) == 0 ? -1d : 1d;
+            var value = sign * magnitude;
+            values[i] = value.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
         return string.Join(", ", values);
     }
 }
