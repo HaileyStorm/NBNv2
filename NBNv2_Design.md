@@ -31,7 +31,7 @@
     Appendix A: Defaults and constants
     Appendix B: Function catalog (IDs, formulas, tiers, costs)
     Appendix C: Region axial map (3D-inspired) and distance examples
-21. Aleph MCP workflow for NBNv2
+21. Agent policy (global + local)
 
 ---
 
@@ -64,74 +64,26 @@ NBN is not an ML training framework (no backpropagation/gradient descent).
 * **GPU compute (optional):** ILGPU (CUDA first; OpenCL if feasible), CPU fallback always
 * **No native CUDA/HIP / no C++ requirement**
 
-### 2.2 Solution layout (recommended)
+### 2.2 Solution layout (high-level)
 
-* `Nbn.Shared`
+Keep this intentionally high-level; the codebase is the source of truth for exact file ownership.
 
-  * Addressing, quantization, bit packing helpers
-  * `.proto` generated code
-  * common constants and validation logic
-  * Base actor class, if common overrides/additions to Proto.Actor base used
-* `Nbn.Runtime.SettingsMonitor` (node)
+* `Nbn.Shared`: shared contracts/helpers (addressing, quantization, generated proto code, validation).
+* Runtime service roots: `Nbn.Runtime.SettingsMonitor`, `Nbn.Runtime.HiveMind`, `Nbn.Runtime.Reproduction`, `Nbn.Runtime.IO`, `Nbn.Runtime.Observability`, `Nbn.Runtime.Artifacts`.
+* Runtime execution: `Nbn.Runtime.Brain` (BrainRoot/BrainSignalRouter) and `Nbn.Runtime.RegionHost` (RegionShard workers, optional debug mirrors).
+* Tools/UI: `Nbn.Tools.Workbench` (orchestrator, designer, visualizer, debug/IO/energy/reproduction consoles).
+* Tests: `Nbn.Tests` (format, simulation, parity, reproduction).
 
-  * registry + settings service
-  * node heartbeat/capabilities store
-  * optional artifact metadata index (not chunk payload)
-* `Nbn.Runtime.HiveMind` (node)
+### 2.3 Project tooling (Beads) [NBN override]
 
-  * global tick engine
-  * placement/rescheduling coordinator
-  * brain lifecycle coordinator, including spawning/loading
-* `Nbn.Runtime.Reproduction` (node or hosted with HiveMind)
+Global Beads policy is in `C:\Users\Haile\.codex\AGENTS.md`. NBN-specific constraints:
 
-  * ReproductionManager actor
-* `Nbn.Runtime.Brain` (library + actors hosted on any node)
-
-  * BrainRoot actor
-  * BrainSignalRouter actor
-* `Nbn.Runtime.RegionHost` (worker node)
-
-  * RegionShard actors (CPU/GPU compute)
-  * optional NeuronDebug actors (mirrors/probes)
-* `Nbn.Runtime.IO` (node)
-
-  * IO Gateway actor (well-known endpoint for External World)
-  * per-brain InputCoordinator and OutputCoordinator actors (placeable on any node(s))
-* `Nbn.Runtime.Observability` (core node)
-
-  * DebugHub and VisualizationHub (single shared hubs per deployment; streams can be disabled)
-* `Nbn.Runtime.Artifacts` (service/library; can run as node or embedded)
-
-  * artifact store client/server, cache, dedup logic
-* `Nbn.Tools.Workbench` (Avalonia app)
-
-  * Orchestrator (service discovery/health/launch)
-  * Designer (brain creation/import/export)
-  * Visualizer (graph/activity)
-  * Debug viewer
-  * Energy/IO console
-  * Reproduction console
-* `Nbn.Tests`
-
-  * format tests, simulation tests, parity tests, reproduction tests
-
-### 2.3 Project tooling (Beads)
-
-NBNv2 uses Beads (`bd`) for task tracking and Beads Viewer (`bv`) for graph views.
-
-Initialization:
-* Run `bd init` in the repo root once (creates root `.beads/`).
-* Do **not** run `bd init` in project subfolders; the repo-root tracker is canonical.
-* When working from a subdirectory, run Beads commands from repo root (or pass `--db <repo>/.beads/beads.db` explicitly).
-* Do not create tasks or issues as part of initialization.
-
-Usage notes:
-* Create/update/close Beads issues in the repo-root tracker only.
-* Use `bd where` before lifecycle commands to confirm the active tracker is root `.beads/`.
-* Remove/retire legacy project-local `.beads/` directories so `bd`/`bv` do not split state across trackers.
-* Use `bd` for task lifecycle updates; keep root `.beads/` under version control unless you explicitly use `--stealth`.
-* For automation, use `bv --robot-*` only. The interactive TUI blocks the session.
-* NEVER use git worktrees (they don't work well with Beads).
+* Canonical tracker is repo-root `.beads/` only; do not initialize per-subfolder trackers.
+* Run lifecycle commands from repo root (or pass `--db <repo>/.beads/beads.db`).
+* Use `bd where` before lifecycle commands.
+* Retire legacy project-local `.beads/` directories so state is not split.
+* Use `bv --robot-*` for automation; avoid interactive `bv` in agent sessions.
+* Avoid git worktrees with Beads in this repo.
 
 ### 2.4 Build/test defaults (required)
 
@@ -2961,305 +2913,9 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 
 ---
 
-## 21. Aleph MCP workflow for NBNv2
+## 21. Agent policy (global + local)
 
-### 21.1 Purpose
+Shared/default coding-agent policy is centralized in:
+`C:\Users\Haile\.codex\AGENTS.md`
 
-Aleph is the default workflow for deep codebase analysis in this repo:
-
-* file-first investigation
-* scoped sub-queries for discovery and synthesis
-* compact context handoff into final edits
-
-Use Aleph to reduce context bloat while still collecting concrete evidence (paths, symbols, message contracts, and behavior edges).
-
-For non-trivial tasks, Aleph-first is the expected posture: do minimal shell scouting, then move quickly into Aleph contexts and delegated sub-query packets for analysis.
-For moderate multi-file work, prefer Aleph unless the change is clearly mechanical and bounded.
-
-### 21.2 When Aleph use is expected (strong default)
-
-Use Aleph before substantial edits when **any** of the following is true:
-
-* task touches 2+ files, or likely spans UI + ViewModel + service/protocol layers
-* task is concrete code-search/edit implementation work where file ownership or side effects are not fully obvious yet
-* any target file is large (roughly 500+ LOC) or dense/low-cohesion
-* request explicitly asks for a careful sweep, architecture review, or "fine-tooth comb" pass
-* ownership/call path/invariant location is not obvious from a quick file scan
-* you need to synthesize behavior across modules before changing code
-* scope is likely to expand while you are still discovering ownership and invariants
-
-If you skip Aleph despite these triggers, provide a one-line reason in your progress update.
-
-### 21.3 When direct shell-only analysis is acceptable
-
-Aleph is optional for narrowly scoped work such as:
-
-* single-file, clearly located fixes with low ambiguity
-* mechanical edits with exact known paths/symbols
-* pure build/test/run/format loops after edits are complete
-
-If scope expands mid-task, switch to Aleph immediately.
-
-### 21.4 Model defaults and upgrade policy
-
-* Default behavior: sub-queries inherit the currently selected Codex/main conversation model.
-* Default backend policy: use Aleph sub-queries through the Codex CLI backend (`sub_query_backend="codex"`), backed by a working `codex` shim/executable on `PATH`.
-* Do not use API backend by default; only use API explicitly when operator policy allows it for that session.
-* Current baseline expectation is GPT-5.3 class quality; Spark baseline is GPT-5.3-Spark class speed.
-* Do not hard-pin version numbers when an alias/channel is available.
-* For explicit model routing, prefer family aliases so upgrades happen automatically as new versions release:
-  * stable/primary family alias (GPT-5)
-  * fast scouting family alias (GPT-5-Spark / `gpt-5.3-codex-spark`)
-* Model-override scope policy:
-  * Prefer per-call overrides for mixed workloads (for example: `sub_query("...", model="gpt-5.3-codex-spark", reasoning_effort="high")`).
-  * Use `configure(sub_query_model=..., sub_query_reasoning_effort=...)` only when running a sustained batch of same-model sub-queries.
-  * After batch overrides, clear them (`configure(sub_query_model="", sub_query_reasoning_effort="")`) so inheritance from the main model resumes.
-* Spark usage policy:
-  * Use Spark for bounded evidence collection (ownership lookup, snippet gathering, references/test inventory), similar fairly simple tasks, and simple mechanical code edits that do not require deep code reasoning.
-  * Do **not** use Spark for code reasoning, synthesis, architectural decisions, or complex/risky code writing.
-
-### 21.5 Reasoning-effort policy
-
-* **Primary model, medium (default):**
-  * repository scouting
-  * finding relevant files/types/messages
-  * assembling focused snippets
-  * simple, low-risk refactors
-* **Primary model, high:**
-  * cross-module behavior changes
-  * protocol/schema or lifecycle changes
-  * recovery, ordering, concurrency, or correctness-critical logic
-* **Spark (`gpt-5.3-codex-spark`):**
-  * use **high** by default
-  * use **xhigh** for noisy or cross-file evidence collection
-  * never run Spark below **high**
-
-### 21.6 Sub-query routing guidance
-
-Use Spark-family sub-queries at **high/xhigh** for bounded discovery tasks:
-
-* locate ownership of a workflow
-* map call paths and message types
-* collect candidate edit files, snippets, and tests/references
-* execute tightly scoped, low-risk code edits when the change is mechanical and reasoning-light
-
-Use primary-model sub-queries (medium/high as needed) for:
-
-* ambiguous architectural reasoning
-* synthesis across many findings
-* risky refactors where subtle regressions are likely
-* non-rote code writing and final implementation decisions
-
-Do not use Spark for synthesis/decision prompts; hand off Spark findings to the primary model for reasoning and final decisions.
-
-For cross-file implementation work, sub-queries are expected (not optional): run a small pack of focused sub-queries before first major edit.
-For mixed sessions, keep default inheritance on and route only bounded evidence calls to Spark at the individual `sub_query(...)` call site.
-
-### 21.7 Minimum Aleph workflow (required when section 21.2 triggers)
-
-1. Load each primary file into its own Aleph context (avoid mixing unrelated files into one context).
-2. Run 3+ focused sub-queries (ownership map, invariants map, test/verification map). Delegate bounded discovery packets via sub-query (or sub-agent via sub-query) instead of long manual command loops in the main thread.
-3. `peek_context` only the specific ranges needed to confirm semantics and side effects.
-4. Post a brief evidence map before editing:
-   * candidate files
-   * key methods/symbols
-   * risk points/invariants
-5. After edits, re-run targeted Aleph searches to verify constraints and hotspot behavior remain coherent.
-
-### 21.8 Practical workflow
-
-1. Scout structure first (roots, key projects, protocols, tests).
-2. Run narrow sub-queries with explicit scope and expected output.
-3. Validate findings in the main thread before editing.
-4. Implement changes locally.
-5. Run quality gates and update docs for changed behavior/workflows.
-
-### 21.9 Tooling knobs
-
-Aleph supports explicit sub-query controls when needed:
-
-* `--sub-query-model`
-* `--sub-query-reasoning-effort`
-* per-call `sub_query(..., model=..., reasoning_effort=...)` overrides
-
-If omitted, defaults should inherit from the main session model/settings.
-
-### 21.10 Guardrails (quality + anti-overuse)
-
-* Treat sub-query output as evidence, not authority.
-* Prefer multiple small scoped queries over one broad query.
-* Require concrete references in sub-query outputs (paths, symbols, contracts).
-* Keep final merge decisions in the primary thread.
-* Do not bulk-load the entire repository when a bounded file set is enough.
-* Prefer 2-6 focused queries over recursive/deep pipelines unless complexity clearly demands it.
-* Keep Aleph contexts task-scoped; close/ignore stale contexts to avoid contaminated reasoning.
-* Do not skip sub-queries for multi-file/cross-layer code-search-and-edit tasks.
-
-### 21.11 Under-use prevention checklist
-
-Before making substantial edits, run this quick gate:
-
-1. Will this likely touch UI + VM + backend/validation/protocol code?
-2. Are there invariants/constraints that must hold across multiple creation paths (random/manual/import/repro)?
-3. Would a mistake likely create broad regressions or expensive rework?
-
-If any answer is "yes", Aleph should be used first (per 21.2 + 21.7).
-Spark is an evidence-collection tool in this workflow, not a decision engine.
-
-Minimum sub-query pack for these cases:
-
-1. file/symbol ownership map
-2. invariant/constraint enforcement map across creation paths
-3. test surface + regression risk map
-
-Typical NBN examples where Aleph should be considered mandatory:
-
-* Workbench Designer flow changes (layout + graph + editor semantics)
-* random brain generation plus manual-editor validation/invariant parity
-* protocol or lifecycle changes that span runtime + IO + tooling
-
-When Aleph is used for one of the above, include a short evidence map in progress updates before major edits.
-
-### 21.12 Sub-query starter pack for code-search/edit tasks
-
-Use these prompts as a default pattern (adapt scope/path names per task):
-
-1. "Within `[scope]`, list exact files/symbols owning `[behavior]`; output file list + symbol list + why relevant."
-2. "Find where `[invariant/constraint]` is enforced today; output code paths, gaps, and likely missed paths."
-3. "Map call path for `[user flow]` from UI to runtime/validation; output ordered path and breakpoints."
-4. "List tests touching `[behavior]` and missing cases likely to regress after `[change]`."
-
-Keep each sub-query narrow and evidence-backed; merge conclusions in the main thread before editing.
-
-### 21.13 Sub-query packet pattern (default for scouting)
-
-Use short delegated packets for discovery-heavy work so main-thread context stays small:
-
-1. Issue packet: Beads issue detail (from repo-root tracker) + dependency/related issue scan + acceptance clues.
-2. Repo scout packet: `rg` ownership sweep + recent `git log/show` around candidate files.
-3. Slice packet: `search_context` + `peek_context` over only the symbols/ranges needed.
-
-When these packets are available, prefer them over repeated ad-hoc `rg`/`git`/`Get-Content` loops in the primary thread.
-
-### 21.14 Aleph CLI/MCP reliability notes (Windows + syntax)
-
-Use these defaults to avoid recurring Aleph friction:
-
-1. Increase sub-query timeout for real scouting packets (5 minutes recommended):
-   * `configure(sub_query_timeout="1000")`
-   * Verify with `exec_python("get_config()")` and confirm `sub_query_timeout_seconds` is `1000.0`.
-2. `configure(...)` argument validation is strict:
-   * `sub_query_backend` must be one of `auto`, `codex`, `api`, `claude`, `gemini`, or `kimi` (`cli` is invalid).
-   * `output_feedback` must be `full` or `metadata` (boolean-like strings such as `false` are invalid).
-3. Aleph MCP tools that accept `output` require one of:
-   * `markdown`
-   * `json`
-   * `object`
-   `text` is invalid for these tools.
-4. Codex sub-query backend on Windows:
-   * Aleph sub-query currently invokes `codex` (not `codex.cmd`).
-   * Validate subprocess resolution with:
-      * `python -c "import subprocess; print(subprocess.run(['codex','--version']).returncode)"`
-      * `python -c "import subprocess; print(subprocess.run(['codex.cmd','--version']).returncode)"`
-      * `exec_python("import shutil; print(shutil.which('codex'))")` inside the active Aleph session
-   * If that fails while `codex.cmd --version` works, install a real `codex.exe` shim in a PATH directory (default repo helper: `powershell -ExecutionPolicy Bypass -File tools/dev/install-codex-shim.ps1`).
-   * The helper installs `codex.exe` alongside `codex.cmd` in the npm PATH directory so future sessions resolve the shim by default.
-   * After install, confirm `python -c "import shutil; print(shutil.which('codex'))"` resolves to `...\\codex.EXE` before retrying Aleph sub-queries.
-   * Run a smoke check after backend setup: `exec_python("print(sub_query('Return exactly OK.', reasoning_effort='medium').strip())")` and expect `OK`.
-   * If you cannot add a shim on that machine/session, explicitly log that sub-query is blocked and run the same investigation using Aleph `search_context` + `peek_context` packets (do not silently skip Aleph evidence gathering).
-5. API fallback prerequisites (only if explicitly authorized for that session):
-   * `sub_query` with `backend="api"` requires an API key (`ALEPH_SUB_QUERY_API_KEY` or `OPENAI_API_KEY`).
-   * Preferred recovery remains Codex CLI backend setup (`configure(sub_query_backend="codex")` + working shim); do not silently switch to API.
-   * API backend also requires a model (`ALEPH_SUB_QUERY_MODEL` or per-step `model` in the recipe).
-   * Missing either key or model will hard-fail recipe `sub_query`/`map_sub_query` steps.
-6. Beads/BV tracker source sanity:
-   * If `bv`/`bd` shows stale or conflicting status, run `bd where` and confirm root `.beads/` is active.
-   * Eliminate project-local `.beads/` directories (after archiving if needed) and run `bd sync` from repo root.
-7. Windows shell chaining in this repo:
-   * In Windows PowerShell sessions, do not use bash-style `&&` command separators.
-   * Use `;` for sequential commands, or `if ($?) { ... }` when the second command must only run on success.
-8. `rg` patterns in PowerShell/tool JSON:
-   * Patterns containing embedded quotes/parentheses are easy to over-escape and can trigger `regex parse error`.
-   * Prefer a two-step sweep for XAML/search-debug loops: first broad token match (for example `rg "PointerPressed"`), then inspect narrowed lines with `Get-Content`/line ranges.
-   * If you need literal matching (no regex semantics), use `rg -F` to avoid regex parser pitfalls.
-9. Beads create dependency flag:
-   * `bd create` does not support `--depends-on`; use `--deps <issue-id>` (or typed deps like `--deps blocks:<issue-id>`).
-   * If you get `unknown flag: --depends-on`, re-run with `--deps` to create the dependency edge at issue creation time.
-10. Beads comments command syntax:
-   * Use `bd comments add <issue-id> "<text>"` (plural `comments`).
-   * `bd comment add ...` is deprecated/invalid in this environment and can fail with `issue add not found`.
-11. Codex model override compatibility:
-   * Some Codex-account modes reject explicit Spark overrides (for example `gpt-5-spark`) even when default Codex runs fine.
-   * A common Spark failure in this repo is: `unsupported_parameter: reasoning.summary` when using `gpt-5.3-codex-spark` through `exec_python(sub_query(...))` while Codex is configured with `model_reasoning_summary="detailed"` or `"concise"`.
-   * Spark works when reasoning summary is `auto` or `none`. Set `%USERPROFILE%\.codex\config.toml` to `model_reasoning_summary = "auto"` (or `"none"`), then retry the Spark smoke query.
-   * Verified on February 27, 2026: with `model_reasoning_summary = "auto"`, `exec_python("print(sub_query('Return exactly OK.', model='gpt-5.3-codex-spark', reasoning_effort='high').strip())")` returns `OK`.
-   * Prefer per-call model overrides first; avoid setting global `configure(sub_query_model=...)` unless you are intentionally running a long same-model batch.
-   * If override support is uncertain, run a tiny smoke query with the intended `model=...` in `sub_query(...)` before wider use.
-   * If the override fails, fall back to inherited/default model and continue evidence collection.
-12. Aleph `exec_python(sub_query(...))` timeout behavior:
-   * If `exec_python(...)` returns `No event loop available for async bridge`, reset or use an explicit Aleph context before retrying sub-query calls:
-     `load_context(context_id="default", content="reset", format="text")`
-     (or use a non-default `context_id`).
-   * In some MCP sessions, tool-call timeout can occur around ~60s even when `sub_query_timeout` is larger.
-   * Keep delegated prompts narrow (single concrete ask) and prefer concise output shape to avoid MCP timeout before sub-query completion.
-   * If repeated timeout persists, run a minimal smoke check prompt first (`Return exactly OK.`), then split larger requests into multiple sub-queries.
-   * If still blocked, explicitly log the timeout condition and continue with Aleph `run_command`/`search_context`/`peek_context` evidence packets.
-13. Visualizer binary lock during local validation:
-   * If `dotnet test -c Release --disable-build-servers` fails with file-lock errors because Workbench/runtime exes are running, run tests with isolated outputs:
-   * `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
-   * This keeps validation unblocked without killing active local demo/workbench processes.
-14. Aleph `configure(...)` output feedback enum:
-   * `output_feedback` only accepts `full` or `metadata`.
-   * Values like `summary` fail validation; if unsure, omit `output_feedback` and set only the knob you need (for example `sub_query_timeout`).
-15. Aleph sub-query batching from `exec_python`:
-   * Packing multiple `sub_query(...)` calls in one `exec_python` call can exceed the MCP tool-call deadline even when each query would pass individually.
-   * Prefer one focused `sub_query(...)` per `exec_python` invocation for reliability; batch only after confirming local session latency/headroom.
-16. Aleph sub-query scope/context mismatch:
-   * Asking a sub-query to compare files/symbols that are not loaded into the current Aleph context can trigger long retries and MCP timeout.
-   * Before cross-file prompts, load both files into the same context (or run separate per-file sub-queries and merge in the main thread).
-   * After each `load_file(..., context_id=...)`, run a quick `search_context` smoke check in that same `context_id` before `sub_query(...)`; this catches stale/contaminated context routing early.
-   * Keep each sub-query scoped to the context it actually has; this is more reliable than broad "compare everything" prompts.
-17. PowerShell file-encoding flag compatibility:
-   * In Windows PowerShell 5.1, `Set-Content -Encoding utf8NoBOM` is invalid and fails parameter binding.
-   * Use `-Encoding UTF8` for compatibility in this environment (or upgrade to PowerShell 7+ if no-BOM control is required).
-
-When sub-query packets are required by policy, resolve the above first rather than falling back to long manual command loops.
-
-## Multi-agent coordination and workspace boundaries
-
-To prevent cross-agent collisions in multi-project work:
-
-* When you start work in a specific project or directory under the NBN repo root, create a sentinel file named `.working` in that directory (include your name and start time if helpful).
-* Remove the `.working` file when you are finished in that directory.
-* You may edit files in another project/directory ONLY if there is no `.working` file present there.
-* Include creation/removal of `.working` files in the same commit/push as your related changes. Do not touch other agents' changes in other directories.
-* NEVER edit or change files outside the NBN repo root (and its subdirectories). If you believe an external change is required, stop and ask for confirmation first.
-
----
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create Beads issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase  # If possible / note other gents may be working in other Projects / directories. Consider using auto-stash.
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes YOU created, prune remote branches (other agents may be working in other Projects / directories)
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-- NEVER use git worktrees
+This design/spec file keeps NBN-specific overrides and constraints (notably sections 2.3, 2.4, 2.5, and 20.x). If a local NBN rule conflicts with the global default, follow the local NBN rule for this repo.
