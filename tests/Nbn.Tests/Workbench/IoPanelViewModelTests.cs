@@ -29,14 +29,14 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public void BuildSuggestedVector_CapsSuggestedLengthAt64()
+    public void BuildSuggestedVector_UsesInputWidth()
     {
         var method = typeof(IoPanelViewModel).GetMethod("BuildSuggestedVector", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
 
         var raw = Assert.IsType<string>(method!.Invoke(null, new object[] { 300 }));
         var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Assert.Equal(64, parts.Length);
+        Assert.Equal(300, parts.Length);
     }
 
     [Fact]

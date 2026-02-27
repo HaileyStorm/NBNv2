@@ -13,7 +13,6 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class IoPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 300;
-    private const int MaxSuggestedInputValues = 64;
     private readonly WorkbenchClient _client;
     private readonly UiDispatcher _dispatcher;
     private string _brainIdText = string.Empty;
@@ -967,7 +966,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             return string.Empty;
         }
 
-        var count = Math.Min(inputWidth, MaxSuggestedInputValues);
+        var count = inputWidth;
         const double minMagnitude = 0.15d;
         var values = new string[count];
         for (var i = 0; i < count; i++)

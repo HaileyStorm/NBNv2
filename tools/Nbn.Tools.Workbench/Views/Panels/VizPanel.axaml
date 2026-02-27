@@ -433,13 +433,19 @@
           <Border Classes="card">
             <StackPanel Spacing="8">
               <TextBlock Text="Inputs" Classes="card-title" />
-              <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowDefinitions="Auto,Auto">
+              <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto">
                 <TextBlock Text="Index" Classes="muted" />
                 <TextBox Grid.Column="1" Text="{Binding Brain.InputIndexText}" Width="80" HorizontalAlignment="Left" />
                 <TextBlock Grid.Column="2" Text="Value" Classes="muted" />
                 <TextBox Grid.Column="3" Text="{Binding Brain.InputValueText}" Width="100" HorizontalAlignment="Left" />
                 <TextBlock Grid.Row="1" Text="Vector" Classes="muted" />
-                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding Brain.InputVectorText}" Watermark="0.1, 0.2, -0.3" />
+                <TextBox Grid.Row="1"
+                         Grid.Column="1"
+                         Grid.ColumnSpan="3"
+                         Text="{Binding Brain.InputVectorText}"
+                         Watermark="0.1,0.2,-0.3"
+                         TextWrapping="NoWrap"
+                         HorizontalAlignment="Stretch" />
               </Grid>
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="Send Input" Command="{Binding Brain.SendInputCommand}" />
