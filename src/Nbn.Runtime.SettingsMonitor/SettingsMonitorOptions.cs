@@ -9,7 +9,7 @@ public sealed record SettingsMonitorOptions(
 {
     public static SettingsMonitorOptions FromArgs(string[] args)
     {
-        var dbPath = "settingsmonitor.db";
+        var dbPath = GetDefaultDatabasePath();
         var bindHost = GetEnv("NBN_SETTINGS_BIND_HOST") ?? "127.0.0.1";
         var port = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var advertisedHost = GetEnv("NBN_SETTINGS_ADVERTISE_HOST");
@@ -108,6 +108,19 @@ public sealed record SettingsMonitorOptions(
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
 
+    public static string GetDefaultDatabasePath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            return "settingsmonitor.db";
+        }
+
+        var root = Path.Combine(localAppData, "Nbn.Workbench");
+        Directory.CreateDirectory(root);
+        return Path.Combine(root, "settingsmonitor.db");
+    }
+
     private static int? GetEnvInt(string key)
     {
         var value = GetEnv(key);
@@ -116,8 +129,9 @@ public sealed record SettingsMonitorOptions(
 
     private static void PrintHelp()
     {
+        var defaultPath = GetDefaultDatabasePath();
         Console.WriteLine("NBN SettingsMonitor options:");
-        Console.WriteLine("  --db <path>                         SQLite DB path (default settingsmonitor.db)");
+        Console.WriteLine($"  --db <path>                         SQLite DB path (default {defaultPath})");
         Console.WriteLine("  --bind, --bind-host <host>          Host/interface to bind (default 127.0.0.1)");
         Console.WriteLine("  --port <port>                       Port to bind (default 12010)");
         Console.WriteLine("  --advertise, --advertise-host       Advertised host for remoting");

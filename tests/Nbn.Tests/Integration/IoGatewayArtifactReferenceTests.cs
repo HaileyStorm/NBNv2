@@ -207,6 +207,50 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SpawnBrainViaIO_Waits_For_Slow_HiveMind_Ack_Within_SpawnTimeout()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expectedBrainId = Guid.NewGuid();
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSpawnProbe(
+            forwarded,
+            new ProtoControl.SpawnBrainAck
+            {
+                BrainId = expectedBrainId.ToProtoUuid()
+            },
+            responseDelay: TimeSpan.FromSeconds(16))));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainDef = new string('6', 64).ToArtifactRef(96, "application/x-nbn", "test-store");
+        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+            gateway,
+            new SpawnBrainViaIO
+            {
+                Request = new ProtoControl.SpawnBrain
+                {
+                    BrainDef = brainDef
+                }
+            },
+            TimeSpan.FromSeconds(30));
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
+        Assert.Equal(expectedBrainId, actualBrainId);
+        Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
+        Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureMessage));
+        Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
+        Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.NotNull(forwardedRequest.BrainDef);
+        Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
     {
         var system = new ActorSystem();
@@ -1513,24 +1557,30 @@ public class IoGatewayArtifactReferenceTests
     {
         private readonly TaskCompletionSource<ProtoControl.SpawnBrain> _request;
         private readonly ProtoControl.SpawnBrainAck _ack;
+        private readonly TimeSpan? _responseDelay;
 
         public HiveSpawnProbe(
             TaskCompletionSource<ProtoControl.SpawnBrain> request,
-            ProtoControl.SpawnBrainAck ack)
+            ProtoControl.SpawnBrainAck ack,
+            TimeSpan? responseDelay = null)
         {
             _request = request;
             _ack = ack;
+            _responseDelay = responseDelay;
         }
 
-        public Task ReceiveAsync(IContext context)
+        public async Task ReceiveAsync(IContext context)
         {
             if (context.Message is ProtoControl.SpawnBrain request)
             {
                 _request.TrySetResult(request.Clone());
+                if (_responseDelay.HasValue && _responseDelay.Value > TimeSpan.Zero)
+                {
+                    await Task.Delay(_responseDelay.Value).ConfigureAwait(false);
+                }
+
                 context.Respond(_ack.Clone());
             }
-
-            return Task.CompletedTask;
         }
     }
 

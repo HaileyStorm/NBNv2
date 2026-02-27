@@ -145,6 +145,13 @@ public partial class VizPanel : UserControl
 
     private void ViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(VizPanelViewModel.SelectedBrain))
+        {
+            CaptureNavigationContext();
+            RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+            return;
+        }
+
         if (e.PropertyName is nameof(VizPanelViewModel.ActivityCanvasWidth)
             or nameof(VizPanelViewModel.ActivityCanvasHeight))
         {

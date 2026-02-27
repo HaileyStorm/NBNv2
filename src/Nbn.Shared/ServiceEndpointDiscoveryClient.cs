@@ -344,8 +344,16 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         return keyFilter;
     }
 
-    private static string PidLabel(PID pid)
-        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+    private string PidLabel(PID pid)
+    {
+        var address = pid.Address;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            address = _system.Address;
+        }
+
+        return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
+    }
 
     private static CancellationTokenSource CreateTimeoutToken(CancellationToken cancellationToken)
     {

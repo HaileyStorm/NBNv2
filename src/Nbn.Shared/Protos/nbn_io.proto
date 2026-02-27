@@ -127,10 +127,12 @@ message InputDrain {
 
 message SubscribeOutputs {
   nbn.Uuid brain_id = 1;
+  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
 }
 
 message UnsubscribeOutputs {
   nbn.Uuid brain_id = 1;
+  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
 }
 
 message OutputEvent {
@@ -142,10 +144,12 @@ message OutputEvent {
 
 message SubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
+  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
 }
 
 message UnsubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
+  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
 }
 
 message OutputVectorEvent {
@@ -154,6 +158,13 @@ message OutputVectorEvent {
   // Published by IO as a full brain-level vector ordered by output_index (0..output_width-1).
   // For sharded output regions, IO assembles shard-local segments before publication.
   repeated float values = 3;
+}
+
+message OutputVectorSegment {
+  nbn.Uuid brain_id = 1;
+  fixed64 tick_id = 2;
+  uint32 output_index_start = 3;
+  repeated float values = 4;
 }
 
 message EnergyCredit {

@@ -16,8 +16,9 @@ Use this startup order for operator flows and local demos:
 1. `SettingsMonitor` (registry + settings)
 2. One or more `WorkerNode` processes (heartbeat/capability inventory)
 3. `HiveMind` (placement + tick control)
-4. `IO Gateway` (and optional `Reproduction` / `Observability`)
-5. Spawn brains through IO (`SpawnBrainViaIO`) and let HiveMind place work on workers
+4. `Observability` (single shared `DebugHub` + `VisualizationHub` for the deployment)
+5. `IO Gateway` (and optional `Reproduction`)
+6. Spawn brains through IO (`SpawnBrainViaIO`) and let HiveMind place work on workers
 
 ## SettingsMonitor quickstart (CLI)
 
@@ -105,6 +106,12 @@ Runtime services now emit `VisualizationEvent` and `DebugOutbound` messages (for
 example: brain spawn/active/pause/terminate, shard spawned, tick, neuron-fired,
 axon-sent, and timeout anomalies). Emission target can be configured with:
 
+Observability is a core runtime service, not a Workbench-owned service. A deployment
+uses one shared `VisualizationHub` and one shared `DebugHub`; multiple Workbench
+instances connect as clients. Visualization subscriptions are tracked per subscriber,
+so one Workbench changing panes/brain focus does not disable visualization for other
+active subscribers.
+
 - `NBN_OBS_ADDRESS` (full `host:port`, takes precedence)
 - `NBN_OBS_HOST` + `NBN_OBS_PORT` (default port `12060`)
 - `NBN_OBS_DEBUG_HUB` (default `DebugHub`)
@@ -174,9 +181,13 @@ Useful telemetry names for this workflow:
 - `nbn.hivemind.rebase.overlay.records`
 
 Quick troubleshooting:
-- `brain_not_found` in ack: inspect `spawn.log` for spawn/registration status, then verify worker logs and placement availability.
+- `brain_not_found` in ack: in demo-script runs inspect `tools/demo/local-demo/<timestamp>/logs/spawn.log` for spawn/registration status, then verify worker logs and placement availability.
 - request timeout: verify `--io-address`/`--io-id` and that IO Gateway is running.
 - spawn failures with worker errors: verify worker nodes are online in SettingsMonitor and advertising required service roles.
+
+Workbench launch log location:
+- Workbench-driven local launches write logs to `%LOCALAPPDATA%\Nbn.Workbench\logs` (for example `HiveMind.out.log`, `IoGateway.out.log`, `WorkerNode.out.log`, `Reproduction.out.log`, `Observability.out.log`, `SettingsMonitor.out.log`, and `workbench.log`).
+- Demo scripts write logs to `tools/demo/local-demo/<timestamp>/logs`.
 
 ## Reproduction Runtime + Operator Runbook
 
@@ -200,6 +211,7 @@ Local deterministic repro demo flow:
 - `tools/demo/run_local_hivemind_demo.ps1` starts worker nodes first, then central services, spawns a brain through IO/HiveMind placement, and runs `Nbn.Tools.DemoHost repro-scenario`.
 - The scenario log is written to `tools/demo/local-demo/<timestamp>/logs/repro-scenario.log`.
 - The script also runs `Nbn.Tools.DemoHost repro-suite` and writes `tools/demo/local-demo/<timestamp>/logs/repro-suite.log` with per-case pass/fail checks.
+- Note: these are demo-script logs; Workbench local-launch logs are under `%LOCALAPPDATA%\Nbn.Workbench\logs`.
 - Default expected fields are:
   - `result.compatible == true`
   - `result.abort_reason == ""`

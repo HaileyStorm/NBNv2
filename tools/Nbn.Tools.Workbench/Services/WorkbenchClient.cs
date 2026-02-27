@@ -18,6 +18,8 @@ namespace Nbn.Tools.Workbench.Services;
 public class WorkbenchClient : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
+    private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
     private readonly IWorkbenchEventSink _sink;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private ActorSystem? _system;
@@ -168,13 +170,7 @@ public class WorkbenchClient : IAsyncDisposable
             _hiveMindPid = pid;
             if (_vizBrainEnabled.HasValue)
             {
-                _root.Send(_hiveMindPid, new SetBrainVisualization
-                {
-                    BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
-                    Enabled = true,
-                    HasFocusRegion = _vizFocusRegionId.HasValue,
-                    FocusRegionId = _vizFocusRegionId ?? 0
-                });
+                _root.Send(_hiveMindPid, BuildVisualizationRequest(_vizBrainEnabled.Value, enabled: true, _vizFocusRegionId));
             }
             _sink.OnHiveMindStatus($"Connected to {host}:{port}", true);
             return status;
@@ -190,11 +186,7 @@ public class WorkbenchClient : IAsyncDisposable
     {
         if (_root is not null && _hiveMindPid is not null && _vizBrainEnabled.HasValue)
         {
-            _root.Send(_hiveMindPid, new SetBrainVisualization
-            {
-                BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
-                Enabled = false
-            });
+            _root.Send(_hiveMindPid, BuildVisualizationRequest(_vizBrainEnabled.Value, enabled: false));
         }
 
         _vizBrainEnabled = null;
@@ -222,11 +214,81 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public virtual async Task<SpawnBrainAck?> SpawnBrainViaIoAsync(SpawnBrain request)
+    public virtual async Task<PlacementLifecycleInfo?> GetPlacementLifecycleAsync(Guid brainId)
     {
-        if (_root is null || _ioGatewayPid is null || request is null)
+        if (_root is null || _hiveMindPid is null || brainId == Guid.Empty)
         {
             return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<PlacementLifecycleInfo>(
+                    _hiveMindPid,
+                    new GetPlacementLifecycle { BrainId = brainId.ToProtoUuid() },
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public virtual async Task<PlacementReconcileReport?> RequestPlacementReconcileAsync(
+        string workerAddress,
+        string workerRootActor,
+        Guid brainId,
+        ulong placementEpoch)
+    {
+        if (_root is null
+            || brainId == Guid.Empty
+            || placementEpoch == 0
+            || string.IsNullOrWhiteSpace(workerAddress)
+            || string.IsNullOrWhiteSpace(workerRootActor))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<PlacementReconcileReport>(
+                    new PID(workerAddress.Trim(), workerRootActor.Trim()),
+                    new PlacementReconcileRequest
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        PlacementEpoch = placementEpoch
+                    },
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public virtual async Task<SpawnBrainAck?> SpawnBrainViaIoAsync(SpawnBrain request)
+    {
+        if (_root is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn failed: Workbench client is not initialized.");
+        }
+
+        if (_ioGatewayPid is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn failed: IO gateway is not connected.");
+        }
+
+        if (request is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_invalid_request",
+                failureMessage: "Spawn request rejected: request payload was null.");
         }
 
         try
@@ -234,15 +296,49 @@ public class WorkbenchClient : IAsyncDisposable
             var response = await _root.RequestAsync<SpawnBrainViaIOAck>(
                     _ioGatewayPid,
                     new SpawnBrainViaIO { Request = request },
-                    DefaultTimeout)
+                    SpawnRequestTimeout)
                 .ConfigureAwait(false);
-            return response?.Ack;
+
+            if (response?.Ack is not null)
+            {
+                return response.Ack;
+            }
+
+            if (!string.IsNullOrWhiteSpace(response?.FailureReasonCode)
+                || !string.IsNullOrWhiteSpace(response?.FailureMessage))
+            {
+                return BuildSpawnFailureAck(
+                    reasonCode: response?.FailureReasonCode,
+                    failureMessage: response?.FailureMessage);
+            }
+
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_empty_response",
+                failureMessage: "Spawn failed: IO returned an empty spawn acknowledgment.");
         }
         catch (Exception ex)
         {
             _sink.OnIoStatus($"Spawn request failed: {ex.Message}", true);
-            return null;
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_request_failed",
+                failureMessage: $"Spawn failed: request to IO gateway failed ({ex.GetBaseException().Message}).");
         }
+    }
+
+    private static SpawnBrainAck BuildSpawnFailureAck(string? reasonCode, string? failureMessage)
+    {
+        var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
+            ? "spawn_failed"
+            : reasonCode.Trim();
+        var normalizedFailureMessage = string.IsNullOrWhiteSpace(failureMessage)
+            ? "Spawn failed: IO did not return a valid spawn acknowledgment."
+            : failureMessage.Trim();
+        return new SpawnBrainAck
+        {
+            BrainId = Guid.Empty.ToProtoUuid(),
+            FailureReasonCode = normalizedReasonCode,
+            FailureMessage = normalizedFailureMessage
+        };
     }
 
     public virtual Task<bool> KillBrainAsync(Guid brainId, string reason)
@@ -505,11 +601,7 @@ public class WorkbenchClient : IAsyncDisposable
 
         if (_vizBrainEnabled.HasValue && _vizBrainEnabled.Value != brainId)
         {
-            _root.Send(_hiveMindPid, new SetBrainVisualization
-            {
-                BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
-                Enabled = false
-            });
+            _root.Send(_hiveMindPid, BuildVisualizationRequest(_vizBrainEnabled.Value, enabled: false));
         }
 
         _vizBrainEnabled = brainId;
@@ -517,13 +609,7 @@ public class WorkbenchClient : IAsyncDisposable
 
         if (brainId.HasValue)
         {
-            _root.Send(_hiveMindPid, new SetBrainVisualization
-            {
-                BrainId = brainId.Value.ToProtoUuid(),
-                Enabled = true,
-                HasFocusRegion = focusRegionId.HasValue,
-                FocusRegionId = focusRegionId ?? 0
-            });
+            _root.Send(_hiveMindPid, BuildVisualizationRequest(brainId.Value, enabled: true, focusRegionId));
         }
     }
 
@@ -826,9 +912,14 @@ public class WorkbenchClient : IAsyncDisposable
 
     public virtual async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByBrainIdsAsync(ReproduceByBrainIdsRequest request)
     {
-        if (_root is null || _ioGatewayPid is null)
+        if (_root is null)
         {
-            return null;
+            return BuildReproFailureResult("repro_unavailable");
+        }
+
+        if (_ioGatewayPid is null)
+        {
+            return BuildReproFailureResult("repro_unavailable");
         }
 
         try
@@ -836,22 +927,27 @@ public class WorkbenchClient : IAsyncDisposable
             var result = await _root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
                     _ioGatewayPid,
                     new ReproduceByBrainIds { Request = request },
-                    DefaultTimeout)
+                    ReproRequestTimeout)
                 .ConfigureAwait(false);
-            return result?.Result;
+            return result?.Result ?? BuildReproFailureResult("repro_empty_response");
         }
         catch (Exception ex)
         {
             _sink.OnIoStatus($"Repro failed: {ex.Message}", false);
-            return null;
+            return BuildReproFailureResult("repro_request_failed");
         }
     }
 
     public virtual async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByArtifactsAsync(ReproduceByArtifactsRequest request)
     {
-        if (_root is null || _ioGatewayPid is null)
+        if (_root is null)
         {
-            return null;
+            return BuildReproFailureResult("repro_unavailable");
+        }
+
+        if (_ioGatewayPid is null)
+        {
+            return BuildReproFailureResult("repro_unavailable");
         }
 
         try
@@ -859,15 +955,33 @@ public class WorkbenchClient : IAsyncDisposable
             var result = await _root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
                     _ioGatewayPid,
                     new ReproduceByArtifacts { Request = request },
-                    DefaultTimeout)
+                    ReproRequestTimeout)
                 .ConfigureAwait(false);
-            return result?.Result;
+            return result?.Result ?? BuildReproFailureResult("repro_empty_response");
         }
         catch (Exception ex)
         {
             _sink.OnIoStatus($"Repro failed: {ex.Message}", false);
-            return null;
+            return BuildReproFailureResult("repro_request_failed");
         }
+    }
+
+    private static Nbn.Proto.Repro.ReproduceResult BuildReproFailureResult(string reasonCode)
+    {
+        return new Nbn.Proto.Repro.ReproduceResult
+        {
+            Report = new SimilarityReport
+            {
+                Compatible = false,
+                AbortReason = string.IsNullOrWhiteSpace(reasonCode) ? "repro_request_failed" : reasonCode.Trim(),
+                SimilarityScore = 0f,
+                RegionSpanScore = 0f,
+                FunctionScore = 0f,
+                ConnectivityScore = 0f
+            },
+            Summary = new MutationSummary(),
+            Spawned = false
+        };
     }
 
     private async Task StopAsync()
@@ -881,11 +995,7 @@ public class WorkbenchClient : IAsyncDisposable
         {
             if (_root is not null && _hiveMindPid is not null && _vizBrainEnabled.HasValue)
             {
-                _root.Send(_hiveMindPid, new SetBrainVisualization
-                {
-                    BrainId = _vizBrainEnabled.Value.ToProtoUuid(),
-                    Enabled = false
-                });
+                _root.Send(_hiveMindPid, BuildVisualizationRequest(_vizBrainEnabled.Value, enabled: false));
             }
 
             if (_system.Remote() is not null)
@@ -952,4 +1062,26 @@ public class WorkbenchClient : IAsyncDisposable
 
         return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
     }
+
+    private SetBrainVisualization BuildVisualizationRequest(Guid brainId, bool enabled, uint? focusRegionId = null)
+    {
+        var message = new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = enabled,
+            HasFocusRegion = focusRegionId.HasValue,
+            FocusRegionId = focusRegionId ?? 0
+        };
+
+        var subscriberActor = GetVisualizationSubscriberActor();
+        if (!string.IsNullOrWhiteSpace(subscriberActor))
+        {
+            message.SubscriberActor = subscriberActor;
+        }
+
+        return message;
+    }
+
+    private string? GetVisualizationSubscriberActor()
+        => _receiverPid is null ? null : PidLabel(_receiverPid);
 }

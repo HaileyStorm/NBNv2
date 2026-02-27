@@ -86,6 +86,287 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_IncludesBrainControllerRowsInHostedActorsList()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        var controllerActor = $"127.0.0.1:12041/worker-node/brain-{brainId:N}-root";
+
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)nowMs,
+                        LastTickId = 12,
+                        State = "Active"
+                    }
+                },
+                Controllers =
+                {
+                    new BrainControllerStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        NodeId = workerId.ToProtoUuid(),
+                        ActorName = controllerActor,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Single(vm.Nodes);
+        var controllerRow = Assert.Single(
+            vm.Actors,
+            node => node.RootActor == controllerActor);
+        Assert.Contains("brain", controllerRow.LogicalName, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("online", controllerRow.Status);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_IncludesPlacementHostedActorRows()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var hiveNodeId = Guid.NewGuid();
+        var workerNodeId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        const ulong placementEpoch = 14;
+        var shardActorPid = $"127.0.0.1:12041/worker-node/brain-{brainId:N}-r9-s2";
+
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = hiveNodeId.ToProtoUuid(),
+                        LogicalName = "hivemind",
+                        Address = "127.0.0.1:12020",
+                        RootActorName = "hive-mind",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    },
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)nowMs,
+                        LastTickId = 22,
+                        State = "Active"
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse(),
+            PlacementLifecycleFactory = requestedBrainId =>
+                requestedBrainId == brainId
+                    ? new PlacementLifecycleInfo
+                    {
+                        BrainId = requestedBrainId.ToProtoUuid(),
+                        PlacementEpoch = placementEpoch,
+                        LifecycleState = PlacementLifecycleState.PlacementLifecycleRunning
+                    }
+                    : null,
+            PlacementReconcileFactory = (workerAddress, workerRoot, requestedBrainId, requestedEpoch) =>
+            {
+                if (requestedBrainId != brainId
+                    || requestedEpoch != placementEpoch
+                    || !string.Equals(workerRoot, connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return new PlacementReconcileReport
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = placementEpoch,
+                    ReconcileState = PlacementReconcileState.PlacementReconcileMatched,
+                    Assignments =
+                    {
+                        new PlacementObservedAssignment
+                        {
+                            AssignmentId = Guid.NewGuid().ToString("N"),
+                            Target = PlacementAssignmentTarget.PlacementTargetRegionShard,
+                            WorkerNodeId = workerNodeId.ToProtoUuid(),
+                            RegionId = 9,
+                            ShardIndex = 2,
+                            ActorPid = shardActorPid
+                        }
+                    }
+                };
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Equal(2, vm.Nodes.Count);
+        var shardRow = Assert.Single(vm.Actors, row => row.RootActor == shardActorPid);
+        Assert.Contains("RegionShard r9 s2", shardRow.LogicalName, StringComparison.Ordinal);
+        Assert.Equal("online", shardRow.Status);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_HostedActors_PrioritizesOnlineWorkerHosts()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var hiveNodeId = Guid.NewGuid();
+        var workerNodeId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        const ulong placementEpoch = 8;
+        var controllerActorPid = "127.0.0.1:12020/hive-mind/brain-controller";
+        var shardActorPid = $"127.0.0.1:12041/worker-node/brain-{brainId:N}-r9-s0";
+
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = hiveNodeId.ToProtoUuid(),
+                        LogicalName = "hivemind",
+                        Address = "127.0.0.1:12020",
+                        RootActorName = "hive-mind",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    },
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)(nowMs - 5_000),
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)nowMs,
+                        LastTickId = 9,
+                        State = "Active"
+                    }
+                },
+                Controllers =
+                {
+                    new BrainControllerStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        NodeId = hiveNodeId.ToProtoUuid(),
+                        ActorName = controllerActorPid,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse(),
+            PlacementLifecycleFactory = requestedBrainId =>
+                requestedBrainId == brainId
+                    ? new PlacementLifecycleInfo
+                    {
+                        BrainId = requestedBrainId.ToProtoUuid(),
+                        PlacementEpoch = placementEpoch,
+                        LifecycleState = PlacementLifecycleState.PlacementLifecycleRunning
+                    }
+                    : null,
+            PlacementReconcileFactory = (workerAddress, workerRoot, requestedBrainId, requestedEpoch) =>
+            {
+                if (requestedBrainId != brainId
+                    || requestedEpoch != placementEpoch
+                    || !string.Equals(workerRoot, connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return new PlacementReconcileReport
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = placementEpoch,
+                    ReconcileState = PlacementReconcileState.PlacementReconcileMatched,
+                    Assignments =
+                    {
+                        new PlacementObservedAssignment
+                        {
+                            AssignmentId = Guid.NewGuid().ToString("N"),
+                            Target = PlacementAssignmentTarget.PlacementTargetRegionShard,
+                            WorkerNodeId = workerNodeId.ToProtoUuid(),
+                            RegionId = 9,
+                            ShardIndex = 0,
+                            ActorPid = shardActorPid
+                        }
+                    }
+                };
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var shardIndex = IndexOfActor(vm.Actors, shardActorPid);
+        var controllerIndex = IndexOfActor(vm.Actors, controllerActorPid);
+        Assert.True(shardIndex >= 0);
+        Assert.True(controllerIndex >= 0);
+        Assert.True(shardIndex < controllerIndex, "Online worker-hosted actor should sort ahead of non-worker actors.");
+    }
+
+    [Fact]
     public async Task SpawnSampleBrainCommand_UsesIoSpawnPath_OnSuccess()
     {
         var connections = new ConnectionViewModel
@@ -247,7 +528,6 @@ public class OrchestratorPanelViewModelTests
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
-            PlacementAck = new PlacementAck { Accepted = true, Message = "ok" },
             BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
         };
         var vm = new DesignerPanelViewModel(connections, client);
@@ -258,7 +538,7 @@ public class OrchestratorPanelViewModelTests
         await WaitForAsync(() => vm.Status.Contains("Brain spawned", StringComparison.Ordinal), timeoutMs: 5000);
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
-        Assert.Equal(1, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
@@ -314,7 +594,6 @@ public class OrchestratorPanelViewModelTests
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
-            PlacementAck = new PlacementAck { Accepted = true, Message = "ok" },
             BrainListFactory = static () => new BrainListResponse()
         };
         var vm = new DesignerPanelViewModel(connections, client);
@@ -327,7 +606,7 @@ public class OrchestratorPanelViewModelTests
             timeoutMs: 15_000);
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
-        Assert.Equal(1, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.Equal(1, client.KillBrainCallCount);
         Assert.Equal(spawnedBrainId, client.LastKillBrainId);
         Assert.Equal("designer_managed_spawn_registration_timeout", client.LastKillReason);
@@ -359,6 +638,19 @@ public class OrchestratorPanelViewModelTests
         Assert.True(predicate());
     }
 
+    private static int IndexOfActor(IReadOnlyList<NodeStatusItem> rows, string rootActor)
+    {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (string.Equals(rows[i].RootActor, rootActor, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     private static BrainListResponse BuildBrainList(Guid brainId, string state)
         => new()
         {
@@ -382,9 +674,13 @@ public class OrchestratorPanelViewModelTests
         public SettingListResponse? SettingsResponse { get; init; }
         public SpawnBrainAck? SpawnBrainAck { get; set; }
         public PlacementAck? PlacementAck { get; set; }
+        public Func<Guid, PlacementLifecycleInfo?>? PlacementLifecycleFactory { get; init; }
+        public Func<string, string, Guid, ulong, PlacementReconcileReport?>? PlacementReconcileFactory { get; init; }
         public bool KillBrainResult { get; set; } = true;
         public int SpawnViaIoCallCount { get; private set; }
         public int RequestPlacementCallCount { get; private set; }
+        public int GetPlacementLifecycleCallCount { get; private set; }
+        public int RequestPlacementReconcileCallCount { get; private set; }
         public int KillBrainCallCount { get; private set; }
         public SpawnBrain? LastSpawnRequest { get; private set; }
         public RequestPlacement? LastPlacementRequest { get; private set; }
@@ -404,6 +700,22 @@ public class OrchestratorPanelViewModelTests
 
         public override Task<SettingListResponse?> ListSettingsAsync()
             => Task.FromResult(SettingsResponse);
+
+        public override Task<PlacementLifecycleInfo?> GetPlacementLifecycleAsync(Guid brainId)
+        {
+            GetPlacementLifecycleCallCount++;
+            return Task.FromResult(PlacementLifecycleFactory?.Invoke(brainId));
+        }
+
+        public override Task<PlacementReconcileReport?> RequestPlacementReconcileAsync(
+            string workerAddress,
+            string workerRootActor,
+            Guid brainId,
+            ulong placementEpoch)
+        {
+            RequestPlacementReconcileCallCount++;
+            return Task.FromResult(PlacementReconcileFactory?.Invoke(workerAddress, workerRootActor, brainId, placementEpoch));
+        }
 
         public override Task<SpawnBrainAck?> SpawnBrainViaIoAsync(SpawnBrain request)
         {

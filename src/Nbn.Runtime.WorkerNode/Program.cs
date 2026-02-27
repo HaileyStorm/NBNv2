@@ -1,8 +1,3 @@
-using Nbn.Proto;
-using Nbn.Proto.Control;
-using Nbn.Proto.Io;
-using Nbn.Proto.Settings;
-using Nbn.Proto.Signal;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Proto;
@@ -26,7 +21,7 @@ catch (ArgumentException ex)
 }
 
 var system = new ActorSystem();
-var remoteConfig = BuildRemoteConfig(options);
+var remoteConfig = WorkerNodeRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
@@ -44,7 +39,8 @@ var workerPid = system.Root.SpawnNamed(
         workerNodeId,
         nodeAddress,
         enabledRoles: options.ServiceRoles,
-        resourceAvailability: options.ResourceAvailability)),
+        resourceAvailability: options.ResourceAvailability,
+        observabilityDefaultHost: options.SettingsHost)),
     options.RootActorName);
 
 var heartbeatCapabilities = WorkerCapabilityScaling.BuildScaledCapabilities(options.ResourceAvailability);
@@ -148,53 +144,6 @@ if (settingsReporter is not null)
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();
-
-static RemoteConfig BuildRemoteConfig(WorkerNodeOptions options)
-{
-    var bindHost = options.BindHost;
-    RemoteConfig config;
-
-    if (IsAllInterfaces(bindHost))
-    {
-        var advertisedHost = options.AdvertisedHost ?? bindHost;
-        config = RemoteConfig.BindToAllInterfaces(advertisedHost, options.Port);
-    }
-    else if (IsLocalhost(bindHost))
-    {
-        config = RemoteConfig.BindToLocalhost(options.Port);
-    }
-    else
-    {
-        config = RemoteConfig.BindTo(bindHost, options.Port);
-    }
-
-    if (!string.IsNullOrWhiteSpace(options.AdvertisedHost))
-    {
-        config = config.WithAdvertisedHost(options.AdvertisedHost);
-    }
-
-    if (options.AdvertisedPort.HasValue)
-    {
-        config = config.WithAdvertisedPort(options.AdvertisedPort);
-    }
-
-    return config.WithProtoMessages(
-        NbnCommonReflection.Descriptor,
-        NbnControlReflection.Descriptor,
-        NbnSettingsReflection.Descriptor,
-        NbnIoReflection.Descriptor,
-        NbnSignalsReflection.Descriptor);
-}
-
-static bool IsLocalhost(string host)
-    => host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("::1", StringComparison.OrdinalIgnoreCase);
-
-static bool IsAllInterfaces(string host)
-    => host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("::", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("*", StringComparison.OrdinalIgnoreCase);
 
 static string PidLabel(PID pid)
     => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";

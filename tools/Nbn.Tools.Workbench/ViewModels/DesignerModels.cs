@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Avalonia;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
@@ -810,14 +811,14 @@ public sealed class DesignerFunctionOption
 
 internal static class DesignerBrushes
 {
-    public static readonly IBrush Surface = new SolidColorBrush(Color.Parse("#FFFFFF"));
-    public static readonly IBrush SurfaceAlt = new SolidColorBrush(Color.Parse("#EDE7D7"));
-    public static readonly IBrush Ink = new SolidColorBrush(Color.Parse("#101B22"));
-    public static readonly IBrush Muted = new SolidColorBrush(Color.Parse("#6F7D86"));
-    public static readonly IBrush Border = new SolidColorBrush(Color.Parse("#D3C9B6"));
-    public static readonly IBrush Accent = new SolidColorBrush(Color.Parse("#F16D3A"));
-    public static readonly IBrush Teal = new SolidColorBrush(Color.Parse("#2F9C8A"));
-    public static readonly IBrush Gold = new SolidColorBrush(Color.Parse("#E2B548"));
-    public static readonly IBrush Disabled = new SolidColorBrush(Color.Parse("#F0EBDD"));
-    public static readonly IBrush OnAccent = new SolidColorBrush(Color.Parse("#FFFFFF"));
+    public static readonly IBrush Surface = new ImmutableSolidColorBrush(Color.Parse("#FFFFFF"));
+    public static readonly IBrush SurfaceAlt = new ImmutableSolidColorBrush(Color.Parse("#EDE7D7"));
+    public static readonly IBrush Ink = new ImmutableSolidColorBrush(Color.Parse("#101B22"));
+    public static readonly IBrush Muted = new ImmutableSolidColorBrush(Color.Parse("#6F7D86"));
+    public static readonly IBrush Border = new ImmutableSolidColorBrush(Color.Parse("#D3C9B6"));
+    public static readonly IBrush Accent = new ImmutableSolidColorBrush(Color.Parse("#F16D3A"));
+    public static readonly IBrush Teal = new ImmutableSolidColorBrush(Color.Parse("#2F9C8A"));
+    public static readonly IBrush Gold = new ImmutableSolidColorBrush(Color.Parse("#E2B548"));
+    public static readonly IBrush Disabled = new ImmutableSolidColorBrush(Color.Parse("#F0EBDD"));
+    public static readonly IBrush OnAccent = new ImmutableSolidColorBrush(Color.Parse("#FFFFFF"));
 }

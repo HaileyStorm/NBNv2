@@ -336,9 +336,10 @@ public sealed class BrainSignalRouterActor : IActor
             outboxDestinationCount = outbox.Destinations.Count;
             foreach (var entry in outbox.Destinations)
             {
+                var destinationShardId = entry.Key;
                 if (!_routingTable.TryGetPid(entry.Key, out var pid) || pid is null)
                 {
-                    if (!TryGetFallbackPid(entry.Value.RegionId, out pid))
+                    if (!TryGetFallbackRoute(entry.Value.RegionId, out var fallbackShardId, out pid))
                     {
                         if (LogDelivery && !missingRouteLogged)
                         {
@@ -349,6 +350,7 @@ public sealed class BrainSignalRouterActor : IActor
                     }
 
                     fallbackRoutes++;
+                    destinationShardId = fallbackShardId;
                 }
 
                 if (pid is null)
@@ -360,14 +362,14 @@ public sealed class BrainSignalRouterActor : IActor
                 {
                     BrainId = _brainIdProto,
                     RegionId = entry.Value.RegionId,
-                    ShardId = entry.Key.ToProtoShardId32(),
+                    ShardId = destinationShardId.ToProtoShardId32(),
                     TickId = tickId
                 };
 
                 signalBatch.Contribs.AddRange(entry.Value.Contribs);
                 // Use Request so RegionShard can reply with SignalBatchAck to this router.
                 context.Request(pid, signalBatch);
-                expectedAckSenders[new PendingAckKey(entry.Value.RegionId, entry.Key)] = pid;
+                expectedAckSenders[new PendingAckKey(entry.Value.RegionId, destinationShardId)] = pid;
 
                 deliveredBatches++;
                 deliveredContribs += (uint)entry.Value.Contribs.Count;
@@ -473,9 +475,13 @@ public sealed class BrainSignalRouterActor : IActor
             _pendingOutboxes.Remove(tickId);
         }
 
+        // If drain requests are expiring, the cached IO PID is likely stale/unreachable.
+        // Clear it so subsequent ticks can proceed without repeatedly waiting on drain responses.
+        _ioGatewayPid = null;
+
         if (LogDelivery)
         {
-            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)}");
+            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)} ioGatewayCleared=true");
         }
     }
 
@@ -557,9 +563,11 @@ public sealed class BrainSignalRouterActor : IActor
         return true;
     }
 
-    private bool TryGetFallbackPid(uint regionId, out PID? pid)
+    private bool TryGetFallbackRoute(uint regionId, out ShardId32 shardId, out PID? pid)
     {
+        shardId = default;
         pid = null;
+        ShardId32? candidateShardId = null;
         PID? candidate = null;
 
         foreach (var entry in _routingTable.Entries)
@@ -571,19 +579,23 @@ public sealed class BrainSignalRouterActor : IActor
 
             if (candidate is not null)
             {
+                shardId = default;
                 pid = null;
                 return false;
             }
 
+            candidateShardId = entry.ShardId;
             candidate = entry.Pid;
         }
 
-        if (candidate is null)
+        if (candidate is null || !candidateShardId.HasValue)
         {
+            shardId = default;
             pid = null;
             return false;
         }
 
+        shardId = candidateShardId.Value;
         pid = candidate;
         return true;
     }

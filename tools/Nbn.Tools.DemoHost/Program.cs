@@ -46,6 +46,18 @@ switch (command)
     case "repro-suite":
         await RunReproSuiteAsync(remaining);
         break;
+    case "hive-status":
+        await RunHiveStatusAsync(remaining);
+        break;
+    case "worker-reconcile":
+        await RunWorkerReconcileAsync(remaining);
+        break;
+    case "shard-output-sink":
+        await RunShardOutputSinkAsync(remaining);
+        break;
+    case "observe-activity":
+        await RunObserveActivityAsync(remaining);
+        break;
     case "run-brain":
         await RunBrainAsync(remaining);
         break;
@@ -313,6 +325,161 @@ static async Task RunSpawnBrainAsync(string[] args)
     }
 }
 
+static async Task RunHiveStatusAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12074;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var hiveAddress = GetArg(args, "--hivemind-address") ?? throw new InvalidOperationException("--hivemind-address is required.");
+    var hiveId = GetArg(args, "--hivemind-id") ?? "HiveMind";
+    var brainId = GetGuidArg(args, "--brain-id");
+    var timeoutSeconds = GetIntArg(args, "--timeout-seconds") ?? 10;
+    var jsonOnly = HasFlag(args, "--json");
+    var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var hivePid = new PID(hiveAddress, hiveId);
+
+        HiveMindStatus? status = null;
+        string? statusError = null;
+        try
+        {
+            status = await system.Root.RequestAsync<HiveMindStatus>(
+                hivePid,
+                new GetHiveMindStatus(),
+                timeout);
+        }
+        catch (Exception ex)
+        {
+            statusError = ex.GetBaseException().Message;
+        }
+
+        BrainRoutingInfo? routing = null;
+        string? routingError = null;
+        BrainIoInfo? ioInfo = null;
+        string? ioInfoError = null;
+
+        if (brainId.HasValue)
+        {
+            var protoBrainId = brainId.Value.ToProtoUuid();
+
+            try
+            {
+                routing = await system.Root.RequestAsync<BrainRoutingInfo>(
+                    hivePid,
+                    new GetBrainRouting { BrainId = protoBrainId },
+                    timeout);
+            }
+            catch (Exception ex)
+            {
+                routingError = ex.GetBaseException().Message;
+            }
+
+            try
+            {
+                ioInfo = await system.Root.RequestAsync<BrainIoInfo>(
+                    hivePid,
+                    new GetBrainIoInfo { BrainId = protoBrainId },
+                    timeout);
+            }
+            catch (Exception ex)
+            {
+                ioInfoError = ex.GetBaseException().Message;
+            }
+        }
+
+        var payload = new
+        {
+            hive_address = hiveAddress,
+            hive_id = hiveId,
+            brain_id = brainId?.ToString("D") ?? string.Empty,
+            hive_status = status is null
+                ? null
+                : new
+                {
+                    last_completed_tick_id = status.LastCompletedTickId,
+                    tick_loop_enabled = status.TickLoopEnabled,
+                    target_tick_hz = status.TargetTickHz,
+                    pending_compute = status.PendingCompute,
+                    pending_deliver = status.PendingDeliver,
+                    reschedule_in_progress = status.RescheduleInProgress,
+                    registered_brains = status.RegisteredBrains,
+                    registered_shards = status.RegisteredShards
+                },
+            brain_routing = routing is null
+                ? null
+                : new
+                {
+                    brain_root_pid = routing.BrainRootPid ?? string.Empty,
+                    signal_router_pid = routing.SignalRouterPid ?? string.Empty,
+                    shard_count = routing.ShardCount,
+                    routing_count = routing.RoutingCount
+                },
+            brain_io = ioInfo is null
+                ? null
+                : new
+                {
+                    input_width = ioInfo.InputWidth,
+                    output_width = ioInfo.OutputWidth
+                },
+            status_error = statusError ?? string.Empty,
+            routing_error = routingError ?? string.Empty,
+            io_error = ioInfoError ?? string.Empty
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"HiveMind: {hiveAddress}/{hiveId}");
+            if (status is null)
+            {
+                Console.WriteLine($"HiveMindStatus failed: {statusError}");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"Status: tick={status.LastCompletedTickId} pending_compute={status.PendingCompute} pending_deliver={status.PendingDeliver} " +
+                    $"brains={status.RegisteredBrains} shards={status.RegisteredShards}");
+            }
+
+            if (brainId.HasValue)
+            {
+                if (routing is null)
+                {
+                    Console.WriteLine($"BrainRouting failed: {routingError}");
+                }
+                else
+                {
+                    Console.WriteLine($"BrainRouting: shard_count={routing.ShardCount} routing_count={routing.RoutingCount}");
+                }
+
+                if (ioInfo is null)
+                {
+                    Console.WriteLine($"BrainIoInfo failed: {ioInfoError}");
+                }
+                else
+                {
+                    Console.WriteLine($"BrainIo: input={ioInfo.InputWidth} output={ioInfo.OutputWidth}");
+                }
+            }
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+}
+
 static async Task RunIoScenarioAsync(string[] args)
 {
     var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
@@ -426,6 +593,230 @@ static async Task RunIoScenarioAsync(string[] args)
                 $"BrainInfo: cost={brainInfo.CostEnabled} energy={brainInfo.EnergyEnabled} remaining={brainInfo.EnergyRemaining} " +
                 $"rate={brainInfo.EnergyRateUnitsPerSecond}/s plasticity={brainInfo.PlasticityEnabled} " +
                 $"mode={(brainInfo.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute")} plasticityRate={brainInfo.PlasticityRate:0.######}");
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+}
+
+static async Task RunObserveActivityAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12075;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var hiveAddress = GetArg(args, "--hivemind-address") ?? throw new InvalidOperationException("--hivemind-address is required.");
+    var hiveId = GetArg(args, "--hivemind-id") ?? "HiveMind";
+    var ioAddress = GetArg(args, "--io-address") ?? throw new InvalidOperationException("--io-address is required.");
+    var ioId = GetArg(args, "--io-id") ?? "io-gateway";
+    var obsAddress = GetArg(args, "--obs-address") ?? throw new InvalidOperationException("--obs-address is required.");
+    var vizId = GetArg(args, "--viz-id") ?? "VisualizationHub";
+    var brainId = GetGuidArg(args, "--brain-id") ?? throw new InvalidOperationException("--brain-id is required.");
+    var focusRegionRaw = GetIntArg(args, "--focus-region");
+    var focusRegion = focusRegionRaw.HasValue ? (uint?)Math.Max(0, focusRegionRaw.Value) : null;
+    var injectTestVector = HasFlag(args, "--inject-test-vector");
+    var injectOutputStart = checked((uint)Math.Max(0, GetIntArg(args, "--inject-output-start") ?? 0));
+    var injectTick = GetULongArg(args, "--inject-tick") ?? 99_999_999UL;
+    var injectValues = ParseFloatList(GetArg(args, "--inject-values")) ?? new List<float> { 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f };
+    var durationSeconds = Math.Max(1, GetIntArg(args, "--seconds") ?? 8);
+    var timeoutSeconds = Math.Max(1, GetIntArg(args, "--timeout-seconds") ?? 10);
+    var jsonOnly = HasFlag(args, "--json");
+    var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var hivePid = new PID(hiveAddress, hiveId);
+        var ioPid = new PID(ioAddress, ioId);
+        var vizPid = new PID(obsAddress, vizId);
+        var probePid = system.Root.Spawn(Props.FromProducer(() => new ActivityProbeActor(
+            brainId.ToProtoUuid(),
+            hivePid,
+            ioPid,
+            vizPid,
+            focusRegion,
+            injectTestVector,
+            injectOutputStart,
+            injectTick,
+            injectValues)));
+
+        await Task.Delay(TimeSpan.FromSeconds(durationSeconds)).ConfigureAwait(false);
+
+        ActivityObservationSnapshot snapshot;
+        try
+        {
+            snapshot = await system.Root.RequestAsync<ActivityObservationSnapshot>(
+                probePid,
+                new GetActivityObservationSnapshot(),
+                timeout);
+        }
+        finally
+        {
+            system.Root.Stop(probePid);
+        }
+
+        var payload = new
+        {
+            brain_id = brainId.ToString("D"),
+            duration_seconds = durationSeconds,
+            focus_region = focusRegion,
+            viz = new
+            {
+                total = snapshot.VizTotal,
+                non_tick = snapshot.VizNonTick,
+                types = snapshot.VizTypeCounts,
+                regions = snapshot.VizRegions,
+                first_tick = snapshot.FirstTickId,
+                last_tick = snapshot.LastTickId
+            },
+            output_vectors = new
+            {
+                total = snapshot.OutputVectorTotal,
+                all_zero = snapshot.OutputVectorAllZero,
+                non_zero = snapshot.OutputVectorTotal - snapshot.OutputVectorAllZero
+            }
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"Observed brain {brainId:D} for {durationSeconds}s.");
+            Console.WriteLine($"Viz events: total={snapshot.VizTotal} non_tick={snapshot.VizNonTick} regions={string.Join(',', snapshot.VizRegions)}");
+            Console.WriteLine($"Output vectors: total={snapshot.OutputVectorTotal} all_zero={snapshot.OutputVectorAllZero}");
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+}
+
+static async Task RunWorkerReconcileAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12076;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var workerAddress = GetArg(args, "--worker-address") ?? throw new InvalidOperationException("--worker-address is required.");
+    var workerId = GetArg(args, "--worker-id") ?? "worker-node";
+    var brainId = GetGuidArg(args, "--brain-id") ?? throw new InvalidOperationException("--brain-id is required.");
+    var placementEpoch = GetULongArg(args, "--placement-epoch") ?? 1UL;
+    var timeoutSeconds = Math.Max(1, GetIntArg(args, "--timeout-seconds") ?? 10);
+    var jsonOnly = HasFlag(args, "--json");
+    var timeout = TimeSpan.FromSeconds(timeoutSeconds);
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var workerPid = new PID(workerAddress, workerId);
+        var report = await system.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = placementEpoch
+            },
+            timeout);
+
+        var payload = new
+        {
+            worker_address = workerAddress,
+            worker_id = workerId,
+            brain_id = brainId.ToString("D"),
+            placement_epoch = placementEpoch,
+            reconcile_state = report.ReconcileState.ToString(),
+            failure_reason = report.FailureReason.ToString(),
+            message = report.Message ?? string.Empty,
+            assignments = report.Assignments
+                .OrderBy(static value => value.Target)
+                .ThenBy(static value => value.RegionId)
+                .ThenBy(static value => value.ShardIndex)
+                .ThenBy(static value => value.AssignmentId, StringComparer.Ordinal)
+                .Select(value => new
+                {
+                    assignment_id = value.AssignmentId ?? string.Empty,
+                    target = value.Target.ToString(),
+                    region_id = value.RegionId,
+                    shard_index = value.ShardIndex,
+                    actor_pid = value.ActorPid ?? string.Empty
+                })
+                .ToArray()
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+
+        if (!jsonOnly)
+        {
+            Console.WriteLine($"Worker reconcile: state={report.ReconcileState} assignments={report.Assignments.Count}");
+        }
+    }
+    finally
+    {
+        await system.Remote().ShutdownAsync(true);
+        await system.ShutdownAsync();
+    }
+}
+
+static async Task RunShardOutputSinkAsync(string[] args)
+{
+    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var port = GetIntArg(args, "--port") ?? 12077;
+    var advertisedHost = GetArg(args, "--advertise-host");
+    var advertisedPort = GetIntArg(args, "--advertise-port");
+    var shardAddress = GetArg(args, "--shard-address") ?? throw new InvalidOperationException("--shard-address is required.");
+    var shardId = GetArg(args, "--shard-id") ?? throw new InvalidOperationException("--shard-id is required.");
+    var brainId = GetGuidArg(args, "--brain-id") ?? throw new InvalidOperationException("--brain-id is required.");
+    var regionId = GetIntArg(args, "--region-id") ?? throw new InvalidOperationException("--region-id is required.");
+    var shardIndex = GetIntArg(args, "--shard-index") ?? throw new InvalidOperationException("--shard-index is required.");
+    var outputPid = GetArg(args, "--output-pid") ?? string.Empty;
+    var jsonOnly = HasFlag(args, "--json");
+
+    var system = new ActorSystem();
+    var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
+    system.WithRemote(remoteConfig);
+    await system.Remote().StartAsync();
+
+    try
+    {
+        var target = new PID(shardAddress, shardId);
+        system.Root.Send(target, new UpdateShardOutputSink
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = checked((uint)Math.Max(0, regionId)),
+            ShardIndex = checked((uint)Math.Max(0, shardIndex)),
+            OutputPid = outputPid
+        });
+
+        var payload = new
+        {
+            shard_address = shardAddress,
+            shard_id = shardId,
+            brain_id = brainId.ToString("D"),
+            region_id = regionId,
+            shard_index = shardIndex,
+            output_pid = outputPid
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        Console.WriteLine(json);
+        if (!jsonOnly)
+        {
+            Console.WriteLine("Shard output sink update sent.");
         }
     }
     finally
@@ -1375,6 +1766,28 @@ static float? GetFloatArg(string[] args, string name)
     return float.TryParse(value, out var parsed) ? parsed : null;
 }
 
+static List<float>? ParseFloatList(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        return null;
+    }
+
+    var values = new List<float>();
+    var tokens = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    foreach (var token in tokens)
+    {
+        if (!float.TryParse(token, out var parsed))
+        {
+            return null;
+        }
+
+        values.Add(parsed);
+    }
+
+    return values.Count == 0 ? null : values;
+}
+
 static bool? GetBoolArg(string[] args, string name)
 {
     var value = GetArg(args, name);
@@ -1474,6 +1887,15 @@ static void PrintHelp()
     Console.WriteLine("                [--spawn-policy default|never|always] [--strength-source base|live] [--json]");
     Console.WriteLine("  repro-suite --io-address <host:port> [--io-id <name>] --parent-a-sha256 <hex> --parent-a-size <bytes>");
     Console.WriteLine("              [--store-uri <path|file://uri>] [--seed <uint64>] [--fail-on-case-failure] [--json]");
+    Console.WriteLine("  hive-status --hivemind-address <host:port> [--hivemind-id <name>] [--brain-id <guid>]");
+    Console.WriteLine("              [--timeout-seconds <int>] [--json]");
+    Console.WriteLine("  worker-reconcile --worker-address <host:port> [--worker-id <name>] --brain-id <guid>");
+    Console.WriteLine("                   [--placement-epoch <uint64>] [--timeout-seconds <int>] [--json]");
+    Console.WriteLine("  shard-output-sink --shard-address <host:port> --shard-id <id> --brain-id <guid> --region-id <int> --shard-index <int>");
+    Console.WriteLine("                    [--output-pid <address/id|id>] [--json]");
+    Console.WriteLine("  observe-activity --hivemind-address <host:port> [--hivemind-id <name>]");
+    Console.WriteLine("                   --io-address <host:port> [--io-id <name>] --obs-address <host:port> [--viz-id <name>]");
+    Console.WriteLine("                   --brain-id <guid> [--focus-region <id>] [--seconds <int>] [--timeout-seconds <int>] [--json]");
     Console.WriteLine("  run-brain --bind-host <host> --port <port> --brain-id <guid>");
     Console.WriteLine("            --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("            [--router-id <name>] [--brain-root-id <name>]");
@@ -1488,3 +1910,198 @@ readonly record struct ReproObservation(
     bool Spawned,
     string ChildBrainId,
     string ExceptionMessage);
+
+sealed record GetActivityObservationSnapshot;
+
+readonly record struct ActivityObservationSnapshot(
+    long VizTotal,
+    long VizNonTick,
+    Dictionary<string, long> VizTypeCounts,
+    List<uint> VizRegions,
+    long OutputVectorTotal,
+    long OutputVectorAllZero,
+    ulong FirstTickId,
+    ulong LastTickId);
+
+sealed class ActivityProbeActor : IActor
+{
+    private readonly Uuid _brainId;
+    private readonly PID _hivePid;
+    private readonly PID _ioPid;
+    private readonly PID _vizPid;
+    private readonly uint? _focusRegionId;
+    private readonly bool _injectTestVector;
+    private readonly uint _injectOutputStart;
+    private readonly ulong _injectTick;
+    private readonly IReadOnlyList<float> _injectValues;
+    private readonly Dictionary<string, long> _vizTypeCounts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<uint> _vizRegions = new();
+    private long _vizTotal;
+    private long _vizNonTick;
+    private long _outputVectorTotal;
+    private long _outputVectorAllZero;
+    private ulong _firstTickId;
+    private ulong _lastTickId;
+
+    public ActivityProbeActor(
+        Uuid brainId,
+        PID hivePid,
+        PID ioPid,
+        PID vizPid,
+        uint? focusRegionId,
+        bool injectTestVector,
+        uint injectOutputStart,
+        ulong injectTick,
+        IReadOnlyList<float> injectValues)
+    {
+        _brainId = brainId;
+        _hivePid = hivePid;
+        _ioPid = ioPid;
+        _vizPid = vizPid;
+        _focusRegionId = focusRegionId;
+        _injectTestVector = injectTestVector;
+        _injectOutputStart = injectOutputStart;
+        _injectTick = injectTick;
+        _injectValues = injectValues;
+    }
+
+    public Task ReceiveAsync(IContext context)
+    {
+        switch (context.Message)
+        {
+            case Started:
+                Subscribe(context);
+                break;
+            case Stopping:
+            case Stopped:
+                Unsubscribe(context);
+                break;
+            case VisualizationEvent viz:
+                RecordViz(viz);
+                break;
+            case OutputVectorEvent vector:
+                RecordVector(vector);
+                break;
+            case GetActivityObservationSnapshot:
+                context.Respond(new ActivityObservationSnapshot(
+                    _vizTotal,
+                    _vizNonTick,
+                    new Dictionary<string, long>(_vizTypeCounts, StringComparer.OrdinalIgnoreCase),
+                    _vizRegions.OrderBy(static value => value).ToList(),
+                    _outputVectorTotal,
+                    _outputVectorAllZero,
+                    _firstTickId,
+                    _lastTickId));
+                break;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void Subscribe(IContext context)
+    {
+        var subscriber = FormatPidLabel(context.Self, context.System.Address);
+        context.Send(_vizPid, new VizSubscribe { SubscriberActor = subscriber });
+        context.Send(_hivePid, new SetBrainVisualization
+        {
+            BrainId = _brainId,
+            Enabled = true,
+            HasFocusRegion = _focusRegionId.HasValue,
+            FocusRegionId = _focusRegionId ?? 0,
+            SubscriberActor = subscriber
+        });
+        context.Send(_ioPid, new SubscribeOutputsVector
+        {
+            BrainId = _brainId,
+            SubscriberActor = subscriber
+        });
+        if (_injectTestVector)
+        {
+            var segment = new OutputVectorSegment
+            {
+                BrainId = _brainId,
+                TickId = _injectTick,
+                OutputIndexStart = _injectOutputStart
+            };
+            segment.Values.AddRange(_injectValues);
+            context.Send(_ioPid, segment);
+        }
+    }
+
+    private void Unsubscribe(IContext context)
+    {
+        var subscriber = FormatPidLabel(context.Self, context.System.Address);
+        context.Send(_vizPid, new VizUnsubscribe { SubscriberActor = subscriber });
+        context.Send(_hivePid, new SetBrainVisualization
+        {
+            BrainId = _brainId,
+            Enabled = false,
+            SubscriberActor = subscriber
+        });
+        context.Send(_ioPid, new UnsubscribeOutputsVector
+        {
+            BrainId = _brainId,
+            SubscriberActor = subscriber
+        });
+    }
+
+    private void RecordViz(VisualizationEvent viz)
+    {
+        _vizTotal++;
+        _vizRegions.Add(viz.RegionId);
+        var type = viz.Type.ToString();
+        _vizTypeCounts[type] = _vizTypeCounts.TryGetValue(type, out var count) ? count + 1 : 1;
+
+        if (!string.Equals(type, VizEventType.VizTick.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            _vizNonTick++;
+        }
+
+        UpdateTick(viz.TickId);
+    }
+
+    private void RecordVector(OutputVectorEvent vector)
+    {
+        _outputVectorTotal++;
+        var allZero = true;
+        foreach (var value in vector.Values)
+        {
+            if (Math.Abs(value) > 1e-6f)
+            {
+                allZero = false;
+                break;
+            }
+        }
+
+        if (allZero)
+        {
+            _outputVectorAllZero++;
+        }
+
+        UpdateTick(vector.TickId);
+    }
+
+    private void UpdateTick(ulong tickId)
+    {
+        if (tickId == 0)
+        {
+            return;
+        }
+
+        if (_firstTickId == 0 || tickId < _firstTickId)
+        {
+            _firstTickId = tickId;
+        }
+
+        if (tickId > _lastTickId)
+        {
+            _lastTickId = tickId;
+        }
+    }
+
+    private static string FormatPidLabel(PID pid, string? fallbackAddress)
+    {
+        var address = string.IsNullOrWhiteSpace(pid.Address) ? fallbackAddress : pid.Address;
+        return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
+    }
+}

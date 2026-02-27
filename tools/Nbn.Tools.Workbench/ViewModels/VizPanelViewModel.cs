@@ -267,6 +267,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 {
                     if (value is not null && (previous?.BrainId != value.BrainId))
                     {
+                        RegionFocusText = string.Empty;
                         _lastRenderedTickId = 0;
                         _nextStreamingRefreshUtc = DateTime.MinValue;
                         _brain.SelectBrain(value.BrainId, preserveOutputs: true);

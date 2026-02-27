@@ -151,6 +151,53 @@ public sealed class HiveMindWorkerInventoryTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task PlacementWorkerInventory_Excludes_NonWorker_ServiceNodes_Even_When_Ready()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 15_000))));
+
+        var workerId = Guid.NewGuid();
+        var serviceNodeId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "127.0.0.1:12041",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker"),
+                BuildWorker(
+                    serviceNodeId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "127.0.0.1:12020",
+                    rootActorName: "HiveMind",
+                    logicalName: "nbn.hivemind")
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+
+        Assert.Single(inventory.Workers);
+        Assert.Equal(workerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
+
+        await system.ShutdownAsync();
+    }
+
     private static ProtoSettings.WorkerReadinessCapability BuildWorker(
         Guid nodeId,
         bool isAlive,
@@ -159,6 +206,7 @@ public sealed class HiveMindWorkerInventoryTests
         long capabilityTimeMs,
         string address,
         string rootActorName,
+        string logicalName = "",
         uint cpuCores = 4,
         long ramFreeBytes = 2L * 1024 * 1024 * 1024,
         long storageFreeBytes = 25L * 1024 * 1024 * 1024,
@@ -171,6 +219,7 @@ public sealed class HiveMindWorkerInventoryTests
         return new ProtoSettings.WorkerReadinessCapability
         {
             NodeId = nodeId.ToProtoUuid(),
+            LogicalName = logicalName,
             Address = address,
             RootActorName = rootActorName,
             IsAlive = isAlive,

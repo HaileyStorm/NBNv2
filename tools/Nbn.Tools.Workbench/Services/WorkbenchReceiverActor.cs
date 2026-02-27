@@ -31,16 +31,32 @@ public sealed class WorkbenchReceiverActor : IActor
                 _ioGateway = setIo.Pid;
                 return Task.CompletedTask;
             case SubscribeOutputsCommand subscribe:
-                SendToIoRequest(context, new SubscribeOutputs { BrainId = subscribe.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new SubscribeOutputs
+                {
+                    BrainId = subscribe.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
                 return Task.CompletedTask;
             case UnsubscribeOutputsCommand unsubscribe:
-                SendToIoRequest(context, new UnsubscribeOutputs { BrainId = unsubscribe.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new UnsubscribeOutputs
+                {
+                    BrainId = unsubscribe.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
                 return Task.CompletedTask;
             case SubscribeOutputsVectorCommand subscribeVector:
-                SendToIoRequest(context, new SubscribeOutputsVector { BrainId = subscribeVector.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new SubscribeOutputsVector
+                {
+                    BrainId = subscribeVector.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
                 return Task.CompletedTask;
             case UnsubscribeOutputsVectorCommand unsubscribeVector:
-                SendToIoRequest(context, new UnsubscribeOutputsVector { BrainId = unsubscribeVector.BrainId.ToProtoUuid() });
+                SendToIoRequest(context, new UnsubscribeOutputsVector
+                {
+                    BrainId = unsubscribeVector.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                });
                 return Task.CompletedTask;
             case InputWriteCommand input:
                 SendToIo(context, new InputWrite
@@ -215,8 +231,7 @@ public sealed class WorkbenchReceiverActor : IActor
             return;
         }
 
-        // Use Request so the IO gateway sees the sender and can register subscriptions.
-        context.Request(_ioGateway, message);
+        context.Send(_ioGateway, message);
     }
 
     private void HandleOutput(OutputEvent output)
@@ -323,6 +338,12 @@ public sealed class WorkbenchReceiverActor : IActor
         }
 
         return preview;
+    }
+
+    private static string PidLabel(PID pid, string? fallbackAddress = null)
+    {
+        var address = string.IsNullOrWhiteSpace(pid.Address) ? fallbackAddress : pid.Address;
+        return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
     }
 }
 

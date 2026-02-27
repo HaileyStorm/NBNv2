@@ -1,5 +1,3 @@
-using Avalonia;
-using Avalonia.Headless;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
@@ -12,126 +10,141 @@ namespace Nbn.Tests.Workbench;
 
 public class DesignerPanelImportTests
 {
-    private static readonly object AvaloniaInitGate = new();
-    private static bool s_avaloniaInitialized;
-
     [Fact]
     public void TryImportNbnFromBytes_RejectsInputTargetInvariantViolation()
     {
-        var vm = CreateViewModel();
-        var statusBefore = vm.Status;
-        var summaryBefore = vm.LoadedSummary;
-        var brainBefore = vm.Brain;
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var vm = CreateViewModel();
+            var statusBefore = vm.Status;
+            var summaryBefore = vm.LoadedSummary;
+            var brainBefore = vm.Brain;
 
-        var imported = vm.TryImportNbnFromBytes(
-            CreateInvalidInputTargetNbn(),
-            "invalid-input-target.nbn");
+            var imported = vm.TryImportNbnFromBytes(
+                CreateInvalidInputTargetNbn(),
+                "invalid-input-target.nbn");
 
-        Assert.False(imported);
-        Assert.Same(brainBefore, vm.Brain);
-        Assert.Equal(summaryBefore, vm.LoadedSummary);
-        Assert.NotEqual(statusBefore, vm.Status);
-        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("invalid-input-target.nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("input region", vm.Status, StringComparison.OrdinalIgnoreCase);
+            Assert.False(imported);
+            Assert.Same(brainBefore, vm.Brain);
+            Assert.Equal(summaryBefore, vm.LoadedSummary);
+            Assert.NotEqual(statusBefore, vm.Status);
+            Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("invalid-input-target.nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("input region", vm.Status, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact]
     public void TryImportNbnFromBytes_RejectsOutputToOutputInvariantViolation()
     {
-        var vm = CreateViewModel();
-        var brainBefore = vm.Brain;
-        var summaryBefore = vm.LoadedSummary;
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var vm = CreateViewModel();
+            var brainBefore = vm.Brain;
+            var summaryBefore = vm.LoadedSummary;
 
-        var imported = vm.TryImportNbnFromBytes(
-            CreateInvalidOutputToOutputNbn(),
-            "invalid-output-output.nbn");
+            var imported = vm.TryImportNbnFromBytes(
+                CreateInvalidOutputToOutputNbn(),
+                "invalid-output-output.nbn");
 
-        Assert.False(imported);
-        Assert.Same(brainBefore, vm.Brain);
-        Assert.Equal(summaryBefore, vm.LoadedSummary);
-        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("output region", vm.Status, StringComparison.OrdinalIgnoreCase);
+            Assert.False(imported);
+            Assert.Same(brainBefore, vm.Brain);
+            Assert.Equal(summaryBefore, vm.LoadedSummary);
+            Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("output region", vm.Status, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact]
     public void TryImportNbnFromBytes_RejectsDuplicateAxonInvariantViolation()
     {
-        var vm = CreateViewModel();
-        var brainBefore = vm.Brain;
-        var summaryBefore = vm.LoadedSummary;
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var vm = CreateViewModel();
+            var brainBefore = vm.Brain;
+            var summaryBefore = vm.LoadedSummary;
 
-        var imported = vm.TryImportNbnFromBytes(
-            CreateInvalidDuplicateAxonNbn(),
-            "invalid-duplicate-axon.nbn");
+            var imported = vm.TryImportNbnFromBytes(
+                CreateInvalidDuplicateAxonNbn(),
+                "invalid-duplicate-axon.nbn");
 
-        Assert.False(imported);
-        Assert.Same(brainBefore, vm.Brain);
-        Assert.Equal(summaryBefore, vm.LoadedSummary);
-        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("duplicate axons", vm.Status, StringComparison.OrdinalIgnoreCase);
+            Assert.False(imported);
+            Assert.Same(brainBefore, vm.Brain);
+            Assert.Equal(summaryBefore, vm.LoadedSummary);
+            Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("duplicate axons", vm.Status, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact]
     public void TryImportNbnFromBytes_RejectsTargetSpanInvariantViolation()
     {
-        var vm = CreateViewModel();
-        var brainBefore = vm.Brain;
-        var summaryBefore = vm.LoadedSummary;
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var vm = CreateViewModel();
+            var brainBefore = vm.Brain;
+            var summaryBefore = vm.LoadedSummary;
 
-        var imported = vm.TryImportNbnFromBytes(
-            CreateInvalidTargetSpanNbn(),
-            "invalid-target-span.nbn");
+            var imported = vm.TryImportNbnFromBytes(
+                CreateInvalidTargetSpanNbn(),
+                "invalid-target-span.nbn");
 
-        Assert.False(imported);
-        Assert.Same(brainBefore, vm.Brain);
-        Assert.Equal(summaryBefore, vm.LoadedSummary);
-        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("destination region span", vm.Status, StringComparison.OrdinalIgnoreCase);
+            Assert.False(imported);
+            Assert.Same(brainBefore, vm.Brain);
+            Assert.Equal(summaryBefore, vm.LoadedSummary);
+            Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("destination region span", vm.Status, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Fact]
     public void TryImportNbnFromBytes_WhenMultipleValidationIssues_ReportsIssueCountSummary()
     {
-        var vm = CreateViewModel();
-        var brainBefore = vm.Brain;
-        var summaryBefore = vm.LoadedSummary;
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var vm = CreateViewModel();
+            var brainBefore = vm.Brain;
+            var summaryBefore = vm.LoadedSummary;
 
-        var imported = vm.TryImportNbnFromBytes(
-            CreateInvalidMultiIssueNbn(),
-            "invalid-multi-issue.nbn");
+            var imported = vm.TryImportNbnFromBytes(
+                CreateInvalidMultiIssueNbn(),
+                "invalid-multi-issue.nbn");
 
-        Assert.False(imported);
-        Assert.Same(brainBefore, vm.Brain);
-        Assert.Equal(summaryBefore, vm.LoadedSummary);
-        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("invalid-multi-issue.nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("(+", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("more issue(s))", vm.Status, StringComparison.Ordinal);
+            Assert.False(imported);
+            Assert.Same(brainBefore, vm.Brain);
+            Assert.Equal(summaryBefore, vm.LoadedSummary);
+            Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("invalid-multi-issue.nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("(+", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("more issue(s))", vm.Status, StringComparison.Ordinal);
+        });
     }
 
     [Fact]
     public void TryImportNbnFromBytes_RejectsMissingRequiredOutputRegion()
     {
-        var vm = CreateViewModel();
-        var brainBefore = vm.Brain;
-        var summaryBefore = vm.LoadedSummary;
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var vm = CreateViewModel();
+            var brainBefore = vm.Brain;
+            var summaryBefore = vm.LoadedSummary;
 
-        var imported = vm.TryImportNbnFromBytes(
-            CreateInvalidMissingOutputRegionNbn(),
-            "invalid-missing-output-region.nbn");
+            var imported = vm.TryImportNbnFromBytes(
+                CreateInvalidMissingOutputRegionNbn(),
+                "invalid-missing-output-region.nbn");
 
-        Assert.False(imported);
-        Assert.Same(brainBefore, vm.Brain);
-        Assert.Equal(summaryBefore, vm.LoadedSummary);
-        Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("invalid-missing-output-region.nbn", vm.Status, StringComparison.Ordinal);
-        Assert.Contains("output region must be present", vm.Status, StringComparison.OrdinalIgnoreCase);
+            Assert.False(imported);
+            Assert.Same(brainBefore, vm.Brain);
+            Assert.Equal(summaryBefore, vm.LoadedSummary);
+            Assert.Contains("Import failed: Invalid .nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("invalid-missing-output-region.nbn", vm.Status, StringComparison.Ordinal);
+            Assert.Contains("output region must be present", vm.Status, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     private static DesignerPanelViewModel CreateViewModel()
     {
-        EnsureAvaloniaInitialized();
+        AvaloniaTestHost.EnsureInitialized();
         var connections = new ConnectionViewModel();
         var client = new WorkbenchClient(new NullWorkbenchEventSink());
         var vm = new DesignerPanelViewModel(connections, client);
@@ -301,32 +314,6 @@ public class DesignerPanelImportTests
             directory);
 
         return NbnBinary.WriteNbn(header, sections);
-    }
-
-    private static void EnsureAvaloniaInitialized()
-    {
-        lock (AvaloniaInitGate)
-        {
-            if (s_avaloniaInitialized || Application.Current is not null)
-            {
-                s_avaloniaInitialized = true;
-                return;
-            }
-
-            try
-            {
-                AppBuilder.Configure<Application>()
-                    .UseHeadless(new AvaloniaHeadlessPlatformOptions())
-                    .SetupWithoutStarting();
-            }
-            catch (InvalidOperationException ex)
-                when (ex.Message.Contains("Setup was already called", StringComparison.Ordinal))
-            {
-                // Another test class initialized Avalonia first; reuse that process-level setup.
-            }
-
-            s_avaloniaInitialized = true;
-        }
     }
 
     private readonly record struct RegionSpec(byte RegionId, NeuronRecord[] Neurons, AxonRecord[] Axons);

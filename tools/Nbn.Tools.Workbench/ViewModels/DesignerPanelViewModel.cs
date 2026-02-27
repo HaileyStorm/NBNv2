@@ -38,6 +38,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const int DefaultInputActivationFunctionId = 1; // ACT_IDENTITY
     private const int DefaultOutputActivationFunctionId = 11; // ACT_TANH
     private const int DefaultInputResetFunctionId = 0; // RESET_ZERO
+    private const int ActivityDriverActivationFunctionId = 17; // ACT_ADD
+    private const int ActivityDriverResetFunctionId = 0; // RESET_ZERO
+    private const int ActivityDriverParamACode = 63;
+    private const int ActivityDriverStrengthCode = 31;
     private const int MaxKnownActivationFunctionId = 29;
     private const int MaxKnownResetFunctionId = 60;
     private const string FunctionLegendText = "Legend: B=buffer, I=inbox, P=potential, T=activation threshold, A=Param A, Bp=Param B, K=out-degree.";
@@ -799,6 +803,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         EnsureNeuronOutboundCoverage(rng, brain, options);
         EnsureRegionInboundConnectivity(rng, brain, options);
         EnsureOutputInbound(rng, brain, options);
+        EnsureBaselineActivityPath(rng, brain);
         var normalizedFunctions = NormalizeBrainFunctionConstraints(brain);
         brain.UpdateTotals();
 
@@ -1177,12 +1182,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var nbnBytes = NbnBinary.WriteNbn(header, sections);
             var store = new LocalArtifactStore(new ArtifactStoreOptions(brainArtifactRoot));
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
-            var artifactSha = manifest.ArtifactId.ToHex();
-            var artifactSize = manifest.ByteLength;
-            var artifactRef = artifactSha.ToArtifactRef((ulong)Math.Max(0L, artifactSize), "application/x-nbn", brainArtifactRoot);
-
-            var inputWidth = Brain.Regions[NbnConstants.InputRegionId].NeuronCount;
-            var outputWidth = Brain.Regions[NbnConstants.OutputRegionId].NeuronCount;
+            var artifactRef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)Math.Max(0L, manifest.ByteLength), "application/x-nbn", brainArtifactRoot);
 
             Status = "Spawning brain via IO/HiveMind worker placement...";
             var spawnAck = await _client.SpawnBrainViaIoAsync(new ProtoControl.SpawnBrain
@@ -1198,25 +1199,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     prefix: "Spawn failed",
                     ack: spawnAck,
                     fallbackMessage: "Spawn failed: IO did not return a brain id.");
-                return;
-            }
-
-            var placementAck = await _client.RequestPlacementAsync(BuildPlacementRequest(
-                spawnedBrainId,
-                inputWidth,
-                outputWidth,
-                artifactSha,
-                artifactSize,
-                shardPlanMode,
-                shardCount,
-                maxNeuronsPerShard,
-                brainArtifactRoot)).ConfigureAwait(false);
-
-            if (placementAck is null || !placementAck.Accepted)
-            {
-                var message = placementAck?.Message ?? "Placement request failed.";
-                await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_placement_failed").ConfigureAwait(false);
-                Status = message;
                 return;
             }
 
@@ -3967,6 +3949,67 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             sourceRegion.UpdateCounts();
             return;
         }
+    }
+
+    private static void EnsureBaselineActivityPath(Random rng, DesignerBrainViewModel brain)
+    {
+        var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+        if (outputRegion.NeuronCount == 0)
+        {
+            return;
+        }
+
+        var outputNeuron = outputRegion.Neurons.FirstOrDefault(neuron => neuron.Exists) ?? outputRegion.Neurons[0];
+        outputNeuron.Exists = true;
+        outputNeuron.ActivationFunctionId = DefaultInputActivationFunctionId;
+        outputNeuron.ResetFunctionId = DefaultInputResetFunctionId;
+        outputNeuron.AccumulationFunctionId = 0;
+        outputNeuron.PreActivationThresholdCode = 0;
+        outputNeuron.ActivationThresholdCode = 0;
+        outputNeuron.ParamACode = 0;
+        outputNeuron.ParamBCode = 0;
+
+        var candidateRegions = brain.Regions
+            .Where(region => region.RegionId != NbnConstants.OutputRegionId && region.NeuronCount > 0)
+            .OrderBy(region => region.RegionId == NbnConstants.InputRegionId ? 1 : 0)
+            .ToList();
+
+        if (candidateRegions.Count == 0)
+        {
+            return;
+        }
+
+        var sourceRegion = candidateRegions[rng.Next(candidateRegions.Count)];
+        var sourceNeuron = sourceRegion.Neurons.FirstOrDefault(neuron => neuron.Exists) ?? sourceRegion.Neurons[0];
+        sourceNeuron.Exists = true;
+        sourceNeuron.ActivationFunctionId = ActivityDriverActivationFunctionId;
+        sourceNeuron.ResetFunctionId = ActivityDriverResetFunctionId;
+        sourceNeuron.AccumulationFunctionId = 0;
+        sourceNeuron.PreActivationThresholdCode = 0;
+        sourceNeuron.ActivationThresholdCode = 0;
+        sourceNeuron.ParamACode = ActivityDriverParamACode;
+        sourceNeuron.ParamBCode = 0;
+
+        var hasOutputEdge = sourceNeuron.Axons.Any(axon => axon.TargetRegionId == NbnConstants.OutputRegionId
+                                                           && axon.TargetNeuronId == outputNeuron.NeuronId);
+        if (!hasOutputEdge && sourceNeuron.Axons.Count < NbnConstants.MaxAxonsPerNeuron)
+        {
+            sourceNeuron.Axons.Add(new DesignerAxonViewModel(
+                NbnConstants.OutputRegionId,
+                outputNeuron.NeuronId,
+                ActivityDriverStrengthCode));
+        }
+
+        var outputAxon = sourceNeuron.Axons.FirstOrDefault(axon => axon.TargetRegionId == NbnConstants.OutputRegionId
+                                                                    && axon.TargetNeuronId == outputNeuron.NeuronId);
+        if (outputAxon is not null)
+        {
+            outputAxon.StrengthCode = ActivityDriverStrengthCode;
+        }
+
+        sourceNeuron.UpdateAxonCount();
+        sourceRegion.UpdateCounts();
+        outputRegion.UpdateCounts();
     }
 
     private static int PickWeightedIndex(Random rng, IReadOnlyList<double> weights)

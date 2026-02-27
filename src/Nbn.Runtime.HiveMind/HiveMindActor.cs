@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using Nbn.Proto.Debug;
@@ -37,8 +39,17 @@ public sealed class HiveMindActor : IActor
     private readonly Dictionary<ShardKey, PID> _pendingComputeSenders = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
     private readonly Dictionary<Guid, PID> _pendingDeliverSenders = new();
+    private readonly Dictionary<string, VisualizationSubscriberLease> _vizSubscriberLeases = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private ulong _vizSequence;
     private long _workerCatalogSnapshotMs;
+    private static readonly bool LogTickBarrier = IsEnvTrue("NBN_HIVEMIND_LOG_TICK_BARRIER");
+    private static readonly TimeSpan VisualizationSubscriberSweepInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly PropertyInfo? ProcessRegistryProperty = typeof(ActorSystem).GetProperty(
+        "ProcessRegistry",
+        BindingFlags.Instance | BindingFlags.Public);
+    private static readonly MethodInfo? ProcessRegistryLookupMethod = ResolveProcessRegistryLookupMethod();
     private static readonly TimeSpan SnapshotShardRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
 
@@ -82,6 +93,8 @@ public sealed class HiveMindActor : IActor
                     {
                         ScheduleNextTick(context, TimeSpan.Zero);
                     }
+
+                    ScheduleSelf(context, VisualizationSubscriberSweepInterval, new SweepVisualizationSubscribers());
 
                     if (_settingsPid is not null)
                     {
@@ -195,11 +208,17 @@ public sealed class HiveMindActor : IActor
                 case ProtoSettings.WorkerInventorySnapshotResponse message:
                     HandleWorkerInventorySnapshotResponse(message);
                     break;
+                case ProtoSettings.NodeListResponse message:
+                    HandleNodeListResponse(message);
+                    break;
                 case ProtoSettings.SettingValue message:
                     HandleSettingValue(context, message);
                     break;
                 case ProtoSettings.SettingChanged message:
                     HandleSettingChanged(context, message);
+                    break;
+                case SweepVisualizationSubscribers:
+                    HandleSweepVisualizationSubscribers(context);
                     break;
                 case PauseBrainRequest message:
                     PauseBrain(context, message.BrainId, message.Reason);
@@ -252,6 +271,9 @@ public sealed class HiveMindActor : IActor
                     {
                         context.Respond(new ProtoControl.BrainRoutingInfo());
                     }
+                    break;
+                case Terminated message:
+                    HandleVisualizationSubscriberTerminated(context, message.Who);
                     break;
         }
 
@@ -500,6 +522,7 @@ public sealed class HiveMindActor : IActor
         }
 
         DispatchPlacementUnassignments(context, brain, brain.PlacementExecution, reason);
+        ReleaseBrainVisualizationSubscribers(context, brain);
         _brains.Remove(brainId);
 
         if (_pendingSpawns.Remove(brainId, out var pendingSpawn))
@@ -582,7 +605,8 @@ public sealed class HiveMindActor : IActor
             _debugStreamEnabled,
             _debugMinSeverity);
         UpdateRoutingTable(context, brain);
-        if (brain.PlacementEpoch > 0)
+        if (brain.PlacementEpoch > 0
+            && (brain.PlacementExecution is null || brain.PlacementExecution.Completed))
         {
             UpdatePlacementLifecycle(
                 brain,
@@ -1134,7 +1158,16 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out var brain, out var reason))
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            const string missingReason = "brain_not_registered";
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_visualization", brainId, missingReason);
+            HiveMindTelemetry.RecordSetBrainVisualizationRejected(brainId, missingReason);
+            return;
+        }
+
+        if (context.Sender is not null
+            && !IsControlPlaneBrainMutationAuthorized(context, brainId, out _, out var reason))
         {
             EmitControlPlaneMutationIgnored(context, "control.set_brain_visualization", brainId, reason);
             HiveMindTelemetry.RecordSetBrainVisualizationRejected(brainId, reason);
@@ -1142,7 +1175,8 @@ public sealed class HiveMindActor : IActor
         }
 
         var focusRegionId = message.HasFocusRegion ? (uint?)message.FocusRegionId : null;
-        SetBrainVisualization(context, brain, message.Enabled, focusRegionId);
+        var subscriber = ResolveVisualizationSubscriber(context, message);
+        SetBrainVisualization(context, brain, subscriber, message.Enabled, focusRegionId);
     }
 
     private void HandleSetBrainCostEnergy(IContext context, ProtoControl.SetBrainCostEnergy message)
@@ -2322,7 +2356,7 @@ public sealed class HiveMindActor : IActor
 
     private static bool PidEquals(PID? left, PID right)
         => left is not null
-           && string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.Ordinal)
+           && string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.OrdinalIgnoreCase)
            && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
 
     private static bool SenderMatchesPid(PID? sender, PID expected)
@@ -2332,7 +2366,209 @@ public sealed class HiveMindActor : IActor
             return false;
         }
 
-        return expected.Equals(sender) || PidEquals(sender, expected);
+        return expected.Equals(sender)
+               || PidEquals(sender, expected)
+               || PidHasEquivalentEndpoint(sender, expected);
+    }
+
+    private static bool PidHasEquivalentEndpoint(PID sender, PID expected)
+    {
+        if (!string.Equals(sender.Id ?? string.Empty, expected.Id ?? string.Empty, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!TryParseEndpoint(sender.Address, out var senderHost, out var senderPort)
+            || !TryParseEndpoint(expected.Address, out var expectedHost, out var expectedPort))
+        {
+            return false;
+        }
+
+        if (senderPort != expectedPort)
+        {
+            return false;
+        }
+
+        if (string.Equals(senderHost, expectedHost, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var senderClass = ClassifyEndpointHost(senderHost);
+        var expectedClass = ClassifyEndpointHost(expectedHost);
+        if (senderClass == EndpointHostClass.Loopback && expectedClass == EndpointHostClass.Loopback)
+        {
+            return true;
+        }
+
+        return (senderClass == EndpointHostClass.Wildcard && expectedClass == EndpointHostClass.Loopback)
+               || (senderClass == EndpointHostClass.Loopback && expectedClass == EndpointHostClass.Wildcard);
+    }
+
+    private static bool TryParseEndpoint(string? address, out string host, out int port)
+    {
+        host = string.Empty;
+        port = 0;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return false;
+        }
+
+        var trimmed = address.Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        if (trimmed[0] == '[')
+        {
+            var closingBracket = trimmed.IndexOf(']');
+            if (closingBracket <= 1 || closingBracket >= trimmed.Length - 1 || trimmed[closingBracket + 1] != ':')
+            {
+                return false;
+            }
+
+            var bracketHost = trimmed[1..closingBracket];
+            var bracketPort = trimmed[(closingBracket + 2)..];
+            if (!int.TryParse(bracketPort, NumberStyles.None, CultureInfo.InvariantCulture, out port) || port <= 0)
+            {
+                return false;
+            }
+
+            host = bracketHost;
+            return !string.IsNullOrWhiteSpace(host);
+        }
+
+        var separator = trimmed.LastIndexOf(':');
+        if (separator <= 0 || separator >= trimmed.Length - 1)
+        {
+            return false;
+        }
+
+        var hostToken = trimmed[..separator];
+        var portToken = trimmed[(separator + 1)..];
+        if (!int.TryParse(portToken, NumberStyles.None, CultureInfo.InvariantCulture, out port) || port <= 0)
+        {
+            return false;
+        }
+
+        host = hostToken;
+        return !string.IsNullOrWhiteSpace(host);
+    }
+
+    private static EndpointHostClass ClassifyEndpointHost(string host)
+    {
+        var normalized = host.Trim();
+        if (normalized.StartsWith("[", StringComparison.Ordinal) && normalized.EndsWith("]", StringComparison.Ordinal))
+        {
+            normalized = normalized[1..^1];
+        }
+
+        if (normalized.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("::1", StringComparison.OrdinalIgnoreCase))
+        {
+            return EndpointHostClass.Loopback;
+        }
+
+        if (normalized.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("::", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("*", StringComparison.Ordinal)
+            || normalized.Equals("+", StringComparison.Ordinal))
+        {
+            return EndpointHostClass.Wildcard;
+        }
+
+        return EndpointHostClass.Other;
+    }
+
+    private static string NormalizeEndpointAddress(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return string.Empty;
+        }
+
+        if (TryParseEndpoint(address, out var host, out var port))
+        {
+            return $"{host.Trim().ToLowerInvariant()}:{port.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        return address.Trim().ToLowerInvariant();
+    }
+
+    private static bool IsLikelyLocalSubscriberPid(ActorSystem system, PID? pid)
+    {
+        if (pid is null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(pid.Address))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(system.Address))
+        {
+            return false;
+        }
+
+        if (string.Equals(pid.Address, system.Address, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var probeSender = new PID(pid.Address, "probe");
+        var probeExpected = new PID(system.Address, "probe");
+        return PidHasEquivalentEndpoint(probeSender, probeExpected);
+    }
+
+    private static bool TryLookupProcessInRegistry(ActorSystem system, PID pid, out object? process)
+    {
+        process = null;
+        if (ProcessRegistryProperty is null || ProcessRegistryLookupMethod is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var registry = ProcessRegistryProperty.GetValue(system);
+            if (registry is null)
+            {
+                return false;
+            }
+
+            process = ProcessRegistryLookupMethod.Invoke(registry, new object?[] { pid });
+            return true;
+        }
+        catch
+        {
+            process = null;
+            return false;
+        }
+    }
+
+    private static MethodInfo? ResolveProcessRegistryLookupMethod()
+    {
+        var registryType = ProcessRegistryProperty?.PropertyType;
+        if (registryType is null)
+        {
+            return null;
+        }
+
+        return registryType
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(static method =>
+            {
+                var parameters = method.GetParameters();
+                return parameters.Length == 1
+                       && parameters[0].ParameterType == typeof(PID)
+                       && method.ReturnType != typeof(void)
+                       && method.ReturnType != typeof(bool)
+                       && !method.ReturnType.IsByRef;
+            });
     }
 
     private static string ToPlacementTargetLabel(ProtoControl.PlacementAssignmentTarget target)
@@ -3093,6 +3329,7 @@ public sealed class HiveMindActor : IActor
 
         var snapshotMs = _workerCatalogSnapshotMs > 0 ? (ulong)_workerCatalogSnapshotMs : (ulong)nowMs;
         var workers = _workerCatalog.Values
+            .Where(static entry => IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName))
             .Select(static entry => new PlacementPlanner.WorkerCandidate(
                 entry.NodeId,
                 entry.WorkerAddress,
@@ -3273,6 +3510,7 @@ public sealed class HiveMindActor : IActor
         try
         {
             context.Request(_settingsPid, new ProtoSettings.WorkerInventorySnapshotRequest());
+            context.Request(_settingsPid, new ProtoSettings.NodeListRequest());
         }
         catch (Exception ex)
         {
@@ -3312,6 +3550,7 @@ public sealed class HiveMindActor : IActor
                 : 0;
 
             entry.WorkerAddress = worker.Address ?? string.Empty;
+            entry.LogicalName = worker.LogicalName ?? string.Empty;
             entry.WorkerRootActorName = worker.RootActorName ?? string.Empty;
             entry.IsAlive = worker.IsAlive;
             entry.IsReady = worker.IsReady;
@@ -3330,6 +3569,96 @@ public sealed class HiveMindActor : IActor
         RefreshWorkerCatalogFreshness(snapshotMs);
     }
 
+    private void HandleNodeListResponse(ProtoSettings.NodeListResponse message)
+    {
+        _activeSettingsNodeAddresses.Clear();
+        foreach (var node in message.Nodes)
+        {
+            var normalizedAddress = NormalizeEndpointAddress(node.Address);
+            if (string.IsNullOrWhiteSpace(normalizedAddress))
+            {
+                continue;
+            }
+
+            _knownSettingsNodeAddresses.Add(normalizedAddress);
+            if (node.IsAlive)
+            {
+                _activeSettingsNodeAddresses.Add(normalizedAddress);
+            }
+        }
+    }
+
+    private void HandleSweepVisualizationSubscribers(IContext context)
+    {
+        try
+        {
+            SweepSubscribersBySettingsNodeLiveness(context);
+            SweepSubscribersByLocalProcessLiveness(context);
+        }
+        finally
+        {
+            ScheduleSelf(context, VisualizationSubscriberSweepInterval, new SweepVisualizationSubscribers());
+        }
+    }
+
+    private void SweepSubscribersBySettingsNodeLiveness(IContext context)
+    {
+        if (_vizSubscriberLeases.Count == 0 || _knownSettingsNodeAddresses.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in _vizSubscriberLeases.ToArray())
+        {
+            var pid = entry.Value.Pid;
+            if (pid is null || string.IsNullOrWhiteSpace(pid.Address))
+            {
+                continue;
+            }
+
+            var normalizedAddress = NormalizeEndpointAddress(pid.Address);
+            if (string.IsNullOrWhiteSpace(normalizedAddress))
+            {
+                continue;
+            }
+
+            if (!_knownSettingsNodeAddresses.Contains(normalizedAddress)
+                || _activeSettingsNodeAddresses.Contains(normalizedAddress))
+            {
+                continue;
+            }
+
+            RemoveVisualizationSubscriber(context, entry.Key);
+        }
+    }
+
+    private void SweepSubscribersByLocalProcessLiveness(IContext context)
+    {
+        if (_vizSubscriberLeases.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var entry in _vizSubscriberLeases.ToArray())
+        {
+            var pid = entry.Value.Pid;
+            if (!IsLikelyLocalSubscriberPid(context.System, pid))
+            {
+                continue;
+            }
+
+            if (!TryLookupProcessInRegistry(context.System, pid!, out var process))
+            {
+                continue;
+            }
+
+            if (process is null || process.GetType().Name.Contains("DeadLetter", StringComparison.OrdinalIgnoreCase))
+            {
+                RemoveVisualizationSubscriber(context, entry.Key);
+            }
+        }
+    }
+
     private ProtoControl.PlacementWorkerInventory BuildPlacementWorkerInventory()
     {
         var nowMs = NowMs();
@@ -3342,7 +3671,11 @@ public sealed class HiveMindActor : IActor
         };
 
         foreach (var entry in _workerCatalog.Values
-                     .Where(static worker => worker.IsAlive && worker.IsReady && worker.IsFresh)
+                     .Where(static worker =>
+                         worker.IsAlive
+                         && worker.IsReady
+                         && worker.IsFresh
+                         && IsPlacementWorkerCandidate(worker.LogicalName, worker.WorkerRootActorName))
                      .OrderBy(static worker => worker.WorkerAddress, StringComparer.Ordinal)
                      .ThenBy(static worker => worker.NodeId))
         {
@@ -3392,6 +3725,38 @@ public sealed class HiveMindActor : IActor
         return nowMs - timestampMs <= staleAfterMs;
     }
 
+    private static bool IsPlacementWorkerCandidate(string? logicalName, string? rootActorName)
+    {
+        if (string.IsNullOrWhiteSpace(logicalName))
+        {
+            // Legacy/synthetic test snapshots may not set logical names.
+            return true;
+        }
+
+        var normalizedLogical = logicalName.Trim();
+        if (normalizedLogical.StartsWith("nbn.worker", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(rootActorName))
+        {
+            return false;
+        }
+
+        var normalizedRoot = rootActorName.Trim();
+        if (normalizedRoot.StartsWith("worker-node", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Legacy RegionHost workers can still be considered compute-capable workers.
+        return normalizedRoot.Equals("regionhost", StringComparison.OrdinalIgnoreCase)
+               || normalizedRoot.Equals("region-host", StringComparison.OrdinalIgnoreCase)
+               || normalizedRoot.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase)
+               || normalizedRoot.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase);
+    }
+
     private void PauseBrain(IContext context, Guid brainId, string? reason)
     {
         if (!_brains.TryGetValue(brainId, out var brain))
@@ -3433,7 +3798,7 @@ public sealed class HiveMindActor : IActor
     private void StartTick(IContext context)
     {
         _tick = new TickState(_lastCompletedTickId + 1, DateTime.UtcNow);
-        EmitVizEvent(context, VizEventType.VizTick, tickId: _tick.TickId);
+        EmitTickVisualizationEvents(context, _tick.TickId);
         _phase = TickPhase.Compute;
         ClearPendingCompute();
         ClearPendingDeliver();
@@ -3442,7 +3807,7 @@ public sealed class HiveMindActor : IActor
 
         foreach (var brain in _brains.Values)
         {
-            if (brain.Paused || brain.Shards.Count == 0)
+            if (!CanDispatchTickToBrain(brain))
             {
                 continue;
             }
@@ -3466,6 +3831,12 @@ public sealed class HiveMindActor : IActor
                 _pendingComputeSenders[key] = senderPid;
             }
 
+            if (LogTickBarrier)
+            {
+                Log(
+                    $"TickCompute dispatch tick={_tick.TickId} brain={brain.BrainId} target={PidLabel(computeTarget)} shards={brain.Shards.Count} pendingCompute={_pendingCompute.Count}");
+            }
+
             context.Send(
                 computeTarget,
                 new ProtoControl.TickCompute
@@ -3484,6 +3855,19 @@ public sealed class HiveMindActor : IActor
         }
 
         SchedulePhaseTimeout(context, TickPhase.Compute, _tick.TickId, _options.ComputeTimeoutMs);
+    }
+
+    private void EmitTickVisualizationEvents(IContext context, ulong tickId)
+    {
+        foreach (var brain in _brains.Values)
+        {
+            if (!brain.VisualizationEnabled)
+            {
+                continue;
+            }
+
+            EmitVizEvent(context, VizEventType.VizTick, brainId: brain.BrainId, tickId: tickId);
+        }
     }
 
     private void HandleTickComputeDone(IContext context, ProtoControl.TickComputeDone message)
@@ -3515,13 +3899,23 @@ public sealed class HiveMindActor : IActor
         var shardId = message.ShardId.ToShardId32();
         var key = new ShardKey(brainId, shardId);
 
+        if (LogTickBarrier)
+        {
+            var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+            Log($"TickComputeDone recv tick={message.TickId} brain={brainId} shard={shardId} sender={senderLabel}");
+        }
+
         if (!_pendingComputeSenders.TryGetValue(key, out var expectedSender))
         {
             EmitTickComputeDoneIgnored(context, message, "untracked_payload");
             return;
         }
 
-        if (!SenderMatchesPid(context.Sender, expectedSender))
+        var senderMatchesExpected = SenderMatchesPid(context.Sender, expectedSender);
+        var senderMatchesTrustedController = !senderMatchesExpected
+            && _brains.TryGetValue(brainId, out var brain)
+            && IsTrustedControllerSender(context.Sender, brain);
+        if (!senderMatchesExpected && !senderMatchesTrustedController)
         {
             EmitTickComputeDoneIgnored(context, message, "sender_mismatch", expectedSender);
             return;
@@ -3574,13 +3968,23 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (LogTickBarrier)
+        {
+            var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+            Log($"TickDeliverDone recv tick={message.TickId} brain={brainId} sender={senderLabel}");
+        }
+
         if (!_pendingDeliverSenders.TryGetValue(brainId, out var expectedSender))
         {
             EmitTickDeliverDoneIgnored(context, message, "untracked_payload");
             return;
         }
 
-        if (!SenderMatchesPid(context.Sender, expectedSender))
+        var senderMatchesExpected = SenderMatchesPid(context.Sender, expectedSender);
+        var senderMatchesTrustedController = !senderMatchesExpected
+            && _brains.TryGetValue(brainId, out var brain)
+            && IsTrustedControllerSender(context.Sender, brain);
+        if (!senderMatchesExpected && !senderMatchesTrustedController)
         {
             EmitTickDeliverDoneIgnored(context, message, "sender_mismatch", expectedSender);
             return;
@@ -3659,7 +4063,7 @@ public sealed class HiveMindActor : IActor
 
         foreach (var brain in _brains.Values)
         {
-            if (brain.Paused || brain.Shards.Count == 0)
+            if (!CanDispatchTickToBrain(brain))
             {
                 continue;
             }
@@ -3783,6 +4187,13 @@ public sealed class HiveMindActor : IActor
         }
 
         ScheduleSelf(context, delay, new TickStart());
+    }
+
+    private static bool CanDispatchTickToBrain(BrainState brain)
+    {
+        // Placement reconciliation metadata can lag behind already-hosted shards.
+        // Tick dispatch should follow runnable state (paused + shard availability).
+        return !brain.Paused && brain.Shards.Count > 0;
     }
 
     private void SchedulePhaseTimeout(IContext context, TickPhase phase, ulong tickId, int timeoutMs)
@@ -3964,6 +4375,17 @@ public sealed class HiveMindActor : IActor
         return delay <= TimeSpan.Zero ? TimeSpan.Zero : delay;
     }
 
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+    }
+
     private static void Log(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [HiveMind] {message}");
 
@@ -4010,6 +4432,10 @@ public sealed class HiveMindActor : IActor
             ProtoSeverity.SevDebug,
             "tick.compute_done.ignored",
             $"Ignored TickComputeDone. reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}.");
+        if (LogTickBarrier)
+        {
+            Log($"TickComputeDone ignored reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}");
+        }
     }
 
     private void EmitTickDeliverDoneIgnored(
@@ -4028,6 +4454,10 @@ public sealed class HiveMindActor : IActor
             ProtoSeverity.SevDebug,
             "tick.deliver_done.ignored",
             $"Ignored TickDeliverDone. reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}.");
+        if (LogTickBarrier)
+        {
+            Log($"TickDeliverDone ignored reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}");
+        }
     }
 
     private static PID? NormalizePid(IContext context, PID? pid)
@@ -4822,15 +5252,108 @@ public sealed class HiveMindActor : IActor
         }
     }
 
-    private void SetBrainVisualization(IContext context, BrainState brain, bool enabled, uint? focusRegionId)
+    private VisualizationSubscriber ResolveVisualizationSubscriber(IContext context, ProtoControl.SetBrainVisualization message)
     {
-        if (brain.VisualizationEnabled == enabled && brain.VisualizationFocusRegionId == focusRegionId)
+        if (TryParsePid(message.SubscriberActor, out var parsedSubscriberPid))
+        {
+            var normalizedSubscriberPid = NormalizePid(context, parsedSubscriberPid) ?? parsedSubscriberPid;
+            normalizedSubscriberPid = ResolveSendTargetPid(context, normalizedSubscriberPid);
+            return new VisualizationSubscriber(PidLabel(normalizedSubscriberPid), normalizedSubscriberPid);
+        }
+
+        if (context.Sender is not null)
+        {
+            var normalizedSender = NormalizePid(context, context.Sender) ?? context.Sender;
+            normalizedSender = ResolveSendTargetPid(context, normalizedSender);
+            return new VisualizationSubscriber(PidLabel(normalizedSender), normalizedSender);
+        }
+
+        // Legacy senderless requests map to one shared slot to preserve compatibility.
+        return new VisualizationSubscriber("legacy:senderless", null);
+    }
+
+    private void SetBrainVisualization(
+        IContext context,
+        BrainState brain,
+        VisualizationSubscriber subscriber,
+        bool enabled,
+        uint? focusRegionId)
+    {
+        if (enabled)
+        {
+            var isNewSubscription = !brain.VisualizationSubscribers.ContainsKey(subscriber.Key);
+            brain.VisualizationSubscribers[subscriber.Key] = new VisualizationSubscriberPreference(
+                subscriber.Key,
+                focusRegionId,
+                subscriber.Pid);
+            if (isNewSubscription)
+            {
+                RetainVisualizationSubscriberLease(context, subscriber);
+            }
+            else if (subscriber.Pid is not null)
+            {
+                RefreshVisualizationSubscriberLeasePid(context, subscriber);
+            }
+        }
+        else if (brain.VisualizationSubscribers.Remove(subscriber.Key))
+        {
+            ReleaseVisualizationSubscriberLease(context, subscriber.Key);
+        }
+
+        ApplyEffectiveVisualizationScope(context, brain);
+    }
+
+    private void RetainVisualizationSubscriberLease(IContext context, VisualizationSubscriber subscriber)
+    {
+        if (_vizSubscriberLeases.TryGetValue(subscriber.Key, out var existingLease))
+        {
+            existingLease.Retain(context, subscriber.Pid);
+            return;
+        }
+
+        var lease = new VisualizationSubscriberLease(subscriber.Key, subscriber.Pid);
+        lease.Retain(context, subscriber.Pid);
+        _vizSubscriberLeases.Add(subscriber.Key, lease);
+    }
+
+    private void RefreshVisualizationSubscriberLeasePid(IContext context, VisualizationSubscriber subscriber)
+    {
+        if (subscriber.Pid is null || !_vizSubscriberLeases.TryGetValue(subscriber.Key, out var lease))
         {
             return;
         }
 
-        brain.VisualizationEnabled = enabled;
-        brain.VisualizationFocusRegionId = enabled ? focusRegionId : null;
+        lease.RefreshPid(context, subscriber.Pid);
+    }
+
+    private void ReleaseVisualizationSubscriberLease(IContext context, string subscriberKey)
+    {
+        if (!_vizSubscriberLeases.TryGetValue(subscriberKey, out var lease))
+        {
+            return;
+        }
+
+        if (!lease.Release(context))
+        {
+            return;
+        }
+
+        _vizSubscriberLeases.Remove(subscriberKey);
+    }
+
+    private void ApplyEffectiveVisualizationScope(IContext context, BrainState brain)
+    {
+        var nextEnabled = brain.VisualizationSubscribers.Count > 0;
+        var nextFocusRegionId = nextEnabled
+            ? ComputeEffectiveVisualizationFocus(brain.VisualizationSubscribers.Values)
+            : null;
+        if (brain.VisualizationEnabled == nextEnabled && brain.VisualizationFocusRegionId == nextFocusRegionId)
+        {
+            return;
+        }
+
+        brain.VisualizationEnabled = nextEnabled;
+        brain.VisualizationFocusRegionId = nextEnabled ? nextFocusRegionId : null;
         foreach (var entry in brain.Shards)
         {
             SendShardVisualizationUpdate(
@@ -4838,7 +5361,7 @@ public sealed class HiveMindActor : IActor
                 brain.BrainId,
                 entry.Key,
                 entry.Value,
-                enabled,
+                nextEnabled,
                 brain.VisualizationFocusRegionId);
         }
 
@@ -4846,7 +5369,103 @@ public sealed class HiveMindActor : IActor
             context,
             ProtoSeverity.SevDebug,
             "viz.toggle",
-            $"Brain={brain.BrainId} enabled={enabled} focus={(brain.VisualizationFocusRegionId.HasValue ? $"R{brain.VisualizationFocusRegionId.Value}" : "all")} shards={brain.Shards.Count}");
+            $"Brain={brain.BrainId} enabled={nextEnabled} focus={(brain.VisualizationFocusRegionId.HasValue ? $"R{brain.VisualizationFocusRegionId.Value}" : "all")} subscribers={brain.VisualizationSubscribers.Count} shards={brain.Shards.Count}");
+    }
+
+    private static uint? ComputeEffectiveVisualizationFocus(IEnumerable<VisualizationSubscriberPreference> preferences)
+    {
+        uint? commonFocusRegionId = null;
+        var hasFocusedSubscriber = false;
+        foreach (var preference in preferences)
+        {
+            if (!preference.FocusRegionId.HasValue)
+            {
+                // Any full-brain subscriber requires full-brain emission.
+                return null;
+            }
+
+            var focusRegionId = preference.FocusRegionId.Value;
+            if (!hasFocusedSubscriber)
+            {
+                commonFocusRegionId = focusRegionId;
+                hasFocusedSubscriber = true;
+                continue;
+            }
+
+            if (commonFocusRegionId != focusRegionId)
+            {
+                // Conflicting focus subscriptions fall back to full-brain emission.
+                return null;
+            }
+        }
+
+        return hasFocusedSubscriber ? commonFocusRegionId : null;
+    }
+
+    private void HandleVisualizationSubscriberTerminated(IContext context, PID terminatedPid)
+    {
+        if (!TryResolveVisualizationSubscriberKey(terminatedPid, out var subscriberKey))
+        {
+            return;
+        }
+
+        RemoveVisualizationSubscriber(context, subscriberKey);
+    }
+
+    private bool TryResolveVisualizationSubscriberKey(PID terminatedPid, out string subscriberKey)
+    {
+        subscriberKey = PidLabel(terminatedPid);
+        if (_vizSubscriberLeases.ContainsKey(subscriberKey))
+        {
+            return true;
+        }
+
+        foreach (var lease in _vizSubscriberLeases)
+        {
+            if (lease.Value.Matches(terminatedPid))
+            {
+                subscriberKey = lease.Key;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void RemoveVisualizationSubscriber(IContext context, string subscriberKey)
+    {
+        if (!_vizSubscriberLeases.Remove(subscriberKey, out var lease))
+        {
+            return;
+        }
+
+        lease.Unwatch(context);
+        foreach (var brain in _brains.Values)
+        {
+            if (!brain.VisualizationSubscribers.Remove(subscriberKey))
+            {
+                continue;
+            }
+
+            ApplyEffectiveVisualizationScope(context, brain);
+        }
+    }
+
+    private void ReleaseBrainVisualizationSubscribers(IContext context, BrainState brain)
+    {
+        if (brain.VisualizationSubscribers.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var key in brain.VisualizationSubscribers.Keys.ToList())
+        {
+            ReleaseVisualizationSubscriberLease(context, key);
+        }
+
+        brain.VisualizationSubscribers.Clear();
+        brain.VisualizationEnabled = false;
+        brain.VisualizationFocusRegionId = null;
     }
 
     private void UpdateShardRuntimeConfig(IContext context, BrainState brain)
@@ -5016,6 +5635,7 @@ public sealed class HiveMindActor : IActor
     private sealed record TickStart;
     private sealed record TickPhaseTimeout(ulong TickId, TickPhase Phase);
     private sealed record RefreshWorkerInventoryTick;
+    private sealed record SweepVisualizationSubscribers;
     private sealed record RescheduleNow(string Reason);
     private sealed record RescheduleCompleted(string Reason, bool Success);
     private sealed record DispatchPlacementPlan(Guid BrainId, ulong PlacementEpoch);
@@ -5029,6 +5649,90 @@ public sealed class HiveMindActor : IActor
         Idle,
         Compute,
         Deliver
+    }
+
+    private sealed record VisualizationSubscriber(string Key, PID? Pid);
+
+    private sealed record VisualizationSubscriberPreference(string Key, uint? FocusRegionId, PID? Pid);
+
+    private sealed class VisualizationSubscriberLease
+    {
+        private PID? _pid;
+        private int _refCount;
+
+        public VisualizationSubscriberLease(string key, PID? pid)
+        {
+            Key = key;
+            _pid = pid;
+        }
+
+        public string Key { get; }
+        public PID? Pid => _pid;
+
+        public void Retain(IContext context, PID? pid)
+        {
+            _refCount++;
+            RefreshPid(context, pid);
+        }
+
+        public bool Release(IContext context)
+        {
+            _refCount = Math.Max(0, _refCount - 1);
+            if (_refCount > 0)
+            {
+                return false;
+            }
+
+            Unwatch(context);
+            return true;
+        }
+
+        public void RefreshPid(IContext context, PID? pid)
+        {
+            if (pid is null)
+            {
+                return;
+            }
+
+            if (_pid is not null && SenderMatchesPid(_pid, pid))
+            {
+                return;
+            }
+
+            if (_pid is not null)
+            {
+                context.Unwatch(_pid);
+            }
+
+            _pid = pid;
+            context.Watch(pid);
+        }
+
+        public bool Matches(PID pid)
+        {
+            if (_pid is null)
+            {
+                return false;
+            }
+
+            if (SenderMatchesPid(pid, _pid) || SenderMatchesPid(_pid, pid))
+            {
+                return true;
+            }
+
+            return string.Equals(_pid.Id ?? string.Empty, pid.Id ?? string.Empty, StringComparison.Ordinal);
+        }
+
+        public void Unwatch(IContext context)
+        {
+            if (_pid is null)
+            {
+                return;
+            }
+
+            context.Unwatch(_pid);
+            _pid = null;
+        }
     }
 
     private sealed class TickState
@@ -5082,6 +5786,7 @@ public sealed class HiveMindActor : IActor
         public bool PlasticityProbabilisticUpdates { get; set; }
         public bool VisualizationEnabled { get; set; }
         public uint? VisualizationFocusRegionId { get; set; }
+        public Dictionary<string, VisualizationSubscriberPreference> VisualizationSubscribers { get; } = new(StringComparer.Ordinal);
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
         public long SpawnedMs { get; set; }
@@ -5127,6 +5832,13 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private enum EndpointHostClass
+    {
+        Other = 0,
+        Loopback = 1,
+        Wildcard = 2
+    }
+
     private sealed class WorkerCatalogEntry
     {
         public WorkerCatalogEntry(Guid nodeId)
@@ -5135,6 +5847,7 @@ public sealed class HiveMindActor : IActor
         }
 
         public Guid NodeId { get; }
+        public string LogicalName { get; set; } = string.Empty;
         public string WorkerAddress { get; set; } = string.Empty;
         public string WorkerRootActorName { get; set; } = string.Empty;
         public bool IsAlive { get; set; }

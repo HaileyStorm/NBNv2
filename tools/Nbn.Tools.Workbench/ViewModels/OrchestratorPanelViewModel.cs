@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Nbn.Proto.Control;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -67,6 +68,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _connectAll = connectAll;
         _disconnectAll = disconnectAll;
         Nodes = new ObservableCollection<NodeStatusItem>();
+        Actors = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(force: true));
@@ -91,6 +93,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     }
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
+    public ObservableCollection<NodeStatusItem> Actors { get; }
     public ObservableCollection<SettingEntryViewModel> Settings { get; }
     public ObservableCollection<BrainTerminatedItem> Terminations { get; }
 
@@ -221,12 +224,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private async Task StartSettingsMonitorAsync()
     {
-        var dbPath = Connections.SettingsDbPath;
-        if (string.IsNullOrWhiteSpace(dbPath))
-        {
-            SettingsLaunchStatus = "Settings DB path required.";
-            return;
-        }
+        var configuredDbPath = Connections.SettingsDbPath?.Trim();
+        var defaultDbPath = BuildDefaultSettingsDbPath();
+        var resolvedDbPath = string.IsNullOrWhiteSpace(configuredDbPath) ? defaultDbPath : configuredDbPath;
+        var includeDbArg = !string.IsNullOrWhiteSpace(configuredDbPath)
+            && !PathsEqual(configuredDbPath, defaultDbPath);
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.SettingsMonitor");
         if (string.IsNullOrWhiteSpace(projectPath))
@@ -241,7 +243,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"--db \"{dbPath}\" --bind-host {Connections.SettingsHost} --port {port}";
+        var args = includeDbArg
+            ? $"--db \"{resolvedDbPath}\" --bind-host {Connections.SettingsHost} --port {port}"
+            : $"--bind-host {Connections.SettingsHost} --port {port}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.SettingsMonitor", args);
         var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false, label: "SettingsMonitor");
         SettingsLaunchStatus = result.Message;
@@ -256,6 +260,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParsePort(Connections.IoPortText, out var ioPort))
+        {
+            HiveMindLaunchStatus = "Invalid IO port.";
+            return;
+        }
+
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.HiveMind");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -263,8 +273,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{Connections.SettingsDbPath}\""
+        var ioAddress = $"{Connections.IoHost}:{ioPort}";
+        var settingsDbPath = ResolveSettingsDbPath();
+        var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
+                 + $" --io-address {ioAddress} --io-name {Connections.IoGateway}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.HiveMind", args);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
@@ -369,6 +382,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --root-name {Connections.WorkerRootName}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.WorkerNode", args);
+        ApplyObservabilityEnvironment(startInfo);
         var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
         WorkerLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -447,6 +461,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             UpdateHiveMindEndpoint(nodes, nowMs);
+            var actorRows = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
 
             var settingsResponse = await _client.ListSettingsAsync().ConfigureAwait(false);
             var settings = settingsResponse?.Settings?
@@ -459,6 +474,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             _dispatcher.Post(() =>
             {
                 Nodes.Clear();
+                Actors.Clear();
                 foreach (var node in sortedNodes)
                 {
                     var isFresh = IsFresh(node.LastSeenMs, nowMs);
@@ -470,6 +486,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                         node.RootActorName ?? string.Empty,
                         seen.ToString("g"),
                         isAlive ? "online" : "offline"));
+                }
+
+                foreach (var actorRow in actorRows)
+                {
+                    Actors.Add(actorRow);
                 }
 
                 foreach (var entry in settings)
@@ -486,6 +507,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 }
 
                 Trim(Nodes);
+                Trim(Actors);
                 Trim(Settings);
             });
 
@@ -1061,6 +1083,325 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return baseDir;
     }
 
+    private static string BuildDefaultSettingsDbPath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            return "settingsmonitor.db";
+        }
+
+        var baseDir = Path.Combine(localAppData, "Nbn.Workbench");
+        Directory.CreateDirectory(baseDir);
+        return Path.Combine(baseDir, "settingsmonitor.db");
+    }
+
+    private string ResolveSettingsDbPath()
+    {
+        var configured = Connections.SettingsDbPath?.Trim();
+        return string.IsNullOrWhiteSpace(configured) ? BuildDefaultSettingsDbPath() : configured;
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            var leftFull = Path.GetFullPath(left);
+            var rightFull = Path.GetFullPath(right);
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            return string.Equals(leftFull, rightFull, comparison);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+    private async Task<IReadOnlyList<NodeStatusItem>> BuildActorRowsAsync(
+        IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
+        IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
+        IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
+        long nowMs)
+    {
+        var rows = new List<(bool IsOnlineWorkerHost, bool IsOnline, long LastSeenMs, NodeStatusItem Row)>();
+        var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var nodeById = nodes
+            .Where(entry => entry.NodeId is not null && entry.NodeId.TryToGuid(out _))
+            .ToDictionary(entry => entry.NodeId!.ToGuid(), entry => entry);
+
+        void AddActorRow(
+            Guid brainId,
+            string actorKind,
+            string actorPid,
+            string hostLabel,
+            string address,
+            long lastSeenMs,
+            bool isOnline,
+            bool hostIsWorker = false,
+            uint regionId = 0,
+            uint shardIndex = 0)
+        {
+            var dedupeKey = BuildHostedActorKey(brainId, actorPid, actorKind, regionId, shardIndex);
+            if (!dedupe.Add(dedupeKey))
+            {
+                return;
+            }
+
+            var brainToken = brainId.ToString("N")[..8];
+            var kindToken = actorKind;
+            if (string.Equals(actorKind, "RegionShard", StringComparison.Ordinal))
+            {
+                kindToken = $"{actorKind} r{regionId} s{shardIndex}";
+            }
+
+            var seen = lastSeenMs > 0 ? FormatUpdated(lastSeenMs) : string.Empty;
+            var logicalName = $"{hostLabel} - brain {brainToken} {kindToken}";
+            var rootActor = string.IsNullOrWhiteSpace(actorPid) ? actorKind : actorPid;
+            rows.Add((isOnline && hostIsWorker, isOnline, lastSeenMs, new NodeStatusItem(
+                logicalName,
+                address,
+                rootActor,
+                seen,
+                isOnline ? "online" : "offline")));
+        }
+
+        foreach (var controller in controllers
+                     .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
+                     .OrderByDescending(entry => entry.LastSeenMs)
+                     .ThenBy(entry => entry.ActorName ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+        {
+            var brainId = controller.BrainId!.ToGuid();
+            var hostLabel = "controller node";
+            var address = string.Empty;
+            var hostSeenMs = (long)controller.LastSeenMs;
+            var hostIsWorker = false;
+            if (controller.NodeId is not null
+                && controller.NodeId.TryToGuid(out var nodeId)
+                && nodeById.TryGetValue(nodeId, out var node))
+            {
+                hostLabel = string.IsNullOrWhiteSpace(node.LogicalName) ? "controller node" : node.LogicalName!;
+                address = node.Address ?? string.Empty;
+                hostSeenMs = (long)node.LastSeenMs;
+                hostIsWorker = IsWorkerHostCandidate(node);
+            }
+
+            var actorPid = controller.ActorName?.Trim() ?? string.Empty;
+            var isOnline = controller.IsAlive && IsFresh(controller.LastSeenMs, nowMs);
+            AddActorRow(
+                brainId,
+                actorKind: "Controller",
+                actorPid: actorPid,
+                hostLabel: hostLabel,
+                address: address,
+                lastSeenMs: hostSeenMs,
+                isOnline: isOnline,
+                hostIsWorker: hostIsWorker);
+        }
+
+        var activeBrainIds = brains
+            .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
+            .Select(entry => entry.BrainId!.ToGuid())
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        if (activeBrainIds.Length == 0)
+        {
+            return rows
+                .OrderByDescending(entry => entry.IsOnlineWorkerHost)
+                .ThenByDescending(entry => entry.IsOnline)
+                .ThenByDescending(entry => entry.LastSeenMs)
+                .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
+                .Select(entry => entry.Row)
+                .ToArray();
+        }
+
+        var lifecycleTasks = activeBrainIds.Select(async brainId =>
+        {
+            var lifecycle = await _client.GetPlacementLifecycleAsync(brainId).ConfigureAwait(false);
+            return (BrainId: brainId, Lifecycle: lifecycle);
+        });
+        var lifecycles = await Task.WhenAll(lifecycleTasks).ConfigureAwait(false);
+        var reconcileNodes = nodes
+            .Where(entry =>
+                entry.IsAlive
+                && IsFresh(entry.LastSeenMs, nowMs)
+                && !string.IsNullOrWhiteSpace(entry.Address)
+                && !string.IsNullOrWhiteSpace(entry.RootActorName))
+            .ToArray();
+
+        var reconcileTasks = new List<Task<(Guid BrainId, Nbn.Proto.Settings.NodeStatus Node, PlacementReconcileReport? Report)>>();
+        foreach (var lifecycleEntry in lifecycles)
+        {
+            var placementEpoch = lifecycleEntry.Lifecycle?.PlacementEpoch ?? 0;
+            if (placementEpoch == 0)
+            {
+                continue;
+            }
+
+            foreach (var node in reconcileNodes)
+            {
+                reconcileTasks.Add(QueryPlacementReconcileAsync(
+                    lifecycleEntry.BrainId,
+                    node,
+                    placementEpoch));
+            }
+        }
+
+        var reconcileResults = reconcileTasks.Count == 0
+            ? Array.Empty<(Guid BrainId, Nbn.Proto.Settings.NodeStatus Node, PlacementReconcileReport? Report)>()
+            : await Task.WhenAll(reconcileTasks).ConfigureAwait(false);
+        foreach (var reconcileResult in reconcileResults)
+        {
+            if (reconcileResult.Report?.Assignments is null
+                || reconcileResult.Report.Assignments.Count == 0)
+            {
+                continue;
+            }
+
+            var report = reconcileResult.Report;
+            var reportBrainId = report.BrainId is not null && report.BrainId.TryToGuid(out var parsedBrainId)
+                ? parsedBrainId
+                : reconcileResult.BrainId;
+
+            foreach (var assignment in report.Assignments)
+            {
+                var actorKind = ToAssignmentTargetLabel(assignment.Target);
+                var actorPid = assignment.ActorPid?.Trim() ?? string.Empty;
+                var hostLabel = string.IsNullOrWhiteSpace(reconcileResult.Node.LogicalName)
+                    ? "host node"
+                    : reconcileResult.Node.LogicalName!;
+                var address = reconcileResult.Node.Address ?? string.Empty;
+                var hostSeenMs = (long)reconcileResult.Node.LastSeenMs;
+                var isOnline = reconcileResult.Node.IsAlive && IsFresh(reconcileResult.Node.LastSeenMs, nowMs);
+                var hostIsWorker = IsWorkerHostCandidate(reconcileResult.Node);
+
+                if (assignment.WorkerNodeId is not null
+                    && assignment.WorkerNodeId.TryToGuid(out var workerNodeId)
+                    && nodeById.TryGetValue(workerNodeId, out var workerNode))
+                {
+                    hostLabel = string.IsNullOrWhiteSpace(workerNode.LogicalName) ? "host node" : workerNode.LogicalName!;
+                    address = workerNode.Address ?? address;
+                    hostSeenMs = (long)workerNode.LastSeenMs;
+                    isOnline = workerNode.IsAlive && IsFresh(workerNode.LastSeenMs, nowMs);
+                    hostIsWorker = IsWorkerHostCandidate(workerNode);
+                }
+
+                AddActorRow(
+                    reportBrainId,
+                    actorKind: actorKind,
+                    actorPid: actorPid,
+                    hostLabel: hostLabel,
+                    address: address,
+                    lastSeenMs: hostSeenMs,
+                    isOnline: isOnline,
+                    hostIsWorker: hostIsWorker,
+                    regionId: assignment.RegionId,
+                    shardIndex: assignment.ShardIndex);
+            }
+        }
+
+        return rows
+            .OrderByDescending(entry => entry.IsOnlineWorkerHost)
+            .ThenByDescending(entry => entry.IsOnline)
+            .ThenByDescending(entry => entry.LastSeenMs)
+            .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.Row)
+            .ToArray();
+
+        async Task<(Guid BrainId, Nbn.Proto.Settings.NodeStatus Node, PlacementReconcileReport? Report)> QueryPlacementReconcileAsync(
+            Guid brainId,
+            Nbn.Proto.Settings.NodeStatus node,
+            ulong placementEpoch)
+        {
+            var report = await _client.RequestPlacementReconcileAsync(
+                    node.Address ?? string.Empty,
+                    node.RootActorName ?? string.Empty,
+                    brainId,
+                    placementEpoch)
+                .ConfigureAwait(false);
+            return (brainId, node, report);
+        }
+    }
+
+    private static string BuildHostedActorKey(
+        Guid brainId,
+        string actorPid,
+        string actorKind,
+        uint regionId,
+        uint shardIndex)
+    {
+        if (!string.IsNullOrWhiteSpace(actorPid))
+        {
+            return actorPid.Trim();
+        }
+
+        return $"{brainId:N}|{actorKind}|{regionId}|{shardIndex}";
+    }
+
+    private static bool IsWorkerHostCandidate(Nbn.Proto.Settings.NodeStatus node)
+    {
+        if (!string.IsNullOrWhiteSpace(node.LogicalName)
+            && node.LogicalName!.Trim().StartsWith("nbn.worker", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(node.RootActorName))
+        {
+            return false;
+        }
+
+        var root = node.RootActorName.Trim();
+        return root.StartsWith("worker-node", StringComparison.OrdinalIgnoreCase)
+               || root.Equals("regionhost", StringComparison.OrdinalIgnoreCase)
+               || root.Equals("region-host", StringComparison.OrdinalIgnoreCase)
+               || root.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase)
+               || root.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ApplyObservabilityEnvironment(ProcessStartInfo startInfo)
+    {
+        if (startInfo.UseShellExecute)
+        {
+            return;
+        }
+
+        var host = Connections.ObsHost?.Trim();
+        if (!string.IsNullOrWhiteSpace(host)
+            && TryParsePort(Connections.ObsPortText, out var obsPort))
+        {
+            startInfo.EnvironmentVariables["NBN_OBS_HOST"] = host;
+            startInfo.EnvironmentVariables["NBN_OBS_PORT"] = obsPort.ToString();
+            startInfo.EnvironmentVariables["NBN_OBS_ADDRESS"] = $"{host}:{obsPort}";
+        }
+
+        var debugHub = Connections.DebugHub?.Trim();
+        if (!string.IsNullOrWhiteSpace(debugHub))
+        {
+            startInfo.EnvironmentVariables["NBN_OBS_DEBUG_HUB"] = debugHub;
+        }
+
+        var vizHub = Connections.VizHub?.Trim();
+        if (!string.IsNullOrWhiteSpace(vizHub))
+        {
+            startInfo.EnvironmentVariables["NBN_OBS_VIZ_HUB"] = vizHub;
+        }
+    }
+
+    private static string ToAssignmentTargetLabel(PlacementAssignmentTarget target)
+    {
+        return target switch
+        {
+            PlacementAssignmentTarget.PlacementTargetBrainRoot => "BrainHost",
+            PlacementAssignmentTarget.PlacementTargetSignalRouter => "SignalRouter",
+            PlacementAssignmentTarget.PlacementTargetInputCoordinator => "InputCoordinator",
+            PlacementAssignmentTarget.PlacementTargetOutputCoordinator => "OutputCoordinator",
+            PlacementAssignmentTarget.PlacementTargetRegionShard => "RegionShard",
+            _ => "HostedActor"
+        };
+    }
+
     private static void ResetDirectory(string path)
     {
         try
@@ -1096,3 +1437,4 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private sealed record SampleArtifact(string Sha256, long Size, string ArtifactRoot);
 }
+

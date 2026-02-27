@@ -228,6 +228,62 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task TickCompletionForwarding_UsesHiveMindHint_WhenEndpointMissing()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var brainId = Guid.NewGuid();
+        var seedRequest = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "seed-hint",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 1,
+                regionId: 0,
+                shardIndex: 0,
+                target: PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                actorName: $"brain-{brainId:N}-root")
+        };
+
+        var ackTcs = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completionTcs = new TaskCompletionSource<TickComputeDone>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hintSenderName = $"worker-test-hivemind-hint-{Guid.NewGuid():N}";
+        var hintSenderPid = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new HiveMindForwardProbeActor(workerPid, seedRequest, ackTcs, completionTcs)),
+            hintSenderName);
+
+        try
+        {
+            var seedAck = await ackTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, seedAck.State);
+
+            var shardId = Nbn.Shared.Addressing.ShardId32.From(1, 0);
+            harness.Root.Send(workerPid, new TickComputeDone
+            {
+                TickId = 42,
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = (uint)shardId.RegionId,
+                ShardId = shardId.ToProtoShardId32(),
+                ComputeMs = 1
+            });
+
+            var forwarded = await completionTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal((ulong)42, forwarded.TickId);
+            Assert.True(forwarded.BrainId.TryToGuid(out var forwardedBrainId));
+            Assert.Equal(brainId, forwardedBrainId);
+        }
+        finally
+        {
+            harness.Root.Stop(hintSenderPid);
+        }
+    }
+
+    [Fact]
     public async Task DiscoveryUpdate_InvalidHiveMind_InvalidateEndpoint_And_EmitsTelemetry()
     {
         using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
@@ -1357,6 +1413,44 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
                 case PlacementAssignmentAck ack:
                     _completion.TrySetResult(ack);
                     context.Stop(context.Self);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveMindForwardProbeActor : IActor
+    {
+        private readonly PID _workerPid;
+        private readonly PlacementAssignmentRequest _seedRequest;
+        private readonly TaskCompletionSource<PlacementAssignmentAck> _assignmentAck;
+        private readonly TaskCompletionSource<TickComputeDone> _computeDone;
+
+        public HiveMindForwardProbeActor(
+            PID workerPid,
+            PlacementAssignmentRequest seedRequest,
+            TaskCompletionSource<PlacementAssignmentAck> assignmentAck,
+            TaskCompletionSource<TickComputeDone> computeDone)
+        {
+            _workerPid = workerPid;
+            _seedRequest = seedRequest;
+            _assignmentAck = assignmentAck;
+            _computeDone = computeDone;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_workerPid, _seedRequest);
+                    break;
+                case PlacementAssignmentAck ack:
+                    _assignmentAck.TrySetResult(ack);
+                    break;
+                case TickComputeDone done:
+                    _computeDone.TrySetResult(done);
                     break;
             }
 

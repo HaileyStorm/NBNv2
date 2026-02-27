@@ -106,8 +106,8 @@ public class HiveMindPlacementLifecycleTests
             {
                 BrainId = brainId.ToProtoUuid()
             });
-        Assert.Equal(4, (int)running.LifecycleState);
-        Assert.Equal(1, (int)running.ReconcileState);
+        Assert.Equal((int)PlacementLifecycleState.PlacementLifecycleAssigned, (int)running.LifecycleState);
+        Assert.Equal((int)PlacementReconcileState.PlacementReconcileUnknown, (int)running.ReconcileState);
         Assert.Equal(1u, running.RegisteredShards);
 
         await system.ShutdownAsync();
@@ -154,6 +154,52 @@ public class HiveMindPlacementLifecycleTests
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, status.FailureReason);
         Assert.NotEqual(PlacementReconcileState.PlacementReconcileFailed, status.ReconcileState);
 
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDispatch_UsesRegisteredShards_Even_When_PlacementExecution_IsInFlight()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
+
+        var brainId = Guid.NewGuid();
+        var placement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 1,
+                OutputWidth = 1
+            });
+        Assert.True(placement.Accepted);
+
+        var computeSeen = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var controller = root.Spawn(Props.FromProducer(() => new TickComputeProbeSenderActor(computeSeen)));
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(controller),
+            SignalRouterPid = PidLabel(controller)
+        }));
+
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(controller),
+            NeuronStart = 0,
+            NeuronCount = 8
+        }));
+
+        root.Send(hiveMind, new Nbn.Shared.HiveMind.StartTickLoop());
+        var dispatchedTick = await computeSeen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        root.Send(hiveMind, new Nbn.Shared.HiveMind.StopTickLoop());
+
+        Assert.True(dispatchedTick > 0);
         await system.ShutdownAsync();
     }
 
@@ -220,6 +266,30 @@ public class HiveMindPlacementLifecycleTests
 
             context.Request(send.Target, send.Message);
             context.Respond(new SendMessageAck());
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TickComputeProbeSenderActor : IActor
+    {
+        private readonly TaskCompletionSource<ulong> _computeSeen;
+
+        public TickComputeProbeSenderActor(TaskCompletionSource<ulong> computeSeen)
+            => _computeSeen = computeSeen;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SendMessage send:
+                    context.Request(send.Target, send.Message);
+                    context.Respond(new SendMessageAck());
+                    break;
+                case TickCompute tick:
+                    _computeSeen.TrySetResult(tick.TickId);
+                    break;
+            }
+
             return Task.CompletedTask;
         }
     }

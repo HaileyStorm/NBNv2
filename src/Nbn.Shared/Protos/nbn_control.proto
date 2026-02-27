@@ -64,6 +64,7 @@ message SetBrainVisualization {
   bool enabled = 2;
   bool has_focus_region = 3;
   uint32 focus_region_id = 4;
+  string subscriber_actor = 5; // optional stable subscriber identity (actor path/id)
 }
 
 message SetBrainCostEnergy {

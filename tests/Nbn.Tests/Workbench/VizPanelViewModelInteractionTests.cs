@@ -553,6 +553,26 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void SelectedBrainChange_ResetsRegionFocusToFullBrain()
+    {
+        var vm = CreateViewModel();
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        vm.KnownBrains.Add(brainA);
+        vm.KnownBrains.Add(brainB);
+
+        vm.SelectedBrain = brainA;
+        Assert.True(vm.ZoomToRegion(9));
+        Assert.Equal("9", vm.RegionFocusText);
+        Assert.Equal((uint)9, vm.ActiveFocusRegionId);
+
+        vm.SelectedBrain = brainB;
+
+        Assert.Equal(string.Empty, vm.RegionFocusText);
+        Assert.Null(vm.ActiveFocusRegionId);
+    }
+
+    [Fact]
     public void TryResolveCanvasHit_NodeHitPadding_ResolvesNearMissWithoutStickyHover()
     {
         var vm = CreateViewModel();

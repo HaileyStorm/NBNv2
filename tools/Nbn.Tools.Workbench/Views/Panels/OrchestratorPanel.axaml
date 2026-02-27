@@ -6,19 +6,6 @@
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
       <Border Classes="card">
-        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
-          <StackPanel Spacing="6">
-            <TextBlock Text="Settings Monitor" Classes="card-title" />
-            <TextBlock Text="Remote registry + live settings feed. Auto-refreshes every 3 seconds while connected." Classes="card-subtitle" />
-          </StackPanel>
-          <StackPanel Grid.Column="1" Spacing="4" HorizontalAlignment="Right">
-            <TextBlock Text="Status" Classes="chip" />
-            <TextBlock Text="{Binding StatusMessage}" Classes="muted" />
-          </StackPanel>
-        </Grid>
-      </Border>
-
-      <Border Classes="card">
         <StackPanel Spacing="10">
           <TextBlock Text="Endpoints" Classes="card-title" />
           <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
@@ -179,76 +166,98 @@
         </StackPanel>
       </Border>
 
-      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
-        <Border Classes="card" Grid.Column="0">
-          <StackPanel Spacing="8">
-            <TextBlock Text="Nodes" Classes="card-title" />
-            <ItemsControl ItemsSource="{Binding Nodes}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Classes="row">
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                      <Border Classes="pill"
-                              Background="{Binding StatusChipBackground}"
-                              BorderBrush="{Binding StatusChipBorder}"
-                              BorderThickness="1">
-                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+      <StackPanel Spacing="16">
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+          <Border Classes="card" Grid.Column="0">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Nodes" Classes="card-title" />
+              <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Nodes}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Classes="row">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                          <Border Classes="pill"
+                                  Background="{Binding StatusChipBackground}"
+                                  BorderBrush="{Binding StatusChipBorder}"
+                                  BorderThickness="1">
+                            <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
+                            <TextBlock Text="{Binding Address}" Classes="muted" />
+                            <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                          </StackPanel>
+                          <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
+                        </Grid>
                       </Border>
-                      <StackPanel Grid.Column="1">
-                        <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
-                        <TextBlock Text="{Binding Address}" Classes="muted" />
-                        <TextBlock Text="{Binding RootActor}" Classes="muted" />
-                      </StackPanel>
-                      <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </StackPanel>
-        </Border>
-        <Border Classes="card" Grid.Column="1">
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card" Grid.Column="1">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Hosted Actors" Classes="card-title" />
+              <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Actors}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Classes="row">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                          <Border Classes="pill"
+                                  Background="{Binding StatusChipBackground}"
+                                  BorderBrush="{Binding StatusChipBorder}"
+                                  BorderThickness="1">
+                            <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+                          </Border>
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
+                            <TextBlock Text="{Binding Address}" Classes="muted" />
+                            <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                          </StackPanel>
+                          <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+        </Grid>
+
+        <Border Classes="card">
           <StackPanel Spacing="8">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
               <TextBlock Text="Settings" Classes="card-title" />
               <Button Grid.Column="1" Content="Apply" Command="{Binding ApplySettingsCommand}" Classes="accent" />
             </Grid>
-            <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer MaxHeight="380" HorizontalScrollBarVisibility="Disabled">
               <ItemsControl ItemsSource="{Binding Settings}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <UniformGrid Columns="2" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                  <Grid ColumnDefinitions="2*,Auto,Auto" ColumnSpacing="12" Margin="0,4">
-                      <TextBlock Text="{Binding Key}" Classes="row-title" TextWrapping="Wrap" />
-                      <TextBox Grid.Column="1" Text="{Binding Value}" Width="96" />
-                      <TextBlock Grid.Column="2" Text="{Binding Updated}" Classes="muted" VerticalAlignment="Center" />
-                  </Grid>
+                    <Border Classes="row" Margin="6,4">
+                      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+                        <TextBlock Text="{Binding Key}" Classes="row-title" TextWrapping="Wrap" />
+                        <TextBlock Grid.Column="1" Text="{Binding Updated}" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Value}" />
+                      </Grid>
+                    </Border>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
             </ScrollViewer>
           </StackPanel>
         </Border>
-      </Grid>
-
-      <Border Classes="card">
-        <StackPanel Spacing="8">
-          <TextBlock Text="Terminations" Classes="card-title" />
-          <ItemsControl ItemsSource="{Binding Terminations}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12" Margin="0,4">
-                  <TextBlock Text="{Binding Time}" Classes="muted" />
-                  <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="row-title" />
-                  <Border Grid.Column="2" Classes="pill">
-                    <TextBlock Text="{Binding Reason}" />
-                  </Border>
-                  <TextBlock Grid.Column="3" Text="{Binding EnergyRemaining}" Classes="muted" />
-                </Grid>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
-      </Border>
+      </StackPanel>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

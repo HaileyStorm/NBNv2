@@ -40,6 +40,9 @@ public sealed record HiveMindOptions(
     int PlacementAssignmentMaxRetries = 2,
     int PlacementReconcileTimeoutMs = 10000)
 {
+    private const string DefaultIoHost = "127.0.0.1";
+    private const int DefaultIoPort = 12050;
+
     public static HiveMindOptions FromArgs(string[] args)
     {
         var bindHost = GetEnv("NBN_HIVE_BIND_HOST") ?? "127.0.0.1";
@@ -84,7 +87,7 @@ public sealed record HiveMindOptions(
         var placementAssignmentMaxRetries = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_MAX_RETRIES") ?? 2;
         var placementReconcileTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_RECONCILE_TIMEOUT_MS") ?? 10000;
         var ioAddress = GetEnv("NBN_HIVE_IO_ADDRESS");
-        var ioName = GetEnv("NBN_HIVE_IO_NAME") ?? "io-gateway";
+        var ioName = GetEnv("NBN_HIVE_IO_NAME") ?? GetEnv("NBN_IO_GATEWAY_NAME") ?? "io-gateway";
 
         var settingsDbPath = GetEnv("NBN_SETTINGS_DB");
         if (string.IsNullOrWhiteSpace(settingsDbPath))
@@ -601,6 +604,16 @@ public sealed record HiveMindOptions(
             enableOtel = true;
         }
 
+        if (string.IsNullOrWhiteSpace(ioAddress))
+        {
+            ioAddress = BuildDefaultIoAddress();
+        }
+
+        if (string.IsNullOrWhiteSpace(ioName))
+        {
+            ioName = "io-gateway";
+        }
+
         enableOtelMetrics ??= enableOtel;
         enableOtelTraces ??= enableOtel;
 
@@ -633,14 +646,31 @@ public sealed record HiveMindOptions(
             string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
             settingsPort,
             settingsName,
-            string.IsNullOrWhiteSpace(ioAddress) ? null : ioAddress,
-            ioName,
+            string.IsNullOrWhiteSpace(ioAddress) ? BuildDefaultIoAddress() : ioAddress.Trim(),
+            string.IsNullOrWhiteSpace(ioName) ? "io-gateway" : ioName.Trim(),
             workerInventoryRefreshMs,
             workerInventoryStaleAfterMs,
             placementAssignmentTimeoutMs,
             placementAssignmentRetryBackoffMs,
             placementAssignmentMaxRetries,
             placementReconcileTimeoutMs);
+    }
+
+    private static string BuildDefaultIoAddress()
+    {
+        var host = GetEnv("NBN_IO_ADVERTISE_HOST") ?? GetEnv("NBN_IO_BIND_HOST");
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            host = DefaultIoHost;
+        }
+
+        var port = GetEnvInt("NBN_IO_ADVERTISE_PORT") ?? GetEnvInt("NBN_IO_PORT");
+        if (port is null || port <= 0)
+        {
+            port = DefaultIoPort;
+        }
+
+        return $"{host.Trim()}:{port.Value}";
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -714,7 +744,7 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --placement-assignment-max-retries <count> Max assignment retries after initial attempt (default 2)");
         Console.WriteLine("  --placement-reconcile-timeout-ms <ms> Reconcile report timeout after assignments are ready (default 10000)");
         Console.WriteLine("  --no-settings-monitor                Disable SettingsMonitor reporting");
-        Console.WriteLine("  --io-address <host:port>             IO Gateway remote address");
+        Console.WriteLine("  --io-address <host:port>             IO Gateway remote address (default from NBN_IO_* or 127.0.0.1:12050)");
         Console.WriteLine("  --io-name <name>                     IO Gateway actor name (default io-gateway)");
     }
 }

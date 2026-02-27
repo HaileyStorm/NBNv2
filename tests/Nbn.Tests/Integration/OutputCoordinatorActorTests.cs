@@ -253,6 +253,43 @@ public sealed class OutputCoordinatorActorTests
         }
     }
 
+    [Fact]
+    public async Task OutputVector_OutputWidthCanIncrease_AfterCoordinatorStart()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var brainId = Guid.NewGuid();
+        var root = system.Root;
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
+            var vectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(brainId, coordinator, vectors.Writer)));
+
+            await Task.Delay(100);
+
+            root.Send(coordinator, new UpdateOutputWidth(4));
+            root.Send(coordinator, new EmitOutputVectorSegment(2, new[] { 2f, 3f }, 50));
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 0f, 1f }, 50));
+
+            var vector = await ReadVectorAsync(vectors.Reader, TimeSpan.FromSeconds(2));
+            Assert.Equal((ulong)50, vector.TickId);
+            Assert.Equal(new[] { 0f, 1f, 2f, 3f }, vector.Values);
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.io.output.vector.published",
+                    ("brain_id", brainId.ToString("D")),
+                    ("output_width", "4")));
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
     private static async Task<OutputVectorEvent> ReadVectorAsync(ChannelReader<OutputVectorEvent> reader, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);

@@ -17,6 +17,8 @@ namespace Nbn.Runtime.RegionHost;
 public sealed class RegionShardActor : IActor
 {
     private static readonly bool LogDelivery = IsEnvTrue("NBN_REGIONHOST_LOG_DELIVERY");
+    private static readonly bool LogOutput = IsEnvTrue("NBN_REGIONHOST_LOG_OUTPUT");
+    private static readonly bool LogViz = IsEnvTrue("NBN_REGIONHOST_LOG_VIZ");
     private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
     private readonly RegionShardCpuBackend _cpu;
@@ -142,12 +144,20 @@ public sealed class RegionShardActor : IActor
         if (string.IsNullOrWhiteSpace(message.OutputPid))
         {
             _outputSink = null;
+            if (LogOutput && _state.IsOutputRegion)
+            {
+                Console.WriteLine($"[RegionShard] Output sink cleared for brain={_brainId} shard={_shardId}.");
+            }
             return;
         }
 
         if (TryParsePid(message.OutputPid, out var pid))
         {
             _outputSink = pid;
+            if (LogOutput && _state.IsOutputRegion)
+            {
+                Console.WriteLine($"[RegionShard] Output sink set for brain={_brainId} shard={_shardId} sink={message.OutputPid}.");
+            }
         }
     }
 
@@ -167,6 +177,16 @@ public sealed class RegionShardActor : IActor
         _vizFocusRegionId = message.Enabled && message.HasFocusRegion
             ? message.FocusRegionId
             : null;
+
+        if (LogViz)
+        {
+            var focusLabel = _vizFocusRegionId.HasValue ? _vizFocusRegionId.Value.ToString() : "all";
+            var hubLabel = _vizHub is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(_vizHub.Address) ? _vizHub.Id : $"{_vizHub.Address}/{_vizHub.Id}");
+            Console.WriteLine(
+                $"[RegionShard] Viz config updated brain={_brainId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} hub={hubLabel}.");
+        }
     }
 
     private void HandleUpdateRuntimeConfig(UpdateShardRuntimeConfig message)
@@ -271,6 +291,7 @@ public sealed class RegionShardActor : IActor
             {
                 Console.WriteLine($"[RegionShard] SignalBatch rejected. reason={rejectReason} tick={batch.TickId}");
             }
+            SendSignalBatchAck(context, batch, preferBatchAddressing: true);
             return;
         }
 
@@ -292,11 +313,20 @@ public sealed class RegionShardActor : IActor
             }
         }
 
+        SendSignalBatchAck(context, batch, preferBatchAddressing: false);
+    }
+
+    private void SendSignalBatchAck(IContext context, SignalBatch batch, bool preferBatchAddressing)
+    {
+        var ackRegionId = preferBatchAddressing ? batch.RegionId : (uint)_state.RegionId;
+        var ackShardId = preferBatchAddressing && batch.ShardId is not null
+            ? batch.ShardId.ToShardId32()
+            : _shardId;
         var ack = new SignalBatchAck
         {
             BrainId = _brainId.ToProtoUuid(),
-            RegionId = (uint)_state.RegionId,
-            ShardId = _shardId.ToProtoShardId32(),
+            RegionId = ackRegionId,
+            ShardId = ackShardId.ToProtoShardId32(),
             TickId = batch.TickId
         };
 
@@ -377,6 +407,13 @@ public sealed class RegionShardActor : IActor
             _plasticityProbabilisticUpdates);
         stopwatch.Stop();
 
+        if (LogViz)
+        {
+            var focusLabel = _vizFocusRegionId.HasValue ? _vizFocusRegionId.Value.ToString() : "all";
+            Console.WriteLine(
+                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} axonEvents={result.AxonVizEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
+        }
+
         if (result.PlasticityStrengthCodeChanges > 0)
         {
             RegionHostTelemetry.RecordPlasticityStrengthCodeChanges(result.PlasticityStrengthCodeChanges, _state.RegionId, _shardId.ShardIndex);
@@ -446,7 +483,13 @@ public sealed class RegionShardActor : IActor
             {
                 context.Send(
                     _outputSink,
-                    new EmitOutputVectorSegment((uint)_state.NeuronStart, result.OutputVector, tick.TickId));
+                    new OutputVectorSegment
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        TickId = tick.TickId,
+                        OutputIndexStart = (uint)_state.NeuronStart,
+                        Values = { result.OutputVector }
+                    });
             }
         }
 
@@ -467,6 +510,15 @@ public sealed class RegionShardActor : IActor
             OutBatches = (uint)result.Outbox.Count,
             OutContribs = result.OutContribs
         };
+
+        if (LogOutput && _state.IsOutputRegion)
+        {
+            var sinkLabel = _outputSink is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(_outputSink.Address) ? _outputSink.Id : $"{_outputSink.Address}/{_outputSink.Id}");
+            Console.WriteLine(
+                $"[RegionShard] Output compute tick={tick.TickId} shard={_shardId} sink={sinkLabel} vectorCount={result.OutputVector.Count} singleCount={result.OutputEvents.Count}");
+        }
 
         _hasComputed = true;
         _lastComputeTickId = tick.TickId;

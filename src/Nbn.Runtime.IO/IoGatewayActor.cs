@@ -9,7 +9,11 @@ namespace Nbn.Runtime.IO;
 
 public sealed class IoGatewayActor : IActor
 {
+    private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
+    private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan ExportRequestTimeout = TimeSpan.FromSeconds(45);
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     private readonly IoOptions _options;
@@ -101,13 +105,13 @@ public sealed class IoGatewayActor : IActor
                 await HandleRequestSnapshotAsync(context, message);
                 break;
             case ExportBrainDefinition message:
-                await HandleExportBrainDefinitionAsync(context, message);
+                HandleExportBrainDefinition(context, message);
                 break;
             case ReproduceByBrainIds message:
-                await HandleReproduceByBrainIds(context, message);
+                HandleReproduceByBrainIds(context, message);
                 break;
             case ReproduceByArtifacts message:
-                await HandleReproduceByArtifacts(context, message);
+                HandleReproduceByArtifacts(context, message);
                 break;
         }
     }
@@ -147,7 +151,7 @@ public sealed class IoGatewayActor : IActor
 
         try
         {
-            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, DefaultRequestTimeout);
+            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, SpawnRequestTimeout);
             if (ack is null)
             {
                 ack = BuildSpawnFailureAck(
@@ -283,7 +287,25 @@ public sealed class IoGatewayActor : IActor
 
         if (entry is null)
         {
+            if (LogOutput)
+            {
+                Console.WriteLine($"IoGateway output forward dropped type={message.GetType().Name} sender={PidLabel(context.Sender)} reason=brain_entry_missing.");
+            }
             return;
+        }
+
+        if (LogOutput)
+        {
+            var subscriberActor = message switch
+            {
+                SubscribeOutputs subscribe => subscribe.SubscriberActor,
+                UnsubscribeOutputs unsubscribe => unsubscribe.SubscriberActor,
+                SubscribeOutputsVector subscribeVector => subscribeVector.SubscriberActor,
+                UnsubscribeOutputsVector unsubscribeVector => unsubscribeVector.SubscriberActor,
+                _ => string.Empty
+            };
+            Console.WriteLine(
+                $"IoGateway output forward type={message.GetType().Name} sender={PidLabel(context.Sender)} subscriber={subscriberActor} target={PidLabel(entry.OutputPid)}.");
         }
 
         context.Forward(entry.OutputPid);
@@ -634,7 +656,7 @@ public sealed class IoGatewayActor : IActor
         BroadcastToClients(context, outbound);
     }
 
-    private async Task HandleExportBrainDefinitionAsync(IContext context, ExportBrainDefinition message)
+    private void HandleExportBrainDefinition(IContext context, ExportBrainDefinition message)
     {
         if (!TryGetBrainId(message.BrainId, out var brainId))
         {
@@ -670,21 +692,31 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        try
+        var exportTask = context.RequestAsync<BrainDefinitionReady>(_hiveMindPid, message, ExportRequestTimeout);
+        context.ReenterAfter(exportTask, completed =>
         {
-            var ready = await context.RequestAsync<BrainDefinitionReady>(_hiveMindPid, message, DefaultRequestTimeout).ConfigureAwait(false);
-            if (ready is not null
-                && HasArtifactRef(ready.BrainDef)
-                && !message.RebaseOverlays
-                && _brains.TryGetValue(brainId, out var existing))
+            if (completed.IsCompletedSuccessfully)
             {
-                existing.BaseDefinition = ready.BrainDef;
+                var ready = completed.Result;
+                if (ready is not null
+                    && HasArtifactRef(ready.BrainDef)
+                    && !message.RebaseOverlays
+                    && _brains.TryGetValue(brainId, out var existing))
+                {
+                    existing.BaseDefinition = ready.BrainDef;
+                }
+
+                if (ready is not null)
+                {
+                    context.Respond(ready);
+                    return Task.CompletedTask;
+                }
             }
 
-            if (ready is not null)
+            if (completed.IsFaulted || completed.IsCanceled)
             {
-                context.Respond(ready);
-                return;
+                var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+                Console.WriteLine($"ExportBrainDefinition failed for {brainId}: {detail}");
             }
 
             if (entry is not null && HasArtifactRef(entry.BaseDefinition))
@@ -694,27 +726,12 @@ public sealed class IoGatewayActor : IActor
                     BrainId = message.BrainId,
                     BrainDef = entry.BaseDefinition
                 });
-                return;
+                return Task.CompletedTask;
             }
 
             context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"ExportBrainDefinition failed for {brainId}: {ex.Message}");
-            if (entry is not null && HasArtifactRef(entry.BaseDefinition))
-            {
-                context.Respond(new BrainDefinitionReady
-                {
-                    BrainId = message.BrainId,
-                    BrainDef = entry.BaseDefinition
-                });
-            }
-            else
-            {
-                context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
-            }
-        }
+            return Task.CompletedTask;
+        });
     }
 
     private async Task HandleRequestSnapshotAsync(IContext context, RequestSnapshot message)
@@ -824,7 +841,7 @@ public sealed class IoGatewayActor : IActor
            && reference.Sha256.Value is not null
            && reference.Sha256.Value.Length == 32;
 
-    private async Task HandleReproduceByBrainIds(IContext context, ReproduceByBrainIds message)
+    private void HandleReproduceByBrainIds(IContext context, ReproduceByBrainIds message)
     {
         if (_reproPid is null)
         {
@@ -832,27 +849,32 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        try
+        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
+        context.ReenterAfter(reproTask, completed =>
         {
-            var result = await context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, DefaultRequestTimeout);
-            if (result is null)
+            if (completed.IsCompletedSuccessfully)
             {
-                context.Respond(CreateReproFailure("repro_empty_response"));
-                return;
+                var result = completed.Result;
+                if (result is null)
+                {
+                    context.Respond(CreateReproFailure("repro_empty_response"));
+                    return Task.CompletedTask;
+                }
+
+                result.Report ??= CreateAbortReport("repro_missing_report");
+                EnsureSimilarityScore(result);
+                context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
+                return Task.CompletedTask;
             }
 
-            result.Report ??= CreateAbortReport("repro_missing_report");
-            EnsureSimilarityScore(result);
-            context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"ReproduceByBrainIds failed: {ex.Message}");
+            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+            Console.WriteLine($"ReproduceByBrainIds failed: {detail}");
             context.Respond(CreateReproFailure("repro_request_failed"));
-        }
+            return Task.CompletedTask;
+        });
     }
 
-    private async Task HandleReproduceByArtifacts(IContext context, ReproduceByArtifacts message)
+    private void HandleReproduceByArtifacts(IContext context, ReproduceByArtifacts message)
     {
         if (_reproPid is null)
         {
@@ -860,24 +882,29 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        try
+        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
+        context.ReenterAfter(reproTask, completed =>
         {
-            var result = await context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, DefaultRequestTimeout);
-            if (result is null)
+            if (completed.IsCompletedSuccessfully)
             {
-                context.Respond(CreateReproFailure("repro_empty_response"));
-                return;
+                var result = completed.Result;
+                if (result is null)
+                {
+                    context.Respond(CreateReproFailure("repro_empty_response"));
+                    return Task.CompletedTask;
+                }
+
+                result.Report ??= CreateAbortReport("repro_missing_report");
+                EnsureSimilarityScore(result);
+                context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
+                return Task.CompletedTask;
             }
 
-            result.Report ??= CreateAbortReport("repro_missing_report");
-            EnsureSimilarityScore(result);
-            context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"ReproduceByArtifacts failed: {ex.Message}");
+            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+            Console.WriteLine($"ReproduceByArtifacts failed: {detail}");
             context.Respond(CreateReproFailure("repro_request_failed"));
-        }
+            return Task.CompletedTask;
+        });
     }
 
     private static Nbn.Proto.Io.ReproduceResult CreateReproFailure(string reason)
@@ -1237,6 +1264,21 @@ public sealed class IoGatewayActor : IActor
 
     private static string PidLabel(PID? pid)
         => pid is null ? "unknown" : PidKey(pid);
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false
+        };
+    }
 
     private async Task<PID?> ResolveRouterPidAsync(IContext context, Guid brainId)
     {

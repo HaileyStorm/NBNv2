@@ -97,9 +97,9 @@ NBN is not an ML training framework (no backpropagation/gradient descent).
 
   * IO Gateway actor (well-known endpoint for External World)
   * per-brain InputCoordinator and OutputCoordinator actors (placeable on any node(s))
-* `Nbn.Runtime.Observability` (node, optional)
+* `Nbn.Runtime.Observability` (core node)
 
-  * DebugHub and VisualizationHub (can be disabled)
+  * DebugHub and VisualizationHub (single shared hubs per deployment; streams can be disabled)
 * `Nbn.Runtime.Artifacts` (service/library; can run as node or embedded)
 
   * artifact store client/server, cache, dedup logic
@@ -197,11 +197,13 @@ NBN treats placement as a runtime concern:
 * Spawns per-brain input/output coordinators and routes external commands
 * External World never needs to know RegionShard placement or actor PIDs
 
-**Observability hubs** (optional)
+**Observability hubs** (core service)
 
 * DebugHub: human-readable debug Stream with filtering/throttling
 * VisualizationHub: stable structured event Stream for Visualizer
-* Both can be disabled entirely
+* One shared hub instance of each type per deployment/cluster
+* Multiple Workbench clients subscribe as peers; one client changing focus must not disable another client's active visualization
+* Streams can be disabled entirely at runtime
 
 **Artifact Store** (optional but recommended/default)
 
@@ -979,7 +981,7 @@ Implementation notes (runtime behavior):
 
 ## 15. Observability: debug, visualization, metrics, tracing
 
-### 15.1 Debug and visualization streams (optional)
+### 15.1 Debug and visualization streams
 
 Debug and visualization can be disabled entirely:
 
@@ -2489,7 +2491,8 @@ For a minimal end-to-end smoke test, use the demo scripts:
 * Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) with a single self-loop axon in region 1 to exercise SignalBatch delivery, and stores it in a local artifact store
 * Starts SettingsMonitor first, then worker nodes (worker inventory/bootstrap), then central services (HiveMind, IO Gateway, Reproduction, and Observability)
 * Spawns the demo brain through IO (`SpawnBrainViaIO`), with HiveMind-managed worker placement for BrainRoot/SignalRouter/coordinators/RegionShards
-* Logs output to `tools/demo/local-demo/logs`
+* Logs output to `tools/demo/local-demo/<timestamp>/logs`
+* Workbench local-launch logs are written to `%LOCALAPPDATA%\Nbn.Workbench\logs` (for example `HiveMind.out.log`, `IoGateway.out.log`, `WorkerNode.out.log`, `Reproduction.out.log`, `Observability.out.log`, `SettingsMonitor.out.log`, and `workbench.log`)
 * Includes an energy/plasticity scenario step via `Nbn.Tools.DemoHost io-scenario` that applies credit/rate/cost-energy/plasticity commands and emits JSON acks
 * Includes a deterministic reproduction scenario via `Nbn.Tools.DemoHost repro-scenario` (default `spawn-policy=never`) that emits JSON with compatibility, abort code, mutation summary, and child artifact metadata
 * Includes a deterministic reproduction verification suite via `Nbn.Tools.DemoHost repro-suite` that runs multiple behavior checks (success path, invalid input/media/reference paths, span-mismatch gate, strength-live fallback, and spawn-attempt path) and emits per-case pass/fail JSON
@@ -3185,6 +3188,8 @@ Use these defaults to avoid recurring Aleph friction:
    * `bd comment add ...` is deprecated/invalid in this environment and can fail with `issue add not found`.
 11. Codex model override compatibility:
    * Some Codex-account modes reject explicit Spark overrides (for example `gpt-5-spark`) even when default Codex runs fine.
+   * A common Spark failure in this repo is: `unsupported_parameter: reasoning.summary` when using `gpt-5.3-codex-spark` through `exec_python(sub_query(...))`.
+   * If that error appears, treat Spark override as unavailable for the session and continue with inherited/default model (do not keep retrying the same override).
    * Prefer per-call model overrides first; avoid setting global `configure(sub_query_model=...)` unless you are intentionally running a long same-model batch.
    * If override support is uncertain, run a tiny smoke query with the intended `model=...` in `sub_query(...)` before wider use.
    * If the override fails, fall back to inherited/default model and continue evidence collection.
@@ -3206,6 +3211,7 @@ Use these defaults to avoid recurring Aleph friction:
 16. Aleph sub-query scope/context mismatch:
    * Asking a sub-query to compare files/symbols that are not loaded into the current Aleph context can trigger long retries and MCP timeout.
    * Before cross-file prompts, load both files into the same context (or run separate per-file sub-queries and merge in the main thread).
+   * After each `load_file(..., context_id=...)`, run a quick `search_context` smoke check in that same `context_id` before `sub_query(...)`; this catches stale/contaminated context routing early.
    * Keep each sub-query scoped to the context it actually has; this is more reliable than broad "compare everything" prompts.
 17. PowerShell file-encoding flag compatibility:
    * In Windows PowerShell 5.1, `Set-Content -Encoding utf8NoBOM` is invalid and fails parameter binding.

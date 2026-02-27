@@ -779,6 +779,65 @@ public class HiveMindTickBarrierTests
     }
 
     [Fact]
+    public async Task TickBarrier_ComputeDone_From_TrustedController_IsAccepted_As_Fallback()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
+
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options)));
+
+        var brainId = Guid.NewGuid();
+        var controller = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new ProtoControl.RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(controller),
+            SignalRouterPid = PidLabel(controller)
+        }));
+
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var shardSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        root.Send(hiveMind, new StartTickLoop());
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 1 && s.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new TickComputeDone
+        {
+            TickId = 1,
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardId = shardId.ToProtoShardId32(),
+            ComputeMs = 1
+        }));
+
+        await WaitForStatus(
+            root,
+            hiveMind,
+            s => s.LastCompletedTickId == 0 && s.PendingCompute == 0 && s.PendingDeliver == 1,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ControlPlane_Legitimate_ControllerRouterUpdate_IsAccepted()
     {
         var system = new ActorSystem();

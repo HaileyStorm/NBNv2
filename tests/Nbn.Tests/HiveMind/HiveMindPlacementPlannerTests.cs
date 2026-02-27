@@ -170,6 +170,71 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public async Task RequestPlacement_Excludes_ServiceNodes_From_EligibleWorkers()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var actor = new HiveMindActor(CreateOptions(workerInventoryStaleAfterMs: 10_000));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-a:12040",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker"),
+                BuildWorker(
+                    Guid.NewGuid(),
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "hivemind:12020",
+                    rootActorName: "HiveMind",
+                    logicalName: "nbn.hivemind")
+            }
+        });
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 2
+            });
+
+        Assert.True(ack.Accepted);
+
+        var plannedPlacement = GetPlannedPlacement(actor, brainId);
+        Assert.NotNull(plannedPlacement);
+        var stored = plannedPlacement!;
+        Assert.Single(stored.EligibleWorkers);
+        Assert.Equal(workerId, stored.EligibleWorkers[0].NodeId);
+        Assert.All(
+            stored.Assignments,
+            assignment =>
+            {
+                Assert.NotNull(assignment.WorkerNodeId);
+                Assert.True(assignment.WorkerNodeId!.TryToGuid(out var assignmentWorkerId));
+                Assert.Equal(workerId, assignmentWorkerId);
+            });
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public void PlacementPlanner_Uses_Only_Eligible_Workers_And_Is_Deterministic()
     {
         var workerA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -287,6 +352,7 @@ public sealed class HiveMindPlacementPlannerTests
         long capabilityTimeMs,
         string address,
         string rootActorName,
+        string logicalName = "",
         uint cpuCores = 8,
         long ramFreeBytes = 8L * 1024 * 1024 * 1024,
         long storageFreeBytes = 40L * 1024 * 1024 * 1024,
@@ -294,6 +360,7 @@ public sealed class HiveMindPlacementPlannerTests
         => new()
         {
             NodeId = nodeId.ToProtoUuid(),
+            LogicalName = logicalName,
             Address = address,
             RootActorName = rootActorName,
             IsAlive = isAlive,

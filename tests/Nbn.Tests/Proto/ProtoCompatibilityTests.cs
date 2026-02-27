@@ -367,6 +367,12 @@ public class ProtoCompatibilityTests
         AssertField(outputVectorEvent, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(outputVectorEvent, "tick_id", 2, FieldType.Fixed64);
         AssertRepeatedField(outputVectorEvent, "values", 3, FieldType.Float);
+
+        var outputVectorSegment = descriptor.MessageTypes.Single(message => message.Name == "OutputVectorSegment");
+        AssertField(outputVectorSegment, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(outputVectorSegment, "tick_id", 2, FieldType.Fixed64);
+        AssertField(outputVectorSegment, "output_index_start", 3, FieldType.UInt32);
+        AssertRepeatedField(outputVectorSegment, "values", 4, FieldType.Float);
     }
 
     [Fact]
@@ -376,15 +382,19 @@ public class ProtoCompatibilityTests
 
         var subscribeOutputs = descriptor.MessageTypes.Single(message => message.Name == "SubscribeOutputs");
         AssertField(subscribeOutputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(subscribeOutputs, "subscriber_actor", 2, FieldType.String);
 
         var unsubscribeOutputs = descriptor.MessageTypes.Single(message => message.Name == "UnsubscribeOutputs");
         AssertField(unsubscribeOutputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(unsubscribeOutputs, "subscriber_actor", 2, FieldType.String);
 
         var subscribeOutputsVector = descriptor.MessageTypes.Single(message => message.Name == "SubscribeOutputsVector");
         AssertField(subscribeOutputsVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(subscribeOutputsVector, "subscriber_actor", 2, FieldType.String);
 
         var unsubscribeOutputsVector = descriptor.MessageTypes.Single(message => message.Name == "UnsubscribeOutputsVector");
         AssertField(unsubscribeOutputsVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(unsubscribeOutputsVector, "subscriber_actor", 2, FieldType.String);
 
         var drainInputs = descriptor.MessageTypes.Single(message => message.Name == "DrainInputs");
         AssertField(drainInputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");

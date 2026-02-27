@@ -22,8 +22,7 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _debugHub = "DebugHub";
     private string _vizHub = "VisualizationHub";
     private string _clientName = "nbn.workbench";
-    private string _settingsDbPath = RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo", "settingsmonitor.db")
-        ?? "settingsmonitor.db";
+    private string _settingsDbPath = BuildDefaultSettingsDbPath();
     private string _settingsHost = "127.0.0.1";
     private string _settingsPortText = "12010";
     private string _settingsName = "SettingsMonitor";
@@ -360,4 +359,17 @@ public sealed class ConnectionViewModel : ViewModelBase
     public string SettingsStatusLabel => SettingsConnected ? "Settings connected" : "Settings disconnected";
 
     public string HiveMindStatusLabel => HiveMindConnected ? "HiveMind connected" : "HiveMind disconnected";
+
+    private static string BuildDefaultSettingsDbPath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            return "settingsmonitor.db";
+        }
+
+        var root = Path.Combine(localAppData, "Nbn.Workbench");
+        Directory.CreateDirectory(root);
+        return Path.Combine(root, "settingsmonitor.db");
+    }
 }

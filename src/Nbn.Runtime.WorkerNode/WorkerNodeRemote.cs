@@ -7,11 +7,11 @@ using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
 using Proto.Remote;
 
-namespace Nbn.Runtime.HiveMind;
+namespace Nbn.Runtime.WorkerNode;
 
-public static class HiveMindRemote
+public static class WorkerNodeRemote
 {
-    public static RemoteConfig BuildConfig(HiveMindOptions options)
+    public static RemoteConfig BuildConfig(WorkerNodeOptions options)
     {
         var bindHost = options.BindHost;
         RemoteConfig config;
@@ -40,16 +40,14 @@ public static class HiveMindRemote
             config = config.WithAdvertisedPort(options.AdvertisedPort);
         }
 
-        config = config.WithProtoMessages(
+        return config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
             NbnControlReflection.Descriptor,
             NbnDebugReflection.Descriptor,
-            NbnIoReflection.Descriptor,
             NbnSettingsReflection.Descriptor,
+            NbnIoReflection.Descriptor,
             NbnSignalsReflection.Descriptor,
             NbnVizReflection.Descriptor);
-
-        return config;
     }
 
     private static bool IsLocalhost(string host)

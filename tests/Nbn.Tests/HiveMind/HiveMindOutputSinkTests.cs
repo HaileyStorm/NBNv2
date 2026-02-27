@@ -298,7 +298,7 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
-    public async Task ControlPlaneMutations_Senderless_Are_Ignored()
+    public async Task ControlPlaneMutations_Senderless_AllowVisualization_AndIgnoreOthers()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
         const string senderMissingReason = "sender_missing";
@@ -376,7 +376,6 @@ public class HiveMindOutputSinkTests
         Assert.False(initialRuntimeUpdate.PlasticityEnabled);
 
         var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
-        var visualizationIgnoredBefore = debugBefore.Count("control.set_brain_visualization.ignored");
         var costEnergyIgnoredBefore = debugBefore.Count("control.set_brain_cost_energy.ignored");
         var plasticityIgnoredBefore = debugBefore.Count("control.set_brain_plasticity.ignored");
         var pauseIgnoredBefore = debugBefore.Count("control.pause_brain.ignored");
@@ -420,7 +419,11 @@ public class HiveMindOutputSinkTests
             Reason = "senderless_poison"
         });
 
-        await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_visualization.ignored", visualizationIgnoredBefore + 1, timeoutMs: 2_000);
+        var visualizationUpdate = await initialVisualizationExtra.Task.WaitAsync(cts.Token);
+        Assert.True(visualizationUpdate.Enabled);
+        Assert.True(visualizationUpdate.HasFocusRegion);
+        Assert.Equal((uint)13, visualizationUpdate.FocusRegionId);
+
         await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_cost_energy.ignored", costEnergyIgnoredBefore + 1, timeoutMs: 2_000);
         await WaitForDebugCountAsync(root, debugProbePid, "control.set_brain_plasticity.ignored", plasticityIgnoredBefore + 1, timeoutMs: 2_000);
         await WaitForDebugCountAsync(root, debugProbePid, "control.pause_brain.ignored", pauseIgnoredBefore + 1, timeoutMs: 2_000);
@@ -431,7 +434,7 @@ public class HiveMindOutputSinkTests
         Assert.Equal(brainPausedBefore, debugAfter.Count("brain.paused"));
         Assert.Equal(brainResumedBefore, debugAfter.Count("brain.resumed"));
 
-        Assert.Equal(visualizationRejectedBefore + 1, metrics.SumLong(visualizationRejectedMetric, "reason", senderMissingReason));
+        Assert.Equal(visualizationRejectedBefore, metrics.SumLong(visualizationRejectedMetric, "reason", senderMissingReason));
         Assert.Equal(costEnergyRejectedBefore + 1, metrics.SumLong(costEnergyRejectedMetric, "reason", senderMissingReason));
         Assert.Equal(plasticityRejectedBefore + 1, metrics.SumLong(plasticityRejectedMetric, "reason", senderMissingReason));
         Assert.Equal(pauseRejectedBefore + 1, metrics.SumLong(pauseRejectedMetric, "reason", senderMissingReason));
@@ -455,8 +458,9 @@ public class HiveMindOutputSinkTests
             NeuronCount = 1
         }));
         var rejectedVisualizationUpdate = await rejectedVisualization.Task.WaitAsync(cts.Token);
-        Assert.False(rejectedVisualizationUpdate.Enabled);
-        Assert.False(rejectedVisualizationUpdate.HasFocusRegion);
+        Assert.True(rejectedVisualizationUpdate.Enabled);
+        Assert.True(rejectedVisualizationUpdate.HasFocusRegion);
+        Assert.Equal((uint)13, rejectedVisualizationUpdate.FocusRegionId);
 
         var runtimeShardB = ShardId32.From(14, 1);
         var rejectedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -832,6 +836,306 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task SetBrainVisualization_MultipleSubscribers_DisablingOne_KeepsVisualizationEnabled()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var subscriberA = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var subscriberB = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var subscriberAKey = PidLabel(subscriberA);
+        var subscriberBKey = PidLabel(subscriberB);
+
+        var shardId = ShardId32.From(13, 0);
+        var visualizationProbePid = root.Spawn(Props.FromProducer(() => new VisualizationHistoryProbe(shardId)));
+        await root.RequestAsync<SendMessageAck>(visualizationProbePid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(visualizationProbePid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var initialUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 1, timeoutMs: 2_000);
+        Assert.False(initialUpdates[0].Enabled);
+        Assert.False(initialUpdates[0].HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberAKey
+        });
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberBKey
+        });
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = false,
+            SubscriberActor = subscriberAKey
+        });
+
+        var enabledWhileSecondSubscriberRemains = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 2, timeoutMs: 2_000);
+        Assert.True(enabledWhileSecondSubscriberRemains[1].Enabled);
+        Assert.True(enabledWhileSecondSubscriberRemains[1].HasFocusRegion);
+        Assert.Equal<uint>(13, enabledWhileSecondSubscriberRemains[1].FocusRegionId);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = false,
+            SubscriberActor = subscriberBKey
+        });
+
+        var disabledAfterAllSubscribersRemoved = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 3, timeoutMs: 2_000);
+        Assert.False(disabledAfterAllSubscribersRemoved[2].Enabled);
+        Assert.False(disabledAfterAllSubscribersRemoved[2].HasFocusRegion);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SetBrainVisualization_ConflictingFocusedSubscribers_FallsBack_ToFullBrain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var subscriberA = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var subscriberB = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var subscriberAKey = PidLabel(subscriberA);
+        var subscriberBKey = PidLabel(subscriberB);
+
+        var shardId = ShardId32.From(13, 0);
+        var visualizationProbePid = root.Spawn(Props.FromProducer(() => new VisualizationHistoryProbe(shardId)));
+        await root.RequestAsync<SendMessageAck>(visualizationProbePid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(visualizationProbePid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var initialUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 1, timeoutMs: 2_000);
+        Assert.False(initialUpdates[0].Enabled);
+        Assert.False(initialUpdates[0].HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberAKey
+        });
+        var focusedOnA = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 2, timeoutMs: 2_000);
+        Assert.True(focusedOnA[1].Enabled);
+        Assert.True(focusedOnA[1].HasFocusRegion);
+        Assert.Equal<uint>(13, focusedOnA[1].FocusRegionId);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 14,
+            SubscriberActor = subscriberBKey
+        });
+
+        var conflictState = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 3, timeoutMs: 2_000);
+        Assert.True(conflictState[2].Enabled);
+        Assert.False(conflictState[2].HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = false,
+            SubscriberActor = subscriberBKey
+        });
+
+        var focusedAfterConflictRemoved = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 4, timeoutMs: 2_000);
+        Assert.True(focusedAfterConflictRemoved[3].Enabled);
+        Assert.True(focusedAfterConflictRemoved[3].HasFocusRegion);
+        Assert.Equal<uint>(13, focusedAfterConflictRemoved[3].FocusRegionId);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SetBrainVisualization_TerminatedSubscriberMessage_RemovesOnlyTargetedSubscriber()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        const string subscriberAKey = "viz-client-a";
+        const string subscriberBKey = "viz-client-b";
+
+        var shardId = ShardId32.From(13, 0);
+        var visualizationProbePid = root.Spawn(Props.FromProducer(() => new VisualizationHistoryProbe(shardId)));
+        await root.RequestAsync<SendMessageAck>(visualizationProbePid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(visualizationProbePid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var initialUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 1, timeoutMs: 2_000);
+        Assert.False(initialUpdates[0].Enabled);
+        Assert.False(initialUpdates[0].HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberAKey
+        });
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberBKey
+        });
+
+        var enabledWithBothSubscribers = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 2, timeoutMs: 2_000);
+        Assert.True(enabledWithBothSubscribers[1].Enabled);
+        Assert.True(enabledWithBothSubscribers[1].HasFocusRegion);
+        Assert.Equal<uint>(13, enabledWithBothSubscribers[1].FocusRegionId);
+
+        root.Send(hiveMind, new Terminated { Who = new PID(string.Empty, subscriberAKey) });
+
+        var afterFirstTermination = await root.RequestAsync<VisualizationProbeSnapshot>(visualizationProbePid, new GetVisualizationProbeSnapshot());
+        Assert.Equal(2, afterFirstTermination.Updates.Count);
+        Assert.True(afterFirstTermination.Updates[1].Enabled);
+        Assert.True(afterFirstTermination.Updates[1].HasFocusRegion);
+        Assert.Equal<uint>(13, afterFirstTermination.Updates[1].FocusRegionId);
+
+        root.Send(hiveMind, new Terminated { Who = new PID(string.Empty, subscriberBKey) });
+        var disabledAfterSecondTermination = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 3, timeoutMs: 2_000);
+        Assert.False(disabledAfterSecondTermination[2].Enabled);
+        Assert.False(disabledAfterSecondTermination[2].HasFocusRegion);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SetBrainVisualization_StoppedLocalSubscriber_IsEventuallyCleanedUp()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var subscriberA = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var subscriberB = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var subscriberAKey = PidLabel(subscriberA);
+        var subscriberBKey = PidLabel(subscriberB);
+
+        var shardId = ShardId32.From(13, 0);
+        var visualizationProbePid = root.Spawn(Props.FromProducer(() => new VisualizationHistoryProbe(shardId)));
+        await root.RequestAsync<SendMessageAck>(visualizationProbePid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(visualizationProbePid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var initialUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 1, timeoutMs: 2_000);
+        Assert.False(initialUpdates[0].Enabled);
+        Assert.False(initialUpdates[0].HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberAKey
+        });
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = subscriberBKey
+        });
+
+        var enabledWithBothSubscribers = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 2, timeoutMs: 2_000);
+        Assert.True(enabledWithBothSubscribers[1].Enabled);
+        Assert.True(enabledWithBothSubscribers[1].HasFocusRegion);
+        Assert.Equal<uint>(13, enabledWithBothSubscribers[1].FocusRegionId);
+
+        root.Stop(subscriberA);
+        await Task.Delay(500);
+        var afterFirstStop = await root.RequestAsync<VisualizationProbeSnapshot>(visualizationProbePid, new GetVisualizationProbeSnapshot());
+        Assert.Equal(2, afterFirstStop.Updates.Count);
+        Assert.True(afterFirstStop.Updates[1].Enabled);
+
+        root.Stop(subscriberB);
+        var disabledAfterSecondStop = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 3, timeoutMs: 6_000);
+        Assert.False(disabledAfterSecondStop[2].Enabled);
+        Assert.False(disabledAfterSecondStop[2].HasFocusRegion);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RuntimeConfig_Updates_ActiveShard_And_NewShard()
     {
         var system = new ActorSystem();
@@ -1176,13 +1480,39 @@ public class HiveMindOutputSinkTests
             $"Timed out waiting for debug summary '{summary}' to reach {minCount}. Current={finalSnapshot.Count(summary)}");
     }
 
+    private static async Task<IReadOnlyList<UpdateShardVisualization>> WaitForVisualizationUpdateCountAsync(
+        IRootContext root,
+        PID probePid,
+        int minCount,
+        int timeoutMs)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var snapshot = await root.RequestAsync<VisualizationProbeSnapshot>(probePid, new GetVisualizationProbeSnapshot());
+            if (snapshot.Updates.Count >= minCount)
+            {
+                return snapshot.Updates;
+            }
+
+            await Task.Delay(25);
+        }
+
+        var finalSnapshot = await root.RequestAsync<VisualizationProbeSnapshot>(probePid, new GetVisualizationProbeSnapshot());
+        throw new TimeoutException(
+            $"Timed out waiting for visualization updates to reach {minCount}. Current={finalSnapshot.Updates.Count}");
+    }
+
     private sealed record GetDebugProbeSnapshot;
+    private sealed record GetVisualizationProbeSnapshot;
 
     private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts)
     {
         public int Count(string summary)
             => Counts.TryGetValue(summary, out var count) ? count : 0;
     }
+
+    private sealed record VisualizationProbeSnapshot(IReadOnlyList<UpdateShardVisualization> Updates);
 
     private sealed class DebugProbeActor : IActor
     {
@@ -1285,6 +1615,40 @@ public class HiveMindOutputSinkTests
             else
             {
                 _second.TrySetResult(update);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class VisualizationHistoryProbe : IActor
+    {
+        private readonly ShardId32 _shardId;
+        private readonly List<UpdateShardVisualization> _updates = new();
+
+        public VisualizationHistoryProbe(ShardId32 shardId)
+        {
+            _shardId = shardId;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SendMessage send:
+                    context.Request(send.Target, send.Message);
+                    context.Respond(new SendMessageAck());
+                    break;
+                case UpdateShardVisualization update:
+                    if (update.RegionId == (uint)_shardId.RegionId && update.ShardIndex == (uint)_shardId.ShardIndex)
+                    {
+                        _updates.Add(update);
+                    }
+
+                    break;
+                case GetVisualizationProbeSnapshot:
+                    context.Respond(new VisualizationProbeSnapshot(_updates.ToArray()));
+                    break;
             }
 
             return Task.CompletedTask;

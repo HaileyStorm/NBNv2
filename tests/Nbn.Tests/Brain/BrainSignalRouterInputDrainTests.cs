@@ -57,6 +57,45 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task TickDeliver_MissingInputDrain_DoesNotWedge_SubsequentTicks()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new SilentIoDrainActor(brainId)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new IgnoreActor()));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid)
+        });
+
+        var tick1Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var tick2Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 2 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)2, tick2Done.TickId);
+
+        var tick3Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 3 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)3, tick3Done.TickId);
+
+        await AssertTaskStillPending(tick1Task, TimeSpan.FromMilliseconds(150));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RuntimeNeuronCommands_AreForwarded_To_All_TargetRegionShards()
     {
         var system = new ActorSystem();
@@ -276,6 +315,42 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task TickDeliver_FallbackRoute_TracksResolvedShardId_ForAckCompletion()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var routedShardId = ShardId32.From(1, 0);
+        var staleOutboxShardId = ShardId32.From(1, 1);
+
+        var batchTcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shard = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, routedShardId, batchTcs)));
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(routedShardId.Value, shard)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, staleOutboxShardId, targetNeuronId: 0, value: 1f));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        var deliveredBatch = await batchTcs.Task.WaitAsync(timeoutCts.Token);
+        Assert.NotNull(deliveredBatch.ShardId);
+        Assert.Equal(routedShardId, deliveredBatch.ShardId!.ToShardId32());
+
+        await root.RequestAsync<EmitAckAck>(
+            shard,
+            new EmitAck(router, CreateAck(brainId, routedShardId, 1)));
+
+        var deliverDone = await deliverTask.WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, deliverDone.TickId);
+        Assert.Equal((uint)1, deliverDone.DeliveredBatches);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task TickDeliver_Completes_WhenExpectedShardSendersAck()
     {
         var system = new ActorSystem();
@@ -383,6 +458,34 @@ public class BrainSignalRouterInputDrainTests
 
         private bool Matches(Nbn.Proto.Uuid? brainId)
             => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed class SilentIoDrainActor : IActor
+    {
+        private readonly Guid _brainId;
+
+        public SilentIoDrainActor(Guid brainId)
+        {
+            _brainId = brainId;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is DrainInputs request && Matches(request.BrainId))
+            {
+                // Intentionally do not respond to simulate a missing drain acknowledgement.
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed class IgnoreActor : IActor
+    {
+        public Task ReceiveAsync(IContext context) => Task.CompletedTask;
     }
 
     private sealed class InputShardActor : IActor

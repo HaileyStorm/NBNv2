@@ -6,13 +6,15 @@ using Proto;
 namespace Nbn.Runtime.IO;
 
 public sealed record EmitOutput(uint OutputIndex, float Value, ulong TickId);
+public sealed record UpdateOutputWidth(uint OutputWidth);
 
 public sealed class OutputCoordinatorActor : IActor
 {
+    private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
     private const int MaxPendingVectorTicks = 16;
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
-    private readonly int _outputWidth;
+    private int _outputWidth;
     private readonly Dictionary<string, PID> _outputSubscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PID> _vectorSubscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<ulong, PendingVectorTick> _pendingVectors = new();
@@ -22,24 +24,44 @@ public sealed class OutputCoordinatorActor : IActor
     {
         _brainId = brainId;
         _brainIdProto = brainId.ToProtoUuid();
-        _outputWidth = checked((int)outputWidth);
+        _outputWidth = Math.Max(1, checked((int)outputWidth));
     }
 
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
-            case SubscribeOutputs:
-                AddSubscriber(context.Sender, _outputSubscribers);
+            case SubscribeOutputs subscribe:
+                var singleSubscriber = ResolveSubscriberPid(context, subscribe.SubscriberActor);
+                AddSubscriber(singleSubscriber, _outputSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleSubscriber)} total={_outputSubscribers.Count}.");
+                }
                 break;
-            case UnsubscribeOutputs:
-                RemoveSubscriber(context.Sender, _outputSubscribers);
+            case UnsubscribeOutputs unsubscribe:
+                var singleUnsubscriber = ResolveSubscriberPid(context, unsubscribe.SubscriberActor);
+                RemoveSubscriber(singleUnsubscriber, _outputSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleUnsubscriber)} total={_outputSubscribers.Count}.");
+                }
                 break;
-            case SubscribeOutputsVector:
-                AddSubscriber(context.Sender, _vectorSubscribers);
+            case SubscribeOutputsVector subscribeVector:
+                var vectorSubscriber = ResolveSubscriberPid(context, subscribeVector.SubscriberActor);
+                AddSubscriber(vectorSubscriber, _vectorSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorSubscriber)} total={_vectorSubscribers.Count}.");
+                }
                 break;
-            case UnsubscribeOutputsVector:
-                RemoveSubscriber(context.Sender, _vectorSubscribers);
+            case UnsubscribeOutputsVector unsubscribeVector:
+                var vectorUnsubscriber = ResolveSubscriberPid(context, unsubscribeVector.SubscriberActor);
+                RemoveSubscriber(vectorUnsubscriber, _vectorSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorUnsubscriber)} total={_vectorSubscribers.Count}.");
+                }
                 break;
             case OutputEvent outputEvent:
                 EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
@@ -47,8 +69,14 @@ public sealed class OutputCoordinatorActor : IActor
             case OutputVectorEvent outputVector:
                 EmitLegacyVector(context, outputVector);
                 break;
+            case OutputVectorSegment segment:
+                EmitProtoVectorSegment(context, segment);
+                break;
             case EmitOutput message:
                 EmitSingle(context, message);
+                break;
+            case UpdateOutputWidth message:
+                ApplyOutputWidthUpdate(message);
                 break;
             case EmitOutputVectorSegment message:
                 EmitVectorSegment(context, message);
@@ -56,6 +84,27 @@ public sealed class OutputCoordinatorActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private void ApplyOutputWidthUpdate(UpdateOutputWidth message)
+    {
+        var requestedWidth = checked((int)message.OutputWidth);
+        if (requestedWidth <= _outputWidth)
+        {
+            return;
+        }
+
+        foreach (var pending in _pendingVectors.Values)
+        {
+            var values = pending.Values;
+            var filled = pending.Filled;
+            Array.Resize(ref values, requestedWidth);
+            Array.Resize(ref filled, requestedWidth);
+            pending.Values = values;
+            pending.Filled = filled;
+        }
+
+        _outputWidth = requestedWidth;
     }
 
     private void EmitSingle(IContext context, EmitOutput message)
@@ -96,6 +145,25 @@ public sealed class OutputCoordinatorActor : IActor
         EmitVectorSegment(
             context,
             new EmitOutputVectorSegment(0, message.Values, message.TickId));
+    }
+
+    private void EmitProtoVectorSegment(IContext context, OutputVectorSegment message)
+    {
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var brainId) || brainId != _brainId)
+        {
+            RecordVectorReject("brain_id_mismatch");
+            return;
+        }
+
+        if (LogOutput)
+        {
+            Console.WriteLine(
+                $"OutputCoordinator[{_brainId:D}] receive proto segment tick={message.TickId} start={message.OutputIndexStart} values={message.Values.Count} sender={PidLabel(context.Sender)}.");
+        }
+
+        EmitVectorSegment(
+            context,
+            new EmitOutputVectorSegment(message.OutputIndexStart, message.Values, message.TickId));
     }
 
     private void EmitVectorSegment(IContext context, EmitOutputVectorSegment message)
@@ -190,6 +258,12 @@ public sealed class OutputCoordinatorActor : IActor
         DropStalePendingTicks();
 
         IoTelemetry.RecordOutputVectorPublished(_brainId, _outputWidth);
+        if (LogOutput)
+        {
+            Console.WriteLine(
+                $"OutputCoordinator[{_brainId:D}] publish vector tick={tickId} width={values.Count} vectorSubs={_vectorSubscribers.Count}.");
+        }
+
         if (_vectorSubscribers.Count == 0)
         {
             return;
@@ -266,6 +340,68 @@ public sealed class OutputCoordinatorActor : IActor
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+    private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
+    {
+        if (context.Sender is not null)
+        {
+            return context.Sender;
+        }
+
+        return TryParsePid(subscriberActor, out var parsed) ? parsed : null;
+    }
+
+    private static string PidLabel(PID? pid)
+    {
+        if (pid is null)
+        {
+            return "<missing>";
+        }
+
+        return string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            _ => false
+        };
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID(string.Empty, string.Empty);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slash = trimmed.IndexOf('/');
+        if (slash <= 0)
+        {
+            pid = new PID(string.Empty, trimmed);
+            return true;
+        }
+
+        var address = trimmed[..slash];
+        var id = trimmed[(slash + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid = new PID(address, id);
+        return true;
+    }
+
     private sealed class PendingVectorTick
     {
         public PendingVectorTick(float[] values, bool[] filled)
@@ -274,8 +410,8 @@ public sealed class OutputCoordinatorActor : IActor
             Filled = filled;
         }
 
-        public float[] Values { get; }
-        public bool[] Filled { get; }
+        public float[] Values { get; set; }
+        public bool[] Filled { get; set; }
         public int FilledCount { get; set; }
     }
 }

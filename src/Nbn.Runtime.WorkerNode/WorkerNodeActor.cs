@@ -30,6 +30,7 @@ public sealed class WorkerNodeActor : IActor
     private PID? _hiveMindHintPid;
     private readonly WorkerServiceRole _enabledRoles;
     private readonly WorkerResourceAvailability _resourceAvailability;
+    private readonly string? _observabilityDefaultHost;
     private readonly Severity _debugMinSeverityDefault;
     private readonly bool _debugStreamEnabledDefault;
 
@@ -39,7 +40,8 @@ public sealed class WorkerNodeActor : IActor
         string? artifactRootPath = null,
         IArtifactStore? artifactStore = null,
         WorkerServiceRole enabledRoles = WorkerServiceRole.All,
-        WorkerResourceAvailability? resourceAvailability = null)
+        WorkerResourceAvailability? resourceAvailability = null,
+        string? observabilityDefaultHost = null)
     {
         if (workerNodeId == Guid.Empty)
         {
@@ -51,6 +53,9 @@ public sealed class WorkerNodeActor : IActor
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(ResolveArtifactRoot(artifactRootPath)));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
         _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
+        _observabilityDefaultHost = string.IsNullOrWhiteSpace(observabilityDefaultHost)
+            ? null
+            : observabilityDefaultHost.Trim();
         _debugStreamEnabledDefault = ResolveDebugStreamEnabled(defaultValue: false);
         _debugMinSeverityDefault = ResolveDebugMinSeverity(Severity.SevDebug);
     }
@@ -77,6 +82,12 @@ public sealed class WorkerNodeActor : IActor
             case PlacementReconcileRequest request:
                 HandlePlacementReconcile(context, request);
                 break;
+            case TickComputeDone computeDone:
+                ForwardTickCompletion(context, computeDone);
+                break;
+            case TickDeliverDone deliverDone:
+                ForwardTickCompletion(context, deliverDone);
+                break;
             case GetWorkerNodeSnapshot:
                 context.Respond(BuildSnapshot());
                 break;
@@ -84,6 +95,17 @@ public sealed class WorkerNodeActor : IActor
                 HandleTerminated(terminated);
                 break;
         }
+    }
+
+    private void ForwardTickCompletion(IContext context, object completion)
+    {
+        var hiveMindPid = ResolveHiveMindPid(context);
+        if (hiveMindPid is null)
+        {
+            return;
+        }
+
+        TryRequest(context, hiveMindPid, completion);
     }
 
     public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
@@ -380,6 +402,7 @@ public sealed class WorkerNodeActor : IActor
         brain.Assignments[assignment.AssignmentId] = hostedState;
 
         UpdateRuntimeWidthsFromShards(brain);
+        UpdateOutputCoordinatorWidth(context, brain);
         PushRouting(context, brain);
         PushShardEndpoints(context, brain);
         PushIoGatewayRegistration(context, brain);
@@ -748,6 +771,7 @@ public sealed class WorkerNodeActor : IActor
         var neuronCount = Math.Max(1, requestedNeuronCount);
         var actorName = ResolveActorName(assignment);
         var routing = BuildShardRouting(brain, (shardId, neuronStart, neuronCount));
+        var observabilityTargets = ObservabilityTargets.Resolve(_observabilityDefaultHost);
 
         var config = new RegionShardActorConfig(
             brain.BrainId,
@@ -756,6 +780,8 @@ public sealed class WorkerNodeActor : IActor
             regionId == NbnConstants.OutputRegionId ? brain.OutputCoordinatorPid : null,
             ResolveHiveMindPid(context),
             routing,
+            VizHub: observabilityTargets.VizHub,
+            DebugHub: observabilityTargets.DebugHub,
             DebugEnabled: _debugStreamEnabledDefault,
             DebugMinSeverity: _debugMinSeverityDefault);
 
@@ -891,6 +917,17 @@ public sealed class WorkerNodeActor : IActor
 
     private void RegisterOutputSink(IContext context, BrainHostingState brain)
         => RegisterOutputSink(context, brain, allowClear: false);
+
+    private void UpdateOutputCoordinatorWidth(IContext context, BrainHostingState brain)
+    {
+        if (brain.OutputCoordinatorPid is null)
+        {
+            return;
+        }
+
+        var outputWidth = ResolveOutputWidth(brain);
+        context.Send(brain.OutputCoordinatorPid, new UpdateOutputWidth((uint)Math.Max(1, outputWidth)));
+    }
 
     private void RegisterOutputSink(IContext context, BrainHostingState brain, bool allowClear)
     {
@@ -1541,26 +1578,29 @@ public sealed class WorkerNodeActor : IActor
 
     private string BuildObservedActorPid(IContext context, HostedAssignmentState assignment)
     {
+        if (assignment.HostedPid is not null)
+        {
+            var remotePid = ToRemotePid(context, assignment.HostedPid);
+            var normalizedId = NormalizeObservedActorId(remotePid.Id);
+            if (!string.Equals(normalizedId, remotePid.Id, StringComparison.Ordinal))
+            {
+                remotePid = new PID(remotePid.Address, normalizedId);
+            }
+
+            return PidLabel(remotePid);
+        }
+
         var configuredActorName = assignment.Assignment.ActorName?.Trim();
         if (!string.IsNullOrWhiteSpace(configuredActorName))
         {
-            var slash = configuredActorName.LastIndexOf('/');
-            if (slash >= 0 && slash < configuredActorName.Length - 1)
+            if (configuredActorName.Contains('/', StringComparison.Ordinal))
             {
-                configuredActorName = configuredActorName[(slash + 1)..];
+                return configuredActorName;
             }
 
-            if (!string.IsNullOrWhiteSpace(configuredActorName))
-            {
-                return string.IsNullOrWhiteSpace(_workerAddress)
-                    ? configuredActorName
-                    : $"{_workerAddress}/{configuredActorName}";
-            }
-        }
-
-        if (assignment.HostedPid is not null)
-        {
-            return PidLabel(ToRemotePid(context, assignment.HostedPid));
+            return string.IsNullOrWhiteSpace(_workerAddress)
+                ? configuredActorName
+                : $"{_workerAddress}/{configuredActorName}";
         }
 
         var actor = string.IsNullOrWhiteSpace(assignment.Assignment.ActorName)
@@ -1677,6 +1717,20 @@ public sealed class WorkerNodeActor : IActor
 
     private static string NormalizeFailureReason(string failureReason, string fallback)
         => string.IsNullOrWhiteSpace(failureReason) ? fallback : failureReason.Trim().ToLowerInvariant();
+
+    private static string NormalizeObservedActorId(string actorId)
+    {
+        if (string.IsNullOrWhiteSpace(actorId) || !actorId.Contains('/', StringComparison.Ordinal))
+        {
+            return actorId;
+        }
+
+        var parts = actorId
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(static part => !part.StartsWith("$", StringComparison.Ordinal))
+            .ToArray();
+        return parts.Length == 0 ? actorId : string.Join("/", parts);
+    }
 
     private PID ToRemotePid(IContext context, PID pid)
     {
