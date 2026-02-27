@@ -106,6 +106,10 @@
                   <TextBox Grid.Column="2" Text="{Binding RandomOptions.SeedText}" Width="140" IsEnabled="{Binding RandomOptions.IsSeedTextEnabled}" />
                 </Grid>
                 <WrapPanel Orientation="Horizontal">
+                  <CheckBox Content="Seed baseline activity path"
+                            IsChecked="{Binding RandomOptions.SeedBaselineActivityPath}"
+                            ToolTip.Tip="Optional fallback driver for fresh random brains. Disable to test organic spontaneous activity."
+                            Margin="0,0,12,0" />
                   <CheckBox Content="Allow self loops" IsChecked="{Binding RandomOptions.AllowSelfLoops}" Margin="0,0,12,0" />
                   <CheckBox Content="Allow intra-region" IsChecked="{Binding RandomOptions.AllowIntraRegion}" Margin="0,0,12,0" />
                   <CheckBox Content="Allow inter-region" IsChecked="{Binding RandomOptions.AllowInterRegion}" />

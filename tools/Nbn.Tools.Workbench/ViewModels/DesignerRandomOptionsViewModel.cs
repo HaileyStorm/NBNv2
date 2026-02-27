@@ -27,6 +27,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     private bool _allowSelfLoops = true;
     private bool _allowIntraRegion = true;
     private bool _allowInterRegion = true;
+    private bool _seedBaselineActivityPath = true;
     private RandomOptionChoice<RandomTargetBiasMode> _selectedTargetBiasMode;
     private string _strengthMinText = "0";
     private string _strengthMaxText = "31";
@@ -216,6 +217,12 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     {
         get => _allowInterRegion;
         set => SetProperty(ref _allowInterRegion, value);
+    }
+
+    public bool SeedBaselineActivityPath
+    {
+        get => _seedBaselineActivityPath;
+        set => SetProperty(ref _seedBaselineActivityPath, value);
     }
 
     public RandomOptionChoice<RandomTargetBiasMode> SelectedTargetBiasMode
@@ -699,7 +706,8 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
             paramAMin,
             paramAMax,
             paramBMin,
-            paramBMax);
+            paramBMax,
+            SeedBaselineActivityPath);
         return true;
     }
 
@@ -1028,7 +1036,8 @@ public readonly record struct RandomBrainGenerationOptions(
     int ParamAMin,
     int ParamAMax,
     int ParamBMin,
-    int ParamBMax);
+    int ParamBMax,
+    bool SeedBaselineActivityPath);
 
 public sealed record RandomOptionChoice<T>(string Label, T Value);
 

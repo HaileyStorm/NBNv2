@@ -803,7 +803,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         EnsureNeuronOutboundCoverage(rng, brain, options);
         EnsureRegionInboundConnectivity(rng, brain, options);
         EnsureOutputInbound(rng, brain, options);
-        EnsureBaselineActivityPath(rng, brain);
+        if (options.SeedBaselineActivityPath)
+        {
+            EnsureBaselineActivityPath(rng, brain);
+        }
         var normalizedFunctions = NormalizeBrainFunctionConstraints(brain);
         brain.UpdateTotals();
 

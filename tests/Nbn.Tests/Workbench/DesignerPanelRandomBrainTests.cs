@@ -19,6 +19,9 @@ public class DesignerPanelRandomBrainTests
             var client = new WorkbenchClient(new NullWorkbenchEventSink());
             var vm = new DesignerPanelViewModel(connections, client);
             vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SelectedActivationMode = vm.RandomOptions.ActivationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Fixed);
+            vm.RandomOptions.ActivationFixedIdText = "11";
+            vm.RandomOptions.SeedBaselineActivityPath = true;
 
             for (var seed = 1; seed <= 128; seed++)
             {
@@ -59,6 +62,9 @@ public class DesignerPanelRandomBrainTests
 
             vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
             vm.RandomOptions.SeedText = "12345";
+            vm.RandomOptions.SelectedActivationMode = vm.RandomOptions.ActivationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Fixed);
+            vm.RandomOptions.ActivationFixedIdText = "11";
+            vm.RandomOptions.SeedBaselineActivityPath = true;
 
             vm.NewRandomBrainCommand.Execute(null);
 
@@ -87,6 +93,46 @@ public class DesignerPanelRandomBrainTests
                         && axon.StrengthCode == 31));
 
             Assert.True(hasDriver, "Expected a seeded driver neuron with an explicit strong path into the output region.");
+        });
+    }
+
+    [Fact]
+    public void NewRandomBrain_DoesNotSeedBaselineOutputDriver_WhenDisabled()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "12345";
+            vm.RandomOptions.SelectedActivationMode = vm.RandomOptions.ActivationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Fixed);
+            vm.RandomOptions.ActivationFixedIdText = "11";
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+            var outputNeuron = outputRegion.Neurons.First(neuron => neuron.Exists);
+
+            var hasDriver = brain.Regions
+                .Where(region => region.RegionId != NbnConstants.InputRegionId && region.RegionId != NbnConstants.OutputRegionId)
+                .SelectMany(region => region.Neurons.Where(neuron => neuron.Exists))
+                .Any(neuron =>
+                    neuron.ActivationFunctionId == 17
+                    && neuron.ResetFunctionId == 0
+                    && neuron.AccumulationFunctionId == 0
+                    && neuron.PreActivationThresholdCode == 0
+                    && neuron.ActivationThresholdCode == 0
+                    && neuron.ParamACode == 63
+                    && neuron.Axons.Any(axon =>
+                        axon.TargetRegionId == NbnConstants.OutputRegionId
+                        && axon.TargetNeuronId == outputNeuron.NeuronId
+                        && axon.StrengthCode == 31));
+
+            Assert.False(hasDriver, "Expected no seeded baseline driver when the toggle is disabled.");
         });
     }
 
