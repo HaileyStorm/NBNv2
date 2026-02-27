@@ -836,6 +836,60 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task SetBrainVisualization_EnabledState_IsPeriodicallyResynced_ToShards()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+        var subscriber = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+
+        var shardId = ShardId32.From(13, 0);
+        var visualizationProbePid = root.Spawn(Props.FromProducer(() => new VisualizationHistoryProbe(shardId)));
+        await root.RequestAsync<SendMessageAck>(visualizationProbePid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(visualizationProbePid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var initialUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 1, timeoutMs: 2_000);
+        Assert.False(initialUpdates[0].Enabled);
+        Assert.False(initialUpdates[0].HasFocusRegion);
+
+        root.Send(hiveMind, new SetBrainVisualization
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Enabled = true,
+            HasFocusRegion = true,
+            FocusRegionId = 13,
+            SubscriberActor = PidLabel(subscriber)
+        });
+
+        var enabledUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 2, timeoutMs: 2_000);
+        Assert.True(enabledUpdates[1].Enabled);
+        Assert.True(enabledUpdates[1].HasFocusRegion);
+        Assert.Equal<uint>(13, enabledUpdates[1].FocusRegionId);
+
+        var resyncedUpdates = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 3, timeoutMs: 4_000);
+        Assert.True(resyncedUpdates[2].Enabled);
+        Assert.True(resyncedUpdates[2].HasFocusRegion);
+        Assert.Equal<uint>(13, resyncedUpdates[2].FocusRegionId);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SetBrainVisualization_MultipleSubscribers_DisablingOne_KeepsVisualizationEnabled()
     {
         var system = new ActorSystem();
@@ -1124,13 +1178,17 @@ public class HiveMindOutputSinkTests
         root.Stop(subscriberA);
         await Task.Delay(500);
         var afterFirstStop = await root.RequestAsync<VisualizationProbeSnapshot>(visualizationProbePid, new GetVisualizationProbeSnapshot());
-        Assert.Equal(2, afterFirstStop.Updates.Count);
-        Assert.True(afterFirstStop.Updates[1].Enabled);
+        Assert.True(afterFirstStop.Updates.Count >= 2);
+        Assert.True(afterFirstStop.Updates[^1].Enabled);
 
         root.Stop(subscriberB);
-        var disabledAfterSecondStop = await WaitForVisualizationUpdateCountAsync(root, visualizationProbePid, minCount: 3, timeoutMs: 6_000);
-        Assert.False(disabledAfterSecondStop[2].Enabled);
-        Assert.False(disabledAfterSecondStop[2].HasFocusRegion);
+        var disabledAfterSecondStop = await WaitForVisualizationUpdateCountAsync(
+            root,
+            visualizationProbePid,
+            minCount: afterFirstStop.Updates.Count + 1,
+            timeoutMs: 6_000);
+        Assert.False(disabledAfterSecondStop[^1].Enabled);
+        Assert.False(disabledAfterSecondStop[^1].HasFocusRegion);
 
         await system.ShutdownAsync();
     }

@@ -43,9 +43,11 @@ public sealed class HiveMindActor : IActor
     private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private ulong _vizSequence;
+    private long _nextVisualizationShardSyncMs;
     private long _workerCatalogSnapshotMs;
     private static readonly bool LogTickBarrier = IsEnvTrue("NBN_HIVEMIND_LOG_TICK_BARRIER");
     private static readonly TimeSpan VisualizationSubscriberSweepInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan VisualizationShardSyncInterval = TimeSpan.FromSeconds(1);
     private static readonly PropertyInfo? ProcessRegistryProperty = typeof(ActorSystem).GetProperty(
         "ProcessRegistry",
         BindingFlags.Instance | BindingFlags.Public);
@@ -3594,10 +3596,45 @@ public sealed class HiveMindActor : IActor
         {
             SweepSubscribersBySettingsNodeLiveness(context);
             SweepSubscribersByLocalProcessLiveness(context);
+            SyncVisualizationScopeToShards(context);
         }
         finally
         {
             ScheduleSelf(context, VisualizationSubscriberSweepInterval, new SweepVisualizationSubscribers());
+        }
+    }
+
+    private void SyncVisualizationScopeToShards(IContext context)
+    {
+        if (_brains.Count == 0)
+        {
+            return;
+        }
+
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (nowMs < _nextVisualizationShardSyncMs)
+        {
+            return;
+        }
+
+        _nextVisualizationShardSyncMs = nowMs + (long)VisualizationShardSyncInterval.TotalMilliseconds;
+        foreach (var brain in _brains.Values)
+        {
+            if (!brain.VisualizationEnabled || brain.Shards.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var entry in brain.Shards)
+            {
+                SendShardVisualizationUpdate(
+                    context,
+                    brain.BrainId,
+                    entry.Key,
+                    entry.Value,
+                    enabled: true,
+                    brain.VisualizationFocusRegionId);
+            }
         }
     }
 

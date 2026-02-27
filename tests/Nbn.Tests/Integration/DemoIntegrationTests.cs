@@ -443,7 +443,12 @@ public class DemoIntegrationTests
             var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
             var vizTcs = new TaskCompletionSource<VisualizationEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-            obsNode.Root.Spawn(Props.FromProducer(() => new VizActivitySubscriberActor(brainId, hiveMindRemote, vizHubRemote, vizTcs)));
+            obsNode.Root.Spawn(Props.FromProducer(() => new VizActivitySubscriberActor(
+                brainId,
+                hiveMindRemote,
+                vizHubRemote,
+                vizTcs,
+                requireNonInputRegion: true)));
 
             ioNode.Root.Send(ioPid, new InputVector
             {
@@ -451,6 +456,7 @@ public class DemoIntegrationTests
                 Values = { 1f }
             });
 
+            var statusBefore = await hiveNode.Root.RequestAsync<ProtoControl.HiveMindStatus>(hiveMindLocal, new ProtoControl.GetHiveMindStatus());
             hiveNode.Root.Send(hiveMindLocal, new StartTickLoop());
 
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -460,7 +466,12 @@ public class DemoIntegrationTests
 
             Assert.True(vizEvent.BrainId.TryToGuid(out var vizBrain) && vizBrain == brainId);
             Assert.NotEqual(VizEventType.VizTick, vizEvent.Type);
+            Assert.NotEqual((uint)NbnConstants.InputRegionId, vizEvent.RegionId);
             Assert.True(vizEvent.TickId >= 1);
+            Assert.InRange(
+                vizEvent.TickId,
+                statusBefore.LastCompletedTickId + 1,
+                statusBefore.LastCompletedTickId + 32);
         }
         finally
         {
@@ -939,18 +950,21 @@ public class DemoIntegrationTests
         private readonly PID _hiveMind;
         private readonly PID _vizHub;
         private readonly TaskCompletionSource<VisualizationEvent> _tcs;
+        private readonly bool _requireNonInputRegion;
         private string? _subscriberActor;
 
         public VizActivitySubscriberActor(
             Guid brainId,
             PID hiveMind,
             PID vizHub,
-            TaskCompletionSource<VisualizationEvent> tcs)
+            TaskCompletionSource<VisualizationEvent> tcs,
+            bool requireNonInputRegion = false)
         {
             _brainId = brainId;
             _hiveMind = hiveMind;
             _vizHub = vizHub;
             _tcs = tcs;
+            _requireNonInputRegion = requireNonInputRegion;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -983,7 +997,8 @@ public class DemoIntegrationTests
                 case VisualizationEvent vizEvent
                     when vizEvent.BrainId.TryToGuid(out var brainId)
                          && brainId == _brainId
-                         && vizEvent.Type != VizEventType.VizTick:
+                         && vizEvent.Type != VizEventType.VizTick
+                         && (!_requireNonInputRegion || vizEvent.RegionId != (uint)NbnConstants.InputRegionId):
                     _tcs.TrySetResult(vizEvent);
                     break;
             }
