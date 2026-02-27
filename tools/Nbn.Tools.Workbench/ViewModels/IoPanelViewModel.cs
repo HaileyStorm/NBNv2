@@ -26,6 +26,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _filterZeroOutputs = true;
     private bool _filterZeroVectorOutputs = true;
     private bool _pauseVectorUiUpdates;
+    private bool _autoSendInputVectorEveryTick;
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
@@ -34,6 +35,9 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
     private string _lastOutputTickLabel = "-";
+    private Guid _lastAutoVectorSendBrainId = Guid.Empty;
+    private ulong _lastAutoVectorSendTickId;
+    private bool _hasLastAutoVectorSendTick;
     private List<Guid> _activeBrains = new();
     private Guid? _selectedBrainId;
 
@@ -189,6 +193,18 @@ public sealed class IoPanelViewModel : ViewModelBase
         ? "UI updates paused (events still received)."
         : "UI updates live.";
 
+    public bool AutoSendInputVectorEveryTick
+    {
+        get => _autoSendInputVectorEveryTick;
+        set
+        {
+            if (SetProperty(ref _autoSendInputVectorEveryTick, value) && !value)
+            {
+                ResetAutoVectorSendTickGate();
+            }
+        }
+    }
+
     public string PlasticityRateText
     {
         get => _plasticityRateText;
@@ -279,6 +295,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         _dispatcher.Post(() =>
         {
             LastOutputTickLabel = item.TickId.ToString();
+            TryAutoSendInputVectorForTick(item.BrainId, item.TickId);
             if (PauseVectorUiUpdates)
             {
                 return;
@@ -309,6 +326,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         _selectedBrainId = brainId;
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
+        ResetAutoVectorSendTickGate();
         if (!preserveOutputs)
         {
             OutputEvents.Clear();
@@ -629,6 +647,44 @@ public sealed class IoPanelViewModel : ViewModelBase
     private void ToggleVectorUiUpdates()
     {
         PauseVectorUiUpdates = !PauseVectorUiUpdates;
+    }
+
+    private void TryAutoSendInputVectorForTick(string eventBrainId, ulong tickId)
+    {
+        if (!AutoSendInputVectorEveryTick || !_selectedBrainId.HasValue)
+        {
+            return;
+        }
+
+        if (!Guid.TryParse(eventBrainId, out var parsedBrainId) || parsedBrainId != _selectedBrainId.Value)
+        {
+            return;
+        }
+
+        if (_hasLastAutoVectorSendTick
+            && _lastAutoVectorSendBrainId == parsedBrainId
+            && _lastAutoVectorSendTickId == tickId)
+        {
+            return;
+        }
+
+        var values = ParseVector(InputVectorText);
+        if (values.Count == 0)
+        {
+            return;
+        }
+
+        _lastAutoVectorSendBrainId = parsedBrainId;
+        _lastAutoVectorSendTickId = tickId;
+        _hasLastAutoVectorSendTick = true;
+        _client.SendInputVector(parsedBrainId, values);
+    }
+
+    private void ResetAutoVectorSendTickGate()
+    {
+        _lastAutoVectorSendBrainId = Guid.Empty;
+        _lastAutoVectorSendTickId = 0;
+        _hasLastAutoVectorSendTick = false;
     }
 
     private void UpdateCostEnergyCombined()

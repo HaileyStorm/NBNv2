@@ -40,6 +40,50 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public void AutoSendInputVectorEveryTick_DefaultsOff()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        Assert.False(vm.AutoSendInputVectorEveryTick);
+    }
+
+    [Fact]
+    public async Task AddVectorEvent_AutoSendEnabled_SendsOncePerTick_ForSelectedBrain()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "1.0, -0.25, 0.5";
+        vm.AutoSendInputVectorEveryTick = true;
+
+        vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 42));
+        vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 42));
+        vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 43));
+
+        await WaitForAsync(() => client.InputVectorCalls.Count == 2);
+
+        Assert.All(client.InputVectorCalls, call => Assert.Equal(brainId, call.BrainId));
+        Assert.Equal(new[] { 1f, -0.25f, 0.5f }, client.InputVectorCalls[0].Values);
+        Assert.Equal(new[] { 1f, -0.25f, 0.5f }, client.InputVectorCalls[1].Values);
+    }
+
+    [Fact]
+    public async Task AddVectorEvent_AutoSendEnabled_WithEmptyVector_DoesNotSend()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = string.Empty;
+        vm.AutoSendInputVectorEveryTick = true;
+
+        vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 55));
+        await WaitForAsync(() => vm.LastOutputTickLabel == "55");
+
+        Assert.Empty(client.InputVectorCalls);
+    }
+
+    [Fact]
     public async Task ApplyCostEnergy_Uses_Independent_Flag_Values()
     {
         var client = new FakeWorkbenchClient();
@@ -113,6 +157,12 @@ public class IoPanelViewModelTests
         return new IoPanelViewModel(client, dispatcher);
     }
 
+    private static OutputVectorEventItem CreateVectorEvent(Guid brainId, ulong tickId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new OutputVectorEventItem(now, now.ToString("g", CultureInfo.InvariantCulture), brainId.ToString("D"), "1, -0.25, 0.5", AllZero: false, tickId);
+    }
+
     private static async Task WaitForAsync(Func<bool> predicate, int timeoutMs = 2000)
     {
         var deadline = Stopwatch.StartNew();
@@ -133,6 +183,7 @@ public class IoPanelViewModelTests
     {
         public List<(Guid BrainId, bool CostEnabled, bool EnergyEnabled)> CostEnergyCalls { get; } = new();
         public Dictionary<Guid, IoCommandResult> CostEnergyResults { get; } = new();
+        public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -173,6 +224,11 @@ public class IoPanelViewModelTests
                     PlasticityRate = rate,
                     PlasticityProbabilisticUpdates = probabilistic
                 }));
+        }
+
+        public override void SendInputVector(Guid brainId, IReadOnlyList<float> values)
+        {
+            InputVectorCalls.Add((brainId, values.ToArray()));
         }
     }
 

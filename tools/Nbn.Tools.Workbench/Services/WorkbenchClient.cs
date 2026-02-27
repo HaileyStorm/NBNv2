@@ -740,7 +740,7 @@ public class WorkbenchClient : IAsyncDisposable
         _root.Send(_receiverPid, new InputWriteCommand(brainId, index, value));
     }
 
-    public void SendInputVector(Guid brainId, IReadOnlyList<float> values)
+    public virtual void SendInputVector(Guid brainId, IReadOnlyList<float> values)
     {
         if (_receiverPid is null || _root is null)
         {

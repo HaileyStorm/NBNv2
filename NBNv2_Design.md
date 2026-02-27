@@ -2981,6 +2981,7 @@ For moderate multi-file work, prefer Aleph unless the change is clearly mechanic
 Use Aleph before substantial edits when **any** of the following is true:
 
 * task touches 2+ files, or likely spans UI + ViewModel + service/protocol layers
+* task is concrete code-search/edit implementation work where file ownership or side effects are not fully obvious yet
 * any target file is large (roughly 500+ LOC) or dense/low-cohesion
 * request explicitly asks for a careful sweep, architecture review, or "fine-tooth comb" pass
 * ownership/call path/invariant location is not obvious from a quick file scan
