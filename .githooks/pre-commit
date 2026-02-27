@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
+# Keep the existing Beads safety behavior in commit flow.
+if command -v bd >/dev/null 2>&1 && [ -d .beads ]; then
+    if ! bd sync --flush-only >/dev/null 2>&1; then
+        echo "Error: Failed to flush bd changes to JSONL" >&2
+        echo "Run 'bd sync --flush-only' manually to diagnose" >&2
+        exit 1
+    fi
+    if [ -f .beads/issues.jsonl ]; then
+        git add .beads/issues.jsonl 2>/dev/null || true
+    fi
+fi
+
+if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoProfile -File ./tools/docs/render-nbnv2-docs.ps1
+elif command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/docs/render-nbnv2-docs.ps1
+else
+    bash ./tools/docs/render-nbnv2-docs.sh
+fi
+
+git add docs/NBNv2.md

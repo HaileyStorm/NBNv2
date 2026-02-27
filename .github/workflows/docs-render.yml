@@ -1,0 +1,35 @@
+name: Docs Render Freshness
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  render-and-validate:
+    name: render-and-validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate docs render freshness (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/docs/render-nbnv2-docs.ps1 -Check
+
+      - name: Validate docs render freshness (Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./tools/docs/render-nbnv2-docs.sh --check

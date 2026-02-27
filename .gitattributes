@@ -1,3 +1,12 @@
 
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
+
+# Keep script/hook/workflow files LF so Linux execution is stable.
+*.sh text eol=lf
+.githooks/* text eol=lf
+tools/docs/*.py text eol=lf
+.github/workflows/*.yml text eol=lf
+docs/NBNv2.md text eol=lf
+docs/INDEX.md text eol=lf
+docs/manifest/*.md text eol=lf

@@ -1,0 +1,148 @@
+## 14. Reproduction and evolution
+
+### 14.1 Overview
+
+Reproduction creates a new `.nbn` brain definition from one or more running brains (by
+ BrainId) or from artifact references. It is performed by a `ReproductionManager`
+service. Reproduction *uses* artifacts regardless.
+
+Reproduction operates primarily on packed/quantized representations:
+
+* neuron records and axon records
+* function IDs and parameter codes
+* strength codes (*optionally* included in transformation)
+
+Axon strength values are not used for gating/similarity checks, including live strength overlays.
+
+### 14.2 Reproduction inputs
+
+Reproduction requests may specify parents by:
+
+* BrainId (preferred): NBN resolves to the latest base `.nbn` plus latest `.nbs` overlay if configured
+* ArtifactRef: `.nbn` (and optionally `.nbs`)
+
+Strength source options:
+
+* base-only
+* live (base + overlay codes)
+
+### 14.3 Similarity gating cascade
+
+Reproduction aborts early if any stage fails:
+
+1. **Format compatibility:** both parents are NBN2 and share compatible quantization schemas and function ID contracts
+2. **IO region invariants:** parents obey input/output connectivity rules; child must obey them too
+3. **Region presence similarity:** region presence means â€œregion has at least one neuron in itâ€ (region section exists); by default the number of present regions must match exactly
+4. **Per-region neuron span similarity:** how many neurons within the region, within tolerances (absolute and/or percentage; smallest limit wins)
+5. **Function distribution similarity:** activation/reset/accum histograms within thresholds, for each region
+6. **Connectivity distribution similarity:** out-degree distribution and target-region distribution within thresholds
+7. **Spot-check overlap:** sample loci and compare connectivity patterns (ignoring strength)
+
+### 14.4 Alignment and locus
+
+Neuron alignment is by locus:
+
+* `(region_id, neuron_id)` is the canonical locus.
+* Regions are independently aligned by locus.
+
+Regions may be absent. Adding a neuron to an empty region creates a new region section; removing the last neuron removes the region section.
+
+### 14.5 Structural mutations
+
+Reproduction can:
+
+* add/remove neurons (except in regions 0 and 31)
+* add/remove axons (following the rules for regions 0 and 31)
+* reroute axons (following the rules for regions 0 and 31)
+* adjust axon strengths (optional)
+* mutate function IDs and parameter codes
+
+Constraints:
+
+* Regions 0 and 31: neurons cannot be added or removed during reproduction.
+* Axon invariants for input/output regions always apply.
+* Duplicate axons from a given source neuron to the same target are not allowed; mutation operations must avoid creating them.
+
+Separate structural probabilities include:
+
+* probability to add a neuron to an empty region (if any empty regions)
+* probability to remove the only/last neuron from a region (if any such regions)
+* probability to disable a neuron within a non-empty region
+* probability to reactivate a disabled locus (within an existing region)
+
+Limits are configurable by:
+
+* absolute counts and/or (average) percentage of the parentâ€™s size
+* if both are provided, the smallest effective limit applies
+
+### 14.6 Deleting neurons and inbound axons
+
+When a neuron is deleted:
+
+* All axons that target it must be handled:
+
+  * removed, or
+  * rerouted within the same target region to a nearby neuron ID (ring distance metric), with configurable probability and max distance (use a distribution so closer within the distance limit is more likely)
+
+Nearby target selection:
+
+* choose a candidate neuron ID in the same region based on ring distance with wrap
+* candidates must exist and be valid targets under IO invariants
+
+### 14.7 Axon strength transformation (optional)
+
+Strength transformation modes:
+
+* copy parent A
+* copy parent B
+* average (decoded float average then re-encode)
+* weighted average (weights configurable)
+* mutate (small random perturbation in float then re-encode)
+* mixed strategies with probabilities
+
+Strength is not used as a reproduction gate.
+
+### 14.8 Out-degree control (average-based)
+
+Hard per-neuron axon count is limited by file format (0..511). Reproduction additionally enforces average out-degree constraints:
+
+* `max_avg_out_degree_brain`
+* optionally per-region max average (`per_region_out_degree_caps`)
+
+Pruning policies:
+
+* remove lowest `abs(strength)` first (default)
+* remove newly added connections first (option)
+* random removal (option)
+
+### 14.9 Outputs
+
+Reproduction returns:
+
+* child `.nbn` artifact ref
+* similarity report and mutation summary
+
+Optionally (default on):
+
+* spawn the child brain immediately and return its BrainId
+
+Implementation notes (runtime behavior):
+
+* `SimilarityReport.compatible=false` with `SimilarityReport.abort_reason=<code>` indicates a gate/runtime abort.
+* Successful child synthesis populates `child_def` and `summary` even when subsequent spawn fails.
+* Spawn-policy behavior:
+  * `SPAWN_CHILD_DEFAULT_ON`: attempt spawn after synthesis
+  * `SPAWN_CHILD_NEVER`: do not spawn; return child artifact only
+  * `SPAWN_CHILD_ALWAYS`: force spawn attempt
+* Spawn attempt failures use abort codes:
+  * `repro_spawn_unavailable`
+  * `repro_child_artifact_missing`
+  * `repro_spawn_failed`
+  * `repro_spawn_request_failed`
+* IO-layer forwarding failures (before reaching ReproductionManager) are surfaced as:
+  * `repro_unavailable`
+  * `repro_empty_response`
+  * `repro_missing_report`
+  * `repro_request_failed`
+
+---
