@@ -29,14 +29,43 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public void BuildSuggestedVector_CapsSuggestedLengthAt256()
+    public void BuildSuggestedVector_CapsSuggestedLengthAt64()
     {
         var method = typeof(IoPanelViewModel).GetMethod("BuildSuggestedVector", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
 
         var raw = Assert.IsType<string>(method!.Invoke(null, new object[] { 300 }));
         var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Assert.Equal(256, parts.Length);
+        Assert.Equal(64, parts.Length);
+    }
+
+    [Fact]
+    public void SendVectorCommand_IsDisabled_WhenContinuousAutoSendEnabled()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        Assert.True(vm.SendVectorCommand.CanExecute(null));
+
+        vm.AutoSendInputVectorEveryTick = true;
+        Assert.False(vm.SendVectorCommand.CanExecute(null));
+
+        vm.AutoSendInputVectorEveryTick = false;
+        Assert.True(vm.SendVectorCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void ApplyBrainInfo_DoesNotRegenerateSuggestion_WhenInputAlreadyPopulated()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        var method = typeof(IoPanelViewModel).GetMethod("ApplyBrainInfo", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        var info = new BrainInfo { InputWidth = 8, OutputWidth = 4 };
+
+        method!.Invoke(vm, new object?[] { info });
+        var first = vm.InputVectorText;
+        Assert.False(string.IsNullOrWhiteSpace(first));
+
+        method.Invoke(vm, new object?[] { info });
+        Assert.Equal(first, vm.InputVectorText);
     }
 
     [Fact]

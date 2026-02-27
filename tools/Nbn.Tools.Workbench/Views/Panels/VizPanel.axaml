@@ -444,8 +444,9 @@
               <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="Send Input" Command="{Binding Brain.SendInputCommand}" />
                 <Button Content="Send Vector" Command="{Binding Brain.SendVectorCommand}" />
-                <CheckBox Content="Continuous (every tick)"
+                <CheckBox Content="Continuous"
                           IsChecked="{Binding Brain.AutoSendInputVectorEveryTick}"
+                          ToolTip.Tip="Send the current vector every tick while enabled."
                           VerticalAlignment="Center" />
               </StackPanel>
             </StackPanel>

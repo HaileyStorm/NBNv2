@@ -13,6 +13,7 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class IoPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 300;
+    private const int MaxSuggestedInputValues = 64;
     private readonly WorkbenchClient _client;
     private readonly UiDispatcher _dispatcher;
     private string _brainIdText = string.Empty;
@@ -60,7 +61,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         SubscribeVectorCommand = new RelayCommand(() => Subscribe(true));
         UnsubscribeVectorCommand = new RelayCommand(() => Unsubscribe(true));
         SendInputCommand = new RelayCommand(SendInput);
-        SendVectorCommand = new RelayCommand(SendVector);
+        SendVectorCommand = new RelayCommand(SendVector, () => !AutoSendInputVectorEveryTick);
         ApplyEnergyCreditCommand = new RelayCommand(ApplyEnergyCredit);
         ApplyEnergyRateCommand = new RelayCommand(ApplyEnergyRate);
         ApplyCostEnergyCommand = new RelayCommand(ApplyCostEnergy);
@@ -198,9 +199,14 @@ public sealed class IoPanelViewModel : ViewModelBase
         get => _autoSendInputVectorEveryTick;
         set
         {
-            if (SetProperty(ref _autoSendInputVectorEveryTick, value) && !value)
+            if (SetProperty(ref _autoSendInputVectorEveryTick, value))
             {
-                ResetAutoVectorSendTickGate();
+                if (!value)
+                {
+                    ResetAutoVectorSendTickGate();
+                }
+
+                SendVectorCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -536,13 +542,14 @@ public sealed class IoPanelViewModel : ViewModelBase
             SelectedPlasticityMode = selectedMode;
         }
 
-        var suggestedVector = BuildSuggestedVector((int)Math.Max(0, info.InputWidth));
-        if (!string.IsNullOrWhiteSpace(suggestedVector)
-            && (string.IsNullOrWhiteSpace(InputVectorText)
-                || string.Equals(InputVectorText.Trim(), _lastSuggestedInputVector, StringComparison.Ordinal)))
+        if (string.IsNullOrWhiteSpace(InputVectorText))
         {
-            _lastSuggestedInputVector = suggestedVector;
-            InputVectorText = suggestedVector;
+            var suggestedVector = BuildSuggestedVector((int)Math.Max(0, info.InputWidth));
+            if (!string.IsNullOrWhiteSpace(suggestedVector))
+            {
+                _lastSuggestedInputVector = suggestedVector;
+                InputVectorText = suggestedVector;
+            }
         }
 
         var plasticityModeLabel = info.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute";
@@ -960,8 +967,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             return string.Empty;
         }
 
-        const int maxSuggestedInputs = 256;
-        var count = Math.Min(inputWidth, maxSuggestedInputs);
+        var count = Math.Min(inputWidth, MaxSuggestedInputValues);
         const double minMagnitude = 0.15d;
         var values = new string[count];
         for (var i = 0; i < count; i++)
@@ -969,10 +975,10 @@ public sealed class IoPanelViewModel : ViewModelBase
             var magnitude = minMagnitude + ((1d - minMagnitude) * Math.Sqrt(Random.Shared.NextDouble()));
             var sign = Random.Shared.Next(0, 2) == 0 ? -1d : 1d;
             var value = sign * magnitude;
-            values[i] = value.ToString("0.###", CultureInfo.InvariantCulture);
+            values[i] = value.ToString("0.##", CultureInfo.InvariantCulture);
         }
 
-        return string.Join(", ", values);
+        return string.Join(",", values);
     }
 }
 
