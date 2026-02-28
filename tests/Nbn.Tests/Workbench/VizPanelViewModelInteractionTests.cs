@@ -991,6 +991,7 @@ public class VizPanelViewModelInteractionTests
         Assert.Equal("8", vm.MiniActivityTopNText);
         Assert.Equal("3", vm.MiniActivityRangeSecondsText);
         Assert.Contains("score =", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("log", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

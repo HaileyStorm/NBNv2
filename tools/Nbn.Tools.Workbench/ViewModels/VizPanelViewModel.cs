@@ -132,7 +132,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _miniActivityRangeSecondsText = DefaultMiniActivityRangeSeconds.ToString("0.###", CultureInfo.InvariantCulture);
     private string _miniActivityChartSeriesLabel = $"Top {DefaultMiniActivityTopN} regions by score.";
     private string _miniActivityChartRangeLabel = "Ticks: awaiting activity.";
-    private string _miniActivityChartMetricLabel = "score = |value| + |strength| per event contribution";
+    private string _miniActivityChartMetricLabel = "score = |value| + |strength| per event contribution | y-axis log(1+score)";
     private string _miniActivityYAxisTopLabel = "0";
     private string _miniActivityYAxisMidLabel = "0";
     private string _miniActivityYAxisBottomLabel = "0";
@@ -2141,7 +2141,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 Enabled: false,
                 SeriesLabel: chart.ModeLabel,
                 RangeLabel: "Ticks: mini chart disabled.",
-                MetricLabel: $"{chart.MetricLabel} | toggle on to resume tracking",
+                MetricLabel: $"{chart.MetricLabel} | y-axis log(1+score) | toggle on to resume tracking",
                 YAxisTopLabel: "0",
                 YAxisMidLabel: "0",
                 YAxisBottomLabel: "0",
@@ -2156,7 +2156,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 Enabled: true,
                 SeriesLabel: chart.ModeLabel,
                 RangeLabel: "Ticks: awaiting activity.",
-                MetricLabel: $"{chart.MetricLabel} | no ranked series in current window",
+                MetricLabel: $"{chart.MetricLabel} | y-axis log(1+score) | no ranked series in current window",
                 YAxisTopLabel: "0",
                 YAxisMidLabel: "0",
                 YAxisBottomLabel: "0",
@@ -2189,9 +2189,9 @@ public sealed class VizPanelViewModel : ViewModelBase
             Enabled: true,
             SeriesLabel: chart.ModeLabel,
             RangeLabel: $"Ticks {chart.MinTick}..{chart.MaxTick}",
-            MetricLabel: $"{chart.MetricLabel} | y-max {yMax:0.###} (peak {chart.PeakScore:0.###})",
+            MetricLabel: $"{chart.MetricLabel} | y-axis log(1+score) | y-max {yMax:0.###} (peak {chart.PeakScore:0.###})",
             YAxisTopLabel: FormatMiniChartAxisValue(yMax),
-            YAxisMidLabel: FormatMiniChartAxisValue(yMax * 0.5f),
+            YAxisMidLabel: FormatMiniChartAxisValue(MiniChartValueFromLogRatio(yMax, 0.5f)),
             YAxisBottomLabel: "0",
             LegendColumns: legendColumns,
             TickCount: chart.Ticks.Count,
@@ -2243,7 +2243,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         var builder = new StringBuilder(values.Count * 24);
-        var divisor = yMax > 0f ? yMax : 1f;
         var usableWidth = Math.Max(1.0, plotWidth - (paddingX * 2.0));
         var usableHeight = Math.Max(1.0, plotHeight - (paddingY * 2.0));
         var xStep = values.Count > 1
@@ -2253,7 +2252,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         for (var i = 0; i < values.Count; i++)
         {
             var x = paddingX + (i * xStep);
-            var ratio = Math.Clamp(values[i] / divisor, 0f, 1f);
+            var ratio = MiniChartLogRatio(values[i], yMax);
             var y = paddingY + ((1f - ratio) * usableHeight);
             builder.Append(i == 0 ? "M " : " L ");
             builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
@@ -2262,6 +2261,35 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         return builder.ToString();
+    }
+
+    private static float MiniChartLogRatio(float value, float yMax)
+    {
+        var boundedMax = yMax > 0f && float.IsFinite(yMax) ? yMax : 1f;
+        var boundedValue = Math.Clamp(float.IsFinite(value) ? value : 0f, 0f, boundedMax);
+        var denominator = MathF.Log(1f + boundedMax);
+        if (!(denominator > 0f) || !float.IsFinite(denominator))
+        {
+            return boundedValue / boundedMax;
+        }
+
+        var numerator = MathF.Log(1f + boundedValue);
+        return Math.Clamp(numerator / denominator, 0f, 1f);
+    }
+
+    private static float MiniChartValueFromLogRatio(float yMax, float ratio)
+    {
+        var boundedMax = yMax > 0f && float.IsFinite(yMax) ? yMax : 1f;
+        var boundedRatio = Math.Clamp(ratio, 0f, 1f);
+        var denominator = MathF.Log(1f + boundedMax);
+        if (!(denominator > 0f) || !float.IsFinite(denominator))
+        {
+            return boundedMax * boundedRatio;
+        }
+
+        var scaled = denominator * boundedRatio;
+        var value = MathF.Exp(scaled) - 1f;
+        return Math.Clamp(value, 0f, boundedMax);
     }
 
     private static string GetMiniActivitySeriesStroke(string key)
