@@ -446,10 +446,17 @@ public class OrchestratorPanelViewModelTests
             IoConnected = true
         };
         var spawnedBrainId = Guid.NewGuid();
+        var registrationPolls = 0;
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
-            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
+            BrainListFactory = () =>
+            {
+                registrationPolls++;
+                return registrationPolls < 2
+                    ? BuildBrainList(spawnedBrainId, "Active", includeAliveController: false)
+                    : BuildBrainList(spawnedBrainId, "Active");
+            }
         };
         var vm = CreateViewModel(connections, client);
 
@@ -458,6 +465,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.True(client.ListBrainsCallCount >= 2);
         Assert.NotNull(client.LastSpawnRequest);
         Assert.Equal("application/x-nbn", client.LastSpawnRequest!.BrainDef?.MediaType);
         Assert.Equal(0, client.KillBrainCallCount);
@@ -595,10 +603,17 @@ public class OrchestratorPanelViewModelTests
             IoPortText = "bad"
         };
         var spawnedBrainId = Guid.NewGuid();
+        var registrationPolls = 0;
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
-            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
+            BrainListFactory = () =>
+            {
+                registrationPolls++;
+                return registrationPolls < 2
+                    ? BuildBrainList(spawnedBrainId, "Active", includeAliveController: false)
+                    : BuildBrainList(spawnedBrainId, "Active");
+            }
         };
         var vm = new DesignerPanelViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
@@ -609,6 +624,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.True(client.ListBrainsCallCount >= 2);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
@@ -721,20 +737,37 @@ public class OrchestratorPanelViewModelTests
         return -1;
     }
 
-    private static BrainListResponse BuildBrainList(Guid brainId, string state)
-        => new()
+    private static BrainListResponse BuildBrainList(Guid brainId, string state, bool includeAliveController = true)
+    {
+        var nowMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var response = new BrainListResponse
         {
             Brains =
             {
                 new BrainStatus
                 {
                     BrainId = brainId.ToProtoUuid(),
-                    SpawnedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    SpawnedMs = nowMs,
                     LastTickId = 0,
                     State = state
                 }
             }
         };
+
+        if (includeAliveController)
+        {
+            response.Controllers.Add(new BrainControllerStatus
+            {
+                BrainId = brainId.ToProtoUuid(),
+                NodeId = Guid.NewGuid().ToProtoUuid(),
+                ActorName = "brain-controller",
+                LastSeenMs = nowMs,
+                IsAlive = true
+            });
+        }
+
+        return response;
+    }
 
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
@@ -749,6 +782,7 @@ public class OrchestratorPanelViewModelTests
         public bool KillBrainResult { get; set; } = true;
         public int SpawnViaIoCallCount { get; private set; }
         public int RequestPlacementCallCount { get; private set; }
+        public int ListBrainsCallCount { get; private set; }
         public int GetPlacementLifecycleCallCount { get; private set; }
         public int RequestPlacementReconcileCallCount { get; private set; }
         public int KillBrainCallCount { get; private set; }
@@ -766,7 +800,10 @@ public class OrchestratorPanelViewModelTests
             => Task.FromResult(NodesResponse);
 
         public override Task<BrainListResponse?> ListBrainsAsync()
-            => Task.FromResult(BrainListFactory?.Invoke() ?? BrainsResponse);
+        {
+            ListBrainsCallCount++;
+            return Task.FromResult(BrainListFactory?.Invoke() ?? BrainsResponse);
+        }
 
         public override Task<SettingListResponse?> ListSettingsAsync()
             => Task.FromResult(SettingsResponse);

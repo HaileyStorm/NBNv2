@@ -64,6 +64,7 @@ public partial class VizPanel : UserControl
     private uint? _lastNavigationFocusRegionId;
     private Guid? _lastSelectedBrainId;
     private TopLevel? _canvasTopLevel;
+    private bool _defaultCanvasViewApplied;
 
     private enum PendingCanvasViewMode
     {
@@ -111,6 +112,7 @@ public partial class VizPanel : UserControl
         if (ActivityCanvasScrollViewer is not null)
         {
             ActivityCanvasScrollViewer.SizeChanged += ActivityCanvasScrollViewerSizeChanged;
+            ActivityCanvasScrollViewer.PropertyChanged += ActivityCanvasScrollViewerPropertyChanged;
         }
 
         SizeChanged += VizPanelSizeChanged;
@@ -202,6 +204,14 @@ public partial class VizPanel : UserControl
 
         _lastNavigationFocusRegionId = null;
         _lastSelectedBrainId = null;
+    }
+
+    private void ActivityCanvasScrollViewerPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == ScrollViewer.OffsetProperty)
+        {
+            InvalidateDefaultCanvasViewState();
+        }
     }
 
     private void VizRootPointerMoved(object? sender, PointerEventArgs e)
@@ -546,6 +556,7 @@ public partial class VizPanel : UserControl
         var worldY = (scrollViewer.Offset.Y + anchor.Y - _canvasPan.Y) / oldScale;
 
         _canvasScale = clampedScale;
+        InvalidateDefaultCanvasViewState();
         SyncCanvasScaleVisuals();
 
         var targetOffset = new Vector(
@@ -588,6 +599,11 @@ public partial class VizPanel : UserControl
             return false;
         }
 
+        if (_defaultCanvasViewApplied)
+        {
+            return true;
+        }
+
         if (Math.Abs(_canvasScale - 1.0) > 0.01)
         {
             return false;
@@ -599,8 +615,15 @@ public partial class VizPanel : UserControl
         }
 
         var expectedOffset = ClampOffset(ComputeCenteredOffsetForScale(scrollViewer, viewModel, 1.0), scrollViewer);
-        return Math.Abs(scrollViewer.Offset.X - expectedOffset.X) <= DefaultCanvasViewOffsetTolerancePx
-               && Math.Abs(scrollViewer.Offset.Y - expectedOffset.Y) <= DefaultCanvasViewOffsetTolerancePx;
+        var isDefault =
+            Math.Abs(scrollViewer.Offset.X - expectedOffset.X) <= DefaultCanvasViewOffsetTolerancePx
+            && Math.Abs(scrollViewer.Offset.Y - expectedOffset.Y) <= DefaultCanvasViewOffsetTolerancePx;
+        if (isDefault)
+        {
+            _defaultCanvasViewApplied = true;
+        }
+
+        return isDefault;
     }
 
     private void RequestCanvasView(PendingCanvasViewMode mode)
@@ -610,6 +633,7 @@ public partial class VizPanel : UserControl
             return;
         }
 
+        _defaultCanvasViewApplied = false;
         _pendingCanvasViewMode = _pendingCanvasViewMode == PendingCanvasViewMode.Fit
             ? PendingCanvasViewMode.Fit
             : mode;
@@ -661,7 +685,10 @@ public partial class VizPanel : UserControl
     }
 
     private void ApplyDefaultCanvasView(ScrollViewer scrollViewer, VizPanelViewModel viewModel)
-        => CenterCanvasAtScale(scrollViewer, viewModel, 1.0);
+    {
+        CenterCanvasAtScale(scrollViewer, viewModel, 1.0);
+        _defaultCanvasViewApplied = true;
+    }
 
     private void ApplyFitCanvasView(ScrollViewer scrollViewer, VizPanelViewModel viewModel)
     {
@@ -682,6 +709,7 @@ public partial class VizPanel : UserControl
         }
 
         CenterCanvasAtScale(scrollViewer, viewModel, fitScale);
+        InvalidateDefaultCanvasViewState();
     }
 
     private void CenterCanvasAtScale(ScrollViewer scrollViewer, VizPanelViewModel viewModel, double targetScale)
@@ -737,6 +765,8 @@ public partial class VizPanel : UserControl
         {
             return;
         }
+
+        InvalidateDefaultCanvasViewState();
 
         var contentDelta = new Vector(deltaX, deltaY);
         var startPan = _canvasPan;
@@ -907,6 +937,7 @@ public partial class VizPanel : UserControl
             return false;
         }
 
+        InvalidateDefaultCanvasViewState();
         var points = _activeTouchPoints.Values.Take(2).ToArray();
         var center = Midpoint(points[0], points[1]);
         var currentDistance = Distance(points[0], points[1]);
@@ -1006,6 +1037,9 @@ public partial class VizPanel : UserControl
     {
         _lastNavigationFocusRegionId = ViewModel?.ActiveFocusRegionId;
     }
+
+    private void InvalidateDefaultCanvasViewState()
+        => _defaultCanvasViewApplied = false;
 
     private static bool TryGetCanvasContentBounds(VizPanelViewModel viewModel, out Rect bounds)
     {

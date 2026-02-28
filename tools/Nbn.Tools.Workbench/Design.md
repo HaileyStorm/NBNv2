@@ -10,6 +10,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 - Treat `DebugHub` and `VisualizationHub` as Observability-owned actor names resolved at the configured Observability host/port (not Workbench-owned services).
 - Surface Observability connection state from runtime reachability/availability signals, not from endpoint text configuration alone.
 - Launch runtime services only from explicit Local Launch commands (`Start` / `Start All`); connection attempts never auto-start runtimes.
+- Treat spawn success as visualization-ready only after SettingsMonitor reports a live brain controller heartbeat for the spawned brain.
 
 ## Visualization layout decisions
 

@@ -697,6 +697,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return false;
         }
 
+        var brainPresentAndActive = false;
         foreach (var entry in response.Brains)
         {
             if (entry.BrainId is null || !entry.BrainId.TryToGuid(out var candidate) || candidate != brainId)
@@ -704,7 +705,47 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 continue;
             }
 
-            return !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            brainPresentAndActive = true;
+            break;
+        }
+
+        if (!brainPresentAndActive)
+        {
+            return false;
+        }
+
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        return HasLiveController(response.Controllers, brainId, nowMs);
+    }
+
+    private static bool HasLiveController(
+        IEnumerable<Nbn.Proto.Settings.BrainControllerStatus>? controllers,
+        Guid brainId,
+        long nowMs)
+    {
+        if (controllers is null)
+        {
+            return false;
+        }
+
+        foreach (var controller in controllers)
+        {
+            if (controller.BrainId is null
+                || !controller.BrainId.TryToGuid(out var candidate)
+                || candidate != brainId)
+            {
+                continue;
+            }
+
+            if (controller.IsAlive && IsFresh(controller.LastSeenMs, nowMs))
+            {
+                return true;
+            }
         }
 
         return false;

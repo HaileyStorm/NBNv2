@@ -32,6 +32,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 {
     private const string NoDocumentStatus = "No file loaded.";
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
+    private const long StaleControllerMs = 15000;
     private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly bool LogSpawnDiagnostics = IsEnvTrue("NBN_WORKBENCH_SPAWN_DIAGNOSTICS_ENABLED");
@@ -4242,6 +4243,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             return false;
         }
 
+        var brainPresentAndActive = false;
         foreach (var entry in response.Brains)
         {
             if (entry.BrainId is null || !entry.BrainId.TryToGuid(out var candidate) || candidate != brainId)
@@ -4249,10 +4251,66 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 continue;
             }
 
-            return !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            brainPresentAndActive = true;
+            break;
+        }
+
+        if (!brainPresentAndActive)
+        {
+            return false;
+        }
+
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        return HasLiveController(response.Controllers, brainId, nowMs);
+    }
+
+    private static bool HasLiveController(
+        IEnumerable<Nbn.Proto.Settings.BrainControllerStatus>? controllers,
+        Guid brainId,
+        long nowMs)
+    {
+        if (controllers is null)
+        {
+            return false;
+        }
+
+        foreach (var controller in controllers)
+        {
+            if (controller.BrainId is null
+                || !controller.BrainId.TryToGuid(out var candidate)
+                || candidate != brainId)
+            {
+                continue;
+            }
+
+            if (controller.IsAlive && IsControllerFresh(controller.LastSeenMs, nowMs))
+            {
+                return true;
+            }
         }
 
         return false;
+    }
+
+    private static bool IsControllerFresh(ulong lastSeenMs, long nowMs)
+    {
+        if (lastSeenMs == 0)
+        {
+            return false;
+        }
+
+        var delta = nowMs - (long)lastSeenMs;
+        if (delta < 0)
+        {
+            return false;
+        }
+
+        return delta <= StaleControllerMs;
     }
 
     private string SuggestedName(string extension)
