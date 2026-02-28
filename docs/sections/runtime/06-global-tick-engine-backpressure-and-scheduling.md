@@ -21,7 +21,7 @@ Each tick consists of two global phases:
 
 **Phase B: Delivery phase (TickDeliver)**
 
-* HiveMind instructs each brainâ€™s BrainRoot (->BrainSignalRouter) to flush all prepared outgoing contributions for tick `tick_id`.
+* HiveMind instructs each brain’s BrainRoot (->BrainSignalRouter) to flush all prepared outgoing contributions for tick `tick_id`.
 * BrainSignalRouter delivers aggregated `SignalBatch` messages to destination RegionShards.
 * Delivery should be sent as a request (sender populated) so RegionShards can reply with `SignalBatchAck` to the router; avoid empty sender PIDs in remoting.
 * Destination RegionShards acknowledge receipt for that tick.

@@ -7,7 +7,7 @@
 * **Actor runtime:** Proto.Actor (.NET)
 * **Remoting transport:** Proto.Remote over gRPC
 * **Wire/message schema:** Protobuf (`.proto`)
-* **Cross-platform GUI:** Avalonia UI (single â€œWorkbenchâ€ app)
+* **Cross-platform GUI:** Avalonia UI (single “Workbench” app)
 * **Settings/metadata store:** SQLite + Dapper
 * **Telemetry:** OpenTelemetry (metrics/traces/logs)
 * **GPU compute (optional):** ILGPU (CUDA first; OpenCL if feasible), CPU fallback always

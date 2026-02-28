@@ -37,7 +37,7 @@ Canonical documents live in two places:
 17. File formats: .nbn and .nbs
 18. Database schemas (SQLite)
 19. Protocol schemas (.proto)
-20. Implementation roadmap
+20. Status and next steps
 Appendix A. Defaults and constants
 Appendix B. Function catalog
 Appendix C. Region axial map and distance examples
@@ -124,7 +124,7 @@ Appendix C. Region axial map and distance examples
 
 <!-- NBN:INCLUDE path="docs/sections/protocols/19-protocol-schemas-proto.md" -->
 
-## 20. Implementation roadmap
+## 20. Status and next steps
 
 <!-- NBN:INCLUDE path="docs/sections/overview/20-implementation-roadmap.md" -->
 
@@ -139,29 +139,3 @@ Appendix C. Region axial map and distance examples
 ## Appendix C. Region axial map and distance examples
 
 <!-- NBN:INCLUDE path="docs/sections/reference/C-region-axial-map-and-distance-examples.md" -->
-
----
-
-## Component ownership notes
-
-These are kept adjacent to implementation code and included here for unified reading context.
-
-<!-- NBN:INCLUDE path="src/Nbn.Shared/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.SettingsMonitor/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.HiveMind/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.IO/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.Reproduction/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.Observability/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.Artifacts/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.Brain/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.BrainHost/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.RegionHost/Design.md" -->
-<!-- NBN:INCLUDE path="src/Nbn.Runtime.WorkerNode/Design.md" -->
-<!-- NBN:INCLUDE path="tools/Nbn.Tools.Workbench/Design.md" -->
-<!-- NBN:INCLUDE path="tools/Nbn.Tools.DemoHost/Design.md" -->
-<!-- NBN:INCLUDE path="tests/Nbn.Tests/Design.md" -->
-
-## Supplemental docs
-
-- `docs/placement-lifecycle.md`
-- `docs/temp/NBNv2_HumanGuide_TEMP.md` (transition source retained until split verification is complete)

@@ -1,10 +1,10 @@
 ## 3. Distributed architecture and service topology
 
-### 3.1 Processes (â€œnodesâ€) and actor placement
+### 3.1 Processes (“nodes”) and actor placement
 
 Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned on any process. A process may:
 
-* host one or more â€œservice rootâ€ actors (HiveMind, SettingsMonitor, IO Gateway, etc.), or
+* host one or more “service root” actors (HiveMind, SettingsMonitor, IO Gateway, etc.), or
 * be a **worker-only** process that hosts only worker actors (RegionShards and/or IO coordinators), or
 * host everything on a single machine for local development (not a special case, still uses Proto.Actor for communications, etc.).
 

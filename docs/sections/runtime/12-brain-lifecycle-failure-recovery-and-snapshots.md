@@ -25,7 +25,7 @@ Snapshots are taken at tick boundaries to avoid needing to store inbox state.
 If any RegionShard for a brain is lost due to process/node failure:
 
 * HiveMind pauses tick dispatch (Section 6.6)
-* HiveMind unloads the brainâ€™s current runtime actors
+* HiveMind unloads the brain’s current runtime actors
 * HiveMind restores the **entire brain** from the last `.nbn` + `.nbs` snapshot
 * RegionShards are respawned and re-placed as needed
 * Tick dispatch resumes

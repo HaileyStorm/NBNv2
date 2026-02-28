@@ -11,6 +11,7 @@ from pathlib import Path
 INCLUDE_LINE_RE = re.compile(r'^\s*<!--\s*NBN:INCLUDE\s+path="([^"]+)"\s*-->\s*$')
 MANIFEST_ENTRY_RE = re.compile(r"^\d+\.\s+(.+?)\s*$")
 ASSEMBLY_HEADER = "## Assembly order (INDEX include sequence)"
+MOJIBAKE_RE = re.compile(r"(Ã¢â‚¬|â€¢|â€œ|â€[\x9d˜™“”¦]|Ã—|âˆˆ|â†\x90)")
 
 
 def fail(message: str) -> None:
@@ -20,6 +21,15 @@ def fail(message: str) -> None:
 
 def normalize_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def assert_no_mojibake(text: str, path_label: str) -> None:
+    for line_number, line in enumerate(text.split("\n"), start=1):
+        if MOJIBAKE_RE.search(line):
+            fail(
+                f"{path_label}:{line_number} contains mojibake text "
+                "(for example â€¢/â€œ/â€™). Fix source encoding before rendering."
+            )
 
 
 def read_utf8(path: Path) -> str:
@@ -175,6 +185,8 @@ def main() -> int:
 
     index_text = read_utf8(index_path)
     manifest_text = read_utf8(manifest_path)
+    assert_no_mojibake(index_text, index_path.as_posix())
+    assert_no_mojibake(manifest_text, manifest_path.as_posix())
 
     index_includes = parse_index_includes(index_text)
     manifest_order = parse_manifest_order(manifest_text)
@@ -183,7 +195,9 @@ def main() -> int:
     include_contents: dict[int, str] = {}
     for line_number, relative_path in index_includes:
         target_path = assert_within_repo(repo_root, relative_path, "docs/INDEX.md", line_number)
-        include_contents[line_number] = read_utf8(target_path)
+        include_text = read_utf8(target_path)
+        assert_no_mojibake(include_text, target_path.as_posix())
+        include_contents[line_number] = include_text
 
     rendered = render(index_includes, include_contents)
 

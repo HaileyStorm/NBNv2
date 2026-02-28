@@ -25,11 +25,11 @@ Regions 0 and 31 must be present. Regions without neurons are not included.
 
 Offsets and sizes:
 
-**0x000â€“0x003 (4 bytes)**
+**0x000–0x003 (4 bytes)**
 
 * `magic` = ASCII `"NBN2"`
 
-**0x004â€“0x005 (2 bytes)**
+**0x004–0x005 (2 bytes)**
 
 * `version_u16` = 2
 
@@ -41,15 +41,15 @@ Offsets and sizes:
 
 * `header_bytes_pow2_u8` = 10 (1024 bytes)
 
-**0x008â€“0x00F (8 bytes)**
+**0x008–0x00F (8 bytes)**
 
 * `brain_seed_u64`
 
-**0x010â€“0x013 (4 bytes)**
+**0x010–0x013 (4 bytes)**
 
 * `axon_stride_u32` (default 1024)
 
-**0x014â€“0x017 (4 bytes)**
+**0x014–0x017 (4 bytes)**
 
 * `flags_u32`
 
@@ -57,21 +57,21 @@ Offsets and sizes:
   * bit 1: reserved
   * others reserved
 
-**0x018â€“0x01F (8 bytes)**
+**0x018–0x01F (8 bytes)**
 
 * `reserved_u64`
 
-**0x020â€“0x0FF (224 bytes)** Quantization schema block (fixed fields)
+**0x020–0x0FF (224 bytes)** Quantization schema block (fixed fields)
 This block defines the decode/encode mapping parameters for each quantized field in neuron/axon records. Bit widths are fixed by record layout; this block defines ranges and mapping types.
 
 Each quant field uses the structure:
 
 * `map_type_u8` (0x00)
 * `reserved_u8` (0x01)
-* `reserved_u16` (0x02â€“0x03)
-* `min_f32` (0x04â€“0x07)
-* `max_f32` (0x08â€“0x0B)
-* `gamma_f32` (0x0Câ€“0x0F)
+* `reserved_u16` (0x02–0x03)
+* `min_f32` (0x04–0x07)
+* `max_f32` (0x08–0x0B)
+* `gamma_f32` (0x0C–0x0F)
 
 Total: 16 bytes per field.
 
@@ -103,7 +103,7 @@ Default recommended mappings:
 * ActivationThreshold: GAMMA_UNSIGNED, min=0, max=1, gamma=2.0
 * ParamA/B: GAMMA_SIGNED_CENTERED, min=-3, max=+3, gamma=2.0
 
-**0x100â€“0x3FF (768 bytes)** Region directory: 32 entries Ã— 24 bytes
+**0x100–0x3FF (768 bytes)** Region directory: 32 entries × 24 bytes
 Entry `i` corresponds to `region_id = i`.
 
 Each entry layout (24 bytes):
@@ -119,11 +119,11 @@ Rules:
 * region_offset is 0 if region absent.
 * region 0 and 31 must have neuron_span>0 and region_offset>0.
 
-**0x400â€“0x3FF (end)** does not exist; header ends at 0x3FF (1024 bytes)
+**0x400–0x3FF (end)** does not exist; header ends at 0x3FF (1024 bytes)
 
 #### 17.2.3 Quantization mapping formulas
 
-Let `bits` be the bit-width, `max_code = (1<<bits)-1`, and `code âˆˆ [0..max_code]`.
+Let `bits` be the bit-width, `max_code = (1<<bits)-1`, and `code ∈ [0..max_code]`.
 
 **Signed centered mapping (even code count)**
 For even `max_code+1`, two center codes map to 0:
@@ -221,8 +221,8 @@ Bit layout:
 
 Rules:
 
-* Axons for each neuron are stored contiguously in the regionâ€™s axon record array.
-* Within a neuronâ€™s axon list, records must be sorted by `(target_region_id, target_neuron_id)` ascending.
+* Axons for each neuron are stored contiguously in the region’s axon record array.
+* Within a neuron’s axon list, records must be sorted by `(target_region_id, target_neuron_id)` ascending.
 * `target_neuron_id` MUST be < the target region's `neuron_span` and <= 4194303.
 * Duplicate axons from a given neuron to the same `(target_region_id, target_neuron_id)` are not allowed.
 * Validation invariants:
@@ -252,11 +252,11 @@ Rules:
 
 Offsets and sizes:
 
-**0x000â€“0x003**
+**0x000–0x003**
 
 * `magic` = ASCII `"NBS2"`
 
-**0x004â€“0x005**
+**0x004–0x005**
 
 * `version_u16` = 2
 
@@ -268,27 +268,27 @@ Offsets and sizes:
 
 * `header_bytes_pow2_u8` = 9 (512 bytes)
 
-**0x008â€“0x017 (16 bytes)**
+**0x008–0x017 (16 bytes)**
 
 * `brain_id_uuid` (RFC 4122 byte order)
 
-**0x018â€“0x01F (8 bytes)**
+**0x018–0x01F (8 bytes)**
 
 * `snapshot_tick_id_u64`
 
-**0x020â€“0x027 (8 bytes)**
+**0x020–0x027 (8 bytes)**
 
 * `timestamp_ms_u64`
 
-**0x028â€“0x02F (8 bytes)**
+**0x028–0x02F (8 bytes)**
 
 * `energy_remaining_i64`
 
-**0x030â€“0x04F (32 bytes)**
+**0x030–0x04F (32 bytes)**
 
 * `base_nbn_sha256`
 
-**0x050â€“0x053 (4 bytes)**
+**0x050–0x053 (4 bytes)**
 
 * `flags_u32`
 
@@ -299,7 +299,7 @@ Offsets and sizes:
   * bit 4: plasticity_enabled
   * others reserved
 
-**0x054â€“0x07F (44 bytes)** Buffer quantization schema (fixed)
+**0x054–0x07F (44 bytes)** Buffer quantization schema (fixed)
 
 * `buffer_map_type_u8`
 * `reserved_u8`
@@ -314,7 +314,7 @@ Default buffer mapping:
 * GAMMA_SIGNED_CENTERED, min=-4, max=+4, gamma=2.0
   Buffer is stored as `int16` code over this range.
 
-**0x080â€“0x1FF**
+**0x080–0x1FF**
 
 * reserved, must be zero
 

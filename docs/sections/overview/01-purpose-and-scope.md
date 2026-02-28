@@ -1,6 +1,6 @@
 ## 1. Purpose and scope
 
-NothingButNeurons (NBN) is a distributed neural simulation framework. It models â€œbrainsâ€ composed of regions, and each region contains neurons connected by directed **axons**. NBN is designed for:
+NothingButNeurons (NBN) is a distributed neural simulation framework. It models “brains” composed of regions, and each region contains neurons connected by directed **axons**. NBN is designed for:
 
 * **Cross-platform execution:** Windows and Ubuntu (headless services and GUIs).
 * **Distributed execution:** compute and coordination can be spread across multiple processes and machines.

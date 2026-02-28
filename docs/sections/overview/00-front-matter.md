@@ -2,7 +2,7 @@
 
 ## Design, Architecture, Protocols, File Formats, and Implementation Specification
 
-**Stack:** C#/.NET â€¢ Proto.Actor (Proto.Remote over gRPC) â€¢ Protobuf â€¢ Avalonia Workbench â€¢ SQLite+Dapper â€¢ OpenTelemetry â€¢ ILGPU (CUDA-first)
+**Stack:** C#/.NET • Proto.Actor (Proto.Remote over gRPC) • Protobuf • Avalonia Workbench • SQLite+Dapper • OpenTelemetry • ILGPU (CUDA-first)
 
 ---
 
@@ -27,10 +27,9 @@
 17. File formats: `.nbn` (definition) and `.nbs` (state)
 18. Database schemas (SQLite)
 19. Protocol schemas (`.proto`)
-20. Implementation roadmap (tentative)
+20. Status and next steps
     Appendix A: Defaults and constants
     Appendix B: Function catalog (IDs, formulas, tiers, costs)
     Appendix C: Region axial map (3D-inspired) and distance examples
-21. Agent policy (global + local)
 
 ---

@@ -6,11 +6,11 @@ Each neuron has:
 
 * Persistent buffer `B` (float)
 * Inbox accumulator `I` for contributions arriving for the next merge (float + flags for product accumulation)
-* Enabled flag (runtime control; separate from â€œexists in definitionâ€; potentially different Proto.Actor inbox mode/function)
+* Enabled flag (runtime control; separate from “exists in definition”; potentially different Proto.Actor inbox mode/function)
 * Function selectors and quantized parameters (from `.nbn` neuron record)
 * Outgoing axon list (targets + strength codes, from `.nbn`, with optional overlay from `.nbs`)
 
-Neurons â€œexistâ€ if their neuron record exists in `.nbn` (Input/Output always exist). Other regions may be absent entirely (no region section).
+Neurons “exist” if their neuron record exists in `.nbn` (Input/Output always exist). Other regions may be absent entirely (no region section).
 
 ### 5.2 Double-buffered accumulation with persistent buffer
 
@@ -19,7 +19,7 @@ Signals delivered during tick `N` must not affect neuron activation within tick 
 Mechanism:
 
 * During delivery phase of tick `N`, incoming contributions accumulate into `I`.
-* At compute phase start of tick `N+1`, `I` is merged into `B` according to the neuronâ€™s accumulation function, then `I` is cleared.
+* At compute phase start of tick `N+1`, `I` is merged into `B` according to the neuron’s accumulation function, then `I` is cleared.
 
 This avoids losing accumulation when a neuron does not activate in a tick, because `B` persists across ticks.
 
@@ -29,13 +29,13 @@ Accumulation functions are selected per neuron (2-bit ID). Defined in Appendix B
 
 Required semantics:
 
-* **SUM:** `B â† B + I`
+* **SUM:** `B ← B + I`
 * **PRODUCT (first-input special):**
 
   * `I` is tracked as `(hasInput, value)`
   * If no input, merge does nothing
-  * If there is input, `B â† B * I.value`
-* **MAX:** `B â† max(B, I)`
+  * If there is input, `B ← B * I.value`
+* **MAX:** `B ← max(B, I)`
 * **NONE:** merge does nothing
 
 ### 5.4 Activation and reset gates

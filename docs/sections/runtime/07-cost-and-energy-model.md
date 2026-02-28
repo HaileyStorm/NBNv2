@@ -7,7 +7,7 @@ NBN can compute a per-brain per-tick **cost** and deduct it from an **energy acc
 * `cost_enabled` (per brain)
 * `energy_enabled` (per brain)
 
-If `energy_enabled` is true and a brainâ€™s energy balance would drop below zero due to tick cost, the brain terminates (unload and potentially trigger a reschedule).
+If `energy_enabled` is true and a brain’s energy balance would drop below zero due to tick cost, the brain terminates (unload and potentially trigger a reschedule).
 
 ### 7.2 Cost units
 
@@ -56,7 +56,7 @@ Energy is tracked per brain.
 
 Brain termination on insufficient energy:
 
-* HiveMind terminates the brainâ€™s actors and unloads placement state.
+* HiveMind terminates the brain’s actors and unloads placement state.
 * HiveMind notifies IO Gateway with:
 
   * BrainId

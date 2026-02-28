@@ -2,7 +2,7 @@
 
 ### 8.1 Region distance (3D-inspired axial layering)
 
-Regions are modeled as slices along an input-to-output axis with â€œplanesâ€ of regions per slice. This induces locality preference without complex geometry.
+Regions are modeled as slices along an input-to-output axis with “planes” of regions per slice. This induces locality preference without complex geometry.
 
 Define a per-region axial coordinate `z(region_id)`:
 

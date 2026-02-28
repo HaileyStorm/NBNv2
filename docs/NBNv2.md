@@ -2,7 +2,7 @@
 
 ## Design, Architecture, Protocols, File Formats, and Implementation Specification
 
-**Stack:** C#/.NET â€¢ Proto.Actor (Proto.Remote over gRPC) â€¢ Protobuf â€¢ Avalonia Workbench â€¢ SQLite+Dapper â€¢ OpenTelemetry â€¢ ILGPU (CUDA-first)
+**Stack:** C#/.NET • Proto.Actor (Proto.Remote over gRPC) • Protobuf • Avalonia Workbench • SQLite+Dapper • OpenTelemetry • ILGPU (CUDA-first)
 
 ---
 
@@ -27,17 +27,16 @@
 17. File formats: `.nbn` (definition) and `.nbs` (state)
 18. Database schemas (SQLite)
 19. Protocol schemas (`.proto`)
-20. Implementation roadmap (tentative)
+20. Status and next steps
     Appendix A: Defaults and constants
     Appendix B: Function catalog (IDs, formulas, tiers, costs)
     Appendix C: Region axial map (3D-inspired) and distance examples
-21. Agent policy (global + local)
 
 ---
 
 ## 1. Purpose and scope
 
-NothingButNeurons (NBN) is a distributed neural simulation framework. It models â€œbrainsâ€ composed of regions, and each region contains neurons connected by directed **axons**. NBN is designed for:
+NothingButNeurons (NBN) is a distributed neural simulation framework. It models “brains” composed of regions, and each region contains neurons connected by directed **axons**. NBN is designed for:
 
 * **Cross-platform execution:** Windows and Ubuntu (headless services and GUIs).
 * **Distributed execution:** compute and coordination can be spread across multiple processes and machines.
@@ -58,7 +57,7 @@ NBN is not an ML training framework (no backpropagation/gradient descent).
 * **Actor runtime:** Proto.Actor (.NET)
 * **Remoting transport:** Proto.Remote over gRPC
 * **Wire/message schema:** Protobuf (`.proto`)
-* **Cross-platform GUI:** Avalonia UI (single â€œWorkbenchâ€ app)
+* **Cross-platform GUI:** Avalonia UI (single “Workbench” app)
 * **Settings/metadata store:** SQLite + Dapper
 * **Telemetry:** OpenTelemetry (metrics/traces/logs)
 * **GPU compute (optional):** ILGPU (CUDA first; OpenCL if feasible), CPU fallback always
@@ -113,11 +112,11 @@ To keep operator flows and tests deterministic across desktop and headless envir
 
 ## 3. Distributed architecture and service topology
 
-### 3.1 Processes (â€œnodesâ€) and actor placement
+### 3.1 Processes (“nodes”) and actor placement
 
 Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned on any process. A process may:
 
-* host one or more â€œservice rootâ€ actors (HiveMind, SettingsMonitor, IO Gateway, etc.), or
+* host one or more “service root” actors (HiveMind, SettingsMonitor, IO Gateway, etc.), or
 * be a **worker-only** process that hosts only worker actors (RegionShards and/or IO coordinators), or
 * host everything on a single machine for local development (not a special case, still uses Proto.Actor for communications, etc.).
 
@@ -188,7 +187,7 @@ For each brain:
 A RegionShard is uniquely identified within a brain by:
 
 * `region_id` (0..31)
-* `shard_index` (0..N-1 for that region, contiguous and stable for the brainâ€™s current placement epoch)
+* `shard_index` (0..N-1 for that region, contiguous and stable for the brain’s current placement epoch)
 
 For convenience, also define a packed `ShardId32`:
 
@@ -232,11 +231,11 @@ Each neuron has:
 
 * Persistent buffer `B` (float)
 * Inbox accumulator `I` for contributions arriving for the next merge (float + flags for product accumulation)
-* Enabled flag (runtime control; separate from â€œexists in definitionâ€; potentially different Proto.Actor inbox mode/function)
+* Enabled flag (runtime control; separate from “exists in definition”; potentially different Proto.Actor inbox mode/function)
 * Function selectors and quantized parameters (from `.nbn` neuron record)
 * Outgoing axon list (targets + strength codes, from `.nbn`, with optional overlay from `.nbs`)
 
-Neurons â€œexistâ€ if their neuron record exists in `.nbn` (Input/Output always exist). Other regions may be absent entirely (no region section).
+Neurons “exist” if their neuron record exists in `.nbn` (Input/Output always exist). Other regions may be absent entirely (no region section).
 
 ### 5.2 Double-buffered accumulation with persistent buffer
 
@@ -245,7 +244,7 @@ Signals delivered during tick `N` must not affect neuron activation within tick 
 Mechanism:
 
 * During delivery phase of tick `N`, incoming contributions accumulate into `I`.
-* At compute phase start of tick `N+1`, `I` is merged into `B` according to the neuronâ€™s accumulation function, then `I` is cleared.
+* At compute phase start of tick `N+1`, `I` is merged into `B` according to the neuron’s accumulation function, then `I` is cleared.
 
 This avoids losing accumulation when a neuron does not activate in a tick, because `B` persists across ticks.
 
@@ -255,13 +254,13 @@ Accumulation functions are selected per neuron (2-bit ID). Defined in Appendix B
 
 Required semantics:
 
-* **SUM:** `B â† B + I`
+* **SUM:** `B ← B + I`
 * **PRODUCT (first-input special):**
 
   * `I` is tracked as `(hasInput, value)`
   * If no input, merge does nothing
-  * If there is input, `B â† B * I.value`
-* **MAX:** `B â† max(B, I)`
+  * If there is input, `B ← B * I.value`
+* **MAX:** `B ← max(B, I)`
 * **NONE:** merge does nothing
 
 ### 5.4 Activation and reset gates
@@ -317,7 +316,7 @@ Each tick consists of two global phases:
 
 **Phase B: Delivery phase (TickDeliver)**
 
-* HiveMind instructs each brainâ€™s BrainRoot (->BrainSignalRouter) to flush all prepared outgoing contributions for tick `tick_id`.
+* HiveMind instructs each brain’s BrainRoot (->BrainSignalRouter) to flush all prepared outgoing contributions for tick `tick_id`.
 * BrainSignalRouter delivers aggregated `SignalBatch` messages to destination RegionShards.
 * Delivery should be sent as a request (sender populated) so RegionShards can reply with `SignalBatchAck` to the router; avoid empty sender PIDs in remoting.
 * Destination RegionShards acknowledge receipt for that tick.
@@ -398,7 +397,7 @@ NBN can compute a per-brain per-tick **cost** and deduct it from an **energy acc
 * `cost_enabled` (per brain)
 * `energy_enabled` (per brain)
 
-If `energy_enabled` is true and a brainâ€™s energy balance would drop below zero due to tick cost, the brain terminates (unload and potentially trigger a reschedule).
+If `energy_enabled` is true and a brain’s energy balance would drop below zero due to tick cost, the brain terminates (unload and potentially trigger a reschedule).
 
 ### 7.2 Cost units
 
@@ -447,7 +446,7 @@ Energy is tracked per brain.
 
 Brain termination on insufficient energy:
 
-* HiveMind terminates the brainâ€™s actors and unloads placement state.
+* HiveMind terminates the brain’s actors and unloads placement state.
 * HiveMind notifies IO Gateway with:
 
   * BrainId
@@ -464,7 +463,7 @@ The External World may decide to respawn/restart the brain using the reported ar
 
 ### 8.1 Region distance (3D-inspired axial layering)
 
-Regions are modeled as slices along an input-to-output axis with â€œplanesâ€ of regions per slice. This induces locality preference without complex geometry.
+Regions are modeled as slices along an input-to-output axis with “planes” of regions per slice. This induces locality preference without complex geometry.
 
 Define a per-region axial coordinate `z(region_id)`:
 
@@ -570,7 +569,7 @@ The CPU backend is the reference implementation. It uses:
 
 GPU compute uses ILGPU and the kernel-per-function model:
 
-* no switch-based â€œmega kernelâ€
+* no switch-based “mega kernel”
 * one kernel per activation function ID used in the shard
 * one kernel per reset function ID used in the shard
 * kernels for accumulation merges if beneficial
@@ -687,7 +686,7 @@ Snapshots are taken at tick boundaries to avoid needing to store inbox state.
 If any RegionShard for a brain is lost due to process/node failure:
 
 * HiveMind pauses tick dispatch (Section 6.6)
-* HiveMind unloads the brainâ€™s current runtime actors
+* HiveMind unloads the brain’s current runtime actors
 * HiveMind restores the **entire brain** from the last `.nbn` + `.nbs` snapshot
 * RegionShards are respawned and re-placed as needed
 * Tick dispatch resumes
@@ -816,7 +815,7 @@ Reproduction aborts early if any stage fails:
 
 1. **Format compatibility:** both parents are NBN2 and share compatible quantization schemas and function ID contracts
 2. **IO region invariants:** parents obey input/output connectivity rules; child must obey them too
-3. **Region presence similarity:** region presence means â€œregion has at least one neuron in itâ€ (region section exists); by default the number of present regions must match exactly
+3. **Region presence similarity:** region presence means “region has at least one neuron in it” (region section exists); by default the number of present regions must match exactly
 4. **Per-region neuron span similarity:** how many neurons within the region, within tolerances (absolute and/or percentage; smallest limit wins)
 5. **Function distribution similarity:** activation/reset/accum histograms within thresholds, for each region
 6. **Connectivity distribution similarity:** out-degree distribution and target-region distribution within thresholds
@@ -856,7 +855,7 @@ Separate structural probabilities include:
 
 Limits are configurable by:
 
-* absolute counts and/or (average) percentage of the parentâ€™s size
+* absolute counts and/or (average) percentage of the parent’s size
 * if both are provided, the smallest effective limit applies
 
 ### 14.6 Deleting neurons and inbound axons
@@ -1083,11 +1082,11 @@ Regions 0 and 31 must be present. Regions without neurons are not included.
 
 Offsets and sizes:
 
-**0x000â€“0x003 (4 bytes)**
+**0x000–0x003 (4 bytes)**
 
 * `magic` = ASCII `"NBN2"`
 
-**0x004â€“0x005 (2 bytes)**
+**0x004–0x005 (2 bytes)**
 
 * `version_u16` = 2
 
@@ -1099,15 +1098,15 @@ Offsets and sizes:
 
 * `header_bytes_pow2_u8` = 10 (1024 bytes)
 
-**0x008â€“0x00F (8 bytes)**
+**0x008–0x00F (8 bytes)**
 
 * `brain_seed_u64`
 
-**0x010â€“0x013 (4 bytes)**
+**0x010–0x013 (4 bytes)**
 
 * `axon_stride_u32` (default 1024)
 
-**0x014â€“0x017 (4 bytes)**
+**0x014–0x017 (4 bytes)**
 
 * `flags_u32`
 
@@ -1115,21 +1114,21 @@ Offsets and sizes:
   * bit 1: reserved
   * others reserved
 
-**0x018â€“0x01F (8 bytes)**
+**0x018–0x01F (8 bytes)**
 
 * `reserved_u64`
 
-**0x020â€“0x0FF (224 bytes)** Quantization schema block (fixed fields)
+**0x020–0x0FF (224 bytes)** Quantization schema block (fixed fields)
 This block defines the decode/encode mapping parameters for each quantized field in neuron/axon records. Bit widths are fixed by record layout; this block defines ranges and mapping types.
 
 Each quant field uses the structure:
 
 * `map_type_u8` (0x00)
 * `reserved_u8` (0x01)
-* `reserved_u16` (0x02â€“0x03)
-* `min_f32` (0x04â€“0x07)
-* `max_f32` (0x08â€“0x0B)
-* `gamma_f32` (0x0Câ€“0x0F)
+* `reserved_u16` (0x02–0x03)
+* `min_f32` (0x04–0x07)
+* `max_f32` (0x08–0x0B)
+* `gamma_f32` (0x0C–0x0F)
 
 Total: 16 bytes per field.
 
@@ -1161,7 +1160,7 @@ Default recommended mappings:
 * ActivationThreshold: GAMMA_UNSIGNED, min=0, max=1, gamma=2.0
 * ParamA/B: GAMMA_SIGNED_CENTERED, min=-3, max=+3, gamma=2.0
 
-**0x100â€“0x3FF (768 bytes)** Region directory: 32 entries Ã— 24 bytes
+**0x100–0x3FF (768 bytes)** Region directory: 32 entries × 24 bytes
 Entry `i` corresponds to `region_id = i`.
 
 Each entry layout (24 bytes):
@@ -1177,11 +1176,11 @@ Rules:
 * region_offset is 0 if region absent.
 * region 0 and 31 must have neuron_span>0 and region_offset>0.
 
-**0x400â€“0x3FF (end)** does not exist; header ends at 0x3FF (1024 bytes)
+**0x400–0x3FF (end)** does not exist; header ends at 0x3FF (1024 bytes)
 
 #### 17.2.3 Quantization mapping formulas
 
-Let `bits` be the bit-width, `max_code = (1<<bits)-1`, and `code âˆˆ [0..max_code]`.
+Let `bits` be the bit-width, `max_code = (1<<bits)-1`, and `code ∈ [0..max_code]`.
 
 **Signed centered mapping (even code count)**
 For even `max_code+1`, two center codes map to 0:
@@ -1279,8 +1278,8 @@ Bit layout:
 
 Rules:
 
-* Axons for each neuron are stored contiguously in the regionâ€™s axon record array.
-* Within a neuronâ€™s axon list, records must be sorted by `(target_region_id, target_neuron_id)` ascending.
+* Axons for each neuron are stored contiguously in the region’s axon record array.
+* Within a neuron’s axon list, records must be sorted by `(target_region_id, target_neuron_id)` ascending.
 * `target_neuron_id` MUST be < the target region's `neuron_span` and <= 4194303.
 * Duplicate axons from a given neuron to the same `(target_region_id, target_neuron_id)` are not allowed.
 * Validation invariants:
@@ -1310,11 +1309,11 @@ Rules:
 
 Offsets and sizes:
 
-**0x000â€“0x003**
+**0x000–0x003**
 
 * `magic` = ASCII `"NBS2"`
 
-**0x004â€“0x005**
+**0x004–0x005**
 
 * `version_u16` = 2
 
@@ -1326,27 +1325,27 @@ Offsets and sizes:
 
 * `header_bytes_pow2_u8` = 9 (512 bytes)
 
-**0x008â€“0x017 (16 bytes)**
+**0x008–0x017 (16 bytes)**
 
 * `brain_id_uuid` (RFC 4122 byte order)
 
-**0x018â€“0x01F (8 bytes)**
+**0x018–0x01F (8 bytes)**
 
 * `snapshot_tick_id_u64`
 
-**0x020â€“0x027 (8 bytes)**
+**0x020–0x027 (8 bytes)**
 
 * `timestamp_ms_u64`
 
-**0x028â€“0x02F (8 bytes)**
+**0x028–0x02F (8 bytes)**
 
 * `energy_remaining_i64`
 
-**0x030â€“0x04F (32 bytes)**
+**0x030–0x04F (32 bytes)**
 
 * `base_nbn_sha256`
 
-**0x050â€“0x053 (4 bytes)**
+**0x050–0x053 (4 bytes)**
 
 * `flags_u32`
 
@@ -1357,7 +1356,7 @@ Offsets and sizes:
   * bit 4: plasticity_enabled
   * others reserved
 
-**0x054â€“0x07F (44 bytes)** Buffer quantization schema (fixed)
+**0x054–0x07F (44 bytes)** Buffer quantization schema (fixed)
 
 * `buffer_map_type_u8`
 * `reserved_u8`
@@ -1372,7 +1371,7 @@ Default buffer mapping:
 * GAMMA_SIGNED_CENTERED, min=-4, max=+4, gamma=2.0
   Buffer is stored as `int16` code over this range.
 
-**0x080â€“0x1FF**
+**0x080–0x1FF**
 
 * reserved, must be zero
 
@@ -2417,59 +2416,38 @@ message ReproduceResult {
 
 ---
 
-## 20. Implementation roadmap (tentative)
+## 20. Status and next steps
 
-1. Define `.proto` and generate C# types
-2. Implement `.nbn` reader/writer, validator, and quantization helpers
-3. Implement RegionShard CPU backend and BrainSignalRouter delivery
-4. Implement HiveMind global tick (compute+deliver), timeout accounting, and metrics
-5. Implement SettingsMonitor registry + capability heartbeats
-6. Implement IO Gateway + per-brain coordinators + Workbench IO/Energy panel
-7. Implement `.nbs` snapshotting and full-brain recovery
-8. Implement plasticity overlay tracking and optional rebasing
-9. Implement reproduction manager (packed-domain transformations)
-10. Implement artifact store with chunked dedup + local cache
-11. Implement GPU backend with ILGPU kernel-per-function (CUDA first), parity tests, and placement heuristics
-12. Expand Workbench Visualizer and Debug viewer; add orchestration conveniences
+### 20.1 Completed baseline
 
-### 20.x Local demo script
+- Core protobuf contracts and generated models are in place.
+- `.nbn`/`.nbs` format read/write and validation pipeline is implemented.
+- Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
+- Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Observability, and Artifacts.
+- Snapshot/recovery, plasticity overlays, and reproduction workflows are implemented and exercised by tests/tools.
+- Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
+- Local demo scripts provide repeatable end-to-end bring-up on Windows and Linux.
+- Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.
 
-For a minimal end-to-end smoke test, use the demo scripts:
-`tools/demo/run_local_hivemind_demo.ps1` (Windows PowerShell) or
-`tools/demo/run_local_hivemind_demo.sh` (Ubuntu/Linux).
+### 20.2 Current priorities
 
-`run_local_hivemind_demo.ps1` provides the full local stack flow:
+1. GPU backend parity and cross-backend correctness coverage.
+2. Distributed resilience hardening (timeouts, restart behavior, and failure diagnostics under load).
+3. Scale/performance validation for larger topologies and sustained multi-brain workloads.
+4. Operator documentation refinement (runbooks, failure triage, and reproducible checklists).
+5. Workbench UX and observability ergonomics for high-volume sessions.
 
-* Creates a tiny `.nbn` (regions 0, 1, and 31 with 1 neuron each) with a single self-loop axon in region 1 to exercise SignalBatch delivery, and stores it in a local artifact store
-* Starts SettingsMonitor first, then worker nodes (worker inventory/bootstrap), then central services (HiveMind, IO Gateway, Reproduction, and Observability)
-* Spawns the demo brain through IO (`SpawnBrainViaIO`), with HiveMind-managed worker placement for BrainRoot/SignalRouter/coordinators/RegionShards
-* Logs output to `tools/demo/local-demo/<timestamp>/logs`
-* Workbench local-launch logs are written to `%LOCALAPPDATA%\Nbn.Workbench\logs` (for example `HiveMind.out.log`, `IoGateway.out.log`, `WorkerNode.out.log`, `Reproduction.out.log`, `Observability.out.log`, `SettingsMonitor.out.log`, and `workbench.log`)
-* Includes an energy/plasticity scenario step via `Nbn.Tools.DemoHost io-scenario` that applies credit/rate/cost-energy/plasticity commands and emits JSON acks
-* Includes a deterministic reproduction scenario via `Nbn.Tools.DemoHost repro-scenario` (default `spawn-policy=never`) that emits JSON with compatibility, abort code, mutation summary, and child artifact metadata
-* Includes a deterministic reproduction verification suite via `Nbn.Tools.DemoHost repro-suite` that runs multiple behavior checks (success path, invalid input/media/reference paths, span-mismatch gate, strength-live fallback, and spawn-attempt path) and emits per-case pass/fail JSON
+### 20.3 Recommended local validation path
 
-The demo uses default ports (SettingsMonitor 12010, WorkerNode base 11940, HiveMind 12020, IO 12050, Reproduction 12070, Observability 12060) and can be edited in the script
-parameters if needed.
-
-`run_local_hivemind_demo.sh` mirrors the worker-node-first startup flow on Linux and can run the same `io-scenario`/`repro-scenario` commands directly against the local demo services it launches.
-
-Troubleshooting:
-
-* If `io-scenario` returns `brain_not_found`, inspect `spawn.log` first, then verify worker health/inventory and placement completion before retrying scenario commands.
-* If command requests timeout, verify `--io-address`/`--io-id` and ensure IO Gateway is running before scenario execution.
-* If `repro-scenario` returns `repro_unavailable`, ensure IO launched with `--repro-address`/`--repro-name` and Reproduction is online.
-* If `repro-scenario` returns `repro_parent_*_artifact_not_found`, verify `--store-uri` and parent artifact sha/size values.
-* If `repro-suite` reports `all_passed=false`, inspect `repro-suite.log` case `failures` entries to identify the failing behavior contract.
-* For abort-code triage procedures, use `tools/demo/reproduction_operator_runbook.md`.
-* For observability checks, verify metrics/traces for:
-  `nbn.hivemind.brain.tick_cost.total`,
-  `nbn.hivemind.brain.energy.depleted`,
-  `nbn.regionhost.plasticity.strength_code.changed`,
-  `nbn.hivemind.snapshot.overlay.records`,
-  `nbn.hivemind.rebase.overlay.records`.
-
----
+- Build/test baseline:
+  - `dotnet build -c Release --disable-build-servers`
+  - `dotnet test -c Release --disable-build-servers`
+- End-to-end demo path:
+  - Windows: `tools/demo/run_local_hivemind_demo.ps1`
+  - Linux: `tools/demo/run_local_hivemind_demo.sh`
+- Documentation freshness:
+  - Windows: `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
+  - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh --check`
 
 # Appendix A: Defaults and constants
 
@@ -2492,7 +2470,7 @@ Troubleshooting:
 
 # Appendix B: Function catalog (IDs, formulas, tiers, costs)
 
-All functions operate on float32 values (`MathF` semantics). The â€œcost weightâ€ is an abstract multiplier used by cost accounting; it is not wall-clock time.
+All functions operate on float32 values (`MathF` semantics). The “cost weight” is an abstract multiplier used by cost accounting; it is not wall-clock time.
 
 ## B.1 AccumulationFunction (2-bit)
 
@@ -2910,130 +2888,3 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 * dist(1,2)  = 3 (same slice)  // note that if they were **same** region this cost would not be incurred
 * dist(3,4)  = 5 * |(-2) - (-1)| = 5
 * dist(8,23) = 5 * |(-1) - (+1)| = 10
-
-# Nbn.Shared
-
-Owns shared contracts/helpers: addressing, quantization, proto-generated models, and shared validation utilities.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.SettingsMonitor
-
-Owns node registry, settings distribution, capability heartbeats, and status query contracts.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.HiveMind
-
-Owns global tick loop, scheduling barriers, timeout/lateness handling, and brain lifecycle orchestration.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.IO
-
-Owns IO Gateway and per-brain coordinator integration paths for external command and output subscriptions.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.Reproduction
-
-Owns compatibility gates, child synthesis, mutation summaries, and spawn policy behavior.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.Observability
-
-Owns DebugHub/VisualizationHub behavior and telemetry integration surfaces.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.Artifacts
-
-Owns artifact fetch/store contracts, dedup manifests, and artifact reference semantics.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.Brain
-
-Owns BrainRoot/BrainSignalRouter coordination and tick-phase routing semantics.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.BrainHost
-
-Owns brain host process wiring and runtime hosting orchestration where applicable.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.RegionHost
-
-Owns RegionShard execution, signal batch handling, and backend dispatch behavior.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Runtime.WorkerNode
-
-Owns worker node inventory, placement execution endpoints, and lifecycle participation.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Tools.Workbench
-
-Owns desktop orchestration/visualization/debug UX and deterministic view-model dispatch behavior.
-
-## Stable responsibilities
-
-- Host operator workflows over IO/debug/viz and reproduction surfaces without exposing actor placement details.
-- Keep command/view-model correctness independent of Avalonia loop availability (dispatcher wrappers execute inline when no UI lifetime exists).
-- Keep visualization semantics deterministic across rendering modes.
-
-## Visualization layout decisions
-
-- Baseline full-brain map uses axial 2D layout.
-- Optional `Projected 3D (R&D)` mode is allowed for region-map rendering only; focus-mode neuron layouts remain 2D.
-- Projected mode uses axial slice depth (`z=-3..+3`) and deterministic lane offsets, then clamps to canvas safe bounds.
-- Projection must fall back to axial 2D when region data is invalid/empty, geometry is non-finite, or spread is below minimum usability thresholds.
-- Hover/select/pin/tooltips and keyboard navigation operate on final 2D coordinates and existing spatial indexing regardless of projection mode.
-- Layout cost for projected region-map mode is `O(region_count)` and bounded by NBN region count (`<= 32`); no GPU dependency is introduced.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Tools.DemoHost
-
-Owns scripted local demo flows, scenario tooling, and operator-facing diagnostics outputs.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-# Nbn.Tests
-
-Owns format/runtime/reproduction parity coverage and regression protection surface.
-
-## Maintenance guidance
-
-Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.

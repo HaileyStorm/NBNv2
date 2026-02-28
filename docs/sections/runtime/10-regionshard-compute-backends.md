@@ -13,7 +13,7 @@ The CPU backend is the reference implementation. It uses:
 
 GPU compute uses ILGPU and the kernel-per-function model:
 
-* no switch-based â€œmega kernelâ€
+* no switch-based “mega kernel”
 * one kernel per activation function ID used in the shard
 * one kernel per reset function ID used in the shard
 * kernels for accumulation merges if beneficial

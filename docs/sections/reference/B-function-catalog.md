@@ -1,6 +1,6 @@
 # Appendix B: Function catalog (IDs, formulas, tiers, costs)
 
-All functions operate on float32 values (`MathF` semantics). The â€œcost weightâ€ is an abstract multiplier used by cost accounting; it is not wall-clock time.
+All functions operate on float32 values (`MathF` semantics). The “cost weight” is an abstract multiplier used by cost accounting; it is not wall-clock time.
 
 ## B.1 AccumulationFunction (2-bit)
 

@@ -32,7 +32,7 @@ Reproduction aborts early if any stage fails:
 
 1. **Format compatibility:** both parents are NBN2 and share compatible quantization schemas and function ID contracts
 2. **IO region invariants:** parents obey input/output connectivity rules; child must obey them too
-3. **Region presence similarity:** region presence means â€œregion has at least one neuron in itâ€ (region section exists); by default the number of present regions must match exactly
+3. **Region presence similarity:** region presence means “region has at least one neuron in it” (region section exists); by default the number of present regions must match exactly
 4. **Per-region neuron span similarity:** how many neurons within the region, within tolerances (absolute and/or percentage; smallest limit wins)
 5. **Function distribution similarity:** activation/reset/accum histograms within thresholds, for each region
 6. **Connectivity distribution similarity:** out-degree distribution and target-region distribution within thresholds
@@ -72,7 +72,7 @@ Separate structural probabilities include:
 
 Limits are configurable by:
 
-* absolute counts and/or (average) percentage of the parentâ€™s size
+* absolute counts and/or (average) percentage of the parent’s size
 * if both are provided, the smallest effective limit applies
 
 ### 14.6 Deleting neurons and inbound axons

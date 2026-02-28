@@ -5,7 +5,7 @@ Defines canonical ownership and include order used by the INDEX template and ren
 ## Canonical locations
 
 - Cross-cutting sections: `docs/sections/*`
-- Component notes near code: `src/*/Design.md`, `tools/*/Design.md`, `tests/*/Design.md`
+- Component notes near code: `src/*/Design.md`, `tools/*/Design.md`, `tests/*/Design.md` (canonical docs, not assembled into `docs/NBNv2.md`)
 - `Docs/` or `docs/` project subfolders are non-canonical.
 - Template entrypoint: `docs/INDEX.md`
 - Generated full document: `docs/NBNv2.md`
@@ -36,20 +36,6 @@ Defines canonical ownership and include order used by the INDEX template and ren
 22. docs/sections/reference/A-defaults-and-constants.md
 23. docs/sections/reference/B-function-catalog.md
 24. docs/sections/reference/C-region-axial-map-and-distance-examples.md
-25. src/Nbn.Shared/Design.md
-26. src/Nbn.Runtime.SettingsMonitor/Design.md
-27. src/Nbn.Runtime.HiveMind/Design.md
-28. src/Nbn.Runtime.IO/Design.md
-29. src/Nbn.Runtime.Reproduction/Design.md
-30. src/Nbn.Runtime.Observability/Design.md
-31. src/Nbn.Runtime.Artifacts/Design.md
-32. src/Nbn.Runtime.Brain/Design.md
-33. src/Nbn.Runtime.BrainHost/Design.md
-34. src/Nbn.Runtime.RegionHost/Design.md
-35. src/Nbn.Runtime.WorkerNode/Design.md
-36. tools/Nbn.Tools.Workbench/Design.md
-37. tools/Nbn.Tools.DemoHost/Design.md
-38. tests/Nbn.Tests/Design.md
 
 ## Include marker contract
 

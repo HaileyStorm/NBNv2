@@ -13,7 +13,7 @@
 A RegionShard is uniquely identified within a brain by:
 
 * `region_id` (0..31)
-* `shard_index` (0..N-1 for that region, contiguous and stable for the brainâ€™s current placement epoch)
+* `shard_index` (0..N-1 for that region, contiguous and stable for the brain’s current placement epoch)
 
 For convenience, also define a packed `ShardId32`:
 
