@@ -61,6 +61,7 @@ public partial class VizPanel : UserControl
     private PendingCanvasViewMode _pendingCanvasViewMode;
     private int _pendingCanvasViewAttempts;
     private uint? _lastNavigationFocusRegionId;
+    private Guid? _lastSelectedBrainId;
     private TopLevel? _canvasTopLevel;
 
     private enum PendingCanvasViewMode
@@ -138,6 +139,7 @@ public partial class VizPanel : UserControl
         }
 
         CaptureNavigationContext();
+        _lastSelectedBrainId = ViewModel?.SelectedBrain?.BrainId;
         SyncCanvasScaleVisuals();
         RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
         UpdateCanvasViewportHeight();
@@ -147,6 +149,14 @@ public partial class VizPanel : UserControl
     {
         if (e.PropertyName == nameof(VizPanelViewModel.SelectedBrain))
         {
+            var selectedBrainId = ViewModel?.SelectedBrain?.BrainId;
+            if (_lastSelectedBrainId == selectedBrainId)
+            {
+                CaptureNavigationContext();
+                return;
+            }
+
+            _lastSelectedBrainId = selectedBrainId;
             CaptureNavigationContext();
             RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
             return;
@@ -184,6 +194,7 @@ public partial class VizPanel : UserControl
         }
 
         _lastNavigationFocusRegionId = null;
+        _lastSelectedBrainId = null;
     }
 
     private void VizRootPointerMoved(object? sender, PointerEventArgs e)
