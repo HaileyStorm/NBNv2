@@ -11,6 +11,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 - Surface Observability connection state from runtime reachability/availability signals, not from endpoint text configuration alone.
 - Launch runtime services only from explicit Local Launch commands (`Start` / `Start All`); connection attempts never auto-start runtimes.
 - Treat spawn success as visualization-ready only after SettingsMonitor reports a live brain controller heartbeat and placement lifecycle reaches `Running` with registered shards for the spawned brain.
+- Drive worker endpoint visibility from SettingsMonitor heartbeat/registration data as a multi-worker list (`active`, `degraded`, `failed`) with transient retention before removal; do not infer worker availability from local endpoint text fields alone.
 
 ## Visualization layout decisions
 

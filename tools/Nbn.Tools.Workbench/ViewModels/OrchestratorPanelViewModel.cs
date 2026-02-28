@@ -19,6 +19,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 {
     private const int MaxRows = 200;
     private const long StaleNodeMs = 15000;
+    private const long WorkerFailedAfterMs = 45000;
+    private const long WorkerRemoveAfterMs = 120000;
     private const long SpawnVisibilityGraceMs = 30000;
     private const float LocalDefaultTickHz = 8f;
     private const float LocalDefaultMinTickHz = 2f;
@@ -40,6 +42,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private readonly Func<Task>? _connectAll;
     private readonly Action? _disconnectAll;
+    private readonly Dictionary<Guid, WorkerEndpointSnapshot> _workerEndpointCache = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private string _statusMessage = "Idle";
     private string _settingsLaunchStatus = "Idle";
@@ -49,6 +52,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _workerLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _sampleBrainStatus = "Not running.";
+    private string _workerEndpointSummary = "No active workers.";
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
     private readonly CancellationTokenSource _refreshCts = new();
     private readonly TimeSpan _autoRefreshInterval = TimeSpan.FromSeconds(3);
@@ -71,6 +75,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _connectAll = connectAll;
         _disconnectAll = disconnectAll;
         Nodes = new ObservableCollection<NodeStatusItem>();
+        WorkerEndpoints = new ObservableCollection<WorkerEndpointItem>();
         Actors = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
@@ -96,6 +101,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     }
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
+    public ObservableCollection<WorkerEndpointItem> WorkerEndpoints { get; }
     public ObservableCollection<NodeStatusItem> Actors { get; }
     public ObservableCollection<SettingEntryViewModel> Settings { get; }
     public ObservableCollection<BrainTerminatedItem> Terminations { get; }
@@ -183,6 +189,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _sampleBrainStatus;
         set => SetProperty(ref _sampleBrainStatus, value);
+    }
+
+    public string WorkerEndpointSummary
+    {
+        get => _workerEndpointSummary;
+        set => SetProperty(ref _workerEndpointSummary, value);
     }
 
     public void UpdateSetting(SettingItem item)
@@ -456,12 +468,20 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         try
         {
-            var nodesResponse = await _client.ListNodesAsync().ConfigureAwait(false);
-            var brainsResponse = await _client.ListBrainsAsync().ConfigureAwait(false);
+            var nodesResponseTask = _client.ListNodesAsync();
+            var brainsResponseTask = _client.ListBrainsAsync();
+            var workerInventoryResponseTask = _client.ListWorkerInventorySnapshotAsync();
+            var settingsResponseTask = _client.ListSettingsAsync();
+
+            var nodesResponse = await nodesResponseTask.ConfigureAwait(false);
+            var brainsResponse = await brainsResponseTask.ConfigureAwait(false);
+            var workerInventoryResponse = await workerInventoryResponseTask.ConfigureAwait(false);
+            var settingsResponse = await settingsResponseTask.ConfigureAwait(false);
 
             var nodes = nodesResponse?.Nodes?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.NodeStatus>();
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
+            var workerInventory = workerInventoryResponse?.Workers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.WorkerReadinessCapability>();
             var sortedNodes = nodes
                 .OrderByDescending(node => node.LastSeenMs)
                 .ThenBy(node => node.LogicalName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
@@ -469,9 +489,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             UpdateHiveMindEndpoint(nodes, nowMs);
+            var workerEndpointState = BuildWorkerEndpointState(sortedNodes, workerInventory, nowMs);
             var actorRows = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
-
-            var settingsResponse = await _client.ListSettingsAsync().ConfigureAwait(false);
             var settings = settingsResponse?.Settings?
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
@@ -482,6 +501,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             _dispatcher.Post(() =>
             {
                 Nodes.Clear();
+                WorkerEndpoints.Clear();
                 Actors.Clear();
                 foreach (var node in sortedNodes)
                 {
@@ -494,6 +514,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                         node.RootActorName ?? string.Empty,
                         seen.ToString("g"),
                         isAlive ? "online" : "offline"));
+                }
+
+                foreach (var workerRow in workerEndpointState.Rows)
+                {
+                    WorkerEndpoints.Add(workerRow);
                 }
 
                 foreach (var actorRow in actorRows)
@@ -514,12 +539,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     }
                 }
 
+                WorkerEndpointSummary = workerEndpointState.SummaryText;
                 Trim(Nodes);
+                Trim(WorkerEndpoints);
                 Trim(Actors);
                 Trim(Settings);
             });
 
-            UpdateConnectionStatusesFromNodes(nodes, nowMs);
+            UpdateConnectionStatusesFromNodes(nodes, nowMs, workerEndpointState);
 
             var controllerMap = controllers
                 .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
@@ -961,12 +988,225 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return delta <= SpawnVisibilityGraceMs;
     }
 
-    private void UpdateConnectionStatusesFromNodes(IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)
+    private WorkerEndpointState BuildWorkerEndpointState(
+        IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
+        IReadOnlyList<Nbn.Proto.Settings.WorkerReadinessCapability> inventory,
+        long nowMs)
+    {
+        foreach (var worker in inventory)
+        {
+            if (worker.NodeId is null || !worker.NodeId.TryToGuid(out var nodeId))
+            {
+                continue;
+            }
+
+            if (!IsWorkerHostCandidate(worker.LogicalName, worker.RootActorName))
+            {
+                continue;
+            }
+
+            UpdateWorkerEndpointSnapshot(
+                nodeId,
+                worker.LogicalName,
+                worker.Address,
+                worker.RootActorName,
+                (long)worker.LastSeenMs,
+                worker.IsAlive);
+        }
+
+        foreach (var node in nodes)
+        {
+            if (node.NodeId is null || !node.NodeId.TryToGuid(out var nodeId))
+            {
+                continue;
+            }
+
+            if (!IsWorkerHostCandidate(node.LogicalName, node.RootActorName))
+            {
+                continue;
+            }
+
+            UpdateWorkerEndpointSnapshot(
+                nodeId,
+                node.LogicalName,
+                node.Address,
+                node.RootActorName,
+                (long)node.LastSeenMs,
+                node.IsAlive);
+        }
+
+        var rows = new List<(int Rank, long LastSeenMs, WorkerEndpointItem Row)>();
+        var staleNodeIds = new List<Guid>();
+        var activeCount = 0;
+        var degradedCount = 0;
+        var failedCount = 0;
+
+        foreach (var entry in _workerEndpointCache.Values)
+        {
+            var (status, remove) = ClassifyWorkerEndpointStatus(entry, nowMs);
+            if (remove)
+            {
+                staleNodeIds.Add(entry.NodeId);
+                continue;
+            }
+
+            switch (status)
+            {
+                case "active":
+                    activeCount++;
+                    break;
+                case "degraded":
+                    degradedCount++;
+                    break;
+                default:
+                    failedCount++;
+                    break;
+            }
+
+            rows.Add((WorkerStatusRank(status), entry.LastSeenMs, new WorkerEndpointItem(
+                entry.NodeId,
+                entry.LogicalName,
+                entry.Address,
+                entry.RootActorName,
+                FormatUpdated(entry.LastSeenMs),
+                status)));
+        }
+
+        foreach (var staleNodeId in staleNodeIds)
+        {
+            _workerEndpointCache.Remove(staleNodeId);
+        }
+
+        var orderedRows = rows
+            .OrderBy(entry => entry.Rank)
+            .ThenByDescending(entry => entry.LastSeenMs)
+            .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.Row)
+            .ToArray();
+
+        var summary = BuildWorkerEndpointSummary(activeCount, degradedCount, failedCount);
+        return new WorkerEndpointState(orderedRows, activeCount, degradedCount, failedCount, summary);
+    }
+
+    private void UpdateWorkerEndpointSnapshot(
+        Guid nodeId,
+        string? logicalName,
+        string? address,
+        string? rootActorName,
+        long lastSeenMs,
+        bool isAlive)
+    {
+        if (!_workerEndpointCache.TryGetValue(nodeId, out var snapshot))
+        {
+            snapshot = new WorkerEndpointSnapshot
+            {
+                NodeId = nodeId
+            };
+            _workerEndpointCache[nodeId] = snapshot;
+        }
+
+        if (!string.IsNullOrWhiteSpace(logicalName))
+        {
+            snapshot.LogicalName = logicalName.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(address))
+        {
+            snapshot.Address = address.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(rootActorName))
+        {
+            snapshot.RootActorName = rootActorName.Trim();
+        }
+
+        var previousLastSeen = snapshot.LastSeenMs;
+        snapshot.LastSeenMs = Math.Max(snapshot.LastSeenMs, lastSeenMs);
+        if (lastSeenMs >= previousLastSeen || !isAlive)
+        {
+            snapshot.IsAlive = isAlive;
+        }
+    }
+
+    private static (string Status, bool Remove) ClassifyWorkerEndpointStatus(WorkerEndpointSnapshot snapshot, long nowMs)
+    {
+        if (snapshot.LastSeenMs <= 0)
+        {
+            return ("failed", false);
+        }
+
+        var ageMs = nowMs - snapshot.LastSeenMs;
+        if (ageMs < 0)
+        {
+            ageMs = 0;
+        }
+
+        if (ageMs > WorkerRemoveAfterMs)
+        {
+            return ("failed", true);
+        }
+
+        if (snapshot.IsAlive && ageMs <= StaleNodeMs)
+        {
+            return ("active", false);
+        }
+
+        if (!snapshot.IsAlive || ageMs > WorkerFailedAfterMs)
+        {
+            return ("failed", false);
+        }
+
+        return ("degraded", false);
+    }
+
+    private static int WorkerStatusRank(string status)
+    {
+        return status switch
+        {
+            "active" => 0,
+            "degraded" => 1,
+            "failed" => 2,
+            _ => 3
+        };
+    }
+
+    private static string BuildWorkerEndpointSummary(int activeCount, int degradedCount, int failedCount)
+    {
+        var parts = new List<string>();
+        if (activeCount > 0)
+        {
+            parts.Add(FormatCount(activeCount, "active"));
+        }
+
+        if (degradedCount > 0)
+        {
+            parts.Add(FormatCount(degradedCount, "degraded"));
+        }
+
+        if (failedCount > 0)
+        {
+            parts.Add(FormatCount(failedCount, "failed"));
+        }
+
+        return parts.Count == 0
+            ? "No active workers."
+            : string.Join(", ", parts);
+    }
+
+    private static string FormatCount(int count, string label)
+    {
+        var suffix = count == 1 ? "worker" : "workers";
+        return $"{count} {label} {suffix}";
+    }
+
+    private void UpdateConnectionStatusesFromNodes(
+        IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
+        long nowMs,
+        WorkerEndpointState workerEndpointState)
     {
         var hiveAlive = false;
         var ioAlive = false;
         var reproAlive = false;
-        var workerAlive = false;
         var obsAlive = false;
         foreach (var node in nodes)
         {
@@ -984,11 +1224,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             if (string.Equals(node.RootActorName, Connections.ReproManager, StringComparison.OrdinalIgnoreCase))
             {
                 reproAlive = reproAlive || fresh;
-            }
-
-            if (IsWorkerNode(node))
-            {
-                workerAlive = workerAlive || fresh;
             }
 
             if (string.Equals(node.RootActorName, Connections.DebugHub, StringComparison.OrdinalIgnoreCase)
@@ -1009,25 +1244,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ReproConnected = reproAlive;
             Connections.ReproStatus = reproAlive ? "Connected" : "Offline";
 
-            Connections.WorkerConnected = workerAlive;
-            Connections.WorkerStatus = workerAlive ? "Connected" : "Offline";
+            Connections.WorkerConnected = workerEndpointState.ActiveCount > 0;
+            Connections.WorkerStatus = workerEndpointState.Rows.Count > 0
+                ? workerEndpointState.SummaryText
+                : "Offline";
 
             Connections.ObsConnected = obsAlive;
             Connections.ObsStatus = obsAlive ? "Connected" : "Offline";
         });
-    }
-
-    private bool IsWorkerNode(Nbn.Proto.Settings.NodeStatus node)
-    {
-        if (node is null)
-        {
-            return false;
-        }
-
-        return (!string.IsNullOrWhiteSpace(Connections.WorkerRootName)
-                && string.Equals(node.RootActorName, Connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
-               || (!string.IsNullOrWhiteSpace(Connections.WorkerLogicalName)
-                   && string.Equals(node.LogicalName, Connections.WorkerLogicalName, StringComparison.OrdinalIgnoreCase));
     }
 
     private void RecordBrainTerminations(IReadOnlyList<BrainListItem> current)
@@ -1402,25 +1626,61 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return $"{brainId:N}|{actorKind}|{regionId}|{shardIndex}";
     }
 
-    private static bool IsWorkerHostCandidate(Nbn.Proto.Settings.NodeStatus node)
+    private bool IsWorkerHostCandidate(Nbn.Proto.Settings.NodeStatus node)
     {
-        if (!string.IsNullOrWhiteSpace(node.LogicalName)
-            && node.LogicalName!.Trim().StartsWith("nbn.worker", StringComparison.OrdinalIgnoreCase))
+        return IsWorkerHostCandidate(node.LogicalName, node.RootActorName);
+    }
+
+    private bool IsWorkerHostCandidate(string? logicalName, string? rootActorName)
+    {
+        if (!string.IsNullOrWhiteSpace(Connections.WorkerLogicalName)
+            && !string.IsNullOrWhiteSpace(logicalName)
+            && string.Equals(logicalName.Trim(), Connections.WorkerLogicalName.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(node.RootActorName))
+        if (!string.IsNullOrWhiteSpace(Connections.WorkerRootName)
+            && !string.IsNullOrWhiteSpace(rootActorName)
+            && string.Equals(rootActorName.Trim(), Connections.WorkerRootName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(logicalName)
+            && logicalName.Trim().StartsWith("nbn.worker", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(rootActorName))
         {
             return false;
         }
 
-        var root = node.RootActorName.Trim();
+        var root = rootActorName.Trim();
         return root.StartsWith("worker-node", StringComparison.OrdinalIgnoreCase)
                || root.Equals("regionhost", StringComparison.OrdinalIgnoreCase)
                || root.Equals("region-host", StringComparison.OrdinalIgnoreCase)
                || root.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase)
                || root.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record WorkerEndpointState(
+        IReadOnlyList<WorkerEndpointItem> Rows,
+        int ActiveCount,
+        int DegradedCount,
+        int FailedCount,
+        string SummaryText);
+
+    private sealed class WorkerEndpointSnapshot
+    {
+        public Guid NodeId { get; init; }
+        public string LogicalName { get; set; } = string.Empty;
+        public string Address { get; set; } = string.Empty;
+        public string RootActorName { get; set; } = string.Empty;
+        public long LastSeenMs { get; set; }
+        public bool IsAlive { get; set; }
     }
 
     private void ApplyObservabilityEnvironment(ProcessStartInfo startInfo)

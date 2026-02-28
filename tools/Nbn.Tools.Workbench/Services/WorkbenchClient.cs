@@ -493,6 +493,27 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public virtual async Task<WorkerInventorySnapshotResponse?> ListWorkerInventorySnapshotAsync()
+    {
+        if (_root is null || _settingsPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<WorkerInventorySnapshotResponse>(
+                _settingsPid,
+                new WorkerInventorySnapshotRequest(),
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnSettingsStatus($"Worker inventory failed: {ex.Message}", true);
+            return null;
+        }
+    }
+
     public virtual async Task<BrainListResponse?> ListBrainsAsync()
     {
         if (_root is null || _settingsPid is null)

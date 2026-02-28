@@ -56,10 +56,60 @@ public sealed record NodeStatusItem(
     string LastSeen,
     string Status)
 {
-    public bool IsOnline => string.Equals(Status, "online", StringComparison.OrdinalIgnoreCase);
-    public string StatusChipBackground => IsOnline ? "#DDF5E5" : "#F6E8BF";
-    public string StatusChipBorder => IsOnline ? "#2D9A5E" : "#C8A13F";
-    public string StatusChipForeground => IsOnline ? "#0F5832" : "#5C4511";
+    private string StatusKey => (Status ?? string.Empty).Trim().ToLowerInvariant();
+    public bool IsOnline => StatusKey is "online" or "active";
+    private bool IsDegraded => StatusKey is "degraded" or "warning";
+    private bool IsFailed => StatusKey is "failed";
+    public string StatusChipBackground => IsOnline
+        ? "#DDF5E5"
+        : IsDegraded
+            ? "#F6E8BF"
+            : IsFailed
+                ? "#FBE8E8"
+                : "#F6E8BF";
+    public string StatusChipBorder => IsOnline
+        ? "#2D9A5E"
+        : IsDegraded
+            ? "#C8A13F"
+            : IsFailed
+                ? "#C04A4A"
+                : "#C8A13F";
+    public string StatusChipForeground => IsOnline
+        ? "#0F5832"
+        : IsDegraded
+            ? "#5C4511"
+            : IsFailed
+                ? "#6B1F1F"
+                : "#5C4511";
+}
+
+public sealed record WorkerEndpointItem(
+    Guid NodeId,
+    string LogicalName,
+    string Address,
+    string RootActor,
+    string LastSeen,
+    string Status)
+{
+    private string StatusKey => (Status ?? string.Empty).Trim().ToLowerInvariant();
+    public bool IsActive => StatusKey is "active" or "online";
+    private bool IsDegraded => StatusKey is "degraded" or "warning";
+    private bool IsFailed => StatusKey is "failed";
+    public string StatusChipBackground => IsActive
+        ? "#DDF5E5"
+        : IsDegraded
+            ? "#F6E8BF"
+            : "#FBE8E8";
+    public string StatusChipBorder => IsActive
+        ? "#2D9A5E"
+        : IsDegraded
+            ? "#C8A13F"
+            : "#C04A4A";
+    public string StatusChipForeground => IsActive
+        ? "#0F5832"
+        : IsDegraded
+            ? "#5C4511"
+            : "#6B1F1F";
 }
 
 public sealed record SettingItem(string Key, string Value, string Updated);

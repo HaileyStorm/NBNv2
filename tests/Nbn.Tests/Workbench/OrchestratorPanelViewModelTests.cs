@@ -78,11 +78,139 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.True(connections.WorkerConnected);
-        Assert.Equal("Connected", connections.WorkerStatus);
+        Assert.Equal("1 active worker", connections.WorkerStatus);
         var workerNode = Assert.Single(vm.Nodes);
         Assert.Equal(connections.WorkerLogicalName, workerNode.LogicalName);
         Assert.Equal(connections.WorkerRootName, workerNode.RootActor);
         Assert.Equal("online", workerNode.Status);
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal(workerId, workerEndpoint.NodeId);
+        Assert.Equal("active", workerEndpoint.Status);
+        Assert.Equal("1 active worker", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_TracksMultipleActiveWorkerEndpoints()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerRootName = "custom-worker-root"
+        };
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerA = Guid.NewGuid();
+        var workerB = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerA.ToProtoUuid(),
+                        LogicalName = "nbn.worker.east",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-east",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    },
+                    new NodeStatus
+                    {
+                        NodeId = workerB.ToProtoUuid(),
+                        LogicalName = "external-runner",
+                        Address = "127.0.0.1:12042",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)(nowMs - 2_000),
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.WorkerConnected);
+        Assert.Equal("2 active workers", connections.WorkerStatus);
+        Assert.Equal(2, vm.WorkerEndpoints.Count);
+        Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("active", endpoint.Status));
+        Assert.Equal("2 active workers", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_ReportDegradedAndFailedStates()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var degradedWorker = Guid.NewGuid();
+        var failedWorker = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = degradedWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.degraded",
+                        Address = "127.0.0.1:12043",
+                        RootActorName = "worker-node-degraded",
+                        LastSeenMs = (ulong)(nowMs - 20_000),
+                        IsAlive = true
+                    },
+                    new NodeStatus
+                    {
+                        NodeId = failedWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.failed",
+                        Address = "127.0.0.1:12044",
+                        RootActorName = "worker-node-failed",
+                        LastSeenMs = (ulong)(nowMs - 70_000),
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.False(connections.WorkerConnected);
+        Assert.Equal("1 degraded worker, 1 failed worker", connections.WorkerStatus);
+        Assert.Equal(2, vm.WorkerEndpoints.Count);
+        Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == degradedWorker && endpoint.Status == "degraded");
+        Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == failedWorker && endpoint.Status == "failed");
+        Assert.Equal("1 degraded worker, 1 failed worker", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_OfflineWhenNoWorkersVisible()
+    {
+        var connections = new ConnectionViewModel();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse(),
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.False(connections.WorkerConnected);
+        Assert.Equal("Offline", connections.WorkerStatus);
+        Assert.Empty(vm.WorkerEndpoints);
+        Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
     }
 
     [Fact]
@@ -828,6 +956,7 @@ public class OrchestratorPanelViewModelTests
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
         public NodeListResponse? NodesResponse { get; init; }
+        public WorkerInventorySnapshotResponse? WorkerInventoryResponse { get; init; }
         public BrainListResponse? BrainsResponse { get; set; }
         public Func<BrainListResponse?>? BrainListFactory { get; set; }
         public SettingListResponse? SettingsResponse { get; init; }
@@ -854,6 +983,9 @@ public class OrchestratorPanelViewModelTests
 
         public override Task<NodeListResponse?> ListNodesAsync()
             => Task.FromResult(NodesResponse);
+
+        public override Task<WorkerInventorySnapshotResponse?> ListWorkerInventorySnapshotAsync()
+            => Task.FromResult(WorkerInventoryResponse);
 
         public override Task<BrainListResponse?> ListBrainsAsync()
         {

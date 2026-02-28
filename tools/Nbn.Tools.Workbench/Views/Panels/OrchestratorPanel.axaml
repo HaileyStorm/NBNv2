@@ -110,6 +110,36 @@
               <TextBlock Text="{Binding Connections.HiveMindStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </WrapPanel>
+
+          <StackPanel Spacing="6">
+            <TextBlock Text="Worker Hosts" Classes="card-title" />
+            <TextBlock Text="SettingsMonitor registration/heartbeat view. Active workers appear first; degraded/failed entries are retained briefly for loss visibility." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
+            <ScrollViewer MaxHeight="200" HorizontalScrollBarVisibility="Disabled">
+              <ItemsControl ItemsSource="{Binding WorkerEndpoints}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="row">
+                      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                        <Border Classes="pill"
+                                Background="{Binding StatusChipBackground}"
+                                BorderBrush="{Binding StatusChipBorder}"
+                                BorderThickness="1">
+                          <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+                        </Border>
+                        <StackPanel Grid.Column="1">
+                          <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
+                          <TextBlock Text="{Binding Address}" Classes="muted" />
+                          <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
         </StackPanel>
       </Border>
 
