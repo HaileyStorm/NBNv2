@@ -1510,6 +1510,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             var address = string.Empty;
             var hostSeenMs = (long)controller.LastSeenMs;
             var hostIsWorker = false;
+            var workerHostNodeId = Guid.Empty;
             if (controller.NodeId is not null
                 && controller.NodeId.TryToGuid(out var nodeId)
                 && nodeById.TryGetValue(nodeId, out var node))
@@ -1520,12 +1521,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 hostIsWorker = IsWorkerHostCandidate(node);
                 if (hostIsWorker)
                 {
-                    AddWorkerBrainHint(nodeId, brainId);
+                    workerHostNodeId = nodeId;
                 }
             }
 
             var actorPid = controller.ActorName?.Trim() ?? string.Empty;
             var isOnline = controller.IsAlive && IsFresh(controller.LastSeenMs, nowMs);
+            if (hostIsWorker && isOnline && workerHostNodeId != Guid.Empty)
+            {
+                AddWorkerBrainHint(workerHostNodeId, brainId);
+            }
+
             AddActorRow(
                 brainId,
                 actorKind: "Controller",
@@ -1615,6 +1621,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 var hostSeenMs = (long)reconcileResult.Node.LastSeenMs;
                 var isOnline = reconcileResult.Node.IsAlive && IsFresh(reconcileResult.Node.LastSeenMs, nowMs);
                 var hostIsWorker = IsWorkerHostCandidate(reconcileResult.Node);
+                var hostNodeId = reconcileResult.Node.NodeId is not null
+                                 && reconcileResult.Node.NodeId.TryToGuid(out var reconcileNodeId)
+                    ? reconcileNodeId
+                    : Guid.Empty;
 
                 if (assignment.WorkerNodeId is not null
                     && assignment.WorkerNodeId.TryToGuid(out var workerNodeId)
@@ -1625,16 +1635,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     hostSeenMs = (long)workerNode.LastSeenMs;
                     isOnline = workerNode.IsAlive && IsFresh(workerNode.LastSeenMs, nowMs);
                     hostIsWorker = IsWorkerHostCandidate(workerNode);
-                    if (hostIsWorker)
-                    {
-                        AddWorkerBrainHint(workerNodeId, reportBrainId);
-                    }
+                    hostNodeId = workerNodeId;
                 }
-                else if (hostIsWorker
-                         && reconcileResult.Node.NodeId is not null
-                         && reconcileResult.Node.NodeId.TryToGuid(out var reconcileNodeId))
+
+                if (hostIsWorker && isOnline && hostNodeId != Guid.Empty)
                 {
-                    AddWorkerBrainHint(reconcileNodeId, reportBrainId);
+                    AddWorkerBrainHint(hostNodeId, reportBrainId);
                 }
 
                 AddActorRow(

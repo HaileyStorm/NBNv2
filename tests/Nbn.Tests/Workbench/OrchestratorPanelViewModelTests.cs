@@ -355,6 +355,69 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_BrainHints_IgnoreOfflineControllers()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        var controllerActor = $"127.0.0.1:12041/worker-node/brain-{brainId:N}-root";
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)nowMs,
+                        LastTickId = 12,
+                        State = "Active"
+                    }
+                },
+                Controllers =
+                {
+                    new BrainControllerStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        NodeId = workerId.ToProtoUuid(),
+                        ActorName = controllerActor,
+                        LastSeenMs = (ulong)(nowMs - 120_000),
+                        IsAlive = true
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var controllerRow = Assert.Single(vm.Actors, node => node.RootActor == controllerActor);
+        Assert.Equal("offline", controllerRow.Status);
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerId);
+        Assert.Equal("none", workerEndpoint.BrainHints);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_IncludesPlacementHostedActorRows()
     {
         var connections = new ConnectionViewModel();
