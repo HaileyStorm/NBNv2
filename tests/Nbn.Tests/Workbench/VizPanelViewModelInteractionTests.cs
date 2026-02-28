@@ -1029,6 +1029,39 @@ public class VizPanelViewModelInteractionTests
         Assert.Contains("Mini chart range", vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void MiniActivityChart_UsesProjectionHistoryBeyondVisibleEventBuffer()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        for (ulong tick = 1; tick <= 20; tick++)
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                vm.AddVizEvent(CreateVizEvent(
+                    type: VizEventType.VizAxonSent.ToString(),
+                    brainId: brain.BrainId.ToString("D"),
+                    tickId: tick,
+                    region: "1",
+                    source: "65537",
+                    target: "131073",
+                    value: 0.25f,
+                    strength: 0.15f));
+            }
+        }
+
+        var chartReady = SpinWait.SpinUntil(
+            () => vm.MiniActivityChartRangeLabel.Contains("Ticks 1..20", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(chartReady);
+        Assert.Equal(400, vm.VizEvents.Count);
+        Assert.Contains("Ticks 1..20", vm.MiniActivityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,

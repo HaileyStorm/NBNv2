@@ -202,6 +202,10 @@ public static class VizActivityCanvasLayoutBuilder
     private static readonly object EdgeCurveCacheGate = new();
     private static readonly Dictionary<CanvasEdgeCurveKey, CanvasEdgeCurve> EdgeCurveCache = new();
     private static readonly Queue<CanvasEdgeCurveKey> EdgeCurveCacheOrder = new();
+    private static readonly double OverlayAvoidUpperRightCenterRadians = -Math.PI / 4.0;
+    private static readonly double OverlayAvoidUpperRightSpreadRadians = Math.PI / 3.1;
+    private static readonly double OverlayAvoidUpperRightTransitionRadians = Math.PI / 18.0;
+    private static readonly double OverlayAvoidUpperRightMaxShiftRadians = Math.PI / 48.0;
 
     public static VizActivityCanvasLayout Build(
         VizActivityProjection projection,
@@ -1275,7 +1279,8 @@ public static class VizActivityCanvasLayoutBuilder
                 -3 or 0 or 3 => 0.0,
                 _ => (((slice - minSlice) & 1) == 0 ? 1.0 : -1.0) * (48.0 + (34.0 * depthRatio))
             };
-            var laneCenterY = CenterY + sliceWave;
+            var rightOverlayBias = normalizedSlice > 0.0 ? normalizedSlice * 34.0 : 0.0;
+            var laneCenterY = CenterY + sliceWave + rightOverlayBias;
             var count = regions.Count;
             var laneHalfHeight = count <= 1
                 ? 0.0
@@ -1340,7 +1345,8 @@ public static class VizActivityCanvasLayoutBuilder
                 var localX = lane * inSliceHorizontal * (1.0 + (0.3 * depthRatio));
                 var localY = lane * inSliceVertical * (0.7 + (0.45 * depthRatio));
                 var x = CenterX + localX + (z * depthX);
-                var y = CenterY + localY - (z * depthY);
+                var rightOverlayBias = z > 0 ? (z / (double)maxSlice) * 20.0 : 0.0;
+                var y = CenterY + localY - (z * depthY) + rightOverlayBias;
                 x = Clamp(x, RegionNodePositionPadding, CanvasWidth - RegionNodePositionPadding);
                 y = Clamp(y, RegionNodePositionPadding, CanvasHeight - RegionNodePositionPadding);
                 positions[regions[index]] = new CanvasPoint(x, y);
@@ -1421,12 +1427,17 @@ public static class VizActivityCanvasLayoutBuilder
 
             var angleStep = (2.0 * Math.PI) / naturalCapacity;
             var ringPhase = (ringIndex * Math.PI) / Math.Max(3, naturalCapacity);
+            var applyOverlayNudge = naturalCapacity >= 12;
             for (var index = 0; index < ringCount; index++)
             {
                 var slot = ringCount == naturalCapacity
                     ? index
                     : (int)Math.Floor(((index + 0.5) * naturalCapacity) / ringCount);
                 var angle = ringPhase + (slot * angleStep);
+                if (applyOverlayNudge)
+                {
+                    angle = NudgeAngleAwayFromOverlay(angle);
+                }
                 var x = CenterX + (Math.Cos(angle) * radius);
                 var y = CenterY + (Math.Sin(angle) * radius * safeYScale);
                 positions.Add(clampToCanvas
@@ -1453,9 +1464,14 @@ public static class VizActivityCanvasLayoutBuilder
         var fallbackRadius = safeMaxRadius;
         var fallbackRemaining = count - positions.Count;
         var fallbackStep = (2.0 * Math.PI) / fallbackRemaining;
+        var applyFallbackOverlayNudge = fallbackRemaining >= 12;
         for (var index = 0; index < fallbackRemaining; index++)
         {
             var angle = (index * fallbackStep) + (Math.PI / 7.0);
+            if (applyFallbackOverlayNudge)
+            {
+                angle = NudgeAngleAwayFromOverlay(angle);
+            }
             var x = CenterX + (Math.Cos(angle) * fallbackRadius);
             var y = CenterY + (Math.Sin(angle) * fallbackRadius * safeYScale);
             positions.Add(clampToCanvas
@@ -1482,9 +1498,14 @@ public static class VizActivityCanvasLayoutBuilder
 
         var radius = Math.Clamp(minRadius + (count * 3.0), minRadius, maxRadius);
         var positions = new List<CanvasPoint>(count);
+        var applyOverlayNudge = count >= 12;
         for (var index = 0; index < count; index++)
         {
             var angle = (2.0 * Math.PI * index) / count;
+            if (applyOverlayNudge)
+            {
+                angle = NudgeAngleAwayFromOverlay(angle);
+            }
             var x = CenterX + (Math.Cos(angle) * radius);
             var y = CenterY + (Math.Sin(angle) * radius * yScale);
             positions.Add(clampToCanvas
@@ -1595,6 +1616,7 @@ public static class VizActivityCanvasLayoutBuilder
         double yScale,
         bool clampToCanvas)
     {
+        angle = NudgeAngleAwayFromOverlay(angle);
         var x = CenterX + (Math.Cos(angle) * radius);
         var y = CenterY + (Math.Sin(angle) * radius * yScale);
         if (!clampToCanvas)
@@ -1633,6 +1655,38 @@ public static class VizActivityCanvasLayoutBuilder
     {
         var normalized = angle % (2.0 * Math.PI);
         return normalized < 0 ? normalized + (2.0 * Math.PI) : normalized;
+    }
+
+    private static double NormalizeSignedAngle(double angle)
+    {
+        var normalized = angle % (2.0 * Math.PI);
+        if (normalized <= -Math.PI)
+        {
+            normalized += 2.0 * Math.PI;
+        }
+        else if (normalized > Math.PI)
+        {
+            normalized -= 2.0 * Math.PI;
+        }
+
+        return normalized;
+    }
+
+    private static double NudgeAngleAwayFromOverlay(double angle)
+    {
+        var signedAngle = NormalizeSignedAngle(angle);
+        var delta = NormalizeSignedAngle(signedAngle - OverlayAvoidUpperRightCenterRadians);
+        var safeTransition = Math.Max(0.01, OverlayAvoidUpperRightTransitionRadians);
+        var safeSpread = Math.Max(safeTransition, OverlayAvoidUpperRightSpreadRadians);
+        var direction = Math.Tanh(delta / safeTransition);
+        if (Math.Abs(direction) < 1e-6)
+        {
+            return signedAngle;
+        }
+
+        var falloff = Math.Exp(-((delta * delta) / (2.0 * safeSpread * safeSpread)));
+        var shift = OverlayAvoidUpperRightMaxShiftRadians * direction * falloff;
+        return NormalizeSignedAngle(signedAngle + shift);
     }
 
     private static int[] BuildSignedOffsetOrder(int maxMagnitude)

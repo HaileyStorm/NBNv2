@@ -30,6 +30,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     }
 
     private const int MaxEvents = 400;
+    private const int MaxProjectionEvents = 24000;
     private const int MaxEventsPerUiFlush = 96;
     private const int MaxPendingEvents = 1600;
     private const int DefaultTickWindow = 64;
@@ -52,10 +53,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double MinMiniActivityRangeSeconds = 0.25d;
     private const double MaxMiniActivityRangeSeconds = 60d;
     private const float DefaultMiniActivityTickRateHz = 20f;
-    private const double MiniActivityChartPlotWidth = 236;
-    private const double MiniActivityChartPlotHeight = 92;
+    private const double MiniActivityChartPlotWidth = 220;
+    private const double MiniActivityChartPlotHeight = 88;
     private const double MiniActivityChartPlotPaddingX = 6;
     private const double MiniActivityChartPlotPaddingY = 6;
+    private const double MiniActivityChartOverlayWidthPx = 312;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
@@ -96,6 +98,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private readonly UiDispatcher _dispatcher;
     private readonly IoPanelViewModel _brain;
     private readonly List<VizEventItem> _allEvents = new();
+    private readonly List<VizEventItem> _projectionEvents = new();
+    private IReadOnlyList<VizEventItem> _filteredProjectionEvents = Array.Empty<VizEventItem>();
     private readonly Queue<VizEventItem> _pendingEvents = new();
     private readonly object _pendingEventsGate = new();
     private bool _flushScheduled;
@@ -128,7 +132,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _miniActivityRangeSecondsText = DefaultMiniActivityRangeSeconds.ToString("0.###", CultureInfo.InvariantCulture);
     private string _miniActivityChartSeriesLabel = $"Top {DefaultMiniActivityTopN} regions by score.";
     private string _miniActivityChartRangeLabel = "Ticks: awaiting activity.";
-    private string _miniActivityChartMetricLabel = "score = 1 + |value| + |strength| per event contribution";
+    private string _miniActivityChartMetricLabel = "score = |value| + |strength| per event contribution";
     private string _miniActivityYAxisTopLabel = "0";
     private string _miniActivityYAxisMidLabel = "0";
     private string _miniActivityYAxisBottomLabel = "0";
@@ -573,6 +577,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public double MiniActivityChartWidth => MiniActivityChartPlotWidth;
 
     public double MiniActivityChartHeight => MiniActivityChartPlotHeight;
+
+    public double MiniActivityChartOverlayWidth => MiniActivityChartOverlayWidthPx;
 
     public string ActivityCanvasLegend
     {
@@ -1508,6 +1514,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         _allEvents.Clear();
+        _projectionEvents.Clear();
+        _filteredProjectionEvents = Array.Empty<VizEventItem>();
         _topologyByBrainId.Clear();
         lock (_pendingDefinitionHydrationGate)
         {
@@ -1587,7 +1595,18 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
         }
 
-        if (matched == 0 && _allEvents.Count > 0 && SelectedBrain is not null)
+        var projectionMatched = new List<VizEventItem>();
+        foreach (var item in _projectionEvents)
+        {
+            if (MatchesFilter(item))
+            {
+                projectionMatched.Add(item);
+            }
+        }
+
+        _filteredProjectionEvents = projectionMatched;
+
+        if (matched == 0 && _projectionEvents.Count > 0 && SelectedBrain is not null)
         {
             Status = "No events for selected brain.";
         }
@@ -1626,19 +1645,19 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private ulong GetLatestTickForCurrentSelection()
     {
-        if (_allEvents.Count == 0)
+        if (_projectionEvents.Count == 0)
         {
             return 0;
         }
 
         if (SelectedBrain is null)
         {
-            return _allEvents[0].TickId;
+            return _projectionEvents[0].TickId;
         }
 
         var selectedBrainId = SelectedBrain.BrainId;
         var hasFocusFilter = TryParseRegionId(RegionFocusText, out var focusRegionId);
-        foreach (var item in _allEvents)
+        foreach (var item in _projectionEvents)
         {
             if (!Guid.TryParse(item.BrainId, out var itemBrainId))
             {
@@ -1771,10 +1790,12 @@ public sealed class VizPanelViewModel : ViewModelBase
 
             AccumulateTopology(item);
             _allEvents.Insert(0, item);
+            _projectionEvents.Insert(0, item);
             accepted++;
         }
 
-        Trim(_allEvents);
+        Trim(_allEvents, MaxEvents);
+        Trim(_projectionEvents, MaxProjectionEvents);
         RefreshFilteredEvents(fromStreaming: true, force: !hasMore);
         _lastFlushBatchCount = batch.Count;
         _lastFlushBatchMs = StopwatchElapsedMs(flushStart);
@@ -1784,7 +1805,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             var selectedBrain = SelectedBrain?.BrainId.ToString("D") ?? "none";
             var typeFilter = SelectedVizType.TypeFilter ?? "all";
             WorkbenchLog.Info(
-                $"VizFlush batch={batch.Count} accepted={accepted} skipped_global={skippedByGlobalFilter} pending_after={pendingAfter} all_events={_allEvents.Count} visible_events={VizEvents.Count} selected_brain={selectedBrain} type_filter={typeFilter} focus={NormalizeDiagnosticText(RegionFocusText)}");
+                $"VizFlush batch={batch.Count} accepted={accepted} skipped_global={skippedByGlobalFilter} pending_after={pendingAfter} table_events={_allEvents.Count} projection_events={_projectionEvents.Count} visible_events={VizEvents.Count} selected_brain={selectedBrain} type_filter={typeFilter} focus={NormalizeDiagnosticText(RegionFocusText)}");
         }
 
         if (hasMore)
@@ -1836,7 +1857,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         sb.AppendLine(
             $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} mini_top_n={ParseMiniActivityTopNOrDefault()} mini_range_s={ParseMiniActivityRangeSecondsOrDefault():0.###} mini_tick_window={ParseMiniActivityTickWindowOrDefault()} tick_hz={(_currentTargetTickHz ?? 0f):0.###} include_low_signal={IncludeLowSignalEvents} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
         sb.AppendLine(
-            $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count} mini_series={MiniActivityChartSeries.Count} mini_enabled={ShowMiniActivityChart}");
+            $"events table={_allEvents.Count} projection={_projectionEvents.Count} filtered_table={VizEvents.Count} filtered_projection={_filteredProjectionEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count} mini_series={MiniActivityChartSeries.Count} mini_enabled={ShowMiniActivityChart}");
         sb.AppendLine(
             $"perf projection_ms={_lastProjectionBuildMs:0.###} layout_ms={_lastCanvasLayoutBuildMs:0.###} apply_ms={_lastCanvasApplyMs:0.###} frame_ms={_lastCanvasFrameMs:0.###} flush_ms={_lastFlushBatchMs:0.###} flush_batch={_lastFlushBatchCount}");
         sb.AppendLine(
@@ -1927,7 +1948,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             miniChartTopN,
             ShowMiniActivityChart,
             miniChartTickWindow);
-        var eventsSnapshot = VizEvents.ToList();
+        var eventsSnapshot = _filteredProjectionEvents.ToList();
         var topology = BuildTopologySnapshotForSelectedBrain();
         var interaction = BuildCanvasInteractionState();
         var colorMode = SelectedCanvasColorMode.Mode;
@@ -2144,7 +2165,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 Series: Array.Empty<VizMiniActivityChartSeriesItem>());
         }
 
-        var yMax = chart.PeakScore > 0f ? chart.PeakScore : 1f;
+        var yMax = ResolveMiniChartYAxisMax(chart);
         var rows = new List<VizMiniActivityChartSeriesItem>(chart.Series.Count);
         foreach (var series in chart.Series)
         {
@@ -2168,13 +2189,44 @@ public sealed class VizPanelViewModel : ViewModelBase
             Enabled: true,
             SeriesLabel: chart.ModeLabel,
             RangeLabel: $"Ticks {chart.MinTick}..{chart.MaxTick}",
-            MetricLabel: $"{chart.MetricLabel} | y-max {yMax:0.###}",
+            MetricLabel: $"{chart.MetricLabel} | y-max {yMax:0.###} (peak {chart.PeakScore:0.###})",
             YAxisTopLabel: FormatMiniChartAxisValue(yMax),
             YAxisMidLabel: FormatMiniChartAxisValue(yMax * 0.5f),
             YAxisBottomLabel: "0",
             LegendColumns: legendColumns,
             TickCount: chart.Ticks.Count,
             Series: rows);
+    }
+
+    private static float ResolveMiniChartYAxisMax(VizMiniActivityChart chart)
+    {
+        var rawPeak = chart.PeakScore > 0f && float.IsFinite(chart.PeakScore)
+            ? chart.PeakScore
+            : 1f;
+        var samples = new List<float>();
+        foreach (var series in chart.Series)
+        {
+            foreach (var value in series.Values)
+            {
+                if (value > 0f && float.IsFinite(value))
+                {
+                    samples.Add(value);
+                }
+            }
+        }
+
+        if (samples.Count == 0)
+        {
+            return rawPeak;
+        }
+
+        samples.Sort();
+        var percentileIndex = (int)Math.Ceiling(samples.Count * 0.95) - 1;
+        percentileIndex = Math.Clamp(percentileIndex, 0, samples.Count - 1);
+        var p95 = samples[percentileIndex];
+        var robustHeadroom = p95 * 1.2f;
+        var floorFromPeak = rawPeak * 0.2f;
+        return Math.Max(1f, Math.Max(robustHeadroom, floorFromPeak));
     }
 
     private static string BuildMiniActivitySeriesPath(
@@ -4633,9 +4685,10 @@ public sealed class VizPanelViewModel : ViewModelBase
     private static string FormatPath(IStorageItem item)
         => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
-    private static void Trim<T>(ICollection<T> collection)
+    private static void Trim<T>(ICollection<T> collection, int maxCount)
     {
-        while (collection.Count > MaxEvents && collection is IList<T> list)
+        var boundedMax = Math.Max(1, maxCount);
+        while (collection.Count > boundedMax && collection is IList<T> list)
         {
             list.RemoveAt(list.Count - 1);
         }

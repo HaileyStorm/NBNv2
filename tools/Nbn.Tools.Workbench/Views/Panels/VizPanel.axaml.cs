@@ -27,8 +27,8 @@ public partial class VizPanel : UserControl
     private const double CanvasViewportMinHeightPx = 460.0;
     private const double CanvasViewportMaxHeightPx = 1800.0;
     private const double DefaultCanvasViewOffsetTolerancePx = 1.5;
-    private const double MiniChartCenterBiasRatio = 0.65;
-    private const double MiniChartCenterBiasMaxPx = 190.0;
+    private const double MiniChartCenterBiasRatio = 0.82;
+    private const double MiniChartCenterBiasMaxPx = 260.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -170,6 +170,16 @@ public partial class VizPanel : UserControl
             _lastSelectedBrainId = selectedBrainId;
             CaptureNavigationContext();
             RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+            return;
+        }
+
+        if (e.PropertyName == nameof(VizPanelViewModel.ShowMiniActivityChart))
+        {
+            if (_defaultCanvasViewApplied)
+            {
+                RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+            }
+
             return;
         }
 
@@ -759,7 +769,7 @@ public partial class VizPanel : UserControl
             return 0.0;
         }
 
-        var requestedBias = viewModel.MiniActivityChartWidth * MiniChartCenterBiasRatio;
+        var requestedBias = viewModel.MiniActivityChartOverlayWidth * MiniChartCenterBiasRatio;
         return Math.Min(MiniChartCenterBiasMaxPx, Math.Max(0.0, requestedBias));
     }
 
