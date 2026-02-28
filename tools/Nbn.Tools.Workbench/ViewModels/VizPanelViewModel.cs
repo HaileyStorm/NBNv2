@@ -23,6 +23,12 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed class VizPanelViewModel : ViewModelBase
 {
+    public enum EmptyCanvasDoubleClickAction
+    {
+        ResetView = 0,
+        ShowFullBrain = 1
+    }
+
     private const int MaxEvents = 400;
     private const int MaxEventsPerUiFlush = 96;
     private const int MaxPendingEvents = 1600;
@@ -578,7 +584,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public bool HasSelectedRouteTarget => _selectedRouteTargetRegionId.HasValue;
 
-    public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Shift+Wheel zoom, Shift+drag or middle-drag pan, double-click empty = fit";
+    public string CanvasNavigationHint => "Alt+Left/Right cycle, Alt+Enter navigate, Alt+P pin, Esc clear | Shift+Wheel zoom, Shift+drag or middle-drag pan, double-click empty = reset (focused+default => full brain)";
 
     public bool ShowProjectionSnapshot
     {
@@ -1217,6 +1223,27 @@ public sealed class VizPanelViewModel : ViewModelBase
         VisualizationSelectionChanged?.Invoke();
         Status = $"Zoom focus set to region {regionId}.";
         return true;
+    }
+
+    public EmptyCanvasDoubleClickAction ResolveEmptyCanvasDoubleClickAction(bool isDefaultCanvasView)
+    {
+        if (ActiveFocusRegionId.HasValue && isDefaultCanvasView)
+        {
+            return EmptyCanvasDoubleClickAction.ShowFullBrain;
+        }
+
+        return EmptyCanvasDoubleClickAction.ResetView;
+    }
+
+    public EmptyCanvasDoubleClickAction HandleEmptyCanvasDoubleClick(bool isDefaultCanvasView)
+    {
+        var action = ResolveEmptyCanvasDoubleClickAction(isDefaultCanvasView);
+        if (action == EmptyCanvasDoubleClickAction.ShowFullBrain)
+        {
+            ShowFullBrain();
+        }
+
+        return action;
     }
 
     private void ShowFullBrain()

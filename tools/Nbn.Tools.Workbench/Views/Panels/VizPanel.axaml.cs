@@ -26,6 +26,7 @@ public partial class VizPanel : UserControl
     private const double CanvasViewportHeightRatio = 0.74;
     private const double CanvasViewportMinHeightPx = 460.0;
     private const double CanvasViewportMaxHeightPx = 1800.0;
+    private const double DefaultCanvasViewOffsetTolerancePx = 1.5;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -327,7 +328,7 @@ public partial class VizPanel : UserControl
         {
             if (isPrimaryDoubleClick)
             {
-                FitCanvasToViewport();
+                HandleEmptyCanvasDoubleClick();
                 e.Handled = true;
                 return;
             }
@@ -556,6 +557,52 @@ public partial class VizPanel : UserControl
     private void FitCanvasToViewport()
         => RequestCanvasView(PendingCanvasViewMode.Fit);
 
+    private void HandleEmptyCanvasDoubleClick()
+    {
+        var viewModel = ViewModel;
+        if (viewModel is null)
+        {
+            RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+            return;
+        }
+
+        var action = viewModel.HandleEmptyCanvasDoubleClick(IsCanvasAtDefaultView());
+        if (action == VizPanelViewModel.EmptyCanvasDoubleClickAction.ShowFullBrain)
+        {
+            QueueDefaultCenterAfterNavigation();
+            return;
+        }
+
+        RequestCanvasView(PendingCanvasViewMode.DefaultCenter);
+    }
+
+    private bool IsCanvasAtDefaultView()
+    {
+        var viewModel = ViewModel;
+        var scrollViewer = ActivityCanvasScrollViewer;
+        if (viewModel is null
+            || scrollViewer is null
+            || scrollViewer.Viewport.Width <= 0
+            || scrollViewer.Viewport.Height <= 0)
+        {
+            return false;
+        }
+
+        if (Math.Abs(_canvasScale - 1.0) > 0.01)
+        {
+            return false;
+        }
+
+        if (Math.Abs(_canvasPan.X) > 0.75 || Math.Abs(_canvasPan.Y) > 0.75)
+        {
+            return false;
+        }
+
+        var expectedOffset = ClampOffset(ComputeCenteredOffsetForScale(scrollViewer, viewModel, 1.0), scrollViewer);
+        return Math.Abs(scrollViewer.Offset.X - expectedOffset.X) <= DefaultCanvasViewOffsetTolerancePx
+               && Math.Abs(scrollViewer.Offset.Y - expectedOffset.Y) <= DefaultCanvasViewOffsetTolerancePx;
+    }
+
     private void RequestCanvasView(PendingCanvasViewMode mode)
     {
         if (mode == PendingCanvasViewMode.None)
@@ -644,23 +691,27 @@ public partial class VizPanel : UserControl
         scrollViewer.Offset = default;
         SyncCanvasScaleVisuals();
 
-        Vector centeredOffset;
+        var centeredOffset = ComputeCenteredOffsetForScale(scrollViewer, viewModel, _canvasScale);
+        ApplyCanvasOffset(centeredOffset, scrollViewer, absorbResidualIntoPan: false);
+    }
+
+    private static Vector ComputeCenteredOffsetForScale(
+        ScrollViewer scrollViewer,
+        VizPanelViewModel viewModel,
+        double scale)
+    {
         if (TryGetCanvasContentBounds(viewModel, out var contentBounds))
         {
-            var centeredX = ((contentBounds.X + (contentBounds.Width / 2.0)) * _canvasScale) - (scrollViewer.Viewport.Width / 2.0);
-            var centeredY = ((contentBounds.Y + (contentBounds.Height / 2.0)) * _canvasScale) - (scrollViewer.Viewport.Height / 2.0);
-            centeredOffset = new Vector(centeredX, centeredY);
-        }
-        else
-        {
-            var scaledWidth = viewModel.ActivityCanvasWidth * _canvasScale;
-            var scaledHeight = viewModel.ActivityCanvasHeight * _canvasScale;
-            centeredOffset = new Vector(
-                Math.Max(0.0, (scaledWidth - scrollViewer.Viewport.Width) / 2.0),
-                Math.Max(0.0, (scaledHeight - scrollViewer.Viewport.Height) / 2.0));
+            var centeredX = ((contentBounds.X + (contentBounds.Width / 2.0)) * scale) - (scrollViewer.Viewport.Width / 2.0);
+            var centeredY = ((contentBounds.Y + (contentBounds.Height / 2.0)) * scale) - (scrollViewer.Viewport.Height / 2.0);
+            return new Vector(centeredX, centeredY);
         }
 
-        ApplyCanvasOffset(centeredOffset, scrollViewer, absorbResidualIntoPan: false);
+        var scaledWidth = viewModel.ActivityCanvasWidth * scale;
+        var scaledHeight = viewModel.ActivityCanvasHeight * scale;
+        return new Vector(
+            Math.Max(0.0, (scaledWidth - scrollViewer.Viewport.Width) / 2.0),
+            Math.Max(0.0, (scaledHeight - scrollViewer.Viewport.Height) / 2.0));
     }
 
     private void ApplyCanvasOffset(Vector targetOffset, ScrollViewer scrollViewer, bool absorbResidualIntoPan)

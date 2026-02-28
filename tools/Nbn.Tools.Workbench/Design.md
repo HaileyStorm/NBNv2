@@ -18,6 +18,8 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 - Projected mode uses axial slice depth (`z=-3..+3`) and deterministic lane offsets, then clamps to canvas safe bounds.
 - Projection must fall back to axial 2D when region data is invalid/empty, geometry is non-finite, or spread is below minimum usability thresholds.
 - Hover/select/pin/tooltips and keyboard navigation operate on final 2D coordinates and existing spatial indexing regardless of projection mode.
+- Focus-mode gateway placement applies deterministic de-overlap search so gateway region nodes do not stack on top of each other.
+- Viz canvas empty-space double-click resets camera to default center; when already at default center in region-focus mode, it returns to full-brain view.
 - Layout cost for projected region-map mode is `O(region_count)` and bounded by NBN region count (`<= 32`); no GPU dependency is introduced.
 
 ## Maintenance guidance

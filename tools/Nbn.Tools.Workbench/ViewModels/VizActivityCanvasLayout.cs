@@ -1523,8 +1523,17 @@ public static class VizActivityCanvasLayoutBuilder
         }
 
         var safeYScale = Math.Clamp(yScale, 0.45, 1.15);
-        var radius = Math.Clamp(minRadius + (gatewayRegionIds.Count * 3.0), minRadius, maxRadius);
+        var baseRadius = Math.Clamp(minRadius + (gatewayRegionIds.Count * 3.0), minRadius, maxRadius);
+        var minCenterSpacing = (MaxGatewayNodeRadius * 2.0) + 2.0;
+        var radiusStep = Math.Max(minCenterSpacing + 2.0, 22.0);
+        var countBasedJitterStep = Math.PI / Math.Max(24.0, gatewayRegionIds.Count * 3.0);
+        var spacingBasedJitterStep = (minCenterSpacing * 1.05) / Math.Max(baseRadius * safeYScale, 1.0);
+        var angleJitterStep = Math.Max(countBasedJitterStep, spacingBasedJitterStep);
+        var angleOffsetOrder = BuildSignedOffsetOrder(maxMagnitude: 12);
+        var maxRadiusBand = Math.Max(12, gatewayRegionIds.Count);
+
         var fallbackStep = (2.0 * Math.PI) / Math.Max(1, gatewayRegionIds.Count);
+        var referenceAngles = new Dictionary<uint, double>();
         for (var index = 0; index < gatewayRegionIds.Count; index++)
         {
             var regionId = gatewayRegionIds[index];
@@ -1532,17 +1541,114 @@ public static class VizActivityCanvasLayoutBuilder
             var angle = hasReference
                 ? Math.Atan2((referencePoint.Y - focusReference.Y) / safeYScale, referencePoint.X - focusReference.X)
                 : (index * fallbackStep);
+            referenceAngles[regionId] = angle;
+        }
 
-            var x = CenterX + (Math.Cos(angle) * radius);
-            var y = CenterY + (Math.Sin(angle) * radius * safeYScale);
-            positions[regionId] = clampToCanvas
-                ? new CanvasPoint(
-                    Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
-                    Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding))
-                : new CanvasPoint(x, y);
+        var orderedRegionIds = gatewayRegionIds
+            .Distinct()
+            .OrderBy(regionId => NormalizeAngle(referenceAngles[regionId]))
+            .ThenBy(regionId => regionId)
+            .ToList();
+
+        foreach (var regionId in orderedRegionIds)
+        {
+            var baseAngle = referenceAngles[regionId];
+            var bestCandidate = BuildFocusedGatewayPoint(baseAngle, baseRadius, safeYScale, clampToCanvas);
+            var bestCandidateDistance = MinDistanceToPlaced(bestCandidate, positions);
+            var placed = false;
+
+            for (var radiusBand = 0; radiusBand <= maxRadiusBand && !placed; radiusBand++)
+            {
+                var rawRadius = baseRadius + (radiusBand * radiusStep);
+                var candidateRadius = clampToCanvas
+                    ? Math.Clamp(rawRadius, minRadius, maxRadius)
+                    : Math.Max(minRadius, rawRadius);
+                foreach (var angleOffset in angleOffsetOrder)
+                {
+                    var candidateAngle = baseAngle + (angleOffset * angleJitterStep);
+                    var candidate = BuildFocusedGatewayPoint(candidateAngle, candidateRadius, safeYScale, clampToCanvas);
+                    var candidateDistance = MinDistanceToPlaced(candidate, positions);
+                    if (candidateDistance > bestCandidateDistance)
+                    {
+                        bestCandidateDistance = candidateDistance;
+                        bestCandidate = candidate;
+                    }
+
+                    if (candidateDistance >= minCenterSpacing - 0.05)
+                    {
+                        bestCandidate = candidate;
+                        placed = true;
+                        break;
+                    }
+                }
+            }
+
+            positions[regionId] = bestCandidate;
         }
 
         return positions;
+    }
+
+    private static CanvasPoint BuildFocusedGatewayPoint(
+        double angle,
+        double radius,
+        double yScale,
+        bool clampToCanvas)
+    {
+        var x = CenterX + (Math.Cos(angle) * radius);
+        var y = CenterY + (Math.Sin(angle) * radius * yScale);
+        if (!clampToCanvas)
+        {
+            return new CanvasPoint(x, y);
+        }
+
+        return new CanvasPoint(
+            Clamp(x, CanvasPadding, CanvasWidth - CanvasPadding),
+            Clamp(y, CanvasPadding, CanvasHeight - CanvasPadding));
+    }
+
+    private static double MinDistanceToPlaced(CanvasPoint candidate, IReadOnlyDictionary<uint, CanvasPoint> placed)
+    {
+        if (placed.Count == 0)
+        {
+            return double.PositiveInfinity;
+        }
+
+        var minDistanceSquared = double.PositiveInfinity;
+        foreach (var point in placed.Values)
+        {
+            var dx = candidate.X - point.X;
+            var dy = candidate.Y - point.Y;
+            var distanceSquared = (dx * dx) + (dy * dy);
+            if (distanceSquared < minDistanceSquared)
+            {
+                minDistanceSquared = distanceSquared;
+            }
+        }
+
+        return double.IsPositiveInfinity(minDistanceSquared) ? double.PositiveInfinity : Math.Sqrt(minDistanceSquared);
+    }
+
+    private static double NormalizeAngle(double angle)
+    {
+        var normalized = angle % (2.0 * Math.PI);
+        return normalized < 0 ? normalized + (2.0 * Math.PI) : normalized;
+    }
+
+    private static int[] BuildSignedOffsetOrder(int maxMagnitude)
+    {
+        var boundedMagnitude = Math.Max(0, maxMagnitude);
+        var offsets = new List<int>(1 + (boundedMagnitude * 2))
+        {
+            0
+        };
+        for (var magnitude = 1; magnitude <= boundedMagnitude; magnitude++)
+        {
+            offsets.Add(magnitude);
+            offsets.Add(-magnitude);
+        }
+
+        return offsets.ToArray();
     }
 
     private static ulong ResolveLatestTick(VizActivityProjection projection)

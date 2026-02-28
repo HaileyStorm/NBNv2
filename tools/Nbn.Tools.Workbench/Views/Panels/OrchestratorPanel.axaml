@@ -25,7 +25,7 @@
             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding Connections.DebugHub}" Width="140" />
 
             <TextBlock Grid.Row="2" Text="Viz Hub" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.VizHub}" Width="140" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.VizHub}" Width="160" />
             <TextBlock Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="4" Text="Uses Obs Host/Port above (Observability-owned)." Classes="muted" TextWrapping="Wrap" />
 
             <TextBlock Grid.Row="3" Text="HiveMind Host" Classes="muted" />

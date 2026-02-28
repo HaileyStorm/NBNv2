@@ -200,7 +200,7 @@
                   <Button Grid.Column="8"
                            Content="Fit view"
                            Click="CanvasFitViewClicked"
-                           ToolTip.Tip="Double-click empty canvas to fit" />
+                           ToolTip.Tip="Double-click empty canvas to reset; focused+default view returns to full brain." />
                   <TextBlock Grid.Column="9"
                              Text="Pan"
                              Classes="muted"

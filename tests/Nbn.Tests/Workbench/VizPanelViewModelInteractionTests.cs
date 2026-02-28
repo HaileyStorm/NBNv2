@@ -574,6 +574,32 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void HandleEmptyCanvasDoubleClick_FocusedDefaultView_SwitchesToFullBrain()
+    {
+        var vm = CreateViewModel();
+
+        Assert.True(vm.ZoomToRegion(9));
+        var action = vm.HandleEmptyCanvasDoubleClick(isDefaultCanvasView: true);
+
+        Assert.Equal(VizPanelViewModel.EmptyCanvasDoubleClickAction.ShowFullBrain, action);
+        Assert.Equal(string.Empty, vm.RegionFocusText);
+        Assert.Null(vm.ActiveFocusRegionId);
+    }
+
+    [Fact]
+    public void HandleEmptyCanvasDoubleClick_FocusedNonDefaultView_ResetsViewWithoutChangingFocus()
+    {
+        var vm = CreateViewModel();
+
+        Assert.True(vm.ZoomToRegion(9));
+        var action = vm.HandleEmptyCanvasDoubleClick(isDefaultCanvasView: false);
+
+        Assert.Equal(VizPanelViewModel.EmptyCanvasDoubleClickAction.ResetView, action);
+        Assert.Equal("9", vm.RegionFocusText);
+        Assert.Equal((uint)9, vm.ActiveFocusRegionId);
+    }
+
+    [Fact]
     public void SetBrains_PreservesSelectedBrainAcrossRefreshObjects()
     {
         var vm = CreateViewModel();
