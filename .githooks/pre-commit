@@ -16,12 +16,24 @@ if command -v bd >/dev/null 2>&1 && [ -d .beads ]; then
     fi
 fi
 
-if command -v pwsh >/dev/null 2>&1; then
-    pwsh -NoProfile -File ./tools/docs/render-nbnv2-docs.ps1
-elif command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/docs/render-nbnv2-docs.ps1
-else
-    bash ./tools/docs/render-nbnv2-docs.sh
-fi
+run_docs_renderer() {
+    if command -v pwsh >/dev/null 2>&1; then
+        if pwsh -NoProfile -File ./tools/docs/render-nbnv2-docs.ps1 "$@"; then
+            return 0
+        fi
+        echo "warning: pwsh docs render failed; trying fallback runner." >&2
+    fi
+
+    if command -v powershell.exe >/dev/null 2>&1; then
+        if powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/docs/render-nbnv2-docs.ps1 "$@"; then
+            return 0
+        fi
+        echo "warning: powershell.exe docs render failed; trying bash fallback." >&2
+    fi
+
+    bash ./tools/docs/render-nbnv2-docs.sh "$@"
+}
+
+run_docs_renderer
 
 git add docs/NBNv2.md

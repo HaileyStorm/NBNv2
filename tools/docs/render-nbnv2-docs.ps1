@@ -11,23 +11,52 @@ if (-not (Test-Path -LiteralPath $renderer)) {
     throw "Renderer not found: $renderer"
 }
 
-$cmd = $null
-$args = @()
+function Resolve-PythonCommand {
+    $pythonCandidates = @("python", "python3")
+    foreach ($candidate in $pythonCandidates) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if (-not $command) {
+            continue
+        }
 
-$python = Get-Command python -ErrorAction SilentlyContinue
-if ($python) {
-    $cmd = $python.Source
-    $args = @($renderer)
-}
-else {
-    $py = Get-Command py -ErrorAction SilentlyContinue
-    if (-not $py) {
-        throw "Python runtime not found. Install python or py launcher."
+        try {
+            & $command.Source -c "import sys" *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return @{
+                    Command = $command.Source
+                    Args = @()
+                }
+            }
+        }
+        catch {
+            # Try the next candidate.
+        }
     }
 
-    $cmd = $py.Source
-    $args = @("-3", $renderer)
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    if ($py) {
+        try {
+            & $py.Source -3 -c "import sys" *> $null
+            if ($LASTEXITCODE -eq 0) {
+                return @{
+                    Command = $py.Source
+                    Args = @("-3")
+                }
+            }
+        }
+        catch {
+            # Fall through to final error.
+        }
+    }
+
+    throw "Python runtime not found. Install python/python3 or py launcher."
 }
+
+$runtime = Resolve-PythonCommand
+$cmd = $runtime.Command
+$args = @()
+$args += $runtime.Args
+$args += $renderer
 
 if ($Check) {
     $args += "--check"
