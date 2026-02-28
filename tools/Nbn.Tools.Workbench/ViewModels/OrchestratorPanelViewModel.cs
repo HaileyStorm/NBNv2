@@ -1229,6 +1229,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return compact.Length <= 4 ? compact : compact[^4..];
     }
 
+    private static string AbbreviateHostedActorBrainId(Guid brainId)
+    {
+        var compact = brainId.ToString("N");
+        return compact.Length <= 8 ? compact : compact[^8..];
+    }
+
     private void UpdateConnectionStatusesFromNodes(
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         long nowMs,
@@ -1466,7 +1472,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 return;
             }
 
-            var brainToken = brainId.ToString("N")[..8];
+            var brainToken = AbbreviateHostedActorBrainId(brainId);
             var kindToken = actorKind;
             if (string.Equals(actorKind, "RegionShard", StringComparison.Ordinal))
             {

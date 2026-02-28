@@ -349,6 +349,7 @@ public class OrchestratorPanelViewModelTests
             vm.Actors,
             node => node.RootActor == controllerActor);
         Assert.Contains("brain", controllerRow.LogicalName, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"brain {HostedActorBrainToken(brainId)}", controllerRow.LogicalName, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("online", controllerRow.Status);
         var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerId);
         Assert.Equal(ShortBrainId(brainId), workerEndpoint.BrainHints);
@@ -1068,6 +1069,12 @@ public class OrchestratorPanelViewModelTests
     {
         var compact = brainId.ToString("N");
         return compact.Length <= 4 ? compact : compact[^4..];
+    }
+
+    private static string HostedActorBrainToken(Guid brainId)
+    {
+        var compact = brainId.ToString("N");
+        return compact.Length <= 8 ? compact : compact[^8..];
     }
 
     private static BrainListResponse BuildBrainList(Guid brainId, string state, bool includeAliveController = true)
