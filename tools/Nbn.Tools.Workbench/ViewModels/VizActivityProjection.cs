@@ -285,16 +285,31 @@ public static class VizActivityProjectionBuilder
                 PeakScore: 0f);
         }
 
-        var tickCount = (int)(maxTick - minTick + 1);
+        var earliestAvailableTick = windowed.Min(item => item.TickId);
+        var effectiveMinTick = Math.Max(minTick, earliestAvailableTick);
+        if (maxTick < effectiveMinTick)
+        {
+            return new VizMiniActivityChart(
+                Enabled: true,
+                ModeLabel: modeLabel,
+                MetricLabel: MiniChartMetricLabel,
+                MinTick: 0,
+                MaxTick: 0,
+                Ticks: Array.Empty<ulong>(),
+                Series: Array.Empty<VizMiniActivitySeries>(),
+                PeakScore: 0f);
+        }
+
+        var tickCount = (int)(maxTick - effectiveMinTick + 1);
         var ticks = new List<ulong>(tickCount);
         for (var i = 0; i < tickCount; i++)
         {
-            ticks.Add(minTick + (ulong)i);
+            ticks.Add(effectiveMinTick + (ulong)i);
         }
 
         var trendByEntity = options.FocusRegionId is uint focusedRegionId
-            ? BuildFocusNeuronTrendMap(windowed, minTick, tickCount, focusedRegionId)
-            : BuildRegionTrendMap(windowed, minTick, tickCount);
+            ? BuildFocusNeuronTrendMap(windowed, effectiveMinTick, tickCount, focusedRegionId)
+            : BuildRegionTrendMap(windowed, effectiveMinTick, tickCount);
         var series = trendByEntity.Values
             .OrderByDescending(item => item.TotalScore)
             .ThenByDescending(item => item.LastActiveTick)
@@ -324,7 +339,7 @@ public static class VizActivityProjectionBuilder
             Enabled: true,
             ModeLabel: modeLabel,
             MetricLabel: MiniChartMetricLabel,
-            MinTick: minTick,
+            MinTick: effectiveMinTick,
             MaxTick: maxTick,
             Ticks: ticks,
             Series: series,

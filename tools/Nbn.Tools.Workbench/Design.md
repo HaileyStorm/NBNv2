@@ -24,6 +24,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 - Viz canvas empty-space double-click resets camera to default center; when already at default center in region-focus mode, it returns to full-brain view.
 - Layout cost for projected region-map mode is `O(region_count)` and bounded by NBN region count (`<= 32`); no GPU dependency is introduced.
 - Viz panel exposes an optional compact top-N activity chart as an in-canvas top-right overlay (below canvas toolbar/status text): full-brain mode ranks regions, focus mode ranks neurons in the focused region (including output region `31` neurons when focused), per-tick score is deterministically `1 + |value| + |strength|`, and chart history range is configured in seconds (default `~3s`) then converted to a bounded tick window from current cadence.
+- Default/fit recenter operations apply a leftward visual bias while the mini chart overlay is enabled so core graph content remains readable under the top-right overlay.
 
 ## Maintenance guidance
 

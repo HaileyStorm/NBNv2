@@ -52,8 +52,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double MinMiniActivityRangeSeconds = 0.25d;
     private const double MaxMiniActivityRangeSeconds = 60d;
     private const float DefaultMiniActivityTickRateHz = 20f;
-    private const double MiniActivityChartPlotWidth = 268;
-    private const double MiniActivityChartPlotHeight = 104;
+    private const double MiniActivityChartPlotWidth = 236;
+    private const double MiniActivityChartPlotHeight = 92;
     private const double MiniActivityChartPlotPaddingX = 6;
     private const double MiniActivityChartPlotPaddingY = 6;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
@@ -2169,8 +2169,8 @@ public sealed class VizPanelViewModel : ViewModelBase
             SeriesLabel: chart.ModeLabel,
             RangeLabel: $"Ticks {chart.MinTick}..{chart.MaxTick}",
             MetricLabel: $"{chart.MetricLabel} | y-max {yMax:0.###}",
-            YAxisTopLabel: yMax.ToString("0.###", CultureInfo.InvariantCulture),
-            YAxisMidLabel: (yMax * 0.5f).ToString("0.###", CultureInfo.InvariantCulture),
+            YAxisTopLabel: FormatMiniChartAxisValue(yMax),
+            YAxisMidLabel: FormatMiniChartAxisValue(yMax * 0.5f),
             YAxisBottomLabel: "0",
             LegendColumns: legendColumns,
             TickCount: chart.Ticks.Count,
@@ -2227,6 +2227,32 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         var index = Math.Abs(hash) % MiniActivityChartSeriesPalette.Length;
         return MiniActivityChartSeriesPalette[index];
+    }
+
+    private static string FormatMiniChartAxisValue(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            return "n/a";
+        }
+
+        var abs = MathF.Abs(value);
+        if (abs >= 1_000_000_000f)
+        {
+            return $"{value / 1_000_000_000f:0.##}B";
+        }
+
+        if (abs >= 1_000_000f)
+        {
+            return $"{value / 1_000_000f:0.##}M";
+        }
+
+        if (abs >= 1_000f)
+        {
+            return $"{value / 1_000f:0.##}K";
+        }
+
+        return value.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
     private void ApplyMiniActivityChartSnapshot(MiniActivityChartRenderSnapshot snapshot)

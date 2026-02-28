@@ -318,22 +318,22 @@
                                  Classes="muted"
                                  TextWrapping="NoWrap"
                                  TextTrimming="CharacterEllipsis" />
-                      <Grid ColumnDefinitions="34,*" RowDefinitions="Auto,Auto" ColumnSpacing="6" RowSpacing="4">
+                      <Grid ColumnDefinitions="46,*" RowDefinitions="Auto,Auto" ColumnSpacing="6" RowSpacing="4">
                         <Grid RowDefinitions="Auto,*,Auto">
                           <TextBlock Text="{Binding MiniActivityYAxisTopLabel}"
                                      Classes="muted"
-                                     FontSize="10"
+                                     FontSize="9"
                                      HorizontalAlignment="Right" />
                           <TextBlock Grid.Row="1"
                                      Text="{Binding MiniActivityYAxisMidLabel}"
                                      Classes="muted"
-                                     FontSize="10"
+                                     FontSize="9"
                                      HorizontalAlignment="Right"
                                      VerticalAlignment="Center" />
                           <TextBlock Grid.Row="2"
                                      Text="{Binding MiniActivityYAxisBottomLabel}"
                                      Classes="muted"
-                                     FontSize="10"
+                                     FontSize="9"
                                      HorizontalAlignment="Right"
                                      VerticalAlignment="Bottom" />
                         </Grid>
@@ -342,15 +342,15 @@
                               Height="{Binding MiniActivityChartHeight}"
                               ClipToBounds="True">
                           <shapes:Line StartPoint="0,6"
-                                       EndPoint="268,6"
+                                       EndPoint="236,6"
                                        Stroke="{DynamicResource NbnBorderBrush}"
                                        StrokeThickness="1" />
-                          <shapes:Line StartPoint="0,52"
-                                       EndPoint="268,52"
+                          <shapes:Line StartPoint="0,46"
+                                       EndPoint="236,46"
                                        Stroke="{DynamicResource NbnBorderBrush}"
                                        StrokeThickness="1" />
-                          <shapes:Line StartPoint="0,98"
-                                       EndPoint="268,98"
+                          <shapes:Line StartPoint="0,86"
+                                       EndPoint="236,86"
                                        Stroke="{DynamicResource NbnBorderBrush}"
                                        StrokeThickness="1" />
                           <ItemsControl ItemsSource="{Binding MiniActivityChartSeries}">

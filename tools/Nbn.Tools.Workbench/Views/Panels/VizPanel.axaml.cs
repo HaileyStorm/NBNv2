@@ -27,6 +27,8 @@ public partial class VizPanel : UserControl
     private const double CanvasViewportMinHeightPx = 460.0;
     private const double CanvasViewportMaxHeightPx = 1800.0;
     private const double DefaultCanvasViewOffsetTolerancePx = 1.5;
+    private const double MiniChartCenterBiasRatio = 0.65;
+    private const double MiniChartCenterBiasMaxPx = 190.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)
@@ -730,14 +732,15 @@ public partial class VizPanel : UserControl
         ApplyCanvasOffset(centeredOffset, scrollViewer, absorbResidualIntoPan: false);
     }
 
-    private static Vector ComputeCenteredOffsetForScale(
+    private Vector ComputeCenteredOffsetForScale(
         ScrollViewer scrollViewer,
         VizPanelViewModel viewModel,
         double scale)
     {
+        var centerBiasX = ComputeCanvasCenterBiasX(viewModel);
         if (TryGetCanvasContentBounds(viewModel, out var contentBounds))
         {
-            var centeredX = ((contentBounds.X + (contentBounds.Width / 2.0)) * scale) - (scrollViewer.Viewport.Width / 2.0);
+            var centeredX = ((contentBounds.X + (contentBounds.Width / 2.0)) * scale) - (scrollViewer.Viewport.Width / 2.0) + centerBiasX;
             var centeredY = ((contentBounds.Y + (contentBounds.Height / 2.0)) * scale) - (scrollViewer.Viewport.Height / 2.0);
             return new Vector(centeredX, centeredY);
         }
@@ -745,8 +748,19 @@ public partial class VizPanel : UserControl
         var scaledWidth = viewModel.ActivityCanvasWidth * scale;
         var scaledHeight = viewModel.ActivityCanvasHeight * scale;
         return new Vector(
-            Math.Max(0.0, (scaledWidth - scrollViewer.Viewport.Width) / 2.0),
+            Math.Max(0.0, ((scaledWidth - scrollViewer.Viewport.Width) / 2.0) + centerBiasX),
             Math.Max(0.0, (scaledHeight - scrollViewer.Viewport.Height) / 2.0));
+    }
+
+    private static double ComputeCanvasCenterBiasX(VizPanelViewModel viewModel)
+    {
+        if (!viewModel.ShowMiniActivityChart)
+        {
+            return 0.0;
+        }
+
+        var requestedBias = viewModel.MiniActivityChartWidth * MiniChartCenterBiasRatio;
+        return Math.Min(MiniChartCenterBiasMaxPx, Math.Max(0.0, requestedBias));
     }
 
     private void ApplyCanvasOffset(Vector targetOffset, ScrollViewer scrollViewer, bool absorbResidualIntoPan)

@@ -156,9 +156,9 @@ public class VizActivityProjectionBuilderTests
         var chart = projection.MiniChart;
         Assert.True(chart.Enabled);
         Assert.Equal("Top 2 regions", chart.ModeLabel);
-        Assert.Equal((ulong)94, chart.MinTick);
+        Assert.Equal((ulong)100, chart.MinTick);
         Assert.Equal((ulong)101, chart.MaxTick);
-        Assert.Equal(8, chart.Ticks.Count);
+        Assert.Equal(2, chart.Ticks.Count);
         Assert.Equal(2, chart.Series.Count);
 
         var first = chart.Series[0];
@@ -167,12 +167,12 @@ public class VizActivityProjectionBuilderTests
         Assert.Equal("R2", second.Label);
         Assert.Equal(5.5f, first.TotalScore, 3);
         Assert.Equal(4.0f, second.TotalScore, 3);
-        Assert.Equal(8, first.Values.Count);
-        Assert.Equal(8, second.Values.Count);
-        Assert.Equal(2.5f, first.Values[6], 3);
-        Assert.Equal(3.0f, first.Values[7], 3);
-        Assert.Equal(2.5f, second.Values[6], 3);
-        Assert.Equal(1.5f, second.Values[7], 3);
+        Assert.Equal(2, first.Values.Count);
+        Assert.Equal(2, second.Values.Count);
+        Assert.Equal(2.5f, first.Values[0], 3);
+        Assert.Equal(3.0f, first.Values[1], 3);
+        Assert.Equal(2.5f, second.Values[0], 3);
+        Assert.Equal(1.5f, second.Values[1], 3);
     }
 
     [Fact]
@@ -205,12 +205,12 @@ public class VizActivityProjectionBuilderTests
         var second = chart.Series[1];
         Assert.Equal("R31N1", first.Label);
         Assert.Equal("R31N3", second.Label);
-        Assert.Equal(8, first.Values.Count);
-        Assert.Equal(8, second.Values.Count);
-        Assert.InRange(first.Values[6], 2.099f, 2.101f);
-        Assert.InRange(first.Values[7], 1.399f, 1.401f);
-        Assert.InRange(second.Values[6], -0.001f, 0.001f);
-        Assert.InRange(second.Values[7], 1.599f, 1.601f);
+        Assert.Equal(2, first.Values.Count);
+        Assert.Equal(2, second.Values.Count);
+        Assert.InRange(first.Values[0], 2.099f, 2.101f);
+        Assert.InRange(first.Values[1], 1.399f, 1.401f);
+        Assert.InRange(second.Values[0], -0.001f, 0.001f);
+        Assert.InRange(second.Values[1], 1.599f, 1.601f);
     }
 
     [Fact]
