@@ -1246,6 +1246,18 @@ public sealed class VizPanelViewModel : ViewModelBase
         return action;
     }
 
+    public bool TryClearCanvasSelectionFromEmptyClick()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedCanvasNodeKey) && string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
+        {
+            return false;
+        }
+
+        ClearCanvasSelection();
+        Status = "Selection cleared.";
+        return true;
+    }
+
     private void ShowFullBrain()
     {
         RegionFocusText = string.Empty;

@@ -600,6 +600,37 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void TryClearCanvasSelectionFromEmptyClick_WithSelection_ClearsSelection()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 100, top: 100);
+        vm.CanvasNodes.Add(node);
+        vm.CanvasEdges.Clear();
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+
+        var cleared = vm.TryClearCanvasSelectionFromEmptyClick();
+
+        Assert.True(cleared);
+        Assert.Null(SelectedCanvasNodeKeyField.GetValue(vm));
+        Assert.Null(SelectedCanvasRouteLabelField.GetValue(vm));
+        Assert.Contains("Selection cleared", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryClearCanvasSelectionFromEmptyClick_WithoutSelection_ReturnsFalse()
+    {
+        var vm = CreateViewModel();
+
+        var cleared = vm.TryClearCanvasSelectionFromEmptyClick();
+
+        Assert.False(cleared);
+    }
+
+    [Fact]
     public void SetBrains_PreservesSelectedBrainAcrossRefreshObjects()
     {
         var vm = CreateViewModel();

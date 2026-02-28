@@ -32,7 +32,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client);
-        Designer = new DesignerPanelViewModel(Connections, _client);
+        Designer = new DesignerPanelViewModel(Connections, _client, OnSpawnedBrainDiscovered);
 
         Navigation = new ObservableCollection<NavItemViewModel>
         {
@@ -266,6 +266,12 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private void OnBrainDiscovered(Guid brainId)
     {
         _dispatcher.Post(() => Viz.AddBrainId(brainId));
+    }
+
+    private void OnSpawnedBrainDiscovered(Guid brainId)
+    {
+        OnBrainDiscovered(brainId);
+        _ = Orchestrator.RefreshSettingsAsync();
     }
 
     private void OnBrainsUpdated(IReadOnlyList<BrainListItem> brains)

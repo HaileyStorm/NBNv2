@@ -333,12 +333,19 @@ public partial class VizPanel : UserControl
         }
 
         var isPrimaryDoubleClick = pointer.IsLeftButtonPressed && e.ClickCount >= 2;
+        var isPrimarySingleClick = pointer.IsLeftButtonPressed && e.ClickCount == 1;
         var hasHit = TryResolveCanvasHitWithProbe(point, PressProbeOffsets, hoverMode: false, out var node, out var edge);
         if (!hasHit)
         {
             if (isPrimaryDoubleClick)
             {
                 HandleEmptyCanvasDoubleClick();
+                e.Handled = true;
+                return;
+            }
+
+            if (isPrimarySingleClick && ViewModel.TryClearCanvasSelectionFromEmptyClick())
+            {
                 e.Handled = true;
                 return;
             }

@@ -78,6 +78,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static readonly double[] AccumulationFunctionWeights = BuildAccumulationFunctionWeights();
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
+    private readonly Action<Guid>? _brainDiscovered;
     private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
     private string _status = "Designer ready.";
     private string _loadedSummary = NoDocumentStatus;
@@ -127,10 +128,11 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _spawnShardTargetNeuronsText = "0";
     private readonly RandomBrainOptionsViewModel _randomOptions;
 
-    public DesignerPanelViewModel(ConnectionViewModel connections, WorkbenchClient client)
+    public DesignerPanelViewModel(ConnectionViewModel connections, WorkbenchClient client, Action<Guid>? brainDiscovered = null)
     {
         _connections = connections;
         _client = client;
+        _brainDiscovered = brainDiscovered;
         _spawnArtifactRoot = BuildDefaultArtifactRoot();
         _randomOptions = new RandomBrainOptionsViewModel();
         _shardPlanOptions = BuildShardPlanOptions();
@@ -1215,15 +1217,16 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 return;
             }
 
-            Status = "Waiting for brain registration after IO/HiveMind worker placement...";
+            Status = "Waiting for brain placement/runtime readiness after IO/HiveMind worker placement...";
             if (!await WaitForBrainRegistrationAsync(spawnedBrainId).ConfigureAwait(false))
             {
-                Status = $"Spawn failed: brain {spawnedBrainId:D} did not register after IO/HiveMind worker placement.";
+                Status = $"Spawn failed: brain {spawnedBrainId:D} did not become visualization-ready after IO/HiveMind worker placement.";
                 await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_registration_timeout").ConfigureAwait(false);
                 return;
             }
 
             _spawnedBrains[designBrainId] = DesignerSpawnState.Create(spawnedBrainId);
+            _brainDiscovered?.Invoke(spawnedBrainId);
             if (LogSpawnDiagnostics && WorkbenchLog.Enabled)
             {
                 WorkbenchLog.Info(
@@ -4225,7 +4228,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         while (DateTime.UtcNow <= deadline)
         {
             var response = await _client.ListBrainsAsync().ConfigureAwait(false);
-            if (IsBrainRegistered(response, brainId))
+            var lifecycle = await _client.GetPlacementLifecycleAsync(brainId).ConfigureAwait(false);
+            if (IsBrainRegistered(response, brainId) && IsPlacementVisualizationReady(lifecycle, brainId))
             {
                 return true;
             }
@@ -4267,6 +4271,19 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         return HasLiveController(response.Controllers, brainId, nowMs);
+    }
+
+    private static bool IsPlacementVisualizationReady(ProtoControl.PlacementLifecycleInfo? lifecycle, Guid brainId)
+    {
+        if (lifecycle?.BrainId is null
+            || !lifecycle.BrainId.TryToGuid(out var candidate)
+            || candidate != brainId)
+        {
+            return false;
+        }
+
+        return lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
+               && lifecycle.RegisteredShards > 0;
     }
 
     private static bool HasLiveController(

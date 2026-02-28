@@ -447,6 +447,7 @@ public class OrchestratorPanelViewModelTests
         };
         var spawnedBrainId = Guid.NewGuid();
         var registrationPolls = 0;
+        var lifecyclePolls = 0;
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
@@ -456,6 +457,18 @@ public class OrchestratorPanelViewModelTests
                 return registrationPolls < 2
                     ? BuildBrainList(spawnedBrainId, "Active", includeAliveController: false)
                     : BuildBrainList(spawnedBrainId, "Active");
+            },
+            PlacementLifecycleFactory = requestedBrainId =>
+            {
+                if (requestedBrainId != spawnedBrainId)
+                {
+                    return null;
+                }
+
+                lifecyclePolls++;
+                return lifecyclePolls < 2
+                    ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleAssigning, registeredShards: 0)
+                    : BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 4);
             }
         };
         var vm = CreateViewModel(connections, client);
@@ -466,6 +479,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.True(client.ListBrainsCallCount >= 2);
+        Assert.True(client.GetPlacementLifecycleCallCount >= 2);
         Assert.NotNull(client.LastSpawnRequest);
         Assert.Equal("application/x-nbn", client.LastSpawnRequest!.BrainDef?.MediaType);
         Assert.Equal(0, client.KillBrainCallCount);
@@ -491,10 +505,23 @@ public class OrchestratorPanelViewModelTests
             IoPortText = "bad"
         };
         var spawnedBrainId = Guid.NewGuid();
+        var lifecyclePolls = 0;
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
-            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active")
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId =>
+            {
+                if (requestedBrainId != spawnedBrainId)
+                {
+                    return null;
+                }
+
+                lifecyclePolls++;
+                return lifecyclePolls < 2
+                    ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleAssigned, registeredShards: 0)
+                    : BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 2);
+            }
         };
         var vm = CreateViewModel(connections, client);
 
@@ -503,6 +530,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.True(client.GetPlacementLifecycleCallCount >= 2);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.NotNull(client.LastSpawnRequest);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
@@ -580,7 +608,7 @@ public class OrchestratorPanelViewModelTests
 
         vm.SpawnSampleBrainCommand.Execute(null);
         await WaitForAsync(
-            () => vm.SampleBrainStatus.Contains("failed to register", StringComparison.OrdinalIgnoreCase),
+            () => vm.SampleBrainStatus.Contains("failed to become visualization-ready", StringComparison.OrdinalIgnoreCase),
             timeoutMs: 15_000);
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
@@ -604,6 +632,7 @@ public class OrchestratorPanelViewModelTests
         };
         var spawnedBrainId = Guid.NewGuid();
         var registrationPolls = 0;
+        var lifecyclePolls = 0;
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
@@ -613,6 +642,18 @@ public class OrchestratorPanelViewModelTests
                 return registrationPolls < 2
                     ? BuildBrainList(spawnedBrainId, "Active", includeAliveController: false)
                     : BuildBrainList(spawnedBrainId, "Active");
+            },
+            PlacementLifecycleFactory = requestedBrainId =>
+            {
+                if (requestedBrainId != spawnedBrainId)
+                {
+                    return null;
+                }
+
+                lifecyclePolls++;
+                return lifecyclePolls < 2
+                    ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleReconciling, registeredShards: 0)
+                    : BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 8);
             }
         };
         var vm = new DesignerPanelViewModel(connections, client);
@@ -625,6 +666,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.True(client.ListBrainsCallCount >= 2);
+        Assert.True(client.GetPlacementLifecycleCallCount >= 2);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
@@ -688,7 +730,7 @@ public class OrchestratorPanelViewModelTests
 
         vm.SpawnBrainCommand.Execute(null);
         await WaitForAsync(
-            () => vm.Status.Contains("did not register after IO/HiveMind worker placement", StringComparison.Ordinal),
+            () => vm.Status.Contains("did not become visualization-ready after IO/HiveMind worker placement", StringComparison.Ordinal),
             timeoutMs: 15_000);
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
@@ -767,6 +809,20 @@ public class OrchestratorPanelViewModelTests
         }
 
         return response;
+    }
+
+    private static PlacementLifecycleInfo BuildPlacementLifecycle(
+        Guid brainId,
+        PlacementLifecycleState state,
+        uint registeredShards)
+    {
+        return new PlacementLifecycleInfo
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlacementEpoch = 1,
+            LifecycleState = state,
+            RegisteredShards = registeredShards
+        };
     }
 
     private sealed class FakeWorkbenchClient : WorkbenchClient

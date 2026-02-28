@@ -633,18 +633,18 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         _sampleBrainId = brainId;
 
-        SampleBrainStatus = "Waiting for sample brain registration...";
+        SampleBrainStatus = "Waiting for sample brain placement/runtime readiness...";
         if (!await WaitForBrainRegistrationAsync(brainId).ConfigureAwait(false))
         {
-            SampleBrainStatus = $"Sample brain failed to register ({brainId:D}) after IO/HiveMind worker placement.";
+            SampleBrainStatus = $"Sample brain failed to become visualization-ready ({brainId:D}) after IO/HiveMind worker placement.";
             await _client.KillBrainAsync(brainId, "workbench_sample_registration_timeout").ConfigureAwait(false);
             _sampleBrainId = null;
             return;
         }
 
         _brainDiscovered?.Invoke(brainId);
-        SampleBrainStatus = $"Sample brain running ({brainId:D}). Spawned via IO; worker placement managed by HiveMind.";
         await RefreshAsync(force: true).ConfigureAwait(false);
+        SampleBrainStatus = $"Sample brain running ({brainId:D}). Spawned via IO; worker placement managed by HiveMind.";
     }
 
     private async Task StopSampleBrainAsync()
@@ -679,7 +679,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         while (DateTime.UtcNow <= deadline)
         {
             var response = await _client.ListBrainsAsync().ConfigureAwait(false);
-            if (IsBrainRegistered(response, brainId))
+            var lifecycle = await _client.GetPlacementLifecycleAsync(brainId).ConfigureAwait(false);
+            if (IsBrainRegistered(response, brainId) && IsPlacementVisualizationReady(lifecycle, brainId))
             {
                 return true;
             }
@@ -721,6 +722,19 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         return HasLiveController(response.Controllers, brainId, nowMs);
+    }
+
+    private static bool IsPlacementVisualizationReady(PlacementLifecycleInfo? lifecycle, Guid brainId)
+    {
+        if (lifecycle?.BrainId is null
+            || !lifecycle.BrainId.TryToGuid(out var candidate)
+            || candidate != brainId)
+        {
+            return false;
+        }
+
+        return lifecycle.LifecycleState == PlacementLifecycleState.PlacementLifecycleRunning
+               && lifecycle.RegisteredShards > 0;
     }
 
     private static bool HasLiveController(
