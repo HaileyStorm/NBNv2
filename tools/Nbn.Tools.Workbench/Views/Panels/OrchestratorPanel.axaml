@@ -143,55 +143,62 @@
         <StackPanel Spacing="8">
           <TextBlock Text="Local Launch" Classes="card-title" />
           <TextBlock Text="Services start only from Start/Start All; connection attempts do not auto-launch runtimes." Classes="muted" TextWrapping="Wrap" />
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="Start All" Command="{Binding StartAllCommand}" Classes="accent" />
-            <Button Content="Stop All" Command="{Binding StopAllCommand}" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <Button Content="Spawn Sample Brain" Command="{Binding SpawnSampleBrainCommand}" Classes="accent" />
-            <Button Content="Stop Sample Brain" Command="{Binding StopSampleBrainCommand}" />
-            <TextBlock Text="{Binding SampleBrainStatus}" Classes="muted" VerticalAlignment="Center" />
-          </StackPanel>
-          <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
-            <TextBlock Text="SettingsMonitor" Classes="muted" />
-            <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
-            <Button Grid.Column="2" Content="Start" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
-            <Button Grid.Column="3" Content="Stop" Command="{Binding StopSettingsMonitorCommand}" />
-            <TextBlock Grid.Column="4" Text="{Binding SettingsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
-
-            <TextBlock Grid.Row="1" Text="HiveMind" Classes="muted" />
-            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.HiveMindPortText}" Width="90" />
-            <Button Grid.Row="1" Grid.Column="2" Content="Start" Command="{Binding StartHiveMindCommand}" Classes="accent" />
-            <Button Grid.Row="1" Grid.Column="3" Content="Stop" Command="{Binding StopHiveMindCommand}" />
-            <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding HiveMindLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
-
-            <TextBlock Grid.Row="2" Text="IO Gateway" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.IoPortText}" Width="90" />
-            <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartIoCommand}" Classes="accent" />
-            <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopIoCommand}" />
-            <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding IoLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
-
-            <TextBlock Grid.Row="3" Text="Reproduction" Classes="muted" />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.ReproPortText}" Width="90" />
-            <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartReproCommand}" Classes="accent" />
-            <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopReproCommand}" />
-            <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding ReproLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
-
-            <TextBlock Grid.Row="4" Text="Observability" Classes="muted" />
-            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
-            <Button Grid.Row="4" Grid.Column="2" Content="Start" Command="{Binding StartObsCommand}" Classes="accent" />
-            <Button Grid.Row="4" Grid.Column="3" Content="Stop" Command="{Binding StopObsCommand}" />
-            <TextBlock Grid.Row="4" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
-
-            <TextBlock Grid.Row="5" Text="Worker Node" Classes="muted" />
-            <Button Grid.Row="5" Grid.Column="1" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
-            <Button Grid.Row="5" Grid.Column="2" Content="Stop" Command="{Binding StopWorkerCommand}" />
-            <TextBlock Grid.Row="5" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="14" RowSpacing="6">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Start All" Command="{Binding StartAllCommand}" Classes="accent" />
+              <Button Content="Stop All" Command="{Binding StopAllCommand}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+              <Button Content="Spawn Sample Brain" Command="{Binding SpawnSampleBrainCommand}" Classes="accent" />
+              <Button Content="Stop Sample Brain" Command="{Binding StopSampleBrainCommand}" />
+              <TextBlock Text="{Binding SampleBrainStatus}" Classes="muted" VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Grid.RowSpan="2" Spacing="4" VerticalAlignment="Top">
+              <CheckBox Content="Workbench logging" IsChecked="{Binding Connections.WorkbenchLoggingEnabled}" />
+              <TextBlock Text="{Binding Connections.WorkbenchLogPath}" Classes="muted" TextWrapping="Wrap" MaxWidth="260" />
+            </StackPanel>
           </Grid>
-          <StackPanel Orientation="Horizontal" Spacing="10">
-            <CheckBox Content="Workbench logging" IsChecked="{Binding Connections.WorkbenchLoggingEnabled}" />
-            <TextBlock Text="{Binding Connections.WorkbenchLogPath}" Classes="muted" VerticalAlignment="Center" />
-          </StackPanel>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+              <TextBlock Text="SettingsMonitor" Classes="muted" />
+              <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
+              <Button Grid.Column="2" Content="Start" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
+              <Button Grid.Column="3" Content="Stop" Command="{Binding StopSettingsMonitorCommand}" />
+              <TextBlock Grid.Column="4" Text="{Binding SettingsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+
+              <TextBlock Grid.Row="1" Text="HiveMind" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.HiveMindPortText}" Width="90" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Start" Command="{Binding StartHiveMindCommand}" Classes="accent" />
+              <Button Grid.Row="1" Grid.Column="3" Content="Stop" Command="{Binding StopHiveMindCommand}" />
+              <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding HiveMindLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+
+              <TextBlock Grid.Row="2" Text="IO Gateway" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.IoPortText}" Width="90" />
+              <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartIoCommand}" Classes="accent" />
+              <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopIoCommand}" />
+              <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding IoLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+              <TextBlock Text="Reproduction" Classes="muted" />
+              <TextBox Grid.Column="1" Text="{Binding Connections.ReproPortText}" Width="90" />
+              <Button Grid.Column="2" Content="Start" Command="{Binding StartReproCommand}" Classes="accent" />
+              <Button Grid.Column="3" Content="Stop" Command="{Binding StopReproCommand}" />
+              <TextBlock Grid.Column="4" Text="{Binding ReproLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+
+              <TextBlock Grid.Row="1" Text="Observability" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Start" Command="{Binding StartObsCommand}" Classes="accent" />
+              <Button Grid.Row="1" Grid.Column="3" Content="Stop" Command="{Binding StopObsCommand}" />
+              <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+
+              <TextBlock Grid.Row="2" Text="Worker Node" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.WorkerPortText}" Width="90" />
+              <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
+              <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
+              <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+            </Grid>
+          </Grid>
         </StackPanel>
       </Border>
 

@@ -80,7 +80,7 @@ public static class VizActivityProjectionBuilder
     private const int DefaultMiniChartTopSeriesCount = 8;
     private const int MaxMiniChartTopSeriesCount = 32;
     private const float LowSignalThreshold = 1e-5f;
-    private const string MiniChartMetricLabel = "score = |value| + |strength| per event contribution";
+    private const string MiniChartMetricLabel = "score = 1 + |value| + |strength| per event contribution";
 
     public static VizActivityProjection Build(IEnumerable<VizEventItem> events, VizActivityProjectionOptions options)
     {
@@ -461,7 +461,7 @@ public static class VizActivityProjectionBuilder
 
     private static float ComputeActivityScore(VizEventItem item)
     {
-        var score = MathF.Abs(item.Value) + MathF.Abs(item.Strength);
+        var score = 1f + MathF.Abs(item.Value) + MathF.Abs(item.Strength);
         return float.IsFinite(score) ? score : 0f;
     }
 

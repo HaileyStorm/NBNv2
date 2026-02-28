@@ -132,7 +132,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _miniActivityRangeSecondsText = DefaultMiniActivityRangeSeconds.ToString("0.###", CultureInfo.InvariantCulture);
     private string _miniActivityChartSeriesLabel = $"Top {DefaultMiniActivityTopN} regions by score.";
     private string _miniActivityChartRangeLabel = "Ticks: awaiting activity.";
-    private string _miniActivityChartMetricLabel = "score = |value| + |strength| per event contribution | y-axis log(1+score)";
+    private string _miniActivityChartMetricLabel = "score = 1 + |value| + |strength| per event contribution | y-axis log(1+score)";
     private string _miniActivityYAxisTopLabel = "0";
     private string _miniActivityYAxisMidLabel = "0";
     private string _miniActivityYAxisBottomLabel = "0";

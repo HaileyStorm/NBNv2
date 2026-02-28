@@ -27,8 +27,8 @@ public partial class VizPanel : UserControl
     private const double CanvasViewportMinHeightPx = 460.0;
     private const double CanvasViewportMaxHeightPx = 1800.0;
     private const double DefaultCanvasViewOffsetTolerancePx = 1.5;
-    private const double MiniChartCenterBiasRatio = 0.82;
-    private const double MiniChartCenterBiasMaxPx = 260.0;
+    private const double MiniChartCenterBiasRatio = 1.0;
+    private const double MiniChartCenterBiasMaxPx = 340.0;
     private static readonly Point[] HoverProbeOffsets =
     {
         new(0, 0)

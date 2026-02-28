@@ -165,14 +165,14 @@ public class VizActivityProjectionBuilderTests
         var second = chart.Series[1];
         Assert.Equal("R1", first.Label);
         Assert.Equal("R2", second.Label);
-        Assert.Equal(2.5f, first.TotalScore, 3);
-        Assert.Equal(2.0f, second.TotalScore, 3);
+        Assert.Equal(5.5f, first.TotalScore, 3);
+        Assert.Equal(4.0f, second.TotalScore, 3);
         Assert.Equal(2, first.Values.Count);
         Assert.Equal(2, second.Values.Count);
-        Assert.Equal(1.5f, first.Values[0], 3);
-        Assert.Equal(1.0f, first.Values[1], 3);
-        Assert.Equal(1.5f, second.Values[0], 3);
-        Assert.Equal(0.5f, second.Values[1], 3);
+        Assert.Equal(2.5f, first.Values[0], 3);
+        Assert.Equal(3.0f, first.Values[1], 3);
+        Assert.Equal(2.5f, second.Values[0], 3);
+        Assert.Equal(1.5f, second.Values[1], 3);
     }
 
     [Fact]
@@ -207,10 +207,10 @@ public class VizActivityProjectionBuilderTests
         Assert.Equal("R31N3", second.Label);
         Assert.Equal(2, first.Values.Count);
         Assert.Equal(2, second.Values.Count);
-        Assert.InRange(first.Values[0], 1.099f, 1.101f);
-        Assert.InRange(first.Values[1], 0.399f, 0.401f);
+        Assert.InRange(first.Values[0], 2.099f, 2.101f);
+        Assert.InRange(first.Values[1], 1.399f, 1.401f);
         Assert.InRange(second.Values[0], -0.001f, 0.001f);
-        Assert.InRange(second.Values[1], 0.599f, 0.601f);
+        Assert.InRange(second.Values[1], 1.599f, 1.601f);
     }
 
     [Fact]
