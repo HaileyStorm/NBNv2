@@ -297,7 +297,8 @@ public sealed class ReproductionManagerActor : IActor
             connectivityScore,
             similarityScore,
             presentA,
-            presentB);
+            presentB,
+            childBuild.RegionsPresentChild);
         return await ApplySpawnPolicyAsync(context, result, config).ConfigureAwait(false);
     }
 
@@ -328,7 +329,7 @@ public sealed class ReproductionManagerActor : IActor
             (ulong)manifest.ByteLength,
             NbnMediaType,
             storeUri);
-        return new ChildBuildResult(childRef, summary, null);
+        return new ChildBuildResult(childRef, summary, null, CountPresentRegions(childHeader));
     }
 
     private static List<NbnRegionSection> BuildChildSections(
@@ -755,8 +756,8 @@ public sealed class ReproductionManagerActor : IActor
             ResolveMutationLimit(limits?.MaxNeuronsRemovedAbs ?? 0, limits?.MaxNeuronsRemovedPct ?? 0f, averageNeuronCount),
             ResolveMutationLimit(limits?.MaxAxonsAddedAbs ?? 0, limits?.MaxAxonsAddedPct ?? 0f, averageAxonCount),
             ResolveMutationLimit(limits?.MaxAxonsRemovedAbs ?? 0, limits?.MaxAxonsRemovedPct ?? 0f, averageAxonCount),
-            ResolveAbsoluteLimit(limits?.MaxRegionsAddedAbs ?? 0),
-            ResolveAbsoluteLimit(limits?.MaxRegionsRemovedAbs ?? 0));
+            ResolveRegionLimit(limits?.MaxRegionsAddedAbs ?? 0),
+            ResolveRegionLimit(limits?.MaxRegionsRemovedAbs ?? 0));
     }
 
     private static int CountExistingNeurons(IReadOnlyDictionary<int, NbnRegionSection> sections)
@@ -810,6 +811,16 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         return int.MaxValue;
+    }
+
+    private static int ResolveRegionLimit(uint absLimit)
+    {
+        if (absLimit > 0)
+        {
+            return (int)Math.Min(absLimit, int.MaxValue);
+        }
+
+        return 0;
     }
 
     private static void ApplyStructuralMutations(
@@ -2776,7 +2787,8 @@ public sealed class ReproductionManagerActor : IActor
         float connectivityScore,
         float similarityScore,
         int regionsPresentA,
-        int regionsPresentB)
+        int regionsPresentB,
+        int regionsPresentChild)
         => new()
         {
             Report = new SimilarityReport
@@ -2789,7 +2801,7 @@ public sealed class ReproductionManagerActor : IActor
                 SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
                 RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
                 RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
-                RegionsPresentChild = (uint)Math.Max(regionsPresentA, 0)
+                RegionsPresentChild = (uint)Math.Max(regionsPresentChild, 0)
             },
             Summary = summary,
             ChildDef = childDef,
@@ -2847,7 +2859,8 @@ public sealed class ReproductionManagerActor : IActor
     private sealed record ChildBuildResult(
         ArtifactRef? ChildDef,
         MutationSummary? Summary,
-        string? AbortReason);
+        string? AbortReason,
+        int RegionsPresentChild = 0);
 
     private sealed record ConnectivityHistogram(
         int[] OutDegreeCounts,

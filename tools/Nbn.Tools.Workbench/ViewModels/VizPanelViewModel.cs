@@ -33,6 +33,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultLodLowZoomBudget = 120;
     private const int DefaultLodMediumZoomBudget = 220;
     private const int DefaultLodHighZoomBudget = 360;
+    private const string DefaultTickCadenceSummary = "Current cadence: runtime default (no override).";
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
@@ -77,7 +78,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _selectedPayload = string.Empty;
     private string _tickWindowText = DefaultTickWindow.ToString(CultureInfo.InvariantCulture);
     private string _tickRateOverrideText = string.Empty;
-    private string _tickRateOverrideSummary = "Tick override: default backpressure target.";
+    private string _tickRateOverrideSummary = "Tick override: default runtime backpressure target.";
+    private string _tickCadenceSummary = DefaultTickCadenceSummary;
     private bool _includeLowSignalEvents;
     private bool _enableAdaptiveLod = true;
     private string _lodLowZoomBudgetText = DefaultLodLowZoomBudget.ToString(CultureInfo.InvariantCulture);
@@ -107,6 +109,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _activityInteractionSummary = "Select a node or route to inspect activity details.";
     private string _activityPinnedSummary = "Pinned: none.";
     private bool _hasCanvasSelection;
+    private bool _isCanvasSelectionExpanded;
     private string _canvasSelectionTitle = "Selected: none";
     private string _canvasSelectionIdentity = "Identity: none.";
     private string _canvasSelectionRuntime = "Runtime: n/a.";
@@ -149,6 +152,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private double _canvasViewportScale = 1.0;
     private CancellationTokenSource? _projectionLayoutRefreshCts;
     private int _projectionLayoutRefreshVersion;
+    private Guid? _preferredBrainId;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -185,6 +189,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         NavigateCanvasPreviousCommand = new RelayCommand(() => NavigateCanvasRelative(-1));
         NavigateCanvasNextCommand = new RelayCommand(() => NavigateCanvasRelative(1));
         NavigateCanvasSelectionCommand = new RelayCommand(NavigateToCanvasSelection);
+        ToggleCanvasSelectionExpandedCommand = new RelayCommand(ToggleCanvasSelectionExpanded, () => HasCanvasSelection);
         TogglePinSelectionCommand = new RelayCommand(TogglePinForCurrentSelection);
         ClearCanvasInteractionCommand = new RelayCommand(ClearCanvasInteraction);
         FocusSelectedRouteSourceCommand = new RelayCommand(FocusSelectedRouteSourceRegion, () => _selectedRouteSourceRegionId.HasValue);
@@ -266,6 +271,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             {
                 if (!_suspendSelection)
                 {
+                    _preferredBrainId = value?.BrainId;
                     if (value is not null && (previous?.BrainId != value.BrainId))
                     {
                         RegionFocusText = string.Empty;
@@ -394,6 +400,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         set => SetProperty(ref _tickRateOverrideSummary, value);
     }
 
+    public string TickCadenceSummary
+    {
+        get => _tickCadenceSummary;
+        private set => SetProperty(ref _tickCadenceSummary, value);
+    }
+
     public bool IncludeLowSignalEvents
     {
         get => _includeLowSignalEvents;
@@ -465,6 +477,23 @@ public sealed class VizPanelViewModel : ViewModelBase
         get => _hasCanvasSelection;
         private set => SetProperty(ref _hasCanvasSelection, value);
     }
+
+    public bool IsCanvasSelectionExpanded
+    {
+        get => _isCanvasSelectionExpanded;
+        private set
+        {
+            if (SetProperty(ref _isCanvasSelectionExpanded, value))
+            {
+                OnPropertyChanged(nameof(IsCanvasSelectionDetailsVisible));
+                OnPropertyChanged(nameof(CanvasSelectionToggleLabel));
+            }
+        }
+    }
+
+    public bool IsCanvasSelectionDetailsVisible => HasCanvasSelection && IsCanvasSelectionExpanded;
+
+    public string CanvasSelectionToggleLabel => IsCanvasSelectionExpanded ? "Collapse" : "Expand";
 
     public string CanvasSelectionTitle
     {
@@ -626,6 +655,8 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public RelayCommand NavigateCanvasSelectionCommand { get; }
 
+    public RelayCommand ToggleCanvasSelectionExpandedCommand { get; }
+
     public RelayCommand TogglePinSelectionCommand { get; }
 
     public RelayCommand ClearCanvasInteractionCommand { get; }
@@ -646,7 +677,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public void SetBrains(IReadOnlyList<BrainListItem> brains)
     {
         var previousSelection = SelectedBrain;
-        var selectedId = previousSelection?.Id;
+        var previousBrainId = previousSelection?.BrainId;
+        var preferredBrainId = _preferredBrainId ?? previousBrainId;
         _suspendSelection = true;
         KnownBrains.Clear();
         foreach (var brain in brains)
@@ -658,6 +690,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             SelectedBrain = null;
             _suspendSelection = false;
+            _preferredBrainId = null;
             Status = "No brains reported.";
             RefreshFilteredEvents();
             return;
@@ -666,22 +699,32 @@ public sealed class VizPanelViewModel : ViewModelBase
         Status = "Streaming";
 
         BrainListItem? match = null;
-        if (!string.IsNullOrWhiteSpace(selectedId))
+        if (preferredBrainId.HasValue)
         {
-            match = KnownBrains.FirstOrDefault(entry => entry.Id == selectedId);
+            match = KnownBrains.FirstOrDefault(entry => entry.BrainId == preferredBrainId.Value);
         }
 
-        if (KnownBrains.Count > 0 && match is null)
+        if (previousSelection is null && KnownBrains.Count > 0 && match is null)
         {
             match = KnownBrains[0];
         }
-        SelectedBrain = match;
+
+        var resolvedSelection = match ?? previousSelection;
+        SelectedBrain = resolvedSelection;
         _suspendSelection = false;
-        if (match is not null)
+
+        var resolvedBrainId = resolvedSelection?.BrainId;
+        if (resolvedBrainId.HasValue)
         {
-            _brain.EnsureSelectedBrain(match.BrainId);
-            QueueDefinitionTopologyHydration(match.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
+            _preferredBrainId = resolvedBrainId.Value;
         }
+
+        if (resolvedBrainId.HasValue && resolvedBrainId != previousBrainId)
+        {
+            _brain.EnsureSelectedBrain(resolvedBrainId.Value);
+            QueueDefinitionTopologyHydration(resolvedBrainId.Value, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
+        }
+
         RefreshFilteredEvents();
     }
 
@@ -1169,11 +1212,9 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private async Task ApplyTickRateOverrideAsync()
     {
-        if (!float.TryParse(TickRateOverrideText, NumberStyles.Float, CultureInfo.InvariantCulture, out var targetTickHz)
-            || !float.IsFinite(targetTickHz)
-            || targetTickHz <= 0f)
+        if (!TryParseTickRateOverrideInput(TickRateOverrideText, out var targetTickHz))
         {
-            Status = "Tick override must be a positive number.";
+            Status = "Tick override must be a positive value (e.g. 12.5Hz or 80ms).";
             return;
         }
 
@@ -1196,15 +1237,32 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         var targetTickHz = ack.TargetTickHz;
+        if (targetTickHz > 0f && float.IsFinite(targetTickHz))
+        {
+            TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
+        }
+
         if (ack.Accepted)
         {
             TickRateOverrideSummary = ack.HasOverride
-                ? $"Tick override active ({ack.OverrideTickHz:0.###} Hz). Current target {targetTickHz:0.###} Hz."
-                : $"Tick override cleared. Current target {targetTickHz:0.###} Hz.";
+                ? $"Tick override active: {FormatTickCadence(ack.OverrideTickHz)}. Current target {FormatTickCadence(targetTickHz)}."
+                : $"Tick override cleared. Current target {FormatTickCadence(targetTickHz)}.";
 
             if (ack.HasOverride)
             {
-                TickRateOverrideText = ack.OverrideTickHz.ToString("0.###", CultureInfo.InvariantCulture);
+                if (ack.OverrideTickHz > 0f && float.IsFinite(ack.OverrideTickHz))
+                {
+                    var cadenceMs = 1000d / ack.OverrideTickHz;
+                    TickRateOverrideText = FormattableString.Invariant($"{cadenceMs:0.###}ms");
+                }
+                else
+                {
+                    TickRateOverrideText = ack.OverrideTickHz.ToString("0.###", CultureInfo.InvariantCulture);
+                }
+            }
+            else
+            {
+                TickRateOverrideText = string.Empty;
             }
         }
 
@@ -1235,6 +1293,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;
+        TickRateOverrideSummary = "Tick override: default runtime backpressure target.";
+        TickCadenceSummary = DefaultTickCadenceSummary;
         ResetCanvasInteractionState(clearPins: true);
         ExportCommand.RaiseCanExecuteChanged();
         RefreshActivityProjection();
@@ -2613,6 +2673,17 @@ public sealed class VizPanelViewModel : ViewModelBase
         Status = $"Canvas navigation focused region {regionId.Value}.";
     }
 
+    private void ToggleCanvasSelectionExpanded()
+    {
+        if (!HasCanvasSelection)
+        {
+            IsCanvasSelectionExpanded = false;
+            return;
+        }
+
+        IsCanvasSelectionExpanded = !IsCanvasSelectionExpanded;
+    }
+
     private void TogglePinForCurrentSelection()
     {
         if (!string.IsNullOrWhiteSpace(_selectedCanvasNodeKey))
@@ -2679,6 +2750,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedRouteTargetRegionId = null;
         _hoverCanvasNodeKey = null;
         _hoverCanvasRouteLabel = null;
+        IsCanvasSelectionExpanded = false;
         CanvasHoverCardText = string.Empty;
         IsCanvasHoverCardVisible = false;
         if (clearPins)
@@ -2687,6 +2759,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             _pinnedCanvasRoutes.Clear();
         }
 
+        ToggleCanvasSelectionExpandedCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
     }
 
@@ -2827,6 +2900,13 @@ public sealed class VizPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasSelectedRouteTarget));
 
         HasCanvasSelection = selectedNode is not null || selectedEdge is not null;
+        OnPropertyChanged(nameof(IsCanvasSelectionDetailsVisible));
+        ToggleCanvasSelectionExpandedCommand.RaiseCanExecuteChanged();
+        if (!HasCanvasSelection && IsCanvasSelectionExpanded)
+        {
+            IsCanvasSelectionExpanded = false;
+        }
+
         if (selectedNode is not null)
         {
             CanvasSelectionTitle = $"Selected Node {selectedNode.Label}";
@@ -3886,6 +3966,55 @@ public sealed class VizPanelViewModel : ViewModelBase
         regionId = parsed;
         remainder = end < trimmed.Length ? trimmed[end..] : string.Empty;
         return true;
+    }
+
+    internal static bool TryParseTickRateOverrideInput(string? value, out float targetTickHz)
+    {
+        targetTickHz = 0f;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        var parseAsMilliseconds = false;
+
+        if (normalized.EndsWith("ms", StringComparison.OrdinalIgnoreCase))
+        {
+            parseAsMilliseconds = true;
+            normalized = normalized[..^2].Trim();
+        }
+        else if (normalized.EndsWith("hz", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..^2].Trim();
+        }
+
+        if (!float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed)
+            || parsed <= 0f)
+        {
+            return false;
+        }
+
+        if (parseAsMilliseconds)
+        {
+            targetTickHz = 1000f / parsed;
+            return float.IsFinite(targetTickHz) && targetTickHz > 0f;
+        }
+
+        targetTickHz = parsed;
+        return true;
+    }
+
+    private static string FormatTickCadence(float tickHz)
+    {
+        if (!float.IsFinite(tickHz) || tickHz <= 0f)
+        {
+            return "n/a";
+        }
+
+        var cadenceMs = 1000d / tickHz;
+        return FormattableString.Invariant($"{tickHz:0.###} Hz ({cadenceMs:0.###} ms/tick)");
     }
 
     private static bool TryParseTickWindow(string? value, out int tickWindow)

@@ -40,7 +40,41 @@
         <StackPanel Spacing="10">
           <TextBlock Text="Neural Activity View" Classes="card-title" />
           <TextBlock Text="Canvas projection for region/edge/tick activity with deterministic layout and focus anchoring." Classes="card-subtitle" />
-          <Grid ColumnDefinitions="Auto,220,Auto,Auto,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+          <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="10"
+                  Background="{DynamicResource NbnSurfaceAltBrush}"
+                  Padding="8">
+            <Grid ColumnDefinitions="Auto,180,Auto,Auto,*"
+                  RowDefinitions="Auto,Auto"
+                  ColumnSpacing="8"
+                  RowSpacing="4">
+              <TextBlock Text="Tick cadence"
+                         Classes="row-title"
+                         VerticalAlignment="Center" />
+              <TextBox Grid.Column="1"
+                       Text="{Binding TickRateOverrideText}"
+                       Watermark="e.g. 80ms or 12.5Hz" />
+              <Button Grid.Column="2"
+                      Content="Apply cadence"
+                      Command="{Binding ApplyTickRateOverrideCommand}" />
+              <Button Grid.Column="3"
+                      Content="Clear"
+                      Command="{Binding ClearTickRateOverrideCommand}" />
+              <TextBlock Grid.Column="4"
+                         Text="{Binding TickCadenceSummary}"
+                         Classes="row-title"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
+              <TextBlock Grid.Row="1"
+                         Grid.ColumnSpan="5"
+                         Text="{Binding TickRateOverrideSummary}"
+                         Classes="muted"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+          <Grid ColumnDefinitions="Auto,220,Auto,Auto,120,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" Watermark="blank = full brain" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
@@ -68,23 +102,15 @@
             <TextBlock Grid.Row="1" Grid.Column="4" Text="Search" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SearchFilterText}" Watermark="Type, event id, source, target" />
 
-            <TextBlock Grid.Row="2" Text="Tick override Hz" Classes="muted" VerticalAlignment="Center" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TickRateOverrideText}" Watermark="e.g. 12.5" />
-            <StackPanel Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="10">
-              <Button Content="Apply tick override" Command="{Binding ApplyTickRateOverrideCommand}" />
-              <Button Content="Clear override" Command="{Binding ClearTickRateOverrideCommand}" />
-              <TextBlock Text="{Binding TickRateOverrideSummary}" Classes="muted" VerticalAlignment="Center" />
-            </StackPanel>
-
-            <TextBlock Grid.Row="3" Text="Color mode" Classes="muted" VerticalAlignment="Center" />
-            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding CanvasColorModeOptions}" SelectedItem="{Binding SelectedCanvasColorMode}" Width="180">
+            <TextBlock Grid.Row="2" Text="Color mode" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding CanvasColorModeOptions}" SelectedItem="{Binding SelectedCanvasColorMode}" Width="180">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:VizCanvasColorModeOption">
                   <TextBlock Text="{Binding Label}" />
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
-            <TextBlock Grid.Row="3"
+            <TextBlock Grid.Row="2"
                        Grid.Column="2"
                        Grid.ColumnSpan="4"
                        Text="{Binding CanvasColorModeHint}"
@@ -92,15 +118,15 @@
                        VerticalAlignment="Center"
                        TextWrapping="Wrap" />
 
-            <TextBlock Grid.Row="4" Text="Layout mode" Classes="muted" VerticalAlignment="Center" />
-            <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding LayoutModeOptions}" SelectedItem="{Binding SelectedLayoutMode}" Width="180">
+            <TextBlock Grid.Row="3" Text="Layout mode" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding LayoutModeOptions}" SelectedItem="{Binding SelectedLayoutMode}" Width="180">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:VizCanvasLayoutModeOption">
                   <TextBlock Text="{Binding Label}" />
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
-            <StackPanel Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="8">
+            <StackPanel Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="8">
               <CheckBox Content="Adaptive LOD"
                         IsChecked="{Binding EnableAdaptiveLod}"
                         VerticalAlignment="Center" />
@@ -266,87 +292,98 @@
                         CornerRadius="10"
                         Background="{DynamicResource NbnSurfaceAltBrush}"
                         Padding="8">
-                  <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
-                        ColumnDefinitions="1.2*,1*"
-                        RowSpacing="4"
+                  <Grid RowDefinitions="Auto,Auto"
+                        ColumnDefinitions="*,Auto"
+                        RowSpacing="6"
                         ColumnSpacing="8">
-                    <TextBlock Text="Selected Item"
-                               Classes="card-title"
-                               Grid.Row="0"
-                               Grid.Column="0"
-                               Grid.ColumnSpan="2" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <TextBlock Text="Selected Item" Classes="card-title" />
+                      <TextBlock Text="{Binding CanvasSelectionTitle}"
+                                 Classes="muted"
+                                 VerticalAlignment="Center"
+                                 TextWrapping="NoWrap"
+                                 TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Content="{Binding CanvasSelectionToggleLabel}"
+                            Command="{Binding ToggleCanvasSelectionExpandedCommand}" />
 
                     <Grid Grid.Row="1"
                           Grid.Column="0"
+                          Grid.ColumnSpan="2"
                           RowDefinitions="Auto,Auto,Auto,Auto"
-                          RowSpacing="2">
-                      <TextBlock Text="{Binding CanvasSelectionTitle}" Classes="row-title" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Grid.Row="1" Text="{Binding CanvasSelectionIdentity}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Grid.Row="2" Text="{Binding CanvasSelectionRuntime}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Grid.Row="3" Text="{Binding CanvasSelectionContext}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                    </Grid>
-
-                    <ScrollViewer Grid.Row="1"
-                                  Grid.Column="1"
-                                  MaxHeight="70"
-                                  VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Disabled">
-                      <TextBlock Text="{Binding CanvasSelectionDetail}"
-                                 Classes="muted"
-                                 TextWrapping="Wrap" />
-                    </ScrollViewer>
-
-                    <Grid Grid.Row="2"
-                          Grid.Column="0"
-                          Grid.ColumnSpan="2"
-                          ColumnDefinitions="Auto,Auto,Auto"
+                          ColumnDefinitions="1.2*,1*"
+                          RowSpacing="4"
                           ColumnSpacing="8"
-                          IsVisible="{Binding HasCanvasSelection}">
-                      <Button Content="Focus Selection" Command="{Binding NavigateCanvasSelectionCommand}" />
-                      <Button Grid.Column="1"
-                              Content="Route Source"
-                              Command="{Binding FocusSelectedRouteSourceCommand}"
-                              IsVisible="{Binding HasSelectedRouteSource}" />
-                      <Button Grid.Column="2"
-                              Content="Route Target"
-                              Command="{Binding FocusSelectedRouteTargetCommand}"
-                              IsVisible="{Binding HasSelectedRouteTarget}" />
-                    </Grid>
+                          IsVisible="{Binding IsCanvasSelectionDetailsVisible}">
+                      <Grid Grid.Row="0"
+                            Grid.Column="0"
+                            RowDefinitions="Auto,Auto,Auto"
+                            RowSpacing="2">
+                        <TextBlock Text="{Binding CanvasSelectionIdentity}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="1" Text="{Binding CanvasSelectionRuntime}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Row="2" Text="{Binding CanvasSelectionContext}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                      </Grid>
 
-                    <Grid Grid.Row="3"
-                          Grid.Column="0"
-                          Grid.ColumnSpan="2"
-                          ColumnDefinitions="Auto,90,Auto,*,Auto,110,Auto"
-                          ColumnSpacing="8"
-                          IsVisible="{Binding HasCanvasSelection}">
-                      <TextBlock Text="Pulse value" Classes="muted" VerticalAlignment="Center" />
-                      <TextBox Grid.Column="1" Width="90" Text="{Binding SelectedInputPulseValueText}" />
-                      <Button Grid.Column="2" Content="Send Runtime Pulse" Command="{Binding PrepareInputPulseCommand}" />
-                      <TextBlock Grid.Column="3" Text="Buffer" Classes="muted" VerticalAlignment="Center" />
-                      <TextBox Grid.Column="4"
-                               Width="90"
-                               Text="{Binding SelectedBufferValueText}"
-                               Watermark="blank = skip" />
-                      <TextBlock Grid.Column="5" Text="Accumulator" Classes="muted" VerticalAlignment="Center" />
-                      <TextBox Grid.Column="6"
-                               Width="110"
-                               Text="{Binding SelectedAccumulatorValueText}"
-                               Watermark="blank = skip" />
-                    </Grid>
+                      <ScrollViewer Grid.Row="0"
+                                    Grid.Column="1"
+                                    MaxHeight="70"
+                                    VerticalScrollBarVisibility="Auto"
+                                    HorizontalScrollBarVisibility="Disabled">
+                        <TextBlock Text="{Binding CanvasSelectionDetail}"
+                                   Classes="muted"
+                                   TextWrapping="Wrap" />
+                      </ScrollViewer>
 
-                    <Grid Grid.Row="4"
-                          Grid.Column="0"
-                          Grid.ColumnSpan="2"
-                          ColumnDefinitions="Auto,*"
-                          ColumnSpacing="8">
-                      <Button Content="Apply Runtime State"
-                              Command="{Binding ApplyRuntimeStateCommand}"
-                              IsVisible="{Binding HasCanvasSelection}" />
-                      <TextBlock Grid.Column="1"
-                                 Text="{Binding CanvasSelectionActionHint}"
-                                 Classes="muted"
-                                 TextWrapping="Wrap"
-                                 VerticalAlignment="Center" />
+                      <Grid Grid.Row="1"
+                            Grid.Column="0"
+                            Grid.ColumnSpan="2"
+                            ColumnDefinitions="Auto,Auto,Auto"
+                            ColumnSpacing="8">
+                        <Button Content="Focus Selection" Command="{Binding NavigateCanvasSelectionCommand}" />
+                        <Button Grid.Column="1"
+                                Content="Route Source"
+                                Command="{Binding FocusSelectedRouteSourceCommand}"
+                                IsVisible="{Binding HasSelectedRouteSource}" />
+                        <Button Grid.Column="2"
+                                Content="Route Target"
+                                Command="{Binding FocusSelectedRouteTargetCommand}"
+                                IsVisible="{Binding HasSelectedRouteTarget}" />
+                      </Grid>
+
+                      <Grid Grid.Row="2"
+                            Grid.Column="0"
+                            Grid.ColumnSpan="2"
+                            ColumnDefinitions="Auto,90,Auto,*,Auto,110,Auto"
+                            ColumnSpacing="8">
+                        <TextBlock Text="Pulse value" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Width="90" Text="{Binding SelectedInputPulseValueText}" />
+                        <Button Grid.Column="2" Content="Send Runtime Pulse" Command="{Binding PrepareInputPulseCommand}" />
+                        <TextBlock Grid.Column="3" Text="Buffer" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="4"
+                                 Width="90"
+                                 Text="{Binding SelectedBufferValueText}"
+                                 Watermark="blank = skip" />
+                        <TextBlock Grid.Column="5" Text="Accumulator" Classes="muted" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="6"
+                                 Width="110"
+                                 Text="{Binding SelectedAccumulatorValueText}"
+                                 Watermark="blank = skip" />
+                      </Grid>
+
+                      <Grid Grid.Row="3"
+                            Grid.Column="0"
+                            Grid.ColumnSpan="2"
+                            ColumnDefinitions="Auto,*"
+                            ColumnSpacing="8">
+                        <Button Content="Apply Runtime State"
+                                Command="{Binding ApplyRuntimeStateCommand}" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding CanvasSelectionActionHint}"
+                                   Classes="muted"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center" />
+                      </Grid>
                     </Grid>
                   </Grid>
                 </Border>

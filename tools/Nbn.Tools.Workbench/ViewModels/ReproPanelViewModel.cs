@@ -34,8 +34,8 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _maxConnectivityHistDistance = "0.25";
     private string _maxAvgOutDegree = "100";
     private string _perRegionOutDegreeCaps = string.Empty;
-    private string _probAddNeuronToEmptyRegion = "0.02";
-    private string _probRemoveLastNeuronFromRegion = "0.01";
+    private string _probAddNeuronToEmptyRegion = "0";
+    private string _probRemoveLastNeuronFromRegion = "0";
     private string _probDisableNeuron = "0.01";
     private string _probReactivateNeuron = "0.01";
     private string _probAddAxon = "0.05";
@@ -511,9 +511,11 @@ public sealed class ReproPanelViewModel : ViewModelBase
         var regionSpanScore = report?.RegionSpanScore ?? 0f;
         var functionScore = report?.FunctionScore ?? 0f;
         var connectivityScore = report?.ConnectivityScore ?? 0f;
+        var parentARegionCount = report?.RegionsPresentA ?? 0u;
+        var parentBRegionCount = report?.RegionsPresentB ?? 0u;
         var childRegionCount = report?.RegionsPresentChild ?? 0u;
 
-        SimilaritySummary = $"Score: {score:0.000} | Compatible: {compatibleText} | Abort: {abortReason} | Region span: {regionSpanScore:0.000} | Function: {functionScore:0.000} | Connectivity: {connectivityScore:0.000} | Child regions: {childRegionCount}";
+        SimilaritySummary = $"Score: {score:0.000} | Compatible: {compatibleText} | Abort: {abortReason} | Region span: {regionSpanScore:0.000} | Function: {functionScore:0.000} | Connectivity: {connectivityScore:0.000} | Regions A/B/Child: {parentARegionCount}/{parentBRegionCount}/{childRegionCount}";
         MutationSummary = $"+N{summary?.NeuronsAdded ?? 0u} -N{summary?.NeuronsRemoved ?? 0u} +A{summary?.AxonsAdded ?? 0u} -A{summary?.AxonsRemoved ?? 0u} reroute={summary?.AxonsRerouted ?? 0u} func={summary?.FunctionsMutated ?? 0u} strength={summary?.StrengthCodesChanged ?? 0u}";
 
         var childLabel = result.ChildBrainId is not null && result.ChildBrainId.TryToGuid(out var childGuid)
@@ -632,8 +634,8 @@ public sealed class ReproPanelViewModel : ViewModelBase
             MaxRegionSpanDiffRatio = ParseFloat(MaxRegionSpanDiffRatio, 0.15f),
             MaxFunctionHistDistance = ParseFloat(MaxFunctionHistDistance, 0.25f),
             MaxConnectivityHistDistance = ParseFloat(MaxConnectivityHistDistance, 0.25f),
-            ProbAddNeuronToEmptyRegion = ParseFloat(ProbAddNeuronToEmptyRegion, 0.02f),
-            ProbRemoveLastNeuronFromRegion = ParseFloat(ProbRemoveLastNeuronFromRegion, 0.01f),
+            ProbAddNeuronToEmptyRegion = ParseFloat(ProbAddNeuronToEmptyRegion, 0f),
+            ProbRemoveLastNeuronFromRegion = ParseFloat(ProbRemoveLastNeuronFromRegion, 0f),
             ProbDisableNeuron = ParseFloat(ProbDisableNeuron, 0.01f),
             ProbReactivateNeuron = ParseFloat(ProbReactivateNeuron, 0.01f),
             ProbAddAxon = ParseFloat(ProbAddAxon, 0.05f),

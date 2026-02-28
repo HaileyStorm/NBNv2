@@ -574,6 +574,105 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void SetBrains_PreservesSelectedBrainAcrossRefreshObjects()
+    {
+        var vm = CreateViewModel();
+        var brainAId = Guid.NewGuid();
+        var brainBId = Guid.NewGuid();
+        var firstA = new BrainListItem(brainAId, "A", true);
+        var firstB = new BrainListItem(brainBId, "B", true);
+        vm.SetBrains(new[] { firstA, firstB });
+
+        vm.SelectedBrain = firstB;
+
+        var refreshedA = new BrainListItem(brainAId, "A", true);
+        var refreshedB = new BrainListItem(brainBId, "B", true);
+        vm.SetBrains(new[] { refreshedA, refreshedB });
+
+        Assert.Equal(brainBId, vm.SelectedBrain?.BrainId);
+        Assert.Equal(refreshedB.Display, vm.SelectedBrain?.Display);
+    }
+
+    [Fact]
+    public void SetBrains_DoesNotForceFirstBrainWhenSelectionTemporarilyMissing()
+    {
+        var vm = CreateViewModel();
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        vm.SetBrains(new[] { brainA, brainB });
+
+        vm.SelectedBrain = brainB;
+        var refreshedOnlyA = new BrainListItem(brainA.BrainId, "A", true);
+        vm.SetBrains(new[] { refreshedOnlyA });
+
+        Assert.Equal(brainB.BrainId, vm.SelectedBrain?.BrainId);
+    }
+
+    [Theory]
+    [InlineData("12.5", 12.5f)]
+    [InlineData("12.5hz", 12.5f)]
+    [InlineData("80ms", 12.5f)]
+    [InlineData("40 ms", 25f)]
+    public void TryParseTickRateOverrideInput_AcceptsHzAndMsFormats(string text, float expectedHz)
+    {
+        var ok = VizPanelViewModel.TryParseTickRateOverrideInput(text, out var hz);
+
+        Assert.True(ok);
+        Assert.Equal(expectedHz, hz, 3);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("0ms")]
+    [InlineData("-5")]
+    [InlineData("abc")]
+    public void TryParseTickRateOverrideInput_RejectsInvalidValues(string text)
+    {
+        var ok = VizPanelViewModel.TryParseTickRateOverrideInput(text, out var hz);
+
+        Assert.False(ok);
+        Assert.Equal(0f, hz);
+    }
+
+    [Fact]
+    public void CanvasSelectionPanel_DefaultsCollapsedAndCollapsesWhenSelectionClears()
+    {
+        var vm = CreateViewModel();
+
+        Assert.False(vm.IsCanvasSelectionExpanded);
+        Assert.False(vm.IsCanvasSelectionDetailsVisible);
+        Assert.False(vm.ToggleCanvasSelectionExpandedCommand.CanExecute(null));
+
+        var node = CreateNode("region:9", "R9", left: 100, top: 100);
+        SetCanvasSelection(vm, node.NodeKey, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode> { node },
+            new List<VizActivityCanvasEdge>());
+
+        Assert.True(vm.HasCanvasSelection);
+        Assert.False(vm.IsCanvasSelectionExpanded);
+        Assert.False(vm.IsCanvasSelectionDetailsVisible);
+        Assert.True(vm.ToggleCanvasSelectionExpandedCommand.CanExecute(null));
+
+        vm.ToggleCanvasSelectionExpandedCommand.Execute(null);
+        Assert.True(vm.IsCanvasSelectionExpanded);
+        Assert.True(vm.IsCanvasSelectionDetailsVisible);
+
+        SetCanvasSelection(vm, null, null);
+        UpdateInteractionSummaries(
+            vm,
+            new List<VizActivityCanvasNode>(),
+            new List<VizActivityCanvasEdge>());
+
+        Assert.False(vm.HasCanvasSelection);
+        Assert.False(vm.IsCanvasSelectionExpanded);
+        Assert.False(vm.IsCanvasSelectionDetailsVisible);
+        Assert.False(vm.ToggleCanvasSelectionExpandedCommand.CanExecute(null));
+    }
+
+    [Fact]
     public void TryResolveCanvasHit_NodeHitPadding_ResolvesNearMissWithoutStickyHover()
     {
         var vm = CreateViewModel();

@@ -37,6 +37,7 @@ public class ReproPanelViewModelTests
         Assert.Contains("Score: 0.500", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Contains("Compatible: False", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Contains("Abort: repro_region_span_mismatch", vm.SimilaritySummary, StringComparison.Ordinal);
+        Assert.Contains("Regions A/B/Child: 0/0/0", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Equal("+N0 -N0 +A0 -A0 reroute=0 func=0 strength=0", vm.MutationSummary);
     }
 
@@ -82,6 +83,7 @@ public class ReproPanelViewModelTests
         Assert.Contains("Score: 0.770", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Contains("Compatible: True", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Contains("Abort: none", vm.SimilaritySummary, StringComparison.Ordinal);
+        Assert.Contains("Regions A/B/Child: 0/0/3", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Equal("+N1 -N2 +A3 -A4 reroute=5 func=6 strength=7", vm.MutationSummary);
     }
 
@@ -136,7 +138,30 @@ public class ReproPanelViewModelTests
         Assert.Contains("Score: 0.000", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Contains("Compatible: Unknown", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Contains("Abort: none", vm.SimilaritySummary, StringComparison.Ordinal);
+        Assert.Contains("Regions A/B/Child: 0/0/0", vm.SimilaritySummary, StringComparison.Ordinal);
         Assert.Equal("+N0 -N0 +A0 -A0 reroute=0 func=0 strength=0", vm.MutationSummary);
+    }
+
+    [Fact]
+    public async Task RunCommand_DefaultRegionPresenceMutationProbabilities_AreZero()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            BrainIdsResult = new ReproduceResult
+            {
+                Report = new SimilarityReport { Compatible = true }
+            }
+        };
+        var vm = CreateViewModel(client);
+        SetActiveBrains(vm);
+
+        vm.RunCommand.Execute(null);
+        await WaitForAsync(() => client.LastBrainIdsRequest is not null);
+
+        var request = client.LastBrainIdsRequest!;
+        Assert.NotNull(request.Config);
+        Assert.Equal(0f, request.Config.ProbAddNeuronToEmptyRegion, 3);
+        Assert.Equal(0f, request.Config.ProbRemoveLastNeuronFromRegion, 3);
     }
 
     [Fact]

@@ -43,8 +43,8 @@ message ReproduceLimits {
   uint32 max_axons_removed_abs = 7;
   float  max_axons_removed_pct = 8;
 
-  uint32 max_regions_added_abs = 9;
-  uint32 max_regions_removed_abs = 10;
+  uint32 max_regions_added_abs = 9;   // 0 means no region additions
+  uint32 max_regions_removed_abs = 10; // 0 means no region removals
 }
 
 message ReproduceConfig {
