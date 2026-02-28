@@ -36,6 +36,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const string DefaultTickOverrideSummary = "Tick override: default runtime backpressure target.";
     private const string DefaultTickCadenceSummary = "Current cadence: awaiting HiveMind status.";
     private const int EmptyBrainRefreshClearThreshold = 3;
+    private const int SelectionMissRefreshClearThreshold = 3;
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
@@ -156,6 +157,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private int _projectionLayoutRefreshVersion;
     private Guid? _preferredBrainId;
     private int _consecutiveEmptyBrainRefreshes;
+    private int _consecutiveSelectionMissRefreshes;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -698,18 +700,36 @@ public sealed class VizPanelViewModel : ViewModelBase
             _suspendSelection = false;
             _preferredBrainId = null;
             _consecutiveEmptyBrainRefreshes = 0;
+            _consecutiveSelectionMissRefreshes = 0;
             Status = "No brains reported.";
             RefreshFilteredEvents();
             return;
         }
 
         _consecutiveEmptyBrainRefreshes = 0;
-        _suspendSelection = true;
-        KnownBrains.Clear();
-        foreach (var brain in brains)
+        var selectedMissingFromSnapshot = preferredBrainId.HasValue
+            && !brains.Any(entry => entry.BrainId == preferredBrainId.Value);
+        if (selectedMissingFromSnapshot && previousSelection is not null)
         {
-            KnownBrains.Add(brain);
+            _consecutiveSelectionMissRefreshes++;
         }
+        else
+        {
+            _consecutiveSelectionMissRefreshes = 0;
+        }
+
+        var preserveMissingSelection = selectedMissingFromSnapshot
+            && previousSelection is not null
+            && _consecutiveSelectionMissRefreshes < SelectionMissRefreshClearThreshold;
+
+        var effectiveBrains = brains.ToList();
+        if (preserveMissingSelection && previousSelection is not null)
+        {
+            effectiveBrains.Add(previousSelection);
+        }
+
+        _suspendSelection = true;
+        _ = ApplyKeyedDiff(KnownBrains, effectiveBrains, static entry => entry.BrainId.ToString("D"));
 
         Status = "Streaming";
 
@@ -724,7 +744,17 @@ public sealed class VizPanelViewModel : ViewModelBase
             match = KnownBrains[0];
         }
 
-        var resolvedSelection = match ?? previousSelection;
+        var resolvedSelection = match;
+        if (resolvedSelection is null && previousSelection is not null)
+        {
+            resolvedSelection = KnownBrains.FirstOrDefault(entry => entry.BrainId == previousSelection.BrainId);
+        }
+
+        if (resolvedSelection is null && KnownBrains.Count > 0 && !preserveMissingSelection)
+        {
+            resolvedSelection = KnownBrains[0];
+        }
+
         SelectedBrain = resolvedSelection;
         _suspendSelection = false;
 
@@ -1322,6 +1352,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _nextStreamingRefreshUtc = DateTime.MinValue;
         _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
         _consecutiveEmptyBrainRefreshes = 0;
+        _consecutiveSelectionMissRefreshes = 0;
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;

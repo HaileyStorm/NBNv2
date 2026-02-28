@@ -2169,6 +2169,127 @@ public class ReproductionManagerActorTests
         }
     }
 
+    [Fact]
+    public async Task ReproduceByArtifacts_WorkbenchDefaultLineage_PreservesExpectedCompatibilityBands()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-lineage-defaults-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = DemoNbnBuilder.BuildSampleNbn();
+            var parentB = DemoNbnBuilder.BuildSampleNbn();
+            var unrelated = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var unrelatedManifest = await store.StoreAsync(new MemoryStream(unrelated), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+            var unrelatedRef = unrelatedManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)unrelatedManifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var generationSuccesses = 0;
+            var directParentChecks = 0;
+            var directParentSuccesses = 0;
+            var directParentScores = new List<float>();
+            var unrelatedScores = new List<float>();
+            var currentLeft = parentARef;
+            var currentRight = parentBRef;
+
+            for (var generation = 0; generation < 8; generation++)
+            {
+                var generationResult = await root.RequestAsync<Repro.ReproduceResult>(
+                    manager,
+                    new Repro.ReproduceByArtifactsRequest
+                    {
+                        ParentADef = currentLeft,
+                        ParentBDef = currentRight,
+                        Seed = 6100UL + (ulong)generation,
+                        Config = CreateWorkbenchDefaultReproConfig()
+                    });
+
+                Assert.NotNull(generationResult.Report);
+                if (!generationResult.Report.Compatible || generationResult.ChildDef is null)
+                {
+                    break;
+                }
+
+                generationSuccesses++;
+                directParentScores.Add(generationResult.Report.SimilarityScore);
+                var childRef = generationResult.ChildDef;
+
+                foreach (var directParentRef in new[] { currentLeft, currentRight })
+                {
+                    var directCheck = await root.RequestAsync<Repro.ReproduceResult>(
+                        manager,
+                        new Repro.ReproduceByArtifactsRequest
+                        {
+                            ParentADef = childRef,
+                            ParentBDef = directParentRef,
+                            Seed = 7100UL + (ulong)(generation * 10) + (ulong)directParentChecks,
+                            Config = CreateWorkbenchDefaultReproConfig()
+                        });
+
+                    Assert.NotNull(directCheck.Report);
+                    directParentChecks++;
+                    if (directCheck.Report.Compatible)
+                    {
+                        directParentSuccesses++;
+                        directParentScores.Add(directCheck.Report.SimilarityScore);
+                    }
+                }
+
+                var unrelatedCheck = await root.RequestAsync<Repro.ReproduceResult>(
+                    manager,
+                    new Repro.ReproduceByArtifactsRequest
+                    {
+                        ParentADef = childRef,
+                        ParentBDef = unrelatedRef,
+                        Seed = 9100UL + (ulong)generation,
+                        Config = CreateWorkbenchDefaultReproConfig()
+                    });
+
+                Assert.NotNull(unrelatedCheck.Report);
+                Assert.False(unrelatedCheck.Report.Compatible);
+                Assert.Equal("repro_region_presence_mismatch", unrelatedCheck.Report.AbortReason);
+                unrelatedScores.Add(unrelatedCheck.Report.SimilarityScore);
+
+                currentLeft = childRef;
+                currentRight = generation % 2 == 0 ? parentARef : parentBRef;
+            }
+
+            Assert.True(generationSuccesses >= 6, $"Expected at least 6 successful generations; got {generationSuccesses}.");
+            Assert.True(directParentChecks >= generationSuccesses * 2);
+            Assert.NotEmpty(directParentScores);
+            Assert.NotEmpty(unrelatedScores);
+
+            var directSuccessRate = directParentChecks == 0
+                ? 0f
+                : directParentSuccesses / (float)directParentChecks;
+            Assert.True(directSuccessRate >= 0.75f, $"Expected direct parent compatibility >= 0.75, got {directSuccessRate:0.###}.");
+
+            var directAverage = directParentScores.Average();
+            var unrelatedAverage = unrelatedScores.Average();
+            Assert.True(directAverage >= 0.55f, $"Expected direct lineage average similarity >= 0.55, got {directAverage:0.###}.");
+            Assert.True(unrelatedAverage <= 0.25f, $"Expected unrelated average similarity <= 0.25, got {unrelatedAverage:0.###}.");
+            Assert.True(directAverage > unrelatedAverage, $"Expected direct average similarity > unrelated average ({directAverage:0.###} vs {unrelatedAverage:0.###}).");
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
     private static byte[] CreateSnapshotWithOverlays(
         byte[] baseNbn,
         IReadOnlyList<NbsOverlayRecord> overlays,
@@ -2232,6 +2353,53 @@ public class ReproductionManagerActorTests
 
         return section.AxonRecords[start + axonOffset].StrengthCode;
     }
+
+    private static Repro.ReproduceConfig CreateWorkbenchDefaultReproConfig()
+        => new()
+        {
+            MaxRegionSpanDiffRatio = 0.15f,
+            MaxFunctionHistDistance = 0.25f,
+            MaxConnectivityHistDistance = 0.25f,
+            ProbAddNeuronToEmptyRegion = 0f,
+            ProbRemoveLastNeuronFromRegion = 0f,
+            ProbDisableNeuron = 0.01f,
+            ProbReactivateNeuron = 0.01f,
+            ProbAddAxon = 0.05f,
+            ProbRemoveAxon = 0.02f,
+            ProbRerouteAxon = 0.02f,
+            ProbRerouteInboundAxonOnDelete = 0.50f,
+            InboundRerouteMaxRingDistance = 0,
+            ProbChooseParentA = 0.45f,
+            ProbChooseParentB = 0.45f,
+            ProbAverage = 0.05f,
+            ProbMutate = 0.05f,
+            ProbChooseFuncA = 0.50f,
+            ProbMutateFunc = 0.02f,
+            MaxAvgOutDegreeBrain = 100f,
+            PrunePolicy = Repro.PrunePolicy.PruneLowestAbsStrengthFirst,
+            StrengthTransformEnabled = false,
+            ProbStrengthChooseA = 0.35f,
+            ProbStrengthChooseB = 0.35f,
+            ProbStrengthAverage = 0.20f,
+            ProbStrengthWeightedAverage = 0.05f,
+            StrengthWeightA = 0.50f,
+            StrengthWeightB = 0.50f,
+            ProbStrengthMutate = 0.05f,
+            SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever,
+            Limits = new Repro.ReproduceLimits
+            {
+                MaxNeuronsAddedAbs = 0,
+                MaxNeuronsAddedPct = 0f,
+                MaxNeuronsRemovedAbs = 0,
+                MaxNeuronsRemovedPct = 0f,
+                MaxAxonsAddedAbs = 0,
+                MaxAxonsAddedPct = 0f,
+                MaxAxonsRemovedAbs = 0,
+                MaxAxonsRemovedPct = 0f,
+                MaxRegionsAddedAbs = 0,
+                MaxRegionsRemovedAbs = 0
+            }
+        };
 
     private static void AssertIoAndDuplicateInvariants(IReadOnlyList<NbnRegionSection> sections)
     {

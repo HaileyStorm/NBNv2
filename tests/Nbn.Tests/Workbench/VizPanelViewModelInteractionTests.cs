@@ -606,6 +606,26 @@ public class VizPanelViewModelInteractionTests
         vm.SetBrains(new[] { refreshedOnlyA });
 
         Assert.Equal(brainB.BrainId, vm.SelectedBrain?.BrainId);
+        Assert.Contains(vm.KnownBrains, entry => entry.BrainId == brainB.BrainId);
+    }
+
+    [Fact]
+    public void SetBrains_MissingSelectionAfterThreshold_FallsBackToAvailableBrain()
+    {
+        var vm = CreateViewModel();
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        vm.SetBrains(new[] { brainA, brainB });
+        vm.SelectedBrain = brainB;
+
+        vm.SetBrains(new[] { new BrainListItem(brainA.BrainId, "A", true) });
+        vm.SetBrains(new[] { new BrainListItem(brainA.BrainId, "A", true) });
+        Assert.Equal(brainB.BrainId, vm.SelectedBrain?.BrainId);
+
+        vm.SetBrains(new[] { new BrainListItem(brainA.BrainId, "A", true) });
+
+        Assert.Equal(brainA.BrainId, vm.SelectedBrain?.BrainId);
+        Assert.Single(vm.KnownBrains);
     }
 
     [Fact]
