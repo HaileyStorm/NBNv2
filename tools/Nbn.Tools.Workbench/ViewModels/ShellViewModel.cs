@@ -413,6 +413,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private async Task ConnectObservabilityWithRetryAsync(CancellationToken token)
     {
+        var attempt = 0;
+
         while (!token.IsCancellationRequested)
         {
             if (!TryParsePort(Connections.ObsPortText, out var obsPort))
@@ -422,7 +424,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            await _client.ConnectObservabilityAsync(
+            attempt++;
+            var connected = await _client.ConnectObservabilityAsync(
                 Connections.ObsHost,
                 obsPort,
                 Connections.DebugHub,
@@ -430,15 +433,27 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 Debug.SelectedSeverity.Severity,
                 Debug.ContextRegex).ConfigureAwait(false);
 
-            UpdateObservabilitySubscriptions();
-
-            if (token.IsCancellationRequested)
+            if (connected)
             {
+                UpdateObservabilitySubscriptions();
+
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                WorkbenchLog.Info($"Observability subscribed to {Connections.ObsHost}:{obsPort}");
                 return;
             }
 
-            WorkbenchLog.Info($"Observability subscribed to {Connections.ObsHost}:{obsPort}");
-            return;
+            try
+            {
+                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
     }
 

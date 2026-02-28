@@ -1,4 +1,5 @@
 using System;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Proto.Debug;
@@ -513,11 +514,12 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public Task ConnectObservabilityAsync(string host, int port, string debugHub, string vizHub, Nbn.Proto.Severity minSeverity, string contextRegex)
+    public async Task<bool> ConnectObservabilityAsync(string host, int port, string debugHub, string vizHub, Nbn.Proto.Severity minSeverity, string contextRegex)
     {
         if (_root is null || _receiverPid is null)
         {
-            return Task.CompletedTask;
+            _sink.OnObsStatus("Observability client not initialized.", false);
+            return false;
         }
 
         _ = minSeverity;
@@ -528,8 +530,13 @@ public class WorkbenchClient : IAsyncDisposable
 
         _debugSubscribed = false;
         _vizSubscribed = false;
-        _sink.OnObsStatus($"Connected to {host}:{port}", true);
-        return Task.CompletedTask;
+        var reachable = await IsEndpointReachableAsync(host, port, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        _sink.OnObsStatus(
+            reachable
+                ? $"Connected to {host}:{port}"
+                : $"Obs endpoint unreachable: {host}:{port}",
+            reachable);
+        return reachable;
     }
 
     public void SetDebugSubscription(bool enabled, DebugSubscriptionFilter filter)
@@ -1088,6 +1095,26 @@ public class WorkbenchClient : IAsyncDisposable
         }
 
         return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+    }
+
+    private static async Task<bool> IsEndpointReachableAsync(string host, int port, TimeSpan timeout)
+    {
+        if (string.IsNullOrWhiteSpace(host) || port <= 0 || port >= 65536)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var client = new TcpClient();
+            using var cts = new CancellationTokenSource(timeout);
+            await client.ConnectAsync(host, port, cts.Token).ConfigureAwait(false);
+            return client.Connected;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private SetBrainVisualization BuildVisualizationRequest(Guid brainId, bool enabled, uint? focusRegionId = null)

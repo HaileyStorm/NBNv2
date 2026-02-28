@@ -9,6 +9,7 @@ namespace Nbn.Tools.Workbench.Services;
 public sealed class LocalServiceRunner
 {
     private const int StartupProbeDelayMs = 400;
+    private const int StartupStabilityDelayMs = 250;
     private const int StartupExitDrainMs = 250;
     private readonly object _gate = new();
     private Process? _process;
@@ -63,6 +64,7 @@ public sealed class LocalServiceRunner
         }
 
         WorkbenchProcessRegistry.Default.Record(process, processLabel);
+        await Task.Delay(StartupStabilityDelayMs).ConfigureAwait(false);
         if (TryBuildStartupExitResult(process, processLabel, logFiles, removeFromRegistry: true, out startupFailure))
         {
             return startupFailure;

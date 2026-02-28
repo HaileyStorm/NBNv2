@@ -86,6 +86,76 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_ObservabilityConnected_WhenDebugHubNodeIsAlive()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.obs",
+                        Address = $"{connections.ObsHost}:{connections.ObsPortText}",
+                        RootActorName = connections.DebugHub,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.ObsConnected);
+        Assert.Equal("Connected", connections.ObsStatus);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_ObservabilityOffline_WhenHubNodesAreMissingOrStale()
+    {
+        var connections = new ConnectionViewModel();
+        var staleMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 60_000;
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.obs",
+                        Address = $"{connections.ObsHost}:{connections.ObsPortText}",
+                        RootActorName = connections.DebugHub,
+                        LastSeenMs = (ulong)staleMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.False(connections.ObsConnected);
+        Assert.Equal("Offline", connections.ObsStatus);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_IncludesBrainControllerRowsInHostedActorsList()
     {
         var connections = new ConnectionViewModel();

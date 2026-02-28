@@ -8,7 +8,8 @@
       <Border Classes="card">
         <StackPanel Spacing="10">
           <TextBlock Text="Endpoints" Classes="card-title" />
-          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <TextBlock Text="Debug Hub and Viz Hub are actor names hosted by Observability at Obs Host/Obs Port." Classes="muted" TextWrapping="Wrap" />
+          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <TextBlock Text="IO Host" Classes="muted" />
             <TextBox Grid.Column="1" Text="{Binding Connections.IoHost}" Width="160" />
             <TextBlock Grid.Column="2" Text="IO Port" Classes="muted" />
@@ -23,38 +24,40 @@
             <TextBlock Grid.Row="1" Grid.Column="4" Text="Debug Hub" Classes="muted" />
             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding Connections.DebugHub}" Width="140" />
 
-            <TextBlock Grid.Row="2" Text="HiveMind Host" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.HiveMindHost}" Width="160" />
-            <TextBlock Grid.Row="2" Grid.Column="2" Text="HiveMind Port" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding Connections.HiveMindPortText}" Width="90" />
-            <TextBlock Grid.Row="2" Grid.Column="4" Text="HiveMind Name" Classes="muted" />
-            <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding Connections.HiveMindName}" Width="140" />
+            <TextBlock Grid.Row="2" Text="Viz Hub" Classes="muted" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.VizHub}" Width="140" />
+            <TextBlock Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="4" Text="Uses Obs Host/Port above (Observability-owned)." Classes="muted" TextWrapping="Wrap" />
 
-            <TextBlock Grid.Row="3" Text="Settings Host" Classes="muted" />
-            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.SettingsHost}" Width="160" />
-            <TextBlock Grid.Row="3" Grid.Column="2" Text="Settings Port" Classes="muted" />
-            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding Connections.SettingsPortText}" Width="90" />
-            <TextBlock Grid.Row="3" Grid.Column="4" Text="Settings Name" Classes="muted" />
-            <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding Connections.SettingsName}" Width="140" />
+            <TextBlock Grid.Row="3" Text="HiveMind Host" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.HiveMindHost}" Width="160" />
+            <TextBlock Grid.Row="3" Grid.Column="2" Text="HiveMind Port" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="3" Text="{Binding Connections.HiveMindPortText}" Width="90" />
+            <TextBlock Grid.Row="3" Grid.Column="4" Text="HiveMind Name" Classes="muted" />
+            <TextBox Grid.Row="3" Grid.Column="5" Text="{Binding Connections.HiveMindName}" Width="140" />
 
-            <TextBlock Grid.Row="4" Text="Repro Host" Classes="muted" />
-            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Connections.ReproHost}" Width="160" />
-            <TextBlock Grid.Row="4" Grid.Column="2" Text="Repro Port" Classes="muted" />
-            <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding Connections.ReproPortText}" Width="90" />
-            <TextBlock Grid.Row="4" Grid.Column="4" Text="Manager" Classes="muted" />
-            <TextBox Grid.Row="4" Grid.Column="5" Text="{Binding Connections.ReproManager}" Width="140" />
+            <TextBlock Grid.Row="4" Text="Settings Host" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Connections.SettingsHost}" Width="160" />
+            <TextBlock Grid.Row="4" Grid.Column="2" Text="Settings Port" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="3" Text="{Binding Connections.SettingsPortText}" Width="90" />
+            <TextBlock Grid.Row="4" Grid.Column="4" Text="Settings Name" Classes="muted" />
+            <TextBox Grid.Row="4" Grid.Column="5" Text="{Binding Connections.SettingsName}" Width="140" />
 
-            <TextBlock Grid.Row="5" Text="Worker Host" Classes="muted" />
-            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Connections.WorkerHost}" Width="160" />
-            <TextBlock Grid.Row="5" Grid.Column="2" Text="Worker Port" Classes="muted" />
-            <TextBox Grid.Row="5" Grid.Column="3" Text="{Binding Connections.WorkerPortText}" Width="90" />
-            <TextBlock Grid.Row="5" Grid.Column="4" Text="Worker Root" Classes="muted" />
-            <TextBox Grid.Row="5" Grid.Column="5" Text="{Binding Connections.WorkerRootName}" Width="140" />
+            <TextBlock Grid.Row="5" Text="Repro Host" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Connections.ReproHost}" Width="160" />
+            <TextBlock Grid.Row="5" Grid.Column="2" Text="Repro Port" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="3" Text="{Binding Connections.ReproPortText}" Width="90" />
+            <TextBlock Grid.Row="5" Grid.Column="4" Text="Manager" Classes="muted" />
+            <TextBox Grid.Row="5" Grid.Column="5" Text="{Binding Connections.ReproManager}" Width="140" />
 
-            <TextBlock Grid.Row="6" Text="Worker Logical" Classes="muted" />
-            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Connections.WorkerLogicalName}" Width="160" />
-            <TextBlock Grid.Row="6" Grid.Column="4" Text="Viz Hub" Classes="muted" />
-            <TextBox Grid.Row="6" Grid.Column="5" Text="{Binding Connections.VizHub}" Width="140" />
+            <TextBlock Grid.Row="6" Text="Worker Host" Classes="muted" />
+            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Connections.WorkerHost}" Width="160" />
+            <TextBlock Grid.Row="6" Grid.Column="2" Text="Worker Port" Classes="muted" />
+            <TextBox Grid.Row="6" Grid.Column="3" Text="{Binding Connections.WorkerPortText}" Width="90" />
+            <TextBlock Grid.Row="6" Grid.Column="4" Text="Worker Root" Classes="muted" />
+            <TextBox Grid.Row="6" Grid.Column="5" Text="{Binding Connections.WorkerRootName}" Width="140" />
+
+            <TextBlock Grid.Row="7" Text="Worker Logical" Classes="muted" />
+            <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Connections.WorkerLogicalName}" Width="160" />
           </Grid>
 
           <WrapPanel>
@@ -113,6 +116,7 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Local Launch" Classes="card-title" />
+          <TextBlock Text="Services start only from Start/Start All; connection attempts do not auto-launch runtimes." Classes="muted" TextWrapping="Wrap" />
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="Start All" Command="{Binding StartAllCommand}" Classes="accent" />
             <Button Content="Stop All" Command="{Binding StopAllCommand}" />
