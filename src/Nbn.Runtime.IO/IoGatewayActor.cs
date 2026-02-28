@@ -10,6 +10,8 @@ namespace Nbn.Runtime.IO;
 public sealed class IoGatewayActor : IActor
 {
     private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
+    private static readonly bool LogMetadataDiagnostics =
+        IsEnvTrue("NBN_METADATA_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_IO_METADATA_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
@@ -190,7 +192,7 @@ public sealed class IoGatewayActor : IActor
 
         if (!_brains.TryGetValue(brainId, out var entry))
         {
-            context.Respond(new BrainInfo
+            var missing = new BrainInfo
             {
                 BrainId = message.BrainId,
                 InputWidth = 0,
@@ -205,12 +207,19 @@ public sealed class IoGatewayActor : IActor
                 LastTickCost = 0,
                 BaseDefinition = new ArtifactRef(),
                 LastSnapshot = new ArtifactRef()
-            });
+            };
+            context.Respond(missing);
+
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] BrainInfo missing brain={brainId} requester={PidLabel(context.Sender)}");
+            }
             return;
         }
 
         entry.Energy.Accrue();
-        context.Respond(new BrainInfo
+        var response = new BrainInfo
         {
             BrainId = message.BrainId,
             InputWidth = entry.InputWidth,
@@ -225,7 +234,14 @@ public sealed class IoGatewayActor : IActor
             LastTickCost = entry.Energy.LastTickCost,
             BaseDefinition = entry.BaseDefinition ?? new ArtifactRef(),
             LastSnapshot = entry.LastSnapshot ?? new ArtifactRef()
-        });
+        };
+        context.Respond(response);
+
+        if (LogMetadataDiagnostics && !HasArtifactRef(response.BaseDefinition))
+        {
+            Console.WriteLine(
+                $"[IoGatewayMeta] BrainInfo no-base brain={brainId} requester={PidLabel(context.Sender)} input={response.InputWidth} output={response.OutputWidth} snapshot={ArtifactLabel(response.LastSnapshot)}");
+        }
     }
 
     private async Task ForwardInputAsync(IContext context, object message)
@@ -542,6 +558,12 @@ public sealed class IoGatewayActor : IActor
                     message.LastTickCost);
             }
 
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] RegisterBrain update brain={brainId} input={existing.InputWidth} output={existing.OutputWidth} base={ArtifactLabel(existing.BaseDefinition)} snapshot={ArtifactLabel(existing.LastSnapshot)} runtimeConfig={message.HasRuntimeConfig}");
+            }
+
             await EnsureIoGatewayRegisteredAsync(context, brainId);
             await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid);
             return;
@@ -594,6 +616,12 @@ public sealed class IoGatewayActor : IActor
         };
 
         _brains.Add(brainId, entry);
+
+        if (LogMetadataDiagnostics)
+        {
+            Console.WriteLine(
+                $"[IoGatewayMeta] RegisterBrain add brain={brainId} input={entry.InputWidth} output={entry.OutputWidth} base={ArtifactLabel(entry.BaseDefinition)} snapshot={ArtifactLabel(entry.LastSnapshot)} runtimeConfig={message.HasRuntimeConfig}");
+        }
 
         await EnsureIoGatewayRegisteredAsync(context, brainId);
         await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid);
@@ -661,12 +689,22 @@ public sealed class IoGatewayActor : IActor
         if (!TryGetBrainId(message.BrainId, out var brainId))
         {
             context.Respond(new BrainDefinitionReady());
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine("[IoGatewayMeta] ExportBrainDefinition invalid-brain-id");
+            }
             return;
         }
 
         _brains.TryGetValue(brainId, out var entry);
         if (!message.RebaseOverlays && entry is not null && HasArtifactRef(entry.BaseDefinition))
         {
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] ExportBrainDefinition local-hit brain={brainId} base={ArtifactLabel(entry.BaseDefinition)} rebase={message.RebaseOverlays}");
+            }
+
             context.Respond(new BrainDefinitionReady
             {
                 BrainId = message.BrainId,
@@ -679,6 +717,12 @@ public sealed class IoGatewayActor : IActor
         {
             if (entry is not null && HasArtifactRef(entry.BaseDefinition))
             {
+                if (LogMetadataDiagnostics)
+                {
+                    Console.WriteLine(
+                        $"[IoGatewayMeta] ExportBrainDefinition hive-missing local-fallback brain={brainId} base={ArtifactLabel(entry.BaseDefinition)}");
+                }
+
                 context.Respond(new BrainDefinitionReady
                 {
                     BrainId = message.BrainId,
@@ -687,6 +731,12 @@ public sealed class IoGatewayActor : IActor
             }
             else
             {
+                if (LogMetadataDiagnostics)
+                {
+                    Console.WriteLine(
+                        $"[IoGatewayMeta] ExportBrainDefinition empty brain={brainId} reason=hive-missing-local-missing");
+                }
+
                 context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
             }
             return;
@@ -708,6 +758,12 @@ public sealed class IoGatewayActor : IActor
 
                 if (ready is not null)
                 {
+                    if (LogMetadataDiagnostics)
+                    {
+                        Console.WriteLine(
+                            $"[IoGatewayMeta] ExportBrainDefinition hive-response brain={brainId} base={ArtifactLabel(ready.BrainDef)}");
+                    }
+
                     context.Respond(ready);
                     return Task.CompletedTask;
                 }
@@ -721,12 +777,24 @@ public sealed class IoGatewayActor : IActor
 
             if (entry is not null && HasArtifactRef(entry.BaseDefinition))
             {
+                if (LogMetadataDiagnostics)
+                {
+                    Console.WriteLine(
+                        $"[IoGatewayMeta] ExportBrainDefinition fallback-local brain={brainId} base={ArtifactLabel(entry.BaseDefinition)}");
+                }
+
                 context.Respond(new BrainDefinitionReady
                 {
                     BrainId = message.BrainId,
                     BrainDef = entry.BaseDefinition
                 });
                 return Task.CompletedTask;
+            }
+
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] ExportBrainDefinition empty brain={brainId} reason=hive-failed-local-missing");
             }
 
             context.Respond(new BrainDefinitionReady { BrainId = message.BrainId });
@@ -840,6 +908,18 @@ public sealed class IoGatewayActor : IActor
            && reference.Sha256 is not null
            && reference.Sha256.Value is not null
            && reference.Sha256.Value.Length == 32;
+
+    private static string ArtifactLabel(ArtifactRef? reference)
+    {
+        if (!HasArtifactRef(reference))
+        {
+            return "missing";
+        }
+
+        return reference!.TryToSha256Hex(out var sha)
+            ? sha[..Math.Min(12, sha.Length)]
+            : "present";
+    }
 
     private void HandleReproduceByBrainIds(IContext context, ReproduceByBrainIds message)
     {

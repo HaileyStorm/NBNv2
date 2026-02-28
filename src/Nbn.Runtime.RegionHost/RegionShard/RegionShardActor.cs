@@ -20,6 +20,7 @@ public sealed class RegionShardActor : IActor
     private static readonly bool LogOutput = IsEnvTrue("NBN_REGIONHOST_LOG_OUTPUT");
     private static readonly bool LogViz = IsEnvTrue("NBN_REGIONHOST_LOG_VIZ");
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogInitDiagnostics = IsEnvTrue("NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED");
     private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
     private readonly RegionShardCpuBackend _cpu;
@@ -70,6 +71,10 @@ public sealed class RegionShardActor : IActor
             case Started:
                 EmitVizEvent(context, VizEventType.VizShardSpawned, tickId: 0, value: 0f);
                 EmitDebug(context, ProtoSeverity.SevInfo, "shard.started", $"Shard {_shardId} for brain {_brainId} started.");
+                if (LogInitDiagnostics)
+                {
+                    LogShardInitDiagnostics();
+                }
                 break;
             case RegionShardUpdateEndpoints endpoints:
                 _router = endpoints.Router;
@@ -726,6 +731,73 @@ public sealed class RegionShardActor : IActor
             SenderNode = context.System.Address ?? string.Empty,
             TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
+    }
+
+    private void LogShardInitDiagnostics()
+    {
+        var existsCount = 0;
+        var enabledCount = 0;
+        var totalAxons = 0;
+        var sampleIndex = -1;
+        var minPre = float.PositiveInfinity;
+        var maxPre = float.NegativeInfinity;
+        var minThr = float.PositiveInfinity;
+        var maxThr = float.NegativeInfinity;
+
+        for (var i = 0; i < _state.NeuronCount; i++)
+        {
+            if (_state.Exists[i])
+            {
+                existsCount++;
+                if (sampleIndex < 0)
+                {
+                    sampleIndex = i;
+                }
+            }
+
+            if (_state.Enabled[i])
+            {
+                enabledCount++;
+            }
+
+            var pre = _state.PreActivationThreshold[i];
+            var thr = _state.ActivationThreshold[i];
+            if (pre < minPre)
+            {
+                minPre = pre;
+            }
+
+            if (pre > maxPre)
+            {
+                maxPre = pre;
+            }
+
+            if (thr < minThr)
+            {
+                minThr = thr;
+            }
+
+            if (thr > maxThr)
+            {
+                maxThr = thr;
+            }
+
+            totalAxons += _state.AxonCounts[i];
+        }
+
+        var sampleLabel = "none";
+        if (sampleIndex >= 0)
+        {
+            sampleLabel =
+                $"idx={sampleIndex} neuron={_state.NeuronStart + sampleIndex} " +
+                $"exists={_state.Exists[sampleIndex]} enabled={_state.Enabled[sampleIndex]} " +
+                $"accum={_state.AccumulationFunctions[sampleIndex]} act={_state.ActivationFunctions[sampleIndex]} reset={_state.ResetFunctions[sampleIndex]} " +
+                $"pre={_state.PreActivationThreshold[sampleIndex]:0.###} thr={_state.ActivationThreshold[sampleIndex]:0.###} " +
+                $"paramA={_state.ParamA[sampleIndex]:0.###} paramB={_state.ParamB[sampleIndex]:0.###} axons={_state.AxonCounts[sampleIndex]}";
+        }
+
+        Console.WriteLine(
+            $"[RegionShard] Init diagnostics brain={_brainId} shard={_shardId} region={_state.RegionId} neuronStart={_state.NeuronStart} neuronCount={_state.NeuronCount} exists={existsCount} enabled={enabledCount} totalAxons={totalAxons} preRange=[{minPre:0.###},{maxPre:0.###}] thrRange=[{minThr:0.###},{maxThr:0.###}] sample={sampleLabel}.");
     }
 
     private static bool IsEnvTrue(string key)

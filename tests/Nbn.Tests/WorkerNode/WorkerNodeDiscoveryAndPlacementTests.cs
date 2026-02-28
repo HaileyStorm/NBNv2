@@ -2,12 +2,14 @@ using Microsoft.Data.Sqlite;
 using Nbn.Proto.Control;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.RegionHost;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Nbn.Tests.Format;
 using Nbn.Tests.TestSupport;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 using ProtoSettings = Nbn.Proto.Settings;
 
 namespace Nbn.Tests.WorkerNode;
@@ -1303,6 +1305,400 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         }
     }
 
+    [Fact]
+    public async Task PlacementAssignmentRequest_BrainInfoMissingBaseDefinition_UsesExportFallbackForArtifactBackedShard()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-export-fallback-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            _ = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new DelayedMetadataProbeActor(brainId, brainDef, exportMissCount: 0)),
+                ioName);
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: artifactStore)),
+                workerName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-export-fallback",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 1,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 4)
+                });
+
+            Assert.True(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+
+            var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+                workerPid,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                });
+            _ = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-export-fallback");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_ArtifactMetadataAppearsAfterTransientMiss_RetriesAndLoadsArtifactBackedShard()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-metadata-retry-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+
+            _ = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new DelayedMetadataProbeActor(brainId, brainDef, exportMissCount: 2)),
+                ioName);
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: artifactStore)),
+                workerName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-metadata-retry",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 1,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 4)
+                });
+
+            Assert.True(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+
+            var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+                workerPid,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                });
+            _ = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-metadata-retry");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_ArtifactMetadataUnavailable_ReturnsRetryableFailureAck()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-metadata-missing-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+
+            _ = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new DelayedMetadataProbeActor(brainId, brainDef, exportMissCount: int.MaxValue)),
+                ioName);
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: artifactStore)),
+                workerName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-metadata-missing",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 1,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 4)
+                });
+
+            Assert.False(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, ack.State);
+            Assert.True(ack.Retryable);
+            Assert.Equal(PlacementFailureReason.PlacementFailureWorkerUnavailable, ack.FailureReason);
+            Assert.True(ack.RetryAfterMs > 0);
+            Assert.Contains("artifact metadata unavailable", ack.Message, StringComparison.OrdinalIgnoreCase);
+
+            var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                workerPid,
+                new WorkerNodeActor.GetWorkerNodeSnapshot());
+            Assert.Equal(0, snapshot.TrackedAssignmentCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_MetadataMissingWithHiveHint_ReturnsRetryableFailureAck()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var brainId = Guid.NewGuid();
+        var workerNodeId = Guid.NewGuid();
+        var workerName = $"worker-{Guid.NewGuid():N}";
+        var workerPid = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "worker.local")),
+            workerName);
+
+        var assignmentAck = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var request = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "assign-hive-hint-metadata-miss",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 1,
+                regionId: 1,
+                shardIndex: 0,
+                target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                neuronStart: 0,
+                neuronCount: 4)
+        };
+
+        _ = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new HiveHintMetadataMissProbeActor(workerPid, request, assignmentAck)),
+            $"hive-hint-{Guid.NewGuid():N}");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ack = await assignmentAck.Task.WaitAsync(cts.Token);
+
+        Assert.False(ack.Accepted);
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, ack.State);
+        Assert.True(ack.Retryable);
+        Assert.Equal(PlacementFailureReason.PlacementFailureWorkerUnavailable, ack.FailureReason);
+        Assert.Contains("artifact metadata unavailable", ack.Message, StringComparison.OrdinalIgnoreCase);
+
+        var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(0, snapshot.TrackedAssignmentCount);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_MetadataMissingWithoutEndpointContext_DoesNotTrackHostedAssignment()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var brainId = Guid.NewGuid();
+        var workerNodeId = Guid.NewGuid();
+        var workerName = $"worker-{Guid.NewGuid():N}";
+        var workerPid = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "worker.local")),
+            workerName);
+
+        harness.Root.Send(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-metadata-missing-no-context",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 1,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                    neuronStart: 0,
+                    neuronCount: 4)
+            });
+        await Task.Delay(150);
+
+        var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetWorkerNodeSnapshot());
+        Assert.Equal(0, snapshot.TrackedAssignmentCount);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_BaseDefinitionStoreUriDifferentFromWorkerRoot_LoadsArtifactBackedShard()
+    {
+        var sourceArtifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-source-store-{Guid.NewGuid():N}");
+        var workerArtifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-runtime-store-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sourceArtifactRoot);
+        Directory.CreateDirectory(workerArtifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var sourceStore = new LocalArtifactStore(new ArtifactStoreOptions(sourceArtifactRoot));
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await sourceStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", sourceArtifactRoot);
+
+            var brainId = Guid.NewGuid();
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+
+            _ = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoWithBaseDefinitionActor(brainDef, inputWidth: 2, outputWidth: 2)),
+                ioName);
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactRootPath: workerArtifactRoot)),
+                workerName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-store-uri-differs",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: NbnConstants.InputRegionId,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 1)
+                });
+
+            Assert.True(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(sourceArtifactRoot))
+            {
+                Directory.Delete(sourceArtifactRoot, recursive: true);
+            }
+
+            if (Directory.Exists(workerArtifactRoot))
+            {
+                Directory.Delete(workerArtifactRoot, recursive: true);
+            }
+        }
+    }
+
     private static IoOptions CreateIoOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -1482,6 +1878,194 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
 
         public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException(_message);
+    }
+
+    private sealed class ExportBrainDefinitionProbeActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly Nbn.Proto.ArtifactRef _baseDefinition;
+        private readonly uint _inputWidth;
+        private readonly uint _outputWidth;
+
+        public ExportBrainDefinitionProbeActor(Guid brainId, Nbn.Proto.ArtifactRef baseDefinition, uint inputWidth = 3, uint outputWidth = 2)
+        {
+            _brainId = brainId;
+            _baseDefinition = baseDefinition.Clone();
+            _inputWidth = inputWidth;
+            _outputWidth = outputWidth;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoControl.GetBrainIoInfo infoRequest
+                && infoRequest.BrainId is not null
+                && infoRequest.BrainId.TryToGuid(out var infoBrainId)
+                && infoBrainId == _brainId)
+            {
+                context.Respond(new ProtoControl.BrainIoInfo
+                {
+                    BrainId = infoRequest.BrainId,
+                    InputWidth = _inputWidth,
+                    OutputWidth = _outputWidth
+                });
+                return Task.CompletedTask;
+            }
+
+            if (context.Message is not Nbn.Proto.Io.ExportBrainDefinition request)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (request.BrainId is not null
+                && request.BrainId.TryToGuid(out var brainId)
+                && brainId == _brainId)
+            {
+                context.Respond(new Nbn.Proto.Io.BrainDefinitionReady
+                {
+                    BrainId = request.BrainId,
+                    BrainDef = _baseDefinition.Clone()
+                });
+                return Task.CompletedTask;
+            }
+
+            context.Respond(new Nbn.Proto.Io.BrainDefinitionReady
+            {
+                BrainId = request.BrainId
+            });
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class DelayedMetadataProbeActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly Nbn.Proto.ArtifactRef _baseDefinition;
+        private int _remainingExportMisses;
+
+        public DelayedMetadataProbeActor(Guid brainId, Nbn.Proto.ArtifactRef baseDefinition, int exportMissCount)
+        {
+            _brainId = brainId;
+            _baseDefinition = baseDefinition.Clone();
+            _remainingExportMisses = Math.Max(0, exportMissCount);
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Nbn.Proto.Io.BrainInfoRequest infoRequest:
+                {
+                    var response = new Nbn.Proto.Io.BrainInfo
+                    {
+                        BrainId = infoRequest.BrainId,
+                        InputWidth = 3,
+                        OutputWidth = 2,
+                        BaseDefinition = new Nbn.Proto.ArtifactRef(),
+                        LastSnapshot = new Nbn.Proto.ArtifactRef()
+                    };
+                    context.Respond(response);
+                    return Task.CompletedTask;
+                }
+                case Nbn.Proto.Io.ExportBrainDefinition exportRequest:
+                {
+                    if (exportRequest.BrainId is not null
+                        && exportRequest.BrainId.TryToGuid(out var requestedBrainId)
+                        && requestedBrainId == _brainId
+                        && _remainingExportMisses <= 0)
+                    {
+                        context.Respond(new Nbn.Proto.Io.BrainDefinitionReady
+                        {
+                            BrainId = exportRequest.BrainId,
+                            BrainDef = _baseDefinition.Clone()
+                        });
+                        return Task.CompletedTask;
+                    }
+
+                    if (_remainingExportMisses > 0)
+                    {
+                        _remainingExportMisses--;
+                    }
+
+                    context.Respond(new Nbn.Proto.Io.BrainDefinitionReady
+                    {
+                        BrainId = exportRequest.BrainId
+                    });
+                    return Task.CompletedTask;
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveHintMetadataMissProbeActor : IActor
+    {
+        private readonly PID _workerPid;
+        private readonly PlacementAssignmentRequest _request;
+        private readonly TaskCompletionSource<PlacementAssignmentAck> _ack;
+
+        public HiveHintMetadataMissProbeActor(
+            PID workerPid,
+            PlacementAssignmentRequest request,
+            TaskCompletionSource<PlacementAssignmentAck> ack)
+        {
+            _workerPid = workerPid;
+            _request = request;
+            _ack = ack;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_workerPid, _request);
+                    break;
+                case PlacementAssignmentAck ack:
+                    _ack.TrySetResult(ack);
+                    break;
+                case Nbn.Proto.Io.ExportBrainDefinition exportRequest:
+                    context.Respond(new Nbn.Proto.Io.BrainDefinitionReady
+                    {
+                        BrainId = exportRequest.BrainId
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FixedBrainInfoWithBaseDefinitionActor : IActor
+    {
+        private readonly Nbn.Proto.ArtifactRef _baseDefinition;
+        private readonly uint _inputWidth;
+        private readonly uint _outputWidth;
+
+        public FixedBrainInfoWithBaseDefinitionActor(Nbn.Proto.ArtifactRef baseDefinition, uint inputWidth, uint outputWidth)
+        {
+            _baseDefinition = baseDefinition.Clone();
+            _inputWidth = inputWidth;
+            _outputWidth = outputWidth;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not Nbn.Proto.Io.BrainInfoRequest request)
+            {
+                return Task.CompletedTask;
+            }
+
+            context.Respond(new Nbn.Proto.Io.BrainInfo
+            {
+                BrainId = request.BrainId,
+                InputWidth = _inputWidth,
+                OutputWidth = _outputWidth,
+                BaseDefinition = _baseDefinition.Clone(),
+                LastSnapshot = new Nbn.Proto.ArtifactRef()
+            });
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class WorkerHarness : IAsyncDisposable

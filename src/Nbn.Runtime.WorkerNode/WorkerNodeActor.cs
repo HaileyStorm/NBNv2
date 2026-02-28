@@ -20,10 +20,16 @@ namespace Nbn.Runtime.WorkerNode;
 public sealed class WorkerNodeActor : IActor
 {
     private static readonly TimeSpan BrainInfoTimeout = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan BrainDefinitionTimeout = TimeSpan.FromMilliseconds(750);
+    private static readonly bool LogRuntimeMetadataDiagnostics = IsEnvTrue("NBN_RUNTIME_METADATA_DIAGNOSTICS_ENABLED");
+    private static readonly int RuntimeMetadataMaxAttempts = 6;
+    private static readonly TimeSpan RuntimeMetadataRetryDelay = TimeSpan.FromMilliseconds(150);
 
     private readonly Guid _workerNodeId;
     private readonly string _workerAddress;
     private readonly IArtifactStore _artifactStore;
+    private readonly string _defaultArtifactRootPath;
+    private readonly Dictionary<string, IArtifactStore> _artifactStoresByRoot;
     private readonly Dictionary<string, ServiceEndpointRegistration> _endpoints = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HostedAssignmentState> _assignments = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, BrainHostingState> _brains = new();
@@ -50,7 +56,12 @@ public sealed class WorkerNodeActor : IActor
 
         _workerNodeId = workerNodeId;
         _workerAddress = workerAddress ?? string.Empty;
-        _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(ResolveArtifactRoot(artifactRootPath)));
+        _defaultArtifactRootPath = ResolveArtifactRoot(artifactRootPath);
+        _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(_defaultArtifactRootPath));
+        _artifactStoresByRoot = new Dictionary<string, IArtifactStore>(StringComparer.OrdinalIgnoreCase)
+        {
+            [_defaultArtifactRootPath] = _artifactStore
+        };
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
         _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
         _observabilityDefaultHost = string.IsNullOrWhiteSpace(observabilityDefaultHost)
@@ -380,7 +391,34 @@ public sealed class WorkerNodeActor : IActor
 
         if (assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard)
         {
-            await EnsureRuntimeInfoAsync(context, brain).ConfigureAwait(false);
+            var metadataReady = await EnsureRuntimeInfoAsync(context, brain, requireArtifacts: true).ConfigureAwait(false);
+            var requesterIsEphemeral = IsEphemeralRequestSender(context.Sender);
+            var shouldRequireArtifacts = HasKnownIoGatewayEndpoint() || HasHiveMindHint() || !requesterIsEphemeral;
+            if (!metadataReady && shouldRequireArtifacts)
+            {
+                var ioError = string.IsNullOrWhiteSpace(brain.RuntimeInfo?.LastIoError)
+                    ? "metadata_unavailable"
+                    : brain.RuntimeInfo!.LastIoError;
+
+                if (LogRuntimeMetadataDiagnostics)
+                {
+                    Console.WriteLine(
+                        $"[WorkerNode] Region shard placement deferred pending artifact metadata. brain={brain.BrainId} assignment={assignment.AssignmentId} region={assignment.RegionId} shard={assignment.ShardIndex} hasIoEndpoint={HasKnownIoGatewayEndpoint()} hasHiveHint={HasHiveMindHint()} ioError={ioError}");
+                }
+
+                RespondFailedPlacement(
+                    context,
+                    FailedAck(
+                        assignment.AssignmentId,
+                        assignment.BrainId,
+                        assignment.PlacementEpoch,
+                        PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                        $"artifact metadata unavailable for brain {brain.BrainId}; retry when IO/Hive metadata is ready (detail={ioError})",
+                        retryable: true,
+                        retryAfterMs: (ulong)Math.Max(50, RuntimeMetadataRetryDelay.TotalMilliseconds)),
+                    assignment.Target);
+                return;
+            }
         }
 
         var hostingStarted = Stopwatch.GetTimestamp();
@@ -769,6 +807,23 @@ public sealed class WorkerNodeActor : IActor
         var neuronStart = checked((int)assignment.NeuronStart);
         var requestedNeuronCount = checked((int)assignment.NeuronCount);
         var neuronCount = Math.Max(1, requestedNeuronCount);
+        var shouldRequireArtifacts = HasKnownIoGatewayEndpoint() || HasHiveMindHint() || !IsEphemeralRequestSender(context.Sender);
+        if (!HasArtifactRef(brain.RuntimeInfo?.BaseDefinition)
+            && shouldRequireArtifacts)
+        {
+            var detail = string.IsNullOrWhiteSpace(brain.RuntimeInfo?.LastIoError)
+                ? "metadata_unavailable"
+                : brain.RuntimeInfo!.LastIoError;
+            return HostingResult.Failed(FailedAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                $"artifact metadata unavailable for brain {brain.BrainId}; retry when IO/Hive metadata is ready (detail={detail})",
+                retryable: true,
+                retryAfterMs: (ulong)Math.Max(50, RuntimeMetadataRetryDelay.TotalMilliseconds)));
+        }
+
         var actorName = ResolveActorName(assignment);
         var routing = BuildShardRouting(brain, (shardId, neuronStart, neuronCount));
         var observabilityTargets = ObservabilityTargets.Resolve(_observabilityDefaultHost);
@@ -807,10 +862,16 @@ public sealed class WorkerNodeActor : IActor
         {
             var nbnRef = runtime.BaseDefinition!.Clone();
             var nbsRef = HasArtifactRef(runtime.LastSnapshot) ? runtime.LastSnapshot!.Clone() : null;
+            var artifactStore = ResolveArtifactStore(nbnRef);
+            if (LogRuntimeMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[WorkerNode] Region shard using artifact state. brain={brain.BrainId} assignment={assignment.AssignmentId} region={assignment.RegionId} shard={assignment.ShardIndex} base={ArtifactLabel(nbnRef)} snapshot={ArtifactLabel(nbsRef)} store={ResolveArtifactStoreRootLabel(nbnRef)}");
+            }
             try
             {
                 return await RegionShardArtifactLoader.CreatePropsAsync(
-                    _artifactStore,
+                    artifactStore,
                     nbnRef,
                     nbsRef,
                     checked((int)assignment.RegionId),
@@ -827,6 +888,12 @@ public sealed class WorkerNodeActor : IActor
                     $"Artifact-backed shard load failed for brain {brain.BrainId} region {assignment.RegionId} shard {assignment.ShardIndex}: {detail}",
                     ex);
             }
+        }
+
+        if (LogRuntimeMetadataDiagnostics)
+        {
+            Console.WriteLine(
+                $"[WorkerNode] Falling back to synthetic shard state. brain={brain.BrainId} region={assignment.RegionId} shard={assignment.ShardIndex} hasIoMetadata={runtime?.HasIoMetadata ?? false} baseDefPresent={HasArtifactRef(runtime?.BaseDefinition)} ioError={runtime?.LastIoError}");
         }
 
         var state = BuildSyntheticRegionState(brain, assignment, neuronStart, neuronCount);
@@ -1040,103 +1107,310 @@ public sealed class WorkerNodeActor : IActor
         });
     }
 
-    private async Task EnsureRuntimeInfoAsync(IContext context, BrainHostingState brain)
+    private async Task<bool> EnsureRuntimeInfoAsync(IContext context, BrainHostingState brain, bool requireArtifacts = false)
     {
         brain.RuntimeInfo ??= new BrainRuntimeInfo();
-        if (brain.RuntimeInfo.HasIoMetadata)
+        if (brain.RuntimeInfo.HasIoMetadata
+            && (!requireArtifacts || HasArtifactRef(brain.RuntimeInfo.BaseDefinition)))
         {
-            return;
+            return true;
         }
 
-        if (!TryResolveEndpointPid(ServiceEndpointSettings.IoGatewayKey, out var ioPid))
+        if (LogRuntimeMetadataDiagnostics)
         {
-            brain.RuntimeInfo.LastIoError = "io_gateway_unavailable";
-            return;
+            LogRuntimeMetadata(brain.BrainId, "begin", brain.RuntimeInfo, requireArtifacts);
         }
 
-        var candidatePids = new List<PID>(2);
-        var systemAddress = context.System.Address;
-        if (string.IsNullOrWhiteSpace(ioPid.Address) && !string.IsNullOrWhiteSpace(systemAddress))
+        var maxAttempts = requireArtifacts ? RuntimeMetadataMaxAttempts : 1;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            candidatePids.Add(new PID(systemAddress, ioPid.Id));
+            var complete = await TryRefreshRuntimeInfoAsync(context, brain, requireArtifacts).ConfigureAwait(false);
+            if (complete)
+            {
+                break;
+            }
+
+            if (attempt >= maxAttempts)
+            {
+                break;
+            }
+
+            if (LogRuntimeMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[WorkerNode] Runtime metadata retry pending. brain={brain.BrainId} attempt={attempt}/{maxAttempts} ioError={brain.RuntimeInfo.LastIoError}");
+            }
+
+            if (RuntimeMetadataRetryDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(RuntimeMetadataRetryDelay).ConfigureAwait(false);
+            }
         }
 
-        candidatePids.Add(ioPid);
+        UpdateRuntimeWidthsFromShards(brain);
+
+        if (LogRuntimeMetadataDiagnostics)
+        {
+            LogRuntimeMetadata(brain.BrainId, "end", brain.RuntimeInfo, requireArtifacts);
+        }
+
+        return brain.RuntimeInfo.HasIoMetadata
+               && (!requireArtifacts || HasArtifactRef(brain.RuntimeInfo.BaseDefinition));
+    }
+
+    private async Task<bool> TryRefreshRuntimeInfoAsync(IContext context, BrainHostingState brain, bool requireArtifacts)
+    {
+        brain.RuntimeInfo ??= new BrainRuntimeInfo();
+        var runtime = brain.RuntimeInfo;
+
+        if (!TryResolveEndpointPid(ServiceEndpointSettings.IoGatewayKey, out var resolvedIoPid))
+        {
+            runtime.LastIoError = "io_gateway_unavailable";
+            runtime.HasIoMetadata = false;
+
+            if (requireArtifacts)
+            {
+                await TryPopulateArtifactRefsAsync(context, brain, ioPid: null).ConfigureAwait(false);
+                if (HasArtifactRef(runtime.BaseDefinition))
+                {
+                    runtime.HasIoMetadata = true;
+                    runtime.LastIoError = string.Empty;
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         Exception? lastRequestException = null;
         BrainInfo? info = null;
+        foreach (var candidate in BuildCandidatePids(context, resolvedIoPid))
+        {
+            try
+            {
+                info = await context.RequestAsync<BrainInfo>(
+                    candidate,
+                    new BrainInfoRequest
+                    {
+                        BrainId = brain.BrainId.ToProtoUuid()
+                    },
+                    BrainInfoTimeout).ConfigureAwait(false);
 
+                if (info is not null)
+                {
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                lastRequestException = ex;
+            }
+        }
+
+        var hasMetadata = false;
         try
         {
-            foreach (var candidate in candidatePids)
+            if (info is not null)
+            {
+                if (info.InputWidth > 0)
+                {
+                    runtime.InputWidth = Math.Max(runtime.InputWidth, checked((int)info.InputWidth));
+                    hasMetadata = true;
+                }
+
+                if (info.OutputWidth > 0)
+                {
+                    runtime.OutputWidth = Math.Max(runtime.OutputWidth, checked((int)info.OutputWidth));
+                    hasMetadata = true;
+                }
+
+                if (HasArtifactRef(info.BaseDefinition))
+                {
+                    runtime.BaseDefinition = info.BaseDefinition.Clone();
+                    hasMetadata = true;
+                }
+
+                if (HasArtifactRef(info.LastSnapshot))
+                {
+                    runtime.LastSnapshot = info.LastSnapshot.Clone();
+                    hasMetadata = true;
+                }
+            }
+
+            if (requireArtifacts && !HasArtifactRef(runtime.BaseDefinition))
+            {
+                await TryPopulateArtifactRefsAsync(context, brain, resolvedIoPid).ConfigureAwait(false);
+            }
+
+            var hasArtifacts = HasArtifactRef(runtime.BaseDefinition);
+            var complete = requireArtifacts ? hasArtifacts : hasMetadata;
+            runtime.HasIoMetadata = complete;
+            if (complete)
+            {
+                runtime.LastIoError = string.Empty;
+                return true;
+            }
+
+            if (info is null && lastRequestException is not null)
+            {
+                runtime.LastIoError = lastRequestException.GetBaseException().Message;
+            }
+            else if (requireArtifacts && string.IsNullOrWhiteSpace(runtime.LastIoError))
+            {
+                runtime.LastIoError = "missing_artifact_metadata";
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            runtime.HasIoMetadata = false;
+            runtime.LastIoError = ex.GetBaseException().Message;
+            return false;
+        }
+    }
+
+    private async Task TryPopulateArtifactRefsAsync(IContext context, BrainHostingState brain, PID? ioPid)
+    {
+        brain.RuntimeInfo ??= new BrainRuntimeInfo();
+        if (HasArtifactRef(brain.RuntimeInfo.BaseDefinition))
+        {
+            return;
+        }
+
+        async Task<bool> TryExportBaseDefinitionAsync(PID endpointPid)
+        {
+            Exception? exportException = null;
+            foreach (var candidate in BuildCandidatePids(context, endpointPid))
             {
                 try
                 {
-                    info = await context.RequestAsync<BrainInfo>(
+                    var ready = await context.RequestAsync<BrainDefinitionReady>(
                         candidate,
-                        new BrainInfoRequest
+                        new ExportBrainDefinition
                         {
-                            BrainId = brain.BrainId.ToProtoUuid()
+                            BrainId = brain.BrainId.ToProtoUuid(),
+                            RebaseOverlays = false
                         },
-                        BrainInfoTimeout).ConfigureAwait(false);
+                        BrainDefinitionTimeout).ConfigureAwait(false);
 
-                    if (info is not null)
+                    if (ready is not null && HasArtifactRef(ready.BrainDef))
                     {
-                        break;
+                        brain.RuntimeInfo.BaseDefinition = ready.BrainDef.Clone();
+                        return true;
                     }
                 }
                 catch (Exception ex)
                 {
-                    lastRequestException = ex;
+                    exportException = ex;
                 }
             }
 
-            if (info is null)
+            if (exportException is not null)
             {
-                if (lastRequestException is not null)
-                {
-                    throw lastRequestException;
-                }
-
-                return;
+                brain.RuntimeInfo.LastIoError = exportException.GetBaseException().Message;
             }
 
-            var hasMetadata = false;
-            if (info.InputWidth > 0)
-            {
-                brain.RuntimeInfo.InputWidth = Math.Max(brain.RuntimeInfo.InputWidth, checked((int)info.InputWidth));
-                hasMetadata = true;
-            }
-
-            if (info.OutputWidth > 0)
-            {
-                brain.RuntimeInfo.OutputWidth = Math.Max(brain.RuntimeInfo.OutputWidth, checked((int)info.OutputWidth));
-                hasMetadata = true;
-            }
-
-            if (HasArtifactRef(info.BaseDefinition))
-            {
-                brain.RuntimeInfo.BaseDefinition = info.BaseDefinition.Clone();
-                hasMetadata = true;
-            }
-
-            if (HasArtifactRef(info.LastSnapshot))
-            {
-                brain.RuntimeInfo.LastSnapshot = info.LastSnapshot.Clone();
-                hasMetadata = true;
-            }
-
-            if (hasMetadata)
-            {
-                brain.RuntimeInfo.HasIoMetadata = true;
-                brain.RuntimeInfo.LastIoError = string.Empty;
-            }
-
-            UpdateRuntimeWidthsFromShards(brain);
+            return false;
         }
-        catch (Exception ex)
+
+        var exportedFromIo = false;
+        if (ioPid is not null)
         {
-            brain.RuntimeInfo.LastIoError = ex.GetBaseException().Message;
+            exportedFromIo = await TryExportBaseDefinitionAsync(ioPid).ConfigureAwait(false);
+        }
+
+        if (!exportedFromIo)
+        {
+            var hiveMindPid = ResolveHiveMindPid(context);
+            if (hiveMindPid is not null)
+            {
+                await TryExportBaseDefinitionAsync(hiveMindPid).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static IReadOnlyList<PID> BuildCandidatePids(IContext context, PID endpointPid)
+    {
+        var candidates = new List<PID>(2);
+        var systemAddress = context.System.Address;
+        if (string.IsNullOrWhiteSpace(endpointPid.Address) && !string.IsNullOrWhiteSpace(systemAddress))
+        {
+            candidates.Add(new PID(systemAddress, endpointPid.Id));
+        }
+
+        candidates.Add(endpointPid);
+
+        if (candidates.Count <= 1)
+        {
+            return candidates;
+        }
+
+        var deduped = new List<PID>(candidates.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in candidates)
+        {
+            var key = $"{candidate.Address}\u001f{candidate.Id}";
+            if (seen.Add(key))
+            {
+                deduped.Add(candidate);
+            }
+        }
+
+        return deduped;
+    }
+
+    private static void LogRuntimeMetadata(Guid brainId, string stage, BrainRuntimeInfo info, bool requireArtifacts)
+        => Console.WriteLine(
+            $"[WorkerNode] Runtime metadata {stage}. brain={brainId} requireArtifacts={requireArtifacts} ioMetadata={info.HasIoMetadata} input={info.InputWidth} output={info.OutputWidth} base={ArtifactLabel(info.BaseDefinition)} snapshot={ArtifactLabel(info.LastSnapshot)} ioError={info.LastIoError}");
+
+    private IArtifactStore ResolveArtifactStore(ArtifactRef reference)
+    {
+        if (_artifactStore is not LocalArtifactStore)
+        {
+            return _artifactStore;
+        }
+
+        var storeRoot = ResolveArtifactRoot(reference.StoreUri);
+        if (ArePathsEquivalent(storeRoot, _defaultArtifactRootPath))
+        {
+            return _artifactStore;
+        }
+
+        if (_artifactStoresByRoot.TryGetValue(storeRoot, out var cached))
+        {
+            return cached;
+        }
+
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(storeRoot));
+        _artifactStoresByRoot[storeRoot] = store;
+        return store;
+    }
+
+    private string ResolveArtifactStoreRootLabel(ArtifactRef? reference)
+    {
+        if (reference is null)
+        {
+            return _defaultArtifactRootPath;
+        }
+
+        return ResolveArtifactRoot(reference.StoreUri);
+    }
+
+    private static bool ArePathsEquivalent(string left, string right)
+    {
+        try
+        {
+            var leftFull = Path.GetFullPath(left);
+            var rightFull = Path.GetFullPath(right);
+            return string.Equals(
+                leftFull,
+                rightFull,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
+        catch
+        {
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -1493,7 +1767,9 @@ public sealed class WorkerNodeActor : IActor
         Uuid? brainId,
         ulong placementEpoch,
         PlacementFailureReason reason,
-        string message)
+        string message,
+        bool retryable = false,
+        ulong retryAfterMs = 0)
         => new()
         {
             AssignmentId = assignmentId ?? string.Empty,
@@ -1501,10 +1777,10 @@ public sealed class WorkerNodeActor : IActor
             PlacementEpoch = placementEpoch,
             State = PlacementAssignmentState.PlacementAssignmentFailed,
             Accepted = false,
-            Retryable = false,
+            Retryable = retryable,
             FailureReason = reason,
             Message = message ?? string.Empty,
-            RetryAfterMs = 0
+            RetryAfterMs = retryable ? retryAfterMs : 0
         };
 
     private static PlacementUnassignmentAck FailedUnassignmentAck(
@@ -1686,6 +1962,17 @@ public sealed class WorkerNodeActor : IActor
         return false;
     }
 
+    private bool HasKnownIoGatewayEndpoint()
+        => _endpoints.ContainsKey(ServiceEndpointSettings.IoGatewayKey);
+
+    private bool HasHiveMindHint()
+        => _hiveMindHintPid is { } hint && !string.IsNullOrWhiteSpace(hint.Id);
+
+    private static bool IsEphemeralRequestSender(PID? sender)
+        => sender is { } value
+           && !string.IsNullOrWhiteSpace(value.Id)
+           && value.Id.StartsWith("$", StringComparison.Ordinal);
+
     private string ResolveReconcileFailureReason(
         bool requestHasBrainId,
         Guid requestBrainId,
@@ -1762,6 +2049,18 @@ public sealed class WorkerNodeActor : IActor
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+    private static string ArtifactLabel(ArtifactRef? reference)
+    {
+        if (!HasArtifactRef(reference))
+        {
+            return "missing";
+        }
+
+        return reference!.TryToSha256Hex(out var sha)
+            ? sha[..Math.Min(12, sha.Length)]
+            : "present";
+    }
+
     private static bool HasArtifactRef(ArtifactRef? reference)
         => reference is not null
            && reference.Sha256 is not null
@@ -1782,6 +2081,16 @@ public sealed class WorkerNodeActor : IActor
         }
 
         return Path.Combine(Environment.CurrentDirectory, "artifacts");
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return !string.IsNullOrWhiteSpace(value)
+               && (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool ResolveDebugStreamEnabled(bool defaultValue)

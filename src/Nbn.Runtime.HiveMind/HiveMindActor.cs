@@ -47,6 +47,8 @@ public sealed class HiveMindActor : IActor
     private long _workerCatalogSnapshotMs;
     private static readonly bool LogTickBarrier = IsEnvTrue("NBN_HIVEMIND_LOG_TICK_BARRIER");
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogMetadataDiagnostics =
+        IsEnvTrue("NBN_METADATA_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_HIVEMIND_METADATA_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan VisualizationSubscriberSweepInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan VisualizationShardSyncInterval = TimeSpan.FromSeconds(1);
     private static readonly PropertyInfo? ProcessRegistryProperty = typeof(ActorSystem).GetProperty(
@@ -5332,6 +5334,18 @@ public sealed class HiveMindActor : IActor
            && reference.Sha256.Value is not null
            && reference.Sha256.Value.Length == 32;
 
+    private static string ArtifactLabel(Nbn.Proto.ArtifactRef? reference)
+    {
+        if (!HasArtifactRef(reference))
+        {
+            return "missing";
+        }
+
+        return reference!.TryToSha256Hex(out var sha)
+            ? sha[..Math.Min(12, sha.Length)]
+            : "present";
+    }
+
     private static string ResolveArtifactRoot(string? storeUri)
     {
         if (!string.IsNullOrWhiteSpace(storeUri))
@@ -5645,18 +5659,41 @@ public sealed class HiveMindActor : IActor
     {
         if (_ioPid is null)
         {
+            if (LogMetadataDiagnostics)
+            {
+                Log(
+                    $"MetaDiag register hm->io skipped brain={brain.BrainId} epoch={brain.PlacementEpoch} reason=io_pid_unavailable force={force}");
+            }
+
             return;
         }
 
-        var inputWidth = (uint)Math.Max(0, brain.InputWidth);
-        var outputWidth = (uint)Math.Max(0, brain.OutputWidth);
-        if (inputWidth == 0 || outputWidth == 0)
+        var rawInputWidth = (uint)Math.Max(0, brain.InputWidth);
+        var rawOutputWidth = (uint)Math.Max(0, brain.OutputWidth);
+        if ((rawInputWidth == 0 || rawOutputWidth == 0)
+            && !HasArtifactRef(brain.BaseDefinition)
+            && !HasArtifactRef(brain.LastSnapshot))
         {
+            if (LogMetadataDiagnostics)
+            {
+                Log(
+                    $"MetaDiag register hm->io skipped brain={brain.BrainId} epoch={brain.PlacementEpoch} reason=invalid_widths input={rawInputWidth} output={rawOutputWidth} force={force}");
+            }
+
             return;
         }
+
+        var inputWidth = rawInputWidth == 0 ? 1u : rawInputWidth;
+        var outputWidth = rawOutputWidth == 0 ? 1u : rawOutputWidth;
 
         if (!force && brain.IoRegistered && brain.IoRegisteredInputWidth == inputWidth && brain.IoRegisteredOutputWidth == outputWidth)
         {
+            if (LogMetadataDiagnostics)
+            {
+                Log(
+                    $"MetaDiag register hm->io skipped brain={brain.BrainId} epoch={brain.PlacementEpoch} reason=already_registered input={inputWidth} output={outputWidth}");
+            }
+
             return;
         }
 
@@ -5686,6 +5723,12 @@ public sealed class HiveMindActor : IActor
 
         var ioPid = ResolveSendTargetPid(context, _ioPid);
         context.Send(ioPid, register);
+
+        if (LogMetadataDiagnostics)
+        {
+            Log(
+                $"MetaDiag register hm->io sent brain={brain.BrainId} epoch={brain.PlacementEpoch} io={PidLabel(ioPid)} input={inputWidth} output={outputWidth} base={ArtifactLabel(brain.BaseDefinition)} snapshot={ArtifactLabel(brain.LastSnapshot)} force={force}");
+        }
 
         brain.IoRegistered = true;
         brain.IoRegisteredInputWidth = inputWidth;

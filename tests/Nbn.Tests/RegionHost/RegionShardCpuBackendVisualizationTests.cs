@@ -31,6 +31,27 @@ public class RegionShardCpuBackendVisualizationTests
     }
 
     [Fact]
+    public void Compute_WithActAddBaselineDriver_FiresFromZeroBuffer()
+    {
+        const int sourceRegionId = 8;
+        const int destRegionId = 9;
+        var state = CreateActAddBaselineState(sourceRegionId, destRegionId);
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(sourceRegionId, sourceCount: 1, destRegionId, destCount: 1);
+
+        var result = backend.Compute(
+            tickId: 16,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled);
+
+        Assert.Equal(1u, result.FiredCount);
+        Assert.Equal(1u, result.OutContribs);
+        Assert.NotEmpty(result.Outbox);
+    }
+
+    [Fact]
     public void Compute_WithFocusScopeOutsideRoute_SkipsVizOutputs()
     {
         var state = CreateSingleNeuronState(sourceRegionId: 8, destRegionId: 9);
@@ -93,6 +114,42 @@ public class RegionShardCpuBackendVisualizationTests
             paramB: new[] { 0f },
             preActivationThreshold: new[] { 0.1f },
             activationThreshold: new[] { 0.2f },
+            axonCounts: new ushort[] { 1 },
+            axonStartOffsets: new[] { 0 },
+            axons: new RegionShardAxons(
+                targetRegionIds: new[] { (byte)destRegionId },
+                targetNeuronIds: new[] { 0 },
+                strengths: new[] { 0.5f },
+                baseStrengthCodes: new byte[] { 16 },
+                runtimeStrengthCodes: new byte[] { 16 },
+                hasRuntimeOverlay: new[] { false },
+                fromAddress32: new[] { SharedAddress32.From(sourceRegionId, 0).Value },
+                toAddress32: new[] { SharedAddress32.From(destRegionId, 0).Value }));
+    }
+
+    private static RegionShardState CreateActAddBaselineState(int sourceRegionId, int destRegionId)
+    {
+        var regionSpans = new int[NbnConstants.RegionCount];
+        regionSpans[sourceRegionId] = 1;
+        regionSpans[destRegionId] = 1;
+
+        return new RegionShardState(
+            regionId: sourceRegionId,
+            neuronStart: 0,
+            neuronCount: 1,
+            brainSeed: 0x1122334455667788UL,
+            strengthQuantization: QuantizationSchemas.DefaultNbn.Strength,
+            regionSpans: regionSpans,
+            buffer: new[] { 0f },
+            enabled: new[] { true },
+            exists: new[] { true },
+            accumulationFunctions: new[] { (byte)AccumulationFunction.AccumSum },
+            activationFunctions: new[] { (byte)ActivationFunction.ActAdd },
+            resetFunctions: new[] { (byte)ResetFunction.ResetHold },
+            paramA: new[] { 1f },
+            paramB: new[] { 0f },
+            preActivationThreshold: new[] { -1f },
+            activationThreshold: new[] { 0.1f },
             axonCounts: new ushort[] { 1 },
             axonStartOffsets: new[] { 0 },
             axons: new RegionShardAxons(

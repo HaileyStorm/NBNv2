@@ -34,6 +34,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
     private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
+    private static readonly bool LogSpawnDiagnostics = IsEnvTrue("NBN_WORKBENCH_SPAWN_DIAGNOSTICS_ENABLED");
     private const int DefaultActivationFunctionId = 11; // ACT_TANH (internal)
     private const int DefaultInputActivationFunctionId = 1; // ACT_IDENTITY
     private const int DefaultOutputActivationFunctionId = 11; // ACT_TANH
@@ -1187,6 +1188,14 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
             var artifactRef = manifest.ArtifactId.Bytes.ToArray()
                 .ToArtifactRef((ulong)Math.Max(0L, manifest.ByteLength), "application/x-nbn", brainArtifactRoot);
+            if (LogSpawnDiagnostics && WorkbenchLog.Enabled)
+            {
+                var artifactSha = manifest.ArtifactId.ToHex().ToLowerInvariant();
+                var regionCount = sections.Count;
+                var neuronCount = sections.Sum(section => (long)section.NeuronSpan);
+                WorkbenchLog.Info(
+                    $"SpawnDiag designBrain={designBrainId:D} artifactSha={artifactSha} artifactRoot={brainArtifactRoot} regions={regionCount} neurons={neuronCount} shardPlan={sharedPlanMode} plannedShards={plannedShardCount}");
+            }
 
             Status = "Spawning brain via IO/HiveMind worker placement...";
             var spawnAck = await _client.SpawnBrainViaIoAsync(new ProtoControl.SpawnBrain
@@ -1214,6 +1223,11 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             }
 
             _spawnedBrains[designBrainId] = DesignerSpawnState.Create(spawnedBrainId);
+            if (LogSpawnDiagnostics && WorkbenchLog.Enabled)
+            {
+                WorkbenchLog.Info(
+                    $"SpawnDiag runtimeBrain={spawnedBrainId:D} designBrain={designBrainId:D} status=registered");
+            }
             Status = $"Brain spawned ({spawnedBrainId:D}). Spawned via IO; worker placement managed by HiveMind.";
             if (shardPlan.Warnings.Count > 0)
             {
@@ -4407,6 +4421,16 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         result = parsed;
         return true;
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return !string.IsNullOrWhiteSpace(value)
+               && (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
     }
 
     private sealed class DesignerSpawnState

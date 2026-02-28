@@ -24,6 +24,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private const float LocalDefaultMinTickHz = 2f;
     private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
+    private static readonly bool EnableRuntimeDiagnostics = IsEnvTrue("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED");
+    private static readonly string ActivityDiagnosticsPeriod =
+        ResolveEnvOrDefault("NBN_WORKBENCH_ACTIVITY_DIAGNOSTICS_PERIOD", "64");
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
@@ -280,6 +283,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --io-address {ioAddress} --io-name {Connections.IoGateway}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.HiveMind", args);
+        ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
         HiveMindLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -319,6 +323,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}"
                  + $" --repro-address {reproAddress} --repro-name {Connections.ReproManager}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.IO", args);
+        ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
         IoLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -351,6 +356,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --io-address {ioAddress} --io-name {Connections.IoGateway}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Reproduction", args);
+        ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
         ReproLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -382,6 +388,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --root-name {Connections.WorkerRootName}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.WorkerNode", args);
+        ApplyRuntimeDiagnosticsEnvironment(startInfo);
         ApplyObservabilityEnvironment(startInfo);
         var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
         WorkerLaunchStatus = result.Message;
@@ -407,6 +414,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Observability", args);
+        ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _obsRunner.StartAsync(startInfo, waitForExit: false, label: "Observability");
         ObsLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -1387,6 +1395,47 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         {
             startInfo.EnvironmentVariables["NBN_OBS_VIZ_HUB"] = vizHub;
         }
+    }
+
+    private static void ApplyRuntimeDiagnosticsEnvironment(ProcessStartInfo startInfo)
+    {
+        if (!EnableRuntimeDiagnostics || startInfo.UseShellExecute)
+        {
+            return;
+        }
+
+        SetEnvIfMissing(startInfo, "NBN_RUNTIME_METADATA_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_METADATA_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_HIVEMIND_METADATA_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_IO_METADATA_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", ActivityDiagnosticsPeriod);
+        SetEnvIfMissing(startInfo, "NBN_VIZ_DIAGNOSTICS_ENABLED", "1");
+    }
+
+    private static void SetEnvIfMissing(ProcessStartInfo startInfo, string key, string value)
+    {
+        if (!startInfo.EnvironmentVariables.ContainsKey(key))
+        {
+            startInfo.EnvironmentVariables[key] = value;
+        }
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return !string.IsNullOrWhiteSpace(value)
+               && (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ResolveEnvOrDefault(string key, string fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
     private static string ToAssignmentTargetLabel(PlacementAssignmentTarget target)

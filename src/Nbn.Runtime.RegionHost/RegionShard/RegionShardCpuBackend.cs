@@ -1,3 +1,4 @@
+using System.Globalization;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
@@ -8,6 +9,10 @@ namespace Nbn.Runtime.RegionHost;
 
 public sealed class RegionShardCpuBackend
 {
+    private static readonly bool LogActivityDiagnostics = IsEnvTrue("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED");
+    private static readonly ulong ActivityDiagnosticsPeriod = ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", 32UL);
+    private static readonly int ActivityDiagnosticsSampleCount = (int)Math.Clamp(ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_SAMPLES", 3UL), 1UL, 16UL);
+
     private readonly RegionShardState _state;
     private readonly RegionShardCostConfig _costConfig;
 
@@ -216,6 +221,13 @@ public sealed class RegionShardCpuBackend
         IReadOnlyList<RegionShardNeuronVizEvent> neuronVizEvents = firedNeuronViz is null
             ? Array.Empty<RegionShardNeuronVizEvent>()
             : firedNeuronViz;
+
+        if (LogActivityDiagnostics
+            && firedCount == 0
+            && (ActivityDiagnosticsPeriod == 0 || tickId % ActivityDiagnosticsPeriod == 0))
+        {
+            EmitActivityDiagnostics(tickId, brainId, shardId);
+        }
 
         return new RegionShardComputeResult(
             outbox,
@@ -545,6 +557,68 @@ public sealed class RegionShardCpuBackend
         }
 
         return 3;
+    }
+
+    private void EmitActivityDiagnostics(ulong tickId, Guid brainId, ShardId32 shardId)
+    {
+        var samples = new List<string>(ActivityDiagnosticsSampleCount);
+        for (var i = 0; i < _state.NeuronCount && samples.Count < ActivityDiagnosticsSampleCount; i++)
+        {
+            if (!_state.Exists[i] || !_state.Enabled[i])
+            {
+                continue;
+            }
+
+            var buffer = _state.Buffer[i];
+            if (!float.IsFinite(buffer))
+            {
+                buffer = 0f;
+            }
+
+            var preThreshold = _state.PreActivationThreshold[i];
+            var activationThreshold = _state.ActivationThreshold[i];
+            var activation = (ActivationFunction)_state.ActivationFunctions[i];
+            var potential = Activate(activation, buffer, _state.ParamA[i], _state.ParamB[i]);
+            if (!float.IsFinite(potential))
+            {
+                potential = 0f;
+            }
+
+            var passesBufferGate = buffer > preThreshold;
+            var passesFireGate = MathF.Abs(potential) > activationThreshold;
+            var neuronId = _state.NeuronStart + i;
+
+            samples.Add(
+                $"n={neuronId} act={(int)activation} buf={FormatScalar(buffer)} pre={FormatScalar(preThreshold)} thr={FormatScalar(activationThreshold)} pa={FormatScalar(_state.ParamA[i])} pb={FormatScalar(_state.ParamB[i])} gate={passesBufferGate} fire={passesFireGate} pot={FormatScalar(potential)}");
+        }
+
+        var sampleSummary = samples.Count == 0
+            ? "no-enabled-neurons"
+            : string.Join(" | ", samples);
+
+        Console.WriteLine(
+            $"[RegionShardCpuDiag] tick={tickId} brain={brainId} shard={shardId} fired=0 sampleCount={samples.Count} {sampleSummary}");
+    }
+
+    private static string FormatScalar(float value)
+        => value.ToString("0.######", CultureInfo.InvariantCulture);
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return !string.IsNullOrWhiteSpace(value)
+               && (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static ulong ResolveUnsignedEnv(string key, ulong fallback)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        return ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
     }
 
     private static uint ComposeAddress(int regionId, int neuronId)
