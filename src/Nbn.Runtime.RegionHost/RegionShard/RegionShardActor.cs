@@ -19,6 +19,7 @@ public sealed class RegionShardActor : IActor
     private static readonly bool LogDelivery = IsEnvTrue("NBN_REGIONHOST_LOG_DELIVERY");
     private static readonly bool LogOutput = IsEnvTrue("NBN_REGIONHOST_LOG_OUTPUT");
     private static readonly bool LogViz = IsEnvTrue("NBN_REGIONHOST_LOG_VIZ");
+    private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
     private readonly RegionShardCpuBackend _cpu;
@@ -178,7 +179,7 @@ public sealed class RegionShardActor : IActor
             ? message.FocusRegionId
             : null;
 
-        if (LogViz)
+        if (LogViz || LogVizDiagnostics)
         {
             var focusLabel = _vizFocusRegionId.HasValue ? _vizFocusRegionId.Value.ToString() : "all";
             var hubLabel = _vizHub is null
@@ -407,11 +408,14 @@ public sealed class RegionShardActor : IActor
             _plasticityProbabilisticUpdates);
         stopwatch.Stop();
 
-        if (LogViz)
+        if (LogViz || LogVizDiagnostics)
         {
             var focusLabel = _vizFocusRegionId.HasValue ? _vizFocusRegionId.Value.ToString() : "all";
+            var hubLabel = _vizHub is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(_vizHub.Address) ? _vizHub.Id : $"{_vizHub.Address}/{_vizHub.Id}");
             Console.WriteLine(
-                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} axonEvents={result.AxonVizEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
+                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} hub={hubLabel} axonEvents={result.AxonVizEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
         }
 
         if (result.PlasticityStrengthCodeChanges > 0)
@@ -586,6 +590,18 @@ public sealed class RegionShardActor : IActor
         if (doneTarget is not null)
         {
             context.Request(doneTarget, done);
+        }
+
+        if (LogVizDiagnostics)
+        {
+            var senderLabel = context.Sender is null
+                ? "<missing>"
+                : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
+            var targetLabel = doneTarget is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(doneTarget.Address) ? doneTarget.Id : $"{doneTarget.Address}/{doneTarget.Id}");
+            Console.WriteLine(
+                $"[RegionShard] TickComputeDone sent tick={done.TickId} shard={_shardId} sender={senderLabel} target={targetLabel} vizEnabled={_vizEnabled} fired={done.FiredCount} outBatches={done.OutBatches}.");
         }
     }
 

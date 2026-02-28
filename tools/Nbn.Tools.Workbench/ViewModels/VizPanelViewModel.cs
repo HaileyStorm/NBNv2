@@ -35,6 +35,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultLodHighZoomBudget = 360;
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
+    private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
     private const int HoverClearDelayMs = 220;
@@ -686,12 +687,14 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public void AddVizEvent(VizEventItem item)
     {
+        var droppedThisCall = 0;
         lock (_pendingEventsGate)
         {
             while (_pendingEvents.Count >= MaxPendingEvents)
             {
                 _pendingEvents.Dequeue();
                 _droppedPendingEvents++;
+                droppedThisCall++;
             }
 
             _pendingEvents.Enqueue(item);
@@ -702,6 +705,12 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
 
             _flushScheduled = true;
+        }
+
+        if (LogVizDiagnostics && droppedThisCall > 0 && WorkbenchLog.Enabled)
+        {
+            WorkbenchLog.Warn(
+                $"VizQueue drop_count={droppedThisCall} pending={_pendingEvents.Count} total_dropped={_droppedPendingEvents} incoming_type={item.Type} incoming_brain={item.BrainId} incoming_tick={item.TickId}");
         }
 
         _dispatcher.Post(FlushPendingEvents);
@@ -1429,6 +1438,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         var flushStart = Stopwatch.GetTimestamp();
         List<VizEventItem> batch;
         var hasMore = false;
+        var pendingAfter = 0;
         lock (_pendingEventsGate)
         {
             if (_pendingEvents.Count == 0)
@@ -1445,27 +1455,40 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
 
             hasMore = _pendingEvents.Count > 0;
+            pendingAfter = _pendingEvents.Count;
             if (!hasMore)
             {
                 _flushScheduled = false;
             }
         }
 
+        var accepted = 0;
+        var skippedByGlobalFilter = 0;
         foreach (var item in batch)
         {
             if (!ShouldIncludeInVisualizer(item))
             {
+                skippedByGlobalFilter++;
                 continue;
             }
 
             AccumulateTopology(item);
             _allEvents.Insert(0, item);
+            accepted++;
         }
 
         Trim(_allEvents);
         RefreshFilteredEvents(fromStreaming: true, force: !hasMore);
         _lastFlushBatchCount = batch.Count;
         _lastFlushBatchMs = StopwatchElapsedMs(flushStart);
+
+        if (LogVizDiagnostics && WorkbenchLog.Enabled)
+        {
+            var selectedBrain = SelectedBrain?.BrainId.ToString("D") ?? "none";
+            var typeFilter = SelectedVizType.TypeFilter ?? "all";
+            WorkbenchLog.Info(
+                $"VizFlush batch={batch.Count} accepted={accepted} skipped_global={skippedByGlobalFilter} pending_after={pendingAfter} all_events={_allEvents.Count} visible_events={VizEvents.Count} selected_brain={selectedBrain} type_filter={typeFilter} focus={NormalizeDiagnosticText(RegionFocusText)}");
+        }
 
         if (hasMore)
         {
@@ -1581,6 +1604,17 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private static bool IsGlobalVisualizerEvent(string? type)
         => string.Equals(type, Nbn.Proto.Viz.VizEventType.VizTick.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+    }
 
     private void RefreshActivityProjection()
     {

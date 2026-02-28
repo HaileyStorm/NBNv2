@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Nbn.Proto.Viz;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -721,6 +722,39 @@ public class VizPanelViewModelInteractionTests
         }
     }
 
+    [Fact]
+    public void AddVizEvent_GlobalTickWithoutBrainId_IsSuppressed()
+    {
+        var vm = CreateViewModel();
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizTick.ToString(),
+            brainId: string.Empty,
+            tickId: 11));
+
+        Assert.Empty(vm.VizEvents);
+    }
+
+    [Fact]
+    public void AddVizEvent_NonGlobalWithoutBrainId_RemainsVisibleWithSelectedBrain()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizNeuronFired.ToString(),
+            brainId: string.Empty,
+            tickId: 12,
+            region: "0",
+            source: "42",
+            target: "99"));
+
+        var item = Assert.Single(vm.VizEvents);
+        Assert.Equal(VizEventType.VizNeuronFired.ToString(), item.Type);
+        Assert.Equal(string.Empty, item.BrainId);
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,
@@ -804,6 +838,30 @@ public class VizPanelViewModelInteractionTests
         var client = new WorkbenchClient(new NullWorkbenchEventSink());
         var io = new IoPanelViewModel(client, dispatcher);
         return new VizPanelViewModel(dispatcher, io);
+    }
+
+    private static VizEventItem CreateVizEvent(
+        string type,
+        string brainId,
+        ulong tickId,
+        string region = "",
+        string source = "",
+        string target = "",
+        float value = 0,
+        float strength = 0,
+        string eventId = "")
+    {
+        return new VizEventItem(
+            DateTimeOffset.UtcNow,
+            type,
+            brainId,
+            tickId,
+            region,
+            source,
+            target,
+            value,
+            strength,
+            eventId);
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

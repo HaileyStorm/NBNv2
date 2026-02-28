@@ -20,6 +20,7 @@ public class WorkbenchClient : IAsyncDisposable
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
+    private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private readonly IWorkbenchEventSink _sink;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private ActorSystem? _system;
@@ -573,6 +574,10 @@ public class WorkbenchClient : IAsyncDisposable
 
             _root.Send(_vizHubPid, new VizSubscribe { SubscriberActor = subscriber });
             _vizSubscribed = true;
+            if (LogVizDiagnostics && WorkbenchLog.Enabled)
+            {
+                WorkbenchLog.Info($"VizSub enabled=true subscriber={subscriber} hub={PidLabel(_vizHubPid)}");
+            }
             return;
         }
 
@@ -583,6 +588,10 @@ public class WorkbenchClient : IAsyncDisposable
 
         _root.Send(_vizHubPid, new VizUnsubscribe { SubscriberActor = subscriber });
         _vizSubscribed = false;
+        if (LogVizDiagnostics && WorkbenchLog.Enabled)
+        {
+            WorkbenchLog.Info($"VizSub enabled=false subscriber={subscriber} hub={PidLabel(_vizHubPid)}");
+        }
     }
 
     public void SetActiveVisualizationBrain(Guid? brainId, uint? focusRegionId)
@@ -610,6 +619,13 @@ public class WorkbenchClient : IAsyncDisposable
         if (brainId.HasValue)
         {
             _root.Send(_hiveMindPid, BuildVisualizationRequest(brainId.Value, enabled: true, focusRegionId));
+        }
+
+        if (LogVizDiagnostics && WorkbenchLog.Enabled)
+        {
+            var brainLabel = brainId.HasValue ? brainId.Value.ToString("D") : "none";
+            var focusLabel = focusRegionId.HasValue ? focusRegionId.Value.ToString() : "all";
+            WorkbenchLog.Info($"VizScope brain={brainLabel} focus={focusLabel} subscribed={_vizSubscribed}");
         }
     }
 
@@ -1061,6 +1077,17 @@ public class WorkbenchClient : IAsyncDisposable
         }
 
         return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
     }
 
     private SetBrainVisualization BuildVisualizationRequest(Guid brainId, bool enabled, uint? focusRegionId = null)

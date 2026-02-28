@@ -15,6 +15,7 @@ namespace Nbn.Tools.Workbench.Services;
 public sealed class WorkbenchReceiverActor : IActor
 {
     private static readonly TimeSpan CommandAckTimeout = TimeSpan.FromSeconds(10);
+    private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private readonly IWorkbenchEventSink _sink;
     private PID? _ioGateway;
 
@@ -291,7 +292,7 @@ public sealed class WorkbenchReceiverActor : IActor
     private void HandleViz(VisualizationEvent viz)
     {
         var brainId = viz.BrainId?.TryToGuid(out var guid) == true ? guid.ToString("D") : "unknown";
-        _sink.OnVizEvent(new VizEventItem(
+        var item = new VizEventItem(
             DateTimeOffset.UtcNow,
             viz.Type.ToString(),
             brainId,
@@ -301,7 +302,14 @@ public sealed class WorkbenchReceiverActor : IActor
             viz.Target?.Value.ToString() ?? string.Empty,
             viz.Value,
             viz.Strength,
-            viz.EventId ?? string.Empty));
+            viz.EventId ?? string.Empty);
+        _sink.OnVizEvent(item);
+
+        if (LogVizDiagnostics && WorkbenchLog.Enabled)
+        {
+            WorkbenchLog.Info(
+                $"VizRx type={item.Type} brain={item.BrainId} tick={item.TickId} region={item.Region} source={item.Source} target={item.Target} value={item.Value:0.######} strength={item.Strength:0.######} event={item.EventId}");
+        }
     }
 
     private void HandleTermination(BrainTerminated terminated)
@@ -338,6 +346,17 @@ public sealed class WorkbenchReceiverActor : IActor
         }
 
         return preview;
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
     }
 
     private static string PidLabel(PID pid, string? fallbackAddress = null)

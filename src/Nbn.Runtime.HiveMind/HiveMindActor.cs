@@ -46,6 +46,7 @@ public sealed class HiveMindActor : IActor
     private long _nextVisualizationShardSyncMs;
     private long _workerCatalogSnapshotMs;
     private static readonly bool LogTickBarrier = IsEnvTrue("NBN_HIVEMIND_LOG_TICK_BARRIER");
+    private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan VisualizationSubscriberSweepInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan VisualizationShardSyncInterval = TimeSpan.FromSeconds(1);
     private static readonly PropertyInfo? ProcessRegistryProperty = typeof(ActorSystem).GetProperty(
@@ -585,6 +586,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        brain.Shards.TryGetValue(shardId, out var previousShardPid);
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
         SendShardVisualizationUpdate(
@@ -648,7 +650,30 @@ public sealed class HiveMindActor : IActor
 
         if (_phase == TickPhase.Compute && _tick is not null)
         {
+            var key = new ShardKey(brainId, shardId);
+            var pendingSenderUpdated = false;
+            var previousPendingSenderLabel = "<missing>";
+            if (_pendingCompute.Contains(key))
+            {
+                if (_pendingComputeSenders.TryGetValue(key, out var existingPendingSender))
+                {
+                    previousPendingSenderLabel = PidLabel(existingPendingSender);
+                }
+
+                _pendingComputeSenders[key] = normalized;
+                pendingSenderUpdated = true;
+            }
+
             Log($"Shard registered mid-compute for brain {brainId}; will start next tick.");
+            if (LogVizDiagnostics)
+            {
+                var priorShardLabel = previousShardPid is null ? "<new>" : PidLabel(previousShardPid);
+                var replacedExisting = previousShardPid is not null;
+                var pidChanged = previousShardPid is not null && !PidEquals(previousShardPid, normalized);
+                var updatedSenderLabel = PidLabel(normalized);
+                Log(
+                    $"VizDiag register-shard brain={brainId} shard={shardId} tick={_tick.TickId} replacedExisting={replacedExisting} pidChanged={pidChanged} pendingKey={_pendingCompute.Contains(key)} pendingSenderUpdated={pendingSenderUpdated} previousShardPid={priorShardLabel} updatedShardPid={updatedSenderLabel} previousPendingSender={previousPendingSenderLabel} pendingCompute={_pendingCompute.Count}");
+            }
         }
 
         EmitDebug(
@@ -3964,6 +3989,13 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (LogVizDiagnostics)
+        {
+            var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+            Log(
+                $"VizDiag TickComputeDone accepted tick={message.TickId} brain={brainId} shard={shardId} sender={senderLabel} expectedSender={PidLabel(expectedSender)} pendingAfter={_pendingCompute.Count}");
+        }
+
         if (message.TickCostTotal != 0)
         {
             var updated = message.TickCostTotal;
@@ -4033,6 +4065,13 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (LogVizDiagnostics)
+        {
+            var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+            Log(
+                $"VizDiag TickDeliverDone accepted tick={message.TickId} brain={brainId} sender={senderLabel} expectedSender={PidLabel(expectedSender)} pendingAfter={_pendingDeliver.Count}");
+        }
+
         _tick.CompletedDeliverCount++;
         ReportBrainTick(context, brainId, message.TickId);
         MaybeCompleteDeliver(context);
@@ -4057,6 +4096,10 @@ public sealed class HiveMindActor : IActor
                         ProtoSeverity.SevError,
                         "tick.compute.timeout",
                         $"Tick {_tick.TickId} compute timeout pending={_pendingCompute.Count}");
+                    if (LogVizDiagnostics)
+                    {
+                        LogError($"TickCompute timeout detail: {DescribePendingCompute()}");
+                    }
                 }
                 ClearPendingCompute();
                 CompleteComputePhase(context);
@@ -4072,6 +4115,10 @@ public sealed class HiveMindActor : IActor
                         ProtoSeverity.SevError,
                         "tick.deliver.timeout",
                         $"Tick {_tick.TickId} deliver timeout pendingBrains={pendingBrains}");
+                    if (LogVizDiagnostics)
+                    {
+                        LogError($"TickDeliver timeout detail: {DescribePendingDeliver()}");
+                    }
                 }
                 ClearPendingDeliver();
                 CompleteTick(context);
@@ -4469,7 +4516,7 @@ public sealed class HiveMindActor : IActor
             ProtoSeverity.SevDebug,
             "tick.compute_done.ignored",
             $"Ignored TickComputeDone. reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}.");
-        if (LogTickBarrier)
+        if (LogTickBarrier || LogVizDiagnostics)
         {
             Log($"TickComputeDone ignored reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}");
         }
@@ -4491,10 +4538,80 @@ public sealed class HiveMindActor : IActor
             ProtoSeverity.SevDebug,
             "tick.deliver_done.ignored",
             $"Ignored TickDeliverDone. reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}.");
-        if (LogTickBarrier)
+        if (LogTickBarrier || LogVizDiagnostics)
         {
             Log($"TickDeliverDone ignored reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}");
         }
+    }
+
+    private string DescribePendingCompute(int maxItems = 10)
+    {
+        if (_pendingCompute.Count == 0)
+        {
+            return "none";
+        }
+
+        var sb = new StringBuilder();
+        var index = 0;
+        foreach (var key in _pendingCompute)
+        {
+            if (index > 0)
+            {
+                sb.Append("; ");
+            }
+
+            var senderLabel = _pendingComputeSenders.TryGetValue(key, out var sender)
+                ? PidLabel(sender)
+                : "<missing>";
+            sb.Append($"brain={key.BrainId:D} shard={key.ShardId} sender={senderLabel}");
+            index++;
+            if (index >= maxItems)
+            {
+                break;
+            }
+        }
+
+        if (_pendingCompute.Count > index)
+        {
+            sb.Append($"; +{_pendingCompute.Count - index} more");
+        }
+
+        return sb.ToString();
+    }
+
+    private string DescribePendingDeliver(int maxItems = 10)
+    {
+        if (_pendingDeliver.Count == 0)
+        {
+            return "none";
+        }
+
+        var sb = new StringBuilder();
+        var index = 0;
+        foreach (var brainId in _pendingDeliver)
+        {
+            if (index > 0)
+            {
+                sb.Append("; ");
+            }
+
+            var senderLabel = _pendingDeliverSenders.TryGetValue(brainId, out var sender)
+                ? PidLabel(sender)
+                : "<missing>";
+            sb.Append($"brain={brainId:D} sender={senderLabel}");
+            index++;
+            if (index >= maxItems)
+            {
+                break;
+            }
+        }
+
+        if (_pendingDeliver.Count > index)
+        {
+            sb.Append($"; +{_pendingDeliver.Count - index} more");
+        }
+
+        return sb.ToString();
     }
 
     private static PID? NormalizePid(IContext context, PID? pid)
