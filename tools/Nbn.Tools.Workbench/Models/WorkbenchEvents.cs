@@ -88,6 +88,7 @@ public sealed record WorkerEndpointItem(
     string LogicalName,
     string Address,
     string RootActor,
+    string BrainHints,
     string LastSeen,
     string Status)
 {

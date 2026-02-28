@@ -489,8 +489,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             UpdateHiveMindEndpoint(nodes, nowMs);
-            var workerEndpointState = BuildWorkerEndpointState(sortedNodes, workerInventory, nowMs);
-            var actorRows = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
+            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
+            var workerEndpointState = BuildWorkerEndpointState(
+                sortedNodes,
+                workerInventory,
+                actorRowsResult.WorkerBrainHints,
+                nowMs);
             var settings = settingsResponse?.Settings?
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
@@ -521,7 +525,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     WorkerEndpoints.Add(workerRow);
                 }
 
-                foreach (var actorRow in actorRows)
+                foreach (var actorRow in actorRowsResult.Rows)
                 {
                     Actors.Add(actorRow);
                 }
@@ -991,6 +995,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private WorkerEndpointState BuildWorkerEndpointState(
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         IReadOnlyList<Nbn.Proto.Settings.WorkerReadinessCapability> inventory,
+        IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
         long nowMs)
     {
         foreach (var worker in inventory)
@@ -1068,6 +1073,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 entry.LogicalName,
                 entry.Address,
                 entry.RootActorName,
+                FormatWorkerBrainHints(workerBrainHints, entry.NodeId),
                 FormatUpdated(entry.LastSeenMs),
                 status)));
         }
@@ -1197,6 +1203,30 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         var suffix = count == 1 ? "worker" : "workers";
         return $"{count} {label} {suffix}";
+    }
+
+    private static string FormatWorkerBrainHints(
+        IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
+        Guid nodeId)
+    {
+        if (!workerBrainHints.TryGetValue(nodeId, out var brainIds) || brainIds.Count == 0)
+        {
+            return "none";
+        }
+
+        var abbreviated = brainIds
+            .Select(AbbreviateBrainId)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        return abbreviated.Length <= 2
+            ? string.Join(", ", abbreviated)
+            : $"{abbreviated[0]}, {abbreviated[1]}, ...";
+    }
+
+    private static string AbbreviateBrainId(Guid brainId)
+    {
+        var compact = brainId.ToString("N");
+        return compact.Length <= 4 ? compact : compact[^4..];
     }
 
     private void UpdateConnectionStatusesFromNodes(
@@ -1405,13 +1435,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return false;
         }
     }
-    private async Task<IReadOnlyList<NodeStatusItem>> BuildActorRowsAsync(
+    private async Task<HostedActorRowsResult> BuildActorRowsAsync(
         IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
         long nowMs)
     {
         var rows = new List<(bool IsOnlineWorkerHost, bool IsOnline, long LastSeenMs, NodeStatusItem Row)>();
+        var workerBrainHints = new Dictionary<Guid, HashSet<Guid>>();
         var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var nodeById = nodes
             .Where(entry => entry.NodeId is not null && entry.NodeId.TryToGuid(out _))
@@ -1453,6 +1484,22 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 isOnline ? "online" : "offline")));
         }
 
+        void AddWorkerBrainHint(Guid nodeId, Guid brainId)
+        {
+            if (nodeId == Guid.Empty || brainId == Guid.Empty)
+            {
+                return;
+            }
+
+            if (!workerBrainHints.TryGetValue(nodeId, out var brainSet))
+            {
+                brainSet = new HashSet<Guid>();
+                workerBrainHints[nodeId] = brainSet;
+            }
+
+            brainSet.Add(brainId);
+        }
+
         foreach (var controller in controllers
                      .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
                      .OrderByDescending(entry => entry.LastSeenMs)
@@ -1471,6 +1518,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 address = node.Address ?? string.Empty;
                 hostSeenMs = (long)node.LastSeenMs;
                 hostIsWorker = IsWorkerHostCandidate(node);
+                if (hostIsWorker)
+                {
+                    AddWorkerBrainHint(nodeId, brainId);
+                }
             }
 
             var actorPid = controller.ActorName?.Trim() ?? string.Empty;
@@ -1494,13 +1545,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             .ToArray();
         if (activeBrainIds.Length == 0)
         {
-            return rows
+            return new HostedActorRowsResult(
+                rows
                 .OrderByDescending(entry => entry.IsOnlineWorkerHost)
                 .ThenByDescending(entry => entry.IsOnline)
                 .ThenByDescending(entry => entry.LastSeenMs)
                 .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
                 .Select(entry => entry.Row)
-                .ToArray();
+                .ToArray(),
+                workerBrainHints);
         }
 
         var lifecycleTasks = activeBrainIds.Select(async brainId =>
@@ -1572,6 +1625,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     hostSeenMs = (long)workerNode.LastSeenMs;
                     isOnline = workerNode.IsAlive && IsFresh(workerNode.LastSeenMs, nowMs);
                     hostIsWorker = IsWorkerHostCandidate(workerNode);
+                    if (hostIsWorker)
+                    {
+                        AddWorkerBrainHint(workerNodeId, reportBrainId);
+                    }
+                }
+                else if (hostIsWorker
+                         && reconcileResult.Node.NodeId is not null
+                         && reconcileResult.Node.NodeId.TryToGuid(out var reconcileNodeId))
+                {
+                    AddWorkerBrainHint(reconcileNodeId, reportBrainId);
                 }
 
                 AddActorRow(
@@ -1588,13 +1651,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             }
         }
 
-        return rows
+        return new HostedActorRowsResult(
+            rows
             .OrderByDescending(entry => entry.IsOnlineWorkerHost)
             .ThenByDescending(entry => entry.IsOnline)
             .ThenByDescending(entry => entry.LastSeenMs)
             .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
             .Select(entry => entry.Row)
-            .ToArray();
+            .ToArray(),
+            workerBrainHints);
 
         async Task<(Guid BrainId, Nbn.Proto.Settings.NodeStatus Node, PlacementReconcileReport? Report)> QueryPlacementReconcileAsync(
             Guid brainId,
@@ -1665,6 +1730,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                || root.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase)
                || root.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase);
     }
+
+    private sealed record HostedActorRowsResult(
+        IReadOnlyList<NodeStatusItem> Rows,
+        IReadOnlyDictionary<Guid, HashSet<Guid>> WorkerBrainHints);
 
     private sealed record WorkerEndpointState(
         IReadOnlyList<WorkerEndpointItem> Rows,

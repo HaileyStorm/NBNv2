@@ -86,6 +86,7 @@ public class OrchestratorPanelViewModelTests
         var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
         Assert.Equal(workerId, workerEndpoint.NodeId);
         Assert.Equal("active", workerEndpoint.Status);
+        Assert.Equal("none", workerEndpoint.BrainHints);
         Assert.Equal("1 active worker", vm.WorkerEndpointSummary);
     }
 
@@ -138,6 +139,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("2 active workers", connections.WorkerStatus);
         Assert.Equal(2, vm.WorkerEndpoints.Count);
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("active", endpoint.Status));
+        Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("none", endpoint.BrainHints));
         Assert.Equal("2 active workers", vm.WorkerEndpointSummary);
     }
 
@@ -188,6 +190,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(2, vm.WorkerEndpoints.Count);
         Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == degradedWorker && endpoint.Status == "degraded");
         Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == failedWorker && endpoint.Status == "failed");
+        Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("none", endpoint.BrainHints));
         Assert.Equal("1 degraded worker, 1 failed worker", vm.WorkerEndpointSummary);
     }
 
@@ -347,6 +350,8 @@ public class OrchestratorPanelViewModelTests
             node => node.RootActor == controllerActor);
         Assert.Contains("brain", controllerRow.LogicalName, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("online", controllerRow.Status);
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerId);
+        Assert.Equal(ShortBrainId(brainId), workerEndpoint.BrainHints);
     }
 
     [Fact]
@@ -448,6 +453,8 @@ public class OrchestratorPanelViewModelTests
         var shardRow = Assert.Single(vm.Actors, row => row.RootActor == shardActorPid);
         Assert.Contains("RegionShard r9 s2", shardRow.LogicalName, StringComparison.Ordinal);
         Assert.Equal("online", shardRow.Status);
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerNodeId);
+        Assert.Equal(ShortBrainId(brainId), workerEndpoint.BrainHints);
     }
 
     [Fact]
@@ -562,6 +569,93 @@ public class OrchestratorPanelViewModelTests
         Assert.True(shardIndex >= 0);
         Assert.True(controllerIndex >= 0);
         Assert.True(shardIndex < controllerIndex, "Online worker-hosted actor should sort ahead of non-worker actors.");
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_BrainHints_TruncateAfterTwoIds()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerNodeId = Guid.NewGuid();
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
+        const ulong placementEpoch = 3;
+
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus { BrainId = brainA.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 1, State = "Active" },
+                    new BrainStatus { BrainId = brainB.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 2, State = "Active" },
+                    new BrainStatus { BrainId = brainC.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 3, State = "Active" }
+                }
+            },
+            SettingsResponse = new SettingListResponse(),
+            PlacementLifecycleFactory = requestedBrainId =>
+                requestedBrainId == brainA || requestedBrainId == brainB || requestedBrainId == brainC
+                    ? new PlacementLifecycleInfo
+                    {
+                        BrainId = requestedBrainId.ToProtoUuid(),
+                        PlacementEpoch = placementEpoch,
+                        LifecycleState = PlacementLifecycleState.PlacementLifecycleRunning
+                    }
+                    : null,
+            PlacementReconcileFactory = (workerAddress, workerRoot, requestedBrainId, requestedEpoch) =>
+            {
+                if (requestedEpoch != placementEpoch
+                    || (requestedBrainId != brainA && requestedBrainId != brainB && requestedBrainId != brainC)
+                    || !string.Equals(workerRoot, connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return new PlacementReconcileReport
+                {
+                    BrainId = requestedBrainId.ToProtoUuid(),
+                    PlacementEpoch = placementEpoch,
+                    ReconcileState = PlacementReconcileState.PlacementReconcileMatched,
+                    Assignments =
+                    {
+                        new PlacementObservedAssignment
+                        {
+                            AssignmentId = Guid.NewGuid().ToString("N"),
+                            Target = PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                            WorkerNodeId = workerNodeId.ToProtoUuid(),
+                            ActorPid = $"127.0.0.1:12041/worker-node/brain-{requestedBrainId:N}-root"
+                        }
+                    }
+                };
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerNodeId);
+        var abbreviated = new[] { ShortBrainId(brainA), ShortBrainId(brainB), ShortBrainId(brainC) }
+            .OrderBy(static value => value, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal($"{abbreviated[0]}, {abbreviated[1]}, ...", workerEndpoint.BrainHints);
     }
 
     [Fact]
@@ -905,6 +999,12 @@ public class OrchestratorPanelViewModelTests
         }
 
         return -1;
+    }
+
+    private static string ShortBrainId(Guid brainId)
+    {
+        var compact = brainId.ToString("N");
+        return compact.Length <= 4 ? compact : compact[^4..];
     }
 
     private static BrainListResponse BuildBrainList(Guid brainId, string state, bool includeAliveController = true)

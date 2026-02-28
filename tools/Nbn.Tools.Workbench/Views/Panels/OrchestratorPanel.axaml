@@ -9,7 +9,7 @@
         <StackPanel Spacing="10">
           <TextBlock Text="Endpoints" Classes="card-title" />
           <TextBlock Text="Debug Hub and Viz Hub are actor names hosted by Observability at Obs Host/Obs Port." Classes="muted" TextWrapping="Wrap" />
-          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+          <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
             <TextBlock Text="IO Host" Classes="muted" />
             <TextBox Grid.Column="1" Text="{Binding Connections.IoHost}" Width="160" />
             <TextBlock Grid.Column="2" Text="IO Port" Classes="muted" />
@@ -48,16 +48,6 @@
             <TextBox Grid.Row="5" Grid.Column="3" Text="{Binding Connections.ReproPortText}" Width="90" />
             <TextBlock Grid.Row="5" Grid.Column="4" Text="Manager" Classes="muted" />
             <TextBox Grid.Row="5" Grid.Column="5" Text="{Binding Connections.ReproManager}" Width="140" />
-
-            <TextBlock Grid.Row="6" Text="Worker Host" Classes="muted" />
-            <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Connections.WorkerHost}" Width="160" />
-            <TextBlock Grid.Row="6" Grid.Column="2" Text="Worker Port" Classes="muted" />
-            <TextBox Grid.Row="6" Grid.Column="3" Text="{Binding Connections.WorkerPortText}" Width="90" />
-            <TextBlock Grid.Row="6" Grid.Column="4" Text="Worker Root" Classes="muted" />
-            <TextBox Grid.Row="6" Grid.Column="5" Text="{Binding Connections.WorkerRootName}" Width="140" />
-
-            <TextBlock Grid.Row="7" Text="Worker Logical" Classes="muted" />
-            <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Connections.WorkerLogicalName}" Width="160" />
           </Grid>
 
           <WrapPanel>
@@ -115,11 +105,16 @@
             <TextBlock Text="Worker Hosts" Classes="card-title" />
             <TextBlock Text="SettingsMonitor registration/heartbeat view. Active workers appear first; degraded/failed entries are retained briefly for loss visibility." Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
-            <ScrollViewer MaxHeight="200" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer MaxHeight="240" HorizontalScrollBarVisibility="Disabled">
               <ItemsControl ItemsSource="{Binding WorkerEndpoints}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <UniformGrid Columns="2" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
-                    <Border Classes="row">
+                    <Border Classes="row" Margin="6,4">
                       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                         <Border Classes="pill"
                                 Background="{Binding StatusChipBackground}"
@@ -131,6 +126,7 @@
                           <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
                           <TextBlock Text="{Binding Address}" Classes="muted" />
                           <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                          <TextBlock Text="{Binding BrainHints, StringFormat='Brains: {0}'}" Classes="muted" TextWrapping="Wrap" />
                         </StackPanel>
                         <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
                       </Grid>
@@ -188,9 +184,8 @@
             <TextBlock Grid.Row="4" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
             <TextBlock Grid.Row="5" Text="Worker Node" Classes="muted" />
-            <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Connections.WorkerPortText}" Width="90" />
-            <Button Grid.Row="5" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
-            <Button Grid.Row="5" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
+            <Button Grid.Row="5" Grid.Column="1" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
+            <Button Grid.Row="5" Grid.Column="2" Content="Stop" Command="{Binding StopWorkerCommand}" />
             <TextBlock Grid.Row="5" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
           </Grid>
           <StackPanel Orientation="Horizontal" Spacing="10">
