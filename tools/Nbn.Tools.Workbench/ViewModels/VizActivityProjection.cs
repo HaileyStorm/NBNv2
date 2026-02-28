@@ -12,7 +12,8 @@ public sealed record VizActivityProjectionOptions(
     bool IncludeLowSignalEvents,
     uint? FocusRegionId,
     int TopSeriesCount = 8,
-    bool EnableMiniChart = true);
+    bool EnableMiniChart = true,
+    int MiniChartTickWindow = 64);
 
 public sealed record VizActivityProjection(
     string Summary,
@@ -124,6 +125,12 @@ public static class VizActivityProjectionBuilder
             .Where(item => item.TickId >= minTick)
             .ToList();
 
+        var chartTickWindow = NormalizeTickWindow(options.MiniChartTickWindow);
+        var chartMinTick = latestTick > (ulong)(chartTickWindow - 1) ? latestTick - (ulong)(chartTickWindow - 1) : 0;
+        var chartWindowed = filtered
+            .Where(item => item.TickId >= chartMinTick)
+            .ToList();
+
         var regionRows = BuildRegionRows(windowed);
         var edgeRows = BuildEdgeRows(windowed);
         var tickRows = BuildTickRows(windowed);
@@ -157,7 +164,7 @@ public static class VizActivityProjectionBuilder
         var summary = options.FocusRegionId is uint focused
             ? $"Ticks {minTick}..{latestTick} | {windowed.Count} events | focus R{focused}: {focusCount}"
             : $"Ticks {minTick}..{latestTick} | {windowed.Count} events | {uniqueRegionCount} regions";
-        var chart = BuildMiniChart(windowed, minTick, latestTick, options);
+        var chart = BuildMiniChart(chartWindowed, chartMinTick, latestTick, options);
 
         return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows, windowed, chart);
     }

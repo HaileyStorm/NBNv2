@@ -989,6 +989,7 @@ public class VizPanelViewModelInteractionTests
 
         Assert.True(vm.ShowMiniActivityChart);
         Assert.Equal("8", vm.MiniActivityTopNText);
+        Assert.Equal("3", vm.MiniActivityRangeSecondsText);
         Assert.Contains("score =", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1015,6 +1016,17 @@ public class VizPanelViewModelInteractionTests
         vm.ApplyActivityOptionsCommand.Execute(null);
 
         Assert.Contains("Mini chart Top N", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ApplyActivityOptions_InvalidMiniRangeSeconds_ShowsValidationError()
+    {
+        var vm = CreateViewModel();
+        vm.MiniActivityRangeSecondsText = "0.1";
+
+        vm.ApplyActivityOptionsCommand.Execute(null);
+
+        Assert.Contains("Mini chart range", vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void UpdateInteractionSummaries(

@@ -150,7 +150,8 @@ public class VizActivityProjectionBuilderTests
                 IncludeLowSignalEvents: true,
                 FocusRegionId: null,
                 TopSeriesCount: 2,
-                EnableMiniChart: true));
+                EnableMiniChart: true,
+                MiniChartTickWindow: 8));
 
         var chart = projection.MiniChart;
         Assert.True(chart.Enabled);
@@ -192,7 +193,8 @@ public class VizActivityProjectionBuilderTests
                 IncludeLowSignalEvents: true,
                 FocusRegionId: outputRegion,
                 TopSeriesCount: 3,
-                EnableMiniChart: true));
+                EnableMiniChart: true,
+                MiniChartTickWindow: 8));
 
         var chart = projection.MiniChart;
         Assert.True(chart.Enabled);
@@ -226,7 +228,8 @@ public class VizActivityProjectionBuilderTests
                 IncludeLowSignalEvents: true,
                 FocusRegionId: null,
                 TopSeriesCount: 5,
-                EnableMiniChart: false));
+                EnableMiniChart: false,
+                MiniChartTickWindow: 8));
 
         Assert.False(projection.MiniChart.Enabled);
         Assert.Empty(projection.MiniChart.Series);
@@ -249,7 +252,8 @@ public class VizActivityProjectionBuilderTests
                 IncludeLowSignalEvents: true,
                 FocusRegionId: null,
                 TopSeriesCount: 2,
-                EnableMiniChart: true));
+                EnableMiniChart: true,
+                MiniChartTickWindow: 8));
 
         var labels = projection.MiniChart.Series.Select(item => item.Label).ToList();
         Assert.Equal(new[] { "R1", "R2" }, labels);

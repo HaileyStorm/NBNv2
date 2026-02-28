@@ -48,8 +48,14 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultMiniActivityTopN = 8;
     private const int MinMiniActivityTopN = 1;
     private const int MaxMiniActivityTopN = 32;
+    private const double DefaultMiniActivityRangeSeconds = 3d;
+    private const double MinMiniActivityRangeSeconds = 0.25d;
+    private const double MaxMiniActivityRangeSeconds = 60d;
+    private const float DefaultMiniActivityTickRateHz = 20f;
     private const double MiniActivityChartPlotWidth = 268;
     private const double MiniActivityChartPlotHeight = 104;
+    private const double MiniActivityChartPlotPaddingX = 6;
+    private const double MiniActivityChartPlotPaddingY = 6;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
@@ -119,9 +125,14 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
     private bool _showMiniActivityChart = true;
     private string _miniActivityTopNText = DefaultMiniActivityTopN.ToString(CultureInfo.InvariantCulture);
+    private string _miniActivityRangeSecondsText = DefaultMiniActivityRangeSeconds.ToString("0.###", CultureInfo.InvariantCulture);
     private string _miniActivityChartSeriesLabel = $"Top {DefaultMiniActivityTopN} regions by score.";
     private string _miniActivityChartRangeLabel = "Ticks: awaiting activity.";
     private string _miniActivityChartMetricLabel = "score = 1 + |value| + |strength| per event contribution";
+    private string _miniActivityYAxisTopLabel = "0";
+    private string _miniActivityYAxisMidLabel = "0";
+    private string _miniActivityYAxisBottomLabel = "0";
+    private int _miniActivityLegendColumns = 2;
     private double _activityCanvasWidth = VizActivityCanvasLayoutBuilder.CanvasWidth;
     private double _activityCanvasHeight = VizActivityCanvasLayoutBuilder.CanvasHeight;
     private bool _showProjectionSnapshot;
@@ -189,6 +200,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private Guid? _preferredBrainId;
     private int _consecutiveEmptyBrainRefreshes;
     private int _consecutiveSelectionMissRefreshes;
+    private float? _currentTargetTickHz;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -510,6 +522,12 @@ public sealed class VizPanelViewModel : ViewModelBase
         set => SetProperty(ref _miniActivityTopNText, value);
     }
 
+    public string MiniActivityRangeSecondsText
+    {
+        get => _miniActivityRangeSecondsText;
+        set => SetProperty(ref _miniActivityRangeSecondsText, value);
+    }
+
     public string MiniActivityChartSeriesLabel
     {
         get => _miniActivityChartSeriesLabel;
@@ -526,6 +544,30 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         get => _miniActivityChartMetricLabel;
         private set => SetProperty(ref _miniActivityChartMetricLabel, value);
+    }
+
+    public string MiniActivityYAxisTopLabel
+    {
+        get => _miniActivityYAxisTopLabel;
+        private set => SetProperty(ref _miniActivityYAxisTopLabel, value);
+    }
+
+    public string MiniActivityYAxisMidLabel
+    {
+        get => _miniActivityYAxisMidLabel;
+        private set => SetProperty(ref _miniActivityYAxisMidLabel, value);
+    }
+
+    public string MiniActivityYAxisBottomLabel
+    {
+        get => _miniActivityYAxisBottomLabel;
+        private set => SetProperty(ref _miniActivityYAxisBottomLabel, value);
+    }
+
+    public int MiniActivityLegendColumns
+    {
+        get => _miniActivityLegendColumns;
+        private set => SetProperty(ref _miniActivityLegendColumns, value);
     }
 
     public double MiniActivityChartWidth => MiniActivityChartPlotWidth;
@@ -850,16 +892,19 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         if (targetTickHz > 0f && float.IsFinite(targetTickHz))
         {
+            _currentTargetTickHz = targetTickHz;
             TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
             TickRateOverrideSummary = hasOverride
                 ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target {FormatTickCadence(targetTickHz)}."
                 : $"{DefaultTickOverrideSummary} Current target {FormatTickCadence(targetTickHz)}.";
+            RefreshActivityProjection();
             return;
         }
 
         TickRateOverrideSummary = hasOverride
             ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target n/a."
             : DefaultTickOverrideSummary;
+        RefreshActivityProjection();
     }
 
     public void AddVizEvent(VizEventItem item)
@@ -1352,6 +1397,12 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParseMiniActivityRangeSeconds(MiniActivityRangeSecondsText, out var rangeSeconds))
+        {
+            Status = $"Mini chart range must be a number in {MinMiniActivityRangeSeconds:0.##}-{MaxMiniActivityRangeSeconds:0.##} seconds.";
+            return;
+        }
+
         if (!TryParseLodRouteBudget(LodLowZoomBudgetText, out var lowBudget))
         {
             Status = $"LOD low-zoom budget must be an integer in {MinLodRouteBudget}-{MaxLodRouteBudget}.";
@@ -1372,6 +1423,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         TickWindowText = tickWindow.ToString(CultureInfo.InvariantCulture);
         MiniActivityTopNText = topN.ToString(CultureInfo.InvariantCulture);
+        MiniActivityRangeSecondsText = rangeSeconds.ToString("0.###", CultureInfo.InvariantCulture);
         LodLowZoomBudgetText = lowBudget.ToString(CultureInfo.InvariantCulture);
         LodMediumZoomBudgetText = mediumBudget.ToString(CultureInfo.InvariantCulture);
         LodHighZoomBudgetText = highBudget.ToString(CultureInfo.InvariantCulture);
@@ -1381,7 +1433,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             QueueDefinitionTopologyHydration(SelectedBrain.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
         }
-        Status = $"Applied activity options (tick window {tickWindow}, mini chart top N {topN}, adaptive LOD {(EnableAdaptiveLod ? "on" : "off")}).";
+        Status = $"Applied activity options (tick window {tickWindow}, mini chart top N {topN}, mini range {rangeSeconds:0.###}s, adaptive LOD {(EnableAdaptiveLod ? "on" : "off")}).";
     }
 
     private async Task ApplyTickRateOverrideAsync()
@@ -1413,6 +1465,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         var targetTickHz = ack.TargetTickHz;
         if (targetTickHz > 0f && float.IsFinite(targetTickHz))
         {
+            _currentTargetTickHz = targetTickHz;
             TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
         }
 
@@ -1443,6 +1496,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         Status = string.IsNullOrWhiteSpace(ack.Message)
             ? (ack.Accepted ? TickRateOverrideSummary : "Tick override request rejected.")
             : ack.Message;
+        RefreshActivityProjection();
     }
 
     private void Clear()
@@ -1465,7 +1519,8 @@ public sealed class VizPanelViewModel : ViewModelBase
             IncludeLowSignalEvents,
             null,
             ParseMiniActivityTopNOrDefault(),
-            ShowMiniActivityChart);
+            ShowMiniActivityChart,
+            ParseMiniActivityTickWindowOrDefault());
         _lastRenderedTickId = 0;
         _nextStreamingRefreshUtc = DateTime.MinValue;
         _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
@@ -1476,6 +1531,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         SelectedPayload = string.Empty;
         TickRateOverrideSummary = DefaultTickOverrideSummary;
         TickCadenceSummary = DefaultTickCadenceSummary;
+        _currentTargetTickHz = null;
         ResetCanvasInteractionState(clearPins: true);
         ExportCommand.RaiseCanExecuteChanged();
         RefreshActivityProjection();
@@ -1778,7 +1834,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         sb.AppendLine(
-            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
+            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} mini_top_n={ParseMiniActivityTopNOrDefault()} mini_range_s={ParseMiniActivityRangeSecondsOrDefault():0.###} mini_tick_window={ParseMiniActivityTickWindowOrDefault()} tick_hz={(_currentTargetTickHz ?? 0f):0.###} include_low_signal={IncludeLowSignalEvents} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
         sb.AppendLine(
             $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count} mini_series={MiniActivityChartSeries.Count} mini_enabled={ShowMiniActivityChart}");
         sb.AppendLine(
@@ -1863,12 +1919,14 @@ public sealed class VizPanelViewModel : ViewModelBase
     private void RefreshActivityProjection()
     {
         var miniChartTopN = ParseMiniActivityTopNOrDefault();
+        var miniChartTickWindow = ParseMiniActivityTickWindowOrDefault();
         var options = new VizActivityProjectionOptions(
             ParseTickWindowOrDefault(),
             IncludeLowSignalEvents,
             TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null,
             miniChartTopN,
-            ShowMiniActivityChart);
+            ShowMiniActivityChart,
+            miniChartTickWindow);
         var eventsSnapshot = VizEvents.ToList();
         var topology = BuildTopologySnapshotForSelectedBrain();
         var interaction = BuildCanvasInteractionState();
@@ -2063,6 +2121,11 @@ public sealed class VizPanelViewModel : ViewModelBase
                 SeriesLabel: chart.ModeLabel,
                 RangeLabel: "Ticks: mini chart disabled.",
                 MetricLabel: $"{chart.MetricLabel} | toggle on to resume tracking",
+                YAxisTopLabel: "0",
+                YAxisMidLabel: "0",
+                YAxisBottomLabel: "0",
+                LegendColumns: 2,
+                TickCount: 0,
                 Series: Array.Empty<VizMiniActivityChartSeriesItem>());
         }
 
@@ -2073,41 +2136,53 @@ public sealed class VizPanelViewModel : ViewModelBase
                 SeriesLabel: chart.ModeLabel,
                 RangeLabel: "Ticks: awaiting activity.",
                 MetricLabel: $"{chart.MetricLabel} | no ranked series in current window",
+                YAxisTopLabel: "0",
+                YAxisMidLabel: "0",
+                YAxisBottomLabel: "0",
+                LegendColumns: 2,
+                TickCount: 0,
                 Series: Array.Empty<VizMiniActivityChartSeriesItem>());
         }
 
         var yMax = chart.PeakScore > 0f ? chart.PeakScore : 1f;
-        var xStep = chart.Ticks.Count > 1
-            ? MiniActivityChartPlotWidth / (chart.Ticks.Count - 1)
-            : 0d;
         var rows = new List<VizMiniActivityChartSeriesItem>(chart.Series.Count);
-        for (var i = 0; i < chart.Series.Count; i++)
+        foreach (var series in chart.Series)
         {
-            var series = chart.Series[i];
-            var stroke = MiniActivityChartSeriesPalette[i % MiniActivityChartSeriesPalette.Length];
-            var pathData = BuildMiniActivitySeriesPath(series.Values, xStep, MiniActivityChartPlotHeight, yMax);
-            var latestScore = series.Values.Count > 0 ? series.Values[^1] : 0f;
+            var stroke = GetMiniActivitySeriesStroke(series.Key);
+            var pathData = BuildMiniActivitySeriesPath(
+                series.Values,
+                MiniActivityChartPlotWidth,
+                MiniActivityChartPlotHeight,
+                MiniActivityChartPlotPaddingX,
+                MiniActivityChartPlotPaddingY,
+                yMax);
             rows.Add(new VizMiniActivityChartSeriesItem(
                 series.Key,
                 series.Label,
                 stroke,
-                pathData,
-                latestScore,
-                series.TotalScore));
+                pathData));
         }
 
+        var legendColumns = Math.Clamp(rows.Count <= 1 ? 2 : rows.Count, 2, 4);
         return new MiniActivityChartRenderSnapshot(
             Enabled: true,
             SeriesLabel: chart.ModeLabel,
             RangeLabel: $"Ticks {chart.MinTick}..{chart.MaxTick}",
             MetricLabel: $"{chart.MetricLabel} | y-max {yMax:0.###}",
+            YAxisTopLabel: yMax.ToString("0.###", CultureInfo.InvariantCulture),
+            YAxisMidLabel: (yMax * 0.5f).ToString("0.###", CultureInfo.InvariantCulture),
+            YAxisBottomLabel: "0",
+            LegendColumns: legendColumns,
+            TickCount: chart.Ticks.Count,
             Series: rows);
     }
 
     private static string BuildMiniActivitySeriesPath(
         IReadOnlyList<float> values,
-        double xStep,
+        double plotWidth,
         double plotHeight,
+        double paddingX,
+        double paddingY,
         float yMax)
     {
         if (values.Count == 0)
@@ -2115,22 +2190,20 @@ public sealed class VizPanelViewModel : ViewModelBase
             return string.Empty;
         }
 
-        var builder = new StringBuilder(values.Count * 20);
+        var builder = new StringBuilder(values.Count * 24);
         var divisor = yMax > 0f ? yMax : 1f;
+        var usableWidth = Math.Max(1.0, plotWidth - (paddingX * 2.0));
+        var usableHeight = Math.Max(1.0, plotHeight - (paddingY * 2.0));
+        var xStep = values.Count > 1
+            ? usableWidth / (values.Count - 1)
+            : 0d;
+
         for (var i = 0; i < values.Count; i++)
         {
-            var x = i * xStep;
+            var x = paddingX + (i * xStep);
             var ratio = Math.Clamp(values[i] / divisor, 0f, 1f);
-            var y = plotHeight - (ratio * plotHeight);
-            if (i == 0)
-            {
-                builder.Append("M ");
-            }
-            else
-            {
-                builder.Append(" L ");
-            }
-
+            var y = paddingY + ((1f - ratio) * usableHeight);
+            builder.Append(i == 0 ? "M " : " L ");
             builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
             builder.Append(' ');
             builder.Append(y.ToString("0.###", CultureInfo.InvariantCulture));
@@ -2139,12 +2212,45 @@ public sealed class VizPanelViewModel : ViewModelBase
         return builder.ToString();
     }
 
+    private static string GetMiniActivitySeriesStroke(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return MiniActivityChartSeriesPalette[0];
+        }
+
+        var hash = 17;
+        foreach (var ch in key)
+        {
+            hash = (hash * 31) + ch;
+        }
+
+        var index = Math.Abs(hash) % MiniActivityChartSeriesPalette.Length;
+        return MiniActivityChartSeriesPalette[index];
+    }
+
     private void ApplyMiniActivityChartSnapshot(MiniActivityChartRenderSnapshot snapshot)
     {
         ReplaceItems(MiniActivityChartSeries, snapshot.Series);
         MiniActivityChartSeriesLabel = snapshot.SeriesLabel;
-        MiniActivityChartRangeLabel = snapshot.RangeLabel;
+        if (snapshot.TickCount > 0)
+        {
+            var tickRateHz = _currentTargetTickHz.HasValue && _currentTargetTickHz.Value > 0f && float.IsFinite(_currentTargetTickHz.Value)
+                ? _currentTargetTickHz.Value
+                : DefaultMiniActivityTickRateHz;
+            var approxSeconds = snapshot.TickCount / tickRateHz;
+            MiniActivityChartRangeLabel = $"{snapshot.RangeLabel} (~{approxSeconds:0.##}s)";
+        }
+        else
+        {
+            MiniActivityChartRangeLabel = snapshot.RangeLabel;
+        }
+
         MiniActivityChartMetricLabel = snapshot.MetricLabel;
+        MiniActivityYAxisTopLabel = snapshot.YAxisTopLabel;
+        MiniActivityYAxisMidLabel = snapshot.YAxisMidLabel;
+        MiniActivityYAxisBottomLabel = snapshot.YAxisBottomLabel;
+        MiniActivityLegendColumns = snapshot.LegendColumns;
     }
 
     private VizActivityCanvasInteractionState BuildCanvasInteractionState()
@@ -2736,6 +2842,23 @@ public sealed class VizPanelViewModel : ViewModelBase
         return TryParseMiniActivityTopN(MiniActivityTopNText, out var topN)
             ? topN
             : DefaultMiniActivityTopN;
+    }
+
+    private double ParseMiniActivityRangeSecondsOrDefault()
+    {
+        return TryParseMiniActivityRangeSeconds(MiniActivityRangeSecondsText, out var seconds)
+            ? seconds
+            : DefaultMiniActivityRangeSeconds;
+    }
+
+    private int ParseMiniActivityTickWindowOrDefault()
+    {
+        var seconds = ParseMiniActivityRangeSecondsOrDefault();
+        var tickRateHz = _currentTargetTickHz.HasValue && _currentTargetTickHz.Value > 0f && float.IsFinite(_currentTargetTickHz.Value)
+            ? _currentTargetTickHz.Value
+            : DefaultMiniActivityTickRateHz;
+        var estimatedTicks = (int)Math.Round(seconds * tickRateHz, MidpointRounding.AwayFromZero);
+        return Math.Clamp(estimatedTicks, 1, MaxTickWindow);
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
@@ -4341,6 +4464,23 @@ public sealed class VizPanelViewModel : ViewModelBase
         return true;
     }
 
+    private static bool TryParseMiniActivityRangeSeconds(string? value, out double seconds)
+    {
+        seconds = DefaultMiniActivityRangeSeconds;
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return false;
+        }
+
+        if (!double.IsFinite(parsed) || parsed < MinMiniActivityRangeSeconds || parsed > MaxMiniActivityRangeSeconds)
+        {
+            return false;
+        }
+
+        seconds = parsed;
+        return true;
+    }
+
     private static bool TryParseLodRouteBudget(string? value, out int routeBudget)
     {
         routeBudget = 0;
@@ -4510,6 +4650,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         string SeriesLabel,
         string RangeLabel,
         string MetricLabel,
+        string YAxisTopLabel,
+        string YAxisMidLabel,
+        string YAxisBottomLabel,
+        int LegendColumns,
+        int TickCount,
         IReadOnlyList<VizMiniActivityChartSeriesItem> Series);
 
     private readonly record struct RuntimeNeuronTargetRequest(
@@ -4608,9 +4753,7 @@ public sealed record VizMiniActivityChartSeriesItem(
     string Key,
     string Label,
     string Stroke,
-    string PathData,
-    float LatestScore,
-    float TotalScore);
+    string PathData);
 
 public sealed record VizPanelExportItem(
     string Time,
