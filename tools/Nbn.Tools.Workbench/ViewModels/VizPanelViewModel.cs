@@ -33,7 +33,9 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultLodLowZoomBudget = 120;
     private const int DefaultLodMediumZoomBudget = 220;
     private const int DefaultLodHighZoomBudget = 360;
-    private const string DefaultTickCadenceSummary = "Current cadence: runtime default (no override).";
+    private const string DefaultTickOverrideSummary = "Tick override: default runtime backpressure target.";
+    private const string DefaultTickCadenceSummary = "Current cadence: awaiting HiveMind status.";
+    private const int EmptyBrainRefreshClearThreshold = 3;
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
@@ -78,7 +80,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _selectedPayload = string.Empty;
     private string _tickWindowText = DefaultTickWindow.ToString(CultureInfo.InvariantCulture);
     private string _tickRateOverrideText = string.Empty;
-    private string _tickRateOverrideSummary = "Tick override: default runtime backpressure target.";
+    private string _tickRateOverrideSummary = DefaultTickOverrideSummary;
     private string _tickCadenceSummary = DefaultTickCadenceSummary;
     private bool _includeLowSignalEvents;
     private bool _enableAdaptiveLod = true;
@@ -153,6 +155,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private CancellationTokenSource? _projectionLayoutRefreshCts;
     private int _projectionLayoutRefreshVersion;
     private Guid? _preferredBrainId;
+    private int _consecutiveEmptyBrainRefreshes;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -679,21 +682,33 @@ public sealed class VizPanelViewModel : ViewModelBase
         var previousSelection = SelectedBrain;
         var previousBrainId = previousSelection?.BrainId;
         var preferredBrainId = _preferredBrainId ?? previousBrainId;
+
+        if (brains.Count == 0)
+        {
+            _consecutiveEmptyBrainRefreshes++;
+            if (_consecutiveEmptyBrainRefreshes < EmptyBrainRefreshClearThreshold
+                && (previousSelection is not null || KnownBrains.Count > 0))
+            {
+                return;
+            }
+
+            _suspendSelection = true;
+            KnownBrains.Clear();
+            SelectedBrain = null;
+            _suspendSelection = false;
+            _preferredBrainId = null;
+            _consecutiveEmptyBrainRefreshes = 0;
+            Status = "No brains reported.";
+            RefreshFilteredEvents();
+            return;
+        }
+
+        _consecutiveEmptyBrainRefreshes = 0;
         _suspendSelection = true;
         KnownBrains.Clear();
         foreach (var brain in brains)
         {
             KnownBrains.Add(brain);
-        }
-
-        if (brains.Count == 0)
-        {
-            SelectedBrain = null;
-            _suspendSelection = false;
-            _preferredBrainId = null;
-            Status = "No brains reported.";
-            RefreshFilteredEvents();
-            return;
         }
 
         Status = "Streaming";
@@ -726,6 +741,22 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         RefreshFilteredEvents();
+    }
+
+    public void ApplyHiveMindTickStatus(float targetTickHz, bool hasOverride, float overrideTickHz)
+    {
+        if (targetTickHz > 0f && float.IsFinite(targetTickHz))
+        {
+            TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
+            TickRateOverrideSummary = hasOverride
+                ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target {FormatTickCadence(targetTickHz)}."
+                : $"{DefaultTickOverrideSummary} Current target {FormatTickCadence(targetTickHz)}.";
+            return;
+        }
+
+        TickRateOverrideSummary = hasOverride
+            ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target n/a."
+            : DefaultTickOverrideSummary;
     }
 
     public void AddVizEvent(VizEventItem item)
@@ -1290,10 +1321,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastRenderedTickId = 0;
         _nextStreamingRefreshUtc = DateTime.MinValue;
         _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
+        _consecutiveEmptyBrainRefreshes = 0;
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;
-        TickRateOverrideSummary = "Tick override: default runtime backpressure target.";
+        TickRateOverrideSummary = DefaultTickOverrideSummary;
         TickCadenceSummary = DefaultTickCadenceSummary;
         ResetCanvasInteractionState(clearPins: true);
         ExportCommand.RaiseCanExecuteChanged();

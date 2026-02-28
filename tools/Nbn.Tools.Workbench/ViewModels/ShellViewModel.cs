@@ -386,6 +386,15 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             if (status is not null)
             {
+                _dispatcher.Post(() =>
+                {
+                    if (!IsConnectionActive)
+                    {
+                        return;
+                    }
+
+                    Viz.ApplyHiveMindTickStatus(status.TargetTickHz, status.HasTickRateOverride, status.TickRateOverrideHz);
+                });
                 UpdateObservabilitySubscriptions();
                 WorkbenchLog.Info($"HiveMind connected to {Connections.HiveMindHost}:{hivePort}/{Connections.HiveMindName}");
                 return;

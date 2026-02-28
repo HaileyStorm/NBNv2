@@ -608,6 +608,57 @@ public class VizPanelViewModelInteractionTests
         Assert.Equal(brainB.BrainId, vm.SelectedBrain?.BrainId);
     }
 
+    [Fact]
+    public void SetBrains_SingleEmptyRefresh_PreservesSelectionAndKnownBrains()
+    {
+        var vm = CreateViewModel();
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        vm.SetBrains(new[] { brainA, brainB });
+        vm.SelectedBrain = brainB;
+
+        vm.SetBrains(Array.Empty<BrainListItem>());
+
+        Assert.Equal(brainB.BrainId, vm.SelectedBrain?.BrainId);
+        Assert.Equal(2, vm.KnownBrains.Count);
+    }
+
+    [Fact]
+    public void SetBrains_RepeatedEmptyRefreshes_ClearSelectionAfterThreshold()
+    {
+        var vm = CreateViewModel();
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        vm.SetBrains(new[] { brainA, brainB });
+        vm.SelectedBrain = brainB;
+
+        vm.SetBrains(Array.Empty<BrainListItem>());
+        vm.SetBrains(Array.Empty<BrainListItem>());
+        Assert.Equal(brainB.BrainId, vm.SelectedBrain?.BrainId);
+
+        vm.SetBrains(Array.Empty<BrainListItem>());
+
+        Assert.Null(vm.SelectedBrain);
+        Assert.Empty(vm.KnownBrains);
+        Assert.Equal("No brains reported.", vm.Status);
+    }
+
+    [Fact]
+    public void ApplyHiveMindTickStatus_UpdatesCadenceAndOverrideSummary()
+    {
+        var vm = CreateViewModel();
+
+        vm.ApplyHiveMindTickStatus(targetTickHz: 8f, hasOverride: false, overrideTickHz: 0f);
+
+        Assert.Equal("Current cadence: 8 Hz (125 ms/tick).", vm.TickCadenceSummary);
+        Assert.Equal("Tick override: default runtime backpressure target. Current target 8 Hz (125 ms/tick).", vm.TickRateOverrideSummary);
+
+        vm.ApplyHiveMindTickStatus(targetTickHz: 12.5f, hasOverride: true, overrideTickHz: 25f);
+
+        Assert.Equal("Current cadence: 12.5 Hz (80 ms/tick).", vm.TickCadenceSummary);
+        Assert.Equal("Tick override active: 25 Hz (40 ms/tick). Current target 12.5 Hz (80 ms/tick).", vm.TickRateOverrideSummary);
+    }
+
     [Theory]
     [InlineData("12.5", 12.5f)]
     [InlineData("12.5hz", 12.5f)]

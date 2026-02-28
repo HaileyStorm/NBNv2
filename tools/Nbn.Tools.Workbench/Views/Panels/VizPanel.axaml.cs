@@ -150,6 +150,12 @@ public partial class VizPanel : UserControl
         if (e.PropertyName == nameof(VizPanelViewModel.SelectedBrain))
         {
             var selectedBrainId = ViewModel?.SelectedBrain?.BrainId;
+            if (!selectedBrainId.HasValue)
+            {
+                CaptureNavigationContext();
+                return;
+            }
+
             if (_lastSelectedBrainId == selectedBrainId)
             {
                 CaptureNavigationContext();
