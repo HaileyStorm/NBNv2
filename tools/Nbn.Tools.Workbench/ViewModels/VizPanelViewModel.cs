@@ -45,9 +45,29 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int SelectionMissRefreshClearThreshold = 3;
     private const int SnapshotRegionRows = 10;
     private const int SnapshotEdgeRows = 14;
+    private const int DefaultMiniActivityTopN = 8;
+    private const int MinMiniActivityTopN = 1;
+    private const int MaxMiniActivityTopN = 32;
+    private const double MiniActivityChartPlotWidth = 268;
+    private const double MiniActivityChartPlotHeight = 104;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
+    private static readonly string[] MiniActivityChartSeriesPalette =
+    {
+        "#2A9D8F",
+        "#E76F51",
+        "#457B9D",
+        "#E9C46A",
+        "#264653",
+        "#F4A261",
+        "#8AB17D",
+        "#B56576",
+        "#6D597A",
+        "#F28482",
+        "#4D908E",
+        "#90BE6D"
+    };
     private const int HoverClearDelayMs = 220;
     private const int EdgeHitSamples = 12;
     private const double HitTestCellSize = 54;
@@ -97,6 +117,11 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _lodSummary = $"Adaptive LOD enabled (routes low/med/high: {DefaultLodLowZoomBudget}/{DefaultLodMediumZoomBudget}/{DefaultLodHighZoomBudget}).";
     private string _activitySummary = "Awaiting visualization events.";
     private string _activityCanvasLegend = "Canvas renderer awaiting activity.";
+    private bool _showMiniActivityChart = true;
+    private string _miniActivityTopNText = DefaultMiniActivityTopN.ToString(CultureInfo.InvariantCulture);
+    private string _miniActivityChartSeriesLabel = $"Top {DefaultMiniActivityTopN} regions by score.";
+    private string _miniActivityChartRangeLabel = "Ticks: awaiting activity.";
+    private string _miniActivityChartMetricLabel = "score = 1 + |value| + |strength| per event contribution";
     private double _activityCanvasWidth = VizActivityCanvasLayoutBuilder.CanvasWidth;
     private double _activityCanvasHeight = VizActivityCanvasLayoutBuilder.CanvasHeight;
     private bool _showProjectionSnapshot;
@@ -174,6 +199,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         RegionActivity = new ObservableCollection<VizRegionActivityItem>();
         EdgeActivity = new ObservableCollection<VizEdgeActivityItem>();
         TickActivity = new ObservableCollection<VizTickActivityItem>();
+        MiniActivityChartSeries = new ObservableCollection<VizMiniActivityChartSeriesItem>();
         CanvasNodes = new ObservableCollection<VizActivityCanvasNode>();
         CanvasEdges = new ObservableCollection<VizActivityCanvasEdge>();
         KnownBrains = new ObservableCollection<BrainListItem>();
@@ -220,6 +246,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     public ObservableCollection<VizRegionActivityItem> RegionActivity { get; }
     public ObservableCollection<VizEdgeActivityItem> EdgeActivity { get; }
     public ObservableCollection<VizTickActivityItem> TickActivity { get; }
+    public ObservableCollection<VizMiniActivityChartSeriesItem> MiniActivityChartSeries { get; }
     public ObservableCollection<VizActivityCanvasNode> CanvasNodes { get; }
     public ObservableCollection<VizActivityCanvasEdge> CanvasEdges { get; }
 
@@ -464,6 +491,46 @@ public sealed class VizPanelViewModel : ViewModelBase
         get => _activitySummary;
         set => SetProperty(ref _activitySummary, value);
     }
+
+    public bool ShowMiniActivityChart
+    {
+        get => _showMiniActivityChart;
+        set
+        {
+            if (SetProperty(ref _showMiniActivityChart, value))
+            {
+                RefreshActivityProjection();
+            }
+        }
+    }
+
+    public string MiniActivityTopNText
+    {
+        get => _miniActivityTopNText;
+        set => SetProperty(ref _miniActivityTopNText, value);
+    }
+
+    public string MiniActivityChartSeriesLabel
+    {
+        get => _miniActivityChartSeriesLabel;
+        private set => SetProperty(ref _miniActivityChartSeriesLabel, value);
+    }
+
+    public string MiniActivityChartRangeLabel
+    {
+        get => _miniActivityChartRangeLabel;
+        private set => SetProperty(ref _miniActivityChartRangeLabel, value);
+    }
+
+    public string MiniActivityChartMetricLabel
+    {
+        get => _miniActivityChartMetricLabel;
+        private set => SetProperty(ref _miniActivityChartMetricLabel, value);
+    }
+
+    public double MiniActivityChartWidth => MiniActivityChartPlotWidth;
+
+    public double MiniActivityChartHeight => MiniActivityChartPlotHeight;
 
     public string ActivityCanvasLegend
     {
@@ -1279,6 +1346,12 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParseMiniActivityTopN(MiniActivityTopNText, out var topN))
+        {
+            Status = $"Mini chart Top N must be an integer in {MinMiniActivityTopN}-{MaxMiniActivityTopN}.";
+            return;
+        }
+
         if (!TryParseLodRouteBudget(LodLowZoomBudgetText, out var lowBudget))
         {
             Status = $"LOD low-zoom budget must be an integer in {MinLodRouteBudget}-{MaxLodRouteBudget}.";
@@ -1298,6 +1371,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         TickWindowText = tickWindow.ToString(CultureInfo.InvariantCulture);
+        MiniActivityTopNText = topN.ToString(CultureInfo.InvariantCulture);
         LodLowZoomBudgetText = lowBudget.ToString(CultureInfo.InvariantCulture);
         LodMediumZoomBudgetText = mediumBudget.ToString(CultureInfo.InvariantCulture);
         LodHighZoomBudgetText = highBudget.ToString(CultureInfo.InvariantCulture);
@@ -1307,7 +1381,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             QueueDefinitionTopologyHydration(SelectedBrain.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
         }
-        Status = $"Applied activity options (tick window {tickWindow}, adaptive LOD {(EnableAdaptiveLod ? "on" : "off")}).";
+        Status = $"Applied activity options (tick window {tickWindow}, mini chart top N {topN}, adaptive LOD {(EnableAdaptiveLod ? "on" : "off")}).";
     }
 
     private async Task ApplyTickRateOverrideAsync()
@@ -1386,7 +1460,12 @@ public sealed class VizPanelViewModel : ViewModelBase
             _pendingDefinitionHydrationKeys.Clear();
         }
         _currentProjection = null;
-        _currentProjectionOptions = new VizActivityProjectionOptions(DefaultTickWindow, IncludeLowSignalEvents, null);
+        _currentProjectionOptions = new VizActivityProjectionOptions(
+            DefaultTickWindow,
+            IncludeLowSignalEvents,
+            null,
+            ParseMiniActivityTopNOrDefault(),
+            ShowMiniActivityChart);
         _lastRenderedTickId = 0;
         _nextStreamingRefreshUtc = DateTime.MinValue;
         _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
@@ -1701,7 +1780,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         sb.AppendLine(
             $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} include_low_signal={IncludeLowSignalEvents} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
         sb.AppendLine(
-            $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count}");
+            $"events all={_allEvents.Count} filtered={VizEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count} mini_series={MiniActivityChartSeries.Count} mini_enabled={ShowMiniActivityChart}");
         sb.AppendLine(
             $"perf projection_ms={_lastProjectionBuildMs:0.###} layout_ms={_lastCanvasLayoutBuildMs:0.###} apply_ms={_lastCanvasApplyMs:0.###} frame_ms={_lastCanvasFrameMs:0.###} flush_ms={_lastFlushBatchMs:0.###} flush_batch={_lastFlushBatchCount}");
         sb.AppendLine(
@@ -1711,6 +1790,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         sb.AppendLine(
             $"canvas_diff nodes({_lastCanvasNodeDiffStats}) edges({_lastCanvasEdgeDiffStats})");
         sb.AppendLine($"summary={ActivitySummary}");
+        sb.AppendLine($"mini_series_label={MiniActivityChartSeriesLabel}");
+        sb.AppendLine($"mini_range={MiniActivityChartRangeLabel}");
+        sb.AppendLine($"mini_metric={MiniActivityChartMetricLabel}");
         sb.AppendLine($"legend={ActivityCanvasLegend}");
         sb.AppendLine($"interaction={ActivityInteractionSummary}");
         sb.AppendLine($"pinned={ActivityPinnedSummary}");
@@ -1780,10 +1862,13 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private void RefreshActivityProjection()
     {
+        var miniChartTopN = ParseMiniActivityTopNOrDefault();
         var options = new VizActivityProjectionOptions(
             ParseTickWindowOrDefault(),
             IncludeLowSignalEvents,
-            TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null);
+            TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null,
+            miniChartTopN,
+            ShowMiniActivityChart);
         var eventsSnapshot = VizEvents.ToList();
         var topology = BuildTopologySnapshotForSelectedBrain();
         var interaction = BuildCanvasInteractionState();
@@ -1917,7 +2002,9 @@ public sealed class VizPanelViewModel : ViewModelBase
             renderOptions);
         cancellationToken.ThrowIfCancellationRequested();
         var layoutMs = StopwatchElapsedMs(layoutStart);
-        return new ProjectionCanvasSnapshot(projection, options, canvas, projectionMs, layoutMs);
+        var miniChart = BuildMiniActivityChartRenderSnapshot(projection.MiniChart);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new ProjectionCanvasSnapshot(projection, options, canvas, miniChart, projectionMs, layoutMs);
     }
 
     private void ApplyProjectionAndCanvasSnapshot(int refreshVersion, ProjectionCanvasSnapshot snapshot)
@@ -1935,6 +2022,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ReplaceItems(EdgeActivity, snapshot.Projection.Edges.Take(SnapshotEdgeRows).ToList());
         ReplaceItems(TickActivity, snapshot.Projection.Ticks);
         ActivitySummary = snapshot.Projection.Summary;
+        ApplyMiniActivityChartSnapshot(snapshot.MiniChart);
 
         var layoutMs = snapshot.LayoutMs;
         var canvas = NormalizeCanvasLayout(snapshot.Canvas);
@@ -1964,6 +2052,99 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastCanvasLayoutBuildMs = layoutMs;
         _lastCanvasFrameMs = snapshot.ProjectionMs + layoutMs + _lastCanvasApplyMs;
         OnPropertyChanged(nameof(TogglePinSelectionLabel));
+    }
+
+    private static MiniActivityChartRenderSnapshot BuildMiniActivityChartRenderSnapshot(VizMiniActivityChart chart)
+    {
+        if (!chart.Enabled)
+        {
+            return new MiniActivityChartRenderSnapshot(
+                Enabled: false,
+                SeriesLabel: chart.ModeLabel,
+                RangeLabel: "Ticks: mini chart disabled.",
+                MetricLabel: $"{chart.MetricLabel} | toggle on to resume tracking",
+                Series: Array.Empty<VizMiniActivityChartSeriesItem>());
+        }
+
+        if (chart.Series.Count == 0 || chart.Ticks.Count == 0)
+        {
+            return new MiniActivityChartRenderSnapshot(
+                Enabled: true,
+                SeriesLabel: chart.ModeLabel,
+                RangeLabel: "Ticks: awaiting activity.",
+                MetricLabel: $"{chart.MetricLabel} | no ranked series in current window",
+                Series: Array.Empty<VizMiniActivityChartSeriesItem>());
+        }
+
+        var yMax = chart.PeakScore > 0f ? chart.PeakScore : 1f;
+        var xStep = chart.Ticks.Count > 1
+            ? MiniActivityChartPlotWidth / (chart.Ticks.Count - 1)
+            : 0d;
+        var rows = new List<VizMiniActivityChartSeriesItem>(chart.Series.Count);
+        for (var i = 0; i < chart.Series.Count; i++)
+        {
+            var series = chart.Series[i];
+            var stroke = MiniActivityChartSeriesPalette[i % MiniActivityChartSeriesPalette.Length];
+            var pathData = BuildMiniActivitySeriesPath(series.Values, xStep, MiniActivityChartPlotHeight, yMax);
+            var latestScore = series.Values.Count > 0 ? series.Values[^1] : 0f;
+            rows.Add(new VizMiniActivityChartSeriesItem(
+                series.Key,
+                series.Label,
+                stroke,
+                pathData,
+                latestScore,
+                series.TotalScore));
+        }
+
+        return new MiniActivityChartRenderSnapshot(
+            Enabled: true,
+            SeriesLabel: chart.ModeLabel,
+            RangeLabel: $"Ticks {chart.MinTick}..{chart.MaxTick}",
+            MetricLabel: $"{chart.MetricLabel} | y-max {yMax:0.###}",
+            Series: rows);
+    }
+
+    private static string BuildMiniActivitySeriesPath(
+        IReadOnlyList<float> values,
+        double xStep,
+        double plotHeight,
+        float yMax)
+    {
+        if (values.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(values.Count * 20);
+        var divisor = yMax > 0f ? yMax : 1f;
+        for (var i = 0; i < values.Count; i++)
+        {
+            var x = i * xStep;
+            var ratio = Math.Clamp(values[i] / divisor, 0f, 1f);
+            var y = plotHeight - (ratio * plotHeight);
+            if (i == 0)
+            {
+                builder.Append("M ");
+            }
+            else
+            {
+                builder.Append(" L ");
+            }
+
+            builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
+            builder.Append(' ');
+            builder.Append(y.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
+    }
+
+    private void ApplyMiniActivityChartSnapshot(MiniActivityChartRenderSnapshot snapshot)
+    {
+        ReplaceItems(MiniActivityChartSeries, snapshot.Series);
+        MiniActivityChartSeriesLabel = snapshot.SeriesLabel;
+        MiniActivityChartRangeLabel = snapshot.RangeLabel;
+        MiniActivityChartMetricLabel = snapshot.MetricLabel;
     }
 
     private VizActivityCanvasInteractionState BuildCanvasInteractionState()
@@ -2548,6 +2729,13 @@ public sealed class VizPanelViewModel : ViewModelBase
         return TryParseTickWindow(TickWindowText, out var tickWindow)
             ? tickWindow
             : DefaultTickWindow;
+    }
+
+    private int ParseMiniActivityTopNOrDefault()
+    {
+        return TryParseMiniActivityTopN(MiniActivityTopNText, out var topN)
+            ? topN
+            : DefaultMiniActivityTopN;
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
@@ -4136,6 +4324,23 @@ public sealed class VizPanelViewModel : ViewModelBase
         return true;
     }
 
+    private static bool TryParseMiniActivityTopN(string? value, out int topN)
+    {
+        topN = DefaultMiniActivityTopN;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return false;
+        }
+
+        if (parsed < MinMiniActivityTopN || parsed > MaxMiniActivityTopN)
+        {
+            return false;
+        }
+
+        topN = parsed;
+        return true;
+    }
+
     private static bool TryParseLodRouteBudget(string? value, out int routeBudget)
     {
         routeBudget = 0;
@@ -4296,8 +4501,16 @@ public sealed class VizPanelViewModel : ViewModelBase
         VizActivityProjection Projection,
         VizActivityProjectionOptions Options,
         VizActivityCanvasLayout Canvas,
+        MiniActivityChartRenderSnapshot MiniChart,
         double ProjectionMs,
         double LayoutMs);
+
+    private readonly record struct MiniActivityChartRenderSnapshot(
+        bool Enabled,
+        string SeriesLabel,
+        string RangeLabel,
+        string MetricLabel,
+        IReadOnlyList<VizMiniActivityChartSeriesItem> Series);
 
     private readonly record struct RuntimeNeuronTargetRequest(
         uint RegionId,
@@ -4390,6 +4603,14 @@ public sealed record VizCanvasLayoutModeOption(string Label, VizActivityCanvasLa
             new VizCanvasLayoutModeOption("Projected 3D (R&D)", VizActivityCanvasLayoutMode.Axial3DExperimental)
         };
 }
+
+public sealed record VizMiniActivityChartSeriesItem(
+    string Key,
+    string Label,
+    string Stroke,
+    string PathData,
+    float LatestScore,
+    float TotalScore);
 
 public sealed record VizPanelExportItem(
     string Time,

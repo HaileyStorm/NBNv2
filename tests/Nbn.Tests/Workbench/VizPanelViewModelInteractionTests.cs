@@ -982,6 +982,41 @@ public class VizPanelViewModelInteractionTests
         Assert.Equal(string.Empty, item.BrainId);
     }
 
+    [Fact]
+    public void MiniActivityChart_DefaultsToEnabledWithTopN8()
+    {
+        var vm = CreateViewModel();
+
+        Assert.True(vm.ShowMiniActivityChart);
+        Assert.Equal("8", vm.MiniActivityTopNText);
+        Assert.Contains("score =", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MiniActivityChart_DisableToggle_ClearsRenderedSeries()
+    {
+        var vm = CreateViewModel();
+        vm.ShowMiniActivityChart = false;
+
+        Assert.Empty(vm.MiniActivityChartSeries);
+        Assert.Equal("Ticks: mini chart disabled.", vm.MiniActivityChartRangeLabel);
+
+        vm.ShowMiniActivityChart = true;
+
+        Assert.Equal("Ticks: awaiting activity.", vm.MiniActivityChartRangeLabel);
+    }
+
+    [Fact]
+    public void ApplyActivityOptions_InvalidMiniTopN_ShowsValidationError()
+    {
+        var vm = CreateViewModel();
+        vm.MiniActivityTopNText = "0";
+
+        vm.ApplyActivityOptionsCommand.Execute(null);
+
+        Assert.Contains("Mini chart Top N", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,

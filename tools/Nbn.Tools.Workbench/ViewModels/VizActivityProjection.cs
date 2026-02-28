@@ -10,7 +10,9 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed record VizActivityProjectionOptions(
     int TickWindow,
     bool IncludeLowSignalEvents,
-    uint? FocusRegionId);
+    uint? FocusRegionId,
+    int TopSeriesCount = 8,
+    bool EnableMiniChart = true);
 
 public sealed record VizActivityProjection(
     string Summary,
@@ -18,7 +20,8 @@ public sealed record VizActivityProjection(
     IReadOnlyList<VizRegionActivityItem> Regions,
     IReadOnlyList<VizEdgeActivityItem> Edges,
     IReadOnlyList<VizTickActivityItem> Ticks,
-    IReadOnlyList<VizEventItem> WindowEvents);
+    IReadOnlyList<VizEventItem> WindowEvents,
+    VizMiniActivityChart MiniChart);
 
 public sealed record VizActivityStatItem(string Label, string Value, string Detail);
 
@@ -51,25 +54,47 @@ public sealed record VizTickActivityItem(
     int AxonCount,
     int BufferCount);
 
+public sealed record VizMiniActivityChart(
+    bool Enabled,
+    string ModeLabel,
+    string MetricLabel,
+    ulong MinTick,
+    ulong MaxTick,
+    IReadOnlyList<ulong> Ticks,
+    IReadOnlyList<VizMiniActivitySeries> Series,
+    float PeakScore);
+
+public sealed record VizMiniActivitySeries(
+    string Key,
+    string Label,
+    float TotalScore,
+    ulong LastActiveTick,
+    IReadOnlyList<float> Values);
+
 public static class VizActivityProjectionBuilder
 {
     private const int DefaultTickWindow = 64;
     private const int MaxTickWindow = 4096;
     private const int MaxTickRows = 20;
+    private const int DefaultMiniChartTopSeriesCount = 8;
+    private const int MaxMiniChartTopSeriesCount = 32;
     private const float LowSignalThreshold = 1e-5f;
+    private const string MiniChartMetricLabel = "score = 1 + |value| + |strength| per event contribution";
 
     public static VizActivityProjection Build(IEnumerable<VizEventItem> events, VizActivityProjectionOptions options)
     {
         var source = events?.ToList() ?? new List<VizEventItem>();
         if (source.Count == 0)
         {
+            var miniChart = BuildMiniChart(Array.Empty<VizEventItem>(), minTick: 0, maxTick: 0, options);
             return new VizActivityProjection(
                 "No visualization events in the current filter.",
                 new[] { new VizActivityStatItem("Events", "0", "Awaiting stream data") },
                 Array.Empty<VizRegionActivityItem>(),
                 Array.Empty<VizEdgeActivityItem>(),
                 Array.Empty<VizTickActivityItem>(),
-                Array.Empty<VizEventItem>());
+                Array.Empty<VizEventItem>(),
+                miniChart);
         }
 
         var tickWindow = NormalizeTickWindow(options.TickWindow);
@@ -79,6 +104,7 @@ public static class VizActivityProjectionBuilder
 
         if (filtered.Count == 0)
         {
+            var miniChart = BuildMiniChart(Array.Empty<VizEventItem>(), minTick: 0, maxTick: 0, options);
             return new VizActivityProjection(
                 "All events were filtered out by current options.",
                 new[]
@@ -88,7 +114,8 @@ public static class VizActivityProjectionBuilder
                 Array.Empty<VizRegionActivityItem>(),
                 Array.Empty<VizEdgeActivityItem>(),
                 Array.Empty<VizTickActivityItem>(),
-                Array.Empty<VizEventItem>());
+                Array.Empty<VizEventItem>(),
+                miniChart);
         }
 
         var latestTick = filtered.Max(item => item.TickId);
@@ -130,8 +157,9 @@ public static class VizActivityProjectionBuilder
         var summary = options.FocusRegionId is uint focused
             ? $"Ticks {minTick}..{latestTick} | {windowed.Count} events | focus R{focused}: {focusCount}"
             : $"Ticks {minTick}..{latestTick} | {windowed.Count} events | {uniqueRegionCount} regions";
+        var chart = BuildMiniChart(windowed, minTick, latestTick, options);
 
-        return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows, windowed);
+        return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows, windowed, chart);
     }
 
     private static IReadOnlyList<VizRegionActivityItem> BuildRegionRows(IReadOnlyList<VizEventItem> events)
@@ -213,6 +241,245 @@ public static class VizActivityProjectionBuilder
             .ToList();
     }
 
+    private static VizMiniActivityChart BuildMiniChart(
+        IReadOnlyList<VizEventItem> windowed,
+        ulong minTick,
+        ulong maxTick,
+        VizActivityProjectionOptions options)
+    {
+        var topSeriesCount = NormalizeTopSeriesCount(options.TopSeriesCount);
+        var modeLabel = options.FocusRegionId is uint focusRegionId
+            ? $"Top {topSeriesCount} neurons in R{focusRegionId}"
+            : $"Top {topSeriesCount} regions";
+
+        if (!options.EnableMiniChart)
+        {
+            return new VizMiniActivityChart(
+                Enabled: false,
+                ModeLabel: modeLabel,
+                MetricLabel: MiniChartMetricLabel,
+                MinTick: 0,
+                MaxTick: 0,
+                Ticks: Array.Empty<ulong>(),
+                Series: Array.Empty<VizMiniActivitySeries>(),
+                PeakScore: 0f);
+        }
+
+        if (windowed.Count == 0 || maxTick < minTick)
+        {
+            return new VizMiniActivityChart(
+                Enabled: true,
+                ModeLabel: modeLabel,
+                MetricLabel: MiniChartMetricLabel,
+                MinTick: 0,
+                MaxTick: 0,
+                Ticks: Array.Empty<ulong>(),
+                Series: Array.Empty<VizMiniActivitySeries>(),
+                PeakScore: 0f);
+        }
+
+        var tickCount = (int)(maxTick - minTick + 1);
+        var ticks = new List<ulong>(tickCount);
+        for (var i = 0; i < tickCount; i++)
+        {
+            ticks.Add(minTick + (ulong)i);
+        }
+
+        var trendByEntity = options.FocusRegionId is uint focusedRegionId
+            ? BuildFocusNeuronTrendMap(windowed, minTick, tickCount, focusedRegionId)
+            : BuildRegionTrendMap(windowed, minTick, tickCount);
+        var series = trendByEntity.Values
+            .OrderByDescending(item => item.TotalScore)
+            .ThenByDescending(item => item.LastActiveTick)
+            .ThenBy(item => item.Label, StringComparer.Ordinal)
+            .Take(topSeriesCount)
+            .Select(item => new VizMiniActivitySeries(
+                item.Key,
+                item.Label,
+                item.TotalScore,
+                item.LastActiveTick,
+                item.Values))
+            .ToList();
+
+        var peakScore = 0f;
+        foreach (var item in series)
+        {
+            foreach (var value in item.Values)
+            {
+                if (value > peakScore)
+                {
+                    peakScore = value;
+                }
+            }
+        }
+
+        return new VizMiniActivityChart(
+            Enabled: true,
+            ModeLabel: modeLabel,
+            MetricLabel: MiniChartMetricLabel,
+            MinTick: minTick,
+            MaxTick: maxTick,
+            Ticks: ticks,
+            Series: series,
+            PeakScore: peakScore);
+    }
+
+    private static Dictionary<string, TrendAccumulator> BuildRegionTrendMap(
+        IReadOnlyList<VizEventItem> events,
+        ulong minTick,
+        int tickCount)
+    {
+        var trends = new Dictionary<string, TrendAccumulator>(StringComparer.Ordinal);
+        foreach (var item in events)
+        {
+            if (item.TickId < minTick)
+            {
+                continue;
+            }
+
+            var tickIndex = (int)(item.TickId - minTick);
+            if (tickIndex < 0 || tickIndex >= tickCount)
+            {
+                continue;
+            }
+
+            var score = ComputeActivityScore(item);
+            if (!(score > 0f))
+            {
+                continue;
+            }
+
+            var hasEventRegion = TryParseRegion(item.Region, out var eventRegionId);
+            var hasSourceRegion = TryParseAddressRegion(item.Source, out var sourceRegionId);
+            var hasTargetRegion = TryParseAddressRegion(item.Target, out var targetRegionId);
+
+            if (hasEventRegion)
+            {
+                AddRegionContribution(trends, eventRegionId, score, tickIndex, item.TickId, tickCount);
+            }
+
+            if (hasSourceRegion && (!hasEventRegion || sourceRegionId != eventRegionId))
+            {
+                AddRegionContribution(trends, sourceRegionId, score, tickIndex, item.TickId, tickCount);
+            }
+
+            if (hasTargetRegion
+                && (!hasEventRegion || targetRegionId != eventRegionId)
+                && (!hasSourceRegion || targetRegionId != sourceRegionId))
+            {
+                AddRegionContribution(trends, targetRegionId, score, tickIndex, item.TickId, tickCount);
+            }
+        }
+
+        return trends;
+    }
+
+    private static Dictionary<string, TrendAccumulator> BuildFocusNeuronTrendMap(
+        IReadOnlyList<VizEventItem> events,
+        ulong minTick,
+        int tickCount,
+        uint focusRegionId)
+    {
+        var trends = new Dictionary<string, TrendAccumulator>(StringComparer.Ordinal);
+        foreach (var item in events)
+        {
+            if (item.TickId < minTick)
+            {
+                continue;
+            }
+
+            var tickIndex = (int)(item.TickId - minTick);
+            if (tickIndex < 0 || tickIndex >= tickCount)
+            {
+                continue;
+            }
+
+            var score = ComputeActivityScore(item);
+            if (!(score > 0f))
+            {
+                continue;
+            }
+
+            var hasSource = TryParseAddress(item.Source, out var sourceRegionId, out var sourceNeuronId);
+            var hasTarget = TryParseAddress(item.Target, out var targetRegionId, out var targetNeuronId);
+            var sourceMatches = hasSource && sourceRegionId == focusRegionId;
+            var targetMatches = hasTarget && targetRegionId == focusRegionId;
+            if (!sourceMatches && !targetMatches)
+            {
+                continue;
+            }
+
+            if (sourceMatches)
+            {
+                AddNeuronContribution(
+                    trends,
+                    focusRegionId,
+                    sourceNeuronId,
+                    score,
+                    tickIndex,
+                    item.TickId,
+                    tickCount);
+            }
+
+            if (targetMatches && (!sourceMatches || targetNeuronId != sourceNeuronId))
+            {
+                AddNeuronContribution(
+                    trends,
+                    focusRegionId,
+                    targetNeuronId,
+                    score,
+                    tickIndex,
+                    item.TickId,
+                    tickCount);
+            }
+        }
+
+        return trends;
+    }
+
+    private static float ComputeActivityScore(VizEventItem item)
+    {
+        var score = 1f + MathF.Abs(item.Value) + MathF.Abs(item.Strength);
+        return float.IsFinite(score) ? score : 0f;
+    }
+
+    private static void AddRegionContribution(
+        IDictionary<string, TrendAccumulator> trends,
+        uint regionId,
+        float score,
+        int tickIndex,
+        ulong tickId,
+        int tickCount)
+    {
+        var key = $"region:{regionId}";
+        if (!trends.TryGetValue(key, out var accumulator))
+        {
+            accumulator = new TrendAccumulator(key, $"R{regionId}", tickCount);
+            trends[key] = accumulator;
+        }
+
+        accumulator.Add(tickIndex, score, tickId);
+    }
+
+    private static void AddNeuronContribution(
+        IDictionary<string, TrendAccumulator> trends,
+        uint regionId,
+        uint neuronId,
+        float score,
+        int tickIndex,
+        ulong tickId,
+        int tickCount)
+    {
+        var key = $"neuron:{regionId}:{neuronId}";
+        if (!trends.TryGetValue(key, out var accumulator))
+        {
+            accumulator = new TrendAccumulator(key, $"R{regionId}N{neuronId}", tickCount);
+            trends[key] = accumulator;
+        }
+
+        accumulator.Add(tickIndex, score, tickId);
+    }
+
     private static bool ShouldKeepEvent(VizEventItem item, bool includeLowSignalEvents)
     {
         if (includeLowSignalEvents || !UsesSignalMagnitude(item.Type))
@@ -266,6 +533,16 @@ public static class VizActivityProjectionBuilder
         }
 
         return Math.Min(value, MaxTickWindow);
+    }
+
+    private static int NormalizeTopSeriesCount(int value)
+    {
+        if (value <= 0)
+        {
+            return DefaultMiniChartTopSeriesCount;
+        }
+
+        return Math.Min(value, MaxMiniChartTopSeriesCount);
     }
 
     private static float AverageMagnitude(IEnumerable<float> values)
@@ -368,6 +645,45 @@ public static class VizActivityProjectionBuilder
         return true;
     }
 
+    private static bool TryParseAddress(string? value, out uint regionId, out uint neuronId)
+    {
+        regionId = 0;
+        neuronId = 0;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var encodedAddress))
+        {
+            var parsedRegion = encodedAddress >> NbnConstants.AddressNeuronBits;
+            if (parsedRegion > NbnConstants.RegionMaxId)
+            {
+                return false;
+            }
+
+            regionId = parsedRegion;
+            neuronId = encodedAddress & NbnConstants.AddressNeuronMask;
+            return true;
+        }
+
+        if (!TryParseRegionToken(value, out var parsedRegionId, out var remainder)
+            || string.IsNullOrWhiteSpace(remainder)
+            || (remainder[0] != 'N' && remainder[0] != 'n'))
+        {
+            return false;
+        }
+
+        if (!uint.TryParse(remainder[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedNeuronId))
+        {
+            return false;
+        }
+
+        regionId = parsedRegionId;
+        neuronId = parsedNeuronId;
+        return true;
+    }
+
     private static bool TryParseRegionToken(string? value, out uint regionId, out string remainder)
     {
         regionId = 0;
@@ -404,5 +720,35 @@ public static class VizActivityProjectionBuilder
         regionId = parsed;
         remainder = end < trimmed.Length ? trimmed[end..] : string.Empty;
         return true;
+    }
+
+    private sealed class TrendAccumulator
+    {
+        public TrendAccumulator(string key, string label, int tickCount)
+        {
+            Key = key;
+            Label = label;
+            Values = new float[tickCount];
+        }
+
+        public string Key { get; }
+
+        public string Label { get; }
+
+        public float[] Values { get; }
+
+        public float TotalScore { get; private set; }
+
+        public ulong LastActiveTick { get; private set; }
+
+        public void Add(int tickIndex, float score, ulong tickId)
+        {
+            Values[tickIndex] += score;
+            TotalScore += score;
+            if (tickId >= LastActiveTick)
+            {
+                LastActiveTick = tickId;
+            }
+        }
     }
 }

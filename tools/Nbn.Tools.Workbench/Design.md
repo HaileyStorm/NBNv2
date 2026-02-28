@@ -23,6 +23,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 - Focus-mode gateway placement applies deterministic de-overlap search so gateway region nodes do not stack on top of each other.
 - Viz canvas empty-space double-click resets camera to default center; when already at default center in region-focus mode, it returns to full-brain view.
 - Layout cost for projected region-map mode is `O(region_count)` and bounded by NBN region count (`<= 32`); no GPU dependency is introduced.
+- Viz panel exposes an optional compact top-N activity chart near the canvas controls: full-brain mode ranks regions, focus mode ranks neurons in the focused region (including output region `31` neurons when focused), and per-tick score is deterministically `1 + |value| + |strength|` over the rolling tick window.
 
 ## Maintenance guidance
 

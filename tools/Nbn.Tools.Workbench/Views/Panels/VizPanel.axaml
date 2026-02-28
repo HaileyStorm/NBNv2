@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shapes="clr-namespace:Avalonia.Controls.Shapes;assembly=Avalonia.Controls"
              xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
              xmlns:models="clr-namespace:Nbn.Tools.Workbench.Models"
              xmlns:panels="clr-namespace:Nbn.Tools.Workbench.Views.Panels"
@@ -83,10 +84,103 @@
             </StackPanel>
             <TextBlock Grid.Column="3" Text="Tick window" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="4" Text="{Binding TickWindowText}" Width="80" />
-            <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="10">
-              <Button Content="Apply options" Command="{Binding ApplyActivityOptionsCommand}" />
-              <CheckBox Content="Include low-signal events" IsChecked="{Binding IncludeLowSignalEvents}" VerticalAlignment="Center" />
-              <TextBlock Text="{Binding ActivitySummary}" Classes="muted" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="5" Spacing="6">
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Content="Apply options" Command="{Binding ApplyActivityOptionsCommand}" />
+                <CheckBox Content="Include low-signal events"
+                          IsChecked="{Binding IncludeLowSignalEvents}"
+                          VerticalAlignment="Center" />
+                <CheckBox Content="Mini chart"
+                          IsChecked="{Binding ShowMiniActivityChart}"
+                          VerticalAlignment="Center" />
+                <TextBlock Text="Top N" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Width="48" Text="{Binding MiniActivityTopNText}" HorizontalContentAlignment="Center" />
+                <TextBlock Text="{Binding ActivitySummary}"
+                           Classes="muted"
+                           VerticalAlignment="Center"
+                           TextWrapping="NoWrap"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+              <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Background="{DynamicResource NbnSurfaceBrush}"
+                      Padding="6"
+                      IsVisible="{Binding ShowMiniActivityChart}">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="{Binding MiniActivityChartSeriesLabel}" Classes="muted" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                  <Border BorderBrush="{DynamicResource NbnBorderBrush}"
+                          BorderThickness="1"
+                          CornerRadius="6"
+                          Background="{DynamicResource NbnSurfaceAltBrush}"
+                          Padding="4">
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="*,Auto" ColumnSpacing="6" RowSpacing="4">
+                      <TextBlock Text="Y" Classes="muted" VerticalAlignment="Top" />
+                      <Grid Grid.Column="1"
+                            Width="{Binding MiniActivityChartWidth}"
+                            Height="{Binding MiniActivityChartHeight}">
+                        <shapes:Line StartPoint="0,0"
+                                     EndPoint="0,104"
+                                     Stroke="{DynamicResource NbnBorderBrush}"
+                                     StrokeThickness="1" />
+                        <shapes:Line StartPoint="0,104"
+                                     EndPoint="268,104"
+                                     Stroke="{DynamicResource NbnBorderBrush}"
+                                     StrokeThickness="1" />
+                        <ItemsControl ItemsSource="{Binding MiniActivityChartSeries}">
+                          <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                              <Grid />
+                            </ItemsPanelTemplate>
+                          </ItemsControl.ItemsPanel>
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:VizMiniActivityChartSeriesItem">
+                              <shapes:Path Data="{Binding PathData}"
+                                           Stroke="{Binding Stroke}"
+                                           StrokeThickness="1.6"
+                                           StrokeLineCap="Round"
+                                           IsHitTestVisible="False" />
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </Grid>
+                      <TextBlock Grid.Row="1"
+                                 Grid.Column="1"
+                                 Text="{Binding MiniActivityChartRangeLabel}"
+                                 Classes="muted"
+                                 TextWrapping="NoWrap"
+                                 TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                  </Border>
+                  <ItemsControl ItemsSource="{Binding MiniActivityChartSeries}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:VizMiniActivityChartSeriesItem">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" Margin="0,1">
+                          <Border Width="10"
+                                  Height="2"
+                                  Background="{Binding Stroke}"
+                                  VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="1"
+                                     Text="{Binding Label}"
+                                     Classes="muted"
+                                     TextWrapping="NoWrap"
+                                     TextTrimming="CharacterEllipsis" />
+                          <TextBlock Grid.Column="2"
+                                     Text="{Binding LatestScore, StringFormat='latest {0:0.###}'}"
+                                     Classes="muted" />
+                          <TextBlock Grid.Column="3"
+                                     Text="{Binding TotalScore, StringFormat='sum {0:0.###}'}"
+                                     Classes="muted" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock Text="{Binding MiniActivityChartMetricLabel}"
+                             Classes="muted"
+                             TextWrapping="NoWrap"
+                             TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </Border>
             </StackPanel>
 
             <TextBlock Grid.Row="1" Text="Event type" Classes="muted" VerticalAlignment="Center" />
