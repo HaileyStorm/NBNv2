@@ -3,7 +3,7 @@
 ## Scope and precedence
 
 - Repo-local guide for coding agents in this repository.
-- Global baseline remains `C:\Users\Haile\.codex\AGENTS.md`.
+- Global baseline remains `~./codex/AGENTS.md`.
 - If rules conflict, this file wins for this repo.
 
 ## NBN in one minute
@@ -85,7 +85,8 @@ Keep docs concise and high-value:
 - Signals from tick `N` are visible at compute of tick `N+1`.
 - Do not dispatch compute `N+1` until deliver `N` completes (or timeout policy finalizes it).
 - Snapshots are taken at tick boundaries; recovery restores full brain from `.nbn + .nbs`.
-- Reproduction cannot add/remove neurons in regions `0` or `31`.
+- Reproduction defaults to protecting neuron counts in regions `0` and `31`.
+- When explicitly requested by an external reproduction caller, manual neuron additions/removals in regions `0` and `31` are allowed; IO-region axon invariants still apply.
 
 ## Build/test defaults (required)
 
@@ -103,9 +104,5 @@ Keep docs concise and high-value:
 
 ## Beads rules (repo-specific)
 
-- Canonical tracker: repo-root `.beads`.
-- Do not initialize per-subfolder trackers.
-- Run lifecycle commands from repo root (or pass explicit DB path).
-- Use `bd where` before lifecycle operations.
-- Use `bv --robot-*` for automation.
-- Avoid git worktrees for Beads-governed work in this repo.
+- Beads/BV lifecycle rules are defined in `~./codex/AGENTS.md`.
+- This repo does not add Beads-specific overrides.
