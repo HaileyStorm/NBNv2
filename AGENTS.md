@@ -24,6 +24,13 @@
   - project docs near code in `src/*/Design.md`, `tools/*/Design.md`, `tests/*/Design.md`
 - Do not create `Docs/` or `docs/` subfolders under `src/*`, `tools/*`, or `tests/*`; project docs must live at project root.
 
+## Aleph doc-first workflow (required)
+
+- For non-trivial tasks, load `docs/NBNv2.md` into Aleph early before deep code analysis.
+- Use focused sub-queries on that loaded spec to answer concrete questions (ownership, invariants, call paths, expected behavior, and test impact).
+- Prefer multiple narrow sub-queries over one broad prompt; keep outputs evidence-oriented.
+- Continue to refer back to `docs/NBNv2.md` throughout edits, verification, and handoff; re-run targeted sub-queries when scope shifts or uncertainty appears.
+
 ## Documentation maintenance policy (required)
 
 When making code changes, update relevant canonical docs if behavior, decisions, ownership boundaries, invariants, or externally-visible contracts changed.
