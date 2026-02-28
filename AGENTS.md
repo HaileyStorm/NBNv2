@@ -26,7 +26,8 @@
 
 ## Aleph doc-first workflow (required)
 
-- For non-trivial tasks, load `docs/NBNv2.md` into Aleph early before deep code analysis.
+- For non-trivial code/behavior tasks, load `docs/NBNv2.md` into Aleph early before deep code analysis.
+- For clearly bounded mechanical or docs-only edits, this step is optional when the task does not depend on spec details.
 - Use focused sub-queries on that loaded spec to answer concrete questions (ownership, invariants, call paths, expected behavior, and test impact).
 - Prefer multiple narrow sub-queries over one broad prompt; keep outputs evidence-oriented.
 - Continue to refer back to `docs/NBNv2.md` throughout edits, verification, and handoff; re-run targeted sub-queries when scope shifts or uncertainty appears.
