@@ -1,51 +1,3 @@
-# NBNv2 specification template
-
-This template is the canonical assembly source for the full specification.
-
-- Generated full document: `docs/NBNv2.md`
-- Assembly map: `docs/manifest/NBNv2-DocumentMap.md`
-- Include marker contract: `<!-- NBN:INCLUDE path="..." -->`
-
-## Layout policy
-
-Canonical documents live in two places:
-
-1. Cross-cutting sections in repo-root `docs/sections/*`.
-2. Project-specific design notes near code in `*/Design.md` (`src/*`, `tools/*`, `tests/*`).
-3. `Docs/` or `docs/` subfolders under project roots are not canonical.
-
-`docs/INDEX.md` remains the stable entrypoint for humans and agents.
-
-## Table of contents
-
-1. Purpose and scope
-2. Technology stack and solution structure
-3. Distributed architecture and service topology
-4. Identifiers, addressing, and IDs
-5. Simulation model and tick semantics
-6. Global tick engine, backpressure, and scheduling
-7. Cost and energy model
-8. Distance model (region and neuron)
-9. Sharding and placement
-10. RegionShard compute backends
-11. Plasticity (axon strength adaptation)
-12. Brain lifecycle, failure recovery, and snapshots
-13. I/O architecture and External World interface
-14. Reproduction and evolution
-15. Observability: debug, visualization, metrics, tracing
-16. Artifact storage and deduplication
-17. File formats: .nbn and .nbs
-18. Database schemas (SQLite)
-19. Protocol schemas (.proto)
-20. Implementation roadmap
-Appendix A. Defaults and constants
-Appendix B. Function catalog
-Appendix C. Region axial map and distance examples
-
----
-
-## Front matter
-
 # NothingButNeurons v2
 
 ## Design, Architecture, Protocols, File Formats, and Implementation Specification
@@ -85,8 +37,6 @@ Appendix C. Region axial map and distance examples
 
 ## 1. Purpose and scope
 
-## 1. Purpose and scope
-
 NothingButNeurons (NBN) is a distributed neural simulation framework. It models â€œbrainsâ€ composed of regions, and each region contains neurons connected by directed **axons**. NBN is designed for:
 
 * **Cross-platform execution:** Windows and Ubuntu (headless services and GUIs).
@@ -98,8 +48,6 @@ NothingButNeurons (NBN) is a distributed neural simulation framework. It models 
 NBN is not an ML training framework (no backpropagation/gradient descent).
 
 ---
-
-## 2. Technology stack and solution structure
 
 ## 2. Technology stack and solution structure
 
@@ -165,8 +113,6 @@ To keep operator flows and tests deterministic across desktop and headless envir
 
 ## 3. Distributed architecture and service topology
 
-## 3. Distributed architecture and service topology
-
 ### 3.1 Processes (â€œnodesâ€) and actor placement
 
 Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned on any process. A process may:
@@ -229,8 +175,6 @@ For each brain:
 
 ## 4. Identifiers, addressing, and IDs
 
-## 4. Identifiers, addressing, and IDs
-
 ### 4.1 Stable IDs
 
 * `BrainId`: UUID (16 bytes)
@@ -279,8 +223,6 @@ Note: Address32 is runtime-only. The `.nbn` axon record stores `target_neuron_id
 These are not configurable.
 
 ---
-
-## 5. Simulation model and tick semantics
 
 ## 5. Simulation model and tick semantics
 
@@ -351,8 +293,6 @@ These apply to all brain creation paths: random generation, manual editing, repr
   * For any source neuron, at most one axon may target a given `(target_region_id, target_neuron_id)`.
 
 ---
-
-## 6. Global tick engine, backpressure, and scheduling
 
 ## 6. Global tick engine, backpressure, and scheduling
 
@@ -451,8 +391,6 @@ When a reschedule/recovery is initiated:
 
 ## 7. Cost and energy model
 
-## 7. Cost and energy model
-
 ### 7.1 Overview
 
 NBN can compute a per-brain per-tick **cost** and deduct it from an **energy account** supplied by the External World (or the Workbench). Cost/energy can be disabled.
@@ -522,8 +460,6 @@ The External World may decide to respawn/restart the brain using the reported ar
 
 ---
 
-## 8. Distance model (region and neuron)
-
 ## 8. Distance model (region + neuron)
 
 ### 8.1 Region distance (3D-inspired axial layering)
@@ -577,8 +513,6 @@ Region span for neuron distance uses the destination region span. If span is unk
 
 ## 9. Sharding and placement
 
-## 9. Sharding and placement
-
 ### 9.1 Region sections and stride
 
 The `.nbn` file stores regions as independent sections. Each region section includes an **axon offset checkpoint table** with a fixed **stride** (default 1024).
@@ -623,8 +557,6 @@ Placement heuristics:
 
 ## 10. RegionShard compute backends
 
-## 10. RegionShard compute backends
-
 ### 10.1 CPU backend (baseline)
 
 The CPU backend is the reference implementation. It uses:
@@ -664,8 +596,6 @@ Tier guidance:
 Placement may weight shards toward GPU nodes if Tier A/B dominates and GPU is available.
 
 ---
-
-## 11. Plasticity (axon strength adaptation)
 
 ## 11. Plasticity (axon strength adaptation)
 
@@ -732,8 +662,6 @@ Rebasing creates a new `.nbn` where base strength codes incorporate current over
 
 ## 12. Brain lifecycle, failure recovery, and snapshots
 
-## 12. Brain lifecycle, failure recovery, and snapshots
-
 ### 12.1 Spawn
 
 Brains are spawned by providing a `.nbn` artifact reference. HiveMind coordinates:
@@ -776,8 +704,6 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 * HiveMind may trigger a placement rebalance if the cluster becomes imbalanced (immediate or queued check)
 
 ---
-
-## 13. I/O architecture and External World interface
 
 ## 13. I/O architecture and External World interface
 
@@ -855,8 +781,6 @@ When a brain terminates, IO publishes:
 * last energy balance and last tick cost totals
 
 ---
-
-## 14. Reproduction and evolution
 
 ## 14. Reproduction and evolution
 
@@ -1009,8 +933,6 @@ Implementation notes (runtime behavior):
 
 ## 15. Observability: debug, visualization, metrics, tracing
 
-## 15. Observability: debug, visualization, metrics, tracing
-
 ### 15.1 Debug and visualization streams
 
 Debug and visualization can be disabled entirely:
@@ -1068,8 +990,6 @@ Both are recorded:
 * late arrivals (received after timeout or after tick advancement)
 
 ---
-
-## 16. Artifact storage and deduplication
 
 ## 16. Artifact storage and deduplication
 
@@ -1135,8 +1055,6 @@ The store may additionally index `.nbn` region sections:
 * enables efficient partial fetch of required regions for worker nodes
 
 ---
-
-## 17. File formats: .nbn and .nbs
 
 ## 17. File formats: `.nbn` and `.nbs`
 
@@ -1499,8 +1417,6 @@ Overlay semantics:
 
 ## 18. Database schemas (SQLite)
 
-## 18. Database schemas (SQLite)
-
 ### 18.1 SettingsMonitor database
 
 Tables (recommended, values not exhaustive):
@@ -1581,8 +1497,6 @@ Tables (recommended):
 * PRIMARY KEY (artifact_sha256, region_id)
 
 ---
-
-## 19. Protocol schemas (.proto)
 
 ## 19. Protocol schemas (`.proto`)
 
@@ -2503,8 +2417,6 @@ message ReproduceResult {
 
 ---
 
-## 20. Implementation roadmap
-
 ## 20. Implementation roadmap (tentative)
 
 1. Define `.proto` and generate C# types
@@ -2559,8 +2471,6 @@ Troubleshooting:
 
 ---
 
-## Appendix A. Defaults and constants
-
 # Appendix A: Defaults and constants
 
 * Regions: 0..31
@@ -2579,8 +2489,6 @@ Troubleshooting:
 * Default remote transport cost disabled (0)
 
 ---
-
-## Appendix B. Function catalog
 
 # Appendix B: Function catalog (IDs, formulas, tiers, costs)
 
@@ -2982,8 +2890,6 @@ Below, `clamp(x, lo, hi)` clamps x.
 
 ---
 
-## Appendix C. Region axial map and distance examples
-
 # Appendix C: Region axial map and examples
 
 ## C.1 Axial coordinate table
@@ -3005,12 +2911,6 @@ With `region_intraslice_unit=3` and `region_axial_unit=5`:
 * dist(3,4)  = 5 * |(-2) - (-1)| = 5
 * dist(8,23) = 5 * |(-1) - (+1)| = 10
 
----
-
-## Component ownership notes
-
-These are kept adjacent to implementation code and included here for unified reading context.
-
 # Nbn.Shared
 
 Owns shared contracts/helpers: addressing, quantization, proto-generated models, and shared validation utilities.
@@ -3018,6 +2918,7 @@ Owns shared contracts/helpers: addressing, quantization, proto-generated models,
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.SettingsMonitor
 
 Owns node registry, settings distribution, capability heartbeats, and status query contracts.
@@ -3025,6 +2926,7 @@ Owns node registry, settings distribution, capability heartbeats, and status que
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.HiveMind
 
 Owns global tick loop, scheduling barriers, timeout/lateness handling, and brain lifecycle orchestration.
@@ -3032,6 +2934,7 @@ Owns global tick loop, scheduling barriers, timeout/lateness handling, and brain
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.IO
 
 Owns IO Gateway and per-brain coordinator integration paths for external command and output subscriptions.
@@ -3039,6 +2942,7 @@ Owns IO Gateway and per-brain coordinator integration paths for external command
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.Reproduction
 
 Owns compatibility gates, child synthesis, mutation summaries, and spawn policy behavior.
@@ -3046,6 +2950,7 @@ Owns compatibility gates, child synthesis, mutation summaries, and spawn policy 
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.Observability
 
 Owns DebugHub/VisualizationHub behavior and telemetry integration surfaces.
@@ -3053,6 +2958,7 @@ Owns DebugHub/VisualizationHub behavior and telemetry integration surfaces.
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.Artifacts
 
 Owns artifact fetch/store contracts, dedup manifests, and artifact reference semantics.
@@ -3060,6 +2966,7 @@ Owns artifact fetch/store contracts, dedup manifests, and artifact reference sem
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.Brain
 
 Owns BrainRoot/BrainSignalRouter coordination and tick-phase routing semantics.
@@ -3067,6 +2974,7 @@ Owns BrainRoot/BrainSignalRouter coordination and tick-phase routing semantics.
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.BrainHost
 
 Owns brain host process wiring and runtime hosting orchestration where applicable.
@@ -3074,6 +2982,7 @@ Owns brain host process wiring and runtime hosting orchestration where applicabl
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.RegionHost
 
 Owns RegionShard execution, signal batch handling, and backend dispatch behavior.
@@ -3081,6 +2990,7 @@ Owns RegionShard execution, signal batch handling, and backend dispatch behavior
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Runtime.WorkerNode
 
 Owns worker node inventory, placement execution endpoints, and lifecycle participation.
@@ -3088,6 +2998,7 @@ Owns worker node inventory, placement execution endpoints, and lifecycle partici
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Tools.Workbench
 
 Owns desktop orchestration/visualization/debug UX and deterministic view-model dispatch behavior.
@@ -3110,6 +3021,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Tools.DemoHost
 
 Owns scripted local demo flows, scenario tooling, and operator-facing diagnostics outputs.
@@ -3117,6 +3029,7 @@ Owns scripted local demo flows, scenario tooling, and operator-facing diagnostic
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
 # Nbn.Tests
 
 Owns format/runtime/reproduction parity coverage and regression protection surface.
@@ -3124,8 +3037,3 @@ Owns format/runtime/reproduction parity coverage and regression protection surfa
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
-
-## Supplemental docs
-
-- `docs/placement-lifecycle.md`
-- `docs/temp/NBNv2_HumanGuide_TEMP.md` (transition source retained until split verification is complete)

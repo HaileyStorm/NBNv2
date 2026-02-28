@@ -137,15 +137,13 @@ def enforce_order_parity(index_includes: list[tuple[int, str]], manifest_order: 
             )
 
 
-def render(index_text: str, include_contents: dict[int, str]) -> str:
-    rendered_lines: list[str] = []
-    for line_number, line in enumerate(index_text.split("\n"), start=1):
-        if line_number in include_contents:
-            rendered_lines.append(include_contents[line_number].rstrip("\n"))
-        else:
-            rendered_lines.append(line)
+def render(index_includes: list[tuple[int, str]], include_contents: dict[int, str]) -> str:
+    # INDEX acts as an assembly map; output emits only included payload content.
+    parts: list[str] = []
+    for line_number, _ in index_includes:
+        parts.append(normalize_newlines(include_contents[line_number]).rstrip("\n"))
 
-    rendered = "\n".join(rendered_lines).rstrip("\n") + "\n"
+    rendered = "\n\n".join(parts).rstrip("\n") + "\n"
     return normalize_newlines(rendered)
 
 
@@ -187,7 +185,7 @@ def main() -> int:
         target_path = assert_within_repo(repo_root, relative_path, "docs/INDEX.md", line_number)
         include_contents[line_number] = read_utf8(target_path)
 
-    rendered = render(index_text, include_contents)
+    rendered = render(index_includes, include_contents)
 
     if args.check:
         existing = ""
