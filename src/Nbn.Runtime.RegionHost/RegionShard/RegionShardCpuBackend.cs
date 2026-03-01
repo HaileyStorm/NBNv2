@@ -12,6 +12,12 @@ namespace Nbn.Runtime.RegionHost;
 public sealed class RegionShardCpuBackend
 {
     private const float BufferVizEpsilon = 1e-6f;
+    private const float PlasticityPredictiveNudgeGain = 0.35f;
+    private const float PlasticitySourceMemoryGain = 0.15f;
+    private const float PlasticitySaturationGain = 0.25f;
+    private const float PlasticityMinStabilizationScale = 0.35f;
+    private const float PlasticityMinNudgeScale = 0.4f;
+    private const float PlasticityMaxNudgeScale = 1.6f;
     private static readonly bool LogActivityDiagnostics = IsEnvTrue("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED");
     private static readonly ulong ActivityDiagnosticsPeriod = ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", 32UL);
     private static readonly int ActivityDiagnosticsSampleCount = (int)Math.Clamp(ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_SAMPLES", 3UL), 1UL, 16UL);
@@ -223,6 +229,7 @@ public sealed class RegionShardCpuBackend
                 if (ApplyPlasticity(
                         tickId,
                         potential,
+                        buffer,
                         index,
                         plasticityEnabled,
                         plasticityRate,
@@ -572,6 +579,7 @@ public sealed class RegionShardCpuBackend
     private bool ApplyPlasticity(
         ulong tickId,
         float potential,
+        float sourceBuffer,
         int axonIndex,
         bool plasticityEnabled,
         float plasticityRate,
@@ -616,14 +624,21 @@ public sealed class RegionShardCpuBackend
         var currentMagnitude = MathF.Abs(currentStrength);
         var currentSign = MathF.Sign(currentStrength);
         var potentialSign = MathF.Sign(normalizedPotential);
+        if (potentialSign == 0f)
+        {
+            return false;
+        }
 
         var delta = effectiveDelta * activationScale;
+        var nudgeScale = ComputeApproximatePlasticityNudgeScale(axonIndex, sourceBuffer, normalizedPotential, currentStrength);
+        delta *= nudgeScale;
         if (delta <= 0f)
         {
             return false;
         }
 
-        var nextMagnitude = potentialSign == currentSign
+        var aligned = currentSign == 0f || potentialSign == currentSign;
+        var nextMagnitude = aligned
             ? currentMagnitude + delta
             : currentMagnitude - delta;
         if (!float.IsFinite(nextMagnitude) || nextMagnitude < 0f)
@@ -631,14 +646,66 @@ public sealed class RegionShardCpuBackend
             nextMagnitude = 0f;
         }
 
-        var updatedStrength = currentSign == 0f
-            ? 0f
-            : currentSign * nextMagnitude;
+        var directionSign = currentSign == 0f ? potentialSign : currentSign;
+        var updatedStrength = directionSign * nextMagnitude;
         updatedStrength = ClampStrengthValue(updatedStrength);
 
         _state.Axons.Strengths[axonIndex] = updatedStrength;
         UpdateRuntimeStrengthMetadata(axonIndex, updatedStrength);
         return _state.Axons.RuntimeStrengthCodes[axonIndex] != previousRuntimeCode;
+    }
+
+    private float ComputeApproximatePlasticityNudgeScale(
+        int axonIndex,
+        float sourceBuffer,
+        float normalizedPotential,
+        float currentStrength)
+    {
+        if (!TryGetLocalTargetBuffer(axonIndex, out var targetBuffer))
+        {
+            return 1f;
+        }
+
+        var predictiveAlignment = Math.Clamp(normalizedPotential * targetBuffer, -1f, 1f);
+        var predictiveScale = 1f + (predictiveAlignment * PlasticityPredictiveNudgeGain);
+        var sourceMemory = Math.Clamp(MathF.Abs(sourceBuffer), 0f, 1f);
+        var memoryScale = 1f + (sourceMemory * PlasticitySourceMemoryGain);
+        var stabilizationScale = 1f - (MathF.Abs(currentStrength) * PlasticitySaturationGain);
+        stabilizationScale = Math.Clamp(stabilizationScale, PlasticityMinStabilizationScale, 1f);
+
+        var combined = predictiveScale * memoryScale * stabilizationScale;
+        return Math.Clamp(combined, PlasticityMinNudgeScale, PlasticityMaxNudgeScale);
+    }
+
+    private bool TryGetLocalTargetBuffer(int axonIndex, out float normalizedTargetBuffer)
+    {
+        normalizedTargetBuffer = 0f;
+
+        var targetRegionId = _state.Axons.TargetRegionIds[axonIndex];
+        if (targetRegionId != _state.RegionId)
+        {
+            return false;
+        }
+
+        var targetNeuronId = _state.Axons.TargetNeuronIds[axonIndex];
+        if (!TryGetLocalNeuronIndex(targetNeuronId, out var targetLocalIndex))
+        {
+            return false;
+        }
+
+        if (!_state.Exists[targetLocalIndex] || !_state.Enabled[targetLocalIndex])
+        {
+            return false;
+        }
+
+        normalizedTargetBuffer = Math.Clamp(NormalizeBuffer(targetLocalIndex), -1f, 1f);
+        return true;
+    }
+
+    private bool TryGetLocalNeuronIndex(int neuronId, out int localIndex)
+    {
+        localIndex = neuronId - _state.NeuronStart;
+        return (uint)localIndex < (uint)_state.NeuronCount;
     }
 
     private void UpdateRuntimeStrengthMetadata(int axonIndex, float strength)

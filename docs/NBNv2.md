@@ -613,7 +613,9 @@ Placement may weight shards toward GPU nodes if Tier A/B dominates and GPU is av
 
 ### 11.1 Overview
 
-Plasticity changes axon strengths slowly based on usage and signal scale.
+Plasticity changes axon strengths slowly based on usage, signal scale, and bounded local nudges.
+
+This surface is intentionally approximate. It is not a full training framework.
 
 Plasticity is configurable per brain:
 
@@ -630,6 +632,12 @@ Compatibility default:
 Plasticity changes are applied at runtime in float space and only persisted to `.nbs` when the quantized **strength code** differs from the base `.nbn` strength code.
 
 Sub-quantum changes are allowed and are not preserved across snapshots unless they cross a quantization boundary.
+
+Non-goals:
+
+* no backpropagation
+* no layered predictive-coding training architecture
+* no centralized training loop
 
 ### 11.2 Runtime representation
 
@@ -666,7 +674,23 @@ Per axon fired:
 
   * if `sign(p) == sign(strength_value)`: increase magnitude by `d * u`
   * else: decrease magnitude by `d * u`
-* Clamp to [-1, 1] and re-quantize
+* Approximate local nudge modulation (bounded, deterministic):
+
+  * local-target only (`target_region == shard_region` and target neuron is local)
+  * `predictive_alignment = clamp(p * target_buffer, -1, +1)`
+  * `predictive_scale = 1 + 0.35 * predictive_alignment`
+  * `source_memory_scale = 1 + 0.15 * abs(source_buffer)`
+  * `stabilization_scale = clamp(1 - 0.25 * abs(strength_value), 0.35, 1)`
+  * `nudge_scale = clamp(predictive_scale * source_memory_scale * stabilization_scale, 0.4, 1.6)`
+  * `effective_delta = d * u * nudge_scale`
+* For non-local targets, `nudge_scale = 1` (baseline `d * u` behavior).
+* If `strength_value == 0`, update direction is seeded from `sign(p)` so dormant axons can start adapting.
+* Clamp to [-1, 1] and re-quantize.
+
+Cadence robustness notes:
+
+* nudges use current local shard state (`source_buffer`, local `target_buffer`) and deterministic tick execution
+* behavior does not require per-tick external input; periodic, bursty, and irregular inputs remain valid
 
 ### 11.4 Rebasing (optional)
 
