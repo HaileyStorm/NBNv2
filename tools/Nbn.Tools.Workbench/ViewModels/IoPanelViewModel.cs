@@ -39,21 +39,30 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _costEnergyEnabled;
     private bool _systemCostEnergyEnabled = true;
     private bool _systemCostEnergyEnabledDraft = true;
+    private bool _systemPlasticitySettingsSyncInProgress;
     private bool _plasticityEnabled = true;
     private bool _systemPlasticityEnabled = true;
     private bool _systemPlasticityEnabledDraft = true;
+    private string _systemPlasticityRateText = "0.001";
+    private string _systemPlasticityRateTextDraft = "0.001";
+    private bool _systemPlasticityProbabilisticUpdates = true;
+    private bool _systemPlasticityProbabilisticUpdatesDraft = true;
     private bool _homeostasisEnabled = true;
     private bool _homeostasisEnergyCouplingEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
+    private PlasticityModeOption _selectedSystemPlasticityModeDraft;
     private HomeostasisTargetModeOption _selectedHomeostasisTargetMode;
     private HomeostasisUpdateModeOption _selectedHomeostasisUpdateMode;
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
+    private string _feedbackBrainSummary = "No known brain selected.";
     private string _lastOutputTickLabel = "-";
     private Guid _lastAutoVectorSendBrainId = Guid.Empty;
     private ulong _lastAutoVectorSendTickId;
     private bool _hasLastAutoVectorSendTick;
     private List<Guid> _activeBrains = new();
+    private readonly Dictionary<Guid, KnownBrainOption> _knownBrainsById = new();
+    private KnownBrainOption? _selectedFeedbackBrain;
     private Guid? _selectedBrainId;
     private int _selectedBrainInputWidth = -1;
 
@@ -69,6 +78,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             new("Absolute", false)
         };
         _selectedPlasticityMode = PlasticityModes[0];
+        _selectedSystemPlasticityModeDraft = PlasticityModes[0];
+        KnownBrains = new ObservableCollection<KnownBrainOption>();
         HomeostasisTargetModes = new ObservableCollection<HomeostasisTargetModeOption>
         {
             new("Zero", HomeostasisTargetMode.HomeostasisTargetZero),
@@ -92,6 +103,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         ApplyEnergyRateCommand = new RelayCommand(ApplyEnergyRate);
         ApplyCostEnergyCommand = new RelayCommand(ApplyCostEnergy);
         ApplyPlasticityCommand = new RelayCommand(ApplyPlasticity);
+        ApplySystemPlasticityModeRateCommand = new RelayCommand(ApplySystemPlasticityModeRate);
         ApplyHomeostasisCommand = new RelayCommand(ApplyHomeostasis);
         ClearOutputsCommand = new RelayCommand(ClearOutputs);
         ClearVectorOutputsCommand = new RelayCommand(ClearVectorOutputs);
@@ -189,7 +201,17 @@ public sealed class IoPanelViewModel : ViewModelBase
     public bool CostEnergySuppressed
     {
         get => !CostEnergyEnabled;
-        set => CostEnergyEnabled = !value;
+        set
+        {
+            var enabled = !value;
+            if (CostEnergyEnabled == enabled)
+            {
+                return;
+            }
+
+            CostEnergyEnabled = enabled;
+            ApplyCostEnergySelected();
+        }
     }
 
     public bool SystemCostEnergyEnabled
@@ -209,7 +231,14 @@ public sealed class IoPanelViewModel : ViewModelBase
     public bool SystemCostEnergyEnabledDraft
     {
         get => _systemCostEnergyEnabledDraft;
-        set => SetProperty(ref _systemCostEnergyEnabledDraft, value);
+        set
+        {
+            if (SetProperty(ref _systemCostEnergyEnabledDraft, value)
+                && !_systemPlasticitySettingsSyncInProgress)
+            {
+                _ = ApplyCostEnergyAsync();
+            }
+        }
     }
 
     public bool CostEnergyOverrideAvailable => SystemCostEnergyEnabled;
@@ -234,7 +263,17 @@ public sealed class IoPanelViewModel : ViewModelBase
     public bool PlasticitySuppressed
     {
         get => !PlasticityEnabled;
-        set => PlasticityEnabled = !value;
+        set
+        {
+            var enabled = !value;
+            if (PlasticityEnabled == enabled)
+            {
+                return;
+            }
+
+            PlasticityEnabled = enabled;
+            ApplyPlasticitySelected();
+        }
     }
 
     public bool SystemPlasticityEnabled
@@ -254,7 +293,14 @@ public sealed class IoPanelViewModel : ViewModelBase
     public bool SystemPlasticityEnabledDraft
     {
         get => _systemPlasticityEnabledDraft;
-        set => SetProperty(ref _systemPlasticityEnabledDraft, value);
+        set
+        {
+            if (SetProperty(ref _systemPlasticityEnabledDraft, value)
+                && !_systemPlasticitySettingsSyncInProgress)
+            {
+                _ = ApplyPlasticityAsync();
+            }
+        }
     }
 
     public bool PlasticityOverrideAvailable => SystemPlasticityEnabled;
@@ -263,6 +309,53 @@ public sealed class IoPanelViewModel : ViewModelBase
     public string SystemPlasticityStateLabel => SystemPlasticityEnabled
         ? "System policy: enabled"
         : "System policy: disabled (override unavailable)";
+
+    public string SystemPlasticityRateText
+    {
+        get => _systemPlasticityRateText;
+        private set => SetProperty(ref _systemPlasticityRateText, value);
+    }
+
+    public string SystemPlasticityRateTextDraft
+    {
+        get => _systemPlasticityRateTextDraft;
+        set => SetProperty(ref _systemPlasticityRateTextDraft, value);
+    }
+
+    public bool SystemPlasticityProbabilisticUpdates
+    {
+        get => _systemPlasticityProbabilisticUpdates;
+        private set => SetProperty(ref _systemPlasticityProbabilisticUpdates, value);
+    }
+
+    public bool SystemPlasticityProbabilisticUpdatesDraft
+    {
+        get => _systemPlasticityProbabilisticUpdatesDraft;
+        set
+        {
+            if (SetProperty(ref _systemPlasticityProbabilisticUpdatesDraft, value))
+            {
+                var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == value);
+                if (selectedMode is not null && !ReferenceEquals(SelectedSystemPlasticityModeDraft, selectedMode))
+                {
+                    _selectedSystemPlasticityModeDraft = selectedMode;
+                    OnPropertyChanged(nameof(SelectedSystemPlasticityModeDraft));
+                }
+            }
+        }
+    }
+
+    public PlasticityModeOption SelectedSystemPlasticityModeDraft
+    {
+        get => _selectedSystemPlasticityModeDraft;
+        set
+        {
+            if (SetProperty(ref _selectedSystemPlasticityModeDraft, value) && value is not null)
+            {
+                SystemPlasticityProbabilisticUpdatesDraft = value.Probabilistic;
+            }
+        }
+    }
 
     public bool HomeostasisEnabled
     {
@@ -396,6 +489,26 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _activeBrainsSummary, value);
     }
 
+    public ObservableCollection<KnownBrainOption> KnownBrains { get; }
+
+    public KnownBrainOption? SelectedFeedbackBrain
+    {
+        get => _selectedFeedbackBrain;
+        set
+        {
+            if (SetProperty(ref _selectedFeedbackBrain, value))
+            {
+                _ = RefreshFeedbackBrainSummaryAsync();
+            }
+        }
+    }
+
+    public string FeedbackBrainSummary
+    {
+        get => _feedbackBrainSummary;
+        set => SetProperty(ref _feedbackBrainSummary, value);
+    }
+
     public AsyncRelayCommand RequestInfoCommand { get; }
 
     public RelayCommand SubscribeOutputsCommand { get; }
@@ -417,6 +530,8 @@ public sealed class IoPanelViewModel : ViewModelBase
     public RelayCommand ApplyCostEnergyCommand { get; }
 
     public RelayCommand ApplyPlasticityCommand { get; }
+
+    public RelayCommand ApplySystemPlasticityModeRateCommand { get; }
 
     public RelayCommand ApplyHomeostasisCommand { get; }
 
@@ -500,6 +615,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         _selectedBrainId = brainId;
         _selectedBrainInputWidth = -1;
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
+        TrackKnownBrain(brainId);
         ResetAutoVectorSendTickGate();
         if (!preserveOutputs)
         {
@@ -546,6 +662,29 @@ public sealed class IoPanelViewModel : ViewModelBase
         ActiveBrainsSummary = _activeBrains.Count == 0
             ? "No active brains loaded."
             : $"Active brains: {_activeBrains.Count}";
+
+        var activeSet = new HashSet<Guid>(_activeBrains);
+        foreach (var option in _knownBrainsById.Values)
+        {
+            option.IsActive = activeSet.Contains(option.BrainId);
+        }
+
+        foreach (var brainId in _activeBrains)
+        {
+            if (_knownBrainsById.ContainsKey(brainId))
+            {
+                continue;
+            }
+
+            var option = new KnownBrainOption(brainId, isActive: true);
+            _knownBrainsById[brainId] = option;
+            KnownBrains.Add(option);
+        }
+
+        if (SelectedFeedbackBrain is null && KnownBrains.Count > 0)
+        {
+            SelectedFeedbackBrain = KnownBrains[0];
+        }
     }
 
     public void RefreshSubscriptions()
@@ -590,16 +729,66 @@ public sealed class IoPanelViewModel : ViewModelBase
         if (string.Equals(item.Key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = ParseBooleanSetting(item.Value, SystemCostEnergyEnabled);
-            SystemCostEnergyEnabled = parsed;
-            SystemCostEnergyEnabledDraft = parsed;
+            _systemPlasticitySettingsSyncInProgress = true;
+            try
+            {
+                SystemCostEnergyEnabled = parsed;
+                SystemCostEnergyEnabledDraft = parsed;
+            }
+            finally
+            {
+                _systemPlasticitySettingsSyncInProgress = false;
+            }
             return true;
         }
 
         if (string.Equals(item.Key, PlasticitySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = ParseBooleanSetting(item.Value, SystemPlasticityEnabled);
-            SystemPlasticityEnabled = parsed;
-            SystemPlasticityEnabledDraft = parsed;
+            _systemPlasticitySettingsSyncInProgress = true;
+            try
+            {
+                SystemPlasticityEnabled = parsed;
+                SystemPlasticityEnabledDraft = parsed;
+            }
+            finally
+            {
+                _systemPlasticitySettingsSyncInProgress = false;
+            }
+            return true;
+        }
+
+        if (string.Equals(item.Key, PlasticitySettingsKeys.SystemRateKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseSystemPlasticityRateText(item.Value, fallback: SystemPlasticityRateText);
+            SystemPlasticityRateText = parsed;
+            _systemPlasticitySettingsSyncInProgress = true;
+            try
+            {
+                SystemPlasticityRateTextDraft = parsed;
+            }
+            finally
+            {
+                _systemPlasticitySettingsSyncInProgress = false;
+            }
+            return true;
+        }
+
+        if (string.Equals(item.Key, PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseBooleanSetting(item.Value, SystemPlasticityProbabilisticUpdates);
+            SystemPlasticityProbabilisticUpdates = parsed;
+            var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == parsed) ?? PlasticityModes[0];
+            _systemPlasticitySettingsSyncInProgress = true;
+            try
+            {
+                SystemPlasticityProbabilisticUpdatesDraft = parsed;
+                SelectedSystemPlasticityModeDraft = selectedMode;
+            }
+            finally
+            {
+                _systemPlasticitySettingsSyncInProgress = false;
+            }
             return true;
         }
 
@@ -780,11 +969,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             InputVectorText = suggestedVector;
         }
 
-        var plasticityModeLabel = info.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute";
-        var homeostasisTargetLabel = SelectedHomeostasisTargetMode?.Label ?? info.HomeostasisTargetMode.ToString();
-        var homeostasisUpdateLabel = SelectedHomeostasisUpdateMode?.Label ?? info.HomeostasisUpdateMode.ToString();
-        BrainInfoSummary =
-            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######}) | Homeostasis: {(info.HomeostasisEnabled ? "on" : "off")} ({homeostasisTargetLabel}, {homeostasisUpdateLabel}, p={info.HomeostasisBaseProbability:0.######}, step={info.HomeostasisMinStepCodes}, coupling={(info.HomeostasisEnergyCouplingEnabled ? "on" : "off")})";
+        BrainInfoSummary = BuildBrainSummary(info);
     }
 
     private void Subscribe(bool vector)
@@ -866,6 +1051,11 @@ public sealed class IoPanelViewModel : ViewModelBase
     private void ApplyPlasticity()
     {
         _ = ApplyPlasticityAsync();
+    }
+
+    private void ApplySystemPlasticityModeRate()
+    {
+        _ = ApplySystemPlasticityModeRateAsync();
     }
 
     private void ApplyHomeostasis()
@@ -1063,17 +1253,83 @@ public sealed class IoPanelViewModel : ViewModelBase
     {
         var enabled = SystemCostEnergyEnabledDraft;
         var result = await _client.SetSettingAsync(CostEnergySettingsKeys.SystemEnabledKey, enabled ? "true" : "false").ConfigureAwait(false);
-        ApplySystemSettingToSummary("Cost/Energy system policy", CostEnergySettingsKeys.SystemEnabledKey, enabled, result);
+        ApplySystemBooleanSettingToSummary("Cost/Energy system policy", CostEnergySettingsKeys.SystemEnabledKey, enabled, result);
     }
 
     private async Task ApplyPlasticityAsync()
     {
         var enabled = SystemPlasticityEnabledDraft;
         var result = await _client.SetSettingAsync(PlasticitySettingsKeys.SystemEnabledKey, enabled ? "true" : "false").ConfigureAwait(false);
-        ApplySystemSettingToSummary("Plasticity system policy", PlasticitySettingsKeys.SystemEnabledKey, enabled, result);
+        ApplySystemBooleanSettingToSummary("Plasticity system policy", PlasticitySettingsKeys.SystemEnabledKey, enabled, result);
     }
 
-    private void ApplySystemSettingToSummary(string operation, string key, bool requested, SettingValue? result)
+    private async Task ApplySystemPlasticityModeRateAsync()
+    {
+        if (!TryParseSystemPlasticityRateDraft(out var rate, out var rateText))
+        {
+            BrainInfoSummary = "Plasticity system rate invalid.";
+            return;
+        }
+
+        var probabilistic = SelectedSystemPlasticityModeDraft?.Probabilistic ?? SystemPlasticityProbabilisticUpdatesDraft;
+        var modeValue = probabilistic ? "true" : "false";
+        var rateResult = await _client.SetSettingAsync(PlasticitySettingsKeys.SystemRateKey, rateText).ConfigureAwait(false);
+        var modeResult = await _client.SetSettingAsync(PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, modeValue).ConfigureAwait(false);
+        var runtimeApplied = 0;
+        var runtimeSkipped = 0;
+        var runtimeFailed = 0;
+
+        if (TryGetTargetBrains(out var targets) && targets.Count > 0)
+        {
+            foreach (var brainId in targets)
+            {
+                var info = await _client.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
+                if (info is null)
+                {
+                    runtimeSkipped++;
+                    continue;
+                }
+
+                var result = await _client.SetPlasticityAsync(
+                        brainId,
+                        info.PlasticityEnabled,
+                        rate,
+                        probabilistic)
+                    .ConfigureAwait(false);
+                if (result.Success)
+                {
+                    runtimeApplied++;
+                }
+                else
+                {
+                    runtimeFailed++;
+                }
+            }
+        }
+
+        _dispatcher.Post(() =>
+        {
+            if (rateResult is null || modeResult is null)
+            {
+                BrainInfoSummary = "Plasticity system mode/rate: update failed (settings unavailable).";
+                return;
+            }
+
+            if (!string.Equals(rateResult.Key, PlasticitySettingsKeys.SystemRateKey, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(modeResult.Key, PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, StringComparison.OrdinalIgnoreCase))
+            {
+                BrainInfoSummary = "Plasticity system mode/rate: update returned unexpected keys.";
+                return;
+            }
+
+            ApplySetting(new SettingItem(rateResult.Key, rateResult.Value, rateResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            ApplySetting(new SettingItem(modeResult.Key, modeResult.Value, modeResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            var appliedMode = ParseBooleanSetting(modeResult.Value, probabilistic) ? "probabilistic" : "absolute";
+            BrainInfoSummary = $"Plasticity system mode/rate: applied ({appliedMode}, rate={rate:0.######}); runtime updated={runtimeApplied}, skipped={runtimeSkipped}, failed={runtimeFailed}.";
+        });
+    }
+
+    private void ApplySystemBooleanSettingToSummary(string operation, string key, bool requested, SettingValue? result)
     {
         _dispatcher.Post(() =>
         {
@@ -1366,6 +1622,88 @@ public sealed class IoPanelViewModel : ViewModelBase
         return true;
     }
 
+    private void TrackKnownBrain(Guid? brainId)
+    {
+        if (!brainId.HasValue)
+        {
+            return;
+        }
+
+        if (_knownBrainsById.ContainsKey(brainId.Value))
+        {
+            return;
+        }
+
+        var option = new KnownBrainOption(brainId.Value, isActive: _activeBrains.Contains(brainId.Value));
+        _knownBrainsById[brainId.Value] = option;
+        KnownBrains.Add(option);
+    }
+
+    private async Task RefreshFeedbackBrainSummaryAsync()
+    {
+        var selected = SelectedFeedbackBrain;
+        if (selected is null)
+        {
+            FeedbackBrainSummary = "No known brain selected.";
+            return;
+        }
+
+        var brainId = selected.BrainId;
+        var info = await _client.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
+        _dispatcher.Post(() =>
+        {
+            if (SelectedFeedbackBrain?.BrainId != brainId)
+            {
+                return;
+            }
+
+            if (info is null)
+            {
+                FeedbackBrainSummary = $"Brain {brainId:D}: unavailable.";
+                return;
+            }
+
+            FeedbackBrainSummary = BuildBrainSummary(info);
+        });
+    }
+
+    private string BuildBrainSummary(BrainInfo info)
+    {
+        var plasticityModeLabel = info.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute";
+        var homeostasisTargetLabel = HomeostasisTargetModes.FirstOrDefault(mode => mode.Mode == info.HomeostasisTargetMode)?.Label
+                                     ?? info.HomeostasisTargetMode.ToString();
+        var homeostasisUpdateLabel = HomeostasisUpdateModes.FirstOrDefault(mode => mode.Mode == info.HomeostasisUpdateMode)?.Label
+                                     ?? info.HomeostasisUpdateMode.ToString();
+        return
+            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######}) | Homeostasis: {(info.HomeostasisEnabled ? "on" : "off")} ({homeostasisTargetLabel}, {homeostasisUpdateLabel}, p={info.HomeostasisBaseProbability:0.######}, step={info.HomeostasisMinStepCodes}, coupling={(info.HomeostasisEnergyCouplingEnabled ? "on" : "off")})";
+    }
+
+    private bool TryParseSystemPlasticityRateDraft(out float rate, out string normalizedText)
+    {
+        if (!float.TryParse(SystemPlasticityRateTextDraft, NumberStyles.Float, CultureInfo.InvariantCulture, out rate)
+            || !float.IsFinite(rate)
+            || rate < 0f)
+        {
+            normalizedText = string.Empty;
+            return false;
+        }
+
+        normalizedText = rate.ToString("0.######", CultureInfo.InvariantCulture);
+        return true;
+    }
+
+    private static string ParseSystemPlasticityRateText(string? value, string fallback)
+    {
+        if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed)
+            || parsed < 0f)
+        {
+            return fallback;
+        }
+
+        return parsed.ToString("0.######", CultureInfo.InvariantCulture);
+    }
+
     private static bool ParseBooleanSetting(string? value, bool fallback)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1414,4 +1752,33 @@ public sealed class IoPanelViewModel : ViewModelBase
 public sealed record PlasticityModeOption(string Label, bool Probabilistic);
 public sealed record HomeostasisTargetModeOption(string Label, HomeostasisTargetMode Mode);
 public sealed record HomeostasisUpdateModeOption(string Label, HomeostasisUpdateMode Mode);
+
+public sealed class KnownBrainOption : ViewModelBase
+{
+    private bool _isActive;
+
+    public KnownBrainOption(Guid brainId, bool isActive)
+    {
+        BrainId = brainId;
+        _isActive = isActive;
+    }
+
+    public Guid BrainId { get; }
+
+    public bool IsActive
+    {
+        get => _isActive;
+        set
+        {
+            if (SetProperty(ref _isActive, value))
+            {
+                OnPropertyChanged(nameof(Label));
+            }
+        }
+    }
+
+    public string Label => IsActive
+        ? $"{BrainId:D} (active)"
+        : $"{BrainId:D} (known)";
+}
 

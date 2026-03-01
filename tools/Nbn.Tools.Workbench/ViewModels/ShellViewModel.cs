@@ -500,7 +500,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 setting.UpdatedMs.ToString()));
         }
 
-        foreach (var key in new[] { CostEnergySettingsKeys.SystemEnabledKey, PlasticitySettingsKeys.SystemEnabledKey })
+        foreach (var key in CostEnergySettingsKeys.AllKeys.Concat(PlasticitySettingsKeys.AllKeys))
         {
             var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
             if (setting is null)

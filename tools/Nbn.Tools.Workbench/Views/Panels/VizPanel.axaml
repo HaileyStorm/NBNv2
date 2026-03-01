@@ -645,9 +645,6 @@
                 <CheckBox Content="Per-brain override: suppress cost+energy"
                           IsChecked="{Binding Brain.CostEnergySuppressed}"
                           IsEnabled="{Binding Brain.CostEnergyOverrideAvailable}" />
-                <Button Content="Update Flags"
-                        Command="{Binding ApplyCostEnergyCommand}"
-                        IsEnabled="{Binding Brain.CostEnergyOverrideAvailable}" />
               </StackPanel>
               <TextBlock Text="System policy is disabled; override is unavailable."
                          Classes="muted"
@@ -655,35 +652,11 @@
               <Border Height="1" Background="#33000000" Margin="0,4,0,4" />
               <TextBlock Text="Plasticity (Selected Brain)" Classes="card-title" />
               <TextBlock Text="{Binding Brain.SystemPlasticityStateLabel}" Classes="muted" />
-              <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
-                <TextBlock Text="Mode" Classes="muted" />
-                <ComboBox Grid.Column="1"
-                          ItemsSource="{Binding Brain.PlasticityModes}"
-                          SelectedItem="{Binding Brain.SelectedPlasticityMode}"
-                          IsEnabled="{Binding Brain.PlasticityOverrideAvailable}"
-                          Width="160">
-                  <ComboBox.ItemTemplate>
-                    <DataTemplate>
-                      <TextBlock Text="{Binding Label}" />
-                    </DataTemplate>
-                  </ComboBox.ItemTemplate>
-                </ComboBox>
-                <CheckBox Grid.Column="2"
-                          Content="Per-brain override: suppress plasticity"
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <CheckBox Content="Per-brain override: suppress plasticity"
                           IsChecked="{Binding Brain.PlasticitySuppressed}"
                           IsEnabled="{Binding Brain.PlasticityOverrideAvailable}" />
-                <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
-                <TextBox Grid.Row="1"
-                         Grid.Column="1"
-                         Text="{Binding Brain.PlasticityRateText}"
-                         IsEnabled="{Binding Brain.PlasticityOverrideAvailable}"
-                         Width="100" />
-                <Button Grid.Row="1"
-                        Grid.Column="2"
-                        Content="Apply"
-                        Command="{Binding ApplyPlasticityCommand}"
-                        IsEnabled="{Binding Brain.PlasticityOverrideAvailable}" />
-              </Grid>
+              </StackPanel>
               <TextBlock Text="System policy is disabled; override is unavailable."
                          Classes="muted"
                          IsVisible="{Binding Brain.PlasticityOverrideUnavailable}" />

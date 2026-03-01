@@ -58,6 +58,7 @@ IO supports:
 * system cost+energy master key (`cost_energy.system.enabled`) from SettingsMonitor, combined with per-brain runtime setting (`effective = system && brain`)
 * plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`)
 * system plasticity master key (`plasticity.system.enabled`) from SettingsMonitor, combined with per-brain `enabled` at runtime (`effective = system && brain`)
+* system plasticity default mode/rate keys in SettingsMonitor (`plasticity.system.probabilistic_updates`, `plasticity.system.rate`) for operator sync surfaces (Workbench Energy + Plasticity and Orchestrator Settings)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
 
 Command writes can be sent as requests and return `IoCommandAck` with:

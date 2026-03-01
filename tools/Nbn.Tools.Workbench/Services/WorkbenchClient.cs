@@ -693,7 +693,7 @@ public class WorkbenchClient : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    public async Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
+    public virtual async Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
     {
         if (_root is null || _ioGatewayPid is null)
         {

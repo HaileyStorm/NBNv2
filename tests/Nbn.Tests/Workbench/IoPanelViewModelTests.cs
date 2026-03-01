@@ -193,13 +193,12 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public async Task ApplyCostEnergy_Writes_System_Setting()
+    public async Task CostEnergyCheckbox_AutoApplies_System_Setting()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
         vm.SystemCostEnergyEnabledDraft = false;
 
-        vm.ApplyCostEnergyCommand.Execute(null);
         await WaitForAsync(() => client.SettingCalls.Count == 1);
 
         Assert.Contains(client.SettingCalls, call => call.Key == CostEnergySettingsKeys.SystemEnabledKey && call.Value == "false");
@@ -209,19 +208,16 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public async Task ApplyCostEnergy_Draft_DoesNotAffect_EffectiveState_UntilApplied()
+    public async Task PlasticityCheckbox_AutoApplies_System_Setting()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
+        vm.SystemPlasticityEnabledDraft = false;
 
-        Assert.True(vm.SystemCostEnergyEnabled);
-        vm.SystemCostEnergyEnabledDraft = false;
-        Assert.True(vm.SystemCostEnergyEnabled);
-
-        vm.ApplyCostEnergyCommand.Execute(null);
         await WaitForAsync(() => client.SettingCalls.Count == 1);
 
-        Assert.False(vm.SystemCostEnergyEnabled);
+        Assert.Contains(client.SettingCalls, call => call.Key == PlasticitySettingsKeys.SystemEnabledKey && call.Value == "false");
+        Assert.False(vm.SystemPlasticityEnabled);
     }
 
     [Fact]
@@ -256,6 +252,15 @@ public class IoPanelViewModelTests
         Assert.False(vm.SystemPlasticityEnabledDraft);
         Assert.False(vm.PlasticityOverrideAvailable);
         Assert.True(vm.PlasticityOverrideUnavailable);
+
+        Assert.True(vm.ApplySetting(new SettingItem(PlasticitySettingsKeys.SystemRateKey, "0.25", string.Empty)));
+        Assert.Equal("0.25", vm.SystemPlasticityRateText);
+        Assert.Equal("0.25", vm.SystemPlasticityRateTextDraft);
+
+        Assert.True(vm.ApplySetting(new SettingItem(PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, "false", string.Empty)));
+        Assert.False(vm.SystemPlasticityProbabilisticUpdates);
+        Assert.False(vm.SystemPlasticityProbabilisticUpdatesDraft);
+        Assert.False(vm.SelectedSystemPlasticityModeDraft.Probabilistic);
     }
 
     [Fact]
@@ -266,7 +271,6 @@ public class IoPanelViewModelTests
         client.ReturnNullOnSetSetting = true;
         vm.SystemCostEnergyEnabledDraft = false;
 
-        vm.ApplyCostEnergyCommand.Execute(null);
         await WaitForAsync(() => vm.BrainInfoSummary.Contains("settings unavailable", StringComparison.OrdinalIgnoreCase));
 
         Assert.True(vm.SystemCostEnergyEnabled);
@@ -282,26 +286,81 @@ public class IoPanelViewModelTests
         var vm = CreateViewModel(client);
         vm.SystemPlasticityEnabledDraft = false;
 
-        vm.ApplyPlasticityCommand.Execute(null);
         await WaitForAsync(() => vm.BrainInfoSummary.Contains("unexpected key", StringComparison.OrdinalIgnoreCase));
 
         Assert.True(vm.SystemPlasticityEnabled);
     }
 
     [Fact]
-    public async Task ApplyPlasticity_Writes_System_Setting_EvenWithNonNumericRateText()
+    public async Task ApplyPlasticityModeRate_Writes_System_Settings()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
-        vm.SystemPlasticityEnabledDraft = false;
-        vm.PlasticityRateText = "not-a-number";
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        vm.UpdateActiveBrains(new[] { brainA, brainB });
+        client.BrainInfoById[brainA] = new BrainInfo { PlasticityEnabled = true };
+        client.BrainInfoById[brainB] = new BrainInfo { PlasticityEnabled = false };
+        vm.SystemPlasticityRateTextDraft = "0.2";
+        vm.SelectedSystemPlasticityModeDraft = vm.PlasticityModes.First(mode => !mode.Probabilistic);
 
-        vm.ApplyPlasticityCommand.Execute(null);
-        await WaitForAsync(() => client.SettingCalls.Count == 1);
+        vm.ApplySystemPlasticityModeRateCommand.Execute(null);
+        await WaitForAsync(() => client.SettingCalls.Count == 2 && client.PlasticityCalls.Count == 2);
 
-        Assert.Contains(client.SettingCalls, call => call.Key == PlasticitySettingsKeys.SystemEnabledKey && call.Value == "false");
-        Assert.False(vm.SystemPlasticityEnabled);
-        Assert.False(vm.SystemPlasticityEnabledDraft);
+        Assert.Contains(client.SettingCalls, call => call.Key == PlasticitySettingsKeys.SystemRateKey && call.Value == "0.2");
+        Assert.Contains(client.SettingCalls, call => call.Key == PlasticitySettingsKeys.SystemProbabilisticUpdatesKey && call.Value == "false");
+        Assert.Contains(client.PlasticityCalls, call => call.BrainId == brainA && call.Enabled && Math.Abs(call.Rate - 0.2f) < 0.000001f && !call.Probabilistic);
+        Assert.Contains(client.PlasticityCalls, call => call.BrainId == brainB && !call.Enabled && Math.Abs(call.Rate - 0.2f) < 0.000001f && !call.Probabilistic);
+        Assert.Equal("0.2", vm.SystemPlasticityRateText);
+        Assert.Equal("0.2", vm.SystemPlasticityRateTextDraft);
+        Assert.False(vm.SystemPlasticityProbabilisticUpdates);
+        Assert.False(vm.SystemPlasticityProbabilisticUpdatesDraft);
+    }
+
+    [Fact]
+    public async Task ApplyPlasticityModeRate_InvalidRate_Shows_Validation_Error()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.SystemPlasticityRateTextDraft = "not-a-number";
+
+        vm.ApplySystemPlasticityModeRateCommand.Execute(null);
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("rate invalid", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Contains("rate invalid", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OverrideCheckboxes_ApplySelectedBrainFlagsWithoutButtons()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.CostEnergyEnabled = true;
+        vm.PlasticityEnabled = true;
+        vm.PlasticityRateText = "0.001";
+        vm.SelectedPlasticityMode = vm.PlasticityModes.First(mode => mode.Probabilistic);
+
+        vm.CostEnergySuppressed = true;
+        vm.PlasticitySuppressed = true;
+        await WaitForAsync(() => client.CostEnergyCalls.Count == 1 && client.PlasticityCalls.Count == 1);
+
+        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainId && !call.CostEnabled && !call.EnergyEnabled);
+        Assert.Contains(client.PlasticityCalls, call => call.BrainId == brainId && !call.Enabled && Math.Abs(call.Rate - 0.001f) < 0.000001f && call.Probabilistic);
+    }
+
+    [Fact]
+    public async Task UpdateActiveBrains_Populates_KnownBrainDropdown()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+
+        vm.UpdateActiveBrains(new[] { brainA, brainB });
+        await WaitForAsync(() => vm.KnownBrains.Count == 2);
+
+        Assert.Equal(2, vm.KnownBrains.Count);
+        Assert.NotNull(vm.SelectedFeedbackBrain);
     }
 
     [Fact]
@@ -418,7 +477,9 @@ public class IoPanelViewModelTests
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
         public List<(Guid BrainId, bool CostEnabled, bool EnergyEnabled)> CostEnergyCalls { get; } = new();
+        public List<(Guid BrainId, bool Enabled, float Rate, bool Probabilistic)> PlasticityCalls { get; } = new();
         public Dictionary<Guid, IoCommandResult> CostEnergyResults { get; } = new();
+        public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
         public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
         public List<(Guid BrainId, bool Enabled, HomeostasisTargetMode TargetMode, HomeostasisUpdateMode UpdateMode, float BaseProbability, uint MinStepCodes, bool EnergyCouplingEnabled, float EnergyTargetScale, float EnergyProbabilityScale)> HomeostasisCalls { get; } = new();
         public List<(string Key, string Value)> SettingCalls { get; } = new();
@@ -454,6 +515,7 @@ public class IoPanelViewModelTests
 
         public override Task<IoCommandResult> SetPlasticityAsync(Guid brainId, bool enabled, float rate, bool probabilistic)
         {
+            PlasticityCalls.Add((brainId, enabled, rate, probabilistic));
             return Task.FromResult(new IoCommandResult(
                 brainId,
                 "set_plasticity",
@@ -473,6 +535,16 @@ public class IoPanelViewModelTests
                     HomeostasisEnergyTargetScale = 1f,
                     HomeostasisEnergyProbabilityScale = 1f
                 }));
+        }
+
+        public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
+        {
+            if (BrainInfoById.TryGetValue(brainId, out var info))
+            {
+                return Task.FromResult<BrainInfo?>(info);
+            }
+
+            return Task.FromResult<BrainInfo?>(null);
         }
 
         public override Task<SettingValue?> SetSettingAsync(string key, string value)

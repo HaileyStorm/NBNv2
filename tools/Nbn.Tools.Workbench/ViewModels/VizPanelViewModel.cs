@@ -240,8 +240,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
         ApplyEnergyRateCommand = new RelayCommand(() => _brain.ApplyEnergyRateSelected());
-        ApplyCostEnergyCommand = new RelayCommand(() => _brain.ApplyCostEnergySelected());
-        ApplyPlasticityCommand = new RelayCommand(() => _brain.ApplyPlasticitySelected());
         NavigateCanvasPreviousCommand = new RelayCommand(() => NavigateCanvasRelative(-1));
         NavigateCanvasNextCommand = new RelayCommand(() => NavigateCanvasRelative(1));
         NavigateCanvasSelectionCommand = new RelayCommand(NavigateToCanvasSelection);
@@ -775,10 +773,6 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand ApplyEnergyCreditCommand { get; }
 
     public RelayCommand ApplyEnergyRateCommand { get; }
-
-    public RelayCommand ApplyCostEnergyCommand { get; }
-
-    public RelayCommand ApplyPlasticityCommand { get; }
 
     public RelayCommand NavigateCanvasPreviousCommand { get; }
 

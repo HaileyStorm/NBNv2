@@ -22,4 +22,22 @@ public sealed class SettingsMonitorDefaultsTests
             out var value));
         Assert.Equal("true", value);
     }
+
+    [Fact]
+    public void DefaultSettings_Include_SystemPlasticityRateKey()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            PlasticitySettingsKeys.SystemRateKey,
+            out var value));
+        Assert.Equal("0.001", value);
+    }
+
+    [Fact]
+    public void DefaultSettings_Include_SystemPlasticityModeKey()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            PlasticitySettingsKeys.SystemProbabilisticUpdatesKey,
+            out var value));
+        Assert.Equal("true", value);
+    }
 }

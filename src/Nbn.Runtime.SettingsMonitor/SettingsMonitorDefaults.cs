@@ -28,6 +28,8 @@ public static class SettingsMonitorDefaults
             { DebugSettingsKeys.IncludeSummaryPrefixesKey, string.Empty },
             { DebugSettingsKeys.ExcludeSummaryPrefixesKey, string.Empty },
             { CostEnergySettingsKeys.SystemEnabledKey, "true" },
-            { PlasticitySettingsKeys.SystemEnabledKey, "true" }
+            { PlasticitySettingsKeys.SystemEnabledKey, "true" },
+            { PlasticitySettingsKeys.SystemRateKey, "0.001" },
+            { PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, "true" }
         };
 }

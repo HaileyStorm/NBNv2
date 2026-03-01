@@ -9,6 +9,9 @@ This surface is intentionally approximate. It is not a full training framework.
 Plasticity uses a layered policy:
 
 * system master setting: `plasticity.system.enabled` (default `true`)
+* system plasticity defaults in SettingsMonitor:
+  * `plasticity.system.rate` (default `0.001`)
+  * `plasticity.system.probabilistic_updates` (default `true`)
 * per-brain runtime setting: `plasticity_enabled`
 * effective runtime enablement: `effective_plasticity_enabled = plasticity.system.enabled && plasticity_enabled`
 
@@ -21,6 +24,8 @@ Per-brain plasticity settings:
 * `plasticity_rebase_threshold` / `plasticity_rebase_threshold_pct` (optional; number of changed-axon codes or percent)
 
 When the system master setting is `false`, no brain can force-enable effective plasticity.
+
+Workbench `Energy + Plasticity` system controls write the SettingsMonitor defaults above and can fan out the selected mode/rate to active brains via IO control commands.
 
 Default runtime baseline:
 
