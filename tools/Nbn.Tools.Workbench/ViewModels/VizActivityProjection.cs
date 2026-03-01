@@ -13,7 +13,8 @@ public sealed record VizActivityProjectionOptions(
     uint? FocusRegionId,
     int TopSeriesCount = 8,
     bool EnableMiniChart = true,
-    int MiniChartTickWindow = 64);
+    int MiniChartTickWindow = 64,
+    ulong? LatestTickHint = null);
 
 public sealed record VizActivityProjection(
     string Summary,
@@ -88,9 +89,18 @@ public static class VizActivityProjectionBuilder
     public static VizActivityProjection Build(IEnumerable<VizEventItem> events, VizActivityProjectionOptions options)
     {
         var source = events?.ToList() ?? new List<VizEventItem>();
+        var latestTickHint = options.LatestTickHint.GetValueOrDefault();
+        var hasLatestTickHint = options.LatestTickHint.HasValue;
         if (source.Count == 0)
         {
-            var miniChart = BuildMiniChart(Array.Empty<VizEventItem>(), minTick: 0, maxTick: 0, options);
+            var minTickFromHint = hasLatestTickHint
+                ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
+                : 0UL;
+            var miniChart = BuildMiniChart(
+                windowed: Array.Empty<VizEventItem>(),
+                minTick: minTickFromHint,
+                maxTick: latestTickHint,
+                options);
             return new VizActivityProjection(
                 "No visualization events in the current filter.",
                 new[] { new VizActivityStatItem("Events", "0", "Awaiting stream data") },
@@ -108,7 +118,14 @@ public static class VizActivityProjectionBuilder
 
         if (filtered.Count == 0)
         {
-            var miniChart = BuildMiniChart(Array.Empty<VizEventItem>(), minTick: 0, maxTick: 0, options);
+            var minTickFromHint = hasLatestTickHint
+                ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
+                : 0UL;
+            var miniChart = BuildMiniChart(
+                windowed: Array.Empty<VizEventItem>(),
+                minTick: minTickFromHint,
+                maxTick: latestTickHint,
+                options);
             return new VizActivityProjection(
                 "All events were filtered out by current options.",
                 new[]
@@ -123,16 +140,18 @@ public static class VizActivityProjectionBuilder
         }
 
         var latestTick = filtered.Max(item => item.TickId);
-        var minTick = latestTick > (ulong)(tickWindow - 1) ? latestTick - (ulong)(tickWindow - 1) : 0;
+        if (hasLatestTickHint && latestTickHint > latestTick)
+        {
+            latestTick = latestTickHint;
+        }
+
+        var minTick = ComputeWindowStart(latestTick, tickWindow);
         var windowed = filtered
             .Where(item => item.TickId >= minTick)
             .ToList();
 
         var chartTickWindow = NormalizeTickWindow(options.MiniChartTickWindow);
-        var chartMinTick = latestTick > (ulong)(chartTickWindow - 1) ? latestTick - (ulong)(chartTickWindow - 1) : 0;
-        var chartWindowed = filtered
-            .Where(item => item.TickId >= chartMinTick)
-            .ToList();
+        var chartMinTick = ComputeWindowStart(latestTick, chartTickWindow);
 
         var regionRows = BuildRegionRows(windowed);
         var edgeRows = BuildEdgeRows(windowed);
@@ -167,7 +186,7 @@ public static class VizActivityProjectionBuilder
         var summary = options.FocusRegionId is uint focused
             ? $"Ticks {minTick}..{latestTick} | {windowed.Count} events | focus R{focused}: {focusCount}"
             : $"Ticks {minTick}..{latestTick} | {windowed.Count} events | {uniqueRegionCount} regions";
-        var chart = BuildMiniChart(chartWindowed, chartMinTick, latestTick, options);
+        var chart = BuildMiniChart(filtered, chartMinTick, latestTick, options);
 
         return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows, windowed, chart);
     }
@@ -318,7 +337,7 @@ public static class VizActivityProjectionBuilder
         }
 
         var trendByEntity = options.FocusRegionId is uint focusedRegionId
-            ? BuildFocusNeuronTrendMap(windowed, effectiveMinTick, tickCount, focusedRegionId)
+            ? BuildFocusNeuronTrendMap(windowed, effectiveMinTick, maxTick, tickCount, focusedRegionId)
             : BuildRegionTrendMap(windowed, effectiveMinTick, tickCount);
         var series = trendByEntity.Values
             .OrderByDescending(item => item.TotalScore)
@@ -433,23 +452,14 @@ public static class VizActivityProjectionBuilder
     private static Dictionary<string, TrendAccumulator> BuildFocusNeuronTrendMap(
         IReadOnlyList<VizEventItem> events,
         ulong minTick,
+        ulong maxTick,
         int tickCount,
         uint focusRegionId)
     {
         var trends = new Dictionary<string, TrendAccumulator>(StringComparer.Ordinal);
+        var baselineByNeuron = new Dictionary<string, (float Value, ulong TickId)>(StringComparer.Ordinal);
         foreach (var item in events)
         {
-            if (item.TickId < minTick)
-            {
-                continue;
-            }
-
-            var tickIndex = (int)(item.TickId - minTick);
-            if (tickIndex < 0 || tickIndex >= tickCount)
-            {
-                continue;
-            }
-
             if (!IsBufferType(item.Type))
             {
                 continue;
@@ -462,6 +472,34 @@ public static class VizActivityProjectionBuilder
                 continue;
             }
 
+            var key = $"neuron:{focusRegionId}:{sourceNeuronId}";
+            if (!trends.TryGetValue(key, out var accumulator))
+            {
+                accumulator = new TrendAccumulator(key, $"R{focusRegionId}N{sourceNeuronId}", tickCount);
+                trends[key] = accumulator;
+            }
+
+            if (item.TickId < minTick)
+            {
+                if (!baselineByNeuron.TryGetValue(key, out var baseline) || item.TickId >= baseline.TickId)
+                {
+                    baselineByNeuron[key] = (item.Value, item.TickId);
+                }
+
+                continue;
+            }
+
+            if (item.TickId > maxTick)
+            {
+                continue;
+            }
+
+            var tickIndex = (int)(item.TickId - minTick);
+            if (tickIndex < 0 || tickIndex >= tickCount)
+            {
+                continue;
+            }
+
             AddNeuronBufferSample(
                 trends,
                 focusRegionId,
@@ -470,6 +508,29 @@ public static class VizActivityProjectionBuilder
                 tickIndex,
                 item.TickId,
                 tickCount);
+        }
+
+        foreach (var (key, accumulator) in trends)
+        {
+            var hasCurrent = baselineByNeuron.TryGetValue(key, out var baseline);
+            var current = hasCurrent ? baseline.Value : 0f;
+            for (var tickIndex = 0; tickIndex < tickCount; tickIndex++)
+            {
+                if (accumulator.TryGetSample(tickIndex, out var explicitValue))
+                {
+                    current = explicitValue;
+                    hasCurrent = true;
+                    continue;
+                }
+
+                if (!hasCurrent)
+                {
+                    continue;
+                }
+
+                var tickId = minTick + (ulong)tickIndex;
+                accumulator.SetHeldSample(tickIndex, current, MathF.Abs(current), tickId);
+            }
         }
 
         return trends;
@@ -569,8 +630,18 @@ public static class VizActivityProjectionBuilder
             return false;
         }
 
-        return type.Contains("AXON", StringComparison.OrdinalIgnoreCase)
-               || type.Contains("NEURON", StringComparison.OrdinalIgnoreCase);
+        // Keep low-signal filtering focused on event magnitudes that represent
+        // sparse transport/spike activity. Buffer streams are sampled state and
+        // must remain visible (including zeros) so charts keep advancing.
+        return IsAxonType(type) || IsFiredType(type);
+    }
+
+    private static ulong ComputeWindowStart(ulong latestTick, int windowSize)
+    {
+        var clampedWindow = NormalizeTickWindow(windowSize);
+        return latestTick > (ulong)(clampedWindow - 1)
+            ? latestTick - (ulong)(clampedWindow - 1)
+            : 0;
     }
 
     private static bool IsAxonType(string? type)
@@ -781,11 +852,14 @@ public static class VizActivityProjectionBuilder
 
     private sealed class TrendAccumulator
     {
+        private readonly bool[] _sampled;
+
         public TrendAccumulator(string key, string label, int tickCount)
         {
             Key = key;
             Label = label;
             Values = new float[tickCount];
+            _sampled = new bool[tickCount];
         }
 
         public string Key { get; }
@@ -801,6 +875,7 @@ public static class VizActivityProjectionBuilder
         public void Add(int tickIndex, float score, ulong tickId)
         {
             Values[tickIndex] += score;
+            _sampled[tickIndex] = true;
             TotalScore += score;
             if (tickId >= LastActiveTick)
             {
@@ -811,6 +886,35 @@ public static class VizActivityProjectionBuilder
         public void SetSample(int tickIndex, float value, float rankingScore, ulong tickId)
         {
             Values[tickIndex] = value;
+            _sampled[tickIndex] = true;
+            TotalScore += rankingScore;
+            if (tickId >= LastActiveTick)
+            {
+                LastActiveTick = tickId;
+            }
+        }
+
+        public bool TryGetSample(int tickIndex, out float value)
+        {
+            if (tickIndex < 0 || tickIndex >= _sampled.Length || !_sampled[tickIndex])
+            {
+                value = 0f;
+                return false;
+            }
+
+            value = Values[tickIndex];
+            return true;
+        }
+
+        public void SetHeldSample(int tickIndex, float value, float rankingScore, ulong tickId)
+        {
+            if (tickIndex < 0 || tickIndex >= _sampled.Length || _sampled[tickIndex])
+            {
+                return;
+            }
+
+            Values[tickIndex] = value;
+            _sampled[tickIndex] = true;
             TotalScore += rankingScore;
             if (tickId >= LastActiveTick)
             {

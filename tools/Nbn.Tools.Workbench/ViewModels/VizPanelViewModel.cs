@@ -143,6 +143,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private bool _showVisualizationStream;
     private DateTime _nextStreamingRefreshUtc = DateTime.MinValue;
     private ulong _lastRenderedTickId;
+    private ulong _latestObservedGlobalTickId;
     private string? _selectedCanvasNodeKey;
     private string? _selectedCanvasRouteLabel;
     private string? _hoverCanvasNodeKey;
@@ -918,6 +919,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         var droppedThisCall = 0;
         lock (_pendingEventsGate)
         {
+            if (IsGlobalVisualizerEvent(item.Type) && item.TickId > _latestObservedGlobalTickId)
+            {
+                _latestObservedGlobalTickId = item.TickId;
+            }
+
             while (_pendingEvents.Count >= MaxPendingEvents)
             {
                 _pendingEvents.Dequeue();
@@ -1510,6 +1516,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         lock (_pendingEventsGate)
         {
             _pendingEvents.Clear();
+            _latestObservedGlobalTickId = 0;
             _flushScheduled = false;
         }
 
@@ -1645,14 +1652,15 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private ulong GetLatestTickForCurrentSelection()
     {
+        var latestTick = ReadLatestGlobalTickId();
         if (_projectionEvents.Count == 0)
         {
-            return 0;
+            return latestTick;
         }
 
         if (SelectedBrain is null)
         {
-            return _projectionEvents[0].TickId;
+            return Math.Max(latestTick, _projectionEvents[0].TickId);
         }
 
         var selectedBrainId = SelectedBrain.BrainId;
@@ -1671,11 +1679,19 @@ public sealed class VizPanelViewModel : ViewModelBase
                     continue;
                 }
 
-                return item.TickId;
+                return Math.Max(latestTick, item.TickId);
             }
         }
 
-        return 0;
+        return latestTick;
+    }
+
+    private ulong ReadLatestGlobalTickId()
+    {
+        lock (_pendingEventsGate)
+        {
+            return _latestObservedGlobalTickId;
+        }
     }
 
     private static bool TouchesFocusRegion(VizEventItem item, uint focusRegionId)
@@ -1941,13 +1957,15 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         var miniChartTopN = ParseMiniActivityTopNOrDefault();
         var miniChartTickWindow = ParseMiniActivityTickWindowOrDefault();
+        var latestTickHint = GetLatestTickForCurrentSelection();
         var options = new VizActivityProjectionOptions(
             ParseTickWindowOrDefault(),
             IncludeLowSignalEvents,
             TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null,
             miniChartTopN,
             ShowMiniActivityChart,
-            miniChartTickWindow);
+            miniChartTickWindow,
+            latestTickHint > 0 ? latestTickHint : null);
         var eventsSnapshot = _filteredProjectionEvents.ToList();
         var topology = BuildTopologySnapshotForSelectedBrain();
         var interaction = BuildCanvasInteractionState();

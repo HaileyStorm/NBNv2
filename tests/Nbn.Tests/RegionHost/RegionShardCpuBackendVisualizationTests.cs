@@ -121,7 +121,7 @@ public class RegionShardCpuBackendVisualizationTests
     }
 
     [Fact]
-    public void Compute_WithFocusScopeOnSource_EmitsZeroBufferVizEachTick()
+    public void Compute_WithFocusScopeOnSource_EmitsBufferVizOnFirstTick_AndWhenValueChanges()
     {
         const int sourceRegionId = 8;
         const int destRegionId = 9;
@@ -144,19 +144,28 @@ public class RegionShardCpuBackendVisualizationTests
             shardId: ShardId32.From(sourceRegionId, 0),
             routing: routing,
             visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
+        state.Buffer[0] = 0.25f;
+        var third = backend.Compute(
+            tickId: 32,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
 
         var firstBuffer = Assert.Single(first.BufferNeuronEvents);
-        var secondBuffer = Assert.Single(second.BufferNeuronEvents);
+        var thirdBuffer = Assert.Single(third.BufferNeuronEvents);
         Assert.Equal(0f, firstBuffer.Buffer);
-        Assert.Equal(0f, secondBuffer.Buffer);
+        Assert.Empty(second.BufferNeuronEvents);
+        Assert.Equal(0.25f, thirdBuffer.Buffer);
         Assert.Equal(30UL, firstBuffer.TickId);
-        Assert.Equal(31UL, secondBuffer.TickId);
+        Assert.Equal(32UL, thirdBuffer.TickId);
         Assert.Empty(first.FiredNeuronEvents);
         Assert.Empty(second.FiredNeuronEvents);
+        Assert.Empty(third.FiredNeuronEvents);
     }
 
     [Fact]
-    public void Compute_WithVisualizationEnabledAll_EmitsZeroBufferVizEachTick()
+    public void Compute_WithVisualizationEnabledAll_EmitsBufferVizOnFirstTickOnly_WhenValueUnchanged()
     {
         const int sourceRegionId = 8;
         const int destRegionId = 9;
@@ -181,13 +190,51 @@ public class RegionShardCpuBackendVisualizationTests
             visualization: RegionShardVisualizationComputeScope.EnabledAll);
 
         var firstBuffer = Assert.Single(first.BufferNeuronEvents);
-        var secondBuffer = Assert.Single(second.BufferNeuronEvents);
         Assert.Equal(0f, firstBuffer.Buffer);
-        Assert.Equal(0f, secondBuffer.Buffer);
         Assert.Equal(40UL, firstBuffer.TickId);
-        Assert.Equal(41UL, secondBuffer.TickId);
+        Assert.Empty(second.BufferNeuronEvents);
         Assert.Empty(first.FiredNeuronEvents);
         Assert.Empty(second.FiredNeuronEvents);
+    }
+
+    [Fact]
+    public void Compute_WhenFocusScopeIsReenabled_EmitsBaselineBufferAgain()
+    {
+        const int sourceRegionId = 8;
+        const int destRegionId = 9;
+        var state = CreateSingleNeuronState(sourceRegionId, destRegionId);
+        state.Buffer[0] = 0.125f;
+        state.PreActivationThreshold[0] = 0.5f;
+        state.ActivationThreshold[0] = 0.5f;
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(sourceRegionId, sourceCount: 1, destRegionId, destCount: 1);
+
+        var focused = backend.Compute(
+            tickId: 50,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
+        var unfocused = backend.Compute(
+            tickId: 51,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: 7));
+        var refocused = backend.Compute(
+            tickId: 52,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
+
+        var first = Assert.Single(focused.BufferNeuronEvents);
+        var second = Assert.Single(refocused.BufferNeuronEvents);
+        Assert.Equal(0.125f, first.Buffer);
+        Assert.Equal(0.125f, second.Buffer);
+        Assert.Equal(50UL, first.TickId);
+        Assert.Equal(52UL, second.TickId);
+        Assert.Empty(unfocused.BufferNeuronEvents);
     }
 
     private static RegionShardState CreateSingleNeuronState(int sourceRegionId, int destRegionId)

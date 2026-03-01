@@ -9,17 +9,24 @@ namespace Nbn.Runtime.RegionHost;
 
 public sealed class RegionShardCpuBackend
 {
+    private const float BufferVizEpsilon = 1e-6f;
     private static readonly bool LogActivityDiagnostics = IsEnvTrue("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED");
     private static readonly ulong ActivityDiagnosticsPeriod = ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", 32UL);
     private static readonly int ActivityDiagnosticsSampleCount = (int)Math.Clamp(ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_SAMPLES", 3UL), 1UL, 16UL);
 
     private readonly RegionShardState _state;
     private readonly RegionShardCostConfig _costConfig;
+    private readonly float[] _lastEmittedBufferSamples;
+    private readonly bool[] _hasLastEmittedBufferSamples;
+    private bool _bufferVizTrackingArmed;
 
     public RegionShardCpuBackend(RegionShardState state, RegionShardCostConfig? costConfig = null)
     {
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _costConfig = costConfig ?? RegionShardCostConfig.Default;
+        _lastEmittedBufferSamples = new float[_state.NeuronCount];
+        _hasLastEmittedBufferSamples = new bool[_state.NeuronCount];
+        _bufferVizTrackingArmed = false;
     }
 
     public RegionShardComputeResult Compute(
@@ -38,6 +45,15 @@ public sealed class RegionShardCpuBackend
         var collectNeuronViz = vizScope.Enabled
                                && (!focusedRegionId.HasValue || focusedRegionId.Value == (uint)_state.RegionId);
         var collectAxonViz = vizScope.Enabled;
+        if (!collectNeuronViz)
+        {
+            _bufferVizTrackingArmed = false;
+        }
+        else if (!_bufferVizTrackingArmed)
+        {
+            Array.Clear(_hasLastEmittedBufferSamples, 0, _hasLastEmittedBufferSamples.Length);
+            _bufferVizTrackingArmed = true;
+        }
 
         var outbox = new Dictionary<ShardId32, List<Contribution>>();
         Dictionary<AxonVizRouteKey, AxonVizAccumulator>? axonVizRoutes = collectAxonViz
@@ -90,7 +106,18 @@ public sealed class RegionShardCpuBackend
 
             var sourceNeuronId = _state.NeuronStart + i;
             var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
-            bufferNeuronViz?.Add(new RegionShardNeuronBufferVizEvent(sourceAddress, tickId, buffer));
+            if (bufferNeuronViz is not null)
+            {
+                var hasSample = _hasLastEmittedBufferSamples[i];
+                var previous = _lastEmittedBufferSamples[i];
+                var changed = !hasSample || MathF.Abs(buffer - previous) > BufferVizEpsilon;
+                if (changed)
+                {
+                    bufferNeuronViz.Add(new RegionShardNeuronBufferVizEvent(sourceAddress, tickId, buffer));
+                    _lastEmittedBufferSamples[i] = buffer;
+                    _hasLastEmittedBufferSamples[i] = true;
+                }
+            }
 
             if (buffer <= _state.PreActivationThreshold[i])
             {

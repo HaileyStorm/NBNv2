@@ -114,8 +114,9 @@ public class DesignerPanelRandomBrainTests
             Assert.All(outputRegion.Neurons.Where(neuron => neuron.Exists), neuron =>
             {
                 Assert.Contains(neuron.ActivationFunctionId, allowedActivationIds);
-                Assert.InRange(neuron.PreActivationThresholdCode, 0, 32);
-                Assert.InRange(neuron.ActivationThresholdCode, 0, 24);
+                Assert.InRange(neuron.PreActivationThresholdCode, 0, 16);
+                Assert.InRange(neuron.ActivationThresholdCode, 0, 16);
+                Assert.Equal(2, neuron.AccumulationFunctionId);
             });
         });
     }

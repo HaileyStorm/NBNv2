@@ -221,6 +221,64 @@ public class VizActivityProjectionBuilderTests
     }
 
     [Fact]
+    public void Build_MiniChart_FocusMode_KeepsZeroBufferSamples_WhenLowSignalFilteringIsDisabled()
+    {
+        const uint focusRegion = 0;
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronBuffer", tick: 200, region: focusRegion, source: Address(focusRegion, 7), target: Address(focusRegion, 7), value: 0f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 201, region: focusRegion, source: Address(focusRegion, 7), target: Address(focusRegion, 7), value: 0f, strength: 0f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 8,
+                IncludeLowSignalEvents: false,
+                FocusRegionId: focusRegion,
+                TopSeriesCount: 2,
+                EnableMiniChart: true,
+                MiniChartTickWindow: 4));
+
+        var chart = projection.MiniChart;
+        Assert.Equal((ulong)198, chart.MinTick);
+        Assert.Equal((ulong)201, chart.MaxTick);
+        var series = Assert.Single(chart.Series);
+        Assert.Equal("R0N7", series.Label);
+        Assert.Equal(4, series.Values.Count);
+        Assert.True(series.Values.All(value => Math.Abs(value) <= 1e-6f));
+    }
+
+    [Fact]
+    public void Build_MiniChart_FocusMode_AdvancesToTickHint_AndHoldsLastKnownBufferValue()
+    {
+        const uint focusRegion = 0;
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronBuffer", tick: 198, region: focusRegion, source: Address(focusRegion, 9), target: Address(focusRegion, 9), value: -0.5f, strength: 0f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 8,
+                IncludeLowSignalEvents: false,
+                FocusRegionId: focusRegion,
+                TopSeriesCount: 2,
+                EnableMiniChart: true,
+                MiniChartTickWindow: 3,
+                LatestTickHint: 201));
+
+        var chart = projection.MiniChart;
+        Assert.Equal((ulong)199, chart.MinTick);
+        Assert.Equal((ulong)201, chart.MaxTick);
+        var series = Assert.Single(chart.Series);
+        Assert.Equal("R0N9", series.Label);
+        Assert.Equal(3, series.Values.Count);
+        Assert.All(series.Values, value => Assert.InRange(value, -0.501f, -0.499f));
+    }
+
+    [Fact]
     public void Build_MiniChart_WhenDisabled_ReturnsNoSeries()
     {
         var events = new List<VizEventItem>
