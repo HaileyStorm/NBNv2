@@ -7,12 +7,9 @@
     <StackPanel Spacing="16">
       <Border Classes="card">
         <StackPanel Spacing="8">
-          <TextBlock Text="Energy + Plasticity" Classes="card-title" />
-          <TextBlock Text="Applies to all active brains (selection lives in Visualizer)." Classes="muted" />
-          <TextBlock Text="Selected Brain" Classes="muted" />
-          <TextBox Text="{Binding BrainIdText}" IsReadOnly="True" />
-          <TextBlock Text="{Binding ActiveBrainsSummary}" Classes="muted" />
-          <TextBlock Text="Use Visualizer for per-brain inputs, outputs, and focus." Classes="card-subtitle" />
+          <TextBlock Text="Energy + Plasticity Settings" Classes="card-title" />
+          <TextBlock Text="System-wide policy controls persisted in SettingsMonitor." Classes="muted" />
+          <TextBlock Text="These values stay synced with Orchestrator &gt; Settings." Classes="muted" />
         </StackPanel>
       </Border>
 
@@ -20,22 +17,11 @@
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
             <TextBlock Text="Energy + Cost" Classes="card-title" />
-            <TextBlock Text="{Binding SystemCostEnergyStateLabel}" Classes="muted" />
-            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
-              <TextBlock Text="Credit" Classes="muted" />
-              <TextBox Grid.Column="1" Text="{Binding EnergyCreditText}" Width="100" />
-              <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyCreditCommand}" />
-              <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
-              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding EnergyRateText}" Width="100" />
-              <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
-            </Grid>
             <StackPanel Orientation="Horizontal" Spacing="12">
-              <CheckBox Content="Per-brain override: suppress cost+energy"
-                        IsChecked="{Binding CostEnergySuppressed}"
-                        IsEnabled="{Binding CostEnergyOverrideAvailable}" />
-              <Button Content="Update Flags"
-                      Command="{Binding ApplyCostEnergyCommand}"
-                      IsEnabled="{Binding CostEnergyOverrideAvailable}" />
+              <CheckBox Content="Enable cost + energy system-wide"
+                        IsChecked="{Binding SystemCostEnergyEnabledDraft}" />
+              <Button Content="Apply Setting"
+                      Command="{Binding ApplyCostEnergyCommand}" />
             </StackPanel>
           </StackPanel>
         </Border>
@@ -43,69 +29,19 @@
         <Border Classes="card" Grid.Column="1">
           <StackPanel Spacing="8">
             <TextBlock Text="Plasticity" Classes="card-title" />
-            <TextBlock Text="{Binding SystemPlasticityStateLabel}" Classes="muted" />
-            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
-              <TextBlock Text="Mode" Classes="muted" />
-              <ComboBox Grid.Column="1" ItemsSource="{Binding PlasticityModes}" SelectedItem="{Binding SelectedPlasticityMode}" Width="160">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding Label}" />
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-              <CheckBox Grid.Column="2"
-                        Content="Per-brain override: suppress plasticity"
-                        IsChecked="{Binding PlasticitySuppressed}"
-                        IsEnabled="{Binding PlasticityOverrideAvailable}" />
-              <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
-              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PlasticityRateText}" Width="90" />
-              <Button Grid.Row="1"
-                      Grid.Column="2"
-                      Content="Apply"
-                      Command="{Binding ApplyPlasticityCommand}"
-                      IsEnabled="{Binding PlasticityOverrideAvailable}" />
-            </Grid>
-            <Border Height="1" Background="#33000000" Margin="0,4,0,4" />
-            <TextBlock Text="Homeostasis" Classes="card-title" />
-            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
-              <TextBlock Text="Target" Classes="muted" />
-              <ComboBox Grid.Column="1" ItemsSource="{Binding HomeostasisTargetModes}" SelectedItem="{Binding SelectedHomeostasisTargetMode}" Width="180">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding Label}" />
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-              <CheckBox Grid.Column="2" Content="Enabled" IsChecked="{Binding HomeostasisEnabled}" />
-
-              <TextBlock Grid.Row="1" Text="Update" Classes="muted" />
-              <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding HomeostasisUpdateModes}" SelectedItem="{Binding SelectedHomeostasisUpdateMode}" Width="180">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate>
-                    <TextBlock Text="{Binding Label}" />
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-              <TextBlock Grid.Row="1" Grid.Column="2" Text="" />
-
-              <TextBlock Grid.Row="2" Text="Base p [0..1]" Classes="muted" />
-              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HomeostasisBaseProbabilityText}" Width="90" />
-              <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding HomeostasisMinStepCodesText}" Width="90" Watermark="Min step codes" />
-
-              <TextBlock Grid.Row="3" Text="Energy scales [0..4]" Classes="muted" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding HomeostasisEnergyTargetScaleText}" Width="90" Watermark="Target" />
-              <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding HomeostasisEnergyProbabilityScaleText}" Width="90" Watermark="Probability" />
-
-              <CheckBox Grid.Row="4" Grid.Column="1" Content="Energy coupling" IsChecked="{Binding HomeostasisEnergyCouplingEnabled}" />
-              <Button Grid.Row="4" Grid.Column="2" Content="Apply" Command="{Binding ApplyHomeostasisCommand}" />
-            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <CheckBox Content="Enable plasticity system-wide"
+                        IsChecked="{Binding SystemPlasticityEnabledDraft}" />
+              <Button Content="Apply Setting"
+                      Command="{Binding ApplyPlasticityCommand}" />
+            </StackPanel>
           </StackPanel>
         </Border>
       </Grid>
 
       <Border Classes="card">
         <StackPanel Spacing="6">
-          <TextBlock Text="Command Feedback" Classes="card-title" />
+          <TextBlock Text="Settings Feedback" Classes="card-title" />
           <TextBlock Text="{Binding BrainInfoSummary}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>

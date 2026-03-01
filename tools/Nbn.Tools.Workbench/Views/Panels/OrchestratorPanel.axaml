@@ -271,6 +271,9 @@
               <TextBlock Text="Settings" Classes="card-title" />
               <Button Grid.Column="1" Content="Apply" Command="{Binding ApplySettingsCommand}" Classes="accent" />
             </Grid>
+            <TextBlock Text="Includes policy keys exposed in Energy + Plasticity; values stay synced across both surfaces."
+                       Classes="muted"
+                       TextWrapping="Wrap" />
             <ScrollViewer MaxHeight="380" HorizontalScrollBarVisibility="Disabled">
               <ItemsControl ItemsSource="{Binding Settings}">
                 <ItemsControl.ItemsPanel>

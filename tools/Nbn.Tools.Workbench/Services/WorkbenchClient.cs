@@ -451,7 +451,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<SettingValue?> SetSettingAsync(string key, string value)
+    public virtual async Task<SettingValue?> SetSettingAsync(string key, string value)
     {
         if (_root is null || _settingsPid is null || string.IsNullOrWhiteSpace(key))
         {

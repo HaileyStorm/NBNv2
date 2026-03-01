@@ -39,7 +39,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             new("Orchestrator", "Nodes + Settings", "O", Orchestrator),
             new("Visualizer", "Activity stream", "V", Viz),
             new("Designer", "Build + import", "S", Designer),
-            new("Energy + Plasticity", "Brain inputs & outputs", "I", Io),
+            new("Energy + Plasticity", "System policy controls", "I", Io),
             new("Reproduction", "Spawn variants", "R", Repro),
             new("Debug", "Logs & filters", "D", Debug)
         };

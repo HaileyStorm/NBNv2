@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -192,20 +193,35 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public async Task ApplyCostEnergy_Uses_Combined_Flag_Value()
+    public async Task ApplyCostEnergy_Writes_System_Setting()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
-        var brainA = Guid.NewGuid();
-        var brainB = Guid.NewGuid();
-        vm.UpdateActiveBrains(new[] { brainA, brainB });
-        vm.CostEnergyEnabled = true;
+        vm.SystemCostEnergyEnabledDraft = false;
 
         vm.ApplyCostEnergyCommand.Execute(null);
-        await WaitForAsync(() => client.CostEnergyCalls.Count == 2);
+        await WaitForAsync(() => client.SettingCalls.Count == 1);
 
-        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainA && call.CostEnabled && call.EnergyEnabled);
-        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainB && call.CostEnabled && call.EnergyEnabled);
+        Assert.Contains(client.SettingCalls, call => call.Key == CostEnergySettingsKeys.SystemEnabledKey && call.Value == "false");
+        Assert.False(vm.SystemCostEnergyEnabled);
+        Assert.False(vm.SystemCostEnergyEnabledDraft);
+        Assert.Contains("disabled", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ApplyCostEnergy_Draft_DoesNotAffect_EffectiveState_UntilApplied()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+
+        Assert.True(vm.SystemCostEnergyEnabled);
+        vm.SystemCostEnergyEnabledDraft = false;
+        Assert.True(vm.SystemCostEnergyEnabled);
+
+        vm.ApplyCostEnergyCommand.Execute(null);
+        await WaitForAsync(() => client.SettingCalls.Count == 1);
+
+        Assert.False(vm.SystemCostEnergyEnabled);
     }
 
     [Fact]
@@ -231,47 +247,61 @@ public class IoPanelViewModelTests
 
         Assert.True(vm.ApplySetting(new SettingItem(CostEnergySettingsKeys.SystemEnabledKey, "false", string.Empty)));
         Assert.False(vm.SystemCostEnergyEnabled);
+        Assert.False(vm.SystemCostEnergyEnabledDraft);
         Assert.False(vm.CostEnergyOverrideAvailable);
         Assert.True(vm.CostEnergyOverrideUnavailable);
 
         Assert.True(vm.ApplySetting(new SettingItem(PlasticitySettingsKeys.SystemEnabledKey, "false", string.Empty)));
         Assert.False(vm.SystemPlasticityEnabled);
+        Assert.False(vm.SystemPlasticityEnabledDraft);
         Assert.False(vm.PlasticityOverrideAvailable);
         Assert.True(vm.PlasticityOverrideUnavailable);
     }
 
     [Fact]
-    public async Task ApplyCostEnergy_PartialFailure_Reports_Failed_Brain_Ids()
+    public async Task ApplyCostEnergy_SettingsUnavailable_Shows_Error()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
-        var brainA = Guid.NewGuid();
-        var brainB = Guid.NewGuid();
-        vm.UpdateActiveBrains(new[] { brainA, brainB });
-        vm.CostEnabled = true;
-        vm.EnergyEnabled = true;
-
-        client.CostEnergyResults[brainA] = new IoCommandResult(brainA, "set_cost_energy", true, "applied");
-        client.CostEnergyResults[brainB] = new IoCommandResult(brainB, "set_cost_energy", false, "brain_not_found");
+        client.ReturnNullOnSetSetting = true;
+        vm.SystemCostEnergyEnabledDraft = false;
 
         vm.ApplyCostEnergyCommand.Execute(null);
-        await WaitForAsync(() => vm.BrainInfoSummary.Contains("Failed:", StringComparison.OrdinalIgnoreCase));
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("settings unavailable", StringComparison.OrdinalIgnoreCase));
 
-        Assert.Contains("1/2 succeeded", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(brainB.ToString("D"), vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("brain_not_found", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.True(vm.SystemCostEnergyEnabled);
     }
 
     [Fact]
-    public void ApplyPlasticity_InvalidRate_Shows_Validation_Error()
+    public async Task ApplyPlasticity_UnexpectedResponseKey_Shows_Error_AndPreservesState()
     {
-        var vm = CreateViewModel(new FakeWorkbenchClient());
-        vm.UpdateActiveBrains(new[] { Guid.NewGuid() });
+        var client = new FakeWorkbenchClient
+        {
+            SetSettingResponseKeyOverride = "unexpected.key"
+        };
+        var vm = CreateViewModel(client);
+        vm.SystemPlasticityEnabledDraft = false;
+
+        vm.ApplyPlasticityCommand.Execute(null);
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("unexpected key", StringComparison.OrdinalIgnoreCase));
+
+        Assert.True(vm.SystemPlasticityEnabled);
+    }
+
+    [Fact]
+    public async Task ApplyPlasticity_Writes_System_Setting_EvenWithNonNumericRateText()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.SystemPlasticityEnabledDraft = false;
         vm.PlasticityRateText = "not-a-number";
 
         vm.ApplyPlasticityCommand.Execute(null);
+        await WaitForAsync(() => client.SettingCalls.Count == 1);
 
-        Assert.Equal("Plasticity rate invalid.", vm.BrainInfoSummary);
+        Assert.Contains(client.SettingCalls, call => call.Key == PlasticitySettingsKeys.SystemEnabledKey && call.Value == "false");
+        Assert.False(vm.SystemPlasticityEnabled);
+        Assert.False(vm.SystemPlasticityEnabledDraft);
     }
 
     [Fact]
@@ -391,6 +421,10 @@ public class IoPanelViewModelTests
         public Dictionary<Guid, IoCommandResult> CostEnergyResults { get; } = new();
         public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
         public List<(Guid BrainId, bool Enabled, HomeostasisTargetMode TargetMode, HomeostasisUpdateMode UpdateMode, float BaseProbability, uint MinStepCodes, bool EnergyCouplingEnabled, float EnergyTargetScale, float EnergyProbabilityScale)> HomeostasisCalls { get; } = new();
+        public List<(string Key, string Value)> SettingCalls { get; } = new();
+        public bool ReturnNullOnSetSetting { get; set; }
+        public string? SetSettingResponseKeyOverride { get; set; }
+        public string? SetSettingResponseValueOverride { get; set; }
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -439,6 +473,22 @@ public class IoPanelViewModelTests
                     HomeostasisEnergyTargetScale = 1f,
                     HomeostasisEnergyProbabilityScale = 1f
                 }));
+        }
+
+        public override Task<SettingValue?> SetSettingAsync(string key, string value)
+        {
+            SettingCalls.Add((key, value));
+            if (ReturnNullOnSetSetting)
+            {
+                return Task.FromResult<SettingValue?>(null);
+            }
+
+            return Task.FromResult<SettingValue?>(new SettingValue
+            {
+                Key = SetSettingResponseKeyOverride ?? key,
+                Value = SetSettingResponseValueOverride ?? value,
+                UpdatedMs = 1UL
+            });
         }
 
         public override Task<IoCommandResult> SetHomeostasisAsync(

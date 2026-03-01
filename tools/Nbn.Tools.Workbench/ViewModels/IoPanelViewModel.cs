@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Globalization;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -37,8 +38,10 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
     private bool _systemCostEnergyEnabled = true;
+    private bool _systemCostEnergyEnabledDraft = true;
     private bool _plasticityEnabled = true;
     private bool _systemPlasticityEnabled = true;
+    private bool _systemPlasticityEnabledDraft = true;
     private bool _homeostasisEnabled = true;
     private bool _homeostasisEnergyCouplingEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
@@ -203,6 +206,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
     }
 
+    public bool SystemCostEnergyEnabledDraft
+    {
+        get => _systemCostEnergyEnabledDraft;
+        set => SetProperty(ref _systemCostEnergyEnabledDraft, value);
+    }
+
     public bool CostEnergyOverrideAvailable => SystemCostEnergyEnabled;
     public bool CostEnergyOverrideUnavailable => !CostEnergyOverrideAvailable;
 
@@ -240,6 +249,12 @@ public sealed class IoPanelViewModel : ViewModelBase
                 OnPropertyChanged(nameof(SystemPlasticityStateLabel));
             }
         }
+    }
+
+    public bool SystemPlasticityEnabledDraft
+    {
+        get => _systemPlasticityEnabledDraft;
+        set => SetProperty(ref _systemPlasticityEnabledDraft, value);
     }
 
     public bool PlasticityOverrideAvailable => SystemPlasticityEnabled;
@@ -574,13 +589,17 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         if (string.Equals(item.Key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
-            SystemCostEnergyEnabled = ParseBooleanSetting(item.Value, SystemCostEnergyEnabled);
+            var parsed = ParseBooleanSetting(item.Value, SystemCostEnergyEnabled);
+            SystemCostEnergyEnabled = parsed;
+            SystemCostEnergyEnabledDraft = parsed;
             return true;
         }
 
         if (string.Equals(item.Key, PlasticitySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
-            SystemPlasticityEnabled = ParseBooleanSetting(item.Value, SystemPlasticityEnabled);
+            var parsed = ParseBooleanSetting(item.Value, SystemPlasticityEnabled);
+            SystemPlasticityEnabled = parsed;
+            SystemPlasticityEnabledDraft = parsed;
             return true;
         }
 
@@ -1042,33 +1061,38 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private async Task ApplyCostEnergyAsync()
     {
-        if (!TryGetTargetBrains(out var targets))
-        {
-            return;
-        }
-
-        var enabled = CostEnergyEnabled;
-        var results = await Task.WhenAll(targets.Select(brainId => _client.SetCostEnergyAsync(brainId, enabled, enabled))).ConfigureAwait(false);
-        ApplyCommandResultToSummary("Cost/Energy flags", results);
+        var enabled = SystemCostEnergyEnabledDraft;
+        var result = await _client.SetSettingAsync(CostEnergySettingsKeys.SystemEnabledKey, enabled ? "true" : "false").ConfigureAwait(false);
+        ApplySystemSettingToSummary("Cost/Energy system policy", CostEnergySettingsKeys.SystemEnabledKey, enabled, result);
     }
 
     private async Task ApplyPlasticityAsync()
     {
-        if (!TryParsePlasticityRate(out var rate))
-        {
-            BrainInfoSummary = "Plasticity rate invalid.";
-            return;
-        }
+        var enabled = SystemPlasticityEnabledDraft;
+        var result = await _client.SetSettingAsync(PlasticitySettingsKeys.SystemEnabledKey, enabled ? "true" : "false").ConfigureAwait(false);
+        ApplySystemSettingToSummary("Plasticity system policy", PlasticitySettingsKeys.SystemEnabledKey, enabled, result);
+    }
 
-        if (!TryGetTargetBrains(out var targets))
+    private void ApplySystemSettingToSummary(string operation, string key, bool requested, SettingValue? result)
+    {
+        _dispatcher.Post(() =>
         {
-            return;
-        }
+            if (result is null)
+            {
+                BrainInfoSummary = $"{operation}: update failed (settings unavailable).";
+                return;
+            }
 
-        var probabilistic = SelectedPlasticityMode?.Probabilistic ?? true;
-        var enabled = PlasticityEnabled;
-        var results = await Task.WhenAll(targets.Select(brainId => _client.SetPlasticityAsync(brainId, enabled, rate, probabilistic))).ConfigureAwait(false);
-        ApplyCommandResultToSummary("Plasticity", results);
+            if (!string.Equals(result.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                BrainInfoSummary = $"{operation}: update returned unexpected key '{result.Key}'.";
+                return;
+            }
+
+            ApplySetting(new SettingItem(result.Key, result.Value, result.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            var persisted = ParseBooleanSetting(result.Value, requested);
+            BrainInfoSummary = $"{operation}: {(persisted ? "enabled" : "disabled")}.";
+        });
     }
 
     private async Task ApplyHomeostasisAsync()
