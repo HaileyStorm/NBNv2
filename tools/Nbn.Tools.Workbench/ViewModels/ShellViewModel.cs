@@ -12,6 +12,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 {
     private readonly UiDispatcher _dispatcher = new();
     private readonly WorkbenchClient _client;
+    private readonly BooleanPropertySyncBridge _plasticityToggleSyncBridge;
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
     private CancellationTokenSource? _connectCts;
@@ -33,6 +34,16 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel(Connections, _client, OnSpawnedBrainDiscovered);
+        _plasticityToggleSyncBridge = new BooleanPropertySyncBridge(
+            Io,
+            nameof(IoPanelViewModel.PlasticityEnabled),
+            () => Io.PlasticityEnabled,
+            value => Io.PlasticityEnabled = value,
+            Designer,
+            nameof(DesignerPanelViewModel.SnapshotPlasticityEnabled),
+            () => Designer.SnapshotPlasticityEnabled,
+            value => Designer.SnapshotPlasticityEnabled = value,
+            initializeRightFromLeft: true);
 
         Navigation = new ObservableCollection<NavItemViewModel>
         {
@@ -261,6 +272,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public async ValueTask DisposeAsync()
     {
+        _plasticityToggleSyncBridge.Dispose();
         await Orchestrator.StopAllAsyncForShutdown();
         _connectCts?.Cancel();
         _connectCts = null;
