@@ -27,7 +27,7 @@ public static class SettingsMonitorDefaults
             { DebugSettingsKeys.ExcludeContextPrefixesKey, string.Empty },
             { DebugSettingsKeys.IncludeSummaryPrefixesKey, string.Empty },
             { DebugSettingsKeys.ExcludeSummaryPrefixesKey, string.Empty },
-            { CostEnergySettingsKeys.SystemEnabledKey, "true" },
+            { CostEnergySettingsKeys.SystemEnabledKey, "false" },
             { CostEnergySettingsKeys.RemoteCostEnabledKey, "false" },
             { CostEnergySettingsKeys.RemoteCostPerBatchKey, "0" },
             { CostEnergySettingsKeys.RemoteCostPerContributionKey, "0" },

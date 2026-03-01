@@ -104,6 +104,13 @@ public class HiveMindLiveSnapshotTests
                 NeuronCount = 2
             }));
 
+            root.Send(hiveMind, new ProtoSettings.SettingChanged
+            {
+                Key = CostEnergySettingsKeys.SystemEnabledKey,
+                Value = "true",
+                UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+
             var ready = await root.RequestAsync<SnapshotReady>(
                 hiveMind,
                 new RequestSnapshot

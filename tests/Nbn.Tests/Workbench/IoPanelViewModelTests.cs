@@ -193,18 +193,29 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public void CostEnergy_Defaults_SystemDisabled_WithPerBrainUnsuppressed()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        Assert.False(vm.SystemCostEnergyEnabled);
+        Assert.False(vm.SystemCostEnergyEnabledDraft);
+        Assert.True(vm.CostEnergyEnabled);
+        Assert.False(vm.CostEnergySuppressed);
+    }
+
+    [Fact]
     public async Task CostEnergyCheckbox_AutoApplies_System_Setting()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
-        vm.SystemCostEnergyEnabledDraft = false;
+        vm.SystemCostEnergyEnabledDraft = true;
 
         await WaitForAsync(() => client.SettingCalls.Count == 1);
 
-        Assert.Contains(client.SettingCalls, call => call.Key == CostEnergySettingsKeys.SystemEnabledKey && call.Value == "false");
-        Assert.False(vm.SystemCostEnergyEnabled);
-        Assert.False(vm.SystemCostEnergyEnabledDraft);
-        Assert.Contains("disabled", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(client.SettingCalls, call => call.Key == CostEnergySettingsKeys.SystemEnabledKey && call.Value == "true");
+        Assert.True(vm.SystemCostEnergyEnabled);
+        Assert.True(vm.SystemCostEnergyEnabledDraft);
+        Assert.Contains("enabled", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -269,11 +280,11 @@ public class IoPanelViewModelTests
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
         client.ReturnNullOnSetSetting = true;
-        vm.SystemCostEnergyEnabledDraft = false;
+        vm.SystemCostEnergyEnabledDraft = true;
 
         await WaitForAsync(() => vm.BrainInfoSummary.Contains("settings unavailable", StringComparison.OrdinalIgnoreCase));
 
-        Assert.True(vm.SystemCostEnergyEnabled);
+        Assert.False(vm.SystemCostEnergyEnabled);
     }
 
     [Fact]

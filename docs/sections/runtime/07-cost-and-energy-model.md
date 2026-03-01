@@ -6,7 +6,7 @@ NBN can compute a per-brain per-tick **cost** and deduct it from an **energy acc
 
 Cost/energy uses a layered policy:
 
-* system master setting: `cost_energy.system.enabled` (default `true`)
+* system master setting: `cost_energy.system.enabled` (default `false`)
 * per-brain runtime setting: `cost_enabled` + `energy_enabled` (paired, treated as one local enable/disable preference)
 * effective runtime enablement: `effective_cost_energy_enabled = cost_energy.system.enabled && cost_enabled && energy_enabled`
 

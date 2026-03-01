@@ -11,7 +11,7 @@ public sealed class SettingsMonitorDefaultsTests
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             CostEnergySettingsKeys.SystemEnabledKey,
             out var value));
-        Assert.Equal("true", value);
+        Assert.Equal("false", value);
     }
 
     [Fact]

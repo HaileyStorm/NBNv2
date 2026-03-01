@@ -30,7 +30,7 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
     private bool _debugStreamEnabled;
-    private bool _systemCostEnergyEnabled = true;
+    private bool _systemCostEnergyEnabled;
     private bool _remoteCostEnabled;
     private long _remoteCostPerBatch;
     private long _remoteCostPerContribution;
@@ -6361,7 +6361,7 @@ public sealed class HiveMindActor : IActor
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
         public long LastTickCost { get; set; }
-        public bool CostEnergyEnabled { get; set; }
+        public bool CostEnergyEnabled { get; set; } = true;
         public bool PlasticityEnabled { get; set; } = true;
         public float PlasticityRate { get; set; } = DefaultPlasticityRate;
         public bool PlasticityProbabilisticUpdates { get; set; } = true;

@@ -1284,6 +1284,13 @@ public class HiveMindOutputSinkTests
         Assert.True(initialUpdate.DebugEnabled);
         Assert.Equal(Nbn.Proto.Severity.SevDebug, initialUpdate.DebugMinSeverity);
 
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
         await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
         {
             BrainId = brainId.ToProtoUuid(),
@@ -1581,6 +1588,13 @@ public class HiveMindOutputSinkTests
         }));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
         var enabled = await enabledRuntime.Task.WaitAsync(cts.Token);
         Assert.True(enabled.CostEnabled);
         Assert.True(enabled.EnergyEnabled);
@@ -1665,6 +1679,13 @@ public class HiveMindOutputSinkTests
         }));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
         var enabled = await enabledRegister.Task.WaitAsync(cts.Token);
         Assert.True(enabled.CostEnabled);
         Assert.True(enabled.EnergyEnabled);
@@ -2035,6 +2056,13 @@ public class HiveMindOutputSinkTests
             NeuronStart = 0,
             NeuronCount = 1
         }));
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
 
         await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
         {
