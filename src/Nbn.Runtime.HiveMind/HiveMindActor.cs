@@ -3923,15 +3923,7 @@ public sealed class HiveMindActor : IActor
 
     private void EmitTickVisualizationEvents(IContext context, ulong tickId)
     {
-        foreach (var brain in _brains.Values)
-        {
-            if (!brain.VisualizationEnabled)
-            {
-                continue;
-            }
-
-            EmitVizEvent(context, VizEventType.VizTick, brainId: brain.BrainId, tickId: tickId);
-        }
+        EmitVizEvent(context, VizEventType.VizTick, tickId: tickId);
     }
 
     private void HandleTickComputeDone(IContext context, ProtoControl.TickComputeDone message)

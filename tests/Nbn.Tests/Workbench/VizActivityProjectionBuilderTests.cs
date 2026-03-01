@@ -156,9 +156,9 @@ public class VizActivityProjectionBuilderTests
         var chart = projection.MiniChart;
         Assert.True(chart.Enabled);
         Assert.Equal("Top 2 regions", chart.ModeLabel);
-        Assert.Equal((ulong)100, chart.MinTick);
+        Assert.Equal((ulong)94, chart.MinTick);
         Assert.Equal((ulong)101, chart.MaxTick);
-        Assert.Equal(2, chart.Ticks.Count);
+        Assert.Equal(8, chart.Ticks.Count);
         Assert.Equal(2, chart.Series.Count);
 
         var first = chart.Series[0];
@@ -167,12 +167,14 @@ public class VizActivityProjectionBuilderTests
         Assert.Equal("R2", second.Label);
         Assert.Equal(5.5f, first.TotalScore, 3);
         Assert.Equal(4.0f, second.TotalScore, 3);
-        Assert.Equal(2, first.Values.Count);
-        Assert.Equal(2, second.Values.Count);
-        Assert.Equal(2.5f, first.Values[0], 3);
-        Assert.Equal(3.0f, first.Values[1], 3);
-        Assert.Equal(2.5f, second.Values[0], 3);
-        Assert.Equal(1.5f, second.Values[1], 3);
+        Assert.Equal(8, first.Values.Count);
+        Assert.Equal(8, second.Values.Count);
+        Assert.True(first.Values.Take(6).All(value => Math.Abs(value) <= 1e-6f));
+        Assert.True(second.Values.Take(6).All(value => Math.Abs(value) <= 1e-6f));
+        Assert.Equal(2.5f, first.Values[6], 3);
+        Assert.Equal(3.0f, first.Values[7], 3);
+        Assert.Equal(2.5f, second.Values[6], 3);
+        Assert.Equal(1.5f, second.Values[7], 3);
     }
 
     [Fact]
@@ -205,12 +207,13 @@ public class VizActivityProjectionBuilderTests
         var second = chart.Series[1];
         Assert.Equal("R31N1", first.Label);
         Assert.Equal("R31N3", second.Label);
-        Assert.Equal(2, first.Values.Count);
-        Assert.Equal(2, second.Values.Count);
-        Assert.InRange(first.Values[0], 2.099f, 2.101f);
-        Assert.InRange(first.Values[1], 1.399f, 1.401f);
-        Assert.InRange(second.Values[0], -0.001f, 0.001f);
-        Assert.InRange(second.Values[1], 1.599f, 1.601f);
+        Assert.Equal(8, first.Values.Count);
+        Assert.Equal(8, second.Values.Count);
+        Assert.True(first.Values.Take(6).All(value => Math.Abs(value) <= 1e-6f));
+        Assert.True(second.Values.Take(7).All(value => Math.Abs(value) <= 1e-6f));
+        Assert.InRange(first.Values[6], 2.099f, 2.101f);
+        Assert.InRange(first.Values[7], 1.399f, 1.401f);
+        Assert.InRange(second.Values[7], 1.599f, 1.601f);
     }
 
     [Fact]
@@ -257,6 +260,35 @@ public class VizActivityProjectionBuilderTests
 
         var labels = projection.MiniChart.Series.Select(item => item.Label).ToList();
         Assert.Equal(new[] { "R1", "R2" }, labels);
+    }
+
+    [Fact]
+    public void Build_MiniChart_KeepsConfiguredRollingTickSpanWhenEventsAreSparse()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 100, region: 1, source: Address(1, 1), target: Address(2, 2), value: 0.4f, strength: 0.1f),
+            CreateEvent("VizAxonSent", tick: 150, region: 1, source: Address(1, 1), target: Address(2, 2), value: 0.6f, strength: 0.2f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 64,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null,
+                TopSeriesCount: 2,
+                EnableMiniChart: true,
+                MiniChartTickWindow: 16));
+
+        var chart = projection.MiniChart;
+        Assert.Equal((ulong)135, chart.MinTick);
+        Assert.Equal((ulong)150, chart.MaxTick);
+        Assert.Equal(16, chart.Ticks.Count);
+        var region = Assert.Single(chart.Series, item => item.Label == "R1");
+        Assert.Equal(16, region.Values.Count);
+        Assert.True(region.Values.Take(15).All(value => Math.Abs(value) <= 1e-6f));
+        Assert.InRange(region.Values[15], 1.79f, 1.81f);
     }
 
     private static VizEventItem CreateEvent(

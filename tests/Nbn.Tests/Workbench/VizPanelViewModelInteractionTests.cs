@@ -1055,12 +1055,12 @@ public class VizPanelViewModelInteractionTests
         }
 
         var chartReady = SpinWait.SpinUntil(
-            () => vm.MiniActivityChartRangeLabel.Contains("Ticks 1..20", StringComparison.OrdinalIgnoreCase),
+            () => vm.MiniActivityChartRangeLabel.Contains("Ticks 0..20", StringComparison.OrdinalIgnoreCase),
             TimeSpan.FromSeconds(5));
 
         Assert.True(chartReady);
         Assert.Equal(400, vm.VizEvents.Count);
-        Assert.Contains("Ticks 1..20", vm.MiniActivityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Ticks 0..20", vm.MiniActivityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void UpdateInteractionSummaries(

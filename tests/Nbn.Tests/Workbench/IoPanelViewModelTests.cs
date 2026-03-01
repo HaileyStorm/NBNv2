@@ -76,7 +76,7 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public async Task AddVectorEvent_AutoSendEnabled_SendsOncePerTick_ForSelectedBrain()
+    public async Task AddVectorEvent_AutoSendEnabled_DoesNotSend()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
@@ -86,18 +86,14 @@ public class IoPanelViewModelTests
         vm.AutoSendInputVectorEveryTick = true;
 
         vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 42));
-        vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 42));
         vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 43));
+        await WaitForAsync(() => vm.LastOutputTickLabel == "43");
 
-        await WaitForAsync(() => client.InputVectorCalls.Count == 2);
-
-        Assert.All(client.InputVectorCalls, call => Assert.Equal(brainId, call.BrainId));
-        Assert.Equal(new[] { 1f, -0.25f, 0.5f }, client.InputVectorCalls[0].Values);
-        Assert.Equal(new[] { 1f, -0.25f, 0.5f }, client.InputVectorCalls[1].Values);
+        Assert.Empty(client.InputVectorCalls);
     }
 
     [Fact]
-    public async Task AddVectorEvent_AutoSendEnabled_WithEmptyVector_DoesNotSend()
+    public async Task ObserveTick_AutoSendEnabled_WithEmptyVector_DoesNotSend()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
@@ -106,10 +102,80 @@ public class IoPanelViewModelTests
         vm.InputVectorText = string.Empty;
         vm.AutoSendInputVectorEveryTick = true;
 
-        vm.AddVectorEvent(CreateVectorEvent(brainId, tickId: 55));
-        await WaitForAsync(() => vm.LastOutputTickLabel == "55");
+        vm.ObserveTick(tickId: 55);
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("Vector is empty.", StringComparison.OrdinalIgnoreCase));
 
         Assert.Empty(client.InputVectorCalls);
+    }
+
+    [Fact]
+    public async Task ObserveTick_AutoSendEnabled_SendsOncePerTick_ForSelectedBrain()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "0.9,0.8,0.7";
+        vm.AutoSendInputVectorEveryTick = true;
+
+        vm.ObserveTick(tickId: 77);
+        vm.ObserveTick(tickId: 77);
+        vm.ObserveTick(tickId: 78);
+
+        await WaitForAsync(() => client.InputVectorCalls.Count == 2);
+
+        Assert.All(client.InputVectorCalls, call => Assert.Equal(brainId, call.BrainId));
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[0].Values);
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[1].Values);
+    }
+
+    [Fact]
+    public async Task ObserveTick_AutoSendEnabled_WithWidthMismatch_DoesNotSend()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        ApplyBrainInfo(vm, new BrainInfo { InputWidth = 4, OutputWidth = 1 });
+        vm.InputVectorText = "1.0, -0.25, 0.5";
+        vm.AutoSendInputVectorEveryTick = true;
+
+        vm.ObserveTick(tickId: 56);
+        await WaitForAsync(() => vm.BrainInfoSummary.Contains("expected 4, got 3", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Empty(client.InputVectorCalls);
+        Assert.Contains("expected 4, got 3", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SendVector_InvalidToken_ShowsValidationError()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "1.0, nope, 0.5";
+
+        vm.SendVectorCommand.Execute(null);
+
+        Assert.Empty(client.InputVectorCalls);
+        Assert.Contains("Vector value #2 is invalid.", vm.BrainInfoSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SendVector_WidthMismatch_ShowsValidationError()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        ApplyBrainInfo(vm, new BrainInfo { InputWidth = 5, OutputWidth = 1 });
+        vm.InputVectorText = "1,1,1";
+
+        vm.SendVectorCommand.Execute(null);
+
+        Assert.Empty(client.InputVectorCalls);
+        Assert.Contains("expected 5, got 3", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -178,6 +244,13 @@ public class IoPanelViewModelTests
         await WaitForAsync(() => vm.BrainInfoSummary.Contains("applied to", StringComparison.OrdinalIgnoreCase));
 
         Assert.Contains("Energy rate: applied to 2 brain(s).", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ApplyBrainInfo(IoPanelViewModel vm, BrainInfo info)
+    {
+        var method = typeof(IoPanelViewModel).GetMethod("ApplyBrainInfo", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        method!.Invoke(vm, new object?[] { info });
     }
 
     private static IoPanelViewModel CreateViewModel(WorkbenchClient client)

@@ -285,8 +285,7 @@ public static class VizActivityProjectionBuilder
                 PeakScore: 0f);
         }
 
-        var earliestAvailableTick = windowed.Min(item => item.TickId);
-        var effectiveMinTick = Math.Max(minTick, earliestAvailableTick);
+        var effectiveMinTick = minTick;
         if (maxTick < effectiveMinTick)
         {
             return new VizMiniActivityChart(

@@ -40,6 +40,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _hasLastAutoVectorSendTick;
     private List<Guid> _activeBrains = new();
     private Guid? _selectedBrainId;
+    private int _selectedBrainInputWidth = -1;
 
     public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
     {
@@ -300,7 +301,6 @@ public sealed class IoPanelViewModel : ViewModelBase
         _dispatcher.Post(() =>
         {
             LastOutputTickLabel = item.TickId.ToString();
-            TryAutoSendInputVectorForTick(item.BrainId, item.TickId);
             if (PauseVectorUiUpdates)
             {
                 return;
@@ -313,6 +313,19 @@ public sealed class IoPanelViewModel : ViewModelBase
 
             VectorEvents.Insert(0, item);
             Trim(VectorEvents);
+        });
+    }
+
+    public void ObserveTick(ulong tickId)
+    {
+        _dispatcher.Post(() =>
+        {
+            if (!_selectedBrainId.HasValue)
+            {
+                return;
+            }
+
+            TryAutoSendInputVectorForTick(_selectedBrainId.Value, tickId);
         });
     }
 
@@ -330,6 +343,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
 
         _selectedBrainId = brainId;
+        _selectedBrainInputWidth = -1;
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
         ResetAutoVectorSendTickGate();
         if (!preserveOutputs)
@@ -525,10 +539,13 @@ public sealed class IoPanelViewModel : ViewModelBase
     {
         if (info is null)
         {
+            _selectedBrainInputWidth = -1;
             BrainInfoSummary = "Brain not found or IO unavailable.";
             return;
         }
 
+        var inputWidth = checked((int)Math.Max(0, info.InputWidth));
+        _selectedBrainInputWidth = inputWidth;
         CostEnabled = info.CostEnabled;
         EnergyEnabled = info.EnergyEnabled;
         PlasticityEnabled = info.PlasticityEnabled;
@@ -541,14 +558,22 @@ public sealed class IoPanelViewModel : ViewModelBase
             SelectedPlasticityMode = selectedMode;
         }
 
-        if (string.IsNullOrWhiteSpace(InputVectorText))
+        var shouldRegenerateSuggestion = string.IsNullOrWhiteSpace(InputVectorText);
+        if (!shouldRegenerateSuggestion
+            && string.Equals(InputVectorText, _lastSuggestedInputVector, StringComparison.Ordinal))
         {
-            var suggestedVector = BuildSuggestedVector((int)Math.Max(0, info.InputWidth));
-            if (!string.IsNullOrWhiteSpace(suggestedVector))
+            if (!TryParseVector(InputVectorText, out var existingSuggestedValues, out _)
+                || existingSuggestedValues.Count != inputWidth)
             {
-                _lastSuggestedInputVector = suggestedVector;
-                InputVectorText = suggestedVector;
+                shouldRegenerateSuggestion = true;
             }
+        }
+
+        if (shouldRegenerateSuggestion)
+        {
+            var suggestedVector = BuildSuggestedVector(inputWidth);
+            _lastSuggestedInputVector = suggestedVector;
+            InputVectorText = suggestedVector;
         }
 
         var plasticityModeLabel = info.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute";
@@ -609,10 +634,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        var values = ParseVector(InputVectorText);
-        if (values.Count == 0)
+        if (!TryGetValidatedInputVector(brainId, updateSummaryOnFailure: true, out var values))
         {
-            BrainInfoSummary = "Vector is empty.";
             return;
         }
 
@@ -655,35 +678,31 @@ public sealed class IoPanelViewModel : ViewModelBase
         PauseVectorUiUpdates = !PauseVectorUiUpdates;
     }
 
-    private void TryAutoSendInputVectorForTick(string eventBrainId, ulong tickId)
+    private void TryAutoSendInputVectorForTick(Guid brainId, ulong tickId)
     {
-        if (!AutoSendInputVectorEveryTick || !_selectedBrainId.HasValue)
-        {
-            return;
-        }
-
-        if (!Guid.TryParse(eventBrainId, out var parsedBrainId) || parsedBrainId != _selectedBrainId.Value)
+        if (!AutoSendInputVectorEveryTick
+            || !_selectedBrainId.HasValue
+            || _selectedBrainId.Value != brainId)
         {
             return;
         }
 
         if (_hasLastAutoVectorSendTick
-            && _lastAutoVectorSendBrainId == parsedBrainId
+            && _lastAutoVectorSendBrainId == brainId
             && _lastAutoVectorSendTickId == tickId)
         {
             return;
         }
 
-        var values = ParseVector(InputVectorText);
-        if (values.Count == 0)
+        if (!TryGetValidatedInputVector(brainId, updateSummaryOnFailure: true, out var values))
         {
             return;
         }
 
-        _lastAutoVectorSendBrainId = parsedBrainId;
+        _lastAutoVectorSendBrainId = brainId;
         _lastAutoVectorSendTickId = tickId;
         _hasLastAutoVectorSendTick = true;
-        _client.SendInputVector(parsedBrainId, values);
+        _client.SendInputVector(brainId, values);
     }
 
     private void ResetAutoVectorSendTickGate()
@@ -931,24 +950,88 @@ public sealed class IoPanelViewModel : ViewModelBase
         });
     }
 
-    private static IReadOnlyList<float> ParseVector(string raw)
+    private bool TryGetValidatedInputVector(Guid brainId, bool updateSummaryOnFailure, out IReadOnlyList<float> values)
+    {
+        if (!TryParseVector(InputVectorText, out values, out var parseError))
+        {
+            if (updateSummaryOnFailure)
+            {
+                BrainInfoSummary = parseError;
+            }
+
+            return false;
+        }
+
+        if (!TryValidateInputVectorWidth(brainId, values.Count, out var widthError))
+        {
+            if (updateSummaryOnFailure)
+            {
+                BrainInfoSummary = widthError;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryValidateInputVectorWidth(Guid brainId, int width, out string error)
+    {
+        if (!_selectedBrainId.HasValue
+            || _selectedBrainId.Value != brainId
+            || _selectedBrainInputWidth < 0
+            || _selectedBrainInputWidth == width)
+        {
+            error = string.Empty;
+            return true;
+        }
+
+        error = FormattableString.Invariant(
+            $"Input vector width mismatch for brain {brainId:D}: expected {_selectedBrainInputWidth}, got {width}.");
+        return false;
+    }
+
+    private static bool TryParseVector(string raw, out IReadOnlyList<float> values, out string error)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return Array.Empty<float>();
+            values = Array.Empty<float>();
+            error = "Vector is empty.";
+            return false;
         }
 
-        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var values = new List<float>(parts.Length);
-        foreach (var part in parts)
+        var parts = raw.Split(',', StringSplitOptions.TrimEntries);
+        var parsedValues = new List<float>(parts.Length);
+        for (var i = 0; i < parts.Length; i++)
         {
-            if (float.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            var part = parts[i];
+            if (string.IsNullOrWhiteSpace(part))
             {
-                values.Add(value);
+                values = Array.Empty<float>();
+                error = FormattableString.Invariant($"Vector value #{i + 1} is empty.");
+                return false;
             }
+
+            if (!float.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || !float.IsFinite(value))
+            {
+                values = Array.Empty<float>();
+                error = FormattableString.Invariant($"Vector value #{i + 1} is invalid.");
+                return false;
+            }
+
+            parsedValues.Add(value);
         }
 
-        return values;
+        if (parsedValues.Count == 0)
+        {
+            values = Array.Empty<float>();
+            error = "Vector is empty.";
+            return false;
+        }
+
+        values = parsedValues;
+        error = string.Empty;
+        return true;
     }
 
     private static void Trim<T>(ObservableCollection<T> collection)

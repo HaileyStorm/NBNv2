@@ -179,6 +179,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnVizEvent(VizEventItem item)
     {
+        if (string.Equals(item.Type, "VizTick", StringComparison.OrdinalIgnoreCase))
+        {
+            Io.ObserveTick(item.TickId);
+        }
+
         Debug.AddVizEvent(item);
         Viz.AddVizEvent(item);
     }

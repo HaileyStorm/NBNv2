@@ -12,6 +12,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 - Launch runtime services only from explicit Local Launch commands (`Start` / `Start All`); connection attempts never auto-start runtimes.
 - Treat spawn success as visualization-ready only after SettingsMonitor reports a live brain controller heartbeat and placement lifecycle reaches `Running` with registered shards for the spawned brain.
 - Drive worker endpoint visibility from SettingsMonitor heartbeat/registration data as a multi-worker list (`active`, `degraded`, `failed`) with transient retention before removal; include compact per-host brain hints from placement/controller ownership when available, and do not infer worker availability from local endpoint text fields alone.
+- Continuous input-vector mode is tick-driven from `VizTick` cadence (using selected-brain + tick de-duplication) rather than output-vector callbacks, so input injection remains active even when output streams are sparse; vector sends are client-validated for parse correctness and selected-brain input width before dispatch.
 
 ## Visualization layout decisions
 

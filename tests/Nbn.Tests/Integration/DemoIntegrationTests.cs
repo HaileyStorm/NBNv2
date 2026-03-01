@@ -443,12 +443,18 @@ public class DemoIntegrationTests
             var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
             var vizTcs = new TaskCompletionSource<VisualizationEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tickTcs = new TaskCompletionSource<VisualizationEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
             obsNode.Root.Spawn(Props.FromProducer(() => new VizActivitySubscriberActor(
                 brainId,
                 hiveMindRemote,
                 vizHubRemote,
                 vizTcs,
                 requireNonInputRegion: true)));
+            obsNode.Root.Spawn(Props.FromProducer(() => new VizTickSubscriberActor(
+                brainId,
+                hiveMindRemote,
+                vizHubRemote,
+                tickTcs)));
 
             ioNode.Root.Send(ioPid, new InputVector
             {
@@ -460,10 +466,14 @@ public class DemoIntegrationTests
             hiveNode.Root.Send(hiveMindLocal, new StartTickLoop());
 
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var tickEvent = await tickTcs.Task.WaitAsync(timeoutCts.Token);
             var vizEvent = await vizTcs.Task.WaitAsync(timeoutCts.Token);
 
             hiveNode.Root.Send(hiveMindLocal, new StopTickLoop());
 
+            Assert.Equal(VizEventType.VizTick, tickEvent.Type);
+            Assert.False(tickEvent.BrainId.TryToGuid(out _));
+            Assert.True(tickEvent.TickId >= 1);
             Assert.True(vizEvent.BrainId.TryToGuid(out var vizBrain) && vizBrain == brainId);
             Assert.NotEqual(VizEventType.VizTick, vizEvent.Type);
             Assert.NotEqual((uint)NbnConstants.InputRegionId, vizEvent.RegionId);
@@ -999,6 +1009,70 @@ public class DemoIntegrationTests
                          && brainId == _brainId
                          && vizEvent.Type != VizEventType.VizTick
                          && (!_requireNonInputRegion || vizEvent.RegionId != (uint)NbnConstants.InputRegionId):
+                    _tcs.TrySetResult(vizEvent);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private static string BuildSubscriberActor(IContext context)
+        {
+            var self = context.Self;
+            var address = string.IsNullOrWhiteSpace(self.Address) ? context.System.Address : self.Address;
+            return string.IsNullOrWhiteSpace(address) ? self.Id : $"{address}/{self.Id}";
+        }
+    }
+
+    private sealed class VizTickSubscriberActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly PID _hiveMind;
+        private readonly PID _vizHub;
+        private readonly TaskCompletionSource<VisualizationEvent> _tcs;
+        private string? _subscriberActor;
+
+        public VizTickSubscriberActor(
+            Guid brainId,
+            PID hiveMind,
+            PID vizHub,
+            TaskCompletionSource<VisualizationEvent> tcs)
+        {
+            _brainId = brainId;
+            _hiveMind = hiveMind;
+            _vizHub = vizHub;
+            _tcs = tcs;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    _subscriberActor = BuildSubscriberActor(context);
+                    context.Send(_vizHub, new VizSubscribe { SubscriberActor = _subscriberActor });
+                    context.Send(_hiveMind, new SetBrainVisualization
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        Enabled = true,
+                        SubscriberActor = _subscriberActor
+                    });
+                    break;
+                case Stopping:
+                case Stopped:
+                    if (!string.IsNullOrWhiteSpace(_subscriberActor))
+                    {
+                        context.Send(_vizHub, new VizUnsubscribe { SubscriberActor = _subscriberActor });
+                        context.Send(_hiveMind, new SetBrainVisualization
+                        {
+                            BrainId = _brainId.ToProtoUuid(),
+                            Enabled = false,
+                            SubscriberActor = _subscriberActor
+                        });
+                    }
+                    break;
+                case VisualizationEvent vizEvent
+                    when vizEvent.Type == VizEventType.VizTick:
                     _tcs.TrySetResult(vizEvent);
                     break;
             }
