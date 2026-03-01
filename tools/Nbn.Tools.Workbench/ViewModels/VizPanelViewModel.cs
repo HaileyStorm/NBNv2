@@ -4942,6 +4942,14 @@ public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasCol
                 VizActivityCanvasColorMode.Activity,
                 "fill=activity load/recency, border=topology"),
             new VizCanvasColorModeOption(
+                "Energy: Reserve",
+                VizActivityCanvasColorMode.EnergyReserve,
+                "fill=latest value reserve sign/magnitude, pulse=activity"),
+            new VizCanvasColorModeOption(
+                "Energy: Cost pressure",
+                VizActivityCanvasColorMode.EnergyCostPressure,
+                "fill=estimated cost pressure (activity+fanout vs reserve), border=topology"),
+            new VizCanvasColorModeOption(
                 "Topology reference",
                 VizActivityCanvasColorMode.Topology,
                 "fill=topology slices, pulse=activity")

@@ -148,7 +148,9 @@ public enum VizActivityCanvasColorMode
 {
     StateValue = 0,
     Activity = 1,
-    Topology = 2
+    Topology = 2,
+    EnergyReserve = 3,
+    EnergyCostPressure = 4
 }
 
 public enum VizActivityCanvasLayoutMode
@@ -272,18 +274,28 @@ public static class VizActivityCanvasLayoutBuilder
             var isDormant = stats.EventCount <= 0 || stats.LastTick == 0;
             var loadRatio = isDormant ? 0.0 : Math.Clamp((double)stats.EventCount / maxNodeEvents, 0.0, 1.0);
             var tickRecency = isDormant ? 0.0 : TickRecency(stats.LastTick, latestTick, options.TickWindow);
+            regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
+            regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
+            var structureRatio = Math.Clamp((double)(routeDegree.OutboundCount + routeDegree.InboundCount) / maxRouteDegree, 0.0, 1.0);
+            var reserveValue = bufferMetrics.BufferCount > 0 ? bufferMetrics.LatestBufferValue : stats.SignedValue;
             var emphasis = (isSelected ? 0.25 : 0.0) + (isHovered ? 0.14 : 0.0) + (isPinned ? 0.18 : 0.0);
             var stroke = GetTopologyStrokeColor(regionId, isDormant);
-            var fill = ResolveRegionFillColor(colorMode, regionId, stats.SignedValue, loadRatio, tickRecency, isDormant);
+            var fill = ResolveRegionFillColor(
+                colorMode,
+                regionId,
+                stats.SignedValue,
+                reserveValue,
+                bufferMetrics.BufferCount,
+                loadRatio,
+                tickRecency,
+                structureRatio,
+                isDormant);
             var fillOpacity = Math.Clamp((isDormant ? 0.14 : 0.36 + (0.45 * loadRatio)) + emphasis, 0.12, 1.0);
             var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.25 + (0.45 * tickRecency)) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.3
                                   + (isPinned ? 0.8 : 0.0)
                                   + (isHovered ? 0.6 : 0.0)
                                   + (isSelected ? 0.9 : 0.0);
-            regionBufferMetrics.TryGetValue(regionId, out var bufferMetrics);
-            regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
-            var structureRatio = Math.Clamp((double)(routeDegree.OutboundCount + routeDegree.InboundCount) / maxRouteDegree, 0.0, 1.0);
             var radius = MinRegionNodeRadius
                          + ((MaxRegionNodeRadius - MinRegionNodeRadius) * ((structureRatio * 0.78) + (loadRatio * 0.22)));
             var bufferAverageText = FormatBufferAverage(bufferMetrics);
@@ -385,14 +397,25 @@ public static class VizActivityCanvasLayoutBuilder
             var isDormant = stats.EventCount <= 0 || stats.LastTick == 0;
             var loadRatio = isDormant ? 0.0 : Math.Clamp((double)stats.EventCount / maxNeuronEvents, 0.0, 1.0);
             var structureRatio = Math.Clamp((double)(stats.OutboundCount + stats.InboundCount) / maxNeuronFlowDegree, 0.0, 1.0);
+            var tickRecency = isDormant ? 0.0 : TickRecency(stats.LastTick, latestTick, options.TickWindow);
             var radius = MinFocusNeuronNodeRadius
                          + ((MaxFocusNeuronNodeRadius - MinFocusNeuronNodeRadius) * ((structureRatio * 0.75) + (loadRatio * 0.25)));
             var emphasis = (isSelected ? 0.24 : 0.0) + (isHovered ? 0.12 : 0.0) + (isPinned ? 0.16 : 0.0);
             var fillOpacity = Math.Clamp((isDormant ? 0.15 : 0.34 + (0.45 * loadRatio)) + emphasis, 0.12, 1.0);
-            var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.28 + (0.35 * TickRecency(stats.LastTick, latestTick, options.TickWindow))) + (emphasis * 0.6), 0.08, 1.0);
+            var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.28 + (0.35 * tickRecency)) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.2 + (isPinned ? 0.8 : 0.0) + (isHovered ? 0.6 : 0.0) + (isSelected ? 0.9 : 0.0);
             var stroke = GetTopologyStrokeColor(focusRegionId, isDormant);
-            var fill = ResolveFocusFillColor(colorMode, focusRegionId, stats.AverageValue, loadRatio, isDormant);
+            var reserveValue = stats.BufferCount > 0 ? stats.LatestBufferValue : stats.AverageValue;
+            var fill = ResolveFocusFillColor(
+                colorMode,
+                focusRegionId,
+                stats.AverageValue,
+                reserveValue,
+                stats.BufferCount,
+                loadRatio,
+                tickRecency,
+                structureRatio,
+                isDormant);
             var bufferAverageText = FormatBufferAverage(stats.BufferCount, stats.AverageBufferValue);
             var bufferLatestText = FormatBufferLatest(stats.BufferCount, stats.LatestBufferValue, stats.LatestBufferTick);
             var detail = $"R{focusRegionId}N{neuronId} | events {stats.EventCount} | last tick {stats.LastTick}"
@@ -448,6 +471,15 @@ public static class VizActivityCanvasLayoutBuilder
                     regionRouteDegrees.TryGetValue(regionId, out var degree);
                     return degree.OutboundCount + degree.InboundCount;
                 }));
+        var maxGatewayAggregateEvents = Math.Max(
+            1,
+            sortedGateways.Count == 0
+                ? 1
+                : sortedGateways.Max(regionId =>
+                {
+                    regionAggregates.TryGetValue(regionId, out var aggregate);
+                    return aggregate?.EventCount ?? 0;
+                }));
         for (var index = 0; index < sortedGateways.Count; index++)
         {
             var regionId = sortedGateways[index];
@@ -483,13 +515,20 @@ public static class VizActivityCanvasLayoutBuilder
             var aggregateDormant = aggregateEventCount <= 0 || aggregateLastTick == 0;
             var structureRatio = Math.Clamp((double)(routeDegree.OutboundCount + routeDegree.InboundCount) / maxGatewayRouteDegree, 0.0, 1.0);
             var activityRatio = aggregateEventCount > 0 ? 1.0 : 0.0;
+            var aggregateLoadRatio = aggregateDormant ? 0.0 : Math.Clamp((double)aggregateEventCount / maxGatewayAggregateEvents, 0.0, 1.0);
+            var aggregateRecency = aggregateDormant ? 0.0 : TickRecency(aggregateLastTick, latestTick, options.TickWindow);
             var radius = MinGatewayNodeRadius
                          + ((MaxGatewayNodeRadius - MinGatewayNodeRadius) * ((structureRatio * 0.8) + (activityRatio * 0.2)));
+            var reserveValue = bufferMetrics.BufferCount > 0 ? bufferMetrics.LatestBufferValue : aggregateAverageSigned;
             var fill = ResolveFocusFillColor(
                 colorMode,
                 regionId,
                 aggregateAverageSigned,
-                activityRatio,
+                reserveValue,
+                bufferMetrics.BufferCount,
+                aggregateLoadRatio,
+                aggregateRecency,
+                structureRatio,
                 isDormant: aggregateDormant);
             var stroke = aggregateDormant ? DimColor(topologyStroke) : topologyStroke;
             var bufferAverageText = FormatBufferAverage(bufferMetrics);
@@ -1877,13 +1916,18 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityCanvasColorMode colorMode,
         uint regionId,
         float signedValue,
+        float reserveValue,
+        int reserveSampleCount,
         double loadRatio,
         double tickRecency,
+        double structureRatio,
         bool isDormant)
         => colorMode switch
         {
             VizActivityCanvasColorMode.Topology => GetTopologyFillColor(regionId, isDormant),
             VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, loadRatio, tickRecency, isDormant),
+            VizActivityCanvasColorMode.EnergyReserve => GetEnergyReserveFillColor(reserveValue, reserveSampleCount, isDormant),
+            VizActivityCanvasColorMode.EnergyCostPressure => GetEnergyCostPressureFillColor(loadRatio, tickRecency, structureRatio, reserveValue, reserveSampleCount, isDormant),
             _ => GetStateFillColor(signedValue, isDormant)
         };
 
@@ -1891,12 +1935,18 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityCanvasColorMode colorMode,
         uint regionId,
         float signedValue,
+        float reserveValue,
+        int reserveSampleCount,
         double activityRatio,
+        double tickRecency,
+        double structureRatio,
         bool isDormant)
         => colorMode switch
         {
             VizActivityCanvasColorMode.Topology => GetTopologyFillColor(regionId, isDormant),
-            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, activityRatio, activityRatio, isDormant),
+            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, activityRatio, tickRecency, isDormant),
+            VizActivityCanvasColorMode.EnergyReserve => GetEnergyReserveFillColor(reserveValue, reserveSampleCount, isDormant),
+            VizActivityCanvasColorMode.EnergyCostPressure => GetEnergyCostPressureFillColor(activityRatio, tickRecency, structureRatio, reserveValue, reserveSampleCount, isDormant),
             _ => GetStateFillColor(signedValue, isDormant)
         };
 
@@ -1934,6 +1984,60 @@ public static class VizActivityCanvasLayoutBuilder
         var minBlend = isDormant ? 0.22 : 0.38;
         var maxBlend = isDormant ? 0.60 : 0.88;
         return BlendColor(neutral, target, minBlend + ((maxBlend - minBlend) * magnitude));
+    }
+
+    private static string GetEnergyReserveFillColor(double reserveValue, int reserveSampleCount, bool isDormant)
+    {
+        var neutral = isDormant ? "#4E5863" : "#5E6873";
+        var normalized = NormalizeEnergySignal(reserveValue);
+        var magnitude = Math.Abs(normalized);
+        if (magnitude < 1e-5)
+        {
+            return reserveSampleCount > 0
+                ? BlendColor(neutral, "#8EA4B8", isDormant ? 0.16 : 0.22)
+                : neutral;
+        }
+
+        var target = normalized >= 0 ? "#E69F00" : "#0072B2";
+        var confidence = reserveSampleCount > 0 ? 1.0 : 0.65;
+        var minBlend = isDormant ? 0.20 : 0.34;
+        var maxBlend = isDormant ? 0.58 : 0.86;
+        var blend = (minBlend + ((maxBlend - minBlend) * magnitude)) * confidence;
+        return BlendColor(neutral, target, Clamp(blend, 0.0, 1.0));
+    }
+
+    private static string GetEnergyCostPressureFillColor(
+        double activityRatio,
+        double tickRecency,
+        double structureRatio,
+        double reserveValue,
+        int reserveSampleCount,
+        bool isDormant)
+    {
+        var activity = Clamp(activityRatio, 0.0, 1.0);
+        var recency = Clamp(tickRecency, 0.0, 1.0);
+        var structure = Clamp(structureRatio, 0.0, 1.0);
+        var reserveMagnitude = Math.Abs(NormalizeEnergySignal(reserveValue));
+        var reserveDeficit = reserveSampleCount > 0
+            ? 1.0 - reserveMagnitude
+            : 0.6;
+        var dynamicLoad = (0.58 * activity) + (0.24 * recency) + (0.18 * structure);
+        var pressure = Clamp((0.80 * dynamicLoad) + (0.20 * reserveDeficit), 0.0, 1.0);
+        var cool = isDormant ? "#4F5E6B" : "#0072B2";
+        var warm = isDormant ? "#8A6A3F" : "#D55E00";
+        var minBlend = isDormant ? 0.18 : 0.24;
+        return BlendColor(cool, warm, minBlend + ((1.0 - minBlend) * pressure));
+    }
+
+    private static double NormalizeEnergySignal(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return 0.0;
+        }
+
+        var normalized = value / (1.0 + Math.Abs(value));
+        return Clamp(normalized, -1.0, 1.0);
     }
 
     private static (string Fill, string Stroke) GetGatewayPalette(string role)

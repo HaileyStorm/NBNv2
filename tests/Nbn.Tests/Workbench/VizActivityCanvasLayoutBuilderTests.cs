@@ -1213,6 +1213,100 @@ public class VizActivityCanvasLayoutBuilderTests
         Assert.Contains("3D fallback to 2D in focus mode", layout.Legend, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Build_EnergyReserveMode_SeparatesPositiveAndNegativeReserveSignals()
+    {
+        const uint positiveRegionId = 9;
+        const uint negativeRegionId = 23;
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronBuffer", tick: 1300, region: positiveRegionId, source: Address(positiveRegionId, 0), target: Address(positiveRegionId, 0), value: 0.9f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 1301, region: negativeRegionId, source: Address(negativeRegionId, 0), target: Address(negativeRegionId, 0), value: -0.9f, strength: 0f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.EnergyReserve);
+
+        var positiveNode = Assert.Single(layout.Nodes, node => node.RegionId == positiveRegionId);
+        var negativeNode = Assert.Single(layout.Nodes, node => node.RegionId == negativeRegionId);
+        var positiveRgb = ParseHexColor(positiveNode.Fill);
+        var negativeRgb = ParseHexColor(negativeNode.Fill);
+
+        Assert.True(positiveRgb.R > positiveRgb.B, $"Expected warm reserve hue for positive reserve, got {positiveNode.Fill}.");
+        Assert.True(negativeRgb.B > negativeRgb.R, $"Expected cool reserve hue for negative reserve, got {negativeNode.Fill}.");
+    }
+
+    [Fact]
+    public void Build_EnergyCostPressureMode_WarmsHighPressureRegion()
+    {
+        const uint highPressureRegionId = 9;
+        const uint lowPressureRegionId = 5;
+        const uint partnerRegionId = 23;
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronBuffer", tick: 1400, region: highPressureRegionId, source: Address(highPressureRegionId, 0), target: Address(highPressureRegionId, 0), value: 0.3f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 1400, region: lowPressureRegionId, source: Address(lowPressureRegionId, 0), target: Address(lowPressureRegionId, 0), value: 0.3f, strength: 0f),
+            CreateEvent("VizNeuronFired", tick: 1401, region: lowPressureRegionId, source: Address(lowPressureRegionId, 0), target: Address(lowPressureRegionId, 0), value: 0.1f, strength: 0f)
+        };
+
+        for (var i = 0; i < 18; i++)
+        {
+            var sourceNeuron = (uint)(i % 4);
+            var targetNeuron = (uint)((i + 1) % 4);
+            events.Add(CreateEvent(
+                "VizAxonSent",
+                tick: (ulong)(1402 + i),
+                region: highPressureRegionId,
+                source: Address(highPressureRegionId, sourceNeuron),
+                target: Address(partnerRegionId, targetNeuron),
+                value: 0.8f,
+                strength: 0.4f));
+            events.Add(CreateEvent(
+                "VizAxonSent",
+                tick: (ulong)(1402 + i),
+                region: partnerRegionId,
+                source: Address(partnerRegionId, targetNeuron),
+                target: Address(highPressureRegionId, sourceNeuron),
+                value: 0.7f,
+                strength: 0.3f));
+        }
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(TickWindow: 128, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 128, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.EnergyCostPressure);
+
+        var highPressureNode = Assert.Single(layout.Nodes, node => node.RegionId == highPressureRegionId);
+        var lowPressureNode = Assert.Single(layout.Nodes, node => node.RegionId == lowPressureRegionId);
+        var highRgb = ParseHexColor(highPressureNode.Fill);
+        var lowRgb = ParseHexColor(lowPressureNode.Fill);
+        var highWarmth = highRgb.R - highRgb.B;
+        var lowWarmth = lowRgb.R - lowRgb.B;
+
+        Assert.True(highWarmth > lowWarmth + 80, $"Expected higher warm-pressure signal for R{highPressureRegionId}. high={highPressureNode.Fill} low={lowPressureNode.Fill}");
+    }
+
+    [Fact]
+    public void CanvasColorModeOptions_IncludeEnergyPrefixedModes()
+    {
+        var options = VizCanvasColorModeOption.CreateDefaults();
+
+        Assert.Contains(options, option => option.Mode == VizActivityCanvasColorMode.EnergyReserve && option.Label.StartsWith("Energy:", StringComparison.Ordinal));
+        Assert.Contains(options, option => option.Mode == VizActivityCanvasColorMode.EnergyCostPressure && option.Label.StartsWith("Energy:", StringComparison.Ordinal));
+    }
+
     private static VizActivityProjection BuildProjection()
     {
         var events = new List<VizEventItem>
@@ -1255,6 +1349,17 @@ public class VizActivityCanvasLayoutBuilderTests
     {
         var value = (regionId << NbnConstants.AddressNeuronBits) | (neuronId & NbnConstants.AddressNeuronMask);
         return value.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static (int R, int G, int B) ParseHexColor(string hex)
+    {
+        Assert.NotNull(hex);
+        Assert.StartsWith("#", hex, StringComparison.Ordinal);
+        Assert.Equal(7, hex.Length);
+        return (
+            Convert.ToInt32(hex[1..3], 16),
+            Convert.ToInt32(hex[3..5], 16),
+            Convert.ToInt32(hex[5..7], 16));
     }
 
     private static double Distance(double x1, double y1, double x2, double y2)
