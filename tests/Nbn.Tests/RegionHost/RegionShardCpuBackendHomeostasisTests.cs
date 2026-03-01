@@ -144,7 +144,7 @@ public class RegionShardCpuBackendHomeostasisTests
                 EnergyCouplingEnabled: false,
                 EnergyTargetScale: 1f,
                 EnergyProbabilityScale: 1f),
-            energyEnabled: true);
+            costEnergyEnabled: true);
 
         var coupledBackend = new RegionShardCpuBackend(coupledState);
         _ = coupledBackend.Compute(
@@ -162,7 +162,7 @@ public class RegionShardCpuBackendHomeostasisTests
                 EnergyCouplingEnabled: true,
                 EnergyTargetScale: 1f,
                 EnergyProbabilityScale: 2f),
-            energyEnabled: true);
+            costEnergyEnabled: true);
 
         var uncoupledCode = quantization.Encode(uncoupledState.Buffer[0], bits: 16);
         var coupledCode = quantization.Encode(coupledState.Buffer[0], bits: 16);

@@ -149,6 +149,12 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "plasticity_delta", 19, FieldType.Float);
         AssertField(shardRuntime, "plasticity_rebase_threshold", 20, FieldType.UInt32);
         AssertField(shardRuntime, "plasticity_rebase_threshold_pct", 21, FieldType.Float);
+        AssertField(shardRuntime, "remote_cost_enabled", 22, FieldType.Bool);
+        AssertField(shardRuntime, "remote_cost_per_batch", 23, FieldType.SInt64);
+        AssertField(shardRuntime, "remote_cost_per_contribution", 24, FieldType.SInt64);
+        AssertField(shardRuntime, "cost_tier_a_multiplier", 25, FieldType.Float);
+        AssertField(shardRuntime, "cost_tier_b_multiplier", 26, FieldType.Float);
+        AssertField(shardRuntime, "cost_tier_c_multiplier", 27, FieldType.Float);
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);

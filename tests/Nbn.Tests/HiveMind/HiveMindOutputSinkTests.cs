@@ -1393,6 +1393,109 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task RuntimeConfig_Propagates_RemoteCost_And_TierSettings()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(13, 0);
+        var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var configuredRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shard,
+            initialRuntime,
+            update => !update.RemoteCostEnabled
+                      && update.RemoteCostPerBatch == 0
+                      && update.RemoteCostPerContribution == 0
+                      && Math.Abs(update.CostTierAMultiplier - 1f) < 0.000001f
+                      && Math.Abs(update.CostTierBMultiplier - 1f) < 0.000001f
+                      && Math.Abs(update.CostTierCMultiplier - 1f) < 0.000001f,
+            configuredRuntime,
+            update => update.RemoteCostEnabled
+                      && update.RemoteCostPerBatch == 7
+                      && update.RemoteCostPerContribution == 3
+                      && Math.Abs(update.CostTierAMultiplier - 1.25f) < 0.000001f
+                      && Math.Abs(update.CostTierBMultiplier - 1.5f) < 0.000001f
+                      && Math.Abs(update.CostTierCMultiplier - 2.25f) < 0.000001f)));
+
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var initial = await initialRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(initial.RemoteCostEnabled);
+        Assert.Equal(0L, initial.RemoteCostPerBatch);
+        Assert.Equal(0L, initial.RemoteCostPerContribution);
+        Assert.Equal(1f, initial.CostTierAMultiplier);
+        Assert.Equal(1f, initial.CostTierBMultiplier);
+        Assert.Equal(1f, initial.CostTierCMultiplier);
+
+        var updatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.RemoteCostEnabledKey,
+            Value = "true",
+            UpdatedMs = updatedMs
+        });
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.RemoteCostPerBatchKey,
+            Value = "7",
+            UpdatedMs = updatedMs + 1
+        });
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.RemoteCostPerContributionKey,
+            Value = "3",
+            UpdatedMs = updatedMs + 2
+        });
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.TierAMultiplierKey,
+            Value = "1.25",
+            UpdatedMs = updatedMs + 3
+        });
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.TierBMultiplierKey,
+            Value = "1.5",
+            UpdatedMs = updatedMs + 4
+        });
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.TierCMultiplierKey,
+            Value = "2.25",
+            UpdatedMs = updatedMs + 5
+        });
+
+        var configured = await configuredRuntime.Task.WaitAsync(cts.Token);
+        Assert.True(configured.RemoteCostEnabled);
+        Assert.Equal(7L, configured.RemoteCostPerBatch);
+        Assert.Equal(3L, configured.RemoteCostPerContribution);
+        Assert.Equal(1.25f, configured.CostTierAMultiplier);
+        Assert.Equal(1.5f, configured.CostTierBMultiplier);
+        Assert.Equal(2.25f, configured.CostTierCMultiplier);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RuntimeConfig_Propagates_DebugStream_Settings()
     {
         var system = new ActorSystem();

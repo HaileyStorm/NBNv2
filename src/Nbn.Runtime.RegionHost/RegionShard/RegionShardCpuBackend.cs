@@ -21,12 +21,31 @@ public sealed class RegionShardCpuBackend
     private static readonly bool LogActivityDiagnostics = IsEnvTrue("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED");
     private static readonly ulong ActivityDiagnosticsPeriod = ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", 32UL);
     private static readonly int ActivityDiagnosticsSampleCount = (int)Math.Clamp(ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_SAMPLES", 3UL), 1UL, 16UL);
+    private static readonly double[] AccumulationBaseCosts = { 1.0, 1.2, 1.0, 0.1 };
+    private static readonly CostTier[] AccumulationTiers =
+    {
+        CostTier.A,
+        CostTier.A,
+        CostTier.A,
+        CostTier.A
+    };
+    private static readonly double[] ActivationBaseCosts = BuildActivationBaseCosts();
+    private static readonly CostTier[] ActivationTiers = BuildActivationTiers();
+    private static readonly double[] ResetBaseCosts = BuildResetBaseCosts();
+    private static readonly CostTier[] ResetTiers = BuildResetTiers();
 
     private readonly RegionShardState _state;
     private readonly RegionShardCostConfig _costConfig;
     private readonly float[] _lastEmittedBufferSamples;
     private readonly bool[] _hasLastEmittedBufferSamples;
     private bool _bufferVizTrackingArmed;
+
+    private enum CostTier
+    {
+        A = 0,
+        B = 1,
+        C = 2
+    }
 
     public RegionShardCpuBackend(RegionShardState state, RegionShardCostConfig? costConfig = null)
     {
@@ -50,10 +69,32 @@ public sealed class RegionShardCpuBackend
         uint plasticityRebaseThreshold = 0,
         float plasticityRebaseThresholdPct = 0f,
         RegionShardHomeostasisConfig? homeostasisConfig = null,
-        bool energyEnabled = false)
+        bool costEnergyEnabled = false,
+        bool? remoteCostEnabled = null,
+        long? remoteCostPerBatch = null,
+        long? remoteCostPerContribution = null,
+        float? costTierAMultiplier = null,
+        float? costTierBMultiplier = null,
+        float? costTierCMultiplier = null)
     {
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
         var homeostasis = homeostasisConfig ?? RegionShardHomeostasisConfig.Default;
+        var effectiveRemoteCostEnabled = remoteCostEnabled ?? _costConfig.RemoteCostEnabled;
+        var effectiveRemoteCostPerBatch = Math.Max(0L, remoteCostPerBatch ?? _costConfig.RemoteCostPerBatch);
+        var effectiveRemoteCostPerContribution = Math.Max(0L, remoteCostPerContribution ?? _costConfig.RemoteCostPerContribution);
+        var effectiveTierAMultiplier = NormalizeTierMultiplier(costTierAMultiplier ?? _costConfig.TierAMultiplier);
+        var effectiveTierBMultiplier = NormalizeTierMultiplier(costTierBMultiplier ?? _costConfig.TierBMultiplier);
+        var effectiveTierCMultiplier = NormalizeTierMultiplier(costTierCMultiplier ?? _costConfig.TierCMultiplier);
+        double[]? accumCostLookup = null;
+        double[]? activationCostLookup = null;
+        double[]? resetCostLookup = null;
+        if (costEnergyEnabled)
+        {
+            accumCostLookup = BuildWeightedLookup(AccumulationBaseCosts, AccumulationTiers, effectiveTierAMultiplier, effectiveTierBMultiplier, effectiveTierCMultiplier);
+            activationCostLookup = BuildWeightedLookup(ActivationBaseCosts, ActivationTiers, effectiveTierAMultiplier, effectiveTierBMultiplier, effectiveTierCMultiplier);
+            resetCostLookup = BuildWeightedLookup(ResetBaseCosts, ResetTiers, effectiveTierAMultiplier, effectiveTierBMultiplier, effectiveTierCMultiplier);
+        }
+
         var vizScope = visualization ?? RegionShardVisualizationComputeScope.EnabledAll;
         var focusedRegionId = vizScope.FocusRegionId;
         var collectNeuronViz = vizScope.Enabled
@@ -86,11 +127,11 @@ public sealed class RegionShardCpuBackend
         var regionDistanceCache = new int?[NbnConstants.RegionCount];
         var sourceRegionZ = RegionZ(_state.RegionId);
 
-        long costAccum = 0;
-        long costActivation = 0;
-        long costReset = 0;
+        double costAccum = 0d;
+        double costActivation = 0d;
+        double costReset = 0d;
         long costDistance = 0;
-        const long costRemote = 0;
+        long costRemote = 0;
         uint plasticityStrengthCodeChanges = 0;
 
         uint firedCount = 0;
@@ -99,7 +140,10 @@ public sealed class RegionShardCpuBackend
         for (var i = 0; i < _state.NeuronCount; i++)
         {
             MergeInbox(i);
-            costAccum++;
+            if (costEnergyEnabled)
+            {
+                costAccum += ResolveFunctionCost(accumCostLookup!, _state.AccumulationFunctions[i]);
+            }
 
             if (!_state.Exists[i])
             {
@@ -112,7 +156,7 @@ public sealed class RegionShardCpuBackend
             }
 
             var buffer = NormalizeBuffer(i);
-            ApplyHomeostasis(tickId, i, homeostasis, energyEnabled);
+            ApplyHomeostasis(tickId, i, homeostasis, costEnergyEnabled);
             buffer = NormalizeBuffer(i);
 
             var sourceNeuronId = _state.NeuronStart + i;
@@ -135,7 +179,10 @@ public sealed class RegionShardCpuBackend
                 continue;
             }
 
-            costActivation++;
+            if (costEnergyEnabled)
+            {
+                costActivation += ResolveFunctionCost(activationCostLookup!, _state.ActivationFunctions[i]);
+            }
             var potential = Activate((ActivationFunction)_state.ActivationFunctions[i], buffer, _state.ParamA[i], _state.ParamB[i]);
             if (!float.IsFinite(potential))
             {
@@ -149,7 +196,10 @@ public sealed class RegionShardCpuBackend
             }
 
             _state.Buffer[i] = reset;
-            costReset++;
+            if (costEnergyEnabled)
+            {
+                costReset += ResolveFunctionCost(resetCostLookup!, _state.ResetFunctions[i]);
+            }
 
             if (outputVector is not null)
             {
@@ -225,7 +275,10 @@ public sealed class RegionShardCpuBackend
                 }
 
                 var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
-                costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
+                if (costEnergyEnabled)
+                {
+                    costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
+                }
                 if (ApplyPlasticity(
                         tickId,
                         potential,
@@ -252,8 +305,31 @@ public sealed class RegionShardCpuBackend
             ApplyPlasticityAutoRebase();
         }
 
-        var tickCostTotal = costAccum + costActivation + costReset + costDistance + costRemote;
-        var costSummary = new RegionShardCostSummary(tickCostTotal, costAccum, costActivation, costReset, costDistance, costRemote);
+        var costAccumUnits = costEnergyEnabled ? RoundToCostUnits(costAccum) : 0L;
+        var costActivationUnits = costEnergyEnabled ? RoundToCostUnits(costActivation) : 0L;
+        var costResetUnits = costEnergyEnabled ? RoundToCostUnits(costReset) : 0L;
+        if (costEnergyEnabled
+            && effectiveRemoteCostEnabled
+            && (effectiveRemoteCostPerBatch != 0 || effectiveRemoteCostPerContribution != 0))
+        {
+            long remoteBatchCount = 0;
+            long remoteContributionCount = 0;
+            foreach (var (destinationShard, contribs) in outbox)
+            {
+                if (destinationShard.Equals(shardId))
+                {
+                    continue;
+                }
+
+                remoteBatchCount++;
+                remoteContributionCount += contribs.Count;
+            }
+
+            costRemote = checked((remoteBatchCount * effectiveRemoteCostPerBatch) + (remoteContributionCount * effectiveRemoteCostPerContribution));
+        }
+
+        var tickCostTotal = checked(costAccumUnits + costActivationUnits + costResetUnits + costDistance + costRemote);
+        var costSummary = new RegionShardCostSummary(tickCostTotal, costAccumUnits, costActivationUnits, costResetUnits, costDistance, costRemote);
 
         IReadOnlyList<OutputEvent> outputList = outputs ?? (IReadOnlyList<OutputEvent>)Array.Empty<OutputEvent>();
         IReadOnlyList<float> outputVectorList = outputVector ?? Array.Empty<float>();
@@ -308,11 +384,214 @@ public sealed class RegionShardCpuBackend
             neuronVizEvents);
     }
 
+    private static double[] BuildWeightedLookup(
+        double[] baseCosts,
+        CostTier[] tiers,
+        float tierAMultiplier,
+        float tierBMultiplier,
+        float tierCMultiplier)
+    {
+        var weighted = new double[baseCosts.Length];
+        for (var i = 0; i < baseCosts.Length; i++)
+        {
+            weighted[i] = baseCosts[i] * ResolveTierMultiplier(tiers[i], tierAMultiplier, tierBMultiplier, tierCMultiplier);
+        }
+
+        return weighted;
+    }
+
+    private static double ResolveFunctionCost(double[] weightedLookup, byte functionId)
+    {
+        var index = (int)functionId;
+        if ((uint)index >= (uint)weightedLookup.Length)
+        {
+            return weightedLookup[0];
+        }
+
+        return weightedLookup[index];
+    }
+
+    private static long RoundToCostUnits(double value)
+    {
+        return (long)Math.Round(value, MidpointRounding.AwayFromZero);
+    }
+
+    private static float NormalizeTierMultiplier(float value)
+    {
+        return float.IsFinite(value) && value > 0f
+            ? value
+            : 1f;
+    }
+
+    private static float ResolveTierMultiplier(CostTier tier, float tierAMultiplier, float tierBMultiplier, float tierCMultiplier)
+    {
+        return tier switch
+        {
+            CostTier.B => tierBMultiplier,
+            CostTier.C => tierCMultiplier,
+            _ => tierAMultiplier
+        };
+    }
+
+    private static double[] BuildActivationBaseCosts()
+    {
+        var costs = new double[64];
+        for (var i = 0; i < costs.Length; i++)
+        {
+            costs[i] = 1.0;
+        }
+
+        costs[(int)ActivationFunction.ActNone] = 0.0;
+        costs[(int)ActivationFunction.ActIdentity] = 1.0;
+        costs[(int)ActivationFunction.ActStepUp] = 1.0;
+        costs[(int)ActivationFunction.ActStepMid] = 1.0;
+        costs[(int)ActivationFunction.ActStepDown] = 1.0;
+        costs[(int)ActivationFunction.ActAbs] = 1.1;
+        costs[(int)ActivationFunction.ActClamp] = 1.1;
+        costs[(int)ActivationFunction.ActRelu] = 1.1;
+        costs[(int)ActivationFunction.ActNrelu] = 1.1;
+        costs[(int)ActivationFunction.ActSin] = 1.4;
+        costs[(int)ActivationFunction.ActTan] = 1.6;
+        costs[(int)ActivationFunction.ActTanh] = 1.6;
+        costs[(int)ActivationFunction.ActElu] = 1.8;
+        costs[(int)ActivationFunction.ActExp] = 1.8;
+        costs[(int)ActivationFunction.ActPrelu] = 1.4;
+        costs[(int)ActivationFunction.ActLog] = 1.9;
+        costs[(int)ActivationFunction.ActMult] = 1.2;
+        costs[(int)ActivationFunction.ActAdd] = 1.2;
+        costs[(int)ActivationFunction.ActSig] = 2.0;
+        costs[(int)ActivationFunction.ActSilu] = 2.0;
+        costs[(int)ActivationFunction.ActPclamp] = 1.3;
+        costs[(int)ActivationFunction.ActModl] = 2.6;
+        costs[(int)ActivationFunction.ActModr] = 2.6;
+        costs[(int)ActivationFunction.ActSoftp] = 2.8;
+        costs[(int)ActivationFunction.ActSelu] = 2.8;
+        costs[(int)ActivationFunction.ActLin] = 1.4;
+        costs[(int)ActivationFunction.ActLogb] = 3.0;
+        costs[(int)ActivationFunction.ActPow] = 3.5;
+        costs[(int)ActivationFunction.ActGauss] = 5.0;
+        costs[(int)ActivationFunction.ActQuad] = 6.0;
+        return costs;
+    }
+
+    private static CostTier[] BuildActivationTiers()
+    {
+        var tiers = new CostTier[64];
+        for (var i = 0; i < tiers.Length; i++)
+        {
+            tiers[i] = CostTier.A;
+        }
+
+        tiers[(int)ActivationFunction.ActSin] = CostTier.B;
+        tiers[(int)ActivationFunction.ActTan] = CostTier.B;
+        tiers[(int)ActivationFunction.ActTanh] = CostTier.B;
+        tiers[(int)ActivationFunction.ActElu] = CostTier.B;
+        tiers[(int)ActivationFunction.ActExp] = CostTier.B;
+        tiers[(int)ActivationFunction.ActPrelu] = CostTier.B;
+        tiers[(int)ActivationFunction.ActLog] = CostTier.B;
+        tiers[(int)ActivationFunction.ActSig] = CostTier.B;
+        tiers[(int)ActivationFunction.ActSilu] = CostTier.B;
+        tiers[(int)ActivationFunction.ActModl] = CostTier.C;
+        tiers[(int)ActivationFunction.ActModr] = CostTier.C;
+        tiers[(int)ActivationFunction.ActSoftp] = CostTier.C;
+        tiers[(int)ActivationFunction.ActSelu] = CostTier.C;
+        tiers[(int)ActivationFunction.ActLogb] = CostTier.C;
+        tiers[(int)ActivationFunction.ActPow] = CostTier.C;
+        tiers[(int)ActivationFunction.ActGauss] = CostTier.C;
+        tiers[(int)ActivationFunction.ActQuad] = CostTier.C;
+        return tiers;
+    }
+
+    private static double[] BuildResetBaseCosts()
+    {
+        var costs = new double[64];
+        for (var i = 0; i < costs.Length; i++)
+        {
+            costs[i] = 1.0;
+        }
+
+        costs[(int)ResetFunction.ResetZero] = 0.2;
+        costs[(int)ResetFunction.ResetDoublePotentialClampBuffer] = 1.2;
+        costs[(int)ResetFunction.ResetFivexPotentialClampBuffer] = 1.3;
+        costs[(int)ResetFunction.ResetNegDoublePotentialClampBuffer] = 1.2;
+        costs[(int)ResetFunction.ResetNegFivexPotentialClampBuffer] = 1.3;
+        costs[(int)ResetFunction.ResetInversePotentialClampBuffer] = 1.8;
+        costs[(int)ResetFunction.ResetDoublePotentialClamp1] = 1.2;
+        costs[(int)ResetFunction.ResetFivexPotentialClamp1] = 1.3;
+        costs[(int)ResetFunction.ResetNegDoublePotentialClamp1] = 1.2;
+        costs[(int)ResetFunction.ResetNegFivexPotentialClamp1] = 1.3;
+        costs[(int)ResetFunction.ResetInversePotentialClamp1] = 1.8;
+        costs[(int)ResetFunction.ResetDoublePotential] = 1.2;
+        costs[(int)ResetFunction.ResetFivexPotential] = 1.3;
+        costs[(int)ResetFunction.ResetNegDoublePotential] = 1.2;
+        costs[(int)ResetFunction.ResetNegFivexPotential] = 1.3;
+        costs[(int)ResetFunction.ResetInversePotential] = 1.8;
+        costs[(int)ResetFunction.ResetDoubleClamp1] = 1.2;
+        costs[(int)ResetFunction.ResetFivexClamp1] = 1.3;
+        costs[(int)ResetFunction.ResetNegDoubleClamp1] = 1.2;
+        costs[(int)ResetFunction.ResetNegFivexClamp1] = 1.3;
+        costs[(int)ResetFunction.ResetDouble] = 1.2;
+        costs[(int)ResetFunction.ResetFivex] = 1.3;
+        costs[(int)ResetFunction.ResetNegDouble] = 1.2;
+        costs[(int)ResetFunction.ResetNegFivex] = 1.3;
+        costs[(int)ResetFunction.ResetDivideAxonCt] = 1.1;
+        costs[(int)ResetFunction.ResetInverseClamp1] = 1.8;
+        costs[(int)ResetFunction.ResetInverse] = 1.8;
+        return costs;
+    }
+
+    private static CostTier[] BuildResetTiers()
+    {
+        var tiers = new CostTier[64];
+        for (var i = 0; i < tiers.Length; i++)
+        {
+            tiers[i] = CostTier.A;
+        }
+
+        SetResetTier(tiers, CostTier.B,
+            ResetFunction.ResetDoublePotentialClampBuffer,
+            ResetFunction.ResetFivexPotentialClampBuffer,
+            ResetFunction.ResetNegDoublePotentialClampBuffer,
+            ResetFunction.ResetNegFivexPotentialClampBuffer,
+            ResetFunction.ResetDoublePotentialClamp1,
+            ResetFunction.ResetFivexPotentialClamp1,
+            ResetFunction.ResetNegDoublePotentialClamp1,
+            ResetFunction.ResetNegFivexPotentialClamp1,
+            ResetFunction.ResetDoublePotential,
+            ResetFunction.ResetFivexPotential,
+            ResetFunction.ResetNegDoublePotential,
+            ResetFunction.ResetNegFivexPotential,
+            ResetFunction.ResetDoubleClamp1,
+            ResetFunction.ResetFivexClamp1,
+            ResetFunction.ResetNegDoubleClamp1,
+            ResetFunction.ResetNegFivexClamp1,
+            ResetFunction.ResetDouble,
+            ResetFunction.ResetFivex,
+            ResetFunction.ResetNegDouble,
+            ResetFunction.ResetNegFivex);
+        SetResetTier(tiers, CostTier.C,
+            ResetFunction.ResetInversePotentialClampBuffer,
+            ResetFunction.ResetInversePotentialClamp1,
+            ResetFunction.ResetInversePotential,
+            ResetFunction.ResetInverseClamp1,
+            ResetFunction.ResetInverse);
+
+        return tiers;
+    }
+
+    private static void SetResetTier(CostTier[] tiers, CostTier tier, params ResetFunction[] functions)
+    {
+        foreach (var function in functions)
+        {
+            tiers[(int)function] = tier;
+        }
+    }
+
     private bool ApplyHomeostasis(
         ulong tickId,
         int neuronIndex,
         RegionShardHomeostasisConfig config,
-        bool energyEnabled)
+        bool costEnergyEnabled)
     {
         if (!config.Enabled)
         {
@@ -330,7 +609,7 @@ public sealed class RegionShardCpuBackend
             return false;
         }
 
-        if (config.EnergyCouplingEnabled && energyEnabled)
+        if (config.EnergyCouplingEnabled && costEnergyEnabled)
         {
             var probabilityScale = ClampFinite(config.EnergyProbabilityScale, 0f, 4f, fallback: 1f);
             probability = Math.Clamp(probability * probabilityScale, 0f, 1f);
@@ -350,7 +629,7 @@ public sealed class RegionShardCpuBackend
         }
 
         var target = ResolveHomeostasisTarget(config.TargetMode);
-        if (config.EnergyCouplingEnabled && energyEnabled)
+        if (config.EnergyCouplingEnabled && costEnergyEnabled)
         {
             var targetScale = ClampFinite(config.EnergyTargetScale, 0f, 4f, fallback: 1f);
             target *= targetScale;
@@ -957,6 +1236,12 @@ public sealed class RegionShardCostConfig
     public int RegionIntrasliceUnit { get; init; } = 3;
     public int RegionAxialUnit { get; init; } = 5;
     public int NeuronDistShift { get; init; } = 10;
+    public bool RemoteCostEnabled { get; init; }
+    public long RemoteCostPerBatch { get; init; }
+    public long RemoteCostPerContribution { get; init; }
+    public float TierAMultiplier { get; init; } = 1f;
+    public float TierBMultiplier { get; init; } = 1f;
+    public float TierCMultiplier { get; init; } = 1f;
 }
 
 public readonly record struct RegionShardCostSummary(

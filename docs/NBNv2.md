@@ -2116,6 +2116,12 @@ message UpdateShardRuntimeConfig {
   float plasticity_delta = 19;
   uint32 plasticity_rebase_threshold = 20;
   float plasticity_rebase_threshold_pct = 21;
+  bool remote_cost_enabled = 22;
+  sint64 remote_cost_per_batch = 23;
+  sint64 remote_cost_per_contribution = 24;
+  float cost_tier_a_multiplier = 25;
+  float cost_tier_b_multiplier = 26;
+  float cost_tier_c_multiplier = 27;
 }
 ```
 

@@ -31,6 +31,12 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _vizHubPid;
     private bool _debugStreamEnabled;
     private bool _systemCostEnergyEnabled = true;
+    private bool _remoteCostEnabled;
+    private long _remoteCostPerBatch;
+    private long _remoteCostPerContribution;
+    private float _costTierAMultiplier = 1f;
+    private float _costTierBMultiplier = 1f;
+    private float _costTierCMultiplier = 1f;
     private bool _systemPlasticityEnabled = true;
     private ProtoSeverity _debugMinSeverity;
     private bool _debugSettingsSubscribed;
@@ -315,7 +321,10 @@ public sealed class HiveMindActor : IActor
 
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.EnabledKey });
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.MinSeverityKey });
-        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = CostEnergySettingsKeys.SystemEnabledKey });
+        foreach (var key in CostEnergySettingsKeys.AllKeys)
+        {
+            context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
+        }
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = PlasticitySettingsKeys.SystemEnabledKey });
     }
 
@@ -405,20 +414,96 @@ public sealed class HiveMindActor : IActor
 
     private bool TryApplySystemCostEnergySetting(string? key, string? value)
     {
-        if (string.IsNullOrWhiteSpace(key)
-            || !string.Equals(key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(key))
         {
             return false;
         }
 
-        var parsed = ParseBooleanSetting(value, _systemCostEnergyEnabled);
-        if (parsed == _systemCostEnergyEnabled)
+        if (string.Equals(key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            var parsed = ParseBooleanSetting(value, _systemCostEnergyEnabled);
+            if (parsed == _systemCostEnergyEnabled)
+            {
+                return false;
+            }
+
+            _systemCostEnergyEnabled = parsed;
+            return true;
         }
 
-        _systemCostEnergyEnabled = parsed;
-        return true;
+        if (string.Equals(key, CostEnergySettingsKeys.RemoteCostEnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseBooleanSetting(value, _remoteCostEnabled);
+            if (parsed == _remoteCostEnabled)
+            {
+                return false;
+            }
+
+            _remoteCostEnabled = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, CostEnergySettingsKeys.RemoteCostPerBatchKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseNonNegativeInt64Setting(value, _remoteCostPerBatch);
+            if (parsed == _remoteCostPerBatch)
+            {
+                return false;
+            }
+
+            _remoteCostPerBatch = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, CostEnergySettingsKeys.RemoteCostPerContributionKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseNonNegativeInt64Setting(value, _remoteCostPerContribution);
+            if (parsed == _remoteCostPerContribution)
+            {
+                return false;
+            }
+
+            _remoteCostPerContribution = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, CostEnergySettingsKeys.TierAMultiplierKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParsePositiveFiniteFloatSetting(value, _costTierAMultiplier);
+            if (Math.Abs(parsed - _costTierAMultiplier) < 0.000001f)
+            {
+                return false;
+            }
+
+            _costTierAMultiplier = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, CostEnergySettingsKeys.TierBMultiplierKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParsePositiveFiniteFloatSetting(value, _costTierBMultiplier);
+            if (Math.Abs(parsed - _costTierBMultiplier) < 0.000001f)
+            {
+                return false;
+            }
+
+            _costTierBMultiplier = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, CostEnergySettingsKeys.TierCMultiplierKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParsePositiveFiniteFloatSetting(value, _costTierCMultiplier);
+            if (Math.Abs(parsed - _costTierCMultiplier) < 0.000001f)
+            {
+                return false;
+            }
+
+            _costTierCMultiplier = parsed;
+            return true;
+        }
+
+        return false;
     }
 
     private bool TryApplySystemPlasticitySetting(string? key, string? value)
@@ -471,6 +556,30 @@ public sealed class HiveMindActor : IActor
             "0" or "false" or "no" or "off" => false,
             _ => fallback
         };
+    }
+
+    private static long ParseNonNegativeInt64Setting(string? value, long fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !long.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Max(0L, parsed);
+    }
+
+    private static float ParsePositiveFiniteFloatSetting(string? value, float fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !float.TryParse(value.Trim(), NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed)
+            || parsed <= 0f)
+        {
+            return fallback;
+        }
+
+        return parsed;
     }
 
     private static ProtoSeverity ParseDebugSeveritySetting(string? value, ProtoSeverity fallback)
@@ -702,6 +811,12 @@ public sealed class HiveMindActor : IActor
             brain.HomeostasisEnergyCouplingEnabled,
             brain.HomeostasisEnergyTargetScale,
             brain.HomeostasisEnergyProbabilityScale,
+            _remoteCostEnabled,
+            _remoteCostPerBatch,
+            _remoteCostPerContribution,
+            _costTierAMultiplier,
+            _costTierBMultiplier,
+            _costTierCMultiplier,
             _debugStreamEnabled,
             _debugMinSeverity);
         UpdateRoutingTable(context, brain);
@@ -1322,8 +1437,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        brain.CostEnabled = perBrainCostEnergyEnabled;
-        brain.EnergyEnabled = perBrainCostEnergyEnabled;
+        brain.CostEnergyEnabled = perBrainCostEnergyEnabled;
         UpdateShardRuntimeConfig(context, brain);
         RegisterBrainWithIo(context, brain, force: true);
     }
@@ -4841,7 +4955,7 @@ public sealed class HiveMindActor : IActor
     }
 
     private static bool ResolvePerBrainCostEnergyEnabled(BrainState brain)
-        => brain.CostEnabled && brain.EnergyEnabled;
+        => brain.CostEnergyEnabled;
 
     private bool ResolveEffectiveCostEnergyEnabled(BrainState brain)
         => _systemCostEnergyEnabled && ResolvePerBrainCostEnergyEnabled(brain);
@@ -5867,6 +5981,12 @@ public sealed class HiveMindActor : IActor
                 brain.HomeostasisEnergyCouplingEnabled,
                 brain.HomeostasisEnergyTargetScale,
                 brain.HomeostasisEnergyProbabilityScale,
+                _remoteCostEnabled,
+                _remoteCostPerBatch,
+                _remoteCostPerContribution,
+                _costTierAMultiplier,
+                _costTierBMultiplier,
+                _costTierCMultiplier,
                 _debugStreamEnabled,
                 _debugMinSeverity);
         }
@@ -6031,6 +6151,12 @@ public sealed class HiveMindActor : IActor
         bool homeostasisEnergyCouplingEnabled,
         float homeostasisEnergyTargetScale,
         float homeostasisEnergyProbabilityScale,
+        bool remoteCostEnabled,
+        long remoteCostPerBatch,
+        long remoteCostPerContribution,
+        float costTierAMultiplier,
+        float costTierBMultiplier,
+        float costTierCMultiplier,
         bool debugEnabled,
         ProtoSeverity debugMinSeverity)
     {
@@ -6057,6 +6183,12 @@ public sealed class HiveMindActor : IActor
                 HomeostasisEnergyCouplingEnabled = homeostasisEnergyCouplingEnabled,
                 HomeostasisEnergyTargetScale = homeostasisEnergyTargetScale,
                 HomeostasisEnergyProbabilityScale = homeostasisEnergyProbabilityScale,
+                RemoteCostEnabled = remoteCostEnabled,
+                RemoteCostPerBatch = remoteCostPerBatch,
+                RemoteCostPerContribution = remoteCostPerContribution,
+                CostTierAMultiplier = costTierAMultiplier,
+                CostTierBMultiplier = costTierBMultiplier,
+                CostTierCMultiplier = costTierCMultiplier,
                 DebugEnabled = debugEnabled,
                 DebugMinSeverity = debugMinSeverity
             });
@@ -6229,8 +6361,7 @@ public sealed class HiveMindActor : IActor
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
         public long LastTickCost { get; set; }
-        public bool CostEnabled { get; set; }
-        public bool EnergyEnabled { get; set; }
+        public bool CostEnergyEnabled { get; set; }
         public bool PlasticityEnabled { get; set; } = true;
         public float PlasticityRate { get; set; } = DefaultPlasticityRate;
         public bool PlasticityProbabilisticUpdates { get; set; } = true;

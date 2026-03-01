@@ -37,8 +37,13 @@ public sealed class RegionShardActor : IActor
     private ProtoSeverity _debugMinSeverity;
     private bool _vizEnabled;
     private uint? _vizFocusRegionId;
-    private bool _costEnabled;
-    private bool _energyEnabled;
+    private bool _costEnergyEnabled;
+    private bool _remoteCostEnabled;
+    private long _remoteCostPerBatch;
+    private long _remoteCostPerContribution;
+    private float _costTierAMultiplier = 1f;
+    private float _costTierBMultiplier = 1f;
+    private float _costTierCMultiplier = 1f;
     private bool _plasticityEnabled;
     private float _plasticityRate;
     private bool _plasticityProbabilisticUpdates;
@@ -218,8 +223,13 @@ public sealed class RegionShardActor : IActor
             return;
         }
 
-        _costEnabled = message.CostEnabled;
-        _energyEnabled = message.EnergyEnabled;
+        _costEnergyEnabled = message.CostEnabled && message.EnergyEnabled;
+        _remoteCostEnabled = message.RemoteCostEnabled;
+        _remoteCostPerBatch = Math.Max(0L, message.RemoteCostPerBatch);
+        _remoteCostPerContribution = Math.Max(0L, message.RemoteCostPerContribution);
+        _costTierAMultiplier = NormalizeTierMultiplier(message.CostTierAMultiplier);
+        _costTierBMultiplier = NormalizeTierMultiplier(message.CostTierBMultiplier);
+        _costTierCMultiplier = NormalizeTierMultiplier(message.CostTierCMultiplier);
         _plasticityEnabled = message.PlasticityEnabled;
         _plasticityRate = message.PlasticityRate;
         _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
@@ -445,7 +455,13 @@ public sealed class RegionShardActor : IActor
                 _homeostasisEnergyCouplingEnabled,
                 _homeostasisEnergyTargetScale,
                 _homeostasisEnergyProbabilityScale),
-            _energyEnabled);
+            _costEnergyEnabled,
+            _remoteCostEnabled,
+            _remoteCostPerBatch,
+            _remoteCostPerContribution,
+            _costTierAMultiplier,
+            _costTierBMultiplier,
+            _costTierCMultiplier);
         stopwatch.Stop();
 
         if (LogViz || LogVizDiagnostics)
@@ -857,6 +873,13 @@ public sealed class RegionShardActor : IActor
                || value.Equals("true", StringComparison.OrdinalIgnoreCase)
                || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
                || value.Equals("y", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static float NormalizeTierMultiplier(float value)
+    {
+        return float.IsFinite(value) && value > 0f
+            ? value
+            : 1f;
     }
 
     private static bool TryParsePid(string? value, out PID pid)
