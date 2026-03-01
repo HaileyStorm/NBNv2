@@ -113,6 +113,17 @@ public class ProtoCompatibilityTests
         AssertField(plasticity, "plasticity_rate", 3, FieldType.Float);
         AssertField(plasticity, "probabilistic_updates", 4, FieldType.Bool);
 
+        var homeostasis = descriptor.MessageTypes.Single(message => message.Name == "SetBrainHomeostasis");
+        AssertField(homeostasis, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(homeostasis, "homeostasis_enabled", 2, FieldType.Bool);
+        AssertField(homeostasis, "homeostasis_target_mode", 3, FieldType.Enum, "nbn.control.HomeostasisTargetMode");
+        AssertField(homeostasis, "homeostasis_update_mode", 4, FieldType.Enum, "nbn.control.HomeostasisUpdateMode");
+        AssertField(homeostasis, "homeostasis_base_probability", 5, FieldType.Float);
+        AssertField(homeostasis, "homeostasis_min_step_codes", 6, FieldType.UInt32);
+        AssertField(homeostasis, "homeostasis_energy_coupling_enabled", 7, FieldType.Bool);
+        AssertField(homeostasis, "homeostasis_energy_target_scale", 8, FieldType.Float);
+        AssertField(homeostasis, "homeostasis_energy_probability_scale", 9, FieldType.Float);
+
         var shardRuntime = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardRuntimeConfig");
         AssertField(shardRuntime, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(shardRuntime, "region_id", 2, FieldType.UInt32);
@@ -124,6 +135,14 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "probabilistic_updates", 8, FieldType.Bool);
         AssertField(shardRuntime, "debug_enabled", 9, FieldType.Bool);
         AssertField(shardRuntime, "debug_min_severity", 10, FieldType.Enum, "nbn.Severity");
+        AssertField(shardRuntime, "homeostasis_enabled", 11, FieldType.Bool);
+        AssertField(shardRuntime, "homeostasis_target_mode", 12, FieldType.Enum, "nbn.control.HomeostasisTargetMode");
+        AssertField(shardRuntime, "homeostasis_update_mode", 13, FieldType.Enum, "nbn.control.HomeostasisUpdateMode");
+        AssertField(shardRuntime, "homeostasis_base_probability", 14, FieldType.Float);
+        AssertField(shardRuntime, "homeostasis_min_step_codes", 15, FieldType.UInt32);
+        AssertField(shardRuntime, "homeostasis_energy_coupling_enabled", 16, FieldType.Bool);
+        AssertField(shardRuntime, "homeostasis_energy_target_scale", 17, FieldType.Float);
+        AssertField(shardRuntime, "homeostasis_energy_probability_scale", 18, FieldType.Float);
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);
@@ -425,6 +444,49 @@ public class ProtoCompatibilityTests
         AssertField(brainInfo, "plasticity_rate", 11, FieldType.Float);
         AssertField(brainInfo, "plasticity_probabilistic_updates", 12, FieldType.Bool);
         AssertField(brainInfo, "last_tick_cost", 13, FieldType.SInt64);
+        AssertField(brainInfo, "homeostasis_enabled", 14, FieldType.Bool);
+        AssertField(brainInfo, "homeostasis_target_mode", 15, FieldType.Enum, "nbn.control.HomeostasisTargetMode");
+        AssertField(brainInfo, "homeostasis_update_mode", 16, FieldType.Enum, "nbn.control.HomeostasisUpdateMode");
+        AssertField(brainInfo, "homeostasis_base_probability", 17, FieldType.Float);
+        AssertField(brainInfo, "homeostasis_min_step_codes", 18, FieldType.UInt32);
+        AssertField(brainInfo, "homeostasis_energy_coupling_enabled", 19, FieldType.Bool);
+        AssertField(brainInfo, "homeostasis_energy_target_scale", 20, FieldType.Float);
+        AssertField(brainInfo, "homeostasis_energy_probability_scale", 21, FieldType.Float);
+    }
+
+    [Fact]
+    public void ProtoIo_RuntimeControlFields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var energyState = descriptor.MessageTypes.Single(message => message.Name == "BrainEnergyState");
+        AssertField(energyState, "energy_remaining", 1, FieldType.SInt64);
+        AssertField(energyState, "energy_rate_units_per_second", 2, FieldType.SInt64);
+        AssertField(energyState, "cost_enabled", 3, FieldType.Bool);
+        AssertField(energyState, "energy_enabled", 4, FieldType.Bool);
+        AssertField(energyState, "plasticity_enabled", 5, FieldType.Bool);
+        AssertField(energyState, "plasticity_rate", 6, FieldType.Float);
+        AssertField(energyState, "plasticity_probabilistic_updates", 7, FieldType.Bool);
+        AssertField(energyState, "last_tick_cost", 8, FieldType.SInt64);
+        AssertField(energyState, "homeostasis_enabled", 9, FieldType.Bool);
+        AssertField(energyState, "homeostasis_target_mode", 10, FieldType.Enum, "nbn.control.HomeostasisTargetMode");
+        AssertField(energyState, "homeostasis_update_mode", 11, FieldType.Enum, "nbn.control.HomeostasisUpdateMode");
+        AssertField(energyState, "homeostasis_base_probability", 12, FieldType.Float);
+        AssertField(energyState, "homeostasis_min_step_codes", 13, FieldType.UInt32);
+        AssertField(energyState, "homeostasis_energy_coupling_enabled", 14, FieldType.Bool);
+        AssertField(energyState, "homeostasis_energy_target_scale", 15, FieldType.Float);
+        AssertField(energyState, "homeostasis_energy_probability_scale", 16, FieldType.Float);
+
+        var setHomeostasis = descriptor.MessageTypes.Single(message => message.Name == "SetHomeostasisEnabled");
+        AssertField(setHomeostasis, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(setHomeostasis, "homeostasis_enabled", 2, FieldType.Bool);
+        AssertField(setHomeostasis, "homeostasis_target_mode", 3, FieldType.Enum, "nbn.control.HomeostasisTargetMode");
+        AssertField(setHomeostasis, "homeostasis_update_mode", 4, FieldType.Enum, "nbn.control.HomeostasisUpdateMode");
+        AssertField(setHomeostasis, "homeostasis_base_probability", 5, FieldType.Float);
+        AssertField(setHomeostasis, "homeostasis_min_step_codes", 6, FieldType.UInt32);
+        AssertField(setHomeostasis, "homeostasis_energy_coupling_enabled", 7, FieldType.Bool);
+        AssertField(setHomeostasis, "homeostasis_energy_target_scale", 8, FieldType.Float);
+        AssertField(setHomeostasis, "homeostasis_energy_probability_scale", 9, FieldType.Float);
     }
 
     [Fact]
@@ -474,6 +536,14 @@ public class ProtoCompatibilityTests
         AssertField(registerBrain, "plasticity_rate", 11, FieldType.Float);
         AssertField(registerBrain, "plasticity_probabilistic_updates", 12, FieldType.Bool);
         AssertField(registerBrain, "last_tick_cost", 13, FieldType.SInt64);
+        AssertField(registerBrain, "homeostasis_enabled", 14, FieldType.Bool);
+        AssertField(registerBrain, "homeostasis_target_mode", 15, FieldType.Enum, "nbn.control.HomeostasisTargetMode");
+        AssertField(registerBrain, "homeostasis_update_mode", 16, FieldType.Enum, "nbn.control.HomeostasisUpdateMode");
+        AssertField(registerBrain, "homeostasis_base_probability", 17, FieldType.Float);
+        AssertField(registerBrain, "homeostasis_min_step_codes", 18, FieldType.UInt32);
+        AssertField(registerBrain, "homeostasis_energy_coupling_enabled", 19, FieldType.Bool);
+        AssertField(registerBrain, "homeostasis_energy_target_scale", 20, FieldType.Float);
+        AssertField(registerBrain, "homeostasis_energy_probability_scale", 21, FieldType.Float);
     }
 
     [Fact]

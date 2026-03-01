@@ -80,6 +80,27 @@ message SetBrainPlasticity {
   bool probabilistic_updates = 4;
 }
 
+enum HomeostasisTargetMode {
+  HOMEOSTASIS_TARGET_ZERO = 0;
+  HOMEOSTASIS_TARGET_FIXED = 1;
+}
+
+enum HomeostasisUpdateMode {
+  HOMEOSTASIS_UPDATE_PROBABILISTIC_QUANTIZED_STEP = 0;
+}
+
+message SetBrainHomeostasis {
+  nbn.Uuid brain_id = 1;
+  bool homeostasis_enabled = 2;
+  HomeostasisTargetMode homeostasis_target_mode = 3;
+  HomeostasisUpdateMode homeostasis_update_mode = 4;
+  float homeostasis_base_probability = 5;
+  uint32 homeostasis_min_step_codes = 6;
+  bool homeostasis_energy_coupling_enabled = 7;
+  float homeostasis_energy_target_scale = 8;
+  float homeostasis_energy_probability_scale = 9;
+}
+
 message UpdateShardOutputSink {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;
@@ -107,6 +128,14 @@ message UpdateShardRuntimeConfig {
   bool probabilistic_updates = 8;
   bool debug_enabled = 9;
   nbn.Severity debug_min_severity = 10;
+  bool homeostasis_enabled = 11;
+  HomeostasisTargetMode homeostasis_target_mode = 12;
+  HomeostasisUpdateMode homeostasis_update_mode = 13;
+  float homeostasis_base_probability = 14;
+  uint32 homeostasis_min_step_codes = 15;
+  bool homeostasis_energy_coupling_enabled = 16;
+  float homeostasis_energy_target_scale = 17;
+  float homeostasis_energy_probability_scale = 18;
 }
 
 message SnapshotOverlayRecord {

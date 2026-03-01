@@ -444,6 +444,61 @@ message BrainIoInfo {
   uint32 input_width = 2;
   uint32 output_width = 3;
 }
+
+message SetBrainCostEnergy {
+  nbn.Uuid brain_id = 1;
+  bool cost_enabled = 2;
+  bool energy_enabled = 3;
+}
+
+message SetBrainPlasticity {
+  nbn.Uuid brain_id = 1;
+  bool plasticity_enabled = 2;
+  float plasticity_rate = 3;
+  bool probabilistic_updates = 4;
+}
+
+enum HomeostasisTargetMode {
+  HOMEOSTASIS_TARGET_ZERO = 0;
+  HOMEOSTASIS_TARGET_FIXED = 1;
+}
+
+enum HomeostasisUpdateMode {
+  HOMEOSTASIS_UPDATE_PROBABILISTIC_QUANTIZED_STEP = 0;
+}
+
+message SetBrainHomeostasis {
+  nbn.Uuid brain_id = 1;
+  bool homeostasis_enabled = 2;
+  HomeostasisTargetMode homeostasis_target_mode = 3;
+  HomeostasisUpdateMode homeostasis_update_mode = 4;
+  float homeostasis_base_probability = 5;
+  uint32 homeostasis_min_step_codes = 6;
+  bool homeostasis_energy_coupling_enabled = 7;
+  float homeostasis_energy_target_scale = 8;
+  float homeostasis_energy_probability_scale = 9;
+}
+
+message UpdateShardRuntimeConfig {
+  nbn.Uuid brain_id = 1;
+  uint32 region_id = 2;
+  uint32 shard_index = 3;
+  bool cost_enabled = 4;
+  bool energy_enabled = 5;
+  bool plasticity_enabled = 6;
+  float plasticity_rate = 7;
+  bool probabilistic_updates = 8;
+  bool debug_enabled = 9;
+  nbn.Severity debug_min_severity = 10;
+  bool homeostasis_enabled = 11;
+  HomeostasisTargetMode homeostasis_target_mode = 12;
+  HomeostasisUpdateMode homeostasis_update_mode = 13;
+  float homeostasis_base_probability = 14;
+  uint32 homeostasis_min_step_codes = 15;
+  bool homeostasis_energy_coupling_enabled = 16;
+  float homeostasis_energy_target_scale = 17;
+  float homeostasis_energy_probability_scale = 18;
+}
 ```
 
 ### 19.5 `nbn_signals.proto`
@@ -518,6 +573,20 @@ message BrainInfo {
   sint64 energy_remaining = 6;
 
   bool plasticity_enabled = 7;
+  nbn.ArtifactRef base_definition = 8;
+  nbn.ArtifactRef last_snapshot = 9;
+  sint64 energy_rate_units_per_second = 10;
+  float plasticity_rate = 11;
+  bool plasticity_probabilistic_updates = 12;
+  sint64 last_tick_cost = 13;
+  bool homeostasis_enabled = 14;
+  nbn.control.HomeostasisTargetMode homeostasis_target_mode = 15;
+  nbn.control.HomeostasisUpdateMode homeostasis_update_mode = 16;
+  float homeostasis_base_probability = 17;
+  uint32 homeostasis_min_step_codes = 18;
+  bool homeostasis_energy_coupling_enabled = 19;
+  float homeostasis_energy_target_scale = 20;
+  float homeostasis_energy_probability_scale = 21;
 }
 
 message BrainEnergyState {
@@ -529,6 +598,14 @@ message BrainEnergyState {
   float plasticity_rate = 6;
   bool plasticity_probabilistic_updates = 7;
   sint64 last_tick_cost = 8;
+  bool homeostasis_enabled = 9;
+  nbn.control.HomeostasisTargetMode homeostasis_target_mode = 10;
+  nbn.control.HomeostasisUpdateMode homeostasis_update_mode = 11;
+  float homeostasis_base_probability = 12;
+  uint32 homeostasis_min_step_codes = 13;
+  bool homeostasis_energy_coupling_enabled = 14;
+  float homeostasis_energy_target_scale = 15;
+  float homeostasis_energy_probability_scale = 16;
 }
 
 message RegisterBrain {
@@ -538,6 +615,21 @@ message RegisterBrain {
   nbn.ArtifactRef base_definition = 4;
   nbn.ArtifactRef last_snapshot = 5;
   BrainEnergyState energy_state = 6;
+  bool has_runtime_config = 7;
+  bool cost_enabled = 8;
+  bool energy_enabled = 9;
+  bool plasticity_enabled = 10;
+  float plasticity_rate = 11;
+  bool plasticity_probabilistic_updates = 12;
+  sint64 last_tick_cost = 13;
+  bool homeostasis_enabled = 14;
+  nbn.control.HomeostasisTargetMode homeostasis_target_mode = 15;
+  nbn.control.HomeostasisUpdateMode homeostasis_update_mode = 16;
+  float homeostasis_base_probability = 17;
+  uint32 homeostasis_min_step_codes = 18;
+  bool homeostasis_energy_coupling_enabled = 19;
+  float homeostasis_energy_target_scale = 20;
+  float homeostasis_energy_probability_scale = 21;
 }
 
 message UnregisterBrain {
@@ -630,6 +722,18 @@ message SetPlasticityEnabled {
   bool plasticity_enabled = 2;
   float plasticity_rate = 3;
   bool probabilistic_updates = 4;
+}
+
+message SetHomeostasisEnabled {
+  nbn.Uuid brain_id = 1;
+  bool homeostasis_enabled = 2;
+  nbn.control.HomeostasisTargetMode homeostasis_target_mode = 3;
+  nbn.control.HomeostasisUpdateMode homeostasis_update_mode = 4;
+  float homeostasis_base_probability = 5;
+  uint32 homeostasis_min_step_codes = 6;
+  bool homeostasis_energy_coupling_enabled = 7;
+  float homeostasis_energy_target_scale = 8;
+  float homeostasis_energy_probability_scale = 9;
 }
 
 message IoCommandAck {

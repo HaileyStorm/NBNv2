@@ -151,6 +151,9 @@ public sealed class HiveMindActor : IActor
                 case ProtoControl.SetBrainPlasticity message:
                     HandleSetBrainPlasticity(context, message);
                     break;
+                case ProtoControl.SetBrainHomeostasis message:
+                    HandleSetBrainHomeostasis(context, message);
+                    break;
                 case ProtoControl.GetBrainIoInfo message:
                     if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
                     {
@@ -608,6 +611,14 @@ public sealed class HiveMindActor : IActor
             brain.PlasticityEnabled,
             brain.PlasticityRate,
             brain.PlasticityProbabilisticUpdates,
+            brain.HomeostasisEnabled,
+            brain.HomeostasisTargetMode,
+            brain.HomeostasisUpdateMode,
+            brain.HomeostasisBaseProbability,
+            brain.HomeostasisMinStepCodes,
+            brain.HomeostasisEnergyCouplingEnabled,
+            brain.HomeostasisEnergyTargetScale,
+            brain.HomeostasisEnergyProbabilityScale,
             _debugStreamEnabled,
             _debugMinSeverity);
         UpdateRoutingTable(context, brain);
@@ -1257,6 +1268,56 @@ public sealed class HiveMindActor : IActor
         brain.PlasticityEnabled = message.PlasticityEnabled;
         brain.PlasticityRate = message.PlasticityRate;
         brain.PlasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+        UpdateShardRuntimeConfig(context, brain);
+        RegisterBrainWithIo(context, brain, force: true);
+    }
+
+    private void HandleSetBrainHomeostasis(IContext context, ProtoControl.SetBrainHomeostasis message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            return;
+        }
+
+        if (!IsControlPlaneBrainMutationAuthorized(context, brainId, out var brain, out var reason))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_homeostasis", brainId, reason);
+            return;
+        }
+
+        if (!IsSupportedHomeostasisTargetMode(message.HomeostasisTargetMode)
+            || message.HomeostasisUpdateMode != ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+            || !float.IsFinite(message.HomeostasisBaseProbability)
+            || message.HomeostasisBaseProbability < 0f
+            || message.HomeostasisBaseProbability > 1f
+            || message.HomeostasisMinStepCodes == 0
+            || !IsFiniteInRange(message.HomeostasisEnergyTargetScale, 0f, 4f)
+            || !IsFiniteInRange(message.HomeostasisEnergyProbabilityScale, 0f, 4f))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_homeostasis", brainId, "invalid_homeostasis_config");
+            return;
+        }
+
+        if (brain.HomeostasisEnabled == message.HomeostasisEnabled
+            && brain.HomeostasisTargetMode == message.HomeostasisTargetMode
+            && brain.HomeostasisUpdateMode == message.HomeostasisUpdateMode
+            && Math.Abs(brain.HomeostasisBaseProbability - message.HomeostasisBaseProbability) < 0.000001f
+            && brain.HomeostasisMinStepCodes == message.HomeostasisMinStepCodes
+            && brain.HomeostasisEnergyCouplingEnabled == message.HomeostasisEnergyCouplingEnabled
+            && Math.Abs(brain.HomeostasisEnergyTargetScale - message.HomeostasisEnergyTargetScale) < 0.000001f
+            && Math.Abs(brain.HomeostasisEnergyProbabilityScale - message.HomeostasisEnergyProbabilityScale) < 0.000001f)
+        {
+            return;
+        }
+
+        brain.HomeostasisEnabled = message.HomeostasisEnabled;
+        brain.HomeostasisTargetMode = message.HomeostasisTargetMode;
+        brain.HomeostasisUpdateMode = message.HomeostasisUpdateMode;
+        brain.HomeostasisBaseProbability = message.HomeostasisBaseProbability;
+        brain.HomeostasisMinStepCodes = message.HomeostasisMinStepCodes;
+        brain.HomeostasisEnergyCouplingEnabled = message.HomeostasisEnergyCouplingEnabled;
+        brain.HomeostasisEnergyTargetScale = message.HomeostasisEnergyTargetScale;
+        brain.HomeostasisEnergyProbabilityScale = message.HomeostasisEnergyProbabilityScale;
         UpdateShardRuntimeConfig(context, brain);
         RegisterBrainWithIo(context, brain, force: true);
     }
@@ -4656,6 +4717,17 @@ public sealed class HiveMindActor : IActor
         return uuid.TryToGuid(out guid);
     }
 
+    private static bool IsSupportedHomeostasisTargetMode(ProtoControl.HomeostasisTargetMode mode)
+    {
+        return mode == ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero
+               || mode == ProtoControl.HomeostasisTargetMode.HomeostasisTargetFixed;
+    }
+
+    private static bool IsFiniteInRange(float value, float min, float max)
+    {
+        return float.IsFinite(value) && value >= min && value <= max;
+    }
+
     private static PID? ParsePid(string? value)
         => TryParsePid(value, out var pid) ? pid : null;
 
@@ -5642,6 +5714,14 @@ public sealed class HiveMindActor : IActor
                 brain.PlasticityEnabled,
                 brain.PlasticityRate,
                 brain.PlasticityProbabilisticUpdates,
+                brain.HomeostasisEnabled,
+                brain.HomeostasisTargetMode,
+                brain.HomeostasisUpdateMode,
+                brain.HomeostasisBaseProbability,
+                brain.HomeostasisMinStepCodes,
+                brain.HomeostasisEnergyCouplingEnabled,
+                brain.HomeostasisEnergyTargetScale,
+                brain.HomeostasisEnergyProbabilityScale,
                 _debugStreamEnabled,
                 _debugMinSeverity);
         }
@@ -5700,6 +5780,14 @@ public sealed class HiveMindActor : IActor
             PlasticityEnabled = brain.PlasticityEnabled,
             PlasticityRate = brain.PlasticityRate,
             PlasticityProbabilisticUpdates = brain.PlasticityProbabilisticUpdates,
+            HomeostasisEnabled = brain.HomeostasisEnabled,
+            HomeostasisTargetMode = brain.HomeostasisTargetMode,
+            HomeostasisUpdateMode = brain.HomeostasisUpdateMode,
+            HomeostasisBaseProbability = brain.HomeostasisBaseProbability,
+            HomeostasisMinStepCodes = brain.HomeostasisMinStepCodes,
+            HomeostasisEnergyCouplingEnabled = brain.HomeostasisEnergyCouplingEnabled,
+            HomeostasisEnergyTargetScale = brain.HomeostasisEnergyTargetScale,
+            HomeostasisEnergyProbabilityScale = brain.HomeostasisEnergyProbabilityScale,
             LastTickCost = brain.LastTickCost
         };
 
@@ -5781,6 +5869,14 @@ public sealed class HiveMindActor : IActor
         bool plasticityEnabled,
         float plasticityRate,
         bool plasticityProbabilisticUpdates,
+        bool homeostasisEnabled,
+        ProtoControl.HomeostasisTargetMode homeostasisTargetMode,
+        ProtoControl.HomeostasisUpdateMode homeostasisUpdateMode,
+        float homeostasisBaseProbability,
+        uint homeostasisMinStepCodes,
+        bool homeostasisEnergyCouplingEnabled,
+        float homeostasisEnergyTargetScale,
+        float homeostasisEnergyProbabilityScale,
         bool debugEnabled,
         ProtoSeverity debugMinSeverity)
     {
@@ -5796,6 +5892,14 @@ public sealed class HiveMindActor : IActor
                 PlasticityEnabled = plasticityEnabled,
                 PlasticityRate = plasticityRate,
                 ProbabilisticUpdates = plasticityProbabilisticUpdates,
+                HomeostasisEnabled = homeostasisEnabled,
+                HomeostasisTargetMode = homeostasisTargetMode,
+                HomeostasisUpdateMode = homeostasisUpdateMode,
+                HomeostasisBaseProbability = homeostasisBaseProbability,
+                HomeostasisMinStepCodes = homeostasisMinStepCodes,
+                HomeostasisEnergyCouplingEnabled = homeostasisEnergyCouplingEnabled,
+                HomeostasisEnergyTargetScale = homeostasisEnergyTargetScale,
+                HomeostasisEnergyProbabilityScale = homeostasisEnergyProbabilityScale,
                 DebugEnabled = debugEnabled,
                 DebugMinSeverity = debugMinSeverity
             });
@@ -5973,6 +6077,14 @@ public sealed class HiveMindActor : IActor
         public bool PlasticityEnabled { get; set; }
         public float PlasticityRate { get; set; }
         public bool PlasticityProbabilisticUpdates { get; set; }
+        public bool HomeostasisEnabled { get; set; } = true;
+        public ProtoControl.HomeostasisTargetMode HomeostasisTargetMode { get; set; } = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero;
+        public ProtoControl.HomeostasisUpdateMode HomeostasisUpdateMode { get; set; } = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep;
+        public float HomeostasisBaseProbability { get; set; } = 0.01f;
+        public uint HomeostasisMinStepCodes { get; set; } = 1;
+        public bool HomeostasisEnergyCouplingEnabled { get; set; }
+        public float HomeostasisEnergyTargetScale { get; set; } = 1f;
+        public float HomeostasisEnergyProbabilityScale { get; set; } = 1f;
         public bool VisualizationEnabled { get; set; }
         public uint? VisualizationFocusRegionId { get; set; }
         public Dictionary<string, VisualizationSubscriberPreference> VisualizationSubscribers { get; } = new(StringComparer.Ordinal);

@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Globalization;
+using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -23,6 +24,10 @@ public sealed class IoPanelViewModel : ViewModelBase
     private string _energyCreditText = "1000";
     private string _energyRateText = "0";
     private string _plasticityRateText = "0.001";
+    private string _homeostasisBaseProbabilityText = "0.01";
+    private string _homeostasisMinStepCodesText = "1";
+    private string _homeostasisEnergyTargetScaleText = "1";
+    private string _homeostasisEnergyProbabilityScaleText = "1";
     private bool _filterZeroOutputs = true;
     private bool _filterZeroVectorOutputs = true;
     private bool _pauseVectorUiUpdates;
@@ -31,7 +36,11 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
     private bool _plasticityEnabled;
+    private bool _homeostasisEnabled = true;
+    private bool _homeostasisEnergyCouplingEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
+    private HomeostasisTargetModeOption _selectedHomeostasisTargetMode;
+    private HomeostasisUpdateModeOption _selectedHomeostasisUpdateMode;
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
     private string _lastOutputTickLabel = "-";
@@ -54,6 +63,17 @@ public sealed class IoPanelViewModel : ViewModelBase
             new("Absolute", false)
         };
         _selectedPlasticityMode = PlasticityModes[0];
+        HomeostasisTargetModes = new ObservableCollection<HomeostasisTargetModeOption>
+        {
+            new("Zero", HomeostasisTargetMode.HomeostasisTargetZero),
+            new("Fixed (0)", HomeostasisTargetMode.HomeostasisTargetFixed)
+        };
+        _selectedHomeostasisTargetMode = HomeostasisTargetModes[0];
+        HomeostasisUpdateModes = new ObservableCollection<HomeostasisUpdateModeOption>
+        {
+            new("Probabilistic Quantized Step", HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep)
+        };
+        _selectedHomeostasisUpdateMode = HomeostasisUpdateModes[0];
 
         RequestInfoCommand = new AsyncRelayCommand(RequestInfoAsync);
         SubscribeOutputsCommand = new RelayCommand(() => Subscribe(false));
@@ -66,6 +86,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         ApplyEnergyRateCommand = new RelayCommand(ApplyEnergyRate);
         ApplyCostEnergyCommand = new RelayCommand(ApplyCostEnergy);
         ApplyPlasticityCommand = new RelayCommand(ApplyPlasticity);
+        ApplyHomeostasisCommand = new RelayCommand(ApplyHomeostasis);
         ClearOutputsCommand = new RelayCommand(ClearOutputs);
         ClearVectorOutputsCommand = new RelayCommand(ClearVectorOutputs);
         ToggleVectorUiUpdatesCommand = new RelayCommand(ToggleVectorUiUpdates);
@@ -163,6 +184,18 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _plasticityEnabled, value);
     }
 
+    public bool HomeostasisEnabled
+    {
+        get => _homeostasisEnabled;
+        set => SetProperty(ref _homeostasisEnabled, value);
+    }
+
+    public bool HomeostasisEnergyCouplingEnabled
+    {
+        get => _homeostasisEnergyCouplingEnabled;
+        set => SetProperty(ref _homeostasisEnergyCouplingEnabled, value);
+    }
+
     public bool FilterZeroOutputs
     {
         get => _filterZeroOutputs;
@@ -217,12 +250,52 @@ public sealed class IoPanelViewModel : ViewModelBase
         set => SetProperty(ref _plasticityRateText, value);
     }
 
+    public string HomeostasisBaseProbabilityText
+    {
+        get => _homeostasisBaseProbabilityText;
+        set => SetProperty(ref _homeostasisBaseProbabilityText, value);
+    }
+
+    public string HomeostasisMinStepCodesText
+    {
+        get => _homeostasisMinStepCodesText;
+        set => SetProperty(ref _homeostasisMinStepCodesText, value);
+    }
+
+    public string HomeostasisEnergyTargetScaleText
+    {
+        get => _homeostasisEnergyTargetScaleText;
+        set => SetProperty(ref _homeostasisEnergyTargetScaleText, value);
+    }
+
+    public string HomeostasisEnergyProbabilityScaleText
+    {
+        get => _homeostasisEnergyProbabilityScaleText;
+        set => SetProperty(ref _homeostasisEnergyProbabilityScaleText, value);
+    }
+
     public ObservableCollection<PlasticityModeOption> PlasticityModes { get; }
 
     public PlasticityModeOption SelectedPlasticityMode
     {
         get => _selectedPlasticityMode;
         set => SetProperty(ref _selectedPlasticityMode, value);
+    }
+
+    public ObservableCollection<HomeostasisTargetModeOption> HomeostasisTargetModes { get; }
+
+    public HomeostasisTargetModeOption SelectedHomeostasisTargetMode
+    {
+        get => _selectedHomeostasisTargetMode;
+        set => SetProperty(ref _selectedHomeostasisTargetMode, value);
+    }
+
+    public ObservableCollection<HomeostasisUpdateModeOption> HomeostasisUpdateModes { get; }
+
+    public HomeostasisUpdateModeOption SelectedHomeostasisUpdateMode
+    {
+        get => _selectedHomeostasisUpdateMode;
+        set => SetProperty(ref _selectedHomeostasisUpdateMode, value);
     }
 
     public string BrainInfoSummary
@@ -264,6 +337,8 @@ public sealed class IoPanelViewModel : ViewModelBase
     public RelayCommand ApplyCostEnergyCommand { get; }
 
     public RelayCommand ApplyPlasticityCommand { get; }
+
+    public RelayCommand ApplyHomeostasisCommand { get; }
 
     public RelayCommand ClearOutputsCommand { get; }
 
@@ -549,13 +624,31 @@ public sealed class IoPanelViewModel : ViewModelBase
         CostEnabled = info.CostEnabled;
         EnergyEnabled = info.EnergyEnabled;
         PlasticityEnabled = info.PlasticityEnabled;
+        HomeostasisEnabled = info.HomeostasisEnabled;
+        HomeostasisEnergyCouplingEnabled = info.HomeostasisEnergyCouplingEnabled;
         EnergyRateText = info.EnergyRateUnitsPerSecond.ToString(CultureInfo.InvariantCulture);
         PlasticityRateText = info.PlasticityRate.ToString("0.######", CultureInfo.InvariantCulture);
+        HomeostasisBaseProbabilityText = info.HomeostasisBaseProbability.ToString("0.######", CultureInfo.InvariantCulture);
+        HomeostasisMinStepCodesText = info.HomeostasisMinStepCodes.ToString(CultureInfo.InvariantCulture);
+        HomeostasisEnergyTargetScaleText = info.HomeostasisEnergyTargetScale.ToString("0.######", CultureInfo.InvariantCulture);
+        HomeostasisEnergyProbabilityScaleText = info.HomeostasisEnergyProbabilityScale.ToString("0.######", CultureInfo.InvariantCulture);
 
         var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == info.PlasticityProbabilisticUpdates);
         if (selectedMode is not null)
         {
             SelectedPlasticityMode = selectedMode;
+        }
+
+        var selectedTargetMode = HomeostasisTargetModes.FirstOrDefault(mode => mode.Mode == info.HomeostasisTargetMode);
+        if (selectedTargetMode is not null)
+        {
+            SelectedHomeostasisTargetMode = selectedTargetMode;
+        }
+
+        var selectedUpdateMode = HomeostasisUpdateModes.FirstOrDefault(mode => mode.Mode == info.HomeostasisUpdateMode);
+        if (selectedUpdateMode is not null)
+        {
+            SelectedHomeostasisUpdateMode = selectedUpdateMode;
         }
 
         var shouldRegenerateSuggestion = string.IsNullOrWhiteSpace(InputVectorText);
@@ -577,8 +670,10 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
 
         var plasticityModeLabel = info.PlasticityProbabilisticUpdates ? "probabilistic" : "absolute";
+        var homeostasisTargetLabel = SelectedHomeostasisTargetMode?.Label ?? info.HomeostasisTargetMode.ToString();
+        var homeostasisUpdateLabel = SelectedHomeostasisUpdateMode?.Label ?? info.HomeostasisUpdateMode.ToString();
         BrainInfoSummary =
-            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######})";
+            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######}) | Homeostasis: {(info.HomeostasisEnabled ? "on" : "off")} ({homeostasisTargetLabel}, {homeostasisUpdateLabel}, p={info.HomeostasisBaseProbability:0.######}, step={info.HomeostasisMinStepCodes}, coupling={(info.HomeostasisEnergyCouplingEnabled ? "on" : "off")})";
     }
 
     private void Subscribe(bool vector)
@@ -660,6 +755,11 @@ public sealed class IoPanelViewModel : ViewModelBase
     private void ApplyPlasticity()
     {
         _ = ApplyPlasticityAsync();
+    }
+
+    private void ApplyHomeostasis()
+    {
+        _ = ApplyHomeostasisAsync();
     }
 
     private void ClearOutputs()
@@ -859,6 +959,54 @@ public sealed class IoPanelViewModel : ViewModelBase
         ApplyCommandResultToSummary("Plasticity", results);
     }
 
+    private async Task ApplyHomeostasisAsync()
+    {
+        if (!TryParseHomeostasisBaseProbability(out var baseProbability))
+        {
+            BrainInfoSummary = "Homeostasis probability invalid.";
+            return;
+        }
+
+        if (!TryParseHomeostasisMinStepCodes(out var minStepCodes))
+        {
+            BrainInfoSummary = "Homeostasis min-step-codes invalid.";
+            return;
+        }
+
+        if (!TryParseHomeostasisScale(HomeostasisEnergyTargetScaleText, out var energyTargetScale))
+        {
+            BrainInfoSummary = "Homeostasis energy-target-scale invalid.";
+            return;
+        }
+
+        if (!TryParseHomeostasisScale(HomeostasisEnergyProbabilityScaleText, out var energyProbabilityScale))
+        {
+            BrainInfoSummary = "Homeostasis energy-probability-scale invalid.";
+            return;
+        }
+
+        if (!TryGetTargetBrains(out var targets))
+        {
+            return;
+        }
+
+        var enabled = HomeostasisEnabled;
+        var targetMode = SelectedHomeostasisTargetMode?.Mode ?? HomeostasisTargetMode.HomeostasisTargetZero;
+        var updateMode = SelectedHomeostasisUpdateMode?.Mode ?? HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep;
+        var energyCouplingEnabled = HomeostasisEnergyCouplingEnabled;
+        var results = await Task.WhenAll(targets.Select(brainId => _client.SetHomeostasisAsync(
+            brainId,
+            enabled,
+            targetMode,
+            updateMode,
+            baseProbability,
+            minStepCodes,
+            energyCouplingEnabled,
+            energyTargetScale,
+            energyProbabilityScale))).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Homeostasis", results);
+    }
+
     private bool TryGetTargetBrains(out IReadOnlyList<Guid> targets)
     {
         if (_activeBrains.Count > 0)
@@ -886,6 +1034,36 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
 
         return float.IsFinite(rate) && rate >= 0f;
+    }
+
+    private bool TryParseHomeostasisBaseProbability(out float probability)
+    {
+        if (!float.TryParse(HomeostasisBaseProbabilityText, NumberStyles.Float, CultureInfo.InvariantCulture, out probability))
+        {
+            return false;
+        }
+
+        return float.IsFinite(probability) && probability >= 0f && probability <= 1f;
+    }
+
+    private bool TryParseHomeostasisMinStepCodes(out uint minStepCodes)
+    {
+        if (!uint.TryParse(HomeostasisMinStepCodesText, NumberStyles.Integer, CultureInfo.InvariantCulture, out minStepCodes))
+        {
+            return false;
+        }
+
+        return minStepCodes > 0;
+    }
+
+    private static bool TryParseHomeostasisScale(string text, out float scale)
+    {
+        if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out scale))
+        {
+            return false;
+        }
+
+        return float.IsFinite(scale) && scale >= 0f && scale <= 4f;
     }
 
     private void ApplyCommandResultToSummary(string operation, IReadOnlyList<IoCommandResult> results)
@@ -936,13 +1114,31 @@ public sealed class IoPanelViewModel : ViewModelBase
                 CostEnabled = selectedState.CostEnabled;
                 EnergyEnabled = selectedState.EnergyEnabled;
                 PlasticityEnabled = selectedState.PlasticityEnabled;
+                HomeostasisEnabled = selectedState.HomeostasisEnabled;
+                HomeostasisEnergyCouplingEnabled = selectedState.HomeostasisEnergyCouplingEnabled;
                 EnergyRateText = selectedState.EnergyRateUnitsPerSecond.ToString(CultureInfo.InvariantCulture);
                 PlasticityRateText = selectedState.PlasticityRate.ToString("0.######", CultureInfo.InvariantCulture);
+                HomeostasisBaseProbabilityText = selectedState.HomeostasisBaseProbability.ToString("0.######", CultureInfo.InvariantCulture);
+                HomeostasisMinStepCodesText = selectedState.HomeostasisMinStepCodes.ToString(CultureInfo.InvariantCulture);
+                HomeostasisEnergyTargetScaleText = selectedState.HomeostasisEnergyTargetScale.ToString("0.######", CultureInfo.InvariantCulture);
+                HomeostasisEnergyProbabilityScaleText = selectedState.HomeostasisEnergyProbabilityScale.ToString("0.######", CultureInfo.InvariantCulture);
 
                 var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == selectedState.PlasticityProbabilisticUpdates);
                 if (selectedMode is not null)
                 {
                     SelectedPlasticityMode = selectedMode;
+                }
+
+                var targetMode = HomeostasisTargetModes.FirstOrDefault(mode => mode.Mode == selectedState.HomeostasisTargetMode);
+                if (targetMode is not null)
+                {
+                    SelectedHomeostasisTargetMode = targetMode;
+                }
+
+                var updateMode = HomeostasisUpdateModes.FirstOrDefault(mode => mode.Mode == selectedState.HomeostasisUpdateMode);
+                if (updateMode is not null)
+                {
+                    SelectedHomeostasisUpdateMode = updateMode;
                 }
             }
 
@@ -1065,4 +1261,6 @@ public sealed class IoPanelViewModel : ViewModelBase
 }
 
 public sealed record PlasticityModeOption(string Label, bool Probabilistic);
+public sealed record HomeostasisTargetModeOption(string Label, HomeostasisTargetMode Mode);
+public sealed record HomeostasisUpdateModeOption(string Label, HomeostasisUpdateMode Mode);
 

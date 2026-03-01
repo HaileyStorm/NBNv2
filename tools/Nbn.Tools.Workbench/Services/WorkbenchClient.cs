@@ -954,6 +954,75 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public void SetHomeostasis(
+        Guid brainId,
+        bool enabled,
+        HomeostasisTargetMode targetMode,
+        HomeostasisUpdateMode updateMode,
+        float baseProbability,
+        uint minStepCodes,
+        bool energyCouplingEnabled,
+        float energyTargetScale,
+        float energyProbabilityScale)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return;
+        }
+
+        _root.Send(
+            _receiverPid,
+            new SetHomeostasisCommand(
+                brainId,
+                enabled,
+                targetMode,
+                updateMode,
+                baseProbability,
+                minStepCodes,
+                energyCouplingEnabled,
+                energyTargetScale,
+                energyProbabilityScale));
+    }
+
+    public virtual async Task<IoCommandResult> SetHomeostasisAsync(
+        Guid brainId,
+        bool enabled,
+        HomeostasisTargetMode targetMode,
+        HomeostasisUpdateMode updateMode,
+        float baseProbability,
+        uint minStepCodes,
+        bool energyCouplingEnabled,
+        float energyTargetScale,
+        float energyProbabilityScale)
+    {
+        if (_receiverPid is null || _root is null)
+        {
+            return new IoCommandResult(brainId, "set_homeostasis", false, "workbench_offline");
+        }
+
+        try
+        {
+            return await _root.RequestAsync<IoCommandResult>(
+                    _receiverPid,
+                    new SetHomeostasisCommand(
+                        brainId,
+                        enabled,
+                        targetMode,
+                        updateMode,
+                        baseProbability,
+                        minStepCodes,
+                        energyCouplingEnabled,
+                        energyTargetScale,
+                        energyProbabilityScale),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return new IoCommandResult(brainId, "set_homeostasis", false, $"request_failed:{ex.Message}");
+        }
+    }
+
     public virtual async Task<Nbn.Proto.Repro.ReproduceResult?> ReproduceByBrainIdsAsync(ReproduceByBrainIdsRequest request)
     {
         if (_root is null)

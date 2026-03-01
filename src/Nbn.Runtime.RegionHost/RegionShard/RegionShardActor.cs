@@ -42,6 +42,14 @@ public sealed class RegionShardActor : IActor
     private bool _plasticityEnabled;
     private float _plasticityRate;
     private bool _plasticityProbabilisticUpdates;
+    private bool _homeostasisEnabled = RegionShardHomeostasisConfig.Default.Enabled;
+    private HomeostasisTargetMode _homeostasisTargetMode = RegionShardHomeostasisConfig.Default.TargetMode;
+    private HomeostasisUpdateMode _homeostasisUpdateMode = RegionShardHomeostasisConfig.Default.UpdateMode;
+    private float _homeostasisBaseProbability = RegionShardHomeostasisConfig.Default.BaseProbability;
+    private uint _homeostasisMinStepCodes = RegionShardHomeostasisConfig.Default.MinStepCodes;
+    private bool _homeostasisEnergyCouplingEnabled = RegionShardHomeostasisConfig.Default.EnergyCouplingEnabled;
+    private float _homeostasisEnergyTargetScale = RegionShardHomeostasisConfig.Default.EnergyTargetScale;
+    private float _homeostasisEnergyProbabilityScale = RegionShardHomeostasisConfig.Default.EnergyProbabilityScale;
     private bool _hasComputed;
     private ulong _lastComputeTickId;
     private ulong _vizSequence;
@@ -212,6 +220,14 @@ public sealed class RegionShardActor : IActor
         _plasticityEnabled = message.PlasticityEnabled;
         _plasticityRate = message.PlasticityRate;
         _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+        _homeostasisEnabled = message.HomeostasisEnabled;
+        _homeostasisTargetMode = message.HomeostasisTargetMode;
+        _homeostasisUpdateMode = message.HomeostasisUpdateMode;
+        _homeostasisBaseProbability = message.HomeostasisBaseProbability;
+        _homeostasisMinStepCodes = message.HomeostasisMinStepCodes;
+        _homeostasisEnergyCouplingEnabled = message.HomeostasisEnergyCouplingEnabled;
+        _homeostasisEnergyTargetScale = message.HomeostasisEnergyTargetScale;
+        _homeostasisEnergyProbabilityScale = message.HomeostasisEnergyProbabilityScale;
         _debugEnabled = message.DebugEnabled;
         _debugMinSeverity = message.DebugMinSeverity;
     }
@@ -410,7 +426,17 @@ public sealed class RegionShardActor : IActor
             vizScope,
             _plasticityEnabled,
             _plasticityRate,
-            _plasticityProbabilisticUpdates);
+            _plasticityProbabilisticUpdates,
+            new RegionShardHomeostasisConfig(
+                _homeostasisEnabled,
+                _homeostasisTargetMode,
+                _homeostasisUpdateMode,
+                _homeostasisBaseProbability,
+                _homeostasisMinStepCodes,
+                _homeostasisEnergyCouplingEnabled,
+                _homeostasisEnergyTargetScale,
+                _homeostasisEnergyProbabilityScale),
+            _energyEnabled);
         stopwatch.Stop();
 
         if (LogViz || LogVizDiagnostics)

@@ -59,4 +59,13 @@ Rebasing creates a new `.nbn` where base strength codes incorporate current over
 * external-world request
 * threshold-based automatic policy (configurable)
 
+### 11.5 Homeostasis is separate from plasticity
+
+Homeostasis decay is a neuron-buffer policy, not an axon-strength policy:
+
+* homeostasis mutates neuron buffer `B` before pre-activation gating
+* plasticity mutates axon strength values after firing logic
+* enabling/disabling homeostasis must not implicitly enable/disable plasticity
+* enabling/disabling plasticity must not implicitly enable/disable homeostasis
+
 ---

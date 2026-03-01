@@ -374,6 +374,9 @@ public class HiveMindOutputSinkTests
         Assert.False(initialRuntimeUpdate.CostEnabled);
         Assert.False(initialRuntimeUpdate.EnergyEnabled);
         Assert.False(initialRuntimeUpdate.PlasticityEnabled);
+        Assert.True(initialRuntimeUpdate.HomeostasisEnabled);
+        Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, initialRuntimeUpdate.HomeostasisTargetMode);
+        Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, initialRuntimeUpdate.HomeostasisUpdateMode);
 
         var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var costEnergyIgnoredBefore = debugBefore.Count("control.set_brain_cost_energy.ignored");
@@ -575,6 +578,9 @@ public class HiveMindOutputSinkTests
         Assert.False(initialRuntimeUpdate.CostEnabled);
         Assert.False(initialRuntimeUpdate.EnergyEnabled);
         Assert.False(initialRuntimeUpdate.PlasticityEnabled);
+        Assert.True(initialRuntimeUpdate.HomeostasisEnabled);
+        Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, initialRuntimeUpdate.HomeostasisTargetMode);
+        Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, initialRuntimeUpdate.HomeostasisUpdateMode);
 
         var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
         var visualizationIgnoredBefore = debugBefore.Count("control.set_brain_visualization.ignored");
@@ -675,6 +681,7 @@ public class HiveMindOutputSinkTests
         Assert.False(rejectedRuntimeUpdate.CostEnabled);
         Assert.False(rejectedRuntimeUpdate.EnergyEnabled);
         Assert.False(rejectedRuntimeUpdate.PlasticityEnabled);
+        Assert.True(rejectedRuntimeUpdate.HomeostasisEnabled);
 
         await Task.Delay(100);
         Assert.False(terminatedTcs.Task.IsCompleted);
@@ -1221,6 +1228,14 @@ public class HiveMindOutputSinkTests
                       && update.PlasticityEnabled
                       && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f
                       && !update.ProbabilisticUpdates
+                      && update.HomeostasisEnabled
+                      && update.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
+                      && update.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+                      && Math.Abs(update.HomeostasisBaseProbability - 0.2f) < 0.000001f
+                      && update.HomeostasisMinStepCodes == 2
+                      && update.HomeostasisEnergyCouplingEnabled
+                      && Math.Abs(update.HomeostasisEnergyTargetScale - 0.7f) < 0.000001f
+                      && Math.Abs(update.HomeostasisEnergyProbabilityScale - 1.3f) < 0.000001f
                       && update.DebugEnabled
                       && update.DebugMinSeverity == Nbn.Proto.Severity.SevDebug)));
 
@@ -1239,6 +1254,12 @@ public class HiveMindOutputSinkTests
         Assert.False(initialUpdate.CostEnabled);
         Assert.False(initialUpdate.EnergyEnabled);
         Assert.False(initialUpdate.PlasticityEnabled);
+        Assert.True(initialUpdate.HomeostasisEnabled);
+        Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, initialUpdate.HomeostasisTargetMode);
+        Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, initialUpdate.HomeostasisUpdateMode);
+        Assert.Equal(0.01f, initialUpdate.HomeostasisBaseProbability);
+        Assert.Equal((uint)1, initialUpdate.HomeostasisMinStepCodes);
+        Assert.False(initialUpdate.HomeostasisEnergyCouplingEnabled);
         Assert.True(initialUpdate.DebugEnabled);
         Assert.Equal(Nbn.Proto.Severity.SevDebug, initialUpdate.DebugMinSeverity);
 
@@ -1257,12 +1278,33 @@ public class HiveMindOutputSinkTests
             ProbabilisticUpdates = false
         }));
 
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainHomeostasis
+        {
+            BrainId = brainId.ToProtoUuid(),
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 0.2f,
+            HomeostasisMinStepCodes = 2,
+            HomeostasisEnergyCouplingEnabled = true,
+            HomeostasisEnergyTargetScale = 0.7f,
+            HomeostasisEnergyProbabilityScale = 1.3f
+        }));
+
         var configuredUpdate = await configuredA.Task.WaitAsync(cts.Token);
         Assert.True(configuredUpdate.CostEnabled);
         Assert.True(configuredUpdate.EnergyEnabled);
         Assert.True(configuredUpdate.PlasticityEnabled);
         Assert.Equal(0.2f, configuredUpdate.PlasticityRate);
         Assert.False(configuredUpdate.ProbabilisticUpdates);
+        Assert.True(configuredUpdate.HomeostasisEnabled);
+        Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, configuredUpdate.HomeostasisTargetMode);
+        Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, configuredUpdate.HomeostasisUpdateMode);
+        Assert.Equal(0.2f, configuredUpdate.HomeostasisBaseProbability);
+        Assert.Equal((uint)2, configuredUpdate.HomeostasisMinStepCodes);
+        Assert.True(configuredUpdate.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.7f, configuredUpdate.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.3f, configuredUpdate.HomeostasisEnergyProbabilityScale);
         Assert.True(configuredUpdate.DebugEnabled);
         Assert.Equal(Nbn.Proto.Severity.SevDebug, configuredUpdate.DebugMinSeverity);
 
@@ -1276,6 +1318,14 @@ public class HiveMindOutputSinkTests
                       && update.PlasticityEnabled
                       && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f
                       && !update.ProbabilisticUpdates
+                      && update.HomeostasisEnabled
+                      && update.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
+                      && update.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+                      && Math.Abs(update.HomeostasisBaseProbability - 0.2f) < 0.000001f
+                      && update.HomeostasisMinStepCodes == 2
+                      && update.HomeostasisEnergyCouplingEnabled
+                      && Math.Abs(update.HomeostasisEnergyTargetScale - 0.7f) < 0.000001f
+                      && Math.Abs(update.HomeostasisEnergyProbabilityScale - 1.3f) < 0.000001f
                       && update.DebugEnabled
                       && update.DebugMinSeverity == Nbn.Proto.Severity.SevDebug)));
 
@@ -1295,6 +1345,14 @@ public class HiveMindOutputSinkTests
         Assert.True(newShardUpdate.PlasticityEnabled);
         Assert.Equal(0.2f, newShardUpdate.PlasticityRate);
         Assert.False(newShardUpdate.ProbabilisticUpdates);
+        Assert.True(newShardUpdate.HomeostasisEnabled);
+        Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, newShardUpdate.HomeostasisTargetMode);
+        Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, newShardUpdate.HomeostasisUpdateMode);
+        Assert.Equal(0.2f, newShardUpdate.HomeostasisBaseProbability);
+        Assert.Equal((uint)2, newShardUpdate.HomeostasisMinStepCodes);
+        Assert.True(newShardUpdate.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.7f, newShardUpdate.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.3f, newShardUpdate.HomeostasisEnergyProbabilityScale);
         Assert.True(newShardUpdate.DebugEnabled);
         Assert.Equal(Nbn.Proto.Severity.SevDebug, newShardUpdate.DebugMinSeverity);
 
@@ -1357,7 +1415,15 @@ public class HiveMindOutputSinkTests
                 && message.EnergyEnabled
                 && message.PlasticityEnabled
                 && Math.Abs(message.PlasticityRate - 0.4f) < 0.000001f
-                && !message.PlasticityProbabilisticUpdates)),
+                && !message.PlasticityProbabilisticUpdates
+                && message.HomeostasisEnabled
+                && message.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
+                && message.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+                && Math.Abs(message.HomeostasisBaseProbability - 0.19f) < 0.000001f
+                && message.HomeostasisMinStepCodes == 3
+                && message.HomeostasisEnergyCouplingEnabled
+                && Math.Abs(message.HomeostasisEnergyTargetScale - 0.8f) < 0.000001f
+                && Math.Abs(message.HomeostasisEnergyProbabilityScale - 1.2f) < 0.000001f)),
             "io-probe");
 
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe)));
@@ -1407,6 +1473,19 @@ public class HiveMindOutputSinkTests
             ProbabilisticUpdates = false
         }));
 
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainHomeostasis
+        {
+            BrainId = brainId.ToProtoUuid(),
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 0.19f,
+            HomeostasisMinStepCodes = 3,
+            HomeostasisEnergyCouplingEnabled = true,
+            HomeostasisEnergyTargetScale = 0.8f,
+            HomeostasisEnergyProbabilityScale = 1.2f
+        }));
+
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var register = await registerTcs.Task.WaitAsync(cts.Token);
         Assert.True(register.HasRuntimeConfig);
@@ -1415,6 +1494,14 @@ public class HiveMindOutputSinkTests
         Assert.True(register.PlasticityEnabled);
         Assert.Equal(0.4f, register.PlasticityRate);
         Assert.False(register.PlasticityProbabilisticUpdates);
+        Assert.True(register.HomeostasisEnabled);
+        Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, register.HomeostasisTargetMode);
+        Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, register.HomeostasisUpdateMode);
+        Assert.Equal(0.19f, register.HomeostasisBaseProbability);
+        Assert.Equal((uint)3, register.HomeostasisMinStepCodes);
+        Assert.True(register.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.8f, register.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.2f, register.HomeostasisEnergyProbabilityScale);
 
         await system.ShutdownAsync();
     }

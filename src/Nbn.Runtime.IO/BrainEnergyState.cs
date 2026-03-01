@@ -1,7 +1,16 @@
+using Nbn.Proto.Control;
+
 namespace Nbn.Runtime.IO;
 
 public sealed class BrainEnergyState
 {
+    private const float MinScale = 0f;
+    private const float MaxScale = 4f;
+    private const float DefaultHomeostasisBaseProbability = 0.01f;
+    private const uint DefaultHomeostasisMinStepCodes = 1;
+    private const float DefaultHomeostasisTargetScale = 1f;
+    private const float DefaultHomeostasisProbabilityScale = 1f;
+
     private DateTimeOffset _lastUpdate;
     private double _carry;
 
@@ -12,7 +21,15 @@ public sealed class BrainEnergyState
         bool energyEnabled = false,
         bool plasticityEnabled = false,
         float plasticityRate = 0,
-        bool plasticityProbabilisticUpdates = false)
+        bool plasticityProbabilisticUpdates = false,
+        bool homeostasisEnabled = true,
+        HomeostasisTargetMode homeostasisTargetMode = HomeostasisTargetMode.HomeostasisTargetZero,
+        HomeostasisUpdateMode homeostasisUpdateMode = HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+        float homeostasisBaseProbability = DefaultHomeostasisBaseProbability,
+        uint homeostasisMinStepCodes = DefaultHomeostasisMinStepCodes,
+        bool homeostasisEnergyCouplingEnabled = false,
+        float homeostasisEnergyTargetScale = DefaultHomeostasisTargetScale,
+        float homeostasisEnergyProbabilityScale = DefaultHomeostasisProbabilityScale)
     {
         EnergyRemaining = energyRemaining;
         EnergyRateUnitsPerSecond = energyRateUnitsPerSecond;
@@ -21,6 +38,15 @@ public sealed class BrainEnergyState
         PlasticityEnabled = plasticityEnabled;
         PlasticityRate = plasticityRate;
         PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
+        SetHomeostasis(
+            homeostasisEnabled,
+            homeostasisTargetMode,
+            homeostasisUpdateMode,
+            homeostasisBaseProbability,
+            homeostasisMinStepCodes,
+            homeostasisEnergyCouplingEnabled,
+            homeostasisEnergyTargetScale,
+            homeostasisEnergyProbabilityScale);
         _lastUpdate = DateTimeOffset.UtcNow;
     }
 
@@ -29,6 +55,14 @@ public sealed class BrainEnergyState
     public bool PlasticityEnabled { get; private set; }
     public float PlasticityRate { get; private set; }
     public bool PlasticityProbabilisticUpdates { get; private set; }
+    public bool HomeostasisEnabled { get; private set; }
+    public HomeostasisTargetMode HomeostasisTargetMode { get; private set; }
+    public HomeostasisUpdateMode HomeostasisUpdateMode { get; private set; }
+    public float HomeostasisBaseProbability { get; private set; }
+    public uint HomeostasisMinStepCodes { get; private set; }
+    public bool HomeostasisEnergyCouplingEnabled { get; private set; }
+    public float HomeostasisEnergyTargetScale { get; private set; }
+    public float HomeostasisEnergyProbabilityScale { get; private set; }
 
     public long EnergyRemaining { get; private set; }
     public long EnergyRateUnitsPerSecond { get; private set; }
@@ -59,12 +93,40 @@ public sealed class BrainEnergyState
         PlasticityProbabilisticUpdates = probabilisticUpdates;
     }
 
+    public void SetHomeostasis(
+        bool enabled,
+        HomeostasisTargetMode targetMode,
+        HomeostasisUpdateMode updateMode,
+        float baseProbability,
+        uint minStepCodes,
+        bool energyCouplingEnabled,
+        float energyTargetScale,
+        float energyProbabilityScale)
+    {
+        HomeostasisEnabled = enabled;
+        HomeostasisTargetMode = NormalizeHomeostasisTargetMode(targetMode);
+        HomeostasisUpdateMode = NormalizeHomeostasisUpdateMode(updateMode);
+        HomeostasisBaseProbability = ClampFinite(baseProbability, 0f, 1f, DefaultHomeostasisBaseProbability);
+        HomeostasisMinStepCodes = minStepCodes == 0 ? DefaultHomeostasisMinStepCodes : minStepCodes;
+        HomeostasisEnergyCouplingEnabled = energyCouplingEnabled;
+        HomeostasisEnergyTargetScale = ClampFinite(energyTargetScale, MinScale, MaxScale, DefaultHomeostasisTargetScale);
+        HomeostasisEnergyProbabilityScale = ClampFinite(energyProbabilityScale, MinScale, MaxScale, DefaultHomeostasisProbabilityScale);
+    }
+
     public void SetRuntimeConfig(
         bool costEnabled,
         bool energyEnabled,
         bool plasticityEnabled,
         float plasticityRate,
         bool plasticityProbabilisticUpdates,
+        bool homeostasisEnabled,
+        HomeostasisTargetMode homeostasisTargetMode,
+        HomeostasisUpdateMode homeostasisUpdateMode,
+        float homeostasisBaseProbability,
+        uint homeostasisMinStepCodes,
+        bool homeostasisEnergyCouplingEnabled,
+        float homeostasisEnergyTargetScale,
+        float homeostasisEnergyProbabilityScale,
         long lastTickCost)
     {
         CostEnabled = costEnabled;
@@ -72,6 +134,15 @@ public sealed class BrainEnergyState
         PlasticityEnabled = plasticityEnabled;
         PlasticityRate = plasticityRate;
         PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
+        SetHomeostasis(
+            homeostasisEnabled,
+            homeostasisTargetMode,
+            homeostasisUpdateMode,
+            homeostasisBaseProbability,
+            homeostasisMinStepCodes,
+            homeostasisEnergyCouplingEnabled,
+            homeostasisEnergyTargetScale,
+            homeostasisEnergyProbabilityScale);
         LastTickCost = lastTickCost;
     }
 
@@ -96,6 +167,14 @@ public sealed class BrainEnergyState
         PlasticityEnabled = state.PlasticityEnabled;
         PlasticityRate = state.PlasticityRate;
         PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;
+        HomeostasisEnabled = state.HomeostasisEnabled;
+        HomeostasisTargetMode = state.HomeostasisTargetMode;
+        HomeostasisUpdateMode = state.HomeostasisUpdateMode;
+        HomeostasisBaseProbability = state.HomeostasisBaseProbability;
+        HomeostasisMinStepCodes = state.HomeostasisMinStepCodes;
+        HomeostasisEnergyCouplingEnabled = state.HomeostasisEnergyCouplingEnabled;
+        HomeostasisEnergyTargetScale = state.HomeostasisEnergyTargetScale;
+        HomeostasisEnergyProbabilityScale = state.HomeostasisEnergyProbabilityScale;
         LastTickCost = state.LastTickCost;
         _carry = 0;
         _lastUpdate = DateTimeOffset.UtcNow;
@@ -115,6 +194,15 @@ public sealed class BrainEnergyState
         PlasticityEnabled = state.PlasticityEnabled;
         PlasticityRate = state.PlasticityRate;
         PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;
+        SetHomeostasis(
+            state.HomeostasisEnabled,
+            state.HomeostasisTargetMode,
+            state.HomeostasisUpdateMode,
+            state.HomeostasisBaseProbability,
+            state.HomeostasisMinStepCodes,
+            state.HomeostasisEnergyCouplingEnabled,
+            state.HomeostasisEnergyTargetScale,
+            state.HomeostasisEnergyProbabilityScale);
         LastTickCost = state.LastTickCost;
         _carry = 0;
         _lastUpdate = DateTimeOffset.UtcNow;
@@ -138,5 +226,34 @@ public sealed class BrainEnergyState
         }
 
         _lastUpdate = now;
+    }
+
+    private static HomeostasisTargetMode NormalizeHomeostasisTargetMode(HomeostasisTargetMode mode)
+    {
+        return mode switch
+        {
+            HomeostasisTargetMode.HomeostasisTargetZero => HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisTargetMode.HomeostasisTargetFixed => HomeostasisTargetMode.HomeostasisTargetFixed,
+            _ => HomeostasisTargetMode.HomeostasisTargetZero
+        };
+    }
+
+    private static HomeostasisUpdateMode NormalizeHomeostasisUpdateMode(HomeostasisUpdateMode mode)
+    {
+        return mode switch
+        {
+            HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep => HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            _ => HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+        };
+    }
+
+    private static float ClampFinite(float value, float min, float max, float fallback)
+    {
+        if (!float.IsFinite(value))
+        {
+            return fallback;
+        }
+
+        return Math.Clamp(value, min, max);
     }
 }

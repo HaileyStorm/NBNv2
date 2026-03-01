@@ -101,6 +101,8 @@ public sealed class WorkbenchReceiverActor : IActor
                 return ForwardSetCostEnergyAsync(context, flags);
             case SetPlasticityCommand plasticity:
                 return ForwardSetPlasticityAsync(context, plasticity);
+            case SetHomeostasisCommand homeostasis:
+                return ForwardSetHomeostasisAsync(context, homeostasis);
             case OutputEvent output:
                 HandleOutput(output);
                 return Task.CompletedTask;
@@ -181,6 +183,28 @@ public sealed class WorkbenchReceiverActor : IActor
         };
 
         var result = await SendCommandAsync(context, message, plasticity.BrainId, "set_plasticity").ConfigureAwait(false);
+        if (context.Sender is not null)
+        {
+            context.Respond(result);
+        }
+    }
+
+    private async Task ForwardSetHomeostasisAsync(IContext context, SetHomeostasisCommand homeostasis)
+    {
+        var message = new SetHomeostasisEnabled
+        {
+            BrainId = homeostasis.BrainId.ToProtoUuid(),
+            HomeostasisEnabled = homeostasis.HomeostasisEnabled,
+            HomeostasisTargetMode = homeostasis.HomeostasisTargetMode,
+            HomeostasisUpdateMode = homeostasis.HomeostasisUpdateMode,
+            HomeostasisBaseProbability = homeostasis.HomeostasisBaseProbability,
+            HomeostasisMinStepCodes = homeostasis.HomeostasisMinStepCodes,
+            HomeostasisEnergyCouplingEnabled = homeostasis.HomeostasisEnergyCouplingEnabled,
+            HomeostasisEnergyTargetScale = homeostasis.HomeostasisEnergyTargetScale,
+            HomeostasisEnergyProbabilityScale = homeostasis.HomeostasisEnergyProbabilityScale
+        };
+
+        var result = await SendCommandAsync(context, message, homeostasis.BrainId, "set_homeostasis").ConfigureAwait(false);
         if (context.Sender is not null)
         {
             context.Respond(result);
@@ -389,6 +413,16 @@ public sealed record EnergyCreditCommand(Guid BrainId, long Amount);
 public sealed record EnergyRateCommand(Guid BrainId, long UnitsPerSecond);
 public sealed record SetCostEnergyCommand(Guid BrainId, bool CostEnabled, bool EnergyEnabled);
 public sealed record SetPlasticityCommand(Guid BrainId, bool PlasticityEnabled, float PlasticityRate, bool ProbabilisticUpdates);
+public sealed record SetHomeostasisCommand(
+    Guid BrainId,
+    bool HomeostasisEnabled,
+    HomeostasisTargetMode HomeostasisTargetMode,
+    HomeostasisUpdateMode HomeostasisUpdateMode,
+    float HomeostasisBaseProbability,
+    uint HomeostasisMinStepCodes,
+    bool HomeostasisEnergyCouplingEnabled,
+    float HomeostasisEnergyTargetScale,
+    float HomeostasisEnergyProbabilityScale);
 public sealed record IoCommandResult(
     Guid BrainId,
     string Command,

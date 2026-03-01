@@ -85,6 +85,9 @@ public sealed class IoGatewayActor : IActor
             case SetPlasticityEnabled message:
                 ApplyPlasticityFlags(context, message);
                 break;
+            case SetHomeostasisEnabled message:
+                ApplyHomeostasisFlags(context, message);
+                break;
             case ApplyTickCost message:
                 ApplyTickCost(context, message);
                 break;
@@ -204,6 +207,14 @@ public sealed class IoGatewayActor : IActor
                 EnergyRateUnitsPerSecond = 0,
                 PlasticityRate = 0,
                 PlasticityProbabilisticUpdates = false,
+                HomeostasisEnabled = true,
+                HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+                HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                HomeostasisBaseProbability = 0.01f,
+                HomeostasisMinStepCodes = 1,
+                HomeostasisEnergyCouplingEnabled = false,
+                HomeostasisEnergyTargetScale = 1f,
+                HomeostasisEnergyProbabilityScale = 1f,
                 LastTickCost = 0,
                 BaseDefinition = new ArtifactRef(),
                 LastSnapshot = new ArtifactRef()
@@ -231,6 +242,14 @@ public sealed class IoGatewayActor : IActor
             EnergyRateUnitsPerSecond = entry.Energy.EnergyRateUnitsPerSecond,
             PlasticityRate = entry.Energy.PlasticityRate,
             PlasticityProbabilisticUpdates = entry.Energy.PlasticityProbabilisticUpdates,
+            HomeostasisEnabled = entry.Energy.HomeostasisEnabled,
+            HomeostasisTargetMode = entry.Energy.HomeostasisTargetMode,
+            HomeostasisUpdateMode = entry.Energy.HomeostasisUpdateMode,
+            HomeostasisBaseProbability = entry.Energy.HomeostasisBaseProbability,
+            HomeostasisMinStepCodes = entry.Energy.HomeostasisMinStepCodes,
+            HomeostasisEnergyCouplingEnabled = entry.Energy.HomeostasisEnergyCouplingEnabled,
+            HomeostasisEnergyTargetScale = entry.Energy.HomeostasisEnergyTargetScale,
+            HomeostasisEnergyProbabilityScale = entry.Energy.HomeostasisEnergyProbabilityScale,
             LastTickCost = entry.Energy.LastTickCost,
             BaseDefinition = entry.BaseDefinition ?? new ArtifactRef(),
             LastSnapshot = entry.LastSnapshot ?? new ArtifactRef()
@@ -461,6 +480,86 @@ public sealed class IoGatewayActor : IActor
         RespondCommandAck(context, message.BrainId, "set_plasticity", success: true, ackMessage, entry);
     }
 
+    private void ApplyHomeostasisFlags(IContext context, SetHomeostasisEnabled message)
+    {
+        if (!TryGetBrainEntry(message, out var entry))
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "brain_not_found");
+            return;
+        }
+
+        if (!float.IsFinite(message.HomeostasisBaseProbability)
+            || message.HomeostasisBaseProbability < 0f
+            || message.HomeostasisBaseProbability > 1f)
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "homeostasis_probability_invalid", entry);
+            return;
+        }
+
+        if (!IsSupportedHomeostasisTargetMode(message.HomeostasisTargetMode))
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "homeostasis_target_mode_invalid", entry);
+            return;
+        }
+
+        if (message.HomeostasisUpdateMode != ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep)
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "homeostasis_update_mode_invalid", entry);
+            return;
+        }
+
+        if (message.HomeostasisMinStepCodes == 0)
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "homeostasis_min_step_codes_invalid", entry);
+            return;
+        }
+
+        if (!IsFiniteInRange(message.HomeostasisEnergyTargetScale, 0f, 4f))
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "homeostasis_energy_target_scale_invalid", entry);
+            return;
+        }
+
+        if (!IsFiniteInRange(message.HomeostasisEnergyProbabilityScale, 0f, 4f))
+        {
+            RespondCommandAck(context, message.BrainId, "set_homeostasis", success: false, "homeostasis_energy_probability_scale_invalid", entry);
+            return;
+        }
+
+        entry.Energy.SetHomeostasis(
+            message.HomeostasisEnabled,
+            message.HomeostasisTargetMode,
+            message.HomeostasisUpdateMode,
+            message.HomeostasisBaseProbability,
+            message.HomeostasisMinStepCodes,
+            message.HomeostasisEnergyCouplingEnabled,
+            message.HomeostasisEnergyTargetScale,
+            message.HomeostasisEnergyProbabilityScale);
+
+        var ackMessage = "applied";
+        if (_hiveMindPid is not null)
+        {
+            context.Request(_hiveMindPid, new ProtoControl.SetBrainHomeostasis
+            {
+                BrainId = message.BrainId,
+                HomeostasisEnabled = message.HomeostasisEnabled,
+                HomeostasisTargetMode = message.HomeostasisTargetMode,
+                HomeostasisUpdateMode = message.HomeostasisUpdateMode,
+                HomeostasisBaseProbability = message.HomeostasisBaseProbability,
+                HomeostasisMinStepCodes = message.HomeostasisMinStepCodes,
+                HomeostasisEnergyCouplingEnabled = message.HomeostasisEnergyCouplingEnabled,
+                HomeostasisEnergyTargetScale = message.HomeostasisEnergyTargetScale,
+                HomeostasisEnergyProbabilityScale = message.HomeostasisEnergyProbabilityScale
+            });
+        }
+        else
+        {
+            ackMessage = "applied_local_only_hivemind_unavailable";
+        }
+
+        RespondCommandAck(context, message.BrainId, "set_homeostasis", success: true, ackMessage, entry);
+    }
+
     private void ApplyTickCost(IContext context, ApplyTickCost message)
     {
         if (!_brains.TryGetValue(message.BrainId, out var entry))
@@ -555,6 +654,14 @@ public sealed class IoGatewayActor : IActor
                     message.PlasticityEnabled,
                     message.PlasticityRate,
                     message.PlasticityProbabilisticUpdates,
+                    message.HomeostasisEnabled,
+                    message.HomeostasisTargetMode,
+                    message.HomeostasisUpdateMode,
+                    message.HomeostasisBaseProbability,
+                    message.HomeostasisMinStepCodes,
+                    message.HomeostasisEnergyCouplingEnabled,
+                    message.HomeostasisEnergyTargetScale,
+                    message.HomeostasisEnergyProbabilityScale,
                     message.LastTickCost);
             }
 
@@ -606,6 +713,14 @@ public sealed class IoGatewayActor : IActor
                 message.PlasticityEnabled,
                 message.PlasticityRate,
                 message.PlasticityProbabilisticUpdates,
+                message.HomeostasisEnabled,
+                message.HomeostasisTargetMode,
+                message.HomeostasisUpdateMode,
+                message.HomeostasisBaseProbability,
+                message.HomeostasisMinStepCodes,
+                message.HomeostasisEnergyCouplingEnabled,
+                message.HomeostasisEnergyTargetScale,
+                message.HomeostasisEnergyProbabilityScale,
                 message.LastTickCost);
         }
 
@@ -1177,6 +1292,8 @@ public sealed class IoGatewayActor : IActor
                 return _brains.TryGetValue(brainId, out entry!);
             case SetPlasticityEnabled plasticity when TryGetBrainId(plasticity.BrainId, out var brainId):
                 return _brains.TryGetValue(brainId, out entry!);
+            case SetHomeostasisEnabled homeostasis when TryGetBrainId(homeostasis.BrainId, out var brainId):
+                return _brains.TryGetValue(brainId, out entry!);
         }
 
         return false;
@@ -1208,6 +1325,8 @@ public sealed class IoGatewayActor : IActor
                 return TryGetBrainId(costEnergy.BrainId, out guid);
             case SetPlasticityEnabled plasticity:
                 return TryGetBrainId(plasticity.BrainId, out guid);
+            case SetHomeostasisEnabled homeostasis:
+                return TryGetBrainId(homeostasis.BrainId, out guid);
             case RuntimeNeuronPulse pulse:
                 return TryGetBrainId(pulse.BrainId, out guid);
             case RuntimeNeuronStateWrite stateWrite:
@@ -1228,6 +1347,17 @@ public sealed class IoGatewayActor : IActor
         return brainId.TryToGuid(out guid);
     }
 
+    private static bool IsSupportedHomeostasisTargetMode(ProtoControl.HomeostasisTargetMode mode)
+    {
+        return mode == ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero
+               || mode == ProtoControl.HomeostasisTargetMode.HomeostasisTargetFixed;
+    }
+
+    private static bool IsFiniteInRange(float value, float min, float max)
+    {
+        return float.IsFinite(value) && value >= min && value <= max;
+    }
+
     private static Nbn.Proto.Io.BrainEnergyState BuildCommandEnergyState(BrainEnergyState energy)
     {
         return new Nbn.Proto.Io.BrainEnergyState
@@ -1239,6 +1369,14 @@ public sealed class IoGatewayActor : IActor
             PlasticityEnabled = energy.PlasticityEnabled,
             PlasticityRate = energy.PlasticityRate,
             PlasticityProbabilisticUpdates = energy.PlasticityProbabilisticUpdates,
+            HomeostasisEnabled = energy.HomeostasisEnabled,
+            HomeostasisTargetMode = energy.HomeostasisTargetMode,
+            HomeostasisUpdateMode = energy.HomeostasisUpdateMode,
+            HomeostasisBaseProbability = energy.HomeostasisBaseProbability,
+            HomeostasisMinStepCodes = energy.HomeostasisMinStepCodes,
+            HomeostasisEnergyCouplingEnabled = energy.HomeostasisEnergyCouplingEnabled,
+            HomeostasisEnergyTargetScale = energy.HomeostasisEnergyTargetScale,
+            HomeostasisEnergyProbabilityScale = energy.HomeostasisEnergyProbabilityScale,
             LastTickCost = energy.LastTickCost
         };
     }

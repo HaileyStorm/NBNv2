@@ -53,6 +53,40 @@
               <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PlasticityRateText}" Width="90" />
               <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyPlasticityCommand}" />
             </Grid>
+            <Border Height="1" Background="#33000000" Margin="0,4,0,4" />
+            <TextBlock Text="Homeostasis" Classes="card-title" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="6">
+              <TextBlock Text="Target" Classes="muted" />
+              <ComboBox Grid.Column="1" ItemsSource="{Binding HomeostasisTargetModes}" SelectedItem="{Binding SelectedHomeostasisTargetMode}" Width="180">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <CheckBox Grid.Column="2" Content="Enabled" IsChecked="{Binding HomeostasisEnabled}" />
+
+              <TextBlock Grid.Row="1" Text="Update" Classes="muted" />
+              <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding HomeostasisUpdateModes}" SelectedItem="{Binding SelectedHomeostasisUpdateMode}" Width="180">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Grid.Row="1" Grid.Column="2" Text="" />
+
+              <TextBlock Grid.Row="2" Text="Base p [0..1]" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HomeostasisBaseProbabilityText}" Width="90" />
+              <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding HomeostasisMinStepCodesText}" Width="90" Watermark="Min step codes" />
+
+              <TextBlock Grid.Row="3" Text="Energy scales [0..4]" Classes="muted" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding HomeostasisEnergyTargetScaleText}" Width="90" Watermark="Target" />
+              <TextBox Grid.Row="3" Grid.Column="2" Text="{Binding HomeostasisEnergyProbabilityScaleText}" Width="90" Watermark="Probability" />
+
+              <CheckBox Grid.Row="4" Grid.Column="1" Content="Energy coupling" IsChecked="{Binding HomeostasisEnergyCouplingEnabled}" />
+              <Button Grid.Row="4" Grid.Column="2" Content="Apply" Command="{Binding ApplyHomeostasisCommand}" />
+            </Grid>
           </StackPanel>
         </Border>
       </Grid>

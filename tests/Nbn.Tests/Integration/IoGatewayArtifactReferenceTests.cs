@@ -445,7 +445,7 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
-    public async Task BrainInfo_Returns_Full_Energy_And_Plasticity_State()
+    public async Task BrainInfo_Returns_Full_Energy_Plasticity_And_Homeostasis_State()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -466,6 +466,14 @@ public class IoGatewayArtifactReferenceTests
                 PlasticityEnabled = true,
                 PlasticityRate = 0.125f,
                 PlasticityProbabilisticUpdates = true,
+                HomeostasisEnabled = true,
+                HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+                HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                HomeostasisBaseProbability = 0.2f,
+                HomeostasisMinStepCodes = 3,
+                HomeostasisEnergyCouplingEnabled = true,
+                HomeostasisEnergyTargetScale = 0.6f,
+                HomeostasisEnergyProbabilityScale = 1.8f,
                 LastTickCost = 41
             }
         });
@@ -486,6 +494,14 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.125f, info.PlasticityRate);
         Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.True(info.HomeostasisEnabled);
+        Assert.Equal(ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero, info.HomeostasisTargetMode);
+        Assert.Equal(ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, info.HomeostasisUpdateMode);
+        Assert.Equal(0.2f, info.HomeostasisBaseProbability);
+        Assert.Equal((uint)3, info.HomeostasisMinStepCodes);
+        Assert.True(info.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.6f, info.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.8f, info.HomeostasisEnergyProbabilityScale);
         Assert.Equal(41, info.LastTickCost);
 
         await system.ShutdownAsync();
@@ -498,7 +514,8 @@ public class IoGatewayArtifactReferenceTests
         var root = system.Root;
         var costEnergy = new TaskCompletionSource<ProtoControl.SetBrainCostEnergy>(TaskCreationOptions.RunContinuationsAsynchronously);
         var plasticity = new TaskCompletionSource<ProtoControl.SetBrainPlasticity>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveConfigProbe(costEnergy, plasticity)));
+        var homeostasis = new TaskCompletionSource<ProtoControl.SetBrainHomeostasis>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveConfigProbe(costEnergy, plasticity, homeostasis)));
         var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
 
         var brainId = Guid.NewGuid();
@@ -531,9 +548,23 @@ public class IoGatewayArtifactReferenceTests
             ProbabilisticUpdates = false
         });
 
+        root.Send(gateway, new SetHomeostasisEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 0.22f,
+            HomeostasisMinStepCodes = 2,
+            HomeostasisEnergyCouplingEnabled = true,
+            HomeostasisEnergyTargetScale = 0.7f,
+            HomeostasisEnergyProbabilityScale = 1.3f
+        });
+
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var costUpdate = await costEnergy.Task.WaitAsync(cts.Token);
         var plasticityUpdate = await plasticity.Task.WaitAsync(cts.Token);
+        var homeostasisUpdate = await homeostasis.Task.WaitAsync(cts.Token);
 
         Assert.True(costUpdate.BrainId.TryToGuid(out var costBrainId));
         Assert.Equal(brainId, costBrainId);
@@ -546,6 +577,17 @@ public class IoGatewayArtifactReferenceTests
         Assert.Equal(0.25f, plasticityUpdate.PlasticityRate);
         Assert.False(plasticityUpdate.ProbabilisticUpdates);
 
+        Assert.True(homeostasisUpdate.BrainId.TryToGuid(out var homeostasisBrainId));
+        Assert.Equal(brainId, homeostasisBrainId);
+        Assert.True(homeostasisUpdate.HomeostasisEnabled);
+        Assert.Equal(ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero, homeostasisUpdate.HomeostasisTargetMode);
+        Assert.Equal(ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, homeostasisUpdate.HomeostasisUpdateMode);
+        Assert.Equal(0.22f, homeostasisUpdate.HomeostasisBaseProbability);
+        Assert.Equal((uint)2, homeostasisUpdate.HomeostasisMinStepCodes);
+        Assert.True(homeostasisUpdate.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.7f, homeostasisUpdate.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.3f, homeostasisUpdate.HomeostasisEnergyProbabilityScale);
+
         var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
         {
             BrainId = brainId.ToProtoUuid()
@@ -556,6 +598,12 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.25f, info.PlasticityRate);
         Assert.False(info.PlasticityProbabilisticUpdates);
+        Assert.True(info.HomeostasisEnabled);
+        Assert.Equal(0.22f, info.HomeostasisBaseProbability);
+        Assert.Equal((uint)2, info.HomeostasisMinStepCodes);
+        Assert.True(info.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.7f, info.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.3f, info.HomeostasisEnergyProbabilityScale);
 
         await system.ShutdownAsync();
     }
@@ -616,6 +664,32 @@ public class IoGatewayArtifactReferenceTests
         Assert.Equal(0.125f, plasticityAck.EnergyState.PlasticityRate);
         Assert.True(plasticityAck.EnergyState.PlasticityProbabilisticUpdates);
 
+        var homeostasisAck = await root.RequestAsync<IoCommandAck>(gateway, new SetHomeostasisEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 0.2f,
+            HomeostasisMinStepCodes = 4,
+            HomeostasisEnergyCouplingEnabled = true,
+            HomeostasisEnergyTargetScale = 0.8f,
+            HomeostasisEnergyProbabilityScale = 1.4f
+        });
+
+        Assert.True(homeostasisAck.Success);
+        Assert.Equal("set_homeostasis", homeostasisAck.Command);
+        Assert.True(homeostasisAck.HasEnergyState);
+        Assert.NotNull(homeostasisAck.EnergyState);
+        Assert.True(homeostasisAck.EnergyState.HomeostasisEnabled);
+        Assert.Equal(ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero, homeostasisAck.EnergyState.HomeostasisTargetMode);
+        Assert.Equal(ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, homeostasisAck.EnergyState.HomeostasisUpdateMode);
+        Assert.Equal(0.2f, homeostasisAck.EnergyState.HomeostasisBaseProbability);
+        Assert.Equal((uint)4, homeostasisAck.EnergyState.HomeostasisMinStepCodes);
+        Assert.True(homeostasisAck.EnergyState.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.8f, homeostasisAck.EnergyState.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.4f, homeostasisAck.EnergyState.HomeostasisEnergyProbabilityScale);
+
         await system.ShutdownAsync();
     }
 
@@ -645,6 +719,42 @@ public class IoGatewayArtifactReferenceTests
         Assert.False(ack.Success);
         Assert.Equal("set_plasticity", ack.Command);
         Assert.Equal("plasticity_rate_invalid", ack.Message);
+        Assert.True(ack.HasEnergyState);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidHomeostasisProbability_Returns_Failure()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        var ack = await root.RequestAsync<IoCommandAck>(gateway, new SetHomeostasisEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 1.1f,
+            HomeostasisMinStepCodes = 1,
+            HomeostasisEnergyCouplingEnabled = false,
+            HomeostasisEnergyTargetScale = 1f,
+            HomeostasisEnergyProbabilityScale = 1f
+        });
+
+        Assert.False(ack.Success);
+        Assert.Equal("set_homeostasis", ack.Command);
+        Assert.Equal("homeostasis_probability_invalid", ack.Message);
         Assert.True(ack.HasEnergyState);
 
         await system.ShutdownAsync();
@@ -687,6 +797,14 @@ public class IoGatewayArtifactReferenceTests
             PlasticityEnabled = true,
             PlasticityRate = 0.5f,
             PlasticityProbabilisticUpdates = true,
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 0.18f,
+            HomeostasisMinStepCodes = 2,
+            HomeostasisEnergyCouplingEnabled = true,
+            HomeostasisEnergyTargetScale = 0.75f,
+            HomeostasisEnergyProbabilityScale = 1.25f,
             LastTickCost = 44
         });
 
@@ -702,6 +820,14 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.5f, info.PlasticityRate);
         Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.True(info.HomeostasisEnabled);
+        Assert.Equal(ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero, info.HomeostasisTargetMode);
+        Assert.Equal(ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, info.HomeostasisUpdateMode);
+        Assert.Equal(0.18f, info.HomeostasisBaseProbability);
+        Assert.Equal((uint)2, info.HomeostasisMinStepCodes);
+        Assert.True(info.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(0.75f, info.HomeostasisEnergyTargetScale);
+        Assert.Equal(1.25f, info.HomeostasisEnergyProbabilityScale);
         Assert.Equal(44, info.LastTickCost);
 
         await system.ShutdownAsync();
@@ -1611,13 +1737,16 @@ public class IoGatewayArtifactReferenceTests
     {
         private readonly TaskCompletionSource<ProtoControl.SetBrainCostEnergy> _costEnergy;
         private readonly TaskCompletionSource<ProtoControl.SetBrainPlasticity> _plasticity;
+        private readonly TaskCompletionSource<ProtoControl.SetBrainHomeostasis> _homeostasis;
 
         public HiveConfigProbe(
             TaskCompletionSource<ProtoControl.SetBrainCostEnergy> costEnergy,
-            TaskCompletionSource<ProtoControl.SetBrainPlasticity> plasticity)
+            TaskCompletionSource<ProtoControl.SetBrainPlasticity> plasticity,
+            TaskCompletionSource<ProtoControl.SetBrainHomeostasis> homeostasis)
         {
             _costEnergy = costEnergy;
             _plasticity = plasticity;
+            _homeostasis = homeostasis;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -1632,6 +1761,9 @@ public class IoGatewayArtifactReferenceTests
                     break;
                 case ProtoControl.SetBrainPlasticity plasticity:
                     _plasticity.TrySetResult(plasticity);
+                    break;
+                case ProtoControl.SetBrainHomeostasis homeostasis:
+                    _homeostasis.TrySetResult(homeostasis);
                     break;
             }
 

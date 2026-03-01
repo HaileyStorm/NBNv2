@@ -42,11 +42,24 @@ Required semantics:
 
 Each tick compute phase:
 
-1. If neuron is disabled (runtime), it does not compute activation; however it may still accumulate inbox depending on policy (default: inbox still accumulates, merge still occurs, activation suppressed).
-2. Pre-activation gate: activate only if `B > PreActivationThreshold` (threshold may be negative).
-3. Activation function computes `potential`.
-4. Reset function updates `B` based on `(B, potential, activation_threshold, out_degree)`.
-5. Fire if `abs(potential) > ActivationThreshold`, producing outgoing axon contributions.
+1. Inbox merge: `I` is merged into `B`.
+2. Homeostasis decay (default on): `B` may move toward a target using probabilistic quantized steps before activation gating.
+3. If neuron is disabled (runtime), it does not compute activation; however it may still accumulate inbox depending on policy (default: inbox still accumulates, merge still occurs, activation suppressed).
+4. Pre-activation gate: activate only if `B > PreActivationThreshold` (threshold may be negative).
+5. Activation function computes `potential`.
+6. Reset function updates `B` based on `(B, potential, activation_threshold, out_degree)`.
+7. Fire if `abs(potential) > ActivationThreshold`, producing outgoing axon contributions.
+
+Homeostasis defaults:
+
+* `homeostasis_enabled=true`
+* `homeostasis_target_mode=ZERO`
+* `homeostasis_update_mode=PROBABILISTIC_QUANTIZED_STEP`
+* `homeostasis_base_probability=0.01`
+* `homeostasis_min_step_codes=1`
+* `homeostasis_energy_coupling_enabled=false`
+* `homeostasis_energy_target_scale=1`
+* `homeostasis_energy_probability_scale=1`
 
 ### 5.5 I/O connectivity rules (invariants)
 

@@ -55,6 +55,8 @@ IO supports:
 * one-time energy credit
 * energy rate
 * enable/disable cost and energy
+* plasticity control (`enabled`, `rate`, `probabilistic_updates`)
+* homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
 
 Command writes can be sent as requests and return `IoCommandAck` with:
 
@@ -62,6 +64,13 @@ Command writes can be sent as requests and return `IoCommandAck` with:
 * success/failure
 * reason text
 * optional runtime `BrainEnergyState` snapshot for immediate operator feedback
+
+Homeostasis operator ranges:
+
+* `homeostasis_base_probability`: `[0,1]`
+* `homeostasis_min_step_codes`: `>= 1`
+* `homeostasis_energy_target_scale`: `[0,4]`
+* `homeostasis_energy_probability_scale`: `[0,4]`
 
 ### 13.6 Brain death notifications
 

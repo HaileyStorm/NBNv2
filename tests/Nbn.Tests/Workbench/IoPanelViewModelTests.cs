@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -231,6 +232,48 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public void ApplyHomeostasis_InvalidProbability_Shows_Validation_Error()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.UpdateActiveBrains(new[] { Guid.NewGuid() });
+        vm.HomeostasisBaseProbabilityText = "1.1";
+
+        vm.ApplyHomeostasisCommand.Execute(null);
+
+        Assert.Equal("Homeostasis probability invalid.", vm.BrainInfoSummary);
+    }
+
+    [Fact]
+    public async Task ApplyHomeostasis_Sends_Configured_Values()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        vm.UpdateActiveBrains(new[] { brainA, brainB });
+        vm.HomeostasisEnabled = true;
+        vm.HomeostasisBaseProbabilityText = "0.3";
+        vm.HomeostasisMinStepCodesText = "2";
+        vm.HomeostasisEnergyCouplingEnabled = true;
+        vm.HomeostasisEnergyTargetScaleText = "0.5";
+        vm.HomeostasisEnergyProbabilityScaleText = "1.5";
+
+        vm.ApplyHomeostasisCommand.Execute(null);
+        await WaitForAsync(() => client.HomeostasisCalls.Count == 2);
+
+        Assert.Contains(client.HomeostasisCalls, call => call.BrainId == brainA
+                                                         && call.Enabled
+                                                         && call.TargetMode == HomeostasisTargetMode.HomeostasisTargetZero
+                                                         && call.UpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+                                                         && Math.Abs(call.BaseProbability - 0.3f) < 0.000001f
+                                                         && call.MinStepCodes == 2
+                                                         && call.EnergyCouplingEnabled
+                                                         && Math.Abs(call.EnergyTargetScale - 0.5f) < 0.000001f
+                                                         && Math.Abs(call.EnergyProbabilityScale - 1.5f) < 0.000001f);
+        Assert.Contains(client.HomeostasisCalls, call => call.BrainId == brainB);
+    }
+
+    [Fact]
     public async Task ApplyEnergyRate_AllSuccess_Shows_Success_Count()
     {
         var client = new FakeWorkbenchClient();
@@ -286,6 +329,7 @@ public class IoPanelViewModelTests
         public List<(Guid BrainId, bool CostEnabled, bool EnergyEnabled)> CostEnergyCalls { get; } = new();
         public Dictionary<Guid, IoCommandResult> CostEnergyResults { get; } = new();
         public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
+        public List<(Guid BrainId, bool Enabled, HomeostasisTargetMode TargetMode, HomeostasisUpdateMode UpdateMode, float BaseProbability, uint MinStepCodes, bool EnergyCouplingEnabled, float EnergyTargetScale, float EnergyProbabilityScale)> HomeostasisCalls { get; } = new();
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -324,7 +368,45 @@ public class IoPanelViewModelTests
                 {
                     PlasticityEnabled = enabled,
                     PlasticityRate = rate,
-                    PlasticityProbabilisticUpdates = probabilistic
+                    PlasticityProbabilisticUpdates = probabilistic,
+                    HomeostasisEnabled = true,
+                    HomeostasisTargetMode = HomeostasisTargetMode.HomeostasisTargetZero,
+                    HomeostasisUpdateMode = HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                    HomeostasisBaseProbability = 0.01f,
+                    HomeostasisMinStepCodes = 1,
+                    HomeostasisEnergyCouplingEnabled = false,
+                    HomeostasisEnergyTargetScale = 1f,
+                    HomeostasisEnergyProbabilityScale = 1f
+                }));
+        }
+
+        public override Task<IoCommandResult> SetHomeostasisAsync(
+            Guid brainId,
+            bool enabled,
+            HomeostasisTargetMode targetMode,
+            HomeostasisUpdateMode updateMode,
+            float baseProbability,
+            uint minStepCodes,
+            bool energyCouplingEnabled,
+            float energyTargetScale,
+            float energyProbabilityScale)
+        {
+            HomeostasisCalls.Add((brainId, enabled, targetMode, updateMode, baseProbability, minStepCodes, energyCouplingEnabled, energyTargetScale, energyProbabilityScale));
+            return Task.FromResult(new IoCommandResult(
+                brainId,
+                "set_homeostasis",
+                true,
+                "applied",
+                new BrainEnergyState
+                {
+                    HomeostasisEnabled = enabled,
+                    HomeostasisTargetMode = targetMode,
+                    HomeostasisUpdateMode = updateMode,
+                    HomeostasisBaseProbability = baseProbability,
+                    HomeostasisMinStepCodes = minStepCodes,
+                    HomeostasisEnergyCouplingEnabled = energyCouplingEnabled,
+                    HomeostasisEnergyTargetScale = energyTargetScale,
+                    HomeostasisEnergyProbabilityScale = energyProbabilityScale
                 }));
         }
 

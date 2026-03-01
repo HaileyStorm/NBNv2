@@ -3,7 +3,9 @@ using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Shared;
+using Nbn.Shared.Quantization;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.RegionHost;
 
@@ -37,9 +39,12 @@ public sealed class RegionShardCpuBackend
         RegionShardVisualizationComputeScope? visualization = null,
         bool plasticityEnabled = false,
         float plasticityRate = 0f,
-        bool probabilisticPlasticityUpdates = false)
+        bool probabilisticPlasticityUpdates = false,
+        RegionShardHomeostasisConfig? homeostasisConfig = null,
+        bool energyEnabled = false)
     {
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
+        var homeostasis = homeostasisConfig ?? RegionShardHomeostasisConfig.Default;
         var vizScope = visualization ?? RegionShardVisualizationComputeScope.EnabledAll;
         var focusedRegionId = vizScope.FocusRegionId;
         var collectNeuronViz = vizScope.Enabled
@@ -97,12 +102,9 @@ public sealed class RegionShardCpuBackend
                 continue;
             }
 
-            var buffer = _state.Buffer[i];
-            if (!float.IsFinite(buffer))
-            {
-                buffer = 0f;
-                _state.Buffer[i] = 0f;
-            }
+            var buffer = NormalizeBuffer(i);
+            ApplyHomeostasis(tickId, i, homeostasis, energyEnabled);
+            buffer = NormalizeBuffer(i);
 
             var sourceNeuronId = _state.NeuronStart + i;
             var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
@@ -276,6 +278,107 @@ public sealed class RegionShardCpuBackend
             axonVizEvents,
             bufferVizEvents,
             neuronVizEvents);
+    }
+
+    private bool ApplyHomeostasis(
+        ulong tickId,
+        int neuronIndex,
+        RegionShardHomeostasisConfig config,
+        bool energyEnabled)
+    {
+        if (!config.Enabled)
+        {
+            return false;
+        }
+
+        if (config.UpdateMode != ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep)
+        {
+            return false;
+        }
+
+        var probability = ClampFinite(config.BaseProbability, 0f, 1f, fallback: 0f);
+        if (probability <= 0f)
+        {
+            return false;
+        }
+
+        if (config.EnergyCouplingEnabled && energyEnabled)
+        {
+            var probabilityScale = ClampFinite(config.EnergyProbabilityScale, 0f, 4f, fallback: 1f);
+            probability = Math.Clamp(probability * probabilityScale, 0f, 1f);
+        }
+
+        if (probability <= 0f)
+        {
+            return false;
+        }
+
+        var neuronId = _state.NeuronStart + neuronIndex;
+        var address = ComposeAddress(_state.RegionId, neuronId);
+        var seed = RegionShardDeterministicRngInput.MixToU64(_state.BrainSeed, tickId, address, address);
+        if (UnitIntervalFromSeed(seed) >= probability)
+        {
+            return false;
+        }
+
+        var target = ResolveHomeostasisTarget(config.TargetMode);
+        if (config.EnergyCouplingEnabled && energyEnabled)
+        {
+            var targetScale = ClampFinite(config.EnergyTargetScale, 0f, 4f, fallback: 1f);
+            target *= targetScale;
+        }
+
+        var current = NormalizeBuffer(neuronIndex);
+        var quantization = QuantizationSchemas.DefaultBuffer;
+        var currentCode = quantization.Encode(current, bits: 16);
+        var targetCode = quantization.Encode(target, bits: 16);
+        if (currentCode == targetCode)
+        {
+            return false;
+        }
+
+        var maxStep = QuantizationMap.MaxCode(bits: 16);
+        var requestedStep = config.MinStepCodes == 0 ? 1 : (int)Math.Min(config.MinStepCodes, (uint)maxStep);
+        var stepCodes = Math.Clamp(requestedStep, 1, maxStep);
+        var nextCode = currentCode;
+        if (targetCode > currentCode)
+        {
+            nextCode = Math.Min(currentCode + stepCodes, targetCode);
+        }
+        else
+        {
+            nextCode = Math.Max(currentCode - stepCodes, targetCode);
+        }
+
+        if (nextCode == currentCode)
+        {
+            return false;
+        }
+
+        _state.Buffer[neuronIndex] = quantization.Decode(nextCode, bits: 16);
+        return true;
+    }
+
+    private static float ResolveHomeostasisTarget(ProtoControl.HomeostasisTargetMode mode)
+    {
+        return mode switch
+        {
+            ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero => 0f,
+            ProtoControl.HomeostasisTargetMode.HomeostasisTargetFixed => 0f,
+            _ => 0f
+        };
+    }
+
+    private float NormalizeBuffer(int index)
+    {
+        var buffer = _state.Buffer[index];
+        if (!float.IsFinite(buffer))
+        {
+            buffer = 0f;
+            _state.Buffer[index] = 0f;
+        }
+
+        return buffer;
     }
 
     private void MergeInbox(int index)
@@ -532,6 +635,16 @@ public sealed class RegionShardCpuBackend
         return (float)(bits * scale);
     }
 
+    private static float ClampFinite(float value, float min, float max, float fallback)
+    {
+        if (!float.IsFinite(value))
+        {
+            return fallback;
+        }
+
+        return Math.Clamp(value, min, max);
+    }
+
     private long ComputeDistanceUnits(int sourceNeuronId, byte destRegionId, int destNeuronId, int sourceRegionZ, int?[] regionDistanceCache)
     {
         var destRegion = (int)destRegionId;
@@ -748,3 +861,24 @@ public sealed record RegionShardComputeResult(
     IReadOnlyList<RegionShardAxonVizEvent> AxonVizEvents,
     IReadOnlyList<RegionShardNeuronBufferVizEvent> BufferNeuronEvents,
     IReadOnlyList<RegionShardNeuronVizEvent> FiredNeuronEvents);
+
+public readonly record struct RegionShardHomeostasisConfig(
+    bool Enabled,
+    ProtoControl.HomeostasisTargetMode TargetMode,
+    ProtoControl.HomeostasisUpdateMode UpdateMode,
+    float BaseProbability,
+    uint MinStepCodes,
+    bool EnergyCouplingEnabled,
+    float EnergyTargetScale,
+    float EnergyProbabilityScale)
+{
+    public static RegionShardHomeostasisConfig Default { get; } = new(
+        Enabled: true,
+        TargetMode: ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+        UpdateMode: ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+        BaseProbability: 0.01f,
+        MinStepCodes: 1,
+        EnergyCouplingEnabled: false,
+        EnergyTargetScale: 1f,
+        EnergyProbabilityScale: 1f);
+}
