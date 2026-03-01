@@ -68,6 +68,7 @@ public sealed class RegionShardCpuBackend
         float plasticityDelta = 0f,
         uint plasticityRebaseThreshold = 0,
         float plasticityRebaseThresholdPct = 0f,
+        RegionShardPlasticityEnergyCostConfig? plasticityEnergyCostConfig = null,
         RegionShardHomeostasisConfig? homeostasisConfig = null,
         bool costEnergyEnabled = false,
         bool? remoteCostEnabled = null,
@@ -75,16 +76,24 @@ public sealed class RegionShardCpuBackend
         long? remoteCostPerContribution = null,
         float? costTierAMultiplier = null,
         float? costTierBMultiplier = null,
-        float? costTierCMultiplier = null)
+        float? costTierCMultiplier = null,
+        long previousTickCostTotal = 0)
     {
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
         var homeostasis = homeostasisConfig ?? RegionShardHomeostasisConfig.Default;
+        var effectivePlasticityEnergyCostConfig = plasticityEnergyCostConfig ?? RegionShardPlasticityEnergyCostConfig.Default;
         var effectiveRemoteCostEnabled = remoteCostEnabled ?? _costConfig.RemoteCostEnabled;
         var effectiveRemoteCostPerBatch = Math.Max(0L, remoteCostPerBatch ?? _costConfig.RemoteCostPerBatch);
         var effectiveRemoteCostPerContribution = Math.Max(0L, remoteCostPerContribution ?? _costConfig.RemoteCostPerContribution);
         var effectiveTierAMultiplier = NormalizeTierMultiplier(costTierAMultiplier ?? _costConfig.TierAMultiplier);
         var effectiveTierBMultiplier = NormalizeTierMultiplier(costTierBMultiplier ?? _costConfig.TierBMultiplier);
         var effectiveTierCMultiplier = NormalizeTierMultiplier(costTierCMultiplier ?? _costConfig.TierCMultiplier);
+        var plasticityEnergyCostScale = ResolvePlasticityEnergyCostScale(
+            effectivePlasticityEnergyCostConfig,
+            costEnergyEnabled,
+            previousTickCostTotal);
+        var effectivePlasticityRate = plasticityRate * plasticityEnergyCostScale;
+        var effectivePlasticityDelta = plasticityDelta * plasticityEnergyCostScale;
         double[]? accumCostLookup = null;
         double[]? activationCostLookup = null;
         double[]? resetCostLookup = null;
@@ -285,9 +294,9 @@ public sealed class RegionShardCpuBackend
                         buffer,
                         index,
                         plasticityEnabled,
-                        plasticityRate,
+                        effectivePlasticityRate,
                         probabilisticPlasticityUpdates,
-                        plasticityDelta))
+                        effectivePlasticityDelta))
                 {
                     plasticityStrengthCodeChanges++;
                 }
@@ -431,6 +440,33 @@ public sealed class RegionShardCpuBackend
             CostTier.C => tierCMultiplier,
             _ => tierAMultiplier
         };
+    }
+
+    private static float ResolvePlasticityEnergyCostScale(
+        RegionShardPlasticityEnergyCostConfig config,
+        bool costEnergyEnabled,
+        long previousTickCostTotal)
+    {
+        if (!config.Enabled || !costEnergyEnabled || previousTickCostTotal <= 0)
+        {
+            return 1f;
+        }
+
+        var referenceTickCost = Math.Max(1L, config.ReferenceTickCost);
+        var ratio = previousTickCostTotal / (float)referenceTickCost;
+        if (!float.IsFinite(ratio) || ratio <= 1f)
+        {
+            return 1f;
+        }
+
+        var pressure = ratio - 1f;
+        var rawScale = 1f / (1f + (config.ResponseStrength * pressure));
+        if (!float.IsFinite(rawScale))
+        {
+            rawScale = config.MinScale;
+        }
+
+        return Math.Clamp(rawScale, config.MinScale, config.MaxScale);
     }
 
     private static double[] BuildActivationBaseCosts()
@@ -1311,4 +1347,19 @@ public readonly record struct RegionShardHomeostasisConfig(
         EnergyCouplingEnabled: false,
         EnergyTargetScale: 1f,
         EnergyProbabilityScale: 1f);
+}
+
+public readonly record struct RegionShardPlasticityEnergyCostConfig(
+    bool Enabled,
+    long ReferenceTickCost,
+    float ResponseStrength,
+    float MinScale,
+    float MaxScale)
+{
+    public static RegionShardPlasticityEnergyCostConfig Default { get; } = new(
+        Enabled: false,
+        ReferenceTickCost: 100,
+        ResponseStrength: 1f,
+        MinScale: 0.1f,
+        MaxScale: 1f);
 }

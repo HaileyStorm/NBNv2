@@ -56,7 +56,7 @@ IO supports:
 * energy rate
 * per-brain cost+energy override (`cost_enabled` + `energy_enabled`, paired)
 * system cost+energy master key (`cost_energy.system.enabled`) from SettingsMonitor, combined with per-brain runtime setting (`effective = system && brain`)
-* plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`)
+* plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`, optional energy/cost modulation bounds)
 * system plasticity master key (`plasticity.system.enabled`) from SettingsMonitor, combined with per-brain `enabled` at runtime (`effective = system && brain`)
 * system plasticity default mode/rate keys in SettingsMonitor (`plasticity.system.probabilistic_updates`, `plasticity.system.rate`) for operator sync surfaces (Workbench Energy + Plasticity and Orchestrator Settings)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
@@ -67,6 +67,15 @@ Command writes can be sent as requests and return `IoCommandAck` with:
 * success/failure
 * reason text
 * optional runtime `BrainEnergyState` snapshot for immediate operator feedback
+* for `set_plasticity`, ACK also carries:
+  * configured requested enablement (`configured_plasticity_enabled`)
+  * current authoritative effective enablement snapshot (`effective_plasticity_enabled`)
+
+Authoritative semantics:
+
+* when HiveMind is available, `set_plasticity` ACK reports accepted configured intent plus the current authoritative effective state from IO runtime snapshot
+* effective state is authoritative only after HiveMind re-register/runtime-config reconciliation (for example, system plasticity master off still yields effective false)
+* when HiveMind is unavailable, IO applies locally and ACK effective/configured values match local state
 
 Homeostasis operator ranges:
 
@@ -81,6 +90,10 @@ Plasticity operator ranges:
 * `plasticity_delta`: `>= 0` (if omitted/`0`, runtime uses `plasticity_rate`)
 * `plasticity_rebase_threshold`: `>= 0` (0 disables count trigger)
 * `plasticity_rebase_threshold_pct`: `[0,1]` (0 disables percent trigger)
+* `plasticity_energy_cost_reference_tick_cost`: `> 0` (when modulation enabled)
+* `plasticity_energy_cost_response_strength`: `[0,8]`
+* `plasticity_energy_cost_min_scale`: `[0,1]`
+* `plasticity_energy_cost_max_scale`: `[0,1]` and `>= min_scale`
 
 ### 13.6 Brain death notifications
 

@@ -67,6 +67,10 @@ public sealed class HiveMindActor : IActor
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
     private const float DefaultPlasticityRate = 0.001f;
     private const float DefaultPlasticityDelta = DefaultPlasticityRate;
+    private const long DefaultPlasticityEnergyCostReferenceTickCost = 100;
+    private const float DefaultPlasticityEnergyCostResponseStrength = 1f;
+    private const float DefaultPlasticityEnergyCostMinScale = 0.1f;
+    private const float DefaultPlasticityEnergyCostMaxScale = 1f;
 
     private TickState? _tick;
     private TickPhase _phase = TickPhase.Idle;
@@ -803,6 +807,11 @@ public sealed class HiveMindActor : IActor
             effectivePlasticityDelta,
             brain.PlasticityRebaseThreshold,
             brain.PlasticityRebaseThresholdPct,
+            brain.PlasticityEnergyCostModulationEnabled,
+            brain.PlasticityEnergyCostReferenceTickCost,
+            brain.PlasticityEnergyCostResponseStrength,
+            brain.PlasticityEnergyCostMinScale,
+            brain.PlasticityEnergyCostMaxScale,
             brain.HomeostasisEnabled,
             brain.HomeostasisTargetMode,
             brain.HomeostasisUpdateMode,
@@ -1467,13 +1476,34 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (!TryNormalizePlasticityEnergyCostModulation(
+                message.PlasticityEnergyCostModulationEnabled,
+                message.PlasticityEnergyCostReferenceTickCost,
+                message.PlasticityEnergyCostResponseStrength,
+                message.PlasticityEnergyCostMinScale,
+                message.PlasticityEnergyCostMaxScale,
+                out var modulationReferenceTickCost,
+                out var modulationResponseStrength,
+                out var modulationMinScale,
+                out var modulationMaxScale))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_plasticity", brainId, "invalid_plasticity_config");
+            HiveMindTelemetry.RecordSetBrainPlasticityRejected(brainId, "invalid_plasticity_config");
+            return;
+        }
+
         var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
         if (brain.PlasticityEnabled == message.PlasticityEnabled
             && Math.Abs(brain.PlasticityRate - message.PlasticityRate) < 0.000001f
             && brain.PlasticityProbabilisticUpdates == message.ProbabilisticUpdates
             && Math.Abs(brain.PlasticityDelta - effectiveDelta) < 0.000001f
             && brain.PlasticityRebaseThreshold == message.PlasticityRebaseThreshold
-            && Math.Abs(brain.PlasticityRebaseThresholdPct - message.PlasticityRebaseThresholdPct) < 0.000001f)
+            && Math.Abs(brain.PlasticityRebaseThresholdPct - message.PlasticityRebaseThresholdPct) < 0.000001f
+            && brain.PlasticityEnergyCostModulationEnabled == message.PlasticityEnergyCostModulationEnabled
+            && brain.PlasticityEnergyCostReferenceTickCost == modulationReferenceTickCost
+            && Math.Abs(brain.PlasticityEnergyCostResponseStrength - modulationResponseStrength) < 0.000001f
+            && Math.Abs(brain.PlasticityEnergyCostMinScale - modulationMinScale) < 0.000001f
+            && Math.Abs(brain.PlasticityEnergyCostMaxScale - modulationMaxScale) < 0.000001f)
         {
             return;
         }
@@ -1484,6 +1514,11 @@ public sealed class HiveMindActor : IActor
         brain.PlasticityDelta = effectiveDelta;
         brain.PlasticityRebaseThreshold = message.PlasticityRebaseThreshold;
         brain.PlasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct;
+        brain.PlasticityEnergyCostModulationEnabled = message.PlasticityEnergyCostModulationEnabled;
+        brain.PlasticityEnergyCostReferenceTickCost = modulationReferenceTickCost;
+        brain.PlasticityEnergyCostResponseStrength = modulationResponseStrength;
+        brain.PlasticityEnergyCostMinScale = modulationMinScale;
+        brain.PlasticityEnergyCostMaxScale = modulationMaxScale;
         UpdateShardRuntimeConfig(context, brain);
         RegisterBrainWithIo(context, brain, force: true);
     }
@@ -4944,6 +4979,75 @@ public sealed class HiveMindActor : IActor
         return float.IsFinite(value) && value >= min && value <= max;
     }
 
+    private static bool TryNormalizePlasticityEnergyCostModulation(
+        bool enabled,
+        long referenceTickCost,
+        float responseStrength,
+        float minScale,
+        float maxScale,
+        out long normalizedReferenceTickCost,
+        out float normalizedResponseStrength,
+        out float normalizedMinScale,
+        out float normalizedMaxScale)
+    {
+        normalizedReferenceTickCost = DefaultPlasticityEnergyCostReferenceTickCost;
+        normalizedResponseStrength = DefaultPlasticityEnergyCostResponseStrength;
+        normalizedMinScale = DefaultPlasticityEnergyCostMinScale;
+        normalizedMaxScale = DefaultPlasticityEnergyCostMaxScale;
+
+        if (!enabled)
+        {
+            var hasExplicitConfiguration = referenceTickCost > 0
+                                           || (float.IsFinite(responseStrength) && responseStrength > 0f)
+                                           || (float.IsFinite(minScale) && minScale > 0f)
+                                           || (float.IsFinite(maxScale) && maxScale > 0f);
+            if (!hasExplicitConfiguration)
+            {
+                return true;
+            }
+
+            if (referenceTickCost > 0)
+            {
+                normalizedReferenceTickCost = referenceTickCost;
+            }
+
+            if (float.IsFinite(responseStrength) && responseStrength >= 0f)
+            {
+                normalizedResponseStrength = Math.Clamp(responseStrength, 0f, 8f);
+            }
+
+            var hasExplicitScale = float.IsFinite(minScale)
+                                   && float.IsFinite(maxScale)
+                                   && (minScale > 0f || maxScale > 0f);
+            if (hasExplicitScale)
+            {
+                normalizedMinScale = Math.Clamp(minScale, 0f, 1f);
+                normalizedMaxScale = Math.Clamp(maxScale, 0f, 1f);
+                if (normalizedMaxScale < normalizedMinScale)
+                {
+                    normalizedMaxScale = normalizedMinScale;
+                }
+            }
+
+            return true;
+        }
+
+        if (referenceTickCost <= 0
+            || !IsFiniteInRange(responseStrength, 0f, 8f)
+            || !IsFiniteInRange(minScale, 0f, 1f)
+            || !IsFiniteInRange(maxScale, 0f, 1f)
+            || maxScale < minScale)
+        {
+            return false;
+        }
+
+        normalizedReferenceTickCost = referenceTickCost;
+        normalizedResponseStrength = responseStrength;
+        normalizedMinScale = minScale;
+        normalizedMaxScale = maxScale;
+        return true;
+    }
+
     private static float ResolvePlasticityDelta(float plasticityRate, float plasticityDelta)
     {
         if (plasticityDelta > 0f)
@@ -5973,6 +6077,11 @@ public sealed class HiveMindActor : IActor
                 effectivePlasticityDelta,
                 brain.PlasticityRebaseThreshold,
                 brain.PlasticityRebaseThresholdPct,
+                brain.PlasticityEnergyCostModulationEnabled,
+                brain.PlasticityEnergyCostReferenceTickCost,
+                brain.PlasticityEnergyCostResponseStrength,
+                brain.PlasticityEnergyCostMinScale,
+                brain.PlasticityEnergyCostMaxScale,
                 brain.HomeostasisEnabled,
                 brain.HomeostasisTargetMode,
                 brain.HomeostasisUpdateMode,
@@ -6051,6 +6160,11 @@ public sealed class HiveMindActor : IActor
             PlasticityDelta = effectivePlasticityDelta,
             PlasticityRebaseThreshold = brain.PlasticityRebaseThreshold,
             PlasticityRebaseThresholdPct = brain.PlasticityRebaseThresholdPct,
+            PlasticityEnergyCostModulationEnabled = brain.PlasticityEnergyCostModulationEnabled,
+            PlasticityEnergyCostReferenceTickCost = brain.PlasticityEnergyCostReferenceTickCost,
+            PlasticityEnergyCostResponseStrength = brain.PlasticityEnergyCostResponseStrength,
+            PlasticityEnergyCostMinScale = brain.PlasticityEnergyCostMinScale,
+            PlasticityEnergyCostMaxScale = brain.PlasticityEnergyCostMaxScale,
             HomeostasisEnabled = brain.HomeostasisEnabled,
             HomeostasisTargetMode = brain.HomeostasisTargetMode,
             HomeostasisUpdateMode = brain.HomeostasisUpdateMode,
@@ -6143,6 +6257,11 @@ public sealed class HiveMindActor : IActor
         float plasticityDelta,
         uint plasticityRebaseThreshold,
         float plasticityRebaseThresholdPct,
+        bool plasticityEnergyCostModulationEnabled,
+        long plasticityEnergyCostReferenceTickCost,
+        float plasticityEnergyCostResponseStrength,
+        float plasticityEnergyCostMinScale,
+        float plasticityEnergyCostMaxScale,
         bool homeostasisEnabled,
         ProtoControl.HomeostasisTargetMode homeostasisTargetMode,
         ProtoControl.HomeostasisUpdateMode homeostasisUpdateMode,
@@ -6175,6 +6294,11 @@ public sealed class HiveMindActor : IActor
                 PlasticityDelta = plasticityDelta,
                 PlasticityRebaseThreshold = plasticityRebaseThreshold,
                 PlasticityRebaseThresholdPct = plasticityRebaseThresholdPct,
+                PlasticityEnergyCostModulationEnabled = plasticityEnergyCostModulationEnabled,
+                PlasticityEnergyCostReferenceTickCost = plasticityEnergyCostReferenceTickCost,
+                PlasticityEnergyCostResponseStrength = plasticityEnergyCostResponseStrength,
+                PlasticityEnergyCostMinScale = plasticityEnergyCostMinScale,
+                PlasticityEnergyCostMaxScale = plasticityEnergyCostMaxScale,
                 HomeostasisEnabled = homeostasisEnabled,
                 HomeostasisTargetMode = homeostasisTargetMode,
                 HomeostasisUpdateMode = homeostasisUpdateMode,
@@ -6368,6 +6492,11 @@ public sealed class HiveMindActor : IActor
         public float PlasticityDelta { get; set; } = DefaultPlasticityDelta;
         public uint PlasticityRebaseThreshold { get; set; }
         public float PlasticityRebaseThresholdPct { get; set; }
+        public bool PlasticityEnergyCostModulationEnabled { get; set; }
+        public long PlasticityEnergyCostReferenceTickCost { get; set; } = DefaultPlasticityEnergyCostReferenceTickCost;
+        public float PlasticityEnergyCostResponseStrength { get; set; } = DefaultPlasticityEnergyCostResponseStrength;
+        public float PlasticityEnergyCostMinScale { get; set; } = DefaultPlasticityEnergyCostMinScale;
+        public float PlasticityEnergyCostMaxScale { get; set; } = DefaultPlasticityEnergyCostMaxScale;
         public bool HomeostasisEnabled { get; set; } = true;
         public ProtoControl.HomeostasisTargetMode HomeostasisTargetMode { get; set; } = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero;
         public ProtoControl.HomeostasisUpdateMode HomeostasisUpdateMode { get; set; } = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep;

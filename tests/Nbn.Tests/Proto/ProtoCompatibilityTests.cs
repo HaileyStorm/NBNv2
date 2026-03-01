@@ -115,6 +115,11 @@ public class ProtoCompatibilityTests
         AssertField(plasticity, "plasticity_delta", 5, FieldType.Float);
         AssertField(plasticity, "plasticity_rebase_threshold", 6, FieldType.UInt32);
         AssertField(plasticity, "plasticity_rebase_threshold_pct", 7, FieldType.Float);
+        AssertField(plasticity, "plasticity_energy_cost_modulation_enabled", 8, FieldType.Bool);
+        AssertField(plasticity, "plasticity_energy_cost_reference_tick_cost", 9, FieldType.SInt64);
+        AssertField(plasticity, "plasticity_energy_cost_response_strength", 10, FieldType.Float);
+        AssertField(plasticity, "plasticity_energy_cost_min_scale", 11, FieldType.Float);
+        AssertField(plasticity, "plasticity_energy_cost_max_scale", 12, FieldType.Float);
 
         var homeostasis = descriptor.MessageTypes.Single(message => message.Name == "SetBrainHomeostasis");
         AssertField(homeostasis, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -155,6 +160,11 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "cost_tier_a_multiplier", 25, FieldType.Float);
         AssertField(shardRuntime, "cost_tier_b_multiplier", 26, FieldType.Float);
         AssertField(shardRuntime, "cost_tier_c_multiplier", 27, FieldType.Float);
+        AssertField(shardRuntime, "plasticity_energy_cost_modulation_enabled", 28, FieldType.Bool);
+        AssertField(shardRuntime, "plasticity_energy_cost_reference_tick_cost", 29, FieldType.SInt64);
+        AssertField(shardRuntime, "plasticity_energy_cost_response_strength", 30, FieldType.Float);
+        AssertField(shardRuntime, "plasticity_energy_cost_min_scale", 31, FieldType.Float);
+        AssertField(shardRuntime, "plasticity_energy_cost_max_scale", 32, FieldType.Float);
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);
@@ -467,6 +477,11 @@ public class ProtoCompatibilityTests
         AssertField(brainInfo, "plasticity_delta", 22, FieldType.Float);
         AssertField(brainInfo, "plasticity_rebase_threshold", 23, FieldType.UInt32);
         AssertField(brainInfo, "plasticity_rebase_threshold_pct", 24, FieldType.Float);
+        AssertField(brainInfo, "plasticity_energy_cost_modulation_enabled", 25, FieldType.Bool);
+        AssertField(brainInfo, "plasticity_energy_cost_reference_tick_cost", 26, FieldType.SInt64);
+        AssertField(brainInfo, "plasticity_energy_cost_response_strength", 27, FieldType.Float);
+        AssertField(brainInfo, "plasticity_energy_cost_min_scale", 28, FieldType.Float);
+        AssertField(brainInfo, "plasticity_energy_cost_max_scale", 29, FieldType.Float);
     }
 
     [Fact]
@@ -494,6 +509,11 @@ public class ProtoCompatibilityTests
         AssertField(energyState, "plasticity_delta", 17, FieldType.Float);
         AssertField(energyState, "plasticity_rebase_threshold", 18, FieldType.UInt32);
         AssertField(energyState, "plasticity_rebase_threshold_pct", 19, FieldType.Float);
+        AssertField(energyState, "plasticity_energy_cost_modulation_enabled", 20, FieldType.Bool);
+        AssertField(energyState, "plasticity_energy_cost_reference_tick_cost", 21, FieldType.SInt64);
+        AssertField(energyState, "plasticity_energy_cost_response_strength", 22, FieldType.Float);
+        AssertField(energyState, "plasticity_energy_cost_min_scale", 23, FieldType.Float);
+        AssertField(energyState, "plasticity_energy_cost_max_scale", 24, FieldType.Float);
 
         var setPlasticity = descriptor.MessageTypes.Single(message => message.Name == "SetPlasticityEnabled");
         AssertField(setPlasticity, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -503,6 +523,11 @@ public class ProtoCompatibilityTests
         AssertField(setPlasticity, "plasticity_delta", 5, FieldType.Float);
         AssertField(setPlasticity, "plasticity_rebase_threshold", 6, FieldType.UInt32);
         AssertField(setPlasticity, "plasticity_rebase_threshold_pct", 7, FieldType.Float);
+        AssertField(setPlasticity, "plasticity_energy_cost_modulation_enabled", 8, FieldType.Bool);
+        AssertField(setPlasticity, "plasticity_energy_cost_reference_tick_cost", 9, FieldType.SInt64);
+        AssertField(setPlasticity, "plasticity_energy_cost_response_strength", 10, FieldType.Float);
+        AssertField(setPlasticity, "plasticity_energy_cost_min_scale", 11, FieldType.Float);
+        AssertField(setPlasticity, "plasticity_energy_cost_max_scale", 12, FieldType.Float);
 
         var setHomeostasis = descriptor.MessageTypes.Single(message => message.Name == "SetHomeostasisEnabled");
         AssertField(setHomeostasis, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -528,6 +553,10 @@ public class ProtoCompatibilityTests
         AssertField(ack, "message", 4, FieldType.String);
         AssertField(ack, "has_energy_state", 5, FieldType.Bool);
         AssertField(ack, "energy_state", 6, FieldType.Message, "nbn.io.BrainEnergyState");
+        AssertField(ack, "has_configured_plasticity_enabled", 7, FieldType.Bool);
+        AssertField(ack, "configured_plasticity_enabled", 8, FieldType.Bool);
+        AssertField(ack, "has_effective_plasticity_enabled", 9, FieldType.Bool);
+        AssertField(ack, "effective_plasticity_enabled", 10, FieldType.Bool);
     }
 
     [Fact]
@@ -574,6 +603,11 @@ public class ProtoCompatibilityTests
         AssertField(registerBrain, "plasticity_delta", 22, FieldType.Float);
         AssertField(registerBrain, "plasticity_rebase_threshold", 23, FieldType.UInt32);
         AssertField(registerBrain, "plasticity_rebase_threshold_pct", 24, FieldType.Float);
+        AssertField(registerBrain, "plasticity_energy_cost_modulation_enabled", 25, FieldType.Bool);
+        AssertField(registerBrain, "plasticity_energy_cost_reference_tick_cost", 26, FieldType.SInt64);
+        AssertField(registerBrain, "plasticity_energy_cost_response_strength", 27, FieldType.Float);
+        AssertField(registerBrain, "plasticity_energy_cost_min_scale", 28, FieldType.Float);
+        AssertField(registerBrain, "plasticity_energy_cost_max_scale", 29, FieldType.Float);
     }
 
     [Fact]

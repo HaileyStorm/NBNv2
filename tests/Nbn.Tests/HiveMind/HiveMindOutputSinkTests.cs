@@ -1945,7 +1945,12 @@ public class HiveMindOutputSinkTests
                 && message.PlasticityEnabled
                 && Math.Abs(message.PlasticityRate - 0.001f) < 0.000001f
                 && message.PlasticityProbabilisticUpdates
-                && Math.Abs(message.PlasticityDelta - 0.001f) < 0.000001f)),
+                && Math.Abs(message.PlasticityDelta - 0.001f) < 0.000001f
+                && !message.PlasticityEnergyCostModulationEnabled
+                && message.PlasticityEnergyCostReferenceTickCost == 100
+                && Math.Abs(message.PlasticityEnergyCostResponseStrength - 1f) < 0.000001f
+                && Math.Abs(message.PlasticityEnergyCostMinScale - 0.1f) < 0.000001f
+                && Math.Abs(message.PlasticityEnergyCostMaxScale - 1f) < 0.000001f)),
             "io-default-plasticity-probe");
 
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe)));
@@ -1987,6 +1992,11 @@ public class HiveMindOutputSinkTests
         Assert.Equal(0.001f, register.PlasticityRate);
         Assert.True(register.PlasticityProbabilisticUpdates);
         Assert.Equal(0.001f, register.PlasticityDelta);
+        Assert.False(register.PlasticityEnergyCostModulationEnabled);
+        Assert.Equal(100, register.PlasticityEnergyCostReferenceTickCost);
+        Assert.Equal(1f, register.PlasticityEnergyCostResponseStrength);
+        Assert.Equal(0.1f, register.PlasticityEnergyCostMinScale);
+        Assert.Equal(1f, register.PlasticityEnergyCostMaxScale);
 
         await system.ShutdownAsync();
     }
@@ -2008,6 +2018,11 @@ public class HiveMindOutputSinkTests
                 && Math.Abs(message.PlasticityDelta - 0.08f) < 0.000001f
                 && message.PlasticityRebaseThreshold == 7
                 && Math.Abs(message.PlasticityRebaseThresholdPct - 0.35f) < 0.000001f
+                && message.PlasticityEnergyCostModulationEnabled
+                && message.PlasticityEnergyCostReferenceTickCost == 64
+                && Math.Abs(message.PlasticityEnergyCostResponseStrength - 1.4f) < 0.000001f
+                && Math.Abs(message.PlasticityEnergyCostMinScale - 0.2f) < 0.000001f
+                && Math.Abs(message.PlasticityEnergyCostMaxScale - 0.85f) < 0.000001f
                 && message.HomeostasisEnabled
                 && message.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
                 && message.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
@@ -2072,7 +2087,12 @@ public class HiveMindOutputSinkTests
             ProbabilisticUpdates = false,
             PlasticityDelta = 0.08f,
             PlasticityRebaseThreshold = 7,
-            PlasticityRebaseThresholdPct = 0.35f
+            PlasticityRebaseThresholdPct = 0.35f,
+            PlasticityEnergyCostModulationEnabled = true,
+            PlasticityEnergyCostReferenceTickCost = 64,
+            PlasticityEnergyCostResponseStrength = 1.4f,
+            PlasticityEnergyCostMinScale = 0.2f,
+            PlasticityEnergyCostMaxScale = 0.85f
         }));
 
         await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainHomeostasis
@@ -2099,6 +2119,11 @@ public class HiveMindOutputSinkTests
         Assert.Equal(0.08f, register.PlasticityDelta);
         Assert.Equal((uint)7, register.PlasticityRebaseThreshold);
         Assert.Equal(0.35f, register.PlasticityRebaseThresholdPct);
+        Assert.True(register.PlasticityEnergyCostModulationEnabled);
+        Assert.Equal(64, register.PlasticityEnergyCostReferenceTickCost);
+        Assert.Equal(1.4f, register.PlasticityEnergyCostResponseStrength);
+        Assert.Equal(0.2f, register.PlasticityEnergyCostMinScale);
+        Assert.Equal(0.85f, register.PlasticityEnergyCostMaxScale);
         Assert.True(register.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, register.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, register.HomeostasisUpdateMode);

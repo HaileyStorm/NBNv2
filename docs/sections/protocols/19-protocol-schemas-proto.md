@@ -459,6 +459,11 @@ message SetBrainPlasticity {
   float plasticity_delta = 5;
   uint32 plasticity_rebase_threshold = 6;
   float plasticity_rebase_threshold_pct = 7;
+  bool plasticity_energy_cost_modulation_enabled = 8;
+  sint64 plasticity_energy_cost_reference_tick_cost = 9;
+  float plasticity_energy_cost_response_strength = 10;
+  float plasticity_energy_cost_min_scale = 11;
+  float plasticity_energy_cost_max_scale = 12;
 }
 
 enum HomeostasisTargetMode {
@@ -510,6 +515,11 @@ message UpdateShardRuntimeConfig {
   float cost_tier_a_multiplier = 25;
   float cost_tier_b_multiplier = 26;
   float cost_tier_c_multiplier = 27;
+  bool plasticity_energy_cost_modulation_enabled = 28;
+  sint64 plasticity_energy_cost_reference_tick_cost = 29;
+  float plasticity_energy_cost_response_strength = 30;
+  float plasticity_energy_cost_min_scale = 31;
+  float plasticity_energy_cost_max_scale = 32;
 }
 ```
 
@@ -602,6 +612,11 @@ message BrainInfo {
   float plasticity_delta = 22;
   uint32 plasticity_rebase_threshold = 23;
   float plasticity_rebase_threshold_pct = 24;
+  bool plasticity_energy_cost_modulation_enabled = 25;
+  sint64 plasticity_energy_cost_reference_tick_cost = 26;
+  float plasticity_energy_cost_response_strength = 27;
+  float plasticity_energy_cost_min_scale = 28;
+  float plasticity_energy_cost_max_scale = 29;
 }
 
 message BrainEnergyState {
@@ -624,6 +639,11 @@ message BrainEnergyState {
   float plasticity_delta = 17;
   uint32 plasticity_rebase_threshold = 18;
   float plasticity_rebase_threshold_pct = 19;
+  bool plasticity_energy_cost_modulation_enabled = 20;
+  sint64 plasticity_energy_cost_reference_tick_cost = 21;
+  float plasticity_energy_cost_response_strength = 22;
+  float plasticity_energy_cost_min_scale = 23;
+  float plasticity_energy_cost_max_scale = 24;
 }
 
 message RegisterBrain {
@@ -651,6 +671,11 @@ message RegisterBrain {
   float plasticity_delta = 22;
   uint32 plasticity_rebase_threshold = 23;
   float plasticity_rebase_threshold_pct = 24;
+  bool plasticity_energy_cost_modulation_enabled = 25;
+  sint64 plasticity_energy_cost_reference_tick_cost = 26;
+  float plasticity_energy_cost_response_strength = 27;
+  float plasticity_energy_cost_min_scale = 28;
+  float plasticity_energy_cost_max_scale = 29;
 }
 
 message UnregisterBrain {
@@ -746,6 +771,11 @@ message SetPlasticityEnabled {
   float plasticity_delta = 5;
   uint32 plasticity_rebase_threshold = 6;
   float plasticity_rebase_threshold_pct = 7;
+  bool plasticity_energy_cost_modulation_enabled = 8;
+  sint64 plasticity_energy_cost_reference_tick_cost = 9;
+  float plasticity_energy_cost_response_strength = 10;
+  float plasticity_energy_cost_min_scale = 11;
+  float plasticity_energy_cost_max_scale = 12;
 }
 
 message SetHomeostasisEnabled {
@@ -767,6 +797,10 @@ message IoCommandAck {
   string message = 4;
   bool has_energy_state = 5;
   BrainEnergyState energy_state = 6; // set when has_energy_state=true
+  bool has_configured_plasticity_enabled = 7;
+  bool configured_plasticity_enabled = 8;
+  bool has_effective_plasticity_enabled = 9;
+  bool effective_plasticity_enabled = 10;
 }
 
 message RequestSnapshot {

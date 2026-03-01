@@ -22,6 +22,11 @@ Per-brain plasticity settings:
 * `plasticity_probabilistic_updates` (on/off)
 * `plasticity_delta` (small)
 * `plasticity_rebase_threshold` / `plasticity_rebase_threshold_pct` (optional; number of changed-axon codes or percent)
+* optional energy/cost modulation:
+  * `plasticity_energy_cost_modulation_enabled`
+  * `plasticity_energy_cost_reference_tick_cost` (`> 0`)
+  * `plasticity_energy_cost_response_strength` (`[0,8]`)
+  * `plasticity_energy_cost_min_scale` / `plasticity_energy_cost_max_scale` (`[0,1]`, max >= min)
 
 When the system master setting is `false`, no brain can force-enable effective plasticity.
 
@@ -36,6 +41,11 @@ Default runtime baseline:
 Compatibility default:
 
 * if `plasticity_delta` is omitted or `0`, runtime uses `plasticity_rate` as the effective delta
+* if modulation fields are omitted while modulation is disabled, runtime defaults are used:
+  * `reference_tick_cost = 100`
+  * `response_strength = 1`
+  * `min_scale = 0.1`
+  * `max_scale = 1`
 
 Plasticity changes are applied at runtime in float space and only persisted to `.nbs` when the quantized **strength code** differs from the base `.nbn` strength code.
 
@@ -70,12 +80,22 @@ Let:
 * `u = abs(p)` (0..1)
 * `lr = plasticity_rate`
 * `d = plasticity_delta` (effective delta after compatibility default)
+* `scale = 1` by default
+
+Optional energy/cost modulation (deterministic, bounded):
+
+* enabled only when `plasticity_energy_cost_modulation_enabled=true` and cost+energy is effectively enabled
+* uses previous tick cost (`previous_tick_cost_total`) as pressure input
+* `ratio = previous_tick_cost_total / plasticity_energy_cost_reference_tick_cost`
+* if `ratio <= 1`, `scale = 1`
+* if `ratio > 1`, `scale = clamp(1 / (1 + plasticity_energy_cost_response_strength * (ratio - 1)), min_scale, max_scale)`
+* effective plasticity parameters become `lr' = lr * scale` and `d' = d * scale`
 
 Per axon fired:
 
 * Optional probabilistic gate:
 
-  * `prob = lr * u`
+  * `prob = lr' * u`
   * deterministic PRNG based on `(brain_seed, tick_id, from_addr32, to_addr32)`
   * apply update only if `rand < prob`
 * Update direction:
@@ -90,8 +110,8 @@ Per axon fired:
   * `source_memory_scale = 1 + 0.15 * abs(source_buffer)`
   * `stabilization_scale = clamp(1 - 0.25 * abs(strength_value), 0.35, 1)`
   * `nudge_scale = clamp(predictive_scale * source_memory_scale * stabilization_scale, 0.4, 1.6)`
-  * `effective_delta = d * u * nudge_scale`
-* For non-local targets, `nudge_scale = 1` (baseline `d * u` behavior).
+  * `effective_delta = d' * u * nudge_scale`
+* For non-local targets, `nudge_scale = 1` (baseline `d' * u` behavior).
 * If `strength_value == 0`, update direction is seeded from `sign(p)` so dormant axons can start adapting.
 * Clamp to [-1, 1] and re-quantize.
 

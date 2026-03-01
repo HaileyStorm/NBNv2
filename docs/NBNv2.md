@@ -638,6 +638,11 @@ Per-brain plasticity settings:
 * `plasticity_probabilistic_updates` (on/off)
 * `plasticity_delta` (small)
 * `plasticity_rebase_threshold` / `plasticity_rebase_threshold_pct` (optional; number of changed-axon codes or percent)
+* optional energy/cost modulation:
+  * `plasticity_energy_cost_modulation_enabled`
+  * `plasticity_energy_cost_reference_tick_cost` (`> 0`)
+  * `plasticity_energy_cost_response_strength` (`[0,8]`)
+  * `plasticity_energy_cost_min_scale` / `plasticity_energy_cost_max_scale` (`[0,1]`, max >= min)
 
 When the system master setting is `false`, no brain can force-enable effective plasticity.
 
@@ -652,6 +657,11 @@ Default runtime baseline:
 Compatibility default:
 
 * if `plasticity_delta` is omitted or `0`, runtime uses `plasticity_rate` as the effective delta
+* if modulation fields are omitted while modulation is disabled, runtime defaults are used:
+  * `reference_tick_cost = 100`
+  * `response_strength = 1`
+  * `min_scale = 0.1`
+  * `max_scale = 1`
 
 Plasticity changes are applied at runtime in float space and only persisted to `.nbs` when the quantized **strength code** differs from the base `.nbn` strength code.
 
@@ -686,12 +696,22 @@ Let:
 * `u = abs(p)` (0..1)
 * `lr = plasticity_rate`
 * `d = plasticity_delta` (effective delta after compatibility default)
+* `scale = 1` by default
+
+Optional energy/cost modulation (deterministic, bounded):
+
+* enabled only when `plasticity_energy_cost_modulation_enabled=true` and cost+energy is effectively enabled
+* uses previous tick cost (`previous_tick_cost_total`) as pressure input
+* `ratio = previous_tick_cost_total / plasticity_energy_cost_reference_tick_cost`
+* if `ratio <= 1`, `scale = 1`
+* if `ratio > 1`, `scale = clamp(1 / (1 + plasticity_energy_cost_response_strength * (ratio - 1)), min_scale, max_scale)`
+* effective plasticity parameters become `lr' = lr * scale` and `d' = d * scale`
 
 Per axon fired:
 
 * Optional probabilistic gate:
 
-  * `prob = lr * u`
+  * `prob = lr' * u`
   * deterministic PRNG based on `(brain_seed, tick_id, from_addr32, to_addr32)`
   * apply update only if `rand < prob`
 * Update direction:
@@ -706,8 +726,8 @@ Per axon fired:
   * `source_memory_scale = 1 + 0.15 * abs(source_buffer)`
   * `stabilization_scale = clamp(1 - 0.25 * abs(strength_value), 0.35, 1)`
   * `nudge_scale = clamp(predictive_scale * source_memory_scale * stabilization_scale, 0.4, 1.6)`
-  * `effective_delta = d * u * nudge_scale`
-* For non-local targets, `nudge_scale = 1` (baseline `d * u` behavior).
+  * `effective_delta = d' * u * nudge_scale`
+* For non-local targets, `nudge_scale = 1` (baseline `d' * u` behavior).
 * If `strength_value == 0`, update direction is seeded from `sign(p)` so dormant axons can start adapting.
 * Clamp to [-1, 1] and re-quantize.
 
@@ -848,7 +868,7 @@ IO supports:
 * energy rate
 * per-brain cost+energy override (`cost_enabled` + `energy_enabled`, paired)
 * system cost+energy master key (`cost_energy.system.enabled`) from SettingsMonitor, combined with per-brain runtime setting (`effective = system && brain`)
-* plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`)
+* plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`, optional energy/cost modulation bounds)
 * system plasticity master key (`plasticity.system.enabled`) from SettingsMonitor, combined with per-brain `enabled` at runtime (`effective = system && brain`)
 * system plasticity default mode/rate keys in SettingsMonitor (`plasticity.system.probabilistic_updates`, `plasticity.system.rate`) for operator sync surfaces (Workbench Energy + Plasticity and Orchestrator Settings)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
@@ -859,6 +879,15 @@ Command writes can be sent as requests and return `IoCommandAck` with:
 * success/failure
 * reason text
 * optional runtime `BrainEnergyState` snapshot for immediate operator feedback
+* for `set_plasticity`, ACK also carries:
+  * configured requested enablement (`configured_plasticity_enabled`)
+  * current authoritative effective enablement snapshot (`effective_plasticity_enabled`)
+
+Authoritative semantics:
+
+* when HiveMind is available, `set_plasticity` ACK reports accepted configured intent plus the current authoritative effective state from IO runtime snapshot
+* effective state is authoritative only after HiveMind re-register/runtime-config reconciliation (for example, system plasticity master off still yields effective false)
+* when HiveMind is unavailable, IO applies locally and ACK effective/configured values match local state
 
 Homeostasis operator ranges:
 
@@ -873,6 +902,10 @@ Plasticity operator ranges:
 * `plasticity_delta`: `>= 0` (if omitted/`0`, runtime uses `plasticity_rate`)
 * `plasticity_rebase_threshold`: `>= 0` (0 disables count trigger)
 * `plasticity_rebase_threshold_pct`: `[0,1]` (0 disables percent trigger)
+* `plasticity_energy_cost_reference_tick_cost`: `> 0` (when modulation enabled)
+* `plasticity_energy_cost_response_strength`: `[0,8]`
+* `plasticity_energy_cost_min_scale`: `[0,1]`
+* `plasticity_energy_cost_max_scale`: `[0,1]` and `>= min_scale`
 
 ### 13.6 Brain death notifications
 
@@ -2071,6 +2104,11 @@ message SetBrainPlasticity {
   float plasticity_delta = 5;
   uint32 plasticity_rebase_threshold = 6;
   float plasticity_rebase_threshold_pct = 7;
+  bool plasticity_energy_cost_modulation_enabled = 8;
+  sint64 plasticity_energy_cost_reference_tick_cost = 9;
+  float plasticity_energy_cost_response_strength = 10;
+  float plasticity_energy_cost_min_scale = 11;
+  float plasticity_energy_cost_max_scale = 12;
 }
 
 enum HomeostasisTargetMode {
@@ -2122,6 +2160,11 @@ message UpdateShardRuntimeConfig {
   float cost_tier_a_multiplier = 25;
   float cost_tier_b_multiplier = 26;
   float cost_tier_c_multiplier = 27;
+  bool plasticity_energy_cost_modulation_enabled = 28;
+  sint64 plasticity_energy_cost_reference_tick_cost = 29;
+  float plasticity_energy_cost_response_strength = 30;
+  float plasticity_energy_cost_min_scale = 31;
+  float plasticity_energy_cost_max_scale = 32;
 }
 ```
 
@@ -2214,6 +2257,11 @@ message BrainInfo {
   float plasticity_delta = 22;
   uint32 plasticity_rebase_threshold = 23;
   float plasticity_rebase_threshold_pct = 24;
+  bool plasticity_energy_cost_modulation_enabled = 25;
+  sint64 plasticity_energy_cost_reference_tick_cost = 26;
+  float plasticity_energy_cost_response_strength = 27;
+  float plasticity_energy_cost_min_scale = 28;
+  float plasticity_energy_cost_max_scale = 29;
 }
 
 message BrainEnergyState {
@@ -2236,6 +2284,11 @@ message BrainEnergyState {
   float plasticity_delta = 17;
   uint32 plasticity_rebase_threshold = 18;
   float plasticity_rebase_threshold_pct = 19;
+  bool plasticity_energy_cost_modulation_enabled = 20;
+  sint64 plasticity_energy_cost_reference_tick_cost = 21;
+  float plasticity_energy_cost_response_strength = 22;
+  float plasticity_energy_cost_min_scale = 23;
+  float plasticity_energy_cost_max_scale = 24;
 }
 
 message RegisterBrain {
@@ -2263,6 +2316,11 @@ message RegisterBrain {
   float plasticity_delta = 22;
   uint32 plasticity_rebase_threshold = 23;
   float plasticity_rebase_threshold_pct = 24;
+  bool plasticity_energy_cost_modulation_enabled = 25;
+  sint64 plasticity_energy_cost_reference_tick_cost = 26;
+  float plasticity_energy_cost_response_strength = 27;
+  float plasticity_energy_cost_min_scale = 28;
+  float plasticity_energy_cost_max_scale = 29;
 }
 
 message UnregisterBrain {
@@ -2358,6 +2416,11 @@ message SetPlasticityEnabled {
   float plasticity_delta = 5;
   uint32 plasticity_rebase_threshold = 6;
   float plasticity_rebase_threshold_pct = 7;
+  bool plasticity_energy_cost_modulation_enabled = 8;
+  sint64 plasticity_energy_cost_reference_tick_cost = 9;
+  float plasticity_energy_cost_response_strength = 10;
+  float plasticity_energy_cost_min_scale = 11;
+  float plasticity_energy_cost_max_scale = 12;
 }
 
 message SetHomeostasisEnabled {
@@ -2379,6 +2442,10 @@ message IoCommandAck {
   string message = 4;
   bool has_energy_state = 5;
   BrainEnergyState energy_state = 6; // set when has_energy_state=true
+  bool has_configured_plasticity_enabled = 7;
+  bool configured_plasticity_enabled = 8;
+  bool has_effective_plasticity_enabled = 9;
+  bool effective_plasticity_enabled = 10;
 }
 
 message RequestSnapshot {

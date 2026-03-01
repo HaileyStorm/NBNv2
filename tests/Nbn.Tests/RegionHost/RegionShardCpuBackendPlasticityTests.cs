@@ -190,6 +190,102 @@ public class RegionShardCpuBackendPlasticityTests
     }
 
     [Fact]
+    public void Compute_WithPlasticityEnergyCostModulationEnabled_ReducesRunawayStrength_WhileMaintainingAdaptation()
+    {
+        var baselineState = CreateSingleNeuronState(strength: 0.5f);
+        var modulatedState = CreateSingleNeuronState(strength: 0.5f);
+        var baselineBackend = new RegionShardCpuBackend(baselineState);
+        var modulatedBackend = new RegionShardCpuBackend(modulatedState);
+        var routing = CreateRouting(baselineState.RegionId, baselineState.NeuronCount, destRegionId: 9, destCount: 1);
+        var modulation = new RegionShardPlasticityEnergyCostConfig(
+            Enabled: true,
+            ReferenceTickCost: 100,
+            ResponseStrength: 1.5f,
+            MinScale: 0.1f,
+            MaxScale: 1f);
+
+        for (ulong tick = 1; tick <= 24; tick++)
+        {
+            _ = baselineBackend.Compute(
+                tickId: tick,
+                brainId: Guid.NewGuid(),
+                shardId: ShardId32.From(baselineState.RegionId, 0),
+                routing: routing,
+                visualization: RegionShardVisualizationComputeScope.Disabled,
+                plasticityEnabled: true,
+                plasticityRate: 0.25f,
+                probabilisticPlasticityUpdates: false,
+                plasticityDelta: 0.25f,
+                costEnergyEnabled: true,
+                previousTickCostTotal: 5_000);
+
+            _ = modulatedBackend.Compute(
+                tickId: tick,
+                brainId: Guid.NewGuid(),
+                shardId: ShardId32.From(modulatedState.RegionId, 0),
+                routing: routing,
+                visualization: RegionShardVisualizationComputeScope.Disabled,
+                plasticityEnabled: true,
+                plasticityRate: 0.25f,
+                probabilisticPlasticityUpdates: false,
+                plasticityDelta: 0.25f,
+                plasticityEnergyCostConfig: modulation,
+                costEnergyEnabled: true,
+                previousTickCostTotal: 5_000);
+        }
+
+        Assert.True(modulatedState.Axons.Strengths[0] < baselineState.Axons.Strengths[0]);
+        Assert.True(modulatedState.Axons.Strengths[0] > 0.5f);
+    }
+
+    [Fact]
+    public void Compute_WithPlasticityEnergyCostModulationDisabled_MatchesBaselineBehavior()
+    {
+        var baselineState = CreateSingleNeuronState(strength: 0.5f);
+        var disabledState = CreateSingleNeuronState(strength: 0.5f);
+        var baselineBackend = new RegionShardCpuBackend(baselineState);
+        var disabledBackend = new RegionShardCpuBackend(disabledState);
+        var routing = CreateRouting(baselineState.RegionId, baselineState.NeuronCount, destRegionId: 9, destCount: 1);
+        var disabledModulation = new RegionShardPlasticityEnergyCostConfig(
+            Enabled: false,
+            ReferenceTickCost: 100,
+            ResponseStrength: 1f,
+            MinScale: 0.1f,
+            MaxScale: 1f);
+
+        var baseline = baselineBackend.Compute(
+            tickId: 71,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(baselineState.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: 0.25f,
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.25f,
+            costEnergyEnabled: true,
+            previousTickCostTotal: 2_000);
+        var withDisabledModulation = disabledBackend.Compute(
+            tickId: 71,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(disabledState.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: 0.25f,
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.25f,
+            plasticityEnergyCostConfig: disabledModulation,
+            costEnergyEnabled: true,
+            previousTickCostTotal: 2_000);
+
+        Assert.Equal(baselineState.Axons.Strengths[0], disabledState.Axons.Strengths[0], precision: 6);
+        Assert.Equal(baselineState.Axons.RuntimeStrengthCodes[0], disabledState.Axons.RuntimeStrengthCodes[0]);
+        Assert.Equal(baselineState.Axons.HasRuntimeOverlay[0], disabledState.Axons.HasRuntimeOverlay[0]);
+        Assert.Equal(baseline.PlasticityStrengthCodeChanges, withDisabledModulation.PlasticityStrengthCodeChanges);
+    }
+
+    [Fact]
     public void Compute_WithPlasticityRebaseThresholdCount_TriggersOverlayReset()
     {
         var state = CreateSingleNeuronState(strength: 0.5f);

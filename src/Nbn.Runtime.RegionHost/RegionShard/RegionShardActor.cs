@@ -50,6 +50,11 @@ public sealed class RegionShardActor : IActor
     private float _plasticityDelta;
     private uint _plasticityRebaseThreshold;
     private float _plasticityRebaseThresholdPct;
+    private bool _plasticityEnergyCostModulationEnabled = RegionShardPlasticityEnergyCostConfig.Default.Enabled;
+    private long _plasticityEnergyCostReferenceTickCost = RegionShardPlasticityEnergyCostConfig.Default.ReferenceTickCost;
+    private float _plasticityEnergyCostResponseStrength = RegionShardPlasticityEnergyCostConfig.Default.ResponseStrength;
+    private float _plasticityEnergyCostMinScale = RegionShardPlasticityEnergyCostConfig.Default.MinScale;
+    private float _plasticityEnergyCostMaxScale = RegionShardPlasticityEnergyCostConfig.Default.MaxScale;
     private bool _homeostasisEnabled = RegionShardHomeostasisConfig.Default.Enabled;
     private HomeostasisTargetMode _homeostasisTargetMode = RegionShardHomeostasisConfig.Default.TargetMode;
     private HomeostasisUpdateMode _homeostasisUpdateMode = RegionShardHomeostasisConfig.Default.UpdateMode;
@@ -60,6 +65,7 @@ public sealed class RegionShardActor : IActor
     private float _homeostasisEnergyProbabilityScale = RegionShardHomeostasisConfig.Default.EnergyProbabilityScale;
     private bool _hasComputed;
     private ulong _lastComputeTickId;
+    private long _lastTickCostTotal;
     private ulong _vizSequence;
 
     public RegionShardActor(RegionShardState state, RegionShardActorConfig config)
@@ -236,6 +242,15 @@ public sealed class RegionShardActor : IActor
         _plasticityDelta = message.PlasticityDelta;
         _plasticityRebaseThreshold = message.PlasticityRebaseThreshold;
         _plasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct;
+        _plasticityEnergyCostModulationEnabled = message.PlasticityEnergyCostModulationEnabled;
+        _plasticityEnergyCostReferenceTickCost = Math.Max(1L, message.PlasticityEnergyCostReferenceTickCost);
+        _plasticityEnergyCostResponseStrength = NormalizeFiniteInRange(message.PlasticityEnergyCostResponseStrength, 0f, 8f, RegionShardPlasticityEnergyCostConfig.Default.ResponseStrength);
+        _plasticityEnergyCostMinScale = NormalizeFiniteInRange(message.PlasticityEnergyCostMinScale, 0f, 1f, RegionShardPlasticityEnergyCostConfig.Default.MinScale);
+        _plasticityEnergyCostMaxScale = NormalizeFiniteInRange(message.PlasticityEnergyCostMaxScale, 0f, 1f, RegionShardPlasticityEnergyCostConfig.Default.MaxScale);
+        if (_plasticityEnergyCostMaxScale < _plasticityEnergyCostMinScale)
+        {
+            _plasticityEnergyCostMaxScale = _plasticityEnergyCostMinScale;
+        }
         _homeostasisEnabled = message.HomeostasisEnabled;
         _homeostasisTargetMode = message.HomeostasisTargetMode;
         _homeostasisUpdateMode = message.HomeostasisUpdateMode;
@@ -446,6 +461,12 @@ public sealed class RegionShardActor : IActor
             _plasticityDelta,
             _plasticityRebaseThreshold,
             _plasticityRebaseThresholdPct,
+            new RegionShardPlasticityEnergyCostConfig(
+                _plasticityEnergyCostModulationEnabled,
+                _plasticityEnergyCostReferenceTickCost,
+                _plasticityEnergyCostResponseStrength,
+                _plasticityEnergyCostMinScale,
+                _plasticityEnergyCostMaxScale),
             new RegionShardHomeostasisConfig(
                 _homeostasisEnabled,
                 _homeostasisTargetMode,
@@ -461,7 +482,8 @@ public sealed class RegionShardActor : IActor
             _remoteCostPerContribution,
             _costTierAMultiplier,
             _costTierBMultiplier,
-            _costTierCMultiplier);
+            _costTierCMultiplier,
+            _lastTickCostTotal);
         stopwatch.Stop();
 
         if (LogViz || LogVizDiagnostics)
@@ -592,6 +614,7 @@ public sealed class RegionShardActor : IActor
 
         _hasComputed = true;
         _lastComputeTickId = tick.TickId;
+        _lastTickCostTotal = result.Cost.Total;
         CacheComputeDone(done);
         SendComputeDone(context, done);
     }
@@ -880,6 +903,16 @@ public sealed class RegionShardActor : IActor
         return float.IsFinite(value) && value > 0f
             ? value
             : 1f;
+    }
+
+    private static float NormalizeFiniteInRange(float value, float min, float max, float fallback)
+    {
+        if (!float.IsFinite(value))
+        {
+            return fallback;
+        }
+
+        return Math.Clamp(value, min, max);
     }
 
     private static bool TryParsePid(string? value, out PID pid)

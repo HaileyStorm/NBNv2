@@ -81,6 +81,11 @@ message SetBrainPlasticity {
   float plasticity_delta = 5;
   uint32 plasticity_rebase_threshold = 6;
   float plasticity_rebase_threshold_pct = 7;
+  bool plasticity_energy_cost_modulation_enabled = 8;
+  sint64 plasticity_energy_cost_reference_tick_cost = 9;
+  float plasticity_energy_cost_response_strength = 10;
+  float plasticity_energy_cost_min_scale = 11;
+  float plasticity_energy_cost_max_scale = 12;
 }
 
 enum HomeostasisTargetMode {
@@ -148,6 +153,11 @@ message UpdateShardRuntimeConfig {
   float cost_tier_a_multiplier = 25;
   float cost_tier_b_multiplier = 26;
   float cost_tier_c_multiplier = 27;
+  bool plasticity_energy_cost_modulation_enabled = 28;
+  sint64 plasticity_energy_cost_reference_tick_cost = 29;
+  float plasticity_energy_cost_response_strength = 30;
+  float plasticity_energy_cost_min_scale = 31;
+  float plasticity_energy_cost_max_scale = 32;
 }
 
 message SnapshotOverlayRecord {

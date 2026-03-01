@@ -18,6 +18,10 @@ public sealed class IoGatewayActor : IActor
     private static readonly TimeSpan ExportRequestTimeout = TimeSpan.FromSeconds(45);
     private const float DefaultPlasticityRate = 0.001f;
     private const float DefaultPlasticityDelta = DefaultPlasticityRate;
+    private const long DefaultPlasticityEnergyCostReferenceTickCost = 100;
+    private const float DefaultPlasticityEnergyCostResponseStrength = 1f;
+    private const float DefaultPlasticityEnergyCostMinScale = 0.1f;
+    private const float DefaultPlasticityEnergyCostMaxScale = 1f;
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     private readonly IoOptions _options;
@@ -220,6 +224,11 @@ public sealed class IoGatewayActor : IActor
                 PlasticityDelta = DefaultPlasticityDelta,
                 PlasticityRebaseThreshold = 0,
                 PlasticityRebaseThresholdPct = 0f,
+                PlasticityEnergyCostModulationEnabled = false,
+                PlasticityEnergyCostReferenceTickCost = DefaultPlasticityEnergyCostReferenceTickCost,
+                PlasticityEnergyCostResponseStrength = DefaultPlasticityEnergyCostResponseStrength,
+                PlasticityEnergyCostMinScale = DefaultPlasticityEnergyCostMinScale,
+                PlasticityEnergyCostMaxScale = DefaultPlasticityEnergyCostMaxScale,
                 LastTickCost = 0,
                 BaseDefinition = new ArtifactRef(),
                 LastSnapshot = new ArtifactRef()
@@ -250,6 +259,11 @@ public sealed class IoGatewayActor : IActor
             PlasticityDelta = entry.Energy.PlasticityDelta,
             PlasticityRebaseThreshold = entry.Energy.PlasticityRebaseThreshold,
             PlasticityRebaseThresholdPct = entry.Energy.PlasticityRebaseThresholdPct,
+            PlasticityEnergyCostModulationEnabled = entry.Energy.PlasticityEnergyCostModulationEnabled,
+            PlasticityEnergyCostReferenceTickCost = entry.Energy.PlasticityEnergyCostReferenceTickCost,
+            PlasticityEnergyCostResponseStrength = entry.Energy.PlasticityEnergyCostResponseStrength,
+            PlasticityEnergyCostMinScale = entry.Energy.PlasticityEnergyCostMinScale,
+            PlasticityEnergyCostMaxScale = entry.Energy.PlasticityEnergyCostMaxScale,
             HomeostasisEnabled = entry.Energy.HomeostasisEnabled,
             HomeostasisTargetMode = entry.Energy.HomeostasisTargetMode,
             HomeostasisUpdateMode = entry.Energy.HomeostasisUpdateMode,
@@ -482,17 +496,25 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
+        if (!TryNormalizePlasticityEnergyCostModulation(
+                message.PlasticityEnergyCostModulationEnabled,
+                message.PlasticityEnergyCostReferenceTickCost,
+                message.PlasticityEnergyCostResponseStrength,
+                message.PlasticityEnergyCostMinScale,
+                message.PlasticityEnergyCostMaxScale,
+                out var modulationReferenceTickCost,
+                out var modulationResponseStrength,
+                out var modulationMinScale,
+                out var modulationMaxScale))
+        {
+            RespondCommandAck(context, message.BrainId, "set_plasticity", success: false, "plasticity_energy_cost_modulation_invalid", entry);
+            return;
+        }
+
         var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
-
-        entry.Energy.SetPlasticity(
-            message.PlasticityEnabled,
-            message.PlasticityRate,
-            message.ProbabilisticUpdates,
-            effectiveDelta,
-            message.PlasticityRebaseThreshold,
-            message.PlasticityRebaseThresholdPct);
-
-        var ackMessage = "applied";
+        var configuredPlasticityEnabled = message.PlasticityEnabled;
+        var effectivePlasticityEnabled = entry.Energy.PlasticityEnabled;
+        var ackMessage = "accepted_pending_authoritative_state";
         if (_hiveMindPid is not null)
         {
             context.Request(_hiveMindPid, new ProtoControl.SetBrainPlasticity
@@ -503,15 +525,41 @@ public sealed class IoGatewayActor : IActor
                 ProbabilisticUpdates = message.ProbabilisticUpdates,
                 PlasticityDelta = effectiveDelta,
                 PlasticityRebaseThreshold = message.PlasticityRebaseThreshold,
-                PlasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct
+                PlasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct,
+                PlasticityEnergyCostModulationEnabled = message.PlasticityEnergyCostModulationEnabled,
+                PlasticityEnergyCostReferenceTickCost = modulationReferenceTickCost,
+                PlasticityEnergyCostResponseStrength = modulationResponseStrength,
+                PlasticityEnergyCostMinScale = modulationMinScale,
+                PlasticityEnergyCostMaxScale = modulationMaxScale
             });
         }
         else
         {
+            entry.Energy.SetPlasticity(
+                message.PlasticityEnabled,
+                message.PlasticityRate,
+                message.ProbabilisticUpdates,
+                effectiveDelta,
+                message.PlasticityRebaseThreshold,
+                message.PlasticityRebaseThresholdPct,
+                message.PlasticityEnergyCostModulationEnabled,
+                modulationReferenceTickCost,
+                modulationResponseStrength,
+                modulationMinScale,
+                modulationMaxScale);
             ackMessage = "applied_local_only_hivemind_unavailable";
+            effectivePlasticityEnabled = entry.Energy.PlasticityEnabled;
         }
 
-        RespondCommandAck(context, message.BrainId, "set_plasticity", success: true, ackMessage, entry);
+        RespondCommandAck(
+            context,
+            message.BrainId,
+            "set_plasticity",
+            success: true,
+            ackMessage,
+            entry,
+            configuredPlasticityEnabled,
+            effectivePlasticityEnabled);
     }
 
     private void ApplyHomeostasisFlags(IContext context, SetHomeostasisEnabled message)
@@ -694,6 +742,11 @@ public sealed class IoGatewayActor : IActor
                     effectiveDelta,
                     message.PlasticityRebaseThreshold,
                     message.PlasticityRebaseThresholdPct,
+                    message.PlasticityEnergyCostModulationEnabled,
+                    message.PlasticityEnergyCostReferenceTickCost,
+                    message.PlasticityEnergyCostResponseStrength,
+                    message.PlasticityEnergyCostMinScale,
+                    message.PlasticityEnergyCostMaxScale,
                     message.HomeostasisEnabled,
                     message.HomeostasisTargetMode,
                     message.HomeostasisUpdateMode,
@@ -757,6 +810,11 @@ public sealed class IoGatewayActor : IActor
                 effectiveDelta,
                 message.PlasticityRebaseThreshold,
                 message.PlasticityRebaseThresholdPct,
+                message.PlasticityEnergyCostModulationEnabled,
+                message.PlasticityEnergyCostReferenceTickCost,
+                message.PlasticityEnergyCostResponseStrength,
+                message.PlasticityEnergyCostMinScale,
+                message.PlasticityEnergyCostMaxScale,
                 message.HomeostasisEnabled,
                 message.HomeostasisTargetMode,
                 message.HomeostasisUpdateMode,
@@ -1402,6 +1460,75 @@ public sealed class IoGatewayActor : IActor
         return float.IsFinite(value) && value >= min && value <= max;
     }
 
+    private static bool TryNormalizePlasticityEnergyCostModulation(
+        bool enabled,
+        long referenceTickCost,
+        float responseStrength,
+        float minScale,
+        float maxScale,
+        out long normalizedReferenceTickCost,
+        out float normalizedResponseStrength,
+        out float normalizedMinScale,
+        out float normalizedMaxScale)
+    {
+        normalizedReferenceTickCost = DefaultPlasticityEnergyCostReferenceTickCost;
+        normalizedResponseStrength = DefaultPlasticityEnergyCostResponseStrength;
+        normalizedMinScale = DefaultPlasticityEnergyCostMinScale;
+        normalizedMaxScale = DefaultPlasticityEnergyCostMaxScale;
+
+        if (!enabled)
+        {
+            var hasExplicitConfiguration = referenceTickCost > 0
+                                           || (float.IsFinite(responseStrength) && responseStrength > 0f)
+                                           || (float.IsFinite(minScale) && minScale > 0f)
+                                           || (float.IsFinite(maxScale) && maxScale > 0f);
+            if (!hasExplicitConfiguration)
+            {
+                return true;
+            }
+
+            if (referenceTickCost > 0)
+            {
+                normalizedReferenceTickCost = referenceTickCost;
+            }
+
+            if (float.IsFinite(responseStrength) && responseStrength >= 0f)
+            {
+                normalizedResponseStrength = Math.Clamp(responseStrength, 0f, 8f);
+            }
+
+            var hasExplicitScale = float.IsFinite(minScale)
+                                   && float.IsFinite(maxScale)
+                                   && (minScale > 0f || maxScale > 0f);
+            if (hasExplicitScale)
+            {
+                normalizedMinScale = Math.Clamp(minScale, 0f, 1f);
+                normalizedMaxScale = Math.Clamp(maxScale, 0f, 1f);
+                if (normalizedMaxScale < normalizedMinScale)
+                {
+                    normalizedMaxScale = normalizedMinScale;
+                }
+            }
+
+            return true;
+        }
+
+        if (referenceTickCost <= 0
+            || !IsFiniteInRange(responseStrength, 0f, 8f)
+            || !IsFiniteInRange(minScale, 0f, 1f)
+            || !IsFiniteInRange(maxScale, 0f, 1f)
+            || maxScale < minScale)
+        {
+            return false;
+        }
+
+        normalizedReferenceTickCost = referenceTickCost;
+        normalizedResponseStrength = responseStrength;
+        normalizedMinScale = minScale;
+        normalizedMaxScale = maxScale;
+        return true;
+    }
+
     private static float ResolvePlasticityDelta(float plasticityRate, float plasticityDelta)
     {
         if (plasticityDelta > 0f)
@@ -1426,6 +1553,11 @@ public sealed class IoGatewayActor : IActor
             PlasticityDelta = energy.PlasticityDelta,
             PlasticityRebaseThreshold = energy.PlasticityRebaseThreshold,
             PlasticityRebaseThresholdPct = energy.PlasticityRebaseThresholdPct,
+            PlasticityEnergyCostModulationEnabled = energy.PlasticityEnergyCostModulationEnabled,
+            PlasticityEnergyCostReferenceTickCost = energy.PlasticityEnergyCostReferenceTickCost,
+            PlasticityEnergyCostResponseStrength = energy.PlasticityEnergyCostResponseStrength,
+            PlasticityEnergyCostMinScale = energy.PlasticityEnergyCostMinScale,
+            PlasticityEnergyCostMaxScale = energy.PlasticityEnergyCostMaxScale,
             HomeostasisEnabled = energy.HomeostasisEnabled,
             HomeostasisTargetMode = energy.HomeostasisTargetMode,
             HomeostasisUpdateMode = energy.HomeostasisUpdateMode,
@@ -1444,7 +1576,9 @@ public sealed class IoGatewayActor : IActor
         string command,
         bool success,
         string message,
-        BrainIoEntry? entry = null)
+        BrainIoEntry? entry = null,
+        bool? configuredPlasticityEnabled = null,
+        bool? effectivePlasticityEnabled = null)
     {
         if (context.Sender is null)
         {
@@ -1457,7 +1591,11 @@ public sealed class IoGatewayActor : IActor
             Command = command,
             Success = success,
             Message = message ?? string.Empty,
-            HasEnergyState = entry is not null
+            HasEnergyState = entry is not null,
+            HasConfiguredPlasticityEnabled = configuredPlasticityEnabled.HasValue,
+            ConfiguredPlasticityEnabled = configuredPlasticityEnabled.GetValueOrDefault(),
+            HasEffectivePlasticityEnabled = effectivePlasticityEnabled.HasValue,
+            EffectivePlasticityEnabled = effectivePlasticityEnabled.GetValueOrDefault()
         };
 
         if (entry is not null)
