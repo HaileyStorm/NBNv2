@@ -35,9 +35,9 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _filterZeroVectorOutputs = true;
     private bool _pauseVectorUiUpdates;
     private bool _autoSendInputVectorEveryTick;
-    private bool _costEnabled = true;
-    private bool _energyEnabled = true;
-    private bool _costEnergyEnabled = true;
+    private bool _costEnabled;
+    private bool _energyEnabled;
+    private bool _costEnergyEnabled;
     private bool _systemCostEnergyEnabled;
     private bool _systemCostEnergyEnabledDraft;
     private bool _systemPlasticitySettingsSyncInProgress;

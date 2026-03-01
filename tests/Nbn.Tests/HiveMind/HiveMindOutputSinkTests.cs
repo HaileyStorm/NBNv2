@@ -1580,6 +1580,13 @@ public class HiveMindOutputSinkTests
             NeuronCount = 1
         }));
 
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = true
+        }));
+
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         root.Send(hiveMind, new ProtoSettings.SettingChanged
         {

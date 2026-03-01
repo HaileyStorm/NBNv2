@@ -644,6 +644,9 @@ public class OrchestratorPanelViewModelTests
         var brainA = Guid.NewGuid();
         var brainB = Guid.NewGuid();
         var brainC = Guid.NewGuid();
+        var brainD = Guid.NewGuid();
+        var brainE = Guid.NewGuid();
+        var brainF = Guid.NewGuid();
         const ulong placementEpoch = 3;
 
         var client = new FakeWorkbenchClient
@@ -669,12 +672,20 @@ public class OrchestratorPanelViewModelTests
                 {
                     new BrainStatus { BrainId = brainA.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 1, State = "Active" },
                     new BrainStatus { BrainId = brainB.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 2, State = "Active" },
-                    new BrainStatus { BrainId = brainC.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 3, State = "Active" }
+                    new BrainStatus { BrainId = brainC.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 3, State = "Active" },
+                    new BrainStatus { BrainId = brainD.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 4, State = "Active" },
+                    new BrainStatus { BrainId = brainE.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 5, State = "Active" },
+                    new BrainStatus { BrainId = brainF.ToProtoUuid(), SpawnedMs = (ulong)nowMs, LastTickId = 6, State = "Active" }
                 }
             },
             SettingsResponse = new SettingListResponse(),
             PlacementLifecycleFactory = requestedBrainId =>
-                requestedBrainId == brainA || requestedBrainId == brainB || requestedBrainId == brainC
+                requestedBrainId == brainA
+                || requestedBrainId == brainB
+                || requestedBrainId == brainC
+                || requestedBrainId == brainD
+                || requestedBrainId == brainE
+                || requestedBrainId == brainF
                     ? new PlacementLifecycleInfo
                     {
                         BrainId = requestedBrainId.ToProtoUuid(),
@@ -685,7 +696,12 @@ public class OrchestratorPanelViewModelTests
             PlacementReconcileFactory = (workerAddress, workerRoot, requestedBrainId, requestedEpoch) =>
             {
                 if (requestedEpoch != placementEpoch
-                    || (requestedBrainId != brainA && requestedBrainId != brainB && requestedBrainId != brainC)
+                    || (requestedBrainId != brainA
+                        && requestedBrainId != brainB
+                        && requestedBrainId != brainC
+                        && requestedBrainId != brainD
+                        && requestedBrainId != brainE
+                        && requestedBrainId != brainF)
                     || !string.Equals(workerRoot, connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
                 {
                     return null;
@@ -716,7 +732,15 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerNodeId);
-        var abbreviated = new[] { ShortBrainId(brainA), ShortBrainId(brainB), ShortBrainId(brainC) }
+        var abbreviated = new[]
+            {
+                ShortBrainId(brainA),
+                ShortBrainId(brainB),
+                ShortBrainId(brainC),
+                ShortBrainId(brainD),
+                ShortBrainId(brainE),
+                ShortBrainId(brainF)
+            }
             .OrderBy(static value => value, StringComparer.Ordinal)
             .ToArray();
         Assert.Equal($"{abbreviated[0]}, {abbreviated[1]}, ...", workerEndpoint.BrainHints);

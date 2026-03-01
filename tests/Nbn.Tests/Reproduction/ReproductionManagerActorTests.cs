@@ -586,6 +586,113 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task ReproduceByArtifacts_FunctionMutation_BiasesTowardStableFamilies()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-function-bias-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var parentRegion0 = new[]
+            {
+                new NeuronRecord(
+                    axonCount: 0,
+                    paramBCode: 0,
+                    paramACode: 0,
+                    activationThresholdCode: 0,
+                    preActivationThresholdCode: 0,
+                    resetFunctionId: 4,
+                    activationFunctionId: 13,
+                    accumulationFunctionId: 1,
+                    exists: true)
+            };
+            var region31 = new[] { CreateNeuron(axonCount: 0) };
+            var parentA = CreateTwoRegionNbn(parentRegion0, Array.Empty<AxonRecord>(), region31, Array.Empty<AxonRecord>());
+            var parentB = CreateTwoRegionNbn(parentRegion0, Array.Empty<AxonRecord>(), region31, Array.Empty<AxonRecord>());
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var preferredActivationIds = new HashSet<byte> { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
+            var preferredResetIds = new HashSet<byte> { 0, 1, 3, 17, 30, 43, 44, 45, 47, 48, 49, 58 };
+            var preferredAccumIds = new HashSet<byte> { 0, 1, 2 };
+            var preferredActivationCount = 0;
+            var preferredResetCount = 0;
+            var preferredAccumCount = 0;
+            const int sampleCount = 20;
+
+            for (ulong seed = 1; seed <= sampleCount; seed++)
+            {
+                var response = await root.RequestAsync<Repro.ReproduceResult>(
+                    manager,
+                    new Repro.ReproduceByArtifactsRequest
+                    {
+                        ParentADef = parentARef,
+                        ParentBDef = parentBRef,
+                        Seed = seed,
+                        Config = new Repro.ReproduceConfig
+                        {
+                            MaxFunctionHistDistance = 1f,
+                            MaxConnectivityHistDistance = 1f,
+                            ProbChooseParentA = 1f,
+                            ProbChooseParentB = 0f,
+                            ProbAverage = 0f,
+                            ProbMutate = 0f,
+                            ProbChooseFuncA = 1f,
+                            ProbMutateFunc = 1f,
+                            SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                        }
+                    });
+
+                Assert.NotNull(response.Report);
+                Assert.True(response.Report.Compatible);
+                Assert.NotNull(response.ChildDef);
+
+                var childBytes = await ReadArtifactBytesAsync(store, response.ChildDef!);
+                var childHeader = NbnBinary.ReadNbnHeader(childBytes);
+                var childSections = ReadSections(childBytes, childHeader);
+                var neuron = childSections.Single(section => section.RegionId == 0).NeuronRecords[0];
+
+                if (preferredActivationIds.Contains(neuron.ActivationFunctionId))
+                {
+                    preferredActivationCount++;
+                }
+
+                if (preferredResetIds.Contains(neuron.ResetFunctionId))
+                {
+                    preferredResetCount++;
+                }
+
+                if (preferredAccumIds.Contains(neuron.AccumulationFunctionId))
+                {
+                    preferredAccumCount++;
+                }
+            }
+
+            Assert.True(preferredActivationCount >= 12, $"Expected activation mutation bias toward preferred set; got {preferredActivationCount}/{sampleCount}.");
+            Assert.True(preferredResetCount >= 10, $"Expected reset mutation bias toward preferred set; got {preferredResetCount}/{sampleCount}.");
+            Assert.True(preferredAccumCount >= 16, $"Expected accumulation mutation bias toward preferred set; got {preferredAccumCount}/{sampleCount}.");
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_DisableNeuron_ReroutesInbound_WhenConfigured()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-inbound-reroute-{Guid.NewGuid():N}");

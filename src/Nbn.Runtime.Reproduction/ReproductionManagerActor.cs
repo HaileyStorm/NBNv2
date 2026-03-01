@@ -21,6 +21,12 @@ public sealed class ReproductionManagerActor : IActor
     private const float MinRequiredSpotOverlap = 0.35f;
     private const float MaxRequiredSpotOverlap = 0.95f;
     private const ulong DefaultSpotCheckSeed = 0x9E3779B97F4A7C15UL;
+    private const float PreferredActivationMutationBias = 0.80f;
+    private const float PreferredResetMutationBias = 0.75f;
+    private const float PreferredAccumulationMutationBias = 0.85f;
+    private static readonly byte[] PreferredActivationFunctionIds = { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
+    private static readonly byte[] PreferredResetFunctionIds = { 0, 1, 3, 17, 30, 43, 44, 45, 47, 48, 49, 58 };
+    private static readonly byte[] PreferredAccumulationFunctionIds = { 0, 0, 2, 2, 1 };
     private readonly PID? _ioGatewayPid;
 
     public ReproductionManagerActor(PID? ioGatewayPid = null)
@@ -475,21 +481,27 @@ public sealed class ReproductionManagerActor : IActor
             chooseAByFallback,
             config,
             bits: 6,
-            ref state);
+            ref state,
+            PreferredActivationFunctionIds,
+            PreferredActivationMutationBias);
         var resetFunctionId = SelectFunctionCode(
             neuronA.ResetFunctionId,
             neuronB.ResetFunctionId,
             chooseAByFallback,
             config,
             bits: 6,
-            ref state);
+            ref state,
+            PreferredResetFunctionIds,
+            PreferredResetMutationBias);
         var accumulationFunctionId = SelectFunctionCode(
             neuronA.AccumulationFunctionId,
             neuronB.AccumulationFunctionId,
             chooseAByFallback,
             config,
             bits: 2,
-            ref state);
+            ref state,
+            PreferredAccumulationFunctionIds,
+            PreferredAccumulationMutationBias);
 
         return new NeuronRecord(
             axonCount: 0,
@@ -564,7 +576,9 @@ public sealed class ReproductionManagerActor : IActor
         bool chooseAByFallback,
         ReproduceConfig? config,
         int bits,
-        ref ulong state)
+        ref ulong state,
+        IReadOnlyList<byte>? preferredCodes = null,
+        float preferredBias = 0f)
     {
         var maxCode = QuantizationMap.MaxCode(bits);
         var chooseAProbability = ClampProbability(config?.ProbChooseFuncA ?? 0f);
@@ -575,10 +589,29 @@ public sealed class ReproductionManagerActor : IActor
 
         if (ShouldMutate(mutateProbability, ref state))
         {
-            selected = (byte)MutateCode(selected, bits, ref state);
+            selected = (byte)MutateFunctionCode(selected, bits, preferredCodes, preferredBias, ref state);
         }
 
         return (byte)Math.Clamp(selected, 0, maxCode);
+    }
+
+    private static int MutateFunctionCode(
+        int code,
+        int bits,
+        IReadOnlyList<byte>? preferredCodes,
+        float preferredBias,
+        ref ulong state)
+    {
+        var maxCode = QuantizationMap.MaxCode(bits);
+        if (preferredCodes is not null
+            && preferredCodes.Count > 0
+            && NextUnitFloat(ref state) < ClampProbability(preferredBias))
+        {
+            var preferred = preferredCodes[(int)(NextRandom(ref state) % (ulong)preferredCodes.Count)];
+            return Math.Clamp((int)preferred, 0, maxCode);
+        }
+
+        return MutateCode(code, bits, ref state);
     }
 
     private static int MutateCode(int code, int bits, ref ulong state)

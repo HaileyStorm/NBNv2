@@ -47,10 +47,12 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const int AccumulationFunctionSumId = 0;
     private const int AccumulationFunctionMaxId = 2;
     private const int AccumulationFunctionNoneId = 3;
-    private const int MaxRandomPreActivationThresholdCode = 40;
-    private const int MaxRandomActivationThresholdCode = 48;
+    private const int MaxRandomPreActivationThresholdCode = 36;
+    private const int MaxRandomActivationThresholdCode = 40;
     private const int MaxRandomOutputPreActivationThresholdCode = 16;
     private const int MaxRandomOutputActivationThresholdCode = 16;
+    private const int MinRandomParamCode = 13;
+    private const int MaxRandomParamCode = 50;
     private const int MaxKnownActivationFunctionId = 29;
     private const int MaxKnownResetFunctionId = 60;
     private const string FunctionLegendText = "Legend: B=buffer, I=inbox, P=potential, T=activation threshold, A=Param A, Bp=Param B, K=out-degree.";
@@ -74,14 +76,33 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const double AxonCountLowBiasPower = 1.7;
     private const double OutputAxonCountLowBiasPower = 2.6;
     private static readonly int[] ActivationFunctionIds = Enumerable.Range(0, MaxKnownActivationFunctionId + 1).ToArray();
-    private static readonly int[] RandomInternalActivationFunctionIds = Enumerable.Range(1, MaxKnownActivationFunctionId).ToArray();
+    private static readonly int[] RandomInternalActivationFunctionIds = { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
+    private static readonly int[] ParamAActivationFunctionIds = { 12, 14, 16, 17, 20, 21, 22, 24, 25, 26, 27, 29 };
+    private static readonly int[] ParamBActivationFunctionIds = { 20, 24, 25, 29 };
     private static readonly int[] InputAllowedActivationFunctionIds = { 1, 6, 7, 11, 16, 17, 25 };
     private static readonly int[] OutputAllowedActivationFunctionIds = { 1, 5, 6, 7, 8, 11, 14, 16, 17, 18, 19, 20, 23, 24, 25 };
     private static readonly int[] RandomOutputActivationFunctionIds = { 6, 11, 18 };
     private static readonly int[] ResetFunctionIds = Enumerable.Range(0, MaxKnownResetFunctionId + 1).ToArray();
     private static readonly int[] InputAllowedResetFunctionIds = { 0, 1, 3, 17, 30 };
+    private static readonly int[] StableOutputResetFunctionIds = { DefaultInputResetFunctionId, 43, 44, 45, 47, 48, 49, 58 };
+    private static readonly int[] RandomOutputResetFunctionIds =
+    {
+        DefaultInputResetFunctionId,
+        DefaultInputResetFunctionId,
+        DefaultInputResetFunctionId,
+        DefaultInputResetFunctionId,
+        43,
+        44,
+        45,
+        47,
+        48,
+        49,
+        58
+    };
+    private static readonly int[] RandomInternalResetFunctionIds = ResetFunctionIds.Where(IsStableRandomResetFunctionId).ToArray();
     private static readonly int[] AccumulationFunctionIds = { 0, 1, 2, 3 };
     private static readonly int[] RandomAccumulationFunctionIds = { 0, 1, 2 };
+    private static readonly double[] RandomAccumulationFunctionWeights = { 1.3, 0.35, 1.1 };
     private static readonly double[] ActivationFunctionWeights = BuildActivationFunctionWeights();
     private static readonly double[] ResetFunctionWeights = BuildResetFunctionWeights();
     private static readonly double[] AccumulationFunctionWeights = BuildAccumulationFunctionWeights();
@@ -664,22 +685,27 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             options.ActivationFixedId,
             ActivationFunctionIds,
             ActivationFunctionWeights,
-            GetRandomAllowedActivationFunctionIdsForRegion,
+            options.ActivationMode == RandomFunctionSelectionMode.Fixed
+                ? GetAllowedActivationFunctionIdsForRegion
+                : GetRandomAllowedActivationFunctionIdsForRegion,
             GetDefaultActivationFunctionIdForRegion);
+        Func<int, IReadOnlyList<int>> resetAllowedSelector = options.ResetMode == RandomFunctionSelectionMode.Fixed
+            ? GetAllowedResetFunctionIdsForRegion
+            : GetRandomAllowedResetFunctionIdsForRegion;
         var resetPickers = BuildRegionFunctionPickers(
             rng,
             options.ResetMode,
             options.ResetFixedId,
             ResetFunctionIds,
             ResetFunctionWeights,
-            GetAllowedResetFunctionIdsForRegion,
+            resetAllowedSelector,
             GetDefaultResetFunctionIdForRegion);
         var accumulationIds = options.AccumulationMode == RandomFunctionSelectionMode.Fixed
             ? (IReadOnlyList<int>)AccumulationFunctionIds
             : RandomAccumulationFunctionIds;
         var accumulationWeights = options.AccumulationMode == RandomFunctionSelectionMode.Fixed
             ? AccumulationFunctionWeights
-            : BuildSubsetWeights(AccumulationFunctionIds, AccumulationFunctionWeights, accumulationIds);
+            : RandomAccumulationFunctionWeights;
         var accumulationPicker = CreateFunctionPicker(rng, options.AccumulationMode, options.AccumulationFixedId, accumulationIds, accumulationWeights);
         var preActivationPicker = CreateCenteredCodePicker(rng, options.ThresholdMode, options.PreActivationMin, options.PreActivationMin, options.PreActivationMax);
         var activationThresholdPicker = CreateLowBiasedCodePicker(rng, options.ThresholdMode, options.ActivationThresholdMin, options.ActivationThresholdMin, options.ActivationThresholdMax);
@@ -3108,16 +3134,16 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     }
 
     private bool UsesParamA(int id)
-    {
-        var option = ActivationFunctions.FirstOrDefault(entry => entry.Id == id);
-        return option?.UsesParamA ?? false;
-    }
+        => ActivationUsesParamA(id);
 
     private bool UsesParamB(int id)
-    {
-        var option = ActivationFunctions.FirstOrDefault(entry => entry.Id == id);
-        return option?.UsesParamB ?? false;
-    }
+        => ActivationUsesParamB(id);
+
+    private static bool ActivationUsesParamA(int id)
+        => ParamAActivationFunctionIds.Contains(id);
+
+    private static bool ActivationUsesParamB(int id)
+        => ParamBActivationFunctionIds.Contains(id);
 
     private string DescribeActivation(int id)
         => ActivationFunctions.FirstOrDefault(entry => entry.Id == id)?.Description ?? "Reserved";
@@ -3252,7 +3278,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         if (neuron.RegionId == NbnConstants.OutputRegionId)
         {
-            if (options.ResetMode != RandomFunctionSelectionMode.Fixed)
+            if (options.ResetMode != RandomFunctionSelectionMode.Fixed
+                && !StableOutputResetFunctionIds.Contains(neuron.ResetFunctionId))
             {
                 neuron.ResetFunctionId = DefaultInputResetFunctionId;
             }
@@ -3268,6 +3295,11 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 neuron.ActivationThresholdCode = Math.Min(neuron.ActivationThresholdCode, MaxRandomOutputActivationThresholdCode);
             }
         }
+        else if (options.ResetMode != RandomFunctionSelectionMode.Fixed
+                 && !IsStableRandomResetFunctionId(neuron.ResetFunctionId))
+        {
+            neuron.ResetFunctionId = GetDefaultResetFunctionIdForRegion(neuron.RegionId);
+        }
 
         if (options.AccumulationMode != RandomFunctionSelectionMode.Fixed
             && neuron.AccumulationFunctionId == AccumulationFunctionNoneId)
@@ -3279,6 +3311,16 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         {
             neuron.PreActivationThresholdCode = Math.Min(neuron.PreActivationThresholdCode, MaxRandomPreActivationThresholdCode);
             neuron.ActivationThresholdCode = Math.Min(neuron.ActivationThresholdCode, MaxRandomActivationThresholdCode);
+        }
+
+        if (options.ParamMode != RandomRangeMode.Fixed)
+        {
+            neuron.ParamACode = ActivationUsesParamA(neuron.ActivationFunctionId)
+                ? Math.Clamp(neuron.ParamACode, MinRandomParamCode, MaxRandomParamCode)
+                : 0;
+            neuron.ParamBCode = ActivationUsesParamB(neuron.ActivationFunctionId)
+                ? Math.Clamp(neuron.ParamBCode, MinRandomParamCode, MaxRandomParamCode)
+                : 0;
         }
     }
 
@@ -3322,6 +3364,21 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         return ResetFunctionIds;
     }
 
+    private static IReadOnlyList<int> GetRandomAllowedResetFunctionIdsForRegion(int regionId)
+    {
+        if (regionId == NbnConstants.InputRegionId)
+        {
+            return InputAllowedResetFunctionIds;
+        }
+
+        if (regionId == NbnConstants.OutputRegionId)
+        {
+            return RandomOutputResetFunctionIds;
+        }
+
+        return RandomInternalResetFunctionIds;
+    }
+
     private static int GetDefaultActivationFunctionIdForRegion(int regionId)
     {
         if (regionId == NbnConstants.InputRegionId)
@@ -3354,6 +3411,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static bool IsResetFunctionAllowedForRegion(int regionId, int functionId)
         => IsKnownResetFunctionId(functionId)
            && GetAllowedResetFunctionIdsForRegion(regionId).Contains(functionId);
+
+    private static bool IsStableRandomResetFunctionId(int functionId)
+        => functionId != 2 && (functionId < 4 || functionId > 16);
 
     private static bool IsKnownActivationFunctionId(int functionId)
         => functionId >= 0 && functionId <= MaxKnownActivationFunctionId;

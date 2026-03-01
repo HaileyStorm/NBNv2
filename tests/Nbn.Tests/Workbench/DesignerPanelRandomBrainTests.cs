@@ -63,7 +63,48 @@ public class DesignerPanelRandomBrainTests
     }
 
     [Fact]
-    public void NewRandomBrain_DefaultModes_OutputNeuronsUseResetZero()
+    public void NewRandomBrain_WeightedResetMode_OutputNeuronsFavorResetZeroAndAllowDecayResets()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+            var allowedOutputResetIds = new HashSet<int> { 0, 43, 44, 45, 47, 48, 49, 58 };
+            var resetCounts = new Dictionary<int, int>();
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.OutputNeuronCountText = "10";
+            vm.RandomOptions.SelectedResetMode = vm.RandomOptions.ResetModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            for (var seed = 1; seed <= 32; seed++)
+            {
+                vm.RandomOptions.SeedText = seed.ToString(CultureInfo.InvariantCulture);
+                vm.NewRandomBrainCommand.Execute(null);
+
+                var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+                var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+                Assert.Equal(10, outputRegion.NeuronCount);
+                foreach (var neuron in outputRegion.Neurons.Where(neuron => neuron.Exists))
+                {
+                    Assert.Contains(neuron.ResetFunctionId, allowedOutputResetIds);
+                    if (!resetCounts.TryAdd(neuron.ResetFunctionId, 1))
+                    {
+                        resetCounts[neuron.ResetFunctionId]++;
+                    }
+                }
+            }
+
+            var zeroCount = resetCounts.TryGetValue(0, out var count) ? count : 0;
+            var nonZeroCount = resetCounts.Where(entry => entry.Key != 0).Sum(entry => entry.Value);
+            Assert.True(nonZeroCount > 0, "Expected output reset selection to include non-zero decay reset functions.");
+            Assert.True(zeroCount > nonZeroCount, "Expected RESET_ZERO to remain the dominant output reset pick.");
+        });
+    }
+
+    [Fact]
+    public void NewRandomBrain_FixedResetMode_OutputNeuronsRespectFixedResetId()
     {
         AvaloniaTestHost.RunOnUiThread(() =>
         {
@@ -72,16 +113,18 @@ public class DesignerPanelRandomBrainTests
             var vm = new DesignerPanelViewModel(connections, client);
 
             vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
-            vm.RandomOptions.SeedText = "78901";
-            vm.RandomOptions.OutputNeuronCountText = "6";
-            vm.RandomOptions.SelectedResetMode = vm.RandomOptions.ResetModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+            vm.RandomOptions.SeedText = "982451653";
+            vm.RandomOptions.OutputNeuronCountText = "5";
+            vm.RandomOptions.SelectedResetMode = vm.RandomOptions.ResetModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Fixed);
+            vm.RandomOptions.ResetFixedIdText = "55";
+            vm.RandomOptions.SeedBaselineActivityPath = false;
 
             vm.NewRandomBrainCommand.Execute(null);
 
             var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
             var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
-            Assert.Equal(6, outputRegion.NeuronCount);
-            Assert.All(outputRegion.Neurons.Where(neuron => neuron.Exists), neuron => Assert.Equal(0, neuron.ResetFunctionId));
+            Assert.Equal(5, outputRegion.NeuronCount);
+            Assert.All(outputRegion.Neurons.Where(neuron => neuron.Exists), neuron => Assert.Equal(55, neuron.ResetFunctionId));
         });
     }
 
@@ -118,6 +161,113 @@ public class DesignerPanelRandomBrainTests
                 Assert.InRange(neuron.ActivationThresholdCode, 0, 16);
                 Assert.Equal(2, neuron.AccumulationFunctionId);
             });
+        });
+    }
+
+    [Fact]
+    public void NewRandomBrain_WeightedActivation_InternalNeuronsUseStableFunctionsAndTightThresholdCaps()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+            var allowedInternalActivationIds = new HashSet<int> { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "246813579";
+            vm.RandomOptions.SelectedActivationMode = vm.RandomOptions.ActivationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+            vm.RandomOptions.SelectedThresholdMode = vm.RandomOptions.ThresholdModes.Single(mode => mode.Value == RandomRangeMode.Range);
+            vm.RandomOptions.PreActivationMinText = "0";
+            vm.RandomOptions.PreActivationMaxText = "63";
+            vm.RandomOptions.ActivationThresholdMinText = "0";
+            vm.RandomOptions.ActivationThresholdMaxText = "63";
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var internalNeurons = brain.Regions
+                .Where(region => region.RegionId != NbnConstants.InputRegionId && region.RegionId != NbnConstants.OutputRegionId)
+                .SelectMany(region => region.Neurons.Where(neuron => neuron.Exists))
+                .ToList();
+
+            Assert.NotEmpty(internalNeurons);
+            Assert.All(internalNeurons, neuron =>
+            {
+                Assert.Contains(neuron.ActivationFunctionId, allowedInternalActivationIds);
+                Assert.InRange(neuron.PreActivationThresholdCode, 0, 36);
+                Assert.InRange(neuron.ActivationThresholdCode, 0, 40);
+            });
+        });
+    }
+
+    [Fact]
+    public void NewRandomBrain_RangedParams_WithParametricActivation_ClampsParamsNearUnitRange()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "123123123";
+            vm.RandomOptions.SelectedActivationMode = vm.RandomOptions.ActivationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Fixed);
+            vm.RandomOptions.ActivationFixedIdText = "25";
+            vm.RandomOptions.SelectedParamMode = vm.RandomOptions.ParamModes.Single(mode => mode.Value == RandomRangeMode.Range);
+            vm.RandomOptions.ParamAMinText = "0";
+            vm.RandomOptions.ParamAMaxText = "63";
+            vm.RandomOptions.ParamBMinText = "0";
+            vm.RandomOptions.ParamBMaxText = "63";
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var nonInputNeurons = brain.Regions
+                .Where(region => region.RegionId != NbnConstants.InputRegionId)
+                .SelectMany(region => region.Neurons.Where(neuron => neuron.Exists))
+                .ToList();
+
+            Assert.NotEmpty(nonInputNeurons);
+            Assert.All(nonInputNeurons, neuron =>
+            {
+                Assert.Equal(25, neuron.ActivationFunctionId);
+                Assert.InRange(neuron.ParamACode, 13, 50);
+                Assert.InRange(neuron.ParamBCode, 13, 50);
+            });
+        });
+    }
+
+    [Fact]
+    public void NewRandomBrain_WeightedReset_AvoidsBufferAmplifyingResetFamilies()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+            var disallowedResetIds = new HashSet<int>(Enumerable.Range(4, 13)) { 2 };
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SelectedResetMode = vm.RandomOptions.ResetModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            for (var seed = 1; seed <= 32; seed++)
+            {
+                vm.RandomOptions.SeedText = seed.ToString(CultureInfo.InvariantCulture);
+                vm.NewRandomBrainCommand.Execute(null);
+
+                var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+                var internalNeurons = brain.Regions
+                    .Where(region => region.RegionId != NbnConstants.InputRegionId && region.RegionId != NbnConstants.OutputRegionId)
+                    .SelectMany(region => region.Neurons.Where(neuron => neuron.Exists))
+                    .ToList();
+
+                Assert.NotEmpty(internalNeurons);
+                Assert.All(internalNeurons, neuron => Assert.DoesNotContain(neuron.ResetFunctionId, disallowedResetIds));
+            }
         });
     }
 

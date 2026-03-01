@@ -193,14 +193,14 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public void CostEnergy_Defaults_SystemDisabled_WithPerBrainUnsuppressed()
+    public void CostEnergy_Defaults_SystemDisabled_WithPerBrainSuppressed()
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
 
         Assert.False(vm.SystemCostEnergyEnabled);
         Assert.False(vm.SystemCostEnergyEnabledDraft);
-        Assert.True(vm.CostEnergyEnabled);
-        Assert.False(vm.CostEnergySuppressed);
+        Assert.False(vm.CostEnergyEnabled);
+        Assert.True(vm.CostEnergySuppressed);
     }
 
     [Fact]

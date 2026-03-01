@@ -6485,7 +6485,7 @@ public sealed class HiveMindActor : IActor
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
         public long LastTickCost { get; set; }
-        public bool CostEnergyEnabled { get; set; } = true;
+        public bool CostEnergyEnabled { get; set; }
         public bool PlasticityEnabled { get; set; } = true;
         public float PlasticityRate { get; set; } = DefaultPlasticityRate;
         public bool PlasticityProbabilisticUpdates { get; set; } = true;

@@ -40,14 +40,14 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     private string _accumulationFixedIdText = "0";
     private RandomOptionChoice<RandomRangeMode> _selectedThresholdMode;
     private string _preActivationMinText = "0";
-    private string _preActivationMaxText = "63";
+    private string _preActivationMaxText = "36";
     private string _activationThresholdMinText = "0";
-    private string _activationThresholdMaxText = "63";
+    private string _activationThresholdMaxText = "40";
     private RandomOptionChoice<RandomRangeMode> _selectedParamMode;
-    private string _paramAMinText = "0";
-    private string _paramAMaxText = "63";
-    private string _paramBMinText = "0";
-    private string _paramBMaxText = "63";
+    private string _paramAMinText = "13";
+    private string _paramAMaxText = "50";
+    private string _paramBMinText = "13";
+    private string _paramBMaxText = "50";
 
     public RandomBrainOptionsViewModel()
     {

@@ -17,6 +17,7 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed class OrchestratorPanelViewModel : ViewModelBase
 {
+    private const int MaxWorkerBrainHints = 2;
     private const int MaxRows = 200;
     private const long StaleNodeMs = 15000;
     private const long WorkerFailedAfterMs = 45000;
@@ -1218,9 +1219,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             .Select(AbbreviateBrainId)
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
-        return abbreviated.Length <= 2
+        return abbreviated.Length <= MaxWorkerBrainHints
             ? string.Join(", ", abbreviated)
-            : $"{abbreviated[0]}, {abbreviated[1]}, ...";
+            : $"{string.Join(", ", abbreviated.Take(MaxWorkerBrainHints))}, ...";
     }
 
     private static string AbbreviateBrainId(Guid brainId)
