@@ -178,14 +178,15 @@ public class VizActivityProjectionBuilderTests
     }
 
     [Fact]
-    public void Build_MiniChart_FocusModeTracksTopNeurons_AndIncludesOutputRegionNeurons()
+    public void Build_MiniChart_FocusModeTracksTopNeurons_BySignedBufferValues()
     {
         var outputRegion = (uint)NbnConstants.OutputRegionId;
         var events = new List<VizEventItem>
         {
             CreateEvent("VizAxonSent", tick: 200, region: 5, source: Address(5, 9), target: Address(outputRegion, 1), value: 1.0f, strength: 0.1f),
-            CreateEvent("VizAxonSent", tick: 201, region: 8, source: Address(8, 2), target: Address(outputRegion, 3), value: 0.4f, strength: 0.2f),
-            CreateEvent("VizAxonSent", tick: 201, region: 6, source: Address(6, 5), target: Address(outputRegion, 1), value: 0.3f, strength: 0.1f)
+            CreateEvent("VizNeuronBuffer", tick: 200, region: outputRegion, source: Address(outputRegion, 1), target: Address(outputRegion, 1), value: -0.6f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 201, region: outputRegion, source: Address(outputRegion, 3), target: Address(outputRegion, 3), value: 0.4f, strength: 0f),
+            CreateEvent("VizNeuronBuffer", tick: 201, region: outputRegion, source: Address(outputRegion, 1), target: Address(outputRegion, 1), value: 0.25f, strength: 0f)
         };
 
         var projection = VizActivityProjectionBuilder.Build(
@@ -202,18 +203,21 @@ public class VizActivityProjectionBuilderTests
         Assert.True(chart.Enabled);
         Assert.Equal("Top 3 neurons in R31", chart.ModeLabel);
         Assert.Equal(2, chart.Series.Count);
+        Assert.True(chart.UseSignedLinearScale);
 
         var first = chart.Series[0];
         var second = chart.Series[1];
         Assert.Equal("R31N1", first.Label);
         Assert.Equal("R31N3", second.Label);
+        Assert.InRange(first.TotalScore, 0.84f, 0.86f);
+        Assert.InRange(second.TotalScore, 0.39f, 0.41f);
         Assert.Equal(8, first.Values.Count);
         Assert.Equal(8, second.Values.Count);
         Assert.True(first.Values.Take(6).All(value => Math.Abs(value) <= 1e-6f));
         Assert.True(second.Values.Take(7).All(value => Math.Abs(value) <= 1e-6f));
-        Assert.InRange(first.Values[6], 2.099f, 2.101f);
-        Assert.InRange(first.Values[7], 1.399f, 1.401f);
-        Assert.InRange(second.Values[7], 1.599f, 1.601f);
+        Assert.InRange(first.Values[6], -0.601f, -0.599f);
+        Assert.InRange(first.Values[7], 0.249f, 0.251f);
+        Assert.InRange(second.Values[7], 0.399f, 0.401f);
     }
 
     [Fact]

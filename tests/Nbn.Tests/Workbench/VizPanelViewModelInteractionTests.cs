@@ -1063,6 +1063,42 @@ public class VizPanelViewModelInteractionTests
         Assert.Contains("Ticks 0..20", vm.MiniActivityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void MiniActivityChart_FocusMode_UsesSignedBufferLinearAxis()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+        vm.RegionFocusText = "0";
+
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizNeuronBuffer.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 10,
+            region: "0",
+            source: "1",
+            target: "1",
+            value: -0.5f));
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizNeuronBuffer.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 11,
+            region: "0",
+            source: "1",
+            target: "1",
+            value: 0.3f));
+
+        var rendered = SpinWait.SpinUntil(
+            () => vm.MiniActivityChartMetricLabel.Contains("linear", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(rendered);
+        Assert.Contains("buffer", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("log(", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual("0", vm.MiniActivityYAxisBottomLabel);
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,

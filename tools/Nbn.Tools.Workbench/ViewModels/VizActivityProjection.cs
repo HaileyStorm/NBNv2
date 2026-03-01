@@ -63,7 +63,9 @@ public sealed record VizMiniActivityChart(
     ulong MaxTick,
     IReadOnlyList<ulong> Ticks,
     IReadOnlyList<VizMiniActivitySeries> Series,
-    float PeakScore);
+    float PeakScore,
+    float MinScore = 0f,
+    bool UseSignedLinearScale = false);
 
 public sealed record VizMiniActivitySeries(
     string Key,
@@ -80,7 +82,8 @@ public static class VizActivityProjectionBuilder
     private const int DefaultMiniChartTopSeriesCount = 8;
     private const int MaxMiniChartTopSeriesCount = 32;
     private const float LowSignalThreshold = 1e-5f;
-    private const string MiniChartMetricLabel = "score = 1 + |value| + |strength| per event contribution";
+    private const string MiniChartScoreMetricLabel = "score = 1 + |value| + |strength| per event contribution";
+    private const string MiniChartFocusBufferMetricLabel = "value = neuron buffer (signed, VizNeuronBuffer)";
 
     public static VizActivityProjection Build(IEnumerable<VizEventItem> events, VizActivityProjectionOptions options)
     {
@@ -254,22 +257,26 @@ public static class VizActivityProjectionBuilder
         ulong maxTick,
         VizActivityProjectionOptions options)
     {
+        var focusMode = options.FocusRegionId.HasValue;
         var topSeriesCount = NormalizeTopSeriesCount(options.TopSeriesCount);
         var modeLabel = options.FocusRegionId is uint focusRegionId
             ? $"Top {topSeriesCount} neurons in R{focusRegionId}"
             : $"Top {topSeriesCount} regions";
+        var metricLabel = focusMode ? MiniChartFocusBufferMetricLabel : MiniChartScoreMetricLabel;
 
         if (!options.EnableMiniChart)
         {
             return new VizMiniActivityChart(
                 Enabled: false,
                 ModeLabel: modeLabel,
-                MetricLabel: MiniChartMetricLabel,
+                MetricLabel: metricLabel,
                 MinTick: 0,
                 MaxTick: 0,
                 Ticks: Array.Empty<ulong>(),
                 Series: Array.Empty<VizMiniActivitySeries>(),
-                PeakScore: 0f);
+                PeakScore: 0f,
+                MinScore: 0f,
+                UseSignedLinearScale: focusMode);
         }
 
         if (windowed.Count == 0 || maxTick < minTick)
@@ -277,12 +284,14 @@ public static class VizActivityProjectionBuilder
             return new VizMiniActivityChart(
                 Enabled: true,
                 ModeLabel: modeLabel,
-                MetricLabel: MiniChartMetricLabel,
+                MetricLabel: metricLabel,
                 MinTick: 0,
                 MaxTick: 0,
                 Ticks: Array.Empty<ulong>(),
                 Series: Array.Empty<VizMiniActivitySeries>(),
-                PeakScore: 0f);
+                PeakScore: 0f,
+                MinScore: 0f,
+                UseSignedLinearScale: focusMode);
         }
 
         var effectiveMinTick = minTick;
@@ -291,12 +300,14 @@ public static class VizActivityProjectionBuilder
             return new VizMiniActivityChart(
                 Enabled: true,
                 ModeLabel: modeLabel,
-                MetricLabel: MiniChartMetricLabel,
+                MetricLabel: metricLabel,
                 MinTick: 0,
                 MaxTick: 0,
                 Ticks: Array.Empty<ulong>(),
                 Series: Array.Empty<VizMiniActivitySeries>(),
-                PeakScore: 0f);
+                PeakScore: 0f,
+                MinScore: 0f,
+                UseSignedLinearScale: focusMode);
         }
 
         var tickCount = (int)(maxTick - effectiveMinTick + 1);
@@ -323,11 +334,33 @@ public static class VizActivityProjectionBuilder
             .ToList();
 
         var peakScore = 0f;
+        var minScore = 0f;
+        var hasFiniteValue = false;
         foreach (var item in series)
         {
             foreach (var value in item.Values)
             {
-                if (value > peakScore)
+                if (!float.IsFinite(value))
+                {
+                    continue;
+                }
+
+                if (focusMode)
+                {
+                    var abs = MathF.Abs(value);
+                    if (abs > peakScore)
+                    {
+                        peakScore = abs;
+                    }
+
+                    if (!hasFiniteValue || value < minScore)
+                    {
+                        minScore = value;
+                    }
+
+                    hasFiniteValue = true;
+                }
+                else if (value > peakScore)
                 {
                     peakScore = value;
                 }
@@ -337,12 +370,14 @@ public static class VizActivityProjectionBuilder
         return new VizMiniActivityChart(
             Enabled: true,
             ModeLabel: modeLabel,
-            MetricLabel: MiniChartMetricLabel,
+            MetricLabel: metricLabel,
             MinTick: effectiveMinTick,
             MaxTick: maxTick,
             Ticks: ticks,
             Series: series,
-            PeakScore: peakScore);
+            PeakScore: peakScore,
+            MinScore: hasFiniteValue ? minScore : 0f,
+            UseSignedLinearScale: focusMode);
     }
 
     private static Dictionary<string, TrendAccumulator> BuildRegionTrendMap(
@@ -415,44 +450,26 @@ public static class VizActivityProjectionBuilder
                 continue;
             }
 
-            var score = ComputeActivityScore(item);
-            if (!(score > 0f))
+            if (!IsBufferType(item.Type))
             {
                 continue;
             }
 
-            var hasSource = TryParseAddress(item.Source, out var sourceRegionId, out var sourceNeuronId);
-            var hasTarget = TryParseAddress(item.Target, out var targetRegionId, out var targetNeuronId);
-            var sourceMatches = hasSource && sourceRegionId == focusRegionId;
-            var targetMatches = hasTarget && targetRegionId == focusRegionId;
-            if (!sourceMatches && !targetMatches)
+            if (!TryParseAddress(item.Source, out var sourceRegionId, out var sourceNeuronId)
+                || sourceRegionId != focusRegionId
+                || !float.IsFinite(item.Value))
             {
                 continue;
             }
 
-            if (sourceMatches)
-            {
-                AddNeuronContribution(
-                    trends,
-                    focusRegionId,
-                    sourceNeuronId,
-                    score,
-                    tickIndex,
-                    item.TickId,
-                    tickCount);
-            }
-
-            if (targetMatches && (!sourceMatches || targetNeuronId != sourceNeuronId))
-            {
-                AddNeuronContribution(
-                    trends,
-                    focusRegionId,
-                    targetNeuronId,
-                    score,
-                    tickIndex,
-                    item.TickId,
-                    tickCount);
-            }
+            AddNeuronBufferSample(
+                trends,
+                focusRegionId,
+                sourceNeuronId,
+                item.Value,
+                tickIndex,
+                item.TickId,
+                tickCount);
         }
 
         return trends;
@@ -499,6 +516,25 @@ public static class VizActivityProjectionBuilder
         }
 
         accumulator.Add(tickIndex, score, tickId);
+    }
+
+    private static void AddNeuronBufferSample(
+        IDictionary<string, TrendAccumulator> trends,
+        uint regionId,
+        uint neuronId,
+        float bufferValue,
+        int tickIndex,
+        ulong tickId,
+        int tickCount)
+    {
+        var key = $"neuron:{regionId}:{neuronId}";
+        if (!trends.TryGetValue(key, out var accumulator))
+        {
+            accumulator = new TrendAccumulator(key, $"R{regionId}N{neuronId}", tickCount);
+            trends[key] = accumulator;
+        }
+
+        accumulator.SetSample(tickIndex, bufferValue, MathF.Abs(bufferValue), tickId);
     }
 
     private static bool ShouldKeepEvent(VizEventItem item, bool includeLowSignalEvents)
@@ -766,6 +802,16 @@ public static class VizActivityProjectionBuilder
         {
             Values[tickIndex] += score;
             TotalScore += score;
+            if (tickId >= LastActiveTick)
+            {
+                LastActiveTick = tickId;
+            }
+        }
+
+        public void SetSample(int tickIndex, float value, float rankingScore, ulong tickId)
+        {
+            Values[tickIndex] = value;
+            TotalScore += rankingScore;
             if (tickId >= LastActiveTick)
             {
                 LastActiveTick = tickId;

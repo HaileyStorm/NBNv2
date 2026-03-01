@@ -63,6 +63,29 @@ public class DesignerPanelRandomBrainTests
     }
 
     [Fact]
+    public void NewRandomBrain_DefaultModes_OutputNeuronsUseResetZero()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "78901";
+            vm.RandomOptions.OutputNeuronCountText = "6";
+            vm.RandomOptions.SelectedResetMode = vm.RandomOptions.ResetModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+            Assert.Equal(6, outputRegion.NeuronCount);
+            Assert.All(outputRegion.Neurons.Where(neuron => neuron.Exists), neuron => Assert.Equal(0, neuron.ResetFunctionId));
+        });
+    }
+
+    [Fact]
     public void NewRandomBrain_AlwaysSeedsBaselineDriverOutsideInputRegion()
     {
         AvaloniaTestHost.RunOnUiThread(() =>

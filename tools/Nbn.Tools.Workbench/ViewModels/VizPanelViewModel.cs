@@ -2135,13 +2135,16 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private static MiniActivityChartRenderSnapshot BuildMiniActivityChartRenderSnapshot(VizMiniActivityChart chart)
     {
+        var yModeLabel = chart.UseSignedLinearScale
+            ? "y-axis linear (signed buffer)"
+            : "y-axis log(1+score)";
         if (!chart.Enabled)
         {
             return new MiniActivityChartRenderSnapshot(
                 Enabled: false,
                 SeriesLabel: chart.ModeLabel,
                 RangeLabel: "Ticks: mini chart disabled.",
-                MetricLabel: $"{chart.MetricLabel} | y-axis log(1+score) | toggle on to resume tracking",
+                MetricLabel: $"{chart.MetricLabel} | {yModeLabel} | toggle on to resume tracking",
                 YAxisTopLabel: "0",
                 YAxisMidLabel: "0",
                 YAxisBottomLabel: "0",
@@ -2156,7 +2159,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                 Enabled: true,
                 SeriesLabel: chart.ModeLabel,
                 RangeLabel: "Ticks: awaiting activity.",
-                MetricLabel: $"{chart.MetricLabel} | y-axis log(1+score) | no ranked series in current window",
+                MetricLabel: $"{chart.MetricLabel} | {yModeLabel} | no ranked series in current window",
                 YAxisTopLabel: "0",
                 YAxisMidLabel: "0",
                 YAxisBottomLabel: "0",
@@ -2165,7 +2168,10 @@ public sealed class VizPanelViewModel : ViewModelBase
                 Series: Array.Empty<VizMiniActivityChartSeriesItem>());
         }
 
-        var yMax = ResolveMiniChartYAxisMax(chart);
+        var useSignedLinearScale = chart.UseSignedLinearScale;
+        var (yMin, yMax) = useSignedLinearScale
+            ? ResolveMiniChartSignedYAxisBounds(chart)
+            : (0f, ResolveMiniChartYAxisMax(chart));
         var rows = new List<VizMiniActivityChartSeriesItem>(chart.Series.Count);
         foreach (var series in chart.Series)
         {
@@ -2176,7 +2182,9 @@ public sealed class VizPanelViewModel : ViewModelBase
                 MiniActivityChartPlotHeight,
                 MiniActivityChartPlotPaddingX,
                 MiniActivityChartPlotPaddingY,
-                yMax);
+                yMin,
+                yMax,
+                useSignedLinearScale: useSignedLinearScale);
             rows.Add(new VizMiniActivityChartSeriesItem(
                 series.Key,
                 series.Label,
@@ -2185,14 +2193,21 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         var legendColumns = Math.Clamp(rows.Count <= 1 ? 2 : rows.Count, 2, 4);
+        var metricRange = useSignedLinearScale
+            ? $"range {yMin:0.###}..{yMax:0.###}"
+            : $"y-max {yMax:0.###} (peak {chart.PeakScore:0.###})";
+        var midLabel = useSignedLinearScale
+            ? FormatMiniChartAxisValue((yMin + yMax) * 0.5f)
+            : FormatMiniChartAxisValue(MiniChartValueFromLogRatio(yMax, 0.5f));
+        var bottomLabel = useSignedLinearScale ? FormatMiniChartAxisValue(yMin) : "0";
         return new MiniActivityChartRenderSnapshot(
             Enabled: true,
             SeriesLabel: chart.ModeLabel,
             RangeLabel: $"Ticks {chart.MinTick}..{chart.MaxTick}",
-            MetricLabel: $"{chart.MetricLabel} | y-axis log(1+score) | y-max {yMax:0.###} (peak {chart.PeakScore:0.###})",
+            MetricLabel: $"{chart.MetricLabel} | {yModeLabel} | {metricRange}",
             YAxisTopLabel: FormatMiniChartAxisValue(yMax),
-            YAxisMidLabel: FormatMiniChartAxisValue(MiniChartValueFromLogRatio(yMax, 0.5f)),
-            YAxisBottomLabel: "0",
+            YAxisMidLabel: midLabel,
+            YAxisBottomLabel: bottomLabel,
             LegendColumns: legendColumns,
             TickCount: chart.Ticks.Count,
             Series: rows);
@@ -2229,13 +2244,58 @@ public sealed class VizPanelViewModel : ViewModelBase
         return Math.Max(1f, Math.Max(robustHeadroom, floorFromPeak));
     }
 
+    private static (float Min, float Max) ResolveMiniChartSignedYAxisBounds(VizMiniActivityChart chart)
+    {
+        var samples = new List<float>();
+        foreach (var series in chart.Series)
+        {
+            foreach (var value in series.Values)
+            {
+                if (float.IsFinite(value))
+                {
+                    samples.Add(value);
+                }
+            }
+        }
+
+        if (samples.Count == 0)
+        {
+            return (-1f, 1f);
+        }
+
+        samples.Sort();
+        var p05Index = (int)Math.Ceiling(samples.Count * 0.05) - 1;
+        var p95Index = (int)Math.Ceiling(samples.Count * 0.95) - 1;
+        p05Index = Math.Clamp(p05Index, 0, samples.Count - 1);
+        p95Index = Math.Clamp(p95Index, 0, samples.Count - 1);
+
+        var robustMin = Math.Min(samples[0], samples[p05Index]);
+        var robustMax = Math.Max(samples[^1], samples[p95Index]);
+        var min = Math.Min(chart.MinScore, robustMin);
+        var max = robustMax;
+        min = Math.Min(min, 0f);
+        max = Math.Max(max, 0f);
+
+        var span = max - min;
+        if (!(span > 1e-5f) || !float.IsFinite(span))
+        {
+            var pad = Math.Max(0.5f, MathF.Max(MathF.Abs(min), MathF.Abs(max)) * 0.25f);
+            return (min - pad, max + pad);
+        }
+
+        var headroom = span * 0.1f;
+        return (min - headroom, max + headroom);
+    }
+
     private static string BuildMiniActivitySeriesPath(
         IReadOnlyList<float> values,
         double plotWidth,
         double plotHeight,
         double paddingX,
         double paddingY,
-        float yMax)
+        float yMin,
+        float yMax,
+        bool useSignedLinearScale)
     {
         if (values.Count == 0)
         {
@@ -2252,7 +2312,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         for (var i = 0; i < values.Count; i++)
         {
             var x = paddingX + (i * xStep);
-            var ratio = MiniChartLogRatio(values[i], yMax);
+            var ratio = useSignedLinearScale
+                ? MiniChartLinearRatio(values[i], yMin, yMax)
+                : MiniChartLogRatio(values[i], yMax);
             var y = paddingY + ((1f - ratio) * usableHeight);
             builder.Append(i == 0 ? "M " : " L ");
             builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
@@ -2261,6 +2323,24 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         return builder.ToString();
+    }
+
+    private static float MiniChartLinearRatio(float value, float yMin, float yMax)
+    {
+        if (!float.IsFinite(value))
+        {
+            return 0f;
+        }
+
+        var min = float.IsFinite(yMin) ? yMin : 0f;
+        var max = float.IsFinite(yMax) ? yMax : 1f;
+        if (!(max > min))
+        {
+            return 0f;
+        }
+
+        var clamped = Math.Clamp(value, min, max);
+        return (clamped - min) / (max - min);
     }
 
     private static float MiniChartLogRatio(float value, float yMax)

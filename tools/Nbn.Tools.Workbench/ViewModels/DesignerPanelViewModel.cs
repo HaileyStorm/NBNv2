@@ -48,6 +48,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const int AccumulationFunctionNoneId = 3;
     private const int MaxRandomPreActivationThresholdCode = 40;
     private const int MaxRandomActivationThresholdCode = 48;
+    private const int MaxRandomOutputPreActivationThresholdCode = 32;
+    private const int MaxRandomOutputActivationThresholdCode = 36;
     private const int MaxKnownActivationFunctionId = 29;
     private const int MaxKnownResetFunctionId = 60;
     private const string FunctionLegendText = "Legend: B=buffer, I=inbox, P=potential, T=activation threshold, A=Param A, Bp=Param B, K=out-degree.";
@@ -3269,6 +3271,20 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             }
 
             return;
+        }
+
+        if (neuron.RegionId == NbnConstants.OutputRegionId)
+        {
+            if (options.ResetMode != RandomFunctionSelectionMode.Fixed)
+            {
+                neuron.ResetFunctionId = DefaultInputResetFunctionId;
+            }
+
+            if (options.ThresholdMode != RandomRangeMode.Fixed)
+            {
+                neuron.PreActivationThresholdCode = Math.Min(neuron.PreActivationThresholdCode, MaxRandomOutputPreActivationThresholdCode);
+                neuron.ActivationThresholdCode = Math.Min(neuron.ActivationThresholdCode, MaxRandomOutputActivationThresholdCode);
+            }
         }
 
         if (options.AccumulationMode != RandomFunctionSelectionMode.Fixed
