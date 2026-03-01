@@ -30,6 +30,7 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
     private bool _debugStreamEnabled;
+    private bool _systemPlasticityEnabled = true;
     private ProtoSeverity _debugMinSeverity;
     private bool _debugSettingsSubscribed;
     private readonly Dictionary<Guid, BrainState> _brains = new();
@@ -57,6 +58,8 @@ public sealed class HiveMindActor : IActor
     private static readonly MethodInfo? ProcessRegistryLookupMethod = ResolveProcessRegistryLookupMethod();
     private static readonly TimeSpan SnapshotShardRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
+    private const float DefaultPlasticityRate = 0.001f;
+    private const float DefaultPlasticityDelta = DefaultPlasticityRate;
 
     private TickState? _tick;
     private TickPhase _phase = TickPhase.Idle;
@@ -311,6 +314,7 @@ public sealed class HiveMindActor : IActor
 
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.EnabledKey });
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.MinSeverityKey });
+        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = PlasticitySettingsKeys.SystemEnabledKey });
     }
 
     private void HandleSettingValue(IContext context, ProtoSettings.SettingValue message)
@@ -324,6 +328,12 @@ public sealed class HiveMindActor : IActor
         {
             UpdateAllShardRuntimeConfig(context);
         }
+
+        if (TryApplySystemPlasticitySetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
+        }
     }
 
     private void HandleSettingChanged(IContext context, ProtoSettings.SettingChanged message)
@@ -336,6 +346,12 @@ public sealed class HiveMindActor : IActor
         if (TryApplyDebugSetting(message.Key, message.Value))
         {
             UpdateAllShardRuntimeConfig(context);
+        }
+
+        if (TryApplySystemPlasticitySetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
         }
     }
 
@@ -373,6 +389,24 @@ public sealed class HiveMindActor : IActor
         return false;
     }
 
+    private bool TryApplySystemPlasticitySetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, PlasticitySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parsed = ParseBooleanSetting(value, _systemPlasticityEnabled);
+        if (parsed == _systemPlasticityEnabled)
+        {
+            return false;
+        }
+
+        _systemPlasticityEnabled = parsed;
+        return true;
+    }
+
     private void UpdateAllShardRuntimeConfig(IContext context)
     {
         foreach (var brain in _brains.Values)
@@ -381,7 +415,18 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private void RegisterAllBrainsWithIo(IContext context)
+    {
+        foreach (var brain in _brains.Values)
+        {
+            RegisterBrainWithIo(context, brain, force: true);
+        }
+    }
+
     private static bool ParseDebugEnabledSetting(string? value, bool fallback)
+        => ParseBooleanSetting(value, fallback);
+
+    private static bool ParseBooleanSetting(string? value, bool fallback)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -601,6 +646,8 @@ public sealed class HiveMindActor : IActor
             normalized,
             brain.VisualizationEnabled,
             brain.VisualizationFocusRegionId);
+        var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
+        var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         SendShardRuntimeConfigUpdate(
             context,
             brainId,
@@ -608,10 +655,10 @@ public sealed class HiveMindActor : IActor
             normalized,
             brain.CostEnabled,
             brain.EnergyEnabled,
-            brain.PlasticityEnabled,
+            effectivePlasticityEnabled,
             brain.PlasticityRate,
             brain.PlasticityProbabilisticUpdates,
-            brain.PlasticityDelta,
+            effectivePlasticityDelta,
             brain.PlasticityRebaseThreshold,
             brain.PlasticityRebaseThresholdPct,
             brain.HomeostasisEnabled,
@@ -4759,6 +4806,9 @@ public sealed class HiveMindActor : IActor
         return plasticityRate > 0f ? plasticityRate : 0f;
     }
 
+    private bool ResolveEffectivePlasticityEnabled(BrainState brain)
+        => _systemPlasticityEnabled && brain.PlasticityEnabled;
+
     private static PID? ParsePid(string? value)
         => TryParsePid(value, out var pid) ? pid : null;
 
@@ -4977,7 +5027,7 @@ public sealed class HiveMindActor : IActor
             message.HasRuntimeState ? message.EnergyRemaining : 0L,
             message.HasRuntimeState ? message.CostEnabled : brain.CostEnabled,
             message.HasRuntimeState ? message.EnergyEnabled : brain.EnergyEnabled,
-            message.HasRuntimeState ? message.PlasticityEnabled : brain.PlasticityEnabled,
+            ResolveEffectivePlasticityEnabled(brain),
             new Dictionary<ShardId32, PID>(brain.Shards),
             storeRootPath,
             string.IsNullOrWhiteSpace(brain.BaseDefinition.StoreUri) ? storeRootPath : brain.BaseDefinition.StoreUri);
@@ -5733,6 +5783,8 @@ public sealed class HiveMindActor : IActor
 
     private void UpdateShardRuntimeConfig(IContext context, BrainState brain)
     {
+        var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
+        var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         foreach (var entry in brain.Shards)
         {
             SendShardRuntimeConfigUpdate(
@@ -5742,10 +5794,10 @@ public sealed class HiveMindActor : IActor
                 entry.Value,
                 brain.CostEnabled,
                 brain.EnergyEnabled,
-                brain.PlasticityEnabled,
+                effectivePlasticityEnabled,
                 brain.PlasticityRate,
                 brain.PlasticityProbabilisticUpdates,
-                brain.PlasticityDelta,
+                effectivePlasticityDelta,
                 brain.PlasticityRebaseThreshold,
                 brain.PlasticityRebaseThresholdPct,
                 brain.HomeostasisEnabled,
@@ -5803,6 +5855,8 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
+        var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         var register = new ProtoIo.RegisterBrain
         {
             BrainId = brain.BrainId.ToProtoUuid(),
@@ -5811,10 +5865,10 @@ public sealed class HiveMindActor : IActor
             HasRuntimeConfig = true,
             CostEnabled = brain.CostEnabled,
             EnergyEnabled = brain.EnergyEnabled,
-            PlasticityEnabled = brain.PlasticityEnabled,
+            PlasticityEnabled = effectivePlasticityEnabled,
             PlasticityRate = brain.PlasticityRate,
             PlasticityProbabilisticUpdates = brain.PlasticityProbabilisticUpdates,
-            PlasticityDelta = brain.PlasticityDelta,
+            PlasticityDelta = effectivePlasticityDelta,
             PlasticityRebaseThreshold = brain.PlasticityRebaseThreshold,
             PlasticityRebaseThresholdPct = brain.PlasticityRebaseThresholdPct,
             HomeostasisEnabled = brain.HomeostasisEnabled,
@@ -6117,10 +6171,10 @@ public sealed class HiveMindActor : IActor
         public long LastTickCost { get; set; }
         public bool CostEnabled { get; set; }
         public bool EnergyEnabled { get; set; }
-        public bool PlasticityEnabled { get; set; }
-        public float PlasticityRate { get; set; }
-        public bool PlasticityProbabilisticUpdates { get; set; }
-        public float PlasticityDelta { get; set; }
+        public bool PlasticityEnabled { get; set; } = true;
+        public float PlasticityRate { get; set; } = DefaultPlasticityRate;
+        public bool PlasticityProbabilisticUpdates { get; set; } = true;
+        public float PlasticityDelta { get; set; } = DefaultPlasticityDelta;
         public uint PlasticityRebaseThreshold { get; set; }
         public float PlasticityRebaseThresholdPct { get; set; }
         public bool HomeostasisEnabled { get; set; } = true;

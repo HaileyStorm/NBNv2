@@ -6,13 +6,27 @@ Plasticity changes axon strengths slowly based on usage, signal scale, and bound
 
 This surface is intentionally approximate. It is not a full training framework.
 
-Plasticity is configurable per brain:
+Plasticity uses a layered policy:
+
+* system master setting: `plasticity.system.enabled` (default `true`)
+* per-brain runtime setting: `plasticity_enabled`
+* effective runtime enablement: `effective_plasticity_enabled = plasticity.system.enabled && plasticity_enabled`
+
+Per-brain plasticity settings:
 
 * `plasticity_enabled`
 * `plasticity_rate` (small)
 * `plasticity_probabilistic_updates` (on/off)
 * `plasticity_delta` (small)
 * `plasticity_rebase_threshold` / `plasticity_rebase_threshold_pct` (optional; number of changed-axon codes or percent)
+
+When the system master setting is `false`, no brain can force-enable effective plasticity.
+
+Default runtime baseline:
+
+* `plasticity_enabled = true`
+* `plasticity_rate = 0.001`
+* `plasticity_probabilistic_updates = true`
 
 Compatibility default:
 

@@ -16,6 +16,8 @@ public sealed class IoGatewayActor : IActor
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan ExportRequestTimeout = TimeSpan.FromSeconds(45);
+    private const float DefaultPlasticityRate = 0.001f;
+    private const float DefaultPlasticityDelta = DefaultPlasticityRate;
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     private readonly IoOptions _options;
@@ -203,10 +205,10 @@ public sealed class IoGatewayActor : IActor
                 CostEnabled = false,
                 EnergyEnabled = false,
                 EnergyRemaining = 0,
-                PlasticityEnabled = false,
+                PlasticityEnabled = true,
                 EnergyRateUnitsPerSecond = 0,
-                PlasticityRate = 0,
-                PlasticityProbabilisticUpdates = false,
+                PlasticityRate = DefaultPlasticityRate,
+                PlasticityProbabilisticUpdates = true,
                 HomeostasisEnabled = true,
                 HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
                 HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
@@ -215,7 +217,7 @@ public sealed class IoGatewayActor : IActor
                 HomeostasisEnergyCouplingEnabled = false,
                 HomeostasisEnergyTargetScale = 1f,
                 HomeostasisEnergyProbabilityScale = 1f,
-                PlasticityDelta = 0f,
+                PlasticityDelta = DefaultPlasticityDelta,
                 PlasticityRebaseThreshold = 0,
                 PlasticityRebaseThresholdPct = 0f,
                 LastTickCost = 0,

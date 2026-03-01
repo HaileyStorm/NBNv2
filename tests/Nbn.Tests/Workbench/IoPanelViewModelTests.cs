@@ -77,6 +77,17 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public void Plasticity_Defaults_To_Enabled_Probabilistic_With_PositiveRate()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        Assert.True(vm.PlasticityEnabled);
+        Assert.True(vm.SelectedPlasticityMode.Probabilistic);
+        Assert.True(float.TryParse(vm.PlasticityRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate));
+        Assert.True(rate > 0f);
+    }
+
+    [Fact]
     public async Task AddVectorEvent_AutoSendEnabled_DoesNotSend()
     {
         var client = new FakeWorkbenchClient();
@@ -229,6 +240,24 @@ public class IoPanelViewModelTests
         vm.ApplyPlasticityCommand.Execute(null);
 
         Assert.Equal("Plasticity rate invalid.", vm.BrainInfoSummary);
+    }
+
+    [Fact]
+    public void ApplyBrainInfo_Uses_RuntimePlasticity_Mode_And_Rate()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        ApplyBrainInfo(vm, new BrainInfo
+        {
+            InputWidth = 4,
+            OutputWidth = 1,
+            PlasticityEnabled = true,
+            PlasticityRate = 0.001f,
+            PlasticityProbabilisticUpdates = true
+        });
+
+        Assert.True(vm.PlasticityEnabled);
+        Assert.True(vm.SelectedPlasticityMode.Probabilistic);
+        Assert.Equal("0.001", vm.PlasticityRateText);
     }
 
     [Fact]

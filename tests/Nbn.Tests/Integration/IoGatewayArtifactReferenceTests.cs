@@ -445,6 +445,30 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task BrainInfo_MissingBrain_Uses_Default_Plasticity_Baseline()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var info = await root.RequestAsync<BrainInfo>(
+            gateway,
+            new BrainInfoRequest
+            {
+                BrainId = Guid.NewGuid().ToProtoUuid()
+            });
+
+        Assert.Equal((uint)0, info.InputWidth);
+        Assert.Equal((uint)0, info.OutputWidth);
+        Assert.True(info.PlasticityEnabled);
+        Assert.Equal(0.001f, info.PlasticityRate);
+        Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.001f, info.PlasticityDelta);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task BrainInfo_Returns_Full_Energy_Plasticity_And_Homeostasis_State()
     {
         var system = new ActorSystem();

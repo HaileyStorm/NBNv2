@@ -7,6 +7,7 @@ using Nbn.Shared.Addressing;
 using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoIo = Nbn.Proto.Io;
+using ProtoSettings = Nbn.Proto.Settings;
 using Xunit;
 
 namespace Nbn.Tests.HiveMind;
@@ -373,7 +374,10 @@ public class HiveMindOutputSinkTests
         var initialRuntimeUpdate = await initialRuntime.Task.WaitAsync(cts.Token);
         Assert.False(initialRuntimeUpdate.CostEnabled);
         Assert.False(initialRuntimeUpdate.EnergyEnabled);
-        Assert.False(initialRuntimeUpdate.PlasticityEnabled);
+        Assert.True(initialRuntimeUpdate.PlasticityEnabled);
+        Assert.Equal(0.001f, initialRuntimeUpdate.PlasticityRate);
+        Assert.True(initialRuntimeUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.001f, initialRuntimeUpdate.PlasticityDelta);
         Assert.True(initialRuntimeUpdate.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, initialRuntimeUpdate.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, initialRuntimeUpdate.HomeostasisUpdateMode);
@@ -480,7 +484,10 @@ public class HiveMindOutputSinkTests
         var rejectedRuntimeUpdate = await rejectedRuntime.Task.WaitAsync(cts.Token);
         Assert.False(rejectedRuntimeUpdate.CostEnabled);
         Assert.False(rejectedRuntimeUpdate.EnergyEnabled);
-        Assert.False(rejectedRuntimeUpdate.PlasticityEnabled);
+        Assert.True(rejectedRuntimeUpdate.PlasticityEnabled);
+        Assert.Equal(0.001f, rejectedRuntimeUpdate.PlasticityRate);
+        Assert.True(rejectedRuntimeUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.001f, rejectedRuntimeUpdate.PlasticityDelta);
 
         await Task.Delay(100);
         Assert.False(terminatedTcs.Task.IsCompleted);
@@ -577,7 +584,10 @@ public class HiveMindOutputSinkTests
         var initialRuntimeUpdate = await initialRuntime.Task.WaitAsync(cts.Token);
         Assert.False(initialRuntimeUpdate.CostEnabled);
         Assert.False(initialRuntimeUpdate.EnergyEnabled);
-        Assert.False(initialRuntimeUpdate.PlasticityEnabled);
+        Assert.True(initialRuntimeUpdate.PlasticityEnabled);
+        Assert.Equal(0.001f, initialRuntimeUpdate.PlasticityRate);
+        Assert.True(initialRuntimeUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.001f, initialRuntimeUpdate.PlasticityDelta);
         Assert.True(initialRuntimeUpdate.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, initialRuntimeUpdate.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, initialRuntimeUpdate.HomeostasisUpdateMode);
@@ -680,7 +690,10 @@ public class HiveMindOutputSinkTests
         var rejectedRuntimeUpdate = await rejectedRuntime.Task.WaitAsync(cts.Token);
         Assert.False(rejectedRuntimeUpdate.CostEnabled);
         Assert.False(rejectedRuntimeUpdate.EnergyEnabled);
-        Assert.False(rejectedRuntimeUpdate.PlasticityEnabled);
+        Assert.True(rejectedRuntimeUpdate.PlasticityEnabled);
+        Assert.Equal(0.001f, rejectedRuntimeUpdate.PlasticityRate);
+        Assert.True(rejectedRuntimeUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.001f, rejectedRuntimeUpdate.PlasticityDelta);
         Assert.True(rejectedRuntimeUpdate.HomeostasisEnabled);
 
         await Task.Delay(100);
@@ -1256,8 +1269,10 @@ public class HiveMindOutputSinkTests
         var initialUpdate = await initialA.Task.WaitAsync(cts.Token);
         Assert.False(initialUpdate.CostEnabled);
         Assert.False(initialUpdate.EnergyEnabled);
-        Assert.False(initialUpdate.PlasticityEnabled);
-        Assert.Equal(0f, initialUpdate.PlasticityDelta);
+        Assert.True(initialUpdate.PlasticityEnabled);
+        Assert.Equal(0.001f, initialUpdate.PlasticityRate);
+        Assert.True(initialUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.001f, initialUpdate.PlasticityDelta);
         Assert.Equal((uint)0, initialUpdate.PlasticityRebaseThreshold);
         Assert.Equal(0f, initialUpdate.PlasticityRebaseThresholdPct);
         Assert.True(initialUpdate.HomeostasisEnabled);
@@ -1416,6 +1431,300 @@ public class HiveMindOutputSinkTests
         var update = await runtimeUpdate.Task.WaitAsync(cts.Token);
         Assert.False(update.DebugEnabled);
         Assert.Equal(Nbn.Proto.Severity.SevWarn, update.DebugMinSeverity);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SystemPlasticitySetting_Disables_RuntimeConfig_For_Unsuppressed_Brain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(13, 0);
+        var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disabledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shard,
+            initialRuntime,
+            update => update.PlasticityEnabled,
+            disabledRuntime,
+            update => !update.PlasticityEnabled)));
+
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var initial = await initialRuntime.Task.WaitAsync(cts.Token);
+        Assert.True(initial.PlasticityEnabled);
+        Assert.Equal(0.001f, initial.PlasticityRate);
+        Assert.True(initial.ProbabilisticUpdates);
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = PlasticitySettingsKeys.SystemEnabledKey,
+            Value = "false",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var disabled = await disabledRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(disabled.PlasticityEnabled);
+        Assert.Equal(0.001f, disabled.PlasticityRate);
+        Assert.True(disabled.ProbabilisticUpdates);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task BrainPlasticitySuppression_Persists_When_SystemPlasticity_Reenabled()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainPlasticity
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = false,
+            PlasticityRate = 0.001f,
+            ProbabilisticUpdates = true,
+            PlasticityDelta = 0.001f
+        }));
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = PlasticitySettingsKeys.SystemEnabledKey,
+            Value = "false",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = PlasticitySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var shard = ShardId32.From(14, 0);
+        var suppressedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsuppressedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shard,
+            suppressedRuntime,
+            update => !update.PlasticityEnabled,
+            unsuppressedRuntime,
+            update => update.PlasticityEnabled)));
+
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var suppressed = await suppressedRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(suppressed.PlasticityEnabled);
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainPlasticity
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.001f,
+            ProbabilisticUpdates = true,
+            PlasticityDelta = 0.001f
+        }));
+
+        var unsuppressed = await unsuppressedRuntime.Task.WaitAsync(cts.Token);
+        Assert.True(unsuppressed.PlasticityEnabled);
+        Assert.Equal(0.001f, unsuppressed.PlasticityRate);
+        Assert.True(unsuppressed.ProbabilisticUpdates);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SystemPlasticitySetting_Toggles_RegisterBrainWithIo_EffectivePlasticity()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var initialEnabledRegister = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disabledRegister = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reenabledRegister = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioProbe = root.Spawn(Props.FromFunc(context =>
+        {
+            if (context.Message is not ProtoIo.RegisterBrain register || !register.HasRuntimeConfig)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (register.PlasticityEnabled)
+            {
+                if (!initialEnabledRegister.Task.IsCompleted)
+                {
+                    initialEnabledRegister.TrySetResult(register);
+                }
+                else if (disabledRegister.Task.IsCompleted && !reenabledRegister.Task.IsCompleted)
+                {
+                    reenabledRegister.TrySetResult(register);
+                }
+            }
+            else if (!disabledRegister.Task.IsCompleted)
+            {
+                disabledRegister.TrySetResult(register);
+            }
+
+            return Task.CompletedTask;
+        }));
+
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var inputShard = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(inputShard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)NbnConstants.InputRegionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(inputShard),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var outputShard = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(outputShard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)NbnConstants.OutputRegionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(outputShard),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var initialEnabled = await initialEnabledRegister.Task.WaitAsync(cts.Token);
+        Assert.True(initialEnabled.PlasticityEnabled);
+        Assert.Equal(0.001f, initialEnabled.PlasticityRate);
+        Assert.True(initialEnabled.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.001f, initialEnabled.PlasticityDelta);
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = PlasticitySettingsKeys.SystemEnabledKey,
+            Value = "false",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var disabled = await disabledRegister.Task.WaitAsync(cts.Token);
+        Assert.False(disabled.PlasticityEnabled);
+        Assert.Equal(0.001f, disabled.PlasticityRate);
+        Assert.True(disabled.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.001f, disabled.PlasticityDelta);
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = PlasticitySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var reenabled = await reenabledRegister.Task.WaitAsync(cts.Token);
+        Assert.True(reenabled.PlasticityEnabled);
+        Assert.Equal(0.001f, reenabled.PlasticityRate);
+        Assert.True(reenabled.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.001f, reenabled.PlasticityDelta);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RegisterBrainWithIo_Emits_Default_Plasticity_RuntimeConfig()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var registerTcs = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioProbe = root.SpawnNamed(
+            Props.FromProducer(() => new IoRegisterProbe(registerTcs, message =>
+                message.HasRuntimeConfig
+                && message.PlasticityEnabled
+                && Math.Abs(message.PlasticityRate - 0.001f) < 0.000001f
+                && message.PlasticityProbabilisticUpdates
+                && Math.Abs(message.PlasticityDelta - 0.001f) < 0.000001f)),
+            "io-default-plasticity-probe");
+
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var inputShard = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(inputShard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)NbnConstants.InputRegionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(inputShard),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var outputShard = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(outputShard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)NbnConstants.OutputRegionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(outputShard),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var register = await registerTcs.Task.WaitAsync(cts.Token);
+        Assert.True(register.HasRuntimeConfig);
+        Assert.True(register.PlasticityEnabled);
+        Assert.Equal(0.001f, register.PlasticityRate);
+        Assert.True(register.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.001f, register.PlasticityDelta);
 
         await system.ShutdownAsync();
     }

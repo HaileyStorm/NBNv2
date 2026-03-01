@@ -35,7 +35,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
-    private bool _plasticityEnabled;
+    private bool _plasticityEnabled = true;
     private bool _homeostasisEnabled = true;
     private bool _homeostasisEnergyCouplingEnabled;
     private PlasticityModeOption _selectedPlasticityMode;

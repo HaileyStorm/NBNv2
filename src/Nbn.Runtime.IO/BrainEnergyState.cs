@@ -6,6 +6,8 @@ public sealed class BrainEnergyState
 {
     private const float MinScale = 0f;
     private const float MaxScale = 4f;
+    private const float DefaultPlasticityRate = 0.001f;
+    private const float DefaultPlasticityDelta = DefaultPlasticityRate;
     private const float DefaultHomeostasisBaseProbability = 0.01f;
     private const uint DefaultHomeostasisMinStepCodes = 1;
     private const float DefaultHomeostasisTargetScale = 1f;
@@ -19,10 +21,10 @@ public sealed class BrainEnergyState
         long energyRateUnitsPerSecond = 0,
         bool costEnabled = false,
         bool energyEnabled = false,
-        bool plasticityEnabled = false,
-        float plasticityRate = 0,
-        bool plasticityProbabilisticUpdates = false,
-        float plasticityDelta = 0,
+        bool plasticityEnabled = true,
+        float plasticityRate = DefaultPlasticityRate,
+        bool plasticityProbabilisticUpdates = true,
+        float plasticityDelta = DefaultPlasticityDelta,
         uint plasticityRebaseThreshold = 0,
         float plasticityRebaseThresholdPct = 0,
         bool homeostasisEnabled = true,

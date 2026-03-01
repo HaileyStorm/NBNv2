@@ -56,6 +56,7 @@ IO supports:
 * energy rate
 * enable/disable cost and energy
 * plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`)
+* system plasticity master key (`plasticity.system.enabled`) from SettingsMonitor, combined with per-brain `enabled` at runtime (`effective = system && brain`)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
 
 Command writes can be sent as requests and return `IoCommandAck` with:

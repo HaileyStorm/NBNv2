@@ -26,6 +26,7 @@ public static class SettingsMonitorDefaults
             { DebugSettingsKeys.IncludeContextPrefixesKey, string.Empty },
             { DebugSettingsKeys.ExcludeContextPrefixesKey, string.Empty },
             { DebugSettingsKeys.IncludeSummaryPrefixesKey, string.Empty },
-            { DebugSettingsKeys.ExcludeSummaryPrefixesKey, string.Empty }
+            { DebugSettingsKeys.ExcludeSummaryPrefixesKey, string.Empty },
+            { PlasticitySettingsKeys.SystemEnabledKey, "true" }
         };
 }
