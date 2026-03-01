@@ -120,6 +120,76 @@ public class RegionShardCpuBackendVisualizationTests
         Assert.Empty(result.FiredNeuronEvents);
     }
 
+    [Fact]
+    public void Compute_WithFocusScopeOnSource_EmitsZeroBufferVizEachTick()
+    {
+        const int sourceRegionId = 8;
+        const int destRegionId = 9;
+        var state = CreateSingleNeuronState(sourceRegionId, destRegionId);
+        state.Buffer[0] = 0f;
+        state.PreActivationThreshold[0] = 0.5f;
+        state.ActivationThreshold[0] = 0.5f;
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(sourceRegionId, sourceCount: 1, destRegionId, destCount: 1);
+
+        var first = backend.Compute(
+            tickId: 30,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
+        var second = backend.Compute(
+            tickId: 31,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
+
+        var firstBuffer = Assert.Single(first.BufferNeuronEvents);
+        var secondBuffer = Assert.Single(second.BufferNeuronEvents);
+        Assert.Equal(0f, firstBuffer.Buffer);
+        Assert.Equal(0f, secondBuffer.Buffer);
+        Assert.Equal(30UL, firstBuffer.TickId);
+        Assert.Equal(31UL, secondBuffer.TickId);
+        Assert.Empty(first.FiredNeuronEvents);
+        Assert.Empty(second.FiredNeuronEvents);
+    }
+
+    [Fact]
+    public void Compute_WithVisualizationEnabledAll_EmitsZeroBufferVizEachTick()
+    {
+        const int sourceRegionId = 8;
+        const int destRegionId = 9;
+        var state = CreateSingleNeuronState(sourceRegionId, destRegionId);
+        state.Buffer[0] = 0f;
+        state.PreActivationThreshold[0] = 0.5f;
+        state.ActivationThreshold[0] = 0.5f;
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(sourceRegionId, sourceCount: 1, destRegionId, destCount: 1);
+
+        var first = backend.Compute(
+            tickId: 40,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.EnabledAll);
+        var second = backend.Compute(
+            tickId: 41,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.EnabledAll);
+
+        var firstBuffer = Assert.Single(first.BufferNeuronEvents);
+        var secondBuffer = Assert.Single(second.BufferNeuronEvents);
+        Assert.Equal(0f, firstBuffer.Buffer);
+        Assert.Equal(0f, secondBuffer.Buffer);
+        Assert.Equal(40UL, firstBuffer.TickId);
+        Assert.Equal(41UL, secondBuffer.TickId);
+        Assert.Empty(first.FiredNeuronEvents);
+        Assert.Empty(second.FiredNeuronEvents);
+    }
+
     private static RegionShardState CreateSingleNeuronState(int sourceRegionId, int destRegionId)
     {
         var regionSpans = new int[NbnConstants.RegionCount];

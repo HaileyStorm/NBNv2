@@ -9,7 +9,6 @@ namespace Nbn.Runtime.RegionHost;
 
 public sealed class RegionShardCpuBackend
 {
-    private const float BufferVizEpsilon = 1e-6f;
     private static readonly bool LogActivityDiagnostics = IsEnvTrue("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED");
     private static readonly ulong ActivityDiagnosticsPeriod = ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", 32UL);
     private static readonly int ActivityDiagnosticsSampleCount = (int)Math.Clamp(ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_SAMPLES", 3UL), 1UL, 16UL);
@@ -91,10 +90,7 @@ public sealed class RegionShardCpuBackend
 
             var sourceNeuronId = _state.NeuronStart + i;
             var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
-            if (MathF.Abs(buffer) > BufferVizEpsilon)
-            {
-                bufferNeuronViz?.Add(new RegionShardNeuronBufferVizEvent(sourceAddress, tickId, buffer));
-            }
+            bufferNeuronViz?.Add(new RegionShardNeuronBufferVizEvent(sourceAddress, tickId, buffer));
 
             if (buffer <= _state.PreActivationThreshold[i])
             {

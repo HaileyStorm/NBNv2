@@ -49,7 +49,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const int MaxRandomPreActivationThresholdCode = 40;
     private const int MaxRandomActivationThresholdCode = 48;
     private const int MaxRandomOutputPreActivationThresholdCode = 32;
-    private const int MaxRandomOutputActivationThresholdCode = 36;
+    private const int MaxRandomOutputActivationThresholdCode = 24;
     private const int MaxKnownActivationFunctionId = 29;
     private const int MaxKnownResetFunctionId = 60;
     private const string FunctionLegendText = "Legend: B=buffer, I=inbox, P=potential, T=activation threshold, A=Param A, Bp=Param B, K=out-degree.";
@@ -76,6 +76,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static readonly int[] RandomInternalActivationFunctionIds = Enumerable.Range(1, MaxKnownActivationFunctionId).ToArray();
     private static readonly int[] InputAllowedActivationFunctionIds = { 1, 6, 7, 11, 16, 17, 25 };
     private static readonly int[] OutputAllowedActivationFunctionIds = { 1, 5, 6, 7, 8, 11, 14, 16, 17, 18, 19, 20, 23, 24, 25 };
+    private static readonly int[] RandomOutputActivationFunctionIds = { 6, 11, 18 };
     private static readonly int[] ResetFunctionIds = Enumerable.Range(0, MaxKnownResetFunctionId + 1).ToArray();
     private static readonly int[] InputAllowedResetFunctionIds = { 0, 1, 3, 17, 30 };
     private static readonly int[] AccumulationFunctionIds = { 0, 1, 2, 3 };
@@ -3324,7 +3325,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         if (regionId == NbnConstants.OutputRegionId)
         {
-            return OutputAllowedActivationFunctionIds;
+            return RandomOutputActivationFunctionIds;
         }
 
         return RandomInternalActivationFunctionIds;

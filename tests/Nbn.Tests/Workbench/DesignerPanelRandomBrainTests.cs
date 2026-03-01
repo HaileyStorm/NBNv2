@@ -86,6 +86,41 @@ public class DesignerPanelRandomBrainTests
     }
 
     [Fact]
+    public void NewRandomBrain_DefaultModes_OutputNeuronsUseBoundedActivationAndThresholds()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+            var allowedActivationIds = new HashSet<int> { 6, 11, 18 };
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "98765";
+            vm.RandomOptions.OutputNeuronCountText = "7";
+            vm.RandomOptions.SelectedActivationMode = vm.RandomOptions.ActivationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+            vm.RandomOptions.SelectedThresholdMode = vm.RandomOptions.ThresholdModes.Single(mode => mode.Value == RandomRangeMode.Range);
+            vm.RandomOptions.PreActivationMinText = "0";
+            vm.RandomOptions.PreActivationMaxText = "63";
+            vm.RandomOptions.ActivationThresholdMinText = "0";
+            vm.RandomOptions.ActivationThresholdMaxText = "63";
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+            Assert.Equal(7, outputRegion.NeuronCount);
+            Assert.All(outputRegion.Neurons.Where(neuron => neuron.Exists), neuron =>
+            {
+                Assert.Contains(neuron.ActivationFunctionId, allowedActivationIds);
+                Assert.InRange(neuron.PreActivationThresholdCode, 0, 32);
+                Assert.InRange(neuron.ActivationThresholdCode, 0, 24);
+            });
+        });
+    }
+
+    [Fact]
     public void NewRandomBrain_AlwaysSeedsBaselineDriverOutsideInputRegion()
     {
         AvaloniaTestHost.RunOnUiThread(() =>
