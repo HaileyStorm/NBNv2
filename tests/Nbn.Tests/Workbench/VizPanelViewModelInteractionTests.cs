@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1099,6 +1100,38 @@ public class VizPanelViewModelInteractionTests
         Assert.NotEqual("0", vm.MiniActivityYAxisBottomLabel);
     }
 
+    [Fact]
+    public void MiniActivityChart_LeadingZeroPlateau_RemainsAnchoredAtLeftEdge()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizAxonSent.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 100,
+            region: "1",
+            source: "65537",
+            target: "131073",
+            value: 0.9f,
+            strength: 0.3f));
+
+        var rendered = SpinWait.SpinUntil(
+            () => vm.MiniActivityChartSeries.Count > 0
+                  && vm.MiniActivityChartRangeLabel.Contains("Ticks 41..100", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(5));
+        Assert.True(rendered);
+
+        foreach (var series in vm.MiniActivityChartSeries)
+        {
+            var (x, y) = ParseMiniChartFirstPoint(series.PathData);
+            Assert.InRange(x, 5.95, 6.05);
+            Assert.InRange(y, 80.5, 81.9);
+        }
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,
@@ -1182,6 +1215,18 @@ public class VizPanelViewModelInteractionTests
         var client = new WorkbenchClient(new NullWorkbenchEventSink());
         var io = new IoPanelViewModel(client, dispatcher);
         return new VizPanelViewModel(dispatcher, io);
+    }
+
+    private static (double X, double Y) ParseMiniChartFirstPoint(string pathData)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(pathData));
+        var tokens = pathData.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.True(tokens.Length >= 3);
+        Assert.Equal("M", tokens[0]);
+
+        var x = double.Parse(tokens[1], CultureInfo.InvariantCulture);
+        var y = double.Parse(tokens[2], CultureInfo.InvariantCulture);
+        return (x, y);
     }
 
     private static VizEventItem CreateVizEvent(

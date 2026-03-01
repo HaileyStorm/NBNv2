@@ -57,6 +57,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const double MiniActivityChartPlotHeight = 88;
     private const double MiniActivityChartPlotPaddingX = 6;
     private const double MiniActivityChartPlotPaddingY = 6;
+    private const double MiniActivityChartPathInsetPx = 0.8;
     private const double MiniActivityChartOverlayWidthPx = 312;
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
@@ -2322,10 +2323,13 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         var builder = new StringBuilder(values.Count * 24);
         var usableWidth = Math.Max(1.0, plotWidth - (paddingX * 2.0));
-        var usableHeight = Math.Max(1.0, plotHeight - (paddingY * 2.0));
+        var usableHeight = Math.Max(
+            1.0,
+            plotHeight - ((paddingY + MiniActivityChartPathInsetPx) * 2.0));
         var xStep = values.Count > 1
             ? usableWidth / (values.Count - 1)
             : 0d;
+        var yOffset = paddingY + MiniActivityChartPathInsetPx;
 
         for (var i = 0; i < values.Count; i++)
         {
@@ -2333,7 +2337,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             var ratio = useSignedLinearScale
                 ? MiniChartLinearRatio(values[i], yMin, yMax)
                 : MiniChartLogRatio(values[i], yMax);
-            var y = paddingY + ((1f - ratio) * usableHeight);
+            var y = yOffset + ((1f - ratio) * usableHeight);
             builder.Append(i == 0 ? "M " : " L ");
             builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
             builder.Append(' ');
