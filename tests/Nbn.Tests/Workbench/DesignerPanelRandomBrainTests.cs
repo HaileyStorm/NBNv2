@@ -11,6 +11,58 @@ namespace Nbn.Tests.Workbench;
 public class DesignerPanelRandomBrainTests
 {
     [Fact]
+    public void NewRandomBrain_DefaultModes_SeedSignalResponsiveInputNeurons()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "424242";
+            vm.RandomOptions.InputNeuronCountText = "7";
+            vm.RandomOptions.SeedBaselineActivityPath = false;
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var inputRegion = brain.Regions[NbnConstants.InputRegionId];
+            Assert.Equal(7, inputRegion.NeuronCount);
+            Assert.All(inputRegion.Neurons.Where(neuron => neuron.Exists), neuron =>
+            {
+                Assert.Equal(1, neuron.ActivationFunctionId);
+                Assert.Equal(0, neuron.ResetFunctionId);
+                Assert.Equal(0, neuron.AccumulationFunctionId);
+                Assert.Equal(0, neuron.PreActivationThresholdCode);
+                Assert.Equal(0, neuron.ActivationThresholdCode);
+            });
+        });
+    }
+
+    [Fact]
+    public void NewRandomBrain_WeightedAccumulation_DoesNotAssignAccumNone()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            var connections = new ConnectionViewModel();
+            var client = new WorkbenchClient(new NullWorkbenchEventSink());
+            var vm = new DesignerPanelViewModel(connections, client);
+
+            vm.RandomOptions.SelectedSeedMode = vm.RandomOptions.SeedModes.Single(mode => mode.Value == RandomSeedMode.Fixed);
+            vm.RandomOptions.SeedText = "123456";
+            vm.RandomOptions.SelectedAccumulationMode = vm.RandomOptions.AccumulationModes.Single(mode => mode.Value == RandomFunctionSelectionMode.Weighted);
+
+            vm.NewRandomBrainCommand.Execute(null);
+
+            var brain = Assert.IsType<DesignerBrainViewModel>(vm.Brain);
+            var existingNeurons = brain.Regions.SelectMany(region => region.Neurons).Where(neuron => neuron.Exists).ToList();
+            Assert.NotEmpty(existingNeurons);
+            Assert.All(existingNeurons, neuron => Assert.NotEqual(3, neuron.AccumulationFunctionId));
+        });
+    }
+
+    [Fact]
     public void NewRandomBrain_AlwaysSeedsBaselineDriverOutsideInputRegion()
     {
         AvaloniaTestHost.RunOnUiThread(() =>

@@ -420,7 +420,7 @@ public sealed class RegionShardActor : IActor
                 ? "(null)"
                 : (string.IsNullOrWhiteSpace(_vizHub.Address) ? _vizHub.Id : $"{_vizHub.Address}/{_vizHub.Id}");
             Console.WriteLine(
-                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} hub={hubLabel} axonEvents={result.AxonVizEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
+                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} hub={hubLabel} axonEvents={result.AxonVizEvents.Count} bufferEvents={result.BufferNeuronEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
         }
 
         if (result.PlasticityStrengthCodeChanges > 0)
@@ -466,6 +466,16 @@ public sealed class RegionShardActor : IActor
                 source: new Address32(axonViz.SourceAddress),
                 target: new Address32(axonViz.TargetAddress),
                 strength: axonViz.AverageSignedStrength);
+        }
+
+        foreach (var buffer in result.BufferNeuronEvents)
+        {
+            EmitVizEvent(
+                context,
+                VizEventType.VizNeuronBuffer,
+                buffer.TickId,
+                buffer.Buffer,
+                source: new Address32(buffer.SourceAddress));
         }
 
         foreach (var fired in result.FiredNeuronEvents)

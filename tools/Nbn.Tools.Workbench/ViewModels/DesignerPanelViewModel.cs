@@ -44,6 +44,10 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const int ActivityDriverResetFunctionId = 0; // RESET_ZERO
     private const int ActivityDriverParamACode = 63;
     private const int ActivityDriverStrengthCode = 31;
+    private const int AccumulationFunctionSumId = 0;
+    private const int AccumulationFunctionNoneId = 3;
+    private const int MaxRandomPreActivationThresholdCode = 40;
+    private const int MaxRandomActivationThresholdCode = 48;
     private const int MaxKnownActivationFunctionId = 29;
     private const int MaxKnownResetFunctionId = 60;
     private const string FunctionLegendText = "Legend: B=buffer, I=inbox, P=potential, T=activation threshold, A=Param A, Bp=Param B, K=out-degree.";
@@ -73,6 +77,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static readonly int[] ResetFunctionIds = Enumerable.Range(0, MaxKnownResetFunctionId + 1).ToArray();
     private static readonly int[] InputAllowedResetFunctionIds = { 0, 1, 3, 17, 30 };
     private static readonly int[] AccumulationFunctionIds = { 0, 1, 2, 3 };
+    private static readonly int[] RandomAccumulationFunctionIds = { 0, 1, 2 };
     private static readonly double[] ActivationFunctionWeights = BuildActivationFunctionWeights();
     private static readonly double[] ResetFunctionWeights = BuildResetFunctionWeights();
     private static readonly double[] AccumulationFunctionWeights = BuildAccumulationFunctionWeights();
@@ -679,7 +684,13 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             ResetFunctionWeights,
             GetAllowedResetFunctionIdsForRegion,
             GetDefaultResetFunctionIdForRegion);
-        var accumulationPicker = CreateFunctionPicker(rng, options.AccumulationMode, options.AccumulationFixedId, AccumulationFunctionIds, AccumulationFunctionWeights);
+        var accumulationIds = options.AccumulationMode == RandomFunctionSelectionMode.Fixed
+            ? (IReadOnlyList<int>)AccumulationFunctionIds
+            : RandomAccumulationFunctionIds;
+        var accumulationWeights = options.AccumulationMode == RandomFunctionSelectionMode.Fixed
+            ? AccumulationFunctionWeights
+            : BuildSubsetWeights(AccumulationFunctionIds, AccumulationFunctionWeights, accumulationIds);
+        var accumulationPicker = CreateFunctionPicker(rng, options.AccumulationMode, options.AccumulationFixedId, accumulationIds, accumulationWeights);
         var preActivationPicker = CreateCenteredCodePicker(rng, options.ThresholdMode, options.PreActivationMin, options.PreActivationMin, options.PreActivationMax);
         var activationThresholdPicker = CreateLowBiasedCodePicker(rng, options.ThresholdMode, options.ActivationThresholdMin, options.ActivationThresholdMin, options.ActivationThresholdMax);
         var paramAPicker = CreateCenteredCodePicker(rng, options.ParamMode, options.ParamAMin, options.ParamAMin, options.ParamAMax);
@@ -713,6 +724,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 neuron.ActivationThresholdCode = activationThresholdPicker();
                 neuron.ParamACode = UsesParamA(activationId) ? paramAPicker() : 0;
                 neuron.ParamBCode = UsesParamB(activationId) ? paramBPicker() : 0;
+                ApplyRandomNeuronActivityGuardrails(neuron, options);
                 region.Neurons.Add(neuron);
             }
 
@@ -3221,6 +3233,55 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         }
 
         return changed;
+    }
+
+    private static void ApplyRandomNeuronActivityGuardrails(DesignerNeuronViewModel neuron, RandomBrainGenerationOptions options)
+    {
+        if (neuron.RegionId == NbnConstants.InputRegionId)
+        {
+            var normalizedActivation = false;
+            if (options.ActivationMode != RandomFunctionSelectionMode.Fixed)
+            {
+                neuron.ActivationFunctionId = DefaultInputActivationFunctionId;
+                normalizedActivation = true;
+            }
+
+            if (options.ResetMode != RandomFunctionSelectionMode.Fixed)
+            {
+                neuron.ResetFunctionId = DefaultInputResetFunctionId;
+            }
+
+            if (options.AccumulationMode != RandomFunctionSelectionMode.Fixed)
+            {
+                neuron.AccumulationFunctionId = AccumulationFunctionSumId;
+            }
+
+            if (options.ThresholdMode != RandomRangeMode.Fixed)
+            {
+                neuron.PreActivationThresholdCode = 0;
+                neuron.ActivationThresholdCode = 0;
+            }
+
+            if (normalizedActivation || options.ParamMode != RandomRangeMode.Fixed)
+            {
+                neuron.ParamACode = 0;
+                neuron.ParamBCode = 0;
+            }
+
+            return;
+        }
+
+        if (options.AccumulationMode != RandomFunctionSelectionMode.Fixed
+            && neuron.AccumulationFunctionId == AccumulationFunctionNoneId)
+        {
+            neuron.AccumulationFunctionId = AccumulationFunctionSumId;
+        }
+
+        if (options.ThresholdMode != RandomRangeMode.Fixed)
+        {
+            neuron.PreActivationThresholdCode = Math.Min(neuron.PreActivationThresholdCode, MaxRandomPreActivationThresholdCode);
+            neuron.ActivationThresholdCode = Math.Min(neuron.ActivationThresholdCode, MaxRandomActivationThresholdCode);
+        }
     }
 
     private static IReadOnlyList<int> GetAllowedActivationFunctionIdsForRegion(int regionId)

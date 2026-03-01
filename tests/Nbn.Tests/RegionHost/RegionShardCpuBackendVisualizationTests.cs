@@ -27,6 +27,7 @@ public class RegionShardCpuBackendVisualizationTests
         Assert.Equal(1u, result.OutContribs);
         Assert.NotEmpty(result.Outbox);
         Assert.Empty(result.AxonVizEvents);
+        Assert.Empty(result.BufferNeuronEvents);
         Assert.Empty(result.FiredNeuronEvents);
     }
 
@@ -66,6 +67,7 @@ public class RegionShardCpuBackendVisualizationTests
             visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: 7));
 
         Assert.Empty(result.AxonVizEvents);
+        Assert.Empty(result.BufferNeuronEvents);
         Assert.Empty(result.FiredNeuronEvents);
     }
 
@@ -87,8 +89,35 @@ public class RegionShardCpuBackendVisualizationTests
 
         Assert.NotEmpty(result.Outbox);
         var route = Assert.Single(result.AxonVizEvents);
+        Assert.Empty(result.BufferNeuronEvents);
         Assert.Empty(result.FiredNeuronEvents);
         Assert.Equal((uint)destRegionId, route.TargetAddress >> NbnConstants.AddressNeuronBits);
+    }
+
+    [Fact]
+    public void Compute_WithFocusScopeOnSource_EmitsBufferVizEvenWhenNeuronDoesNotFire()
+    {
+        const int sourceRegionId = 8;
+        const int destRegionId = 9;
+        var state = CreateSingleNeuronState(sourceRegionId, destRegionId);
+        state.Buffer[0] = 0.5f;
+        state.PreActivationThreshold[0] = 0.9f;
+        state.ActivationThreshold[0] = 0.9f;
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(sourceRegionId, sourceCount: 1, destRegionId, destCount: 1);
+
+        var result = backend.Compute(
+            tickId: 22,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: new RegionShardVisualizationComputeScope(Enabled: true, FocusRegionId: sourceRegionId));
+
+        var buffer = Assert.Single(result.BufferNeuronEvents);
+        Assert.Equal(22UL, buffer.TickId);
+        Assert.Equal((uint)sourceRegionId, buffer.SourceAddress >> NbnConstants.AddressNeuronBits);
+        Assert.Equal(0.5f, buffer.Buffer);
+        Assert.Empty(result.FiredNeuronEvents);
     }
 
     private static RegionShardState CreateSingleNeuronState(int sourceRegionId, int destRegionId)

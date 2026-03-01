@@ -9,6 +9,7 @@ namespace Nbn.Runtime.RegionHost;
 
 public sealed class RegionShardCpuBackend
 {
+    private const float BufferVizEpsilon = 1e-6f;
     private static readonly bool LogActivityDiagnostics = IsEnvTrue("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED");
     private static readonly ulong ActivityDiagnosticsPeriod = ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", 32UL);
     private static readonly int ActivityDiagnosticsSampleCount = (int)Math.Clamp(ResolveUnsignedEnv("NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_SAMPLES", 3UL), 1UL, 16UL);
@@ -45,6 +46,9 @@ public sealed class RegionShardCpuBackend
             : null;
         List<RegionShardNeuronVizEvent>? firedNeuronViz = collectNeuronViz
             ? new List<RegionShardNeuronVizEvent>()
+            : null;
+        List<RegionShardNeuronBufferVizEvent>? bufferNeuronViz = collectNeuronViz
+            ? new List<RegionShardNeuronBufferVizEvent>()
             : null;
         List<OutputEvent>? outputs = _state.IsOutputRegion ? new List<OutputEvent>() : null;
         float[]? outputVector = _state.IsOutputRegion ? new float[_state.NeuronCount] : null;
@@ -84,6 +88,14 @@ public sealed class RegionShardCpuBackend
                 buffer = 0f;
                 _state.Buffer[i] = 0f;
             }
+
+            var sourceNeuronId = _state.NeuronStart + i;
+            var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
+            if (MathF.Abs(buffer) > BufferVizEpsilon)
+            {
+                bufferNeuronViz?.Add(new RegionShardNeuronBufferVizEvent(sourceAddress, tickId, buffer));
+            }
+
             if (buffer <= _state.PreActivationThreshold[i])
             {
                 continue;
@@ -116,8 +128,6 @@ public sealed class RegionShardCpuBackend
             }
 
             firedCount++;
-            var sourceNeuronId = _state.NeuronStart + i;
-            var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
             firedNeuronViz?.Add(new RegionShardNeuronVizEvent(sourceAddress, tickId, potential));
 
             if (outputs is not null)
@@ -221,6 +231,9 @@ public sealed class RegionShardCpuBackend
         IReadOnlyList<RegionShardNeuronVizEvent> neuronVizEvents = firedNeuronViz is null
             ? Array.Empty<RegionShardNeuronVizEvent>()
             : firedNeuronViz;
+        IReadOnlyList<RegionShardNeuronBufferVizEvent> bufferVizEvents = bufferNeuronViz is null
+            ? Array.Empty<RegionShardNeuronBufferVizEvent>()
+            : bufferNeuronViz;
 
         if (LogActivityDiagnostics
             && firedCount == 0
@@ -238,6 +251,7 @@ public sealed class RegionShardCpuBackend
             plasticityStrengthCodeChanges,
             costSummary,
             axonVizEvents,
+            bufferVizEvents,
             neuronVizEvents);
     }
 
@@ -687,6 +701,11 @@ public readonly record struct RegionShardNeuronVizEvent(
     ulong TickId,
     float Potential);
 
+public readonly record struct RegionShardNeuronBufferVizEvent(
+    uint SourceAddress,
+    ulong TickId,
+    float Buffer);
+
 public readonly record struct RegionShardVisualizationComputeScope(
     bool Enabled,
     uint? FocusRegionId)
@@ -704,4 +723,5 @@ public sealed record RegionShardComputeResult(
     uint PlasticityStrengthCodeChanges,
     RegionShardCostSummary Cost,
     IReadOnlyList<RegionShardAxonVizEvent> AxonVizEvents,
+    IReadOnlyList<RegionShardNeuronBufferVizEvent> BufferNeuronEvents,
     IReadOnlyList<RegionShardNeuronVizEvent> FiredNeuronEvents);
