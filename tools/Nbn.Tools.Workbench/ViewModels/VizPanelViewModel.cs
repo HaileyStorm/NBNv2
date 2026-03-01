@@ -13,6 +13,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
+using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -62,6 +63,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan StreamingRefreshInterval = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DefinitionHydrationRetryInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SelectedBrainEnergyRefreshInterval = TimeSpan.FromMilliseconds(750);
     private static readonly string[] MiniActivityChartSeriesPalette =
     {
         "#2A9D8F",
@@ -109,6 +111,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _regionFilterText = string.Empty;
     private string _searchFilterText = string.Empty;
     private string _brainEntryText = string.Empty;
+    private string _selectedBrainEnergySummary = "Selected brain energy: n/a (no brain selected).";
     private BrainListItem? _selectedBrain;
     private VizPanelTypeOption _selectedVizType;
     private VizCanvasColorModeOption _selectedCanvasColorMode;
@@ -208,6 +211,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     private int _consecutiveSelectionMissRefreshes;
     private float? _currentTargetTickHz;
     private ulong? _miniChartMinTickFloor;
+    private DateTime _nextSelectedBrainEnergyRefreshUtc = DateTime.MinValue;
+    private int _selectedBrainEnergyRefreshInFlight;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -338,6 +343,17 @@ public sealed class VizPanelViewModel : ViewModelBase
                         QueueDefinitionTopologyHydration(value.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
                     }
                     RefreshFilteredEvents();
+                }
+
+                if (value is null)
+                {
+                    _nextSelectedBrainEnergyRefreshUtc = DateTime.MinValue;
+                    SelectedBrainEnergySummary = "Selected brain energy: n/a (no brain selected).";
+                }
+                else if (previous?.BrainId != value.BrainId)
+                {
+                    SelectedBrainEnergySummary = FormattableString.Invariant($"Selected brain energy: loading for {value.BrainId:D}...");
+                    QueueSelectedBrainEnergyRefresh(force: true);
                 }
 
                 OnPropertyChanged(nameof(HasSelectedBrain));
@@ -503,6 +519,12 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         get => _status;
         set => SetProperty(ref _status, value);
+    }
+
+    public string SelectedBrainEnergySummary
+    {
+        get => _selectedBrainEnergySummary;
+        private set => SetProperty(ref _selectedBrainEnergySummary, value);
     }
 
     public string ActivitySummary
@@ -890,6 +912,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         {
             _brain.EnsureSelectedBrain(resolvedBrainId.Value);
             QueueDefinitionTopologyHydration(resolvedBrainId.Value, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
+        }
+
+        if (resolvedBrainId.HasValue)
+        {
+            QueueSelectedBrainEnergyRefresh(force: resolvedBrainId != previousBrainId);
         }
 
         RefreshFilteredEvents();
@@ -1816,6 +1843,11 @@ public sealed class VizPanelViewModel : ViewModelBase
         Trim(_allEvents, MaxEvents);
         Trim(_projectionEvents, MaxProjectionEvents);
         RefreshFilteredEvents(fromStreaming: true, force: !hasMore);
+        if (SelectedBrain is not null
+            && (accepted > 0 || batch.Any(entry => IsGlobalVisualizerEvent(entry.Type))))
+        {
+            QueueSelectedBrainEnergyRefresh();
+        }
         _lastFlushBatchCount = batch.Count;
         _lastFlushBatchMs = StopwatchElapsedMs(flushStart);
 
@@ -3097,6 +3129,64 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         _miniChartMinTickFloor = latestTick;
+    }
+
+    private void QueueSelectedBrainEnergyRefresh(bool force = false)
+    {
+        var selectedBrain = SelectedBrain;
+        if (selectedBrain is null)
+        {
+            _nextSelectedBrainEnergyRefreshUtc = DateTime.MinValue;
+            SelectedBrainEnergySummary = "Selected brain energy: n/a (no brain selected).";
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (!force && now < _nextSelectedBrainEnergyRefreshUtc)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _selectedBrainEnergyRefreshInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _nextSelectedBrainEnergyRefreshUtc = now + SelectedBrainEnergyRefreshInterval;
+        _ = RefreshSelectedBrainEnergyAsync(selectedBrain.BrainId);
+    }
+
+    private async Task RefreshSelectedBrainEnergyAsync(Guid brainId)
+    {
+        try
+        {
+            var info = await _brain.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
+            _dispatcher.Post(() =>
+            {
+                if (SelectedBrain?.BrainId != brainId)
+                {
+                    return;
+                }
+
+                SelectedBrainEnergySummary = BuildSelectedBrainEnergySummary(info);
+            });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _selectedBrainEnergyRefreshInFlight, 0);
+        }
+    }
+
+    private static string BuildSelectedBrainEnergySummary(BrainInfo? info)
+    {
+        if (info is null)
+        {
+            return "Selected brain energy: unavailable.";
+        }
+
+        var enabled = info.CostEnabled && info.EnergyEnabled ? "on" : "off";
+        return FormattableString.Invariant(
+            $"Selected brain energy: {info.EnergyRemaining:N0} units | rate {info.EnergyRateUnitsPerSecond:N0}/s | last tick cost {info.LastTickCost:N0} | cost+energy {enabled}.");
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)

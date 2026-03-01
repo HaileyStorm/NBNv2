@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Nbn.Proto.Io;
 using Nbn.Proto.Viz;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -722,6 +723,33 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void SelectedBrainEnergySummary_RefreshesFromBrainInfo()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        client.BrainInfoById[brainId] = new BrainInfo
+        {
+            EnergyRemaining = 4321,
+            EnergyRateUnitsPerSecond = 7,
+            LastTickCost = 3,
+            CostEnabled = true,
+            EnergyEnabled = true
+        };
+        var brain = new BrainListItem(brainId, "Running", true);
+        vm.KnownBrains.Add(brain);
+
+        vm.SelectedBrain = brain;
+
+        var refreshed = SpinWait.SpinUntil(
+            () => vm.SelectedBrainEnergySummary.Contains("4,321 units", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(2));
+        Assert.True(refreshed);
+        Assert.Contains("rate 7/s", vm.SelectedBrainEnergySummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("cost+energy on", vm.SelectedBrainEnergySummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ApplyHiveMindTickStatus_UpdatesCadenceAndOverrideSummary()
     {
         var vm = CreateViewModel();
@@ -1250,10 +1278,10 @@ public class VizPanelViewModelInteractionTests
             IsPinned: false);
     }
 
-    private static VizPanelViewModel CreateViewModel()
+    private static VizPanelViewModel CreateViewModel(WorkbenchClient? client = null)
     {
         var dispatcher = new UiDispatcher();
-        var client = new WorkbenchClient(new NullWorkbenchEventSink());
+        client ??= new WorkbenchClient(new NullWorkbenchEventSink());
         var io = new IoPanelViewModel(client, dispatcher);
         return new VizPanelViewModel(dispatcher, io);
     }
@@ -1292,6 +1320,26 @@ public class VizPanelViewModelInteractionTests
             value,
             strength,
             eventId);
+    }
+
+    private sealed class FakeWorkbenchClient : WorkbenchClient
+    {
+        public FakeWorkbenchClient()
+            : base(new NullWorkbenchEventSink())
+        {
+        }
+
+        public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
+
+        public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
+        {
+            if (BrainInfoById.TryGetValue(brainId, out var info))
+            {
+                return Task.FromResult<BrainInfo?>(info);
+            }
+
+            return Task.FromResult<BrainInfo?>(null);
+        }
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

@@ -34,6 +34,7 @@
             </StackPanel>
           </Grid>
           <TextBlock Text="{Binding Status}" Classes="muted" />
+          <TextBlock Text="{Binding SelectedBrainEnergySummary}" Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
 
