@@ -112,6 +112,9 @@ public class ProtoCompatibilityTests
         AssertField(plasticity, "plasticity_enabled", 2, FieldType.Bool);
         AssertField(plasticity, "plasticity_rate", 3, FieldType.Float);
         AssertField(plasticity, "probabilistic_updates", 4, FieldType.Bool);
+        AssertField(plasticity, "plasticity_delta", 5, FieldType.Float);
+        AssertField(plasticity, "plasticity_rebase_threshold", 6, FieldType.UInt32);
+        AssertField(plasticity, "plasticity_rebase_threshold_pct", 7, FieldType.Float);
 
         var homeostasis = descriptor.MessageTypes.Single(message => message.Name == "SetBrainHomeostasis");
         AssertField(homeostasis, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -143,6 +146,9 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "homeostasis_energy_coupling_enabled", 16, FieldType.Bool);
         AssertField(shardRuntime, "homeostasis_energy_target_scale", 17, FieldType.Float);
         AssertField(shardRuntime, "homeostasis_energy_probability_scale", 18, FieldType.Float);
+        AssertField(shardRuntime, "plasticity_delta", 19, FieldType.Float);
+        AssertField(shardRuntime, "plasticity_rebase_threshold", 20, FieldType.UInt32);
+        AssertField(shardRuntime, "plasticity_rebase_threshold_pct", 21, FieldType.Float);
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);
@@ -452,6 +458,9 @@ public class ProtoCompatibilityTests
         AssertField(brainInfo, "homeostasis_energy_coupling_enabled", 19, FieldType.Bool);
         AssertField(brainInfo, "homeostasis_energy_target_scale", 20, FieldType.Float);
         AssertField(brainInfo, "homeostasis_energy_probability_scale", 21, FieldType.Float);
+        AssertField(brainInfo, "plasticity_delta", 22, FieldType.Float);
+        AssertField(brainInfo, "plasticity_rebase_threshold", 23, FieldType.UInt32);
+        AssertField(brainInfo, "plasticity_rebase_threshold_pct", 24, FieldType.Float);
     }
 
     [Fact]
@@ -476,6 +485,18 @@ public class ProtoCompatibilityTests
         AssertField(energyState, "homeostasis_energy_coupling_enabled", 14, FieldType.Bool);
         AssertField(energyState, "homeostasis_energy_target_scale", 15, FieldType.Float);
         AssertField(energyState, "homeostasis_energy_probability_scale", 16, FieldType.Float);
+        AssertField(energyState, "plasticity_delta", 17, FieldType.Float);
+        AssertField(energyState, "plasticity_rebase_threshold", 18, FieldType.UInt32);
+        AssertField(energyState, "plasticity_rebase_threshold_pct", 19, FieldType.Float);
+
+        var setPlasticity = descriptor.MessageTypes.Single(message => message.Name == "SetPlasticityEnabled");
+        AssertField(setPlasticity, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(setPlasticity, "plasticity_enabled", 2, FieldType.Bool);
+        AssertField(setPlasticity, "plasticity_rate", 3, FieldType.Float);
+        AssertField(setPlasticity, "probabilistic_updates", 4, FieldType.Bool);
+        AssertField(setPlasticity, "plasticity_delta", 5, FieldType.Float);
+        AssertField(setPlasticity, "plasticity_rebase_threshold", 6, FieldType.UInt32);
+        AssertField(setPlasticity, "plasticity_rebase_threshold_pct", 7, FieldType.Float);
 
         var setHomeostasis = descriptor.MessageTypes.Single(message => message.Name == "SetHomeostasisEnabled");
         AssertField(setHomeostasis, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -544,6 +565,9 @@ public class ProtoCompatibilityTests
         AssertField(registerBrain, "homeostasis_energy_coupling_enabled", 19, FieldType.Bool);
         AssertField(registerBrain, "homeostasis_energy_target_scale", 20, FieldType.Float);
         AssertField(registerBrain, "homeostasis_energy_probability_scale", 21, FieldType.Float);
+        AssertField(registerBrain, "plasticity_delta", 22, FieldType.Float);
+        AssertField(registerBrain, "plasticity_rebase_threshold", 23, FieldType.UInt32);
+        AssertField(registerBrain, "plasticity_rebase_threshold_pct", 24, FieldType.Float);
     }
 
     [Fact]

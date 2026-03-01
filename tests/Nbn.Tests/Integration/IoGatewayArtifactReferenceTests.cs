@@ -466,6 +466,9 @@ public class IoGatewayArtifactReferenceTests
                 PlasticityEnabled = true,
                 PlasticityRate = 0.125f,
                 PlasticityProbabilisticUpdates = true,
+                PlasticityDelta = 0.05f,
+                PlasticityRebaseThreshold = 4,
+                PlasticityRebaseThresholdPct = 0.25f,
                 HomeostasisEnabled = true,
                 HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
                 HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
@@ -494,6 +497,9 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.125f, info.PlasticityRate);
         Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.05f, info.PlasticityDelta);
+        Assert.Equal((uint)4, info.PlasticityRebaseThreshold);
+        Assert.Equal(0.25f, info.PlasticityRebaseThresholdPct);
         Assert.True(info.HomeostasisEnabled);
         Assert.Equal(ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero, info.HomeostasisTargetMode);
         Assert.Equal(ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, info.HomeostasisUpdateMode);
@@ -545,7 +551,10 @@ public class IoGatewayArtifactReferenceTests
             BrainId = brainId.ToProtoUuid(),
             PlasticityEnabled = true,
             PlasticityRate = 0.25f,
-            ProbabilisticUpdates = false
+            ProbabilisticUpdates = false,
+            PlasticityDelta = 0.06f,
+            PlasticityRebaseThreshold = 5,
+            PlasticityRebaseThresholdPct = 0.4f
         });
 
         root.Send(gateway, new SetHomeostasisEnabled
@@ -576,6 +585,9 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(plasticityUpdate.PlasticityEnabled);
         Assert.Equal(0.25f, plasticityUpdate.PlasticityRate);
         Assert.False(plasticityUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.06f, plasticityUpdate.PlasticityDelta);
+        Assert.Equal((uint)5, plasticityUpdate.PlasticityRebaseThreshold);
+        Assert.Equal(0.4f, plasticityUpdate.PlasticityRebaseThresholdPct);
 
         Assert.True(homeostasisUpdate.BrainId.TryToGuid(out var homeostasisBrainId));
         Assert.Equal(brainId, homeostasisBrainId);
@@ -598,12 +610,63 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.25f, info.PlasticityRate);
         Assert.False(info.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.06f, info.PlasticityDelta);
+        Assert.Equal((uint)5, info.PlasticityRebaseThreshold);
+        Assert.Equal(0.4f, info.PlasticityRebaseThresholdPct);
         Assert.True(info.HomeostasisEnabled);
         Assert.Equal(0.22f, info.HomeostasisBaseProbability);
         Assert.Equal((uint)2, info.HomeostasisMinStepCodes);
         Assert.True(info.HomeostasisEnergyCouplingEnabled);
         Assert.Equal(0.7f, info.HomeostasisEnergyTargetScale);
         Assert.Equal(1.3f, info.HomeostasisEnergyProbabilityScale);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SetFlags_PlasticityDelta_Defaults_To_Rate_When_Omitted()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var costEnergy = new TaskCompletionSource<ProtoControl.SetBrainCostEnergy>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var plasticity = new TaskCompletionSource<ProtoControl.SetBrainPlasticity>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var homeostasis = new TaskCompletionSource<ProtoControl.SetBrainHomeostasis>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveConfigProbe(costEnergy, plasticity, homeostasis)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        root.Send(gateway, new SetPlasticityEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.2f,
+            ProbabilisticUpdates = false
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var plasticityUpdate = await plasticity.Task.WaitAsync(cts.Token);
+        Assert.Equal(0.2f, plasticityUpdate.PlasticityRate);
+        Assert.Equal(0.2f, plasticityUpdate.PlasticityDelta);
+        Assert.Equal((uint)0, plasticityUpdate.PlasticityRebaseThreshold);
+        Assert.Equal(0f, plasticityUpdate.PlasticityRebaseThresholdPct);
+
+        var info = await root.RequestAsync<BrainInfo>(gateway, new BrainInfoRequest
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        Assert.True(info.PlasticityEnabled);
+        Assert.Equal(0.2f, info.PlasticityRate);
+        Assert.Equal(0.2f, info.PlasticityDelta);
+        Assert.Equal((uint)0, info.PlasticityRebaseThreshold);
+        Assert.Equal(0f, info.PlasticityRebaseThresholdPct);
 
         await system.ShutdownAsync();
     }
@@ -653,7 +716,10 @@ public class IoGatewayArtifactReferenceTests
             BrainId = brainId.ToProtoUuid(),
             PlasticityEnabled = true,
             PlasticityRate = 0.125f,
-            ProbabilisticUpdates = true
+            ProbabilisticUpdates = true,
+            PlasticityDelta = 0.04f,
+            PlasticityRebaseThreshold = 2,
+            PlasticityRebaseThresholdPct = 0.5f
         });
 
         Assert.True(plasticityAck.Success);
@@ -663,6 +729,9 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(plasticityAck.EnergyState.PlasticityEnabled);
         Assert.Equal(0.125f, plasticityAck.EnergyState.PlasticityRate);
         Assert.True(plasticityAck.EnergyState.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.04f, plasticityAck.EnergyState.PlasticityDelta);
+        Assert.Equal((uint)2, plasticityAck.EnergyState.PlasticityRebaseThreshold);
+        Assert.Equal(0.5f, plasticityAck.EnergyState.PlasticityRebaseThresholdPct);
 
         var homeostasisAck = await root.RequestAsync<IoCommandAck>(gateway, new SetHomeostasisEnabled
         {
@@ -761,6 +830,71 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task CommandAck_InvalidPlasticityDelta_Returns_Failure()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        var ack = await root.RequestAsync<IoCommandAck>(gateway, new SetPlasticityEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.2f,
+            ProbabilisticUpdates = false,
+            PlasticityDelta = float.NaN
+        });
+
+        Assert.False(ack.Success);
+        Assert.Equal("set_plasticity", ack.Command);
+        Assert.Equal("plasticity_delta_invalid", ack.Message);
+        Assert.True(ack.HasEnergyState);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidPlasticityRebaseThresholdPct_Returns_Failure()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        var ack = await root.RequestAsync<IoCommandAck>(gateway, new SetPlasticityEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            PlasticityEnabled = true,
+            PlasticityRate = 0.2f,
+            ProbabilisticUpdates = false,
+            PlasticityDelta = 0.05f,
+            PlasticityRebaseThresholdPct = 1.5f
+        });
+
+        Assert.False(ack.Success);
+        Assert.Equal("set_plasticity", ack.Command);
+        Assert.Equal("plasticity_rebase_threshold_pct_invalid", ack.Message);
+        Assert.True(ack.HasEnergyState);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterBrain_RuntimeConfig_Updates_Config_Without_Resetting_Balance()
     {
         var system = new ActorSystem();
@@ -797,6 +931,9 @@ public class IoGatewayArtifactReferenceTests
             PlasticityEnabled = true,
             PlasticityRate = 0.5f,
             PlasticityProbabilisticUpdates = true,
+            PlasticityDelta = 0.1f,
+            PlasticityRebaseThreshold = 6,
+            PlasticityRebaseThresholdPct = 0.3f,
             HomeostasisEnabled = true,
             HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
             HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
@@ -820,6 +957,9 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.5f, info.PlasticityRate);
         Assert.True(info.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.1f, info.PlasticityDelta);
+        Assert.Equal((uint)6, info.PlasticityRebaseThreshold);
+        Assert.Equal(0.3f, info.PlasticityRebaseThresholdPct);
         Assert.True(info.HomeostasisEnabled);
         Assert.Equal(ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero, info.HomeostasisTargetMode);
         Assert.Equal(ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, info.HomeostasisUpdateMode);

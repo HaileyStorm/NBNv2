@@ -1228,6 +1228,9 @@ public class HiveMindOutputSinkTests
                       && update.PlasticityEnabled
                       && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f
                       && !update.ProbabilisticUpdates
+                      && Math.Abs(update.PlasticityDelta - 0.05f) < 0.000001f
+                      && update.PlasticityRebaseThreshold == 3
+                      && Math.Abs(update.PlasticityRebaseThresholdPct - 0.5f) < 0.000001f
                       && update.HomeostasisEnabled
                       && update.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
                       && update.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
@@ -1254,6 +1257,9 @@ public class HiveMindOutputSinkTests
         Assert.False(initialUpdate.CostEnabled);
         Assert.False(initialUpdate.EnergyEnabled);
         Assert.False(initialUpdate.PlasticityEnabled);
+        Assert.Equal(0f, initialUpdate.PlasticityDelta);
+        Assert.Equal((uint)0, initialUpdate.PlasticityRebaseThreshold);
+        Assert.Equal(0f, initialUpdate.PlasticityRebaseThresholdPct);
         Assert.True(initialUpdate.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, initialUpdate.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, initialUpdate.HomeostasisUpdateMode);
@@ -1275,7 +1281,10 @@ public class HiveMindOutputSinkTests
             BrainId = brainId.ToProtoUuid(),
             PlasticityEnabled = true,
             PlasticityRate = 0.2f,
-            ProbabilisticUpdates = false
+            ProbabilisticUpdates = false,
+            PlasticityDelta = 0.05f,
+            PlasticityRebaseThreshold = 3,
+            PlasticityRebaseThresholdPct = 0.5f
         }));
 
         await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainHomeostasis
@@ -1297,6 +1306,9 @@ public class HiveMindOutputSinkTests
         Assert.True(configuredUpdate.PlasticityEnabled);
         Assert.Equal(0.2f, configuredUpdate.PlasticityRate);
         Assert.False(configuredUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.05f, configuredUpdate.PlasticityDelta);
+        Assert.Equal((uint)3, configuredUpdate.PlasticityRebaseThreshold);
+        Assert.Equal(0.5f, configuredUpdate.PlasticityRebaseThresholdPct);
         Assert.True(configuredUpdate.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, configuredUpdate.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, configuredUpdate.HomeostasisUpdateMode);
@@ -1318,6 +1330,9 @@ public class HiveMindOutputSinkTests
                       && update.PlasticityEnabled
                       && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f
                       && !update.ProbabilisticUpdates
+                      && Math.Abs(update.PlasticityDelta - 0.05f) < 0.000001f
+                      && update.PlasticityRebaseThreshold == 3
+                      && Math.Abs(update.PlasticityRebaseThresholdPct - 0.5f) < 0.000001f
                       && update.HomeostasisEnabled
                       && update.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
                       && update.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
@@ -1345,6 +1360,9 @@ public class HiveMindOutputSinkTests
         Assert.True(newShardUpdate.PlasticityEnabled);
         Assert.Equal(0.2f, newShardUpdate.PlasticityRate);
         Assert.False(newShardUpdate.ProbabilisticUpdates);
+        Assert.Equal(0.05f, newShardUpdate.PlasticityDelta);
+        Assert.Equal((uint)3, newShardUpdate.PlasticityRebaseThreshold);
+        Assert.Equal(0.5f, newShardUpdate.PlasticityRebaseThresholdPct);
         Assert.True(newShardUpdate.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, newShardUpdate.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, newShardUpdate.HomeostasisUpdateMode);
@@ -1416,6 +1434,9 @@ public class HiveMindOutputSinkTests
                 && message.PlasticityEnabled
                 && Math.Abs(message.PlasticityRate - 0.4f) < 0.000001f
                 && !message.PlasticityProbabilisticUpdates
+                && Math.Abs(message.PlasticityDelta - 0.08f) < 0.000001f
+                && message.PlasticityRebaseThreshold == 7
+                && Math.Abs(message.PlasticityRebaseThresholdPct - 0.35f) < 0.000001f
                 && message.HomeostasisEnabled
                 && message.HomeostasisTargetMode == HomeostasisTargetMode.HomeostasisTargetZero
                 && message.HomeostasisUpdateMode == HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
@@ -1470,7 +1491,10 @@ public class HiveMindOutputSinkTests
             BrainId = brainId.ToProtoUuid(),
             PlasticityEnabled = true,
             PlasticityRate = 0.4f,
-            ProbabilisticUpdates = false
+            ProbabilisticUpdates = false,
+            PlasticityDelta = 0.08f,
+            PlasticityRebaseThreshold = 7,
+            PlasticityRebaseThresholdPct = 0.35f
         }));
 
         await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainHomeostasis
@@ -1494,6 +1518,9 @@ public class HiveMindOutputSinkTests
         Assert.True(register.PlasticityEnabled);
         Assert.Equal(0.4f, register.PlasticityRate);
         Assert.False(register.PlasticityProbabilisticUpdates);
+        Assert.Equal(0.08f, register.PlasticityDelta);
+        Assert.Equal((uint)7, register.PlasticityRebaseThreshold);
+        Assert.Equal(0.35f, register.PlasticityRebaseThresholdPct);
         Assert.True(register.HomeostasisEnabled);
         Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, register.HomeostasisTargetMode);
         Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, register.HomeostasisUpdateMode);

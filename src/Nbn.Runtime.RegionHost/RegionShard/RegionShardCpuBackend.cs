@@ -40,6 +40,9 @@ public sealed class RegionShardCpuBackend
         bool plasticityEnabled = false,
         float plasticityRate = 0f,
         bool probabilisticPlasticityUpdates = false,
+        float plasticityDelta = 0f,
+        uint plasticityRebaseThreshold = 0,
+        float plasticityRebaseThresholdPct = 0f,
         RegionShardHomeostasisConfig? homeostasisConfig = null,
         bool energyEnabled = false)
     {
@@ -217,11 +220,29 @@ public sealed class RegionShardCpuBackend
 
                 var distanceUnits = ComputeDistanceUnits(sourceNeuronId, destRegion, destNeuron, sourceRegionZ, regionDistanceCache);
                 costDistance += _costConfig.AxonBaseCost + (_costConfig.AxonUnitCost * distanceUnits);
-                if (ApplyPlasticity(tickId, potential, index, plasticityEnabled, plasticityRate, probabilisticPlasticityUpdates))
+                if (ApplyPlasticity(
+                        tickId,
+                        potential,
+                        index,
+                        plasticityEnabled,
+                        plasticityRate,
+                        probabilisticPlasticityUpdates,
+                        plasticityDelta))
                 {
                     plasticityStrengthCodeChanges++;
                 }
             }
+        }
+
+        var changedCodeCount = CountChangedStrengthCodes();
+        if (ShouldAutoRebasePlasticity(
+                plasticityEnabled,
+                _state.Axons.Count,
+                changedCodeCount,
+                plasticityRebaseThreshold,
+                plasticityRebaseThresholdPct))
+        {
+            ApplyPlasticityAutoRebase();
         }
 
         var tickCostTotal = costAccum + costActivation + costReset + costDistance + costRemote;
@@ -554,9 +575,14 @@ public sealed class RegionShardCpuBackend
         int axonIndex,
         bool plasticityEnabled,
         float plasticityRate,
-        bool probabilisticPlasticityUpdates)
+        bool probabilisticPlasticityUpdates,
+        float plasticityDelta)
     {
-        if (!plasticityEnabled || !float.IsFinite(plasticityRate) || plasticityRate <= 0f)
+        if (!plasticityEnabled
+            || !float.IsFinite(plasticityRate)
+            || plasticityRate < 0f
+            || !float.IsFinite(plasticityDelta)
+            || plasticityDelta <= 0f)
         {
             return false;
         }
@@ -569,6 +595,7 @@ public sealed class RegionShardCpuBackend
         }
 
         var effectiveRate = MathF.Max(plasticityRate, 0f);
+        var effectiveDelta = MathF.Max(plasticityDelta, 0f);
         if (probabilisticPlasticityUpdates)
         {
             var probability = Math.Clamp(effectiveRate * activationScale, 0f, 1f);
@@ -590,7 +617,12 @@ public sealed class RegionShardCpuBackend
         var currentSign = MathF.Sign(currentStrength);
         var potentialSign = MathF.Sign(normalizedPotential);
 
-        var delta = effectiveRate * activationScale;
+        var delta = effectiveDelta * activationScale;
+        if (delta <= 0f)
+        {
+            return false;
+        }
+
         var nextMagnitude = potentialSign == currentSign
             ? currentMagnitude + delta
             : currentMagnitude - delta;
@@ -614,6 +646,52 @@ public sealed class RegionShardCpuBackend
         var runtimeCode = (byte)_state.StrengthQuantization.Encode(strength, bits: 5);
         _state.Axons.RuntimeStrengthCodes[axonIndex] = runtimeCode;
         _state.Axons.HasRuntimeOverlay[axonIndex] = runtimeCode != _state.Axons.BaseStrengthCodes[axonIndex];
+    }
+
+    private uint CountChangedStrengthCodes()
+    {
+        uint changed = 0;
+        for (var i = 0; i < _state.Axons.Count; i++)
+        {
+            if (_state.Axons.RuntimeStrengthCodes[i] != _state.Axons.BaseStrengthCodes[i])
+            {
+                changed++;
+            }
+        }
+
+        return changed;
+    }
+
+    private static bool ShouldAutoRebasePlasticity(
+        bool plasticityEnabled,
+        int totalAxons,
+        uint changedCodeCount,
+        uint rebaseThreshold,
+        float rebaseThresholdPct)
+    {
+        if (!plasticityEnabled || totalAxons <= 0)
+        {
+            return false;
+        }
+
+        var countTrigger = rebaseThreshold > 0 && changedCodeCount >= rebaseThreshold;
+        var pctTrigger = false;
+        if (float.IsFinite(rebaseThresholdPct) && rebaseThresholdPct > 0f)
+        {
+            var fraction = Math.Clamp(rebaseThresholdPct, 0f, 1f);
+            pctTrigger = changedCodeCount / (float)totalAxons >= fraction;
+        }
+
+        return countTrigger || pctTrigger;
+    }
+
+    private void ApplyPlasticityAutoRebase()
+    {
+        for (var i = 0; i < _state.Axons.Count; i++)
+        {
+            _state.Axons.BaseStrengthCodes[i] = _state.Axons.RuntimeStrengthCodes[i];
+            _state.Axons.HasRuntimeOverlay[i] = false;
+        }
     }
 
     private float ClampStrengthValue(float value)

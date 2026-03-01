@@ -24,7 +24,8 @@ public class RegionShardCpuBackendPlasticityTests
             visualization: RegionShardVisualizationComputeScope.Disabled,
             plasticityEnabled: true,
             plasticityRate: 0.25f,
-            probabilisticPlasticityUpdates: false);
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.25f);
 
         var contribution = Assert.Single(Assert.Single(result.Outbox).Value);
         Assert.Equal(0.45f, contribution.Value, precision: 6);
@@ -51,7 +52,8 @@ public class RegionShardCpuBackendPlasticityTests
             visualization: RegionShardVisualizationComputeScope.Disabled,
             plasticityEnabled: true,
             plasticityRate: 0.5f,
-            probabilisticPlasticityUpdates: false);
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.5f);
 
         Assert.Equal(-0.15f, state.Axons.Strengths[0], precision: 6);
     }
@@ -79,7 +81,8 @@ public class RegionShardCpuBackendPlasticityTests
             visualization: RegionShardVisualizationComputeScope.Disabled,
             plasticityEnabled: true,
             plasticityRate: plasticityRate,
-            probabilisticPlasticityUpdates: true);
+            probabilisticPlasticityUpdates: true,
+            plasticityDelta: plasticityRate);
 
         var deterministicBackend = new RegionShardCpuBackend(deterministicState);
         var deterministicResult = deterministicBackend.Compute(
@@ -90,7 +93,8 @@ public class RegionShardCpuBackendPlasticityTests
             visualization: RegionShardVisualizationComputeScope.Disabled,
             plasticityEnabled: true,
             plasticityRate: plasticityRate,
-            probabilisticPlasticityUpdates: false);
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: plasticityRate);
 
         Assert.Equal(0.5f, probabilisticState.Axons.Strengths[0], precision: 6);
         Assert.True(deterministicState.Axons.Strengths[0] > 0.5f);
@@ -121,6 +125,130 @@ public class RegionShardCpuBackendPlasticityTests
         Assert.Equal((uint)0, result.PlasticityStrengthCodeChanges);
         Assert.Equal(0f, state.Axons.Strengths[0], precision: 6);
         Assert.Equal(baseCode, state.Axons.RuntimeStrengthCodes[0]);
+        Assert.False(state.Axons.HasRuntimeOverlay[0]);
+    }
+
+    [Fact]
+    public void Compute_UsesPlasticityDelta_ForMagnitude_WhenProbabilisticDisabled()
+    {
+        var state = CreateSingleNeuronState(strength: 0.5f);
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(state.RegionId, state.NeuronCount, destRegionId: 9, destCount: 1);
+
+        _ = backend.Compute(
+            tickId: 31,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(state.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: 0.01f,
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.3f);
+
+        Assert.Equal(0.77f, state.Axons.Strengths[0], precision: 6);
+    }
+
+    [Fact]
+    public void Compute_WithProbabilisticPlasticity_UsesRateForGate_AndDeltaForStep()
+    {
+        const float plasticityRate = 0.1f;
+        const float plasticityDelta = 0.3f;
+        const float activationScale = 0.9f;
+        var probability = Math.Clamp(plasticityRate * activationScale, 0f, 1f);
+
+        var probe = CreateSingleNeuronState(strength: 0.5f);
+        var gatedTick = FindTickWithSampleLessThan(probe, probability);
+
+        var state = CreateSingleNeuronState(strength: 0.5f);
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(state.RegionId, state.NeuronCount, destRegionId: 9, destCount: 1);
+        _ = backend.Compute(
+            tickId: gatedTick,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(state.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: plasticityRate,
+            probabilisticPlasticityUpdates: true,
+            plasticityDelta: plasticityDelta);
+
+        Assert.Equal(0.77f, state.Axons.Strengths[0], precision: 6);
+    }
+
+    [Fact]
+    public void Compute_WithPlasticityRebaseThresholdCount_TriggersOverlayReset()
+    {
+        var state = CreateSingleNeuronState(strength: 0.5f);
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(state.RegionId, state.NeuronCount, destRegionId: 9, destCount: 1);
+        var originalBaseCode = state.Axons.BaseStrengthCodes[0];
+
+        _ = backend.Compute(
+            tickId: 41,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(state.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: 0.25f,
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.25f,
+            plasticityRebaseThreshold: 1);
+
+        Assert.NotEqual(originalBaseCode, state.Axons.BaseStrengthCodes[0]);
+        Assert.Equal(state.Axons.BaseStrengthCodes[0], state.Axons.RuntimeStrengthCodes[0]);
+        Assert.False(state.Axons.HasRuntimeOverlay[0]);
+    }
+
+    [Fact]
+    public void Compute_WithPlasticityRebaseThresholdCount_BelowThreshold_PreservesOverlay()
+    {
+        var state = CreateSingleNeuronState(strength: 0.5f);
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(state.RegionId, state.NeuronCount, destRegionId: 9, destCount: 1);
+        var originalBaseCode = state.Axons.BaseStrengthCodes[0];
+
+        _ = backend.Compute(
+            tickId: 43,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(state.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: 0.25f,
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.25f,
+            plasticityRebaseThreshold: 2);
+
+        Assert.Equal(originalBaseCode, state.Axons.BaseStrengthCodes[0]);
+        Assert.NotEqual(state.Axons.BaseStrengthCodes[0], state.Axons.RuntimeStrengthCodes[0]);
+        Assert.True(state.Axons.HasRuntimeOverlay[0]);
+    }
+
+    [Fact]
+    public void Compute_WithPlasticityRebaseThresholdPct_TriggersOverlayReset()
+    {
+        var state = CreateSingleNeuronState(strength: 0.5f);
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(state.RegionId, state.NeuronCount, destRegionId: 9, destCount: 1);
+        var originalBaseCode = state.Axons.BaseStrengthCodes[0];
+
+        _ = backend.Compute(
+            tickId: 45,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(state.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            plasticityEnabled: true,
+            plasticityRate: 0.25f,
+            probabilisticPlasticityUpdates: false,
+            plasticityDelta: 0.25f,
+            plasticityRebaseThresholdPct: 0.5f);
+
+        Assert.NotEqual(originalBaseCode, state.Axons.BaseStrengthCodes[0]);
+        Assert.Equal(state.Axons.BaseStrengthCodes[0], state.Axons.RuntimeStrengthCodes[0]);
         Assert.False(state.Axons.HasRuntimeOverlay[0]);
     }
 
@@ -187,6 +315,20 @@ public class RegionShardCpuBackendPlasticityTests
         }
 
         throw new InvalidOperationException($"Unable to find deterministic RNG sample >= {threshold}.");
+    }
+
+    private static ulong FindTickWithSampleLessThan(RegionShardState state, float threshold)
+    {
+        for (ulong tickId = 1; tickId < 100_000; tickId++)
+        {
+            var sample = UnitIntervalFromSeed(state.GetDeterministicRngInput(tickId, axonIndex: 0).ToSeed());
+            if (sample < threshold)
+            {
+                return tickId;
+            }
+        }
+
+        throw new InvalidOperationException($"Unable to find deterministic RNG sample < {threshold}.");
     }
 
     private static float UnitIntervalFromSeed(ulong seed)

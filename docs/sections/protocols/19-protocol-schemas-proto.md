@@ -456,6 +456,9 @@ message SetBrainPlasticity {
   bool plasticity_enabled = 2;
   float plasticity_rate = 3;
   bool probabilistic_updates = 4;
+  float plasticity_delta = 5;
+  uint32 plasticity_rebase_threshold = 6;
+  float plasticity_rebase_threshold_pct = 7;
 }
 
 enum HomeostasisTargetMode {
@@ -498,6 +501,9 @@ message UpdateShardRuntimeConfig {
   bool homeostasis_energy_coupling_enabled = 16;
   float homeostasis_energy_target_scale = 17;
   float homeostasis_energy_probability_scale = 18;
+  float plasticity_delta = 19;
+  uint32 plasticity_rebase_threshold = 20;
+  float plasticity_rebase_threshold_pct = 21;
 }
 ```
 
@@ -587,6 +593,9 @@ message BrainInfo {
   bool homeostasis_energy_coupling_enabled = 19;
   float homeostasis_energy_target_scale = 20;
   float homeostasis_energy_probability_scale = 21;
+  float plasticity_delta = 22;
+  uint32 plasticity_rebase_threshold = 23;
+  float plasticity_rebase_threshold_pct = 24;
 }
 
 message BrainEnergyState {
@@ -606,6 +615,9 @@ message BrainEnergyState {
   bool homeostasis_energy_coupling_enabled = 14;
   float homeostasis_energy_target_scale = 15;
   float homeostasis_energy_probability_scale = 16;
+  float plasticity_delta = 17;
+  uint32 plasticity_rebase_threshold = 18;
+  float plasticity_rebase_threshold_pct = 19;
 }
 
 message RegisterBrain {
@@ -630,6 +642,9 @@ message RegisterBrain {
   bool homeostasis_energy_coupling_enabled = 19;
   float homeostasis_energy_target_scale = 20;
   float homeostasis_energy_probability_scale = 21;
+  float plasticity_delta = 22;
+  uint32 plasticity_rebase_threshold = 23;
+  float plasticity_rebase_threshold_pct = 24;
 }
 
 message UnregisterBrain {
@@ -722,6 +737,9 @@ message SetPlasticityEnabled {
   bool plasticity_enabled = 2;
   float plasticity_rate = 3;
   bool probabilistic_updates = 4;
+  float plasticity_delta = 5;
+  uint32 plasticity_rebase_threshold = 6;
+  float plasticity_rebase_threshold_pct = 7;
 }
 
 message SetHomeostasisEnabled {

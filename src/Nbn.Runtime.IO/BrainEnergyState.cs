@@ -22,6 +22,9 @@ public sealed class BrainEnergyState
         bool plasticityEnabled = false,
         float plasticityRate = 0,
         bool plasticityProbabilisticUpdates = false,
+        float plasticityDelta = 0,
+        uint plasticityRebaseThreshold = 0,
+        float plasticityRebaseThresholdPct = 0,
         bool homeostasisEnabled = true,
         HomeostasisTargetMode homeostasisTargetMode = HomeostasisTargetMode.HomeostasisTargetZero,
         HomeostasisUpdateMode homeostasisUpdateMode = HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
@@ -38,6 +41,9 @@ public sealed class BrainEnergyState
         PlasticityEnabled = plasticityEnabled;
         PlasticityRate = plasticityRate;
         PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
+        PlasticityDelta = plasticityDelta;
+        PlasticityRebaseThreshold = plasticityRebaseThreshold;
+        PlasticityRebaseThresholdPct = plasticityRebaseThresholdPct;
         SetHomeostasis(
             homeostasisEnabled,
             homeostasisTargetMode,
@@ -55,6 +61,9 @@ public sealed class BrainEnergyState
     public bool PlasticityEnabled { get; private set; }
     public float PlasticityRate { get; private set; }
     public bool PlasticityProbabilisticUpdates { get; private set; }
+    public float PlasticityDelta { get; private set; }
+    public uint PlasticityRebaseThreshold { get; private set; }
+    public float PlasticityRebaseThresholdPct { get; private set; }
     public bool HomeostasisEnabled { get; private set; }
     public HomeostasisTargetMode HomeostasisTargetMode { get; private set; }
     public HomeostasisUpdateMode HomeostasisUpdateMode { get; private set; }
@@ -86,11 +95,20 @@ public sealed class BrainEnergyState
         EnergyEnabled = energyEnabled;
     }
 
-    public void SetPlasticity(bool enabled, float rate, bool probabilisticUpdates)
+    public void SetPlasticity(
+        bool enabled,
+        float rate,
+        bool probabilisticUpdates,
+        float delta,
+        uint rebaseThreshold,
+        float rebaseThresholdPct)
     {
         PlasticityEnabled = enabled;
         PlasticityRate = rate;
         PlasticityProbabilisticUpdates = probabilisticUpdates;
+        PlasticityDelta = delta;
+        PlasticityRebaseThreshold = rebaseThreshold;
+        PlasticityRebaseThresholdPct = rebaseThresholdPct;
     }
 
     public void SetHomeostasis(
@@ -119,6 +137,9 @@ public sealed class BrainEnergyState
         bool plasticityEnabled,
         float plasticityRate,
         bool plasticityProbabilisticUpdates,
+        float plasticityDelta,
+        uint plasticityRebaseThreshold,
+        float plasticityRebaseThresholdPct,
         bool homeostasisEnabled,
         HomeostasisTargetMode homeostasisTargetMode,
         HomeostasisUpdateMode homeostasisUpdateMode,
@@ -134,6 +155,9 @@ public sealed class BrainEnergyState
         PlasticityEnabled = plasticityEnabled;
         PlasticityRate = plasticityRate;
         PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
+        PlasticityDelta = plasticityDelta;
+        PlasticityRebaseThreshold = plasticityRebaseThreshold;
+        PlasticityRebaseThresholdPct = plasticityRebaseThresholdPct;
         SetHomeostasis(
             homeostasisEnabled,
             homeostasisTargetMode,
@@ -167,6 +191,9 @@ public sealed class BrainEnergyState
         PlasticityEnabled = state.PlasticityEnabled;
         PlasticityRate = state.PlasticityRate;
         PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;
+        PlasticityDelta = state.PlasticityDelta;
+        PlasticityRebaseThreshold = state.PlasticityRebaseThreshold;
+        PlasticityRebaseThresholdPct = state.PlasticityRebaseThresholdPct;
         HomeostasisEnabled = state.HomeostasisEnabled;
         HomeostasisTargetMode = state.HomeostasisTargetMode;
         HomeostasisUpdateMode = state.HomeostasisUpdateMode;
@@ -194,6 +221,9 @@ public sealed class BrainEnergyState
         PlasticityEnabled = state.PlasticityEnabled;
         PlasticityRate = state.PlasticityRate;
         PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;
+        PlasticityDelta = state.PlasticityDelta;
+        PlasticityRebaseThreshold = state.PlasticityRebaseThreshold;
+        PlasticityRebaseThresholdPct = state.PlasticityRebaseThresholdPct;
         SetHomeostasis(
             state.HomeostasisEnabled,
             state.HomeostasisTargetMode,

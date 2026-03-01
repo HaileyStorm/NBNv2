@@ -42,6 +42,9 @@ public sealed class RegionShardActor : IActor
     private bool _plasticityEnabled;
     private float _plasticityRate;
     private bool _plasticityProbabilisticUpdates;
+    private float _plasticityDelta;
+    private uint _plasticityRebaseThreshold;
+    private float _plasticityRebaseThresholdPct;
     private bool _homeostasisEnabled = RegionShardHomeostasisConfig.Default.Enabled;
     private HomeostasisTargetMode _homeostasisTargetMode = RegionShardHomeostasisConfig.Default.TargetMode;
     private HomeostasisUpdateMode _homeostasisUpdateMode = RegionShardHomeostasisConfig.Default.UpdateMode;
@@ -220,6 +223,9 @@ public sealed class RegionShardActor : IActor
         _plasticityEnabled = message.PlasticityEnabled;
         _plasticityRate = message.PlasticityRate;
         _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+        _plasticityDelta = message.PlasticityDelta;
+        _plasticityRebaseThreshold = message.PlasticityRebaseThreshold;
+        _plasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct;
         _homeostasisEnabled = message.HomeostasisEnabled;
         _homeostasisTargetMode = message.HomeostasisTargetMode;
         _homeostasisUpdateMode = message.HomeostasisUpdateMode;
@@ -427,6 +433,9 @@ public sealed class RegionShardActor : IActor
             _plasticityEnabled,
             _plasticityRate,
             _plasticityProbabilisticUpdates,
+            _plasticityDelta,
+            _plasticityRebaseThreshold,
+            _plasticityRebaseThresholdPct,
             new RegionShardHomeostasisConfig(
                 _homeostasisEnabled,
                 _homeostasisTargetMode,

@@ -12,6 +12,10 @@ Plasticity is configurable per brain:
 * `plasticity_delta` (small)
 * `plasticity_rebase_threshold` / `plasticity_rebase_threshold_pct` (optional; number of changed-axon codes or percent)
 
+Compatibility default:
+
+* if `plasticity_delta` is omitted or `0`, runtime uses `plasticity_rate` as the effective delta
+
 Plasticity changes are applied at runtime in float space and only persisted to `.nbs` when the quantized **strength code** differs from the base `.nbn` strength code.
 
 Sub-quantum changes are allowed and are not preserved across snapshots unless they cross a quantization boundary.
@@ -38,6 +42,7 @@ Let:
 * `p = clamp(potential, -1, +1)`
 * `u = abs(p)` (0..1)
 * `lr = plasticity_rate`
+* `d = plasticity_delta` (effective delta after compatibility default)
 
 Per axon fired:
 
@@ -48,8 +53,8 @@ Per axon fired:
   * apply update only if `rand < prob`
 * Update direction:
 
-  * if `sign(p) == sign(strength_value)`: increase magnitude by `plasticity_delta * u`
-  * else: decrease magnitude by `plasticity_delta * u`
+  * if `sign(p) == sign(strength_value)`: increase magnitude by `d * u`
+  * else: decrease magnitude by `d * u`
 * Clamp to [-1, 1] and re-quantize
 
 ### 11.4 Rebasing (optional)
@@ -58,6 +63,17 @@ Rebasing creates a new `.nbn` where base strength codes incorporate current over
 
 * external-world request
 * threshold-based automatic policy (configurable)
+
+Automatic threshold policy details:
+
+* evaluate at the end of compute with deterministic shard-local state
+* compute `changed_code_count` as the number of axons where runtime code differs from base code
+* trigger rebase when either condition is met:
+  * `plasticity_rebase_threshold > 0` and `changed_code_count >= plasticity_rebase_threshold`
+  * `plasticity_rebase_threshold_pct > 0` and `changed_code_count / total_axons >= plasticity_rebase_threshold_pct` (fraction in `[0, 1]`)
+* when triggered, runtime promotes each axon's base code to current runtime code and clears overlay markers
+
+Note: automatic threshold rebasing updates runtime/base-code bookkeeping and overlay state. Persisting that rebased state to a stored `.nbn` artifact still uses the explicit export/rebase flow.
 
 ### 11.5 Homeostasis is separate from plasticity
 

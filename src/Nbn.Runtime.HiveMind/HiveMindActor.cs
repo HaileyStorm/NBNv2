@@ -611,6 +611,9 @@ public sealed class HiveMindActor : IActor
             brain.PlasticityEnabled,
             brain.PlasticityRate,
             brain.PlasticityProbabilisticUpdates,
+            brain.PlasticityDelta,
+            brain.PlasticityRebaseThreshold,
+            brain.PlasticityRebaseThresholdPct,
             brain.HomeostasisEnabled,
             brain.HomeostasisTargetMode,
             brain.HomeostasisUpdateMode,
@@ -1258,9 +1261,24 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        if (!float.IsFinite(message.PlasticityRate)
+            || message.PlasticityRate < 0f
+            || !float.IsFinite(message.PlasticityDelta)
+            || message.PlasticityDelta < 0f
+            || !IsFiniteInRange(message.PlasticityRebaseThresholdPct, 0f, 1f))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.set_brain_plasticity", brainId, "invalid_plasticity_config");
+            HiveMindTelemetry.RecordSetBrainPlasticityRejected(brainId, "invalid_plasticity_config");
+            return;
+        }
+
+        var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
         if (brain.PlasticityEnabled == message.PlasticityEnabled
             && Math.Abs(brain.PlasticityRate - message.PlasticityRate) < 0.000001f
-            && brain.PlasticityProbabilisticUpdates == message.ProbabilisticUpdates)
+            && brain.PlasticityProbabilisticUpdates == message.ProbabilisticUpdates
+            && Math.Abs(brain.PlasticityDelta - effectiveDelta) < 0.000001f
+            && brain.PlasticityRebaseThreshold == message.PlasticityRebaseThreshold
+            && Math.Abs(brain.PlasticityRebaseThresholdPct - message.PlasticityRebaseThresholdPct) < 0.000001f)
         {
             return;
         }
@@ -1268,6 +1286,9 @@ public sealed class HiveMindActor : IActor
         brain.PlasticityEnabled = message.PlasticityEnabled;
         brain.PlasticityRate = message.PlasticityRate;
         brain.PlasticityProbabilisticUpdates = message.ProbabilisticUpdates;
+        brain.PlasticityDelta = effectiveDelta;
+        brain.PlasticityRebaseThreshold = message.PlasticityRebaseThreshold;
+        brain.PlasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct;
         UpdateShardRuntimeConfig(context, brain);
         RegisterBrainWithIo(context, brain, force: true);
     }
@@ -4728,6 +4749,16 @@ public sealed class HiveMindActor : IActor
         return float.IsFinite(value) && value >= min && value <= max;
     }
 
+    private static float ResolvePlasticityDelta(float plasticityRate, float plasticityDelta)
+    {
+        if (plasticityDelta > 0f)
+        {
+            return plasticityDelta;
+        }
+
+        return plasticityRate > 0f ? plasticityRate : 0f;
+    }
+
     private static PID? ParsePid(string? value)
         => TryParsePid(value, out var pid) ? pid : null;
 
@@ -5714,6 +5745,9 @@ public sealed class HiveMindActor : IActor
                 brain.PlasticityEnabled,
                 brain.PlasticityRate,
                 brain.PlasticityProbabilisticUpdates,
+                brain.PlasticityDelta,
+                brain.PlasticityRebaseThreshold,
+                brain.PlasticityRebaseThresholdPct,
                 brain.HomeostasisEnabled,
                 brain.HomeostasisTargetMode,
                 brain.HomeostasisUpdateMode,
@@ -5780,6 +5814,9 @@ public sealed class HiveMindActor : IActor
             PlasticityEnabled = brain.PlasticityEnabled,
             PlasticityRate = brain.PlasticityRate,
             PlasticityProbabilisticUpdates = brain.PlasticityProbabilisticUpdates,
+            PlasticityDelta = brain.PlasticityDelta,
+            PlasticityRebaseThreshold = brain.PlasticityRebaseThreshold,
+            PlasticityRebaseThresholdPct = brain.PlasticityRebaseThresholdPct,
             HomeostasisEnabled = brain.HomeostasisEnabled,
             HomeostasisTargetMode = brain.HomeostasisTargetMode,
             HomeostasisUpdateMode = brain.HomeostasisUpdateMode,
@@ -5869,6 +5906,9 @@ public sealed class HiveMindActor : IActor
         bool plasticityEnabled,
         float plasticityRate,
         bool plasticityProbabilisticUpdates,
+        float plasticityDelta,
+        uint plasticityRebaseThreshold,
+        float plasticityRebaseThresholdPct,
         bool homeostasisEnabled,
         ProtoControl.HomeostasisTargetMode homeostasisTargetMode,
         ProtoControl.HomeostasisUpdateMode homeostasisUpdateMode,
@@ -5892,6 +5932,9 @@ public sealed class HiveMindActor : IActor
                 PlasticityEnabled = plasticityEnabled,
                 PlasticityRate = plasticityRate,
                 ProbabilisticUpdates = plasticityProbabilisticUpdates,
+                PlasticityDelta = plasticityDelta,
+                PlasticityRebaseThreshold = plasticityRebaseThreshold,
+                PlasticityRebaseThresholdPct = plasticityRebaseThresholdPct,
                 HomeostasisEnabled = homeostasisEnabled,
                 HomeostasisTargetMode = homeostasisTargetMode,
                 HomeostasisUpdateMode = homeostasisUpdateMode,
@@ -6077,6 +6120,9 @@ public sealed class HiveMindActor : IActor
         public bool PlasticityEnabled { get; set; }
         public float PlasticityRate { get; set; }
         public bool PlasticityProbabilisticUpdates { get; set; }
+        public float PlasticityDelta { get; set; }
+        public uint PlasticityRebaseThreshold { get; set; }
+        public float PlasticityRebaseThresholdPct { get; set; }
         public bool HomeostasisEnabled { get; set; } = true;
         public ProtoControl.HomeostasisTargetMode HomeostasisTargetMode { get; set; } = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero;
         public ProtoControl.HomeostasisUpdateMode HomeostasisUpdateMode { get; set; } = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep;

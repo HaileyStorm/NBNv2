@@ -215,6 +215,9 @@ public sealed class IoGatewayActor : IActor
                 HomeostasisEnergyCouplingEnabled = false,
                 HomeostasisEnergyTargetScale = 1f,
                 HomeostasisEnergyProbabilityScale = 1f,
+                PlasticityDelta = 0f,
+                PlasticityRebaseThreshold = 0,
+                PlasticityRebaseThresholdPct = 0f,
                 LastTickCost = 0,
                 BaseDefinition = new ArtifactRef(),
                 LastSnapshot = new ArtifactRef()
@@ -242,6 +245,9 @@ public sealed class IoGatewayActor : IActor
             EnergyRateUnitsPerSecond = entry.Energy.EnergyRateUnitsPerSecond,
             PlasticityRate = entry.Energy.PlasticityRate,
             PlasticityProbabilisticUpdates = entry.Energy.PlasticityProbabilisticUpdates,
+            PlasticityDelta = entry.Energy.PlasticityDelta,
+            PlasticityRebaseThreshold = entry.Energy.PlasticityRebaseThreshold,
+            PlasticityRebaseThresholdPct = entry.Energy.PlasticityRebaseThresholdPct,
             HomeostasisEnabled = entry.Energy.HomeostasisEnabled,
             HomeostasisTargetMode = entry.Energy.HomeostasisTargetMode,
             HomeostasisUpdateMode = entry.Energy.HomeostasisUpdateMode,
@@ -459,7 +465,27 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        entry.Energy.SetPlasticity(message.PlasticityEnabled, message.PlasticityRate, message.ProbabilisticUpdates);
+        if (!float.IsFinite(message.PlasticityDelta) || message.PlasticityDelta < 0f)
+        {
+            RespondCommandAck(context, message.BrainId, "set_plasticity", success: false, "plasticity_delta_invalid", entry);
+            return;
+        }
+
+        if (!IsFiniteInRange(message.PlasticityRebaseThresholdPct, 0f, 1f))
+        {
+            RespondCommandAck(context, message.BrainId, "set_plasticity", success: false, "plasticity_rebase_threshold_pct_invalid", entry);
+            return;
+        }
+
+        var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
+
+        entry.Energy.SetPlasticity(
+            message.PlasticityEnabled,
+            message.PlasticityRate,
+            message.ProbabilisticUpdates,
+            effectiveDelta,
+            message.PlasticityRebaseThreshold,
+            message.PlasticityRebaseThresholdPct);
 
         var ackMessage = "applied";
         if (_hiveMindPid is not null)
@@ -469,7 +495,10 @@ public sealed class IoGatewayActor : IActor
                 BrainId = message.BrainId,
                 PlasticityEnabled = message.PlasticityEnabled,
                 PlasticityRate = message.PlasticityRate,
-                ProbabilisticUpdates = message.ProbabilisticUpdates
+                ProbabilisticUpdates = message.ProbabilisticUpdates,
+                PlasticityDelta = effectiveDelta,
+                PlasticityRebaseThreshold = message.PlasticityRebaseThreshold,
+                PlasticityRebaseThresholdPct = message.PlasticityRebaseThresholdPct
             });
         }
         else
@@ -648,12 +677,16 @@ public sealed class IoGatewayActor : IActor
 
             if (message.HasRuntimeConfig)
             {
+                var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
                 existing.Energy.SetRuntimeConfig(
                     message.CostEnabled,
                     message.EnergyEnabled,
                     message.PlasticityEnabled,
                     message.PlasticityRate,
                     message.PlasticityProbabilisticUpdates,
+                    effectiveDelta,
+                    message.PlasticityRebaseThreshold,
+                    message.PlasticityRebaseThresholdPct,
                     message.HomeostasisEnabled,
                     message.HomeostasisTargetMode,
                     message.HomeostasisUpdateMode,
@@ -707,12 +740,16 @@ public sealed class IoGatewayActor : IActor
 
         if (message.HasRuntimeConfig)
         {
+            var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
             energy.SetRuntimeConfig(
                 message.CostEnabled,
                 message.EnergyEnabled,
                 message.PlasticityEnabled,
                 message.PlasticityRate,
                 message.PlasticityProbabilisticUpdates,
+                effectiveDelta,
+                message.PlasticityRebaseThreshold,
+                message.PlasticityRebaseThresholdPct,
                 message.HomeostasisEnabled,
                 message.HomeostasisTargetMode,
                 message.HomeostasisUpdateMode,
@@ -1358,6 +1395,16 @@ public sealed class IoGatewayActor : IActor
         return float.IsFinite(value) && value >= min && value <= max;
     }
 
+    private static float ResolvePlasticityDelta(float plasticityRate, float plasticityDelta)
+    {
+        if (plasticityDelta > 0f)
+        {
+            return plasticityDelta;
+        }
+
+        return plasticityRate > 0f ? plasticityRate : 0f;
+    }
+
     private static Nbn.Proto.Io.BrainEnergyState BuildCommandEnergyState(BrainEnergyState energy)
     {
         return new Nbn.Proto.Io.BrainEnergyState
@@ -1369,6 +1416,9 @@ public sealed class IoGatewayActor : IActor
             PlasticityEnabled = energy.PlasticityEnabled,
             PlasticityRate = energy.PlasticityRate,
             PlasticityProbabilisticUpdates = energy.PlasticityProbabilisticUpdates,
+            PlasticityDelta = energy.PlasticityDelta,
+            PlasticityRebaseThreshold = energy.PlasticityRebaseThreshold,
+            PlasticityRebaseThresholdPct = energy.PlasticityRebaseThresholdPct,
             HomeostasisEnabled = energy.HomeostasisEnabled,
             HomeostasisTargetMode = energy.HomeostasisTargetMode,
             HomeostasisUpdateMode = energy.HomeostasisUpdateMode,

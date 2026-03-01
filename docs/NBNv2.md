@@ -623,6 +623,10 @@ Plasticity is configurable per brain:
 * `plasticity_delta` (small)
 * `plasticity_rebase_threshold` / `plasticity_rebase_threshold_pct` (optional; number of changed-axon codes or percent)
 
+Compatibility default:
+
+* if `plasticity_delta` is omitted or `0`, runtime uses `plasticity_rate` as the effective delta
+
 Plasticity changes are applied at runtime in float space and only persisted to `.nbs` when the quantized **strength code** differs from the base `.nbn` strength code.
 
 Sub-quantum changes are allowed and are not preserved across snapshots unless they cross a quantization boundary.
@@ -649,6 +653,7 @@ Let:
 * `p = clamp(potential, -1, +1)`
 * `u = abs(p)` (0..1)
 * `lr = plasticity_rate`
+* `d = plasticity_delta` (effective delta after compatibility default)
 
 Per axon fired:
 
@@ -659,8 +664,8 @@ Per axon fired:
   * apply update only if `rand < prob`
 * Update direction:
 
-  * if `sign(p) == sign(strength_value)`: increase magnitude by `plasticity_delta * u`
-  * else: decrease magnitude by `plasticity_delta * u`
+  * if `sign(p) == sign(strength_value)`: increase magnitude by `d * u`
+  * else: decrease magnitude by `d * u`
 * Clamp to [-1, 1] and re-quantize
 
 ### 11.4 Rebasing (optional)
@@ -669,6 +674,17 @@ Rebasing creates a new `.nbn` where base strength codes incorporate current over
 
 * external-world request
 * threshold-based automatic policy (configurable)
+
+Automatic threshold policy details:
+
+* evaluate at the end of compute with deterministic shard-local state
+* compute `changed_code_count` as the number of axons where runtime code differs from base code
+* trigger rebase when either condition is met:
+  * `plasticity_rebase_threshold > 0` and `changed_code_count >= plasticity_rebase_threshold`
+  * `plasticity_rebase_threshold_pct > 0` and `changed_code_count / total_axons >= plasticity_rebase_threshold_pct` (fraction in `[0, 1]`)
+* when triggered, runtime promotes each axon's base code to current runtime code and clears overlay markers
+
+Note: automatic threshold rebasing updates runtime/base-code bookkeeping and overlay state. Persisting that rebased state to a stored `.nbn` artifact still uses the explicit export/rebase flow.
 
 ### 11.5 Homeostasis is separate from plasticity
 
@@ -783,7 +799,7 @@ IO supports:
 * one-time energy credit
 * energy rate
 * enable/disable cost and energy
-* plasticity control (`enabled`, `rate`, `probabilistic_updates`)
+* plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
 
 Command writes can be sent as requests and return `IoCommandAck` with:
@@ -799,6 +815,13 @@ Homeostasis operator ranges:
 * `homeostasis_min_step_codes`: `>= 1`
 * `homeostasis_energy_target_scale`: `[0,4]`
 * `homeostasis_energy_probability_scale`: `[0,4]`
+
+Plasticity operator ranges:
+
+* `plasticity_rate`: `>= 0`
+* `plasticity_delta`: `>= 0` (if omitted/`0`, runtime uses `plasticity_rate`)
+* `plasticity_rebase_threshold`: `>= 0` (0 disables count trigger)
+* `plasticity_rebase_threshold_pct`: `[0,1]` (0 disables percent trigger)
 
 ### 13.6 Brain death notifications
 
@@ -1994,6 +2017,9 @@ message SetBrainPlasticity {
   bool plasticity_enabled = 2;
   float plasticity_rate = 3;
   bool probabilistic_updates = 4;
+  float plasticity_delta = 5;
+  uint32 plasticity_rebase_threshold = 6;
+  float plasticity_rebase_threshold_pct = 7;
 }
 
 enum HomeostasisTargetMode {
@@ -2036,6 +2062,9 @@ message UpdateShardRuntimeConfig {
   bool homeostasis_energy_coupling_enabled = 16;
   float homeostasis_energy_target_scale = 17;
   float homeostasis_energy_probability_scale = 18;
+  float plasticity_delta = 19;
+  uint32 plasticity_rebase_threshold = 20;
+  float plasticity_rebase_threshold_pct = 21;
 }
 ```
 
@@ -2125,6 +2154,9 @@ message BrainInfo {
   bool homeostasis_energy_coupling_enabled = 19;
   float homeostasis_energy_target_scale = 20;
   float homeostasis_energy_probability_scale = 21;
+  float plasticity_delta = 22;
+  uint32 plasticity_rebase_threshold = 23;
+  float plasticity_rebase_threshold_pct = 24;
 }
 
 message BrainEnergyState {
@@ -2144,6 +2176,9 @@ message BrainEnergyState {
   bool homeostasis_energy_coupling_enabled = 14;
   float homeostasis_energy_target_scale = 15;
   float homeostasis_energy_probability_scale = 16;
+  float plasticity_delta = 17;
+  uint32 plasticity_rebase_threshold = 18;
+  float plasticity_rebase_threshold_pct = 19;
 }
 
 message RegisterBrain {
@@ -2168,6 +2203,9 @@ message RegisterBrain {
   bool homeostasis_energy_coupling_enabled = 19;
   float homeostasis_energy_target_scale = 20;
   float homeostasis_energy_probability_scale = 21;
+  float plasticity_delta = 22;
+  uint32 plasticity_rebase_threshold = 23;
+  float plasticity_rebase_threshold_pct = 24;
 }
 
 message UnregisterBrain {
@@ -2260,6 +2298,9 @@ message SetPlasticityEnabled {
   bool plasticity_enabled = 2;
   float plasticity_rate = 3;
   bool probabilistic_updates = 4;
+  float plasticity_delta = 5;
+  uint32 plasticity_rebase_threshold = 6;
+  float plasticity_rebase_threshold_pct = 7;
 }
 
 message SetHomeostasisEnabled {
