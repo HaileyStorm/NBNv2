@@ -1436,6 +1436,151 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task SystemCostEnergySetting_Disables_RuntimeConfig_For_Enabled_Brain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(12, 0);
+        var enabledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disabledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shard,
+            enabledRuntime,
+            update => update.CostEnabled && update.EnergyEnabled,
+            disabledRuntime,
+            update => !update.CostEnabled && !update.EnergyEnabled)));
+
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = true
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var enabled = await enabledRuntime.Task.WaitAsync(cts.Token);
+        Assert.True(enabled.CostEnabled);
+        Assert.True(enabled.EnergyEnabled);
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "false",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var disabled = await disabledRuntime.Task.WaitAsync(cts.Token);
+        Assert.False(disabled.CostEnabled);
+        Assert.False(disabled.EnergyEnabled);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SystemCostEnergySetting_Toggles_RegisterBrainWithIo_EffectiveCostEnergy()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var enabledRegister = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disabledRegister = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioProbe = root.Spawn(Props.FromFunc(context =>
+        {
+            if (context.Message is not ProtoIo.RegisterBrain register || !register.HasRuntimeConfig)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (register.CostEnabled && register.EnergyEnabled)
+            {
+                enabledRegister.TrySetResult(register);
+            }
+            else if (!register.CostEnabled && !register.EnergyEnabled)
+            {
+                disabledRegister.TrySetResult(register);
+            }
+
+            return Task.CompletedTask;
+        }));
+
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioProbe)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var inputShard = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(inputShard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)NbnConstants.InputRegionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(inputShard),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var outputShard = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(outputShard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)NbnConstants.OutputRegionId,
+            ShardIndex = 0,
+            ShardPid = PidLabel(outputShard),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new SetBrainCostEnergy
+        {
+            BrainId = brainId.ToProtoUuid(),
+            CostEnabled = true,
+            EnergyEnabled = true
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var enabled = await enabledRegister.Task.WaitAsync(cts.Token);
+        Assert.True(enabled.CostEnabled);
+        Assert.True(enabled.EnergyEnabled);
+
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "false",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var disabled = await disabledRegister.Task.WaitAsync(cts.Token);
+        Assert.False(disabled.CostEnabled);
+        Assert.False(disabled.EnergyEnabled);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SystemPlasticitySetting_Disables_RuntimeConfig_For_Unsuppressed_Brain()
     {
         var system = new ActorSystem();

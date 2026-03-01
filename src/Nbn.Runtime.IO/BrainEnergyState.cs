@@ -38,8 +38,9 @@ public sealed class BrainEnergyState
     {
         EnergyRemaining = energyRemaining;
         EnergyRateUnitsPerSecond = energyRateUnitsPerSecond;
-        CostEnabled = costEnabled;
-        EnergyEnabled = energyEnabled;
+        var combinedCostEnergyEnabled = costEnabled && energyEnabled;
+        CostEnabled = combinedCostEnergyEnabled;
+        EnergyEnabled = combinedCostEnergyEnabled;
         PlasticityEnabled = plasticityEnabled;
         PlasticityRate = plasticityRate;
         PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
@@ -93,8 +94,9 @@ public sealed class BrainEnergyState
 
     public void SetCostEnergyEnabled(bool costEnabled, bool energyEnabled)
     {
-        CostEnabled = costEnabled;
-        EnergyEnabled = energyEnabled;
+        var combinedEnabled = costEnabled && energyEnabled;
+        CostEnabled = combinedEnabled;
+        EnergyEnabled = combinedEnabled;
     }
 
     public void SetPlasticity(
@@ -152,8 +154,9 @@ public sealed class BrainEnergyState
         float homeostasisEnergyProbabilityScale,
         long lastTickCost)
     {
-        CostEnabled = costEnabled;
-        EnergyEnabled = energyEnabled;
+        var combinedCostEnergyEnabled = costEnabled && energyEnabled;
+        CostEnabled = combinedCostEnergyEnabled;
+        EnergyEnabled = combinedCostEnergyEnabled;
         PlasticityEnabled = plasticityEnabled;
         PlasticityRate = plasticityRate;
         PlasticityProbabilisticUpdates = plasticityProbabilisticUpdates;
@@ -188,8 +191,9 @@ public sealed class BrainEnergyState
 
         EnergyRemaining = state.EnergyRemaining;
         EnergyRateUnitsPerSecond = state.EnergyRateUnitsPerSecond;
-        CostEnabled = state.CostEnabled;
-        EnergyEnabled = state.EnergyEnabled;
+        var combinedCostEnergyEnabled = state.CostEnabled && state.EnergyEnabled;
+        CostEnabled = combinedCostEnergyEnabled;
+        EnergyEnabled = combinedCostEnergyEnabled;
         PlasticityEnabled = state.PlasticityEnabled;
         PlasticityRate = state.PlasticityRate;
         PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;
@@ -218,8 +222,9 @@ public sealed class BrainEnergyState
 
         EnergyRemaining = state.EnergyRemaining;
         EnergyRateUnitsPerSecond = state.EnergyRateUnitsPerSecond;
-        CostEnabled = state.CostEnabled;
-        EnergyEnabled = state.EnergyEnabled;
+        var combinedCostEnergyEnabled = state.CostEnabled && state.EnergyEnabled;
+        CostEnabled = combinedCostEnergyEnabled;
+        EnergyEnabled = combinedCostEnergyEnabled;
         PlasticityEnabled = state.PlasticityEnabled;
         PlasticityRate = state.PlasticityRate;
         PlasticityProbabilisticUpdates = state.PlasticityProbabilisticUpdates;

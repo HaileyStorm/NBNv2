@@ -12,7 +12,6 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 {
     private readonly UiDispatcher _dispatcher = new();
     private readonly WorkbenchClient _client;
-    private readonly BooleanPropertySyncBridge _plasticityToggleSyncBridge;
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
     private CancellationTokenSource? _connectCts;
@@ -34,16 +33,6 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client);
         Designer = new DesignerPanelViewModel(Connections, _client, OnSpawnedBrainDiscovered);
-        _plasticityToggleSyncBridge = new BooleanPropertySyncBridge(
-            Io,
-            nameof(IoPanelViewModel.PlasticityEnabled),
-            () => Io.PlasticityEnabled,
-            value => Io.PlasticityEnabled = value,
-            Designer,
-            nameof(DesignerPanelViewModel.SnapshotPlasticityEnabled),
-            () => Designer.SnapshotPlasticityEnabled,
-            value => Designer.SnapshotPlasticityEnabled = value,
-            initializeRightFromLeft: true);
 
         Navigation = new ObservableCollection<NavItemViewModel>
         {
@@ -264,6 +253,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public void OnSettingChanged(SettingItem item)
     {
         Orchestrator.UpdateSetting(item);
+        Io.ApplySetting(item);
         if (Debug.ApplySetting(item))
         {
             _dispatcher.Post(UpdateObservabilitySubscriptions);
@@ -272,7 +262,6 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public async ValueTask DisposeAsync()
     {
-        _plasticityToggleSyncBridge.Dispose();
         await Orchestrator.StopAllAsyncForShutdown();
         _connectCts?.Cancel();
         _connectCts = null;
@@ -369,7 +358,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 if (!token.IsCancellationRequested)
                 {
                     await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
-                    await SyncDebugSettingsFromSettingsMonitorAsync().ConfigureAwait(false);
+                    await SyncWorkbenchSettingsFromSettingsMonitorAsync().ConfigureAwait(false);
                 }
 
                 WorkbenchLog.Info($"Settings connected to {Connections.SettingsHost}:{settingsPort}/{Connections.SettingsName}");
@@ -495,7 +484,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         });
     }
 
-    private async Task SyncDebugSettingsFromSettingsMonitorAsync()
+    private async Task SyncWorkbenchSettingsFromSettingsMonitorAsync()
     {
         foreach (var key in DebugSettingsKeys.AllKeys)
         {
@@ -506,6 +495,20 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             }
 
             Debug.ApplySetting(new SettingItem(
+                key,
+                setting.Value ?? string.Empty,
+                setting.UpdatedMs.ToString()));
+        }
+
+        foreach (var key in new[] { CostEnergySettingsKeys.SystemEnabledKey, PlasticitySettingsKeys.SystemEnabledKey })
+        {
+            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
+            if (setting is null)
+            {
+                continue;
+            }
+
+            Io.ApplySetting(new SettingItem(
                 key,
                 setting.Value ?? string.Empty,
                 setting.UpdatedMs.ToString()));

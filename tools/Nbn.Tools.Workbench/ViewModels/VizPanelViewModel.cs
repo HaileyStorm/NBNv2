@@ -241,6 +241,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
         ApplyEnergyRateCommand = new RelayCommand(() => _brain.ApplyEnergyRateSelected());
         ApplyCostEnergyCommand = new RelayCommand(() => _brain.ApplyCostEnergySelected());
+        ApplyPlasticityCommand = new RelayCommand(() => _brain.ApplyPlasticitySelected());
         NavigateCanvasPreviousCommand = new RelayCommand(() => NavigateCanvasRelative(-1));
         NavigateCanvasNextCommand = new RelayCommand(() => NavigateCanvasRelative(1));
         NavigateCanvasSelectionCommand = new RelayCommand(NavigateToCanvasSelection);
@@ -776,6 +777,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public RelayCommand ApplyEnergyRateCommand { get; }
 
     public RelayCommand ApplyCostEnergyCommand { get; }
+
+    public RelayCommand ApplyPlasticityCommand { get; }
 
     public RelayCommand NavigateCanvasPreviousCommand { get; }
 

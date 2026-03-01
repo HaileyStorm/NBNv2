@@ -20,6 +20,7 @@
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
             <TextBlock Text="Energy + Cost" Classes="card-title" />
+            <TextBlock Text="{Binding SystemCostEnergyStateLabel}" Classes="muted" />
             <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
               <TextBlock Text="Credit" Classes="muted" />
               <TextBox Grid.Column="1" Text="{Binding EnergyCreditText}" Width="100" />
@@ -29,9 +30,12 @@
               <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyEnergyRateCommand}" />
             </Grid>
             <StackPanel Orientation="Horizontal" Spacing="12">
-              <CheckBox Content="Cost Enabled" IsChecked="{Binding CostEnabled}" />
-              <CheckBox Content="Energy Enabled" IsChecked="{Binding EnergyEnabled}" />
-              <Button Content="Update Flags" Command="{Binding ApplyCostEnergyCommand}" />
+              <CheckBox Content="Per-brain override: suppress cost+energy"
+                        IsChecked="{Binding CostEnergySuppressed}"
+                        IsEnabled="{Binding CostEnergyOverrideAvailable}" />
+              <Button Content="Update Flags"
+                      Command="{Binding ApplyCostEnergyCommand}"
+                      IsEnabled="{Binding CostEnergyOverrideAvailable}" />
             </StackPanel>
           </StackPanel>
         </Border>
@@ -39,6 +43,7 @@
         <Border Classes="card" Grid.Column="1">
           <StackPanel Spacing="8">
             <TextBlock Text="Plasticity" Classes="card-title" />
+            <TextBlock Text="{Binding SystemPlasticityStateLabel}" Classes="muted" />
             <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="6">
               <TextBlock Text="Mode" Classes="muted" />
               <ComboBox Grid.Column="1" ItemsSource="{Binding PlasticityModes}" SelectedItem="{Binding SelectedPlasticityMode}" Width="160">
@@ -48,10 +53,17 @@
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
               </ComboBox>
-              <CheckBox Grid.Column="2" Content="Enabled" IsChecked="{Binding PlasticityEnabled}" />
+              <CheckBox Grid.Column="2"
+                        Content="Per-brain override: suppress plasticity"
+                        IsChecked="{Binding PlasticitySuppressed}"
+                        IsEnabled="{Binding PlasticityOverrideAvailable}" />
               <TextBlock Grid.Row="1" Text="Rate" Classes="muted" />
               <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PlasticityRateText}" Width="90" />
-              <Button Grid.Row="1" Grid.Column="2" Content="Apply" Command="{Binding ApplyPlasticityCommand}" />
+              <Button Grid.Row="1"
+                      Grid.Column="2"
+                      Content="Apply"
+                      Command="{Binding ApplyPlasticityCommand}"
+                      IsEnabled="{Binding PlasticityOverrideAvailable}" />
             </Grid>
             <Border Height="1" Background="#33000000" Margin="0,4,0,4" />
             <TextBlock Text="Homeostasis" Classes="card-title" />

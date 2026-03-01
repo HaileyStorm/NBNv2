@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -191,21 +192,52 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
-    public async Task ApplyCostEnergy_Uses_Independent_Flag_Values()
+    public async Task ApplyCostEnergy_Uses_Combined_Flag_Value()
     {
         var client = new FakeWorkbenchClient();
         var vm = CreateViewModel(client);
         var brainA = Guid.NewGuid();
         var brainB = Guid.NewGuid();
         vm.UpdateActiveBrains(new[] { brainA, brainB });
-        vm.CostEnabled = true;
-        vm.EnergyEnabled = false;
+        vm.CostEnergyEnabled = true;
 
         vm.ApplyCostEnergyCommand.Execute(null);
         await WaitForAsync(() => client.CostEnergyCalls.Count == 2);
 
-        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainA && call.CostEnabled && !call.EnergyEnabled);
-        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainB && call.CostEnabled && !call.EnergyEnabled);
+        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainA && call.CostEnabled && call.EnergyEnabled);
+        Assert.Contains(client.CostEnergyCalls, call => call.BrainId == brainB && call.CostEnabled && call.EnergyEnabled);
+    }
+
+    [Fact]
+    public void SuppressedFlags_Track_Inverse_Enabled_State()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        vm.CostEnergyEnabled = true;
+        Assert.False(vm.CostEnergySuppressed);
+        vm.CostEnergySuppressed = true;
+        Assert.False(vm.CostEnergyEnabled);
+
+        vm.PlasticityEnabled = true;
+        Assert.False(vm.PlasticitySuppressed);
+        vm.PlasticitySuppressed = true;
+        Assert.False(vm.PlasticityEnabled);
+    }
+
+    [Fact]
+    public void ApplySetting_Updates_SystemPolicyIndicators()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        Assert.True(vm.ApplySetting(new SettingItem(CostEnergySettingsKeys.SystemEnabledKey, "false", string.Empty)));
+        Assert.False(vm.SystemCostEnergyEnabled);
+        Assert.False(vm.CostEnergyOverrideAvailable);
+        Assert.True(vm.CostEnergyOverrideUnavailable);
+
+        Assert.True(vm.ApplySetting(new SettingItem(PlasticitySettingsKeys.SystemEnabledKey, "false", string.Empty)));
+        Assert.False(vm.SystemPlasticityEnabled);
+        Assert.False(vm.PlasticityOverrideAvailable);
+        Assert.True(vm.PlasticityOverrideUnavailable);
     }
 
     [Fact]

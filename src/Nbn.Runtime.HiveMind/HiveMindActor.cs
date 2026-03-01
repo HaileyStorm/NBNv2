@@ -30,6 +30,7 @@ public sealed class HiveMindActor : IActor
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
     private bool _debugStreamEnabled;
+    private bool _systemCostEnergyEnabled = true;
     private bool _systemPlasticityEnabled = true;
     private ProtoSeverity _debugMinSeverity;
     private bool _debugSettingsSubscribed;
@@ -314,6 +315,7 @@ public sealed class HiveMindActor : IActor
 
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.EnabledKey });
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = DebugSettingsKeys.MinSeverityKey });
+        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = CostEnergySettingsKeys.SystemEnabledKey });
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = PlasticitySettingsKeys.SystemEnabledKey });
     }
 
@@ -327,6 +329,12 @@ public sealed class HiveMindActor : IActor
         if (TryApplyDebugSetting(message.Key, message.Value))
         {
             UpdateAllShardRuntimeConfig(context);
+        }
+
+        if (TryApplySystemCostEnergySetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
         }
 
         if (TryApplySystemPlasticitySetting(message.Key, message.Value))
@@ -346,6 +354,12 @@ public sealed class HiveMindActor : IActor
         if (TryApplyDebugSetting(message.Key, message.Value))
         {
             UpdateAllShardRuntimeConfig(context);
+        }
+
+        if (TryApplySystemCostEnergySetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
         }
 
         if (TryApplySystemPlasticitySetting(message.Key, message.Value))
@@ -387,6 +401,24 @@ public sealed class HiveMindActor : IActor
         }
 
         return false;
+    }
+
+    private bool TryApplySystemCostEnergySetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parsed = ParseBooleanSetting(value, _systemCostEnergyEnabled);
+        if (parsed == _systemCostEnergyEnabled)
+        {
+            return false;
+        }
+
+        _systemCostEnergyEnabled = parsed;
+        return true;
     }
 
     private bool TryApplySystemPlasticitySetting(string? key, string? value)
@@ -646,6 +678,7 @@ public sealed class HiveMindActor : IActor
             normalized,
             brain.VisualizationEnabled,
             brain.VisualizationFocusRegionId);
+        var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
         var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
         var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         SendShardRuntimeConfigUpdate(
@@ -653,8 +686,8 @@ public sealed class HiveMindActor : IActor
             brainId,
             shardId,
             normalized,
-            brain.CostEnabled,
-            brain.EnergyEnabled,
+            effectiveCostEnergyEnabled,
+            effectiveCostEnergyEnabled,
             effectivePlasticityEnabled,
             brain.PlasticityRate,
             brain.PlasticityProbabilisticUpdates,
@@ -1283,13 +1316,14 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        if (brain.CostEnabled == message.CostEnabled && brain.EnergyEnabled == message.EnergyEnabled)
+        var perBrainCostEnergyEnabled = message.CostEnabled && message.EnergyEnabled;
+        if (ResolvePerBrainCostEnergyEnabled(brain) == perBrainCostEnergyEnabled)
         {
             return;
         }
 
-        brain.CostEnabled = message.CostEnabled;
-        brain.EnergyEnabled = message.EnergyEnabled;
+        brain.CostEnabled = perBrainCostEnergyEnabled;
+        brain.EnergyEnabled = perBrainCostEnergyEnabled;
         UpdateShardRuntimeConfig(context, brain);
         RegisterBrainWithIo(context, brain, force: true);
     }
@@ -4806,8 +4840,30 @@ public sealed class HiveMindActor : IActor
         return plasticityRate > 0f ? plasticityRate : 0f;
     }
 
+    private static bool ResolvePerBrainCostEnergyEnabled(BrainState brain)
+        => brain.CostEnabled && brain.EnergyEnabled;
+
+    private bool ResolveEffectiveCostEnergyEnabled(BrainState brain)
+        => _systemCostEnergyEnabled && ResolvePerBrainCostEnergyEnabled(brain);
+
     private bool ResolveEffectivePlasticityEnabled(BrainState brain)
         => _systemPlasticityEnabled && brain.PlasticityEnabled;
+
+    private bool ResolveSnapshotCostEnergyEnabled(BrainState brain, ProtoIo.RequestSnapshot message)
+    {
+        var requestedCostEnergyEnabled = message.HasRuntimeState
+            ? message.CostEnabled && message.EnergyEnabled
+            : ResolvePerBrainCostEnergyEnabled(brain);
+        return _systemCostEnergyEnabled && requestedCostEnergyEnabled;
+    }
+
+    private bool ResolveSnapshotPlasticityEnabled(BrainState brain, ProtoIo.RequestSnapshot message)
+    {
+        var requestedPlasticityEnabled = message.HasRuntimeState
+            ? message.PlasticityEnabled
+            : brain.PlasticityEnabled;
+        return _systemPlasticityEnabled && requestedPlasticityEnabled;
+    }
 
     private static PID? ParsePid(string? value)
         => TryParsePid(value, out var pid) ? pid : null;
@@ -5019,15 +5075,17 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var snapshotCostEnergyEnabled = ResolveSnapshotCostEnergyEnabled(brain, message);
+        var snapshotPlasticityEnabled = ResolveSnapshotPlasticityEnabled(brain, message);
         var storeRootPath = ResolveArtifactRoot(brain.BaseDefinition!.StoreUri);
         var request = new SnapshotBuildRequest(
             brain.BrainId,
             brain.BaseDefinition!,
             _lastCompletedTickId,
             message.HasRuntimeState ? message.EnergyRemaining : 0L,
-            message.HasRuntimeState ? message.CostEnabled : brain.CostEnabled,
-            message.HasRuntimeState ? message.EnergyEnabled : brain.EnergyEnabled,
-            ResolveEffectivePlasticityEnabled(brain),
+            snapshotCostEnergyEnabled,
+            snapshotCostEnergyEnabled,
+            snapshotPlasticityEnabled,
             new Dictionary<ShardId32, PID>(brain.Shards),
             storeRootPath,
             string.IsNullOrWhiteSpace(brain.BaseDefinition.StoreUri) ? storeRootPath : brain.BaseDefinition.StoreUri);
@@ -5783,6 +5841,7 @@ public sealed class HiveMindActor : IActor
 
     private void UpdateShardRuntimeConfig(IContext context, BrainState brain)
     {
+        var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
         var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
         var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         foreach (var entry in brain.Shards)
@@ -5792,8 +5851,8 @@ public sealed class HiveMindActor : IActor
                 brain.BrainId,
                 entry.Key,
                 entry.Value,
-                brain.CostEnabled,
-                brain.EnergyEnabled,
+                effectiveCostEnergyEnabled,
+                effectiveCostEnergyEnabled,
                 effectivePlasticityEnabled,
                 brain.PlasticityRate,
                 brain.PlasticityProbabilisticUpdates,
@@ -5855,6 +5914,7 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
         var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
         var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         var register = new ProtoIo.RegisterBrain
@@ -5863,8 +5923,8 @@ public sealed class HiveMindActor : IActor
             InputWidth = inputWidth,
             OutputWidth = outputWidth,
             HasRuntimeConfig = true,
-            CostEnabled = brain.CostEnabled,
-            EnergyEnabled = brain.EnergyEnabled,
+            CostEnabled = effectiveCostEnergyEnabled,
+            EnergyEnabled = effectiveCostEnergyEnabled,
             PlasticityEnabled = effectivePlasticityEnabled,
             PlasticityRate = brain.PlasticityRate,
             PlasticityProbabilisticUpdates = brain.PlasticityProbabilisticUpdates,

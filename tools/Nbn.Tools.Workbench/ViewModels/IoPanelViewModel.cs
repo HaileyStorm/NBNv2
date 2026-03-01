@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Globalization;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 
@@ -35,7 +36,9 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
+    private bool _systemCostEnergyEnabled = true;
     private bool _plasticityEnabled = true;
+    private bool _systemPlasticityEnabled = true;
     private bool _homeostasisEnabled = true;
     private bool _homeostasisEnergyCouplingEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
@@ -174,15 +177,77 @@ public sealed class IoPanelViewModel : ViewModelBase
                     _energyEnabled = value;
                     OnPropertyChanged(nameof(EnergyEnabled));
                 }
+
+                OnPropertyChanged(nameof(CostEnergySuppressed));
             }
         }
     }
 
+    public bool CostEnergySuppressed
+    {
+        get => !CostEnergyEnabled;
+        set => CostEnergyEnabled = !value;
+    }
+
+    public bool SystemCostEnergyEnabled
+    {
+        get => _systemCostEnergyEnabled;
+        private set
+        {
+            if (SetProperty(ref _systemCostEnergyEnabled, value))
+            {
+                OnPropertyChanged(nameof(CostEnergyOverrideAvailable));
+                OnPropertyChanged(nameof(CostEnergyOverrideUnavailable));
+                OnPropertyChanged(nameof(SystemCostEnergyStateLabel));
+            }
+        }
+    }
+
+    public bool CostEnergyOverrideAvailable => SystemCostEnergyEnabled;
+    public bool CostEnergyOverrideUnavailable => !CostEnergyOverrideAvailable;
+
+    public string SystemCostEnergyStateLabel => SystemCostEnergyEnabled
+        ? "System policy: enabled"
+        : "System policy: disabled (override unavailable)";
+
     public bool PlasticityEnabled
     {
         get => _plasticityEnabled;
-        set => SetProperty(ref _plasticityEnabled, value);
+        set
+        {
+            if (SetProperty(ref _plasticityEnabled, value))
+            {
+                OnPropertyChanged(nameof(PlasticitySuppressed));
+            }
+        }
     }
+
+    public bool PlasticitySuppressed
+    {
+        get => !PlasticityEnabled;
+        set => PlasticityEnabled = !value;
+    }
+
+    public bool SystemPlasticityEnabled
+    {
+        get => _systemPlasticityEnabled;
+        private set
+        {
+            if (SetProperty(ref _systemPlasticityEnabled, value))
+            {
+                OnPropertyChanged(nameof(PlasticityOverrideAvailable));
+                OnPropertyChanged(nameof(PlasticityOverrideUnavailable));
+                OnPropertyChanged(nameof(SystemPlasticityStateLabel));
+            }
+        }
+    }
+
+    public bool PlasticityOverrideAvailable => SystemPlasticityEnabled;
+    public bool PlasticityOverrideUnavailable => !PlasticityOverrideAvailable;
+
+    public string SystemPlasticityStateLabel => SystemPlasticityEnabled
+        ? "System policy: enabled"
+        : "System policy: disabled (override unavailable)";
 
     public bool HomeostasisEnabled
     {
@@ -493,6 +558,33 @@ public sealed class IoPanelViewModel : ViewModelBase
     public void ApplyCostEnergySelected()
     {
         _ = ApplyCostEnergySelectedAsync();
+    }
+
+    public void ApplyPlasticitySelected()
+    {
+        _ = ApplyPlasticitySelectedAsync();
+    }
+
+    public bool ApplySetting(SettingItem item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.Key))
+        {
+            return false;
+        }
+
+        if (string.Equals(item.Key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            SystemCostEnergyEnabled = ParseBooleanSetting(item.Value, SystemCostEnergyEnabled);
+            return true;
+        }
+
+        if (string.Equals(item.Key, PlasticitySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            SystemPlasticityEnabled = ParseBooleanSetting(item.Value, SystemPlasticityEnabled);
+            return true;
+        }
+
+        return false;
     }
 
     public bool TrySendInputSelected(uint index, float value, out string status)
@@ -822,6 +914,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         _costEnergyEnabled = combined;
         OnPropertyChanged(nameof(CostEnergyEnabled));
+        OnPropertyChanged(nameof(CostEnergySuppressed));
     }
 
     private bool TryGetBrainId(out Guid brainId)
@@ -889,8 +982,28 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        var result = await _client.SetCostEnergyAsync(brainId, CostEnabled, EnergyEnabled).ConfigureAwait(false);
+        var enabled = CostEnergyEnabled;
+        var result = await _client.SetCostEnergyAsync(brainId, enabled, enabled).ConfigureAwait(false);
         ApplyCommandResultToSummary("Cost/Energy flags", new[] { result });
+    }
+
+    private async Task ApplyPlasticitySelectedAsync()
+    {
+        if (!TryGetSelectedBrain(out var brainId))
+        {
+            return;
+        }
+
+        if (!TryParsePlasticityRate(out var rate))
+        {
+            BrainInfoSummary = "Plasticity rate invalid.";
+            return;
+        }
+
+        var probabilistic = SelectedPlasticityMode?.Probabilistic ?? true;
+        var enabled = PlasticityEnabled;
+        var result = await _client.SetPlasticityAsync(brainId, enabled, rate, probabilistic).ConfigureAwait(false);
+        ApplyCommandResultToSummary("Plasticity", new[] { result });
     }
 
     private async Task ApplyEnergyCreditAsync()
@@ -934,9 +1047,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        var costEnabled = CostEnabled;
-        var energyEnabled = EnergyEnabled;
-        var results = await Task.WhenAll(targets.Select(brainId => _client.SetCostEnergyAsync(brainId, costEnabled, energyEnabled))).ConfigureAwait(false);
+        var enabled = CostEnergyEnabled;
+        var results = await Task.WhenAll(targets.Select(brainId => _client.SetCostEnergyAsync(brainId, enabled, enabled))).ConfigureAwait(false);
         ApplyCommandResultToSummary("Cost/Energy flags", results);
     }
 
@@ -1228,6 +1340,21 @@ public sealed class IoPanelViewModel : ViewModelBase
         values = parsedValues;
         error = string.Empty;
         return true;
+    }
+
+    private static bool ParseBooleanSetting(string? value, bool fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => fallback
+        };
     }
 
     private static void Trim<T>(ObservableCollection<T> collection)

@@ -54,7 +54,8 @@ IO supports:
 
 * one-time energy credit
 * energy rate
-* enable/disable cost and energy
+* per-brain cost+energy override (`cost_enabled` + `energy_enabled`, paired)
+* system cost+energy master key (`cost_energy.system.enabled`) from SettingsMonitor, combined with per-brain runtime setting (`effective = system && brain`)
 * plasticity control (`enabled`, `rate`, `probabilistic_updates`, `delta`, `rebase_threshold`, `rebase_threshold_pct`)
 * system plasticity master key (`plasticity.system.enabled`) from SettingsMonitor, combined with per-brain `enabled` at runtime (`effective = system && brain`)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)

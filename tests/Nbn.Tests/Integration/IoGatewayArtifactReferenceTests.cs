@@ -514,7 +514,7 @@ public class IoGatewayArtifactReferenceTests
 
         Assert.Equal((uint)3, info.InputWidth);
         Assert.Equal((uint)2, info.OutputWidth);
-        Assert.True(info.CostEnabled);
+        Assert.False(info.CostEnabled);
         Assert.False(info.EnergyEnabled);
         Assert.Equal(1234, info.EnergyRemaining);
         Assert.Equal(17, info.EnergyRateUnitsPerSecond);
@@ -601,7 +601,7 @@ public class IoGatewayArtifactReferenceTests
 
         Assert.True(costUpdate.BrainId.TryToGuid(out var costBrainId));
         Assert.Equal(brainId, costBrainId);
-        Assert.True(costUpdate.CostEnabled);
+        Assert.False(costUpdate.CostEnabled);
         Assert.False(costUpdate.EnergyEnabled);
 
         Assert.True(plasticityUpdate.BrainId.TryToGuid(out var plasticityBrainId));
@@ -629,7 +629,7 @@ public class IoGatewayArtifactReferenceTests
             BrainId = brainId.ToProtoUuid()
         });
 
-        Assert.True(info.CostEnabled);
+        Assert.False(info.CostEnabled);
         Assert.False(info.EnergyEnabled);
         Assert.True(info.PlasticityEnabled);
         Assert.Equal(0.25f, info.PlasticityRate);
@@ -696,7 +696,7 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
-    public async Task SetFlags_Request_Returns_IoCommandAck_With_RuntimeState()
+    public async Task SetFlags_Request_Returns_IoCommandAck_With_RuntimeState_And_Coerced_CostEnergyPair()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -731,7 +731,7 @@ public class IoGatewayArtifactReferenceTests
         Assert.Equal("set_cost_energy", flagsAck.Command);
         Assert.True(flagsAck.HasEnergyState);
         Assert.NotNull(flagsAck.EnergyState);
-        Assert.True(flagsAck.EnergyState.CostEnabled);
+        Assert.False(flagsAck.EnergyState.CostEnabled);
         Assert.False(flagsAck.EnergyState.EnergyEnabled);
         Assert.Equal(250, flagsAck.EnergyState.EnergyRemaining);
 

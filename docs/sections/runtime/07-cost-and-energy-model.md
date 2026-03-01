@@ -1,13 +1,18 @@
-## 7. Cost and energy model
+﻿## 7. Cost and energy model
 
 ### 7.1 Overview
 
-NBN can compute a per-brain per-tick **cost** and deduct it from an **energy account** supplied by the External World (or the Workbench). Cost/energy can be disabled.
+NBN can compute a per-brain per-tick **cost** and deduct it from an **energy account** supplied by the External World (or the Workbench).
 
-* `cost_enabled` (per brain)
-* `energy_enabled` (per brain)
+Cost/energy uses a layered policy:
 
-If `energy_enabled` is true and a brain’s energy balance would drop below zero due to tick cost, the brain terminates (unload and potentially trigger a reschedule).
+* system master setting: `cost_energy.system.enabled` (default `true`)
+* per-brain runtime setting: `cost_enabled` + `energy_enabled` (paired, treated as one local enable/disable preference)
+* effective runtime enablement: `effective_cost_energy_enabled = cost_energy.system.enabled && cost_enabled && energy_enabled`
+
+When the system master setting is `false`, no brain can force-enable effective cost/energy.
+
+If `effective_cost_energy_enabled` is true and a brain's energy balance would drop below zero due to tick cost, the brain terminates (unload and potentially trigger a reschedule).
 
 ### 7.2 Cost units
 
@@ -56,7 +61,7 @@ Energy is tracked per brain.
 
 Brain termination on insufficient energy:
 
-* HiveMind terminates the brain’s actors and unloads placement state.
+* HiveMind terminates the brain's actors and unloads placement state.
 * HiveMind notifies IO Gateway with:
 
   * BrainId
@@ -68,3 +73,5 @@ Brain termination on insufficient energy:
 The External World may decide to respawn/restart the brain using the reported artifact(s).
 
 ---
+
+

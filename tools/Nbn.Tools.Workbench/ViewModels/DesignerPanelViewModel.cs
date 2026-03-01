@@ -128,8 +128,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _snapshotTickText = "0";
     private string _snapshotEnergyText = "0";
     private bool _snapshotIncludeEnabledBitset = true;
-    private bool _snapshotCostEnergyEnabled;
-    private bool _snapshotPlasticityEnabled;
     private readonly IReadOnlyList<ShardPlanOption> _shardPlanOptions;
     private ShardPlanOption _selectedShardPlan;
     private string _spawnArtifactRoot = BuildDefaultArtifactRoot();
@@ -503,18 +501,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     {
         get => _snapshotIncludeEnabledBitset;
         set => SetProperty(ref _snapshotIncludeEnabledBitset, value);
-    }
-
-    public bool SnapshotCostEnergyEnabled
-    {
-        get => _snapshotCostEnergyEnabled;
-        set => SetProperty(ref _snapshotCostEnergyEnabled, value);
-    }
-
-    public bool SnapshotPlasticityEnabled
-    {
-        get => _snapshotPlasticityEnabled;
-        set => SetProperty(ref _snapshotPlasticityEnabled, value);
     }
 
     public IReadOnlyList<ShardPlanOption> ShardPlanOptions => _shardPlanOptions;
@@ -2392,17 +2378,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         if (SnapshotIncludeEnabledBitset)
         {
             flags |= 0x1u;
-        }
-
-        if (SnapshotCostEnergyEnabled)
-        {
-            flags |= 0x4u;
-            flags |= 0x8u;
-        }
-
-        if (SnapshotPlasticityEnabled)
-        {
-            flags |= 0x10u;
         }
 
         var regions = new List<NbsRegionSection>();

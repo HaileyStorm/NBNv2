@@ -348,11 +348,6 @@
                 </Grid>
                 <TextBlock Text="Header tick is informational only and does not advance the sim." Classes="muted" TextWrapping="Wrap" />
                 <CheckBox Content="Include enabled bitset" IsChecked="{Binding SnapshotIncludeEnabledBitset}" />
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <CheckBox Content="Cost + Energy" IsChecked="{Binding SnapshotCostEnergyEnabled}"
-                            ToolTip.Tip="Sets both cost_enabled and energy_enabled flags in the snapshot header." />
-                  <CheckBox Content="Plasticity" IsChecked="{Binding SnapshotPlasticityEnabled}" />
-                </StackPanel>
               </StackPanel>
             </Border>
 

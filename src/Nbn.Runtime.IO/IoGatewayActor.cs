@@ -433,7 +433,8 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        entry.Energy.SetCostEnergyEnabled(message.CostEnabled, message.EnergyEnabled);
+        var enabled = message.CostEnabled && message.EnergyEnabled;
+        entry.Energy.SetCostEnergyEnabled(enabled, enabled);
 
         var ackMessage = "applied";
         if (_hiveMindPid is not null)
@@ -441,8 +442,8 @@ public sealed class IoGatewayActor : IActor
             context.Request(_hiveMindPid, new ProtoControl.SetBrainCostEnergy
             {
                 BrainId = message.BrainId,
-                CostEnabled = message.CostEnabled,
-                EnergyEnabled = message.EnergyEnabled
+                CostEnabled = enabled,
+                EnergyEnabled = enabled
             });
         }
         else
