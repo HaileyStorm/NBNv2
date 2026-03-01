@@ -14,6 +14,7 @@ public sealed record VizActivityProjectionOptions(
     int TopSeriesCount = 8,
     bool EnableMiniChart = true,
     int MiniChartTickWindow = 64,
+    ulong? MiniChartMinTickFloor = null,
     ulong? LatestTickHint = null);
 
 public sealed record VizActivityProjection(
@@ -96,6 +97,7 @@ public static class VizActivityProjectionBuilder
             var minTickFromHint = hasLatestTickHint
                 ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
                 : 0UL;
+            minTickFromHint = ApplyMiniChartTickFloor(minTickFromHint, latestTickHint, options.MiniChartMinTickFloor);
             var miniChart = BuildMiniChart(
                 windowed: Array.Empty<VizEventItem>(),
                 minTick: minTickFromHint,
@@ -121,6 +123,7 @@ public static class VizActivityProjectionBuilder
             var minTickFromHint = hasLatestTickHint
                 ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
                 : 0UL;
+            minTickFromHint = ApplyMiniChartTickFloor(minTickFromHint, latestTickHint, options.MiniChartMinTickFloor);
             var miniChart = BuildMiniChart(
                 windowed: Array.Empty<VizEventItem>(),
                 minTick: minTickFromHint,
@@ -152,6 +155,7 @@ public static class VizActivityProjectionBuilder
 
         var chartTickWindow = NormalizeTickWindow(options.MiniChartTickWindow);
         var chartMinTick = ComputeWindowStart(latestTick, chartTickWindow);
+        chartMinTick = ApplyMiniChartTickFloor(chartMinTick, latestTick, options.MiniChartMinTickFloor);
 
         var regionRows = BuildRegionRows(windowed);
         var edgeRows = BuildEdgeRows(windowed);
@@ -642,6 +646,22 @@ public static class VizActivityProjectionBuilder
         return latestTick > (ulong)(clampedWindow - 1)
             ? latestTick - (ulong)(clampedWindow - 1)
             : 0;
+    }
+
+    private static ulong ApplyMiniChartTickFloor(ulong minTick, ulong maxTick, ulong? minTickFloor)
+    {
+        if (!minTickFloor.HasValue)
+        {
+            return minTick;
+        }
+
+        var floor = minTickFloor.Value;
+        if (floor > maxTick)
+        {
+            return maxTick;
+        }
+
+        return Math.Max(minTick, floor);
     }
 
     private static bool IsAxonType(string? type)

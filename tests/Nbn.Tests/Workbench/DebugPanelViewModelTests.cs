@@ -66,6 +66,36 @@ public sealed class DebugPanelViewModelTests
         Assert.Equal(1, notifications);
     }
 
+    [Fact]
+    public void ApplyFilter_PersistsDebugSettingsAndRefreshesSubscription()
+    {
+        var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink());
+        var viewModel = new DebugPanelViewModel(client, new UiDispatcher())
+        {
+            StreamEnabled = true,
+            ContextRegex = "hivemind\\..*",
+            IncludeContextPrefixes = "hivemind., region.",
+            ExcludeContextPrefixes = "hivemind.tick",
+            IncludeSummaryPrefixes = "brain., placement.",
+            ExcludeSummaryPrefixes = "brain.terminated"
+        };
+        viewModel.SelectedSeverity = viewModel.SeverityOptions.First(option => option.Severity == Severity.SevWarn);
+
+        viewModel.ApplyFilterCommand.Execute(null);
+
+        var applied = SpinWait.SpinUntil(
+            () => client.Settings.ContainsKey(DebugSettingsKeys.ExcludeSummaryPrefixesKey),
+            TimeSpan.FromSeconds(2));
+        Assert.True(applied);
+        Assert.Equal("true", client.Settings[DebugSettingsKeys.EnabledKey]);
+        Assert.Equal(Severity.SevWarn.ToString(), client.Settings[DebugSettingsKeys.MinSeverityKey]);
+        Assert.Equal("hivemind\\..*", client.Settings[DebugSettingsKeys.ContextRegexKey]);
+        Assert.Equal("hivemind.,region.", client.Settings[DebugSettingsKeys.IncludeContextPrefixesKey]);
+        Assert.Equal("hivemind.tick", client.Settings[DebugSettingsKeys.ExcludeContextPrefixesKey]);
+        Assert.Equal("brain.,placement.", client.Settings[DebugSettingsKeys.IncludeSummaryPrefixesKey]);
+        Assert.Equal("brain.terminated", client.Settings[DebugSettingsKeys.ExcludeSummaryPrefixesKey]);
+    }
+
     private static DebugPanelViewModel CreateViewModel()
         => new(new WorkbenchClient(new NullWorkbenchEventSink()), new UiDispatcher());
 
@@ -83,5 +113,26 @@ public sealed class DebugPanelViewModelTests
         public void OnSettingChanged(SettingItem item) { }
         public void OnBrainDiscovered(Guid brainId) { }
         public void OnBrainsUpdated(IReadOnlyList<BrainListItem> brains) { }
+    }
+
+    private sealed class RecordingWorkbenchClient : WorkbenchClient
+    {
+        public RecordingWorkbenchClient(IWorkbenchEventSink sink)
+            : base(sink)
+        {
+        }
+
+        public Dictionary<string, string> Settings { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public override Task<Nbn.Proto.Settings.SettingValue?> SetSettingAsync(string key, string value)
+        {
+            Settings[key] = value;
+            return Task.FromResult<Nbn.Proto.Settings.SettingValue?>(
+                new Nbn.Proto.Settings.SettingValue
+                {
+                    Key = key,
+                    Value = value
+                });
+        }
     }
 }

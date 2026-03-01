@@ -315,8 +315,39 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private async Task ApplyFilterAsync()
     {
         Status = "Applying filter...";
-        await _client.RefreshDebugFilterAsync(BuildSubscriptionFilter());
-        Status = "Filter updated.";
+        var filter = BuildSubscriptionFilter();
+        var settingsApplied = true;
+
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.EnabledKey,
+            filter.StreamEnabled ? "true" : "false").ConfigureAwait(false);
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.MinSeverityKey,
+            filter.MinSeverity.ToString()).ConfigureAwait(false);
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.ContextRegexKey,
+            filter.ContextRegex).ConfigureAwait(false);
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.IncludeContextPrefixesKey,
+            string.Join(",", filter.IncludeContextPrefixes)).ConfigureAwait(false);
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.ExcludeContextPrefixesKey,
+            string.Join(",", filter.ExcludeContextPrefixes)).ConfigureAwait(false);
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.IncludeSummaryPrefixesKey,
+            string.Join(",", filter.IncludeSummaryPrefixes)).ConfigureAwait(false);
+        settingsApplied &= await TryApplyDebugSettingAsync(
+            DebugSettingsKeys.ExcludeSummaryPrefixesKey,
+            string.Join(",", filter.ExcludeSummaryPrefixes)).ConfigureAwait(false);
+
+        await _client.RefreshDebugFilterAsync(filter).ConfigureAwait(false);
+        Status = settingsApplied ? "Filter updated." : "Filter updated (settings unavailable).";
+    }
+
+    private async Task<bool> TryApplyDebugSettingAsync(string key, string value)
+    {
+        var result = await _client.SetSettingAsync(key, value ?? string.Empty).ConfigureAwait(false);
+        return result is not null;
     }
 
     private void Clear()

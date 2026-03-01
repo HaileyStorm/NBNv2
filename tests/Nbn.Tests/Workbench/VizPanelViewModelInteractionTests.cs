@@ -1132,6 +1132,47 @@ public class VizPanelViewModelInteractionTests
         }
     }
 
+    [Fact]
+    public void MiniActivityChart_CadenceIncrease_RebasesWindowToCurrentTick()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+
+        vm.ApplyHiveMindTickStatus(targetTickHz: 8f, hasOverride: false, overrideTickHz: 0f);
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizAxonSent.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 100,
+            region: "1",
+            source: "65537",
+            target: "131073",
+            value: 0.9f,
+            strength: 0.3f));
+
+        var initialRendered = SpinWait.SpinUntil(
+            () => vm.MiniActivityChartRangeLabel.Contains("Ticks 77..100", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(5));
+        Assert.True(initialRendered);
+
+        vm.ApplyHiveMindTickStatus(targetTickHz: 20f, hasOverride: false, overrideTickHz: 0f);
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizAxonSent.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 101,
+            region: "1",
+            source: "65537",
+            target: "131073",
+            value: 0.8f,
+            strength: 0.2f));
+
+        var rebased = SpinWait.SpinUntil(
+            () => vm.MiniActivityChartRangeLabel.Contains("Ticks 100..101", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(5));
+        Assert.True(rebased);
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,

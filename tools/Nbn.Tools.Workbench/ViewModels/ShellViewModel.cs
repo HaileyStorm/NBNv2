@@ -524,7 +524,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         var vizBrainId = shouldSubscribeViz ? Viz.SelectedBrain?.BrainId : null;
         var vizFocusRegionId = shouldSubscribeViz ? Viz.ActiveFocusRegionId : null;
         var debugFilter = Debug.BuildSubscriptionFilter();
-        var shouldSubscribeDebug = SelectedNav?.Panel is DebugPanelViewModel && debugFilter.StreamEnabled;
+        var shouldSubscribeDebug = debugFilter.StreamEnabled;
         _client.SetDebugSubscription(shouldSubscribeDebug, debugFilter);
         _client.SetVizSubscription(shouldSubscribeViz);
         _client.SetActiveVisualizationBrain(vizBrainId, vizFocusRegionId);

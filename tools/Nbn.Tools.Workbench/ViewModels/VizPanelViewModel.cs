@@ -207,6 +207,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private int _consecutiveEmptyBrainRefreshes;
     private int _consecutiveSelectionMissRefreshes;
     private float? _currentTargetTickHz;
+    private ulong? _miniChartMinTickFloor;
 
     public VizPanelViewModel(UiDispatcher dispatcher, IoPanelViewModel brain)
     {
@@ -332,6 +333,7 @@ public sealed class VizPanelViewModel : ViewModelBase
                         RegionFocusText = string.Empty;
                         _lastRenderedTickId = 0;
                         _nextStreamingRefreshUtc = DateTime.MinValue;
+                        _miniChartMinTickFloor = null;
                         _brain.SelectBrain(value.BrainId, preserveOutputs: true);
                         QueueDefinitionTopologyHydration(value.BrainId, TryParseRegionId(RegionFocusText, out var focusRegionId) ? focusRegionId : null);
                     }
@@ -897,6 +899,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         if (targetTickHz > 0f && float.IsFinite(targetTickHz))
         {
+            RebaseMiniChartWindowOnCadenceChange(_currentTargetTickHz, targetTickHz);
             _currentTargetTickHz = targetTickHz;
             TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
             TickRateOverrideSummary = hasOverride
@@ -1475,6 +1478,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         var targetTickHz = ack.TargetTickHz;
         if (targetTickHz > 0f && float.IsFinite(targetTickHz))
         {
+            RebaseMiniChartWindowOnCadenceChange(_currentTargetTickHz, targetTickHz);
             _currentTargetTickHz = targetTickHz;
             TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
         }
@@ -1539,6 +1543,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _nextDefinitionHydrationRetryUtc = DateTime.MinValue;
         _consecutiveEmptyBrainRefreshes = 0;
         _consecutiveSelectionMissRefreshes = 0;
+        _miniChartMinTickFloor = null;
         VizEvents.Clear();
         SelectedEvent = null;
         SelectedPayload = string.Empty;
@@ -1957,13 +1962,14 @@ public sealed class VizPanelViewModel : ViewModelBase
         var miniChartTickWindow = ParseMiniActivityTickWindowOrDefault();
         var latestTickHint = GetLatestTickForCurrentSelection();
         var options = new VizActivityProjectionOptions(
-            ParseTickWindowOrDefault(),
-            IncludeLowSignalEvents,
-            TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null,
-            miniChartTopN,
-            ShowMiniActivityChart,
-            miniChartTickWindow,
-            latestTickHint > 0 ? latestTickHint : null);
+            TickWindow: ParseTickWindowOrDefault(),
+            IncludeLowSignalEvents: IncludeLowSignalEvents,
+            FocusRegionId: TryParseRegionId(RegionFocusText, out var regionId) ? regionId : null,
+            TopSeriesCount: miniChartTopN,
+            EnableMiniChart: ShowMiniActivityChart,
+            MiniChartTickWindow: miniChartTickWindow,
+            MiniChartMinTickFloor: _miniChartMinTickFloor,
+            LatestTickHint: latestTickHint > 0 ? latestTickHint : null);
         var eventsSnapshot = _filteredProjectionEvents.ToList();
         var topology = BuildTopologySnapshotForSelectedBrain();
         var interaction = BuildCanvasInteractionState();
@@ -3064,6 +3070,33 @@ public sealed class VizPanelViewModel : ViewModelBase
             : DefaultMiniActivityTickRateHz;
         var estimatedTicks = (int)Math.Round(seconds * tickRateHz, MidpointRounding.AwayFromZero);
         return Math.Clamp(estimatedTicks, 1, MaxTickWindow);
+    }
+
+    private void RebaseMiniChartWindowOnCadenceChange(float? previousTickHz, float nextTickHz)
+    {
+        if (!previousTickHz.HasValue
+            || !float.IsFinite(previousTickHz.Value)
+            || previousTickHz.Value <= 0f
+            || !float.IsFinite(nextTickHz)
+            || nextTickHz <= 0f)
+        {
+            return;
+        }
+
+        var previous = previousTickHz.Value;
+        var relativeDelta = Math.Abs(nextTickHz - previous) / previous;
+        if (relativeDelta < 0.01f)
+        {
+            return;
+        }
+
+        var latestTick = GetLatestTickForCurrentSelection();
+        if (latestTick == 0)
+        {
+            return;
+        }
+
+        _miniChartMinTickFloor = latestTick;
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)

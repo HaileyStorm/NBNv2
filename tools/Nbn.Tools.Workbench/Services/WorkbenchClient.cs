@@ -573,6 +573,11 @@ public class WorkbenchClient : IAsyncDisposable
         {
             _root.Send(_debugHubPid, BuildDebugSubscribe(subscriber, filter));
             _debugSubscribed = true;
+            if (WorkbenchLog.Enabled)
+            {
+                WorkbenchLog.Info(
+                    $"DebugSub enabled=true subscriber={subscriber} hub={PidLabel(_debugHubPid)} min={filter.MinSeverity} regex={filter.ContextRegex}");
+            }
             return;
         }
 
@@ -583,6 +588,10 @@ public class WorkbenchClient : IAsyncDisposable
 
         _root.Send(_debugHubPid, new DebugUnsubscribe { SubscriberActor = subscriber });
         _debugSubscribed = false;
+        if (WorkbenchLog.Enabled)
+        {
+            WorkbenchLog.Info($"DebugSub enabled=false subscriber={subscriber} hub={PidLabel(_debugHubPid)}");
+        }
     }
 
     public void SetVizSubscription(bool enabled)

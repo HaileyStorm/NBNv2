@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Globalization;
+using System.Threading;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
@@ -65,6 +66,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private KnownBrainOption? _selectedFeedbackBrain;
     private Guid? _selectedBrainId;
     private int _selectedBrainInputWidth = -1;
+    private readonly SemaphoreSlim _selectedBrainCommandGate = new(1, 1);
 
     public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
     {
@@ -701,22 +703,22 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     public void ApplyEnergyCreditSelected()
     {
-        _ = ApplyEnergyCreditSelectedAsync();
+        QueueSelectedBrainCommand(ApplyEnergyCreditSelectedAsync);
     }
 
     public void ApplyEnergyRateSelected()
     {
-        _ = ApplyEnergyRateSelectedAsync();
+        QueueSelectedBrainCommand(ApplyEnergyRateSelectedAsync);
     }
 
     public void ApplyCostEnergySelected()
     {
-        _ = ApplyCostEnergySelectedAsync();
+        QueueSelectedBrainCommand(ApplyCostEnergySelectedAsync);
     }
 
     public void ApplyPlasticitySelected()
     {
-        _ = ApplyPlasticitySelectedAsync();
+        QueueSelectedBrainCommand(ApplyPlasticitySelectedAsync);
     }
 
     public bool ApplySetting(SettingItem item)
@@ -1124,6 +1126,24 @@ public sealed class IoPanelViewModel : ViewModelBase
         _costEnergyEnabled = combined;
         OnPropertyChanged(nameof(CostEnergyEnabled));
         OnPropertyChanged(nameof(CostEnergySuppressed));
+    }
+
+    private void QueueSelectedBrainCommand(Func<Task> command)
+    {
+        _ = RunSelectedBrainCommandAsync(command);
+    }
+
+    private async Task RunSelectedBrainCommandAsync(Func<Task> command)
+    {
+        await _selectedBrainCommandGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await command().ConfigureAwait(false);
+        }
+        finally
+        {
+            _selectedBrainCommandGate.Release();
+        }
     }
 
     private bool TryGetBrainId(out Guid brainId)

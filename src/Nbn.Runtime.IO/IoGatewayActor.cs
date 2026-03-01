@@ -435,6 +435,8 @@ public sealed class IoGatewayActor : IActor
 
         var enabled = message.CostEnabled && message.EnergyEnabled;
         entry.Energy.SetCostEnergyEnabled(enabled, enabled);
+        Console.WriteLine(
+            $"Cost/Energy override applied for brain {entry.BrainId}: enabled={enabled} remaining={entry.Energy.EnergyRemaining} rate={entry.Energy.EnergyRateUnitsPerSecond}/s");
 
         var ackMessage = "applied";
         if (_hiveMindPid is not null)
@@ -623,6 +625,8 @@ public sealed class IoGatewayActor : IActor
         }
 
         entry.EnergyDepletedSignaled = true;
+        Console.WriteLine(
+            $"Energy depleted for brain {entry.BrainId}: tick={message.TickId} remaining={entry.Energy.EnergyRemaining} last_tick_cost={entry.Energy.LastTickCost} rate={entry.Energy.EnergyRateUnitsPerSecond}/s");
 
         if (_hiveMindPid is null)
         {
