@@ -21,6 +21,8 @@ public sealed class ReproductionManagerActor : IActor
     private const float MinRequiredSpotOverlap = 0.35f;
     private const float MaxRequiredSpotOverlap = 0.95f;
     private const ulong DefaultSpotCheckSeed = 0x9E3779B97F4A7C15UL;
+    private const uint DefaultRunCount = 1;
+    private const uint MaxRunCount = 64;
     private const float PreferredActivationMutationBias = 0.80f;
     private const float PreferredResetMutationBias = 0.75f;
     private const float PreferredAccumulationMutationBias = 0.85f;
@@ -44,11 +46,63 @@ public sealed class ReproductionManagerActor : IActor
             case ReproduceByArtifactsRequest message:
                 context.Respond(await HandleReproduceByArtifactsAsync(context, message).ConfigureAwait(false));
                 break;
+            case AssessCompatibilityByBrainIdsRequest message:
+                context.Respond(await HandleAssessCompatibilityByBrainIdsAsync(context, message).ConfigureAwait(false));
+                break;
+            case AssessCompatibilityByArtifactsRequest message:
+                context.Respond(await HandleAssessCompatibilityByArtifactsAsync(context, message).ConfigureAwait(false));
+                break;
         }
     }
 
-    private async Task<ReproduceResult> HandleReproduceByBrainIdsAsync(IContext context, ReproduceByBrainIdsRequest request)
+    private Task<ReproduceResult> HandleAssessCompatibilityByBrainIdsAsync(
+        IContext context,
+        AssessCompatibilityByBrainIdsRequest request)
+        => HandleReproduceByBrainIdsAsync(
+            context,
+            new ReproduceByBrainIdsRequest
+            {
+                ParentA = request.ParentA,
+                ParentB = request.ParentB,
+                StrengthSource = request.StrengthSource,
+                Config = request.Config,
+                Seed = request.Seed,
+                ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
+                ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
+                RunCount = request.RunCount
+            },
+            assessmentOnly: true);
+
+    private Task<ReproduceResult> HandleAssessCompatibilityByArtifactsAsync(
+        IContext context,
+        AssessCompatibilityByArtifactsRequest request)
+        => HandleReproduceByArtifactsAsync(
+            context,
+            new ReproduceByArtifactsRequest
+            {
+                ParentADef = request.ParentADef,
+                ParentAState = request.ParentAState,
+                ParentBDef = request.ParentBDef,
+                ParentBState = request.ParentBState,
+                StrengthSource = request.StrengthSource,
+                Config = request.Config,
+                Seed = request.Seed,
+                ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
+                ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
+                RunCount = request.RunCount
+            },
+            assessmentOnly: true);
+
+    private async Task<ReproduceResult> HandleReproduceByBrainIdsAsync(
+        IContext context,
+        ReproduceByBrainIdsRequest request,
+        bool assessmentOnly = false)
     {
+        if (!TryResolveRunCount(request.RunCount, out _))
+        {
+            return CreateRunCountOutOfRangeResult(request.RunCount);
+        }
+
         if (request.ParentA is null || request.ParentB is null)
         {
             return CreateAbortResult("repro_missing_parent_brain_ids");
@@ -93,8 +147,10 @@ public sealed class ReproductionManagerActor : IActor
                     Config = request.Config,
                     Seed = request.Seed,
                     ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
-                    ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves }
-                })
+                    ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
+                    RunCount = request.RunCount
+                },
+                assessmentOnly)
             .ConfigureAwait(false);
     }
 
@@ -134,10 +190,18 @@ public sealed class ReproductionManagerActor : IActor
         }
     }
 
-    private async Task<ReproduceResult> HandleReproduceByArtifactsAsync(IContext context, ReproduceByArtifactsRequest request)
+    private async Task<ReproduceResult> HandleReproduceByArtifactsAsync(
+        IContext context,
+        ReproduceByArtifactsRequest request,
+        bool assessmentOnly = false)
     {
         try
         {
+            if (!TryResolveRunCount(request.RunCount, out var runCount))
+            {
+                return CreateRunCountOutOfRangeResult(request.RunCount);
+            }
+
             if (request.ParentADef is null)
             {
                 return CreateAbortResult("repro_missing_parent_a_def");
@@ -176,8 +240,10 @@ public sealed class ReproductionManagerActor : IActor
                     "b")
                 .ConfigureAwait(false);
 
-            return await EvaluateSimilarityGatesAndBuildChildAsync(
+            return await ExecuteRunsAsync(
                     context,
+                    runCount,
+                    assessmentOnly,
                     parentA.Parsed!,
                     parentB.Parsed!,
                     transformParentA.Parsed,
@@ -207,7 +273,8 @@ public sealed class ReproductionManagerActor : IActor
         ReproduceConfig? config,
         ulong seed,
         IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
-        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves)
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves,
+        bool assessmentOnly)
     {
         var presentA = CountPresentRegions(gateParentA.Header);
         var presentB = CountPresentRegions(gateParentB.Header);
@@ -280,6 +347,17 @@ public sealed class ReproductionManagerActor : IActor
                 regionsPresentB: presentB);
         }
 
+        if (assessmentOnly)
+        {
+            return CreateAssessmentResult(
+                spanScore,
+                functionScore,
+                connectivityScore,
+                similarityScore,
+                presentA,
+                presentB);
+        }
+
         var childBuild = await BuildAndStoreChildDefinitionAsync(
                 transformParentA,
                 transformParentB,
@@ -314,6 +392,57 @@ public sealed class ReproductionManagerActor : IActor
             presentB,
             childBuild.RegionsPresentChild);
         return await ApplySpawnPolicyAsync(context, result, config).ConfigureAwait(false);
+    }
+
+    private async Task<ReproduceResult> ExecuteRunsAsync(
+        IContext context,
+        uint runCount,
+        bool assessmentOnly,
+        ParsedParent gateParentA,
+        ParsedParent gateParentB,
+        ParsedParent transformParentA,
+        ParsedParent transformParentB,
+        ArtifactRef parentARef,
+        ArtifactRef parentBRef,
+        ReproduceConfig? config,
+        ulong seed,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves)
+    {
+        ReproduceResult? firstRun = null;
+        var outcomes = new List<ReproduceRunOutcome>((int)runCount);
+
+        for (uint runIndex = 0; runIndex < runCount; runIndex++)
+        {
+            var runSeed = DeriveRunSeed(seed, runIndex);
+            var runResult = await EvaluateSimilarityGatesAndBuildChildAsync(
+                    context,
+                    gateParentA,
+                    gateParentB,
+                    transformParentA,
+                    transformParentB,
+                    parentARef,
+                    parentBRef,
+                    config,
+                    runSeed,
+                    manualIoNeuronAdds,
+                    manualIoNeuronRemoves,
+                    assessmentOnly)
+                .ConfigureAwait(false);
+
+            outcomes.Add(CreateRunOutcome(runIndex, runSeed, runResult));
+            firstRun ??= runResult;
+        }
+
+        var response = firstRun ?? CreateAbortResult("repro_internal_error");
+        response.RequestedRunCount = runCount;
+        response.Runs.Clear();
+        foreach (var outcome in outcomes)
+        {
+            response.Runs.Add(outcome);
+        }
+
+        return response;
     }
 
     private static async Task<ChildBuildResult> BuildAndStoreChildDefinitionAsync(
@@ -3021,11 +3150,92 @@ public sealed class ReproductionManagerActor : IActor
         return result;
     }
 
+    private static bool TryResolveRunCount(uint requestedRunCount, out uint normalizedRunCount)
+    {
+        normalizedRunCount = requestedRunCount == 0 ? DefaultRunCount : requestedRunCount;
+        return normalizedRunCount >= DefaultRunCount && normalizedRunCount <= MaxRunCount;
+    }
+
+    private static ReproduceResult CreateRunCountOutOfRangeResult(uint requestedRunCount)
+    {
+        var result = CreateAbortResult("repro_run_count_out_of_range");
+        result.RequestedRunCount = requestedRunCount;
+        return result;
+    }
+
+    private static ulong DeriveRunSeed(ulong requestSeed, uint runIndex)
+    {
+        if (runIndex == 0)
+        {
+            return requestSeed;
+        }
+
+        var state = requestSeed + (0x9E3779B97F4A7C15UL * runIndex);
+        return NextRandom(ref state);
+    }
+
+    private static ReproduceRunOutcome CreateRunOutcome(uint runIndex, ulong seed, ReproduceResult source)
+    {
+        var outcome = new ReproduceRunOutcome
+        {
+            RunIndex = runIndex,
+            Seed = seed,
+            Spawned = source.Spawned
+        };
+
+        if (source.Report is not null)
+        {
+            outcome.Report = source.Report.Clone();
+        }
+
+        if (source.Summary is not null)
+        {
+            outcome.Summary = source.Summary.Clone();
+        }
+
+        if (source.ChildDef is not null)
+        {
+            outcome.ChildDef = source.ChildDef.Clone();
+        }
+
+        if (source.ChildBrainId is not null)
+        {
+            outcome.ChildBrainId = source.ChildBrainId.Clone();
+        }
+
+        return outcome;
+    }
+
     private static bool HasArtifactRef(ArtifactRef? reference)
         => reference is not null
            && reference.Sha256 is not null
            && reference.Sha256.Value is not null
            && reference.Sha256.Value.Length == Sha256Hash.Length;
+
+    private static ReproduceResult CreateAssessmentResult(
+        float regionSpanScore,
+        float functionScore,
+        float connectivityScore,
+        float similarityScore,
+        int regionsPresentA,
+        int regionsPresentB)
+        => new()
+        {
+            Report = new SimilarityReport
+            {
+                Compatible = true,
+                AbortReason = string.Empty,
+                RegionSpanScore = Math.Clamp(regionSpanScore, 0f, 1f),
+                FunctionScore = Math.Clamp(functionScore, 0f, 1f),
+                ConnectivityScore = Math.Clamp(connectivityScore, 0f, 1f),
+                SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
+                RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
+                RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
+                RegionsPresentChild = 0
+            },
+            Summary = new MutationSummary(),
+            Spawned = false
+        };
 
     private static ReproduceResult CreateSuccessResult(
         ArtifactRef childDef,

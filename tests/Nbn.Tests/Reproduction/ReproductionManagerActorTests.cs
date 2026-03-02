@@ -1824,6 +1824,319 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task AssessCompatibilityByArtifacts_Returns_ReportWithoutChildArtifact_OrSpawn()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-artifacts-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var ioProbe = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe()));
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor(ioProbe)));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 777,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.Equal(string.Empty, response.Report.AbortReason);
+            Assert.False(response.Spawned);
+            Assert.Null(response.ChildBrainId);
+            Assert.True(response.ChildDef is null || !response.ChildDef.TryToSha256Hex(out _));
+            Assert.Equal((uint)1, response.RequestedRunCount);
+            Assert.Single(response.Runs);
+            Assert.Equal((uint)0, response.Runs[0].RunIndex);
+            Assert.False(response.Runs[0].Spawned);
+            Assert.True(response.Runs[0].ChildDef is null || !response.Runs[0].ChildDef.TryToSha256Hex(out _));
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AssessCompatibilityByBrainIds_ResolvesParents_AndReturnsAssessmentOnlyResult()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-brainids-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var parentABrainId = Guid.NewGuid();
+            var parentBBrainId = Guid.NewGuid();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainInfo = new Dictionary<Guid, ProtoIo.BrainInfo>
+            {
+                [parentABrainId] = new ProtoIo.BrainInfo
+                {
+                    BrainId = parentABrainId.ToProtoUuid(),
+                    InputWidth = 1,
+                    OutputWidth = 1,
+                    BaseDefinition = parentARef,
+                    LastSnapshot = new ArtifactRef()
+                },
+                [parentBBrainId] = new ProtoIo.BrainInfo
+                {
+                    BrainId = parentBBrainId.ToProtoUuid(),
+                    InputWidth = 1,
+                    OutputWidth = 1,
+                    BaseDefinition = parentBRef,
+                    LastSnapshot = new ArtifactRef()
+                }
+            };
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var ioProbe = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe(brainInfo)));
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor(ioProbe)));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.AssessCompatibilityByBrainIdsRequest
+                {
+                    ParentA = parentABrainId.ToProtoUuid(),
+                    ParentB = parentBBrainId.ToProtoUuid(),
+                    Seed = 9001,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.False(response.Spawned);
+            Assert.Null(response.ChildBrainId);
+            Assert.True(response.ChildDef is null || !response.ChildDef.TryToSha256Hex(out _));
+            Assert.Equal((uint)1, response.RequestedRunCount);
+            Assert.Single(response.Runs);
+            Assert.Equal((uint)0, response.Runs[0].RunIndex);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_RunCountZero_DefaultsToSingleRun()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-zero-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 1234,
+                    RunCount = 0,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f,
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.Equal((uint)1, response.RequestedRunCount);
+            Assert.Single(response.Runs);
+            Assert.Equal((uint)0, response.Runs[0].RunIndex);
+            Assert.Equal((ulong)1234, response.Runs[0].Seed);
+            Assert.NotNull(response.ChildDef);
+            Assert.True(response.ChildDef.TryToSha256Hex(out _));
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_RunCountMultiple_ReturnsDeterministicOrderedOutcomes()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-many-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var request = new Repro.ReproduceByArtifactsRequest
+            {
+                ParentADef = parentARef,
+                ParentBDef = parentBRef,
+                Seed = 424242,
+                RunCount = 3,
+                Config = new Repro.ReproduceConfig
+                {
+                    MaxRegionSpanDiffRatio = 0f,
+                    SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                }
+            };
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var first = await root.RequestAsync<Repro.ReproduceResult>(manager, request);
+            var second = await root.RequestAsync<Repro.ReproduceResult>(manager, request);
+
+            Assert.NotNull(first.Report);
+            Assert.True(first.Report.Compatible);
+            Assert.Equal((uint)3, first.RequestedRunCount);
+            Assert.Equal(3, first.Runs.Count);
+            Assert.Equal(3, second.Runs.Count);
+            Assert.Equal((ulong)424242, first.Runs[0].Seed);
+
+            for (var i = 0; i < first.Runs.Count; i++)
+            {
+                Assert.Equal((uint)i, first.Runs[i].RunIndex);
+                Assert.Equal((uint)i, second.Runs[i].RunIndex);
+                Assert.Equal(first.Runs[i].Seed, second.Runs[i].Seed);
+                Assert.NotNull(first.Runs[i].Report);
+                Assert.True(first.Runs[i].Report.Compatible);
+            }
+
+            Assert.NotNull(first.ChildDef);
+            Assert.True(first.ChildDef.TryToSha256Hex(out var topLevelHash));
+            Assert.NotNull(first.Runs[0].ChildDef);
+            Assert.True(first.Runs[0].ChildDef.TryToSha256Hex(out var firstRunHash));
+            Assert.Equal(firstRunHash, topLevelHash);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_RunCountAboveLimit_ReturnsAbort()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-invalid-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 555,
+                    RunCount = 65,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.False(response.Report.Compatible);
+            Assert.Equal("repro_run_count_out_of_range", response.Report.AbortReason);
+            Assert.Equal((uint)65, response.RequestedRunCount);
+            Assert.Empty(response.Runs);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_DefaultSpawnPolicy_SpawnsChild_WhenIoGatewayAvailable()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-spawn-default-{Guid.NewGuid():N}");

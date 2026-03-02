@@ -20,11 +20,19 @@ Reproduction requests may specify parents by:
 
 * BrainId (preferred): NBN resolves to the latest base `.nbn` plus latest `.nbs` overlay if configured
 * ArtifactRef: `.nbn` (and optionally `.nbs`)
+* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn
 
 Strength source options:
 
 * base-only
 * live (base + overlay codes)
+
+Run-count behavior:
+
+* reproduction and assessment requests accept `run_count`
+* omitted/`0` defaults to `1`
+* values above runtime bounds are rejected with `repro_run_count_out_of_range` (current runtime max: `64`)
+* multi-run responses preserve deterministic ordering by `run_index`
 
 IO-region neuron-count protection and overrides:
 
@@ -126,14 +134,19 @@ Pruning policies:
 
 ### 14.9 Outputs
 
-Reproduction returns:
+Reproduction requests return:
 
-* child `.nbn` artifact ref
+* child `.nbn` artifact ref (when synthesis succeeds)
 * similarity report and mutation summary
+* `requested_run_count` and per-run outcomes (`runs`) for deterministic multi-run reporting
 
-Optionally (default on):
+Assessment requests return:
 
-* spawn the child brain immediately and return its BrainId
+* similarity report and mutation summary only
+* no child synthesis, no child artifact, and no spawn attempt
+* `requested_run_count` and ordered per-run outcomes (`runs`)
+
+For backward compatibility, top-level `report/summary/child_def/spawned/child_brain_id` mirror run `0` when `run_count > 1`.
 
 Implementation notes (runtime behavior):
 
@@ -143,6 +156,7 @@ Implementation notes (runtime behavior):
   * `SPAWN_CHILD_DEFAULT_ON`: attempt spawn after synthesis
   * `SPAWN_CHILD_NEVER`: do not spawn; return child artifact only
   * `SPAWN_CHILD_ALWAYS`: force spawn attempt
+  * assessment requests ignore spawn policy and never synthesize/spawn children
 * Spawn attempt failures use abort codes:
   * `repro_spawn_unavailable`
   * `repro_child_artifact_missing`

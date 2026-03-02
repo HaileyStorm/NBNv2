@@ -640,6 +640,30 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_ReproductionWrappers_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var reproduceByBrainIds = descriptor.MessageTypes.Single(message => message.Name == "ReproduceByBrainIds");
+        AssertField(reproduceByBrainIds, "request", 1, FieldType.Message, "nbn.repro.ReproduceByBrainIdsRequest");
+
+        var reproduceByArtifacts = descriptor.MessageTypes.Single(message => message.Name == "ReproduceByArtifacts");
+        AssertField(reproduceByArtifacts, "request", 1, FieldType.Message, "nbn.repro.ReproduceByArtifactsRequest");
+
+        var reproduceResult = descriptor.MessageTypes.Single(message => message.Name == "ReproduceResult");
+        AssertField(reproduceResult, "result", 1, FieldType.Message, "nbn.repro.ReproduceResult");
+
+        var assessByBrainIds = descriptor.MessageTypes.Single(message => message.Name == "AssessCompatibilityByBrainIds");
+        AssertField(assessByBrainIds, "request", 1, FieldType.Message, "nbn.repro.AssessCompatibilityByBrainIdsRequest");
+
+        var assessByArtifacts = descriptor.MessageTypes.Single(message => message.Name == "AssessCompatibilityByArtifacts");
+        AssertField(assessByArtifacts, "request", 1, FieldType.Message, "nbn.repro.AssessCompatibilityByArtifactsRequest");
+
+        var assessResult = descriptor.MessageTypes.Single(message => message.Name == "AssessCompatibilityResult");
+        AssertField(assessResult, "result", 1, FieldType.Message, "nbn.repro.ReproduceResult");
+    }
+
+    [Fact]
     public void ProtoSettings_NodeCapabilitiesFields_AreStable()
     {
         var descriptor = NbnSettingsReflection.Descriptor;
@@ -695,6 +719,7 @@ public class ProtoCompatibilityTests
         AssertField(byBrainIds, "seed", 5, FieldType.Fixed64);
         AssertRepeatedField(byBrainIds, "manual_io_neuron_adds", 6, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
         AssertRepeatedField(byBrainIds, "manual_io_neuron_removes", 7, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertField(byBrainIds, "run_count", 10, FieldType.UInt32);
 
         var byArtifacts = descriptor.MessageTypes.Single(message => message.Name == "ReproduceByArtifactsRequest");
         AssertField(byArtifacts, "parentA_def", 1, FieldType.Message, "nbn.ArtifactRef");
@@ -706,6 +731,29 @@ public class ProtoCompatibilityTests
         AssertField(byArtifacts, "seed", 7, FieldType.Fixed64);
         AssertRepeatedField(byArtifacts, "manual_io_neuron_adds", 8, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
         AssertRepeatedField(byArtifacts, "manual_io_neuron_removes", 9, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertField(byArtifacts, "run_count", 10, FieldType.UInt32);
+
+        var assessByBrainIds = descriptor.MessageTypes.Single(message => message.Name == "AssessCompatibilityByBrainIdsRequest");
+        AssertField(assessByBrainIds, "parentA", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(assessByBrainIds, "parentB", 2, FieldType.Message, "nbn.Uuid");
+        AssertField(assessByBrainIds, "strength_source", 3, FieldType.Enum, "nbn.repro.StrengthSource");
+        AssertField(assessByBrainIds, "config", 4, FieldType.Message, "nbn.repro.ReproduceConfig");
+        AssertField(assessByBrainIds, "seed", 5, FieldType.Fixed64);
+        AssertRepeatedField(assessByBrainIds, "manual_io_neuron_adds", 6, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertRepeatedField(assessByBrainIds, "manual_io_neuron_removes", 7, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertField(assessByBrainIds, "run_count", 10, FieldType.UInt32);
+
+        var assessByArtifacts = descriptor.MessageTypes.Single(message => message.Name == "AssessCompatibilityByArtifactsRequest");
+        AssertField(assessByArtifacts, "parentA_def", 1, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(assessByArtifacts, "parentA_state", 2, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(assessByArtifacts, "parentB_def", 3, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(assessByArtifacts, "parentB_state", 4, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(assessByArtifacts, "strength_source", 5, FieldType.Enum, "nbn.repro.StrengthSource");
+        AssertField(assessByArtifacts, "config", 6, FieldType.Message, "nbn.repro.ReproduceConfig");
+        AssertField(assessByArtifacts, "seed", 7, FieldType.Fixed64);
+        AssertRepeatedField(assessByArtifacts, "manual_io_neuron_adds", 8, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertRepeatedField(assessByArtifacts, "manual_io_neuron_removes", 9, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertField(assessByArtifacts, "run_count", 10, FieldType.UInt32);
 
         var config = descriptor.MessageTypes.Single(message => message.Name == "ReproduceConfig");
         AssertField(config, "max_region_span_diff_ratio", 1, FieldType.Float);
@@ -728,6 +776,19 @@ public class ProtoCompatibilityTests
 
         var report = descriptor.MessageTypes.Single(message => message.Name == "SimilarityReport");
         AssertField(report, "similarity_score", 13, FieldType.Float);
+
+        var runOutcome = descriptor.MessageTypes.Single(message => message.Name == "ReproduceRunOutcome");
+        AssertField(runOutcome, "run_index", 1, FieldType.UInt32);
+        AssertField(runOutcome, "seed", 2, FieldType.Fixed64);
+        AssertField(runOutcome, "report", 3, FieldType.Message, "nbn.repro.SimilarityReport");
+        AssertField(runOutcome, "summary", 4, FieldType.Message, "nbn.repro.MutationSummary");
+        AssertField(runOutcome, "child_def", 10, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(runOutcome, "spawned", 11, FieldType.Bool);
+        AssertField(runOutcome, "child_brain_id", 12, FieldType.Message, "nbn.Uuid");
+
+        var reproduceResultMessage = descriptor.MessageTypes.Single(message => message.Name == "ReproduceResult");
+        AssertRepeatedField(reproduceResultMessage, "runs", 20, FieldType.Message, "nbn.repro.ReproduceRunOutcome");
+        AssertField(reproduceResultMessage, "requested_run_count", 21, FieldType.UInt32);
     }
 
     [Fact]

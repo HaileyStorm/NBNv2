@@ -952,11 +952,19 @@ Reproduction requests may specify parents by:
 
 * BrainId (preferred): NBN resolves to the latest base `.nbn` plus latest `.nbs` overlay if configured
 * ArtifactRef: `.nbn` (and optionally `.nbs`)
+* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn
 
 Strength source options:
 
 * base-only
 * live (base + overlay codes)
+
+Run-count behavior:
+
+* reproduction and assessment requests accept `run_count`
+* omitted/`0` defaults to `1`
+* values above runtime bounds are rejected with `repro_run_count_out_of_range` (current runtime max: `64`)
+* multi-run responses preserve deterministic ordering by `run_index`
 
 IO-region neuron-count protection and overrides:
 
@@ -1058,14 +1066,19 @@ Pruning policies:
 
 ### 14.9 Outputs
 
-Reproduction returns:
+Reproduction requests return:
 
-* child `.nbn` artifact ref
+* child `.nbn` artifact ref (when synthesis succeeds)
 * similarity report and mutation summary
+* `requested_run_count` and per-run outcomes (`runs`) for deterministic multi-run reporting
 
-Optionally (default on):
+Assessment requests return:
 
-* spawn the child brain immediately and return its BrainId
+* similarity report and mutation summary only
+* no child synthesis, no child artifact, and no spawn attempt
+* `requested_run_count` and ordered per-run outcomes (`runs`)
+
+For backward compatibility, top-level `report/summary/child_def/spawned/child_brain_id` mirror run `0` when `run_count > 1`.
 
 Implementation notes (runtime behavior):
 
@@ -1075,6 +1088,7 @@ Implementation notes (runtime behavior):
   * `SPAWN_CHILD_DEFAULT_ON`: attempt spawn after synthesis
   * `SPAWN_CHILD_NEVER`: do not spawn; return child artifact only
   * `SPAWN_CHILD_ALWAYS`: force spawn attempt
+  * assessment requests ignore spawn policy and never synthesize/spawn children
 * Spawn attempt failures use abort codes:
   * `repro_spawn_unavailable`
   * `repro_child_artifact_missing`
@@ -2491,7 +2505,19 @@ message ReproduceByArtifacts {
   nbn.repro.ReproduceByArtifactsRequest request = 1;
 }
 
+message AssessCompatibilityByBrainIds {
+  nbn.repro.AssessCompatibilityByBrainIdsRequest request = 1;
+}
+
+message AssessCompatibilityByArtifacts {
+  nbn.repro.AssessCompatibilityByArtifactsRequest request = 1;
+}
+
 message ReproduceResult {
+  nbn.repro.ReproduceResult result = 1;
+}
+
+message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
 }
 ```
@@ -2703,6 +2729,7 @@ message ReproduceByBrainIdsRequest {
   fixed64 seed = 5;
   repeated ManualIoNeuronEdit manual_io_neuron_adds = 6;
   repeated ManualIoNeuronEdit manual_io_neuron_removes = 7;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
 }
 
 message ReproduceByArtifactsRequest {
@@ -2715,6 +2742,31 @@ message ReproduceByArtifactsRequest {
   fixed64 seed = 7;
   repeated ManualIoNeuronEdit manual_io_neuron_adds = 8;
   repeated ManualIoNeuronEdit manual_io_neuron_removes = 9;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
+}
+
+message AssessCompatibilityByBrainIdsRequest {
+  nbn.Uuid parentA = 1;
+  nbn.Uuid parentB = 2;
+  StrengthSource strength_source = 3;
+  ReproduceConfig config = 4;
+  fixed64 seed = 5;
+  repeated ManualIoNeuronEdit manual_io_neuron_adds = 6;
+  repeated ManualIoNeuronEdit manual_io_neuron_removes = 7;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
+}
+
+message AssessCompatibilityByArtifactsRequest {
+  nbn.ArtifactRef parentA_def = 1; // .nbn
+  nbn.ArtifactRef parentA_state = 2; // optional .nbs
+  nbn.ArtifactRef parentB_def = 3; // .nbn
+  nbn.ArtifactRef parentB_state = 4; // optional .nbs
+  StrengthSource strength_source = 5;
+  ReproduceConfig config = 6;
+  fixed64 seed = 7;
+  repeated ManualIoNeuronEdit manual_io_neuron_adds = 8;
+  repeated ManualIoNeuronEdit manual_io_neuron_removes = 9;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
 }
 
 message SimilarityReport {
@@ -2741,6 +2793,17 @@ message MutationSummary {
   uint32 strength_codes_changed = 7;
 }
 
+message ReproduceRunOutcome {
+  uint32 run_index = 1;
+  fixed64 seed = 2;
+  SimilarityReport report = 3;
+  MutationSummary summary = 4;
+
+  nbn.ArtifactRef child_def = 10; // .nbn when synthesized
+  bool spawned = 11;
+  nbn.Uuid child_brain_id = 12; // valid if spawned==true
+}
+
 message ReproduceResult {
   SimilarityReport report = 1;
   MutationSummary summary = 2;
@@ -2748,6 +2811,8 @@ message ReproduceResult {
   nbn.ArtifactRef child_def = 10; // .nbn
   bool spawned = 11;
   nbn.Uuid child_brain_id = 12; // valid if spawned==true
+  repeated ReproduceRunOutcome runs = 20; // deterministic order by run_index
+  uint32 requested_run_count = 21; // normalized effective run count
 }
 ```
 

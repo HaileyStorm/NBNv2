@@ -128,6 +128,12 @@ public sealed class IoGatewayActor : IActor
             case ReproduceByArtifacts message:
                 HandleReproduceByArtifacts(context, message);
                 break;
+            case AssessCompatibilityByBrainIds message:
+                HandleAssessCompatibilityByBrainIds(context, message);
+                break;
+            case AssessCompatibilityByArtifacts message:
+                HandleAssessCompatibilityByArtifacts(context, message);
+                break;
         }
     }
 
@@ -1233,7 +1239,84 @@ public sealed class IoGatewayActor : IActor
         });
     }
 
+    private void HandleAssessCompatibilityByBrainIds(IContext context, AssessCompatibilityByBrainIds message)
+    {
+        if (_reproPid is null)
+        {
+            context.Respond(CreateAssessmentFailure("repro_unavailable"));
+            return;
+        }
+
+        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
+        context.ReenterAfter(reproTask, completed =>
+        {
+            if (completed.IsCompletedSuccessfully)
+            {
+                var result = completed.Result;
+                if (result is null)
+                {
+                    context.Respond(CreateAssessmentFailure("repro_empty_response"));
+                    return Task.CompletedTask;
+                }
+
+                result.Report ??= CreateAbortReport("repro_missing_report");
+                EnsureSimilarityScore(result);
+                context.Respond(new AssessCompatibilityResult { Result = result });
+                return Task.CompletedTask;
+            }
+
+            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+            Console.WriteLine($"AssessCompatibilityByBrainIds failed: {detail}");
+            context.Respond(CreateAssessmentFailure("repro_request_failed"));
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleAssessCompatibilityByArtifacts(IContext context, AssessCompatibilityByArtifacts message)
+    {
+        if (_reproPid is null)
+        {
+            context.Respond(CreateAssessmentFailure("repro_unavailable"));
+            return;
+        }
+
+        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
+        context.ReenterAfter(reproTask, completed =>
+        {
+            if (completed.IsCompletedSuccessfully)
+            {
+                var result = completed.Result;
+                if (result is null)
+                {
+                    context.Respond(CreateAssessmentFailure("repro_empty_response"));
+                    return Task.CompletedTask;
+                }
+
+                result.Report ??= CreateAbortReport("repro_missing_report");
+                EnsureSimilarityScore(result);
+                context.Respond(new AssessCompatibilityResult { Result = result });
+                return Task.CompletedTask;
+            }
+
+            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+            Console.WriteLine($"AssessCompatibilityByArtifacts failed: {detail}");
+            context.Respond(CreateAssessmentFailure("repro_request_failed"));
+            return Task.CompletedTask;
+        });
+    }
+
     private static Nbn.Proto.Io.ReproduceResult CreateReproFailure(string reason)
+        => new()
+        {
+            Result = new Nbn.Proto.Repro.ReproduceResult
+            {
+                Report = CreateAbortReport(reason),
+                Summary = new MutationSummary(),
+                Spawned = false
+            }
+        };
+
+    private static AssessCompatibilityResult CreateAssessmentFailure(string reason)
         => new()
         {
             Result = new Nbn.Proto.Repro.ReproduceResult

@@ -307,6 +307,18 @@ message ReproduceByArtifacts {
   nbn.repro.ReproduceByArtifactsRequest request = 1;
 }
 
+message AssessCompatibilityByBrainIds {
+  nbn.repro.AssessCompatibilityByBrainIdsRequest request = 1;
+}
+
+message AssessCompatibilityByArtifacts {
+  nbn.repro.AssessCompatibilityByArtifactsRequest request = 1;
+}
+
 message ReproduceResult {
+  nbn.repro.ReproduceResult result = 1;
+}
+
+message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
 }

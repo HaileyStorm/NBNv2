@@ -830,7 +830,19 @@ message ReproduceByArtifacts {
   nbn.repro.ReproduceByArtifactsRequest request = 1;
 }
 
+message AssessCompatibilityByBrainIds {
+  nbn.repro.AssessCompatibilityByBrainIdsRequest request = 1;
+}
+
+message AssessCompatibilityByArtifacts {
+  nbn.repro.AssessCompatibilityByArtifactsRequest request = 1;
+}
+
 message ReproduceResult {
+  nbn.repro.ReproduceResult result = 1;
+}
+
+message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
 }
 ```
@@ -1042,6 +1054,7 @@ message ReproduceByBrainIdsRequest {
   fixed64 seed = 5;
   repeated ManualIoNeuronEdit manual_io_neuron_adds = 6;
   repeated ManualIoNeuronEdit manual_io_neuron_removes = 7;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
 }
 
 message ReproduceByArtifactsRequest {
@@ -1054,6 +1067,31 @@ message ReproduceByArtifactsRequest {
   fixed64 seed = 7;
   repeated ManualIoNeuronEdit manual_io_neuron_adds = 8;
   repeated ManualIoNeuronEdit manual_io_neuron_removes = 9;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
+}
+
+message AssessCompatibilityByBrainIdsRequest {
+  nbn.Uuid parentA = 1;
+  nbn.Uuid parentB = 2;
+  StrengthSource strength_source = 3;
+  ReproduceConfig config = 4;
+  fixed64 seed = 5;
+  repeated ManualIoNeuronEdit manual_io_neuron_adds = 6;
+  repeated ManualIoNeuronEdit manual_io_neuron_removes = 7;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
+}
+
+message AssessCompatibilityByArtifactsRequest {
+  nbn.ArtifactRef parentA_def = 1; // .nbn
+  nbn.ArtifactRef parentA_state = 2; // optional .nbs
+  nbn.ArtifactRef parentB_def = 3; // .nbn
+  nbn.ArtifactRef parentB_state = 4; // optional .nbs
+  StrengthSource strength_source = 5;
+  ReproduceConfig config = 6;
+  fixed64 seed = 7;
+  repeated ManualIoNeuronEdit manual_io_neuron_adds = 8;
+  repeated ManualIoNeuronEdit manual_io_neuron_removes = 9;
+  uint32 run_count = 10; // defaults to 1 when unset or 0
 }
 
 message SimilarityReport {
@@ -1080,6 +1118,17 @@ message MutationSummary {
   uint32 strength_codes_changed = 7;
 }
 
+message ReproduceRunOutcome {
+  uint32 run_index = 1;
+  fixed64 seed = 2;
+  SimilarityReport report = 3;
+  MutationSummary summary = 4;
+
+  nbn.ArtifactRef child_def = 10; // .nbn when synthesized
+  bool spawned = 11;
+  nbn.Uuid child_brain_id = 12; // valid if spawned==true
+}
+
 message ReproduceResult {
   SimilarityReport report = 1;
   MutationSummary summary = 2;
@@ -1087,6 +1136,8 @@ message ReproduceResult {
   nbn.ArtifactRef child_def = 10; // .nbn
   bool spawned = 11;
   nbn.Uuid child_brain_id = 12; // valid if spawned==true
+  repeated ReproduceRunOutcome runs = 20; // deterministic order by run_index
+  uint32 requested_run_count = 21; // normalized effective run count
 }
 ```
 

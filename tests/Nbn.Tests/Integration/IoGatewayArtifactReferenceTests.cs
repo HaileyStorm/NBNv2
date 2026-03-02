@@ -1792,6 +1792,120 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task AssessCompatibilityByBrainIds_Returns_AbortReport_When_Repro_Is_Unavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<AssessCompatibilityResult>(
+            gateway,
+            new AssessCompatibilityByBrainIds
+            {
+                Request = new Repro.AssessCompatibilityByBrainIdsRequest
+                {
+                    ParentA = Guid.NewGuid().ToProtoUuid(),
+                    ParentB = Guid.NewGuid().ToProtoUuid(),
+                    Config = new Repro.ReproduceConfig()
+                }
+            });
+
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.False(response.Result.Report.Compatible);
+        Assert.Equal("repro_unavailable", response.Result.Report.AbortReason);
+        Assert.False(response.Result.Spawned);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task AssessCompatibilityByArtifacts_Preserves_Detailed_Result_From_Repro_Response()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var expected = new Repro.ReproduceResult
+        {
+            Report = new Repro.SimilarityReport
+            {
+                Compatible = true,
+                AbortReason = string.Empty,
+                SimilarityScore = 0.91f,
+                RegionSpanScore = 0.92f,
+                FunctionScore = 0.90f,
+                ConnectivityScore = 0.89f
+            },
+            Summary = new Repro.MutationSummary(),
+            Spawned = false,
+            RequestedRunCount = 3,
+            Runs =
+            {
+                new Repro.ReproduceRunOutcome
+                {
+                    RunIndex = 0,
+                    Seed = 100,
+                    Report = new Repro.SimilarityReport
+                    {
+                        Compatible = true,
+                        SimilarityScore = 0.91f
+                    },
+                    Summary = new Repro.MutationSummary(),
+                    Spawned = false
+                },
+                new Repro.ReproduceRunOutcome
+                {
+                    RunIndex = 1,
+                    Seed = 101,
+                    Report = new Repro.SimilarityReport
+                    {
+                        Compatible = true,
+                        SimilarityScore = 0.90f
+                    },
+                    Summary = new Repro.MutationSummary(),
+                    Spawned = false
+                },
+                new Repro.ReproduceRunOutcome
+                {
+                    RunIndex = 2,
+                    Seed = 102,
+                    Report = new Repro.SimilarityReport
+                    {
+                        Compatible = false,
+                        AbortReason = "repro_region_span_mismatch",
+                        SimilarityScore = 0.20f
+                    },
+                    Summary = new Repro.MutationSummary(),
+                    Spawned = false
+                }
+            }
+        };
+
+        var reproProbe = root.Spawn(Props.FromProducer(() => new ReproFixedResponseProbe(expected)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), reproPid: reproProbe)));
+
+        var response = await root.RequestAsync<AssessCompatibilityResult>(
+            gateway,
+            new AssessCompatibilityByArtifacts
+            {
+                Request = new Repro.AssessCompatibilityByArtifactsRequest()
+            });
+
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.True(response.Result.Report.Compatible);
+        Assert.Equal(0.91f, response.Result.Report.SimilarityScore);
+        Assert.Equal((uint)3, response.Result.RequestedRunCount);
+        Assert.Equal(3, response.Result.Runs.Count);
+        Assert.Equal((uint)0, response.Result.Runs[0].RunIndex);
+        Assert.Equal((ulong)100, response.Result.Runs[0].Seed);
+        Assert.Equal((uint)2, response.Result.Runs[2].RunIndex);
+        Assert.False(response.Result.Runs[2].Report.Compatible);
+        Assert.Equal("repro_region_span_mismatch", response.Result.Runs[2].Report.AbortReason);
+
+        await system.ShutdownAsync();
+    }
+
     private static async Task<(string ArtifactRoot, ArtifactRef BrainDef)> StoreBrainDefinitionAsync()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-io-spawn-{Guid.NewGuid():N}");
@@ -2058,6 +2172,8 @@ public class IoGatewayArtifactReferenceTests
             {
                 case Repro.ReproduceByBrainIdsRequest:
                 case Repro.ReproduceByArtifactsRequest:
+                case Repro.AssessCompatibilityByBrainIdsRequest:
+                case Repro.AssessCompatibilityByArtifactsRequest:
                     context.Respond(_response.Clone());
                     break;
             }
@@ -2307,6 +2423,8 @@ public class IoGatewayArtifactReferenceTests
             {
                 case Repro.ReproduceByBrainIdsRequest:
                 case Repro.ReproduceByArtifactsRequest:
+                case Repro.AssessCompatibilityByBrainIdsRequest:
+                case Repro.AssessCompatibilityByArtifactsRequest:
                     context.Respond(new Repro.ReproduceResult());
                     break;
             }
@@ -2323,6 +2441,8 @@ public class IoGatewayArtifactReferenceTests
             {
                 case Repro.ReproduceByBrainIdsRequest:
                 case Repro.ReproduceByArtifactsRequest:
+                case Repro.AssessCompatibilityByBrainIdsRequest:
+                case Repro.AssessCompatibilityByArtifactsRequest:
                     context.Respond("unexpected-response-type");
                     break;
             }
