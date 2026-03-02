@@ -20,7 +20,7 @@ Keep this intentionally high-level; the codebase is the source of truth for exac
 * `Nbn.Shared`: shared contracts/helpers (addressing, quantization, generated proto code, validation).
 * Runtime service roots: `Nbn.Runtime.SettingsMonitor`, `Nbn.Runtime.HiveMind`, `Nbn.Runtime.Reproduction`, `Nbn.Runtime.IO`, `Nbn.Runtime.Observability`, `Nbn.Runtime.Artifacts`.
 * Runtime execution: `Nbn.Runtime.Brain` (BrainRoot/BrainSignalRouter) and `Nbn.Runtime.RegionHost` (RegionShard workers, optional debug mirrors).
-* Tools/UI: `Nbn.Tools.Workbench` (orchestrator, designer, visualizer, debug/IO/energy/reproduction consoles).
+* Tools/UI: `Nbn.Tools.Workbench` (orchestrator, designer, visualizer, debug/IO/energy/reproduction consoles), `Nbn.Tools.EvolutionSim` (standalone artifact-first evolution/speciation stress simulator).
 * Tests: `Nbn.Tests` (format, simulation, parity, reproduction).
 
 ### 2.3 Project tooling (Beads)

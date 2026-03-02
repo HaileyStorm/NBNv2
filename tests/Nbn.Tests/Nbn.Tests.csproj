@@ -31,6 +31,7 @@
     <ProjectReference Include="..\..\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.Observability\Nbn.Runtime.Observability.csproj" />
     <ProjectReference Include="..\..\tools\Nbn.Tools.Workbench\Nbn.Tools.Workbench.csproj" />
+    <ProjectReference Include="..\..\tools\Nbn.Tools.EvolutionSim\Nbn.Tools.EvolutionSim.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.WorkerNode\Nbn.Runtime.WorkerNode.csproj" />
   </ItemGroup>
 
