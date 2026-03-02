@@ -37,6 +37,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
     private readonly LocalServiceRunner _reproRunner = new();
+    private readonly LocalServiceRunner _speciationRunner = new();
     private readonly LocalServiceRunner _workerRunner = new();
     private readonly LocalServiceRunner _obsRunner = new();
     private readonly Action<Guid>? _brainDiscovered;
@@ -237,6 +238,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_reproRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_speciationRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_obsRunner, _ => { }).ConfigureAwait(false);
     }
 
@@ -278,12 +280,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        if (!TryParsePort(Connections.IoPortText, out var ioPort))
-        {
-            HiveMindLaunchStatus = "Invalid IO port.";
-            return;
-        }
-
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.HiveMind");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -291,11 +287,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var ioAddress = $"{Connections.IoHost}:{ioPort}";
         var settingsDbPath = ResolveSettingsDbPath();
         var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
-                 + $" --io-address {ioAddress} --io-name {Connections.IoGateway}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.HiveMind", args);
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
@@ -312,18 +306,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        if (!TryParsePort(Connections.HiveMindPortText, out var hivePort))
-        {
-            IoLaunchStatus = "Invalid HiveMind port.";
-            return;
-        }
-
-        if (!TryParsePort(Connections.ReproPortText, out var reproPort))
-        {
-            IoLaunchStatus = "Invalid Reproduction port.";
-            return;
-        }
-
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.IO");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -331,12 +313,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var hiveAddress = $"{Connections.HiveMindHost}:{hivePort}";
-        var reproAddress = $"{Connections.ReproHost}:{reproPort}";
         var args = $"--bind-host {Connections.IoHost} --port {port}"
-                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
-                 + $" --hivemind-address {hiveAddress} --hivemind-name {Connections.HiveMindName}"
-                 + $" --repro-address {reproAddress} --repro-name {Connections.ReproManager}";
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.IO", args);
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
@@ -352,12 +330,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        if (!TryParsePort(Connections.IoPortText, out var ioPort))
-        {
-            ReproLaunchStatus = "Invalid IO port.";
-            return;
-        }
-
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Reproduction");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -365,15 +337,32 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var ioAddress = $"{Connections.IoHost}:{ioPort}";
         var args = $"--bind-host {Connections.ReproHost} --port {reproPort}"
                  + $" --manager-name {Connections.ReproManager}"
-                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
-                 + $" --io-address {ioAddress} --io-name {Connections.IoGateway}";
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Reproduction", args);
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
         ReproLaunchStatus = result.Message;
+        await TriggerReconnectAsync().ConfigureAwait(false);
+    }
+
+    private async Task StartSpeciationAsync()
+    {
+        var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Speciation");
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            StatusMessage = "Speciation project not found.";
+            return;
+        }
+
+        var speciationPort = ResolveSpeciationPort();
+        var args = $"--bind-host {Connections.SettingsHost} --port {speciationPort}"
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
+        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Speciation", args);
+        ApplyRuntimeDiagnosticsEnvironment(startInfo);
+        var result = await _speciationRunner.StartAsync(startInfo, waitForExit: false, label: "Speciation");
+        StatusMessage = $"Speciation launch: {result.Message}";
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -614,6 +603,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StartHiveMindAsync().ConfigureAwait(false);
         await StartWorkerAsync().ConfigureAwait(false);
         await StartReproAsync().ConfigureAwait(false);
+        await StartSpeciationAsync().ConfigureAwait(false);
         await StartIoAsync().ConfigureAwait(false);
         await StartObsAsync().ConfigureAwait(false);
     }
@@ -625,6 +615,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_speciationRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
@@ -1502,6 +1493,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return false;
         }
     }
+
+    private static int ResolveSpeciationPort()
+    {
+        var configured = Environment.GetEnvironmentVariable("NBN_SPECIATION_PORT");
+        return int.TryParse(configured, out var parsed) && parsed > 0 ? parsed : 12080;
+    }
+
     private async Task<HostedActorRowsResult> BuildActorRowsAsync(
         IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,

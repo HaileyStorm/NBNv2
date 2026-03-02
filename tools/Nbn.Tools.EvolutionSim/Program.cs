@@ -61,6 +61,7 @@ static async Task RunAsync(string[] args)
         {
             throw new InvalidOperationException("At least two parent references are required.");
         }
+        ValidateParentPool(parentPool);
 
         var options = new EvolutionSimulationOptions
         {
@@ -138,6 +139,10 @@ static IReadOnlyList<ArtifactRef> ResolveParentPool(string[] args)
 {
     var pool = new List<ArtifactRef>();
     var defaultStoreUri = GetArg(args, "--store-uri");
+    if (string.IsNullOrWhiteSpace(defaultStoreUri))
+    {
+        defaultStoreUri = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+    }
 
     foreach (var parentSpec in GetArgs(args, "--parent"))
     {
@@ -216,6 +221,24 @@ static ArtifactRef ParseParentSpec(string raw, string? defaultStoreUri)
     var storeUri = tokens.Length >= 3 ? tokens[2] : defaultStoreUri;
     var mediaType = tokens.Length >= 4 ? tokens[3] : "application/x-nbn";
     return tokens[0].ToArtifactRef(sizeBytes, mediaType, storeUri);
+}
+
+static void ValidateParentPool(IReadOnlyList<ArtifactRef> parentPool)
+{
+    for (var i = 0; i < parentPool.Count; i++)
+    {
+        var parent = parentPool[i];
+        if (!parent.TryToSha256Hex(out _))
+        {
+            throw new InvalidOperationException($"Parent reference at index {i} is missing a valid sha256.");
+        }
+
+        if (string.IsNullOrWhiteSpace(parent.StoreUri))
+        {
+            throw new InvalidOperationException(
+                $"Parent reference at index {i} is missing store_uri. Provide --store-uri, set NBN_ARTIFACT_ROOT, or include store_uri in --parent entries.");
+        }
+    }
 }
 
 static void EmitStatus(EvolutionSimulationStatus status, bool jsonOnly, bool isFinal)
@@ -390,6 +413,7 @@ static void PrintHelp()
     Console.WriteLine("      [--min-runs <int>] [--max-runs <int>] [--run-gamma <double>]");
     Console.WriteLine("      [--strength-source base|live] [--commit-to-speciation <bool>] [--spawn-children <bool>]");
     Console.WriteLine("      [--store-uri <path|file://uri>] [--parent <sha256,size[,store_uri][,media_type]> ...]");
+    Console.WriteLine("      store-uri fallback: --store-uri, then NBN_ARTIFACT_ROOT env var.");
     Console.WriteLine("      [--parents-file <path>] [--json]");
     Console.WriteLine("  fallback parent flags (if --parent/--parents-file omitted):");
     Console.WriteLine("      --parent-a-sha256 <hex> --parent-a-size <bytes>");

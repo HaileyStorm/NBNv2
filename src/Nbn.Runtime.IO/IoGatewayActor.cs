@@ -35,17 +35,27 @@ public sealed class IoGatewayActor : IActor
     private readonly Dictionary<string, ClientInfo> _clients = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, PID> _routerCache = new();
     private readonly Dictionary<Guid, string> _routerRegistration = new();
-    private readonly PID? _hiveMindPid;
-    private readonly PID? _reproPid;
-    private readonly PID? _speciationPid;
+    private readonly PID? _configuredHiveMindPid;
+    private readonly PID? _configuredReproPid;
+    private readonly PID? _configuredSpeciationPid;
+    private PID? _hiveMindPid;
+    private PID? _reproPid;
+    private PID? _speciationPid;
 
     public IoGatewayActor(IoOptions options, PID? hiveMindPid = null, PID? reproPid = null, PID? speciationPid = null)
     {
         _options = options;
-        _hiveMindPid = hiveMindPid ?? TryCreatePid(options.HiveMindAddress, options.HiveMindName);
-        _reproPid = reproPid ?? TryCreatePid(options.ReproAddress, options.ReproName);
-        _speciationPid = speciationPid ?? TryCreatePid(options.SpeciationAddress, options.SpeciationName);
+        _configuredHiveMindPid = hiveMindPid ?? TryCreatePid(options.HiveMindAddress, options.HiveMindName);
+        _configuredReproPid = reproPid ?? TryCreatePid(options.ReproAddress, options.ReproName);
+        _configuredSpeciationPid = speciationPid ?? TryCreatePid(options.SpeciationAddress, options.SpeciationName);
+        _hiveMindPid = _configuredHiveMindPid;
+        _reproPid = _configuredReproPid;
+        _speciationPid = _configuredSpeciationPid;
     }
+
+    public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
+
+    public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
 
     public async Task ReceiveAsync(IContext context)
     {
@@ -165,6 +175,12 @@ public sealed class IoGatewayActor : IActor
             case SpeciationListHistory message:
                 HandleSpeciationListHistory(context, message);
                 break;
+            case DiscoverySnapshotApplied snapshot:
+                ApplyDiscoverySnapshot(snapshot);
+                break;
+            case EndpointStateObserved observed:
+                ApplyObservedEndpoint(observed.Observation, source: "update");
+                break;
         }
     }
 
@@ -184,6 +200,149 @@ public sealed class IoGatewayActor : IActor
             ServerTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
     }
+
+    private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
+    {
+        if (snapshot.Registrations is null)
+        {
+            return;
+        }
+
+        var hiveSeen = false;
+        var reproSeen = false;
+        var speciationSeen = false;
+        foreach (var entry in snapshot.Registrations)
+        {
+            if (!TryMarkDiscoveryKey(entry.Key, ref hiveSeen, ref reproSeen, ref speciationSeen))
+            {
+                continue;
+            }
+
+            ApplyEndpoint(entry.Value);
+        }
+
+        if (!hiveSeen)
+        {
+            _hiveMindPid = _configuredHiveMindPid;
+        }
+
+        if (!reproSeen)
+        {
+            _reproPid = _configuredReproPid;
+        }
+
+        if (!speciationSeen)
+        {
+            _speciationPid = _configuredSpeciationPid;
+        }
+    }
+
+    private void ApplyObservedEndpoint(ServiceEndpointObservation observation, string source)
+    {
+        if (!IsDiscoveryKey(observation.Key))
+        {
+            return;
+        }
+
+        if (observation.Kind == ServiceEndpointObservationKind.Upserted)
+        {
+            if (observation.Registration is ServiceEndpointRegistration registration)
+            {
+                ApplyEndpoint(registration);
+                return;
+            }
+
+            ApplyObservationRemoval(observation.Key, source, "registration_missing");
+            return;
+        }
+
+        if (observation.Kind == ServiceEndpointObservationKind.Removed
+            || observation.Kind == ServiceEndpointObservationKind.Invalid)
+        {
+            var fallbackReason = observation.Kind == ServiceEndpointObservationKind.Removed
+                ? "endpoint_removed"
+                : "endpoint_parse_failed";
+            ApplyObservationRemoval(observation.Key, source, NormalizeFailureReason(observation.FailureReason, fallbackReason));
+        }
+    }
+
+    private void ApplyEndpoint(ServiceEndpointRegistration registration)
+    {
+        if (string.Equals(registration.Key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal))
+        {
+            _hiveMindPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        if (string.Equals(registration.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
+        {
+            _reproPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        if (string.Equals(registration.Key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal))
+        {
+            _speciationPid = registration.Endpoint.ToPid();
+        }
+    }
+
+    private void ApplyObservationRemoval(string key, string source, string reason)
+    {
+        if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal))
+        {
+            _hiveMindPid = _configuredHiveMindPid;
+            Console.WriteLine($"[WARN] IO discovery removed hive endpoint (source={source}, reason={reason}).");
+            return;
+        }
+
+        if (string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
+        {
+            _reproPid = _configuredReproPid;
+            Console.WriteLine($"[WARN] IO discovery removed repro endpoint (source={source}, reason={reason}).");
+            return;
+        }
+
+        if (string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal))
+        {
+            _speciationPid = _configuredSpeciationPid;
+            Console.WriteLine($"[WARN] IO discovery removed speciation endpoint (source={source}, reason={reason}).");
+        }
+    }
+
+    private static bool IsDiscoveryKey(string? key)
+        => string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal)
+           || string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal)
+           || string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal);
+
+    private static bool TryMarkDiscoveryKey(
+        string? key,
+        ref bool hiveSeen,
+        ref bool reproSeen,
+        ref bool speciationSeen)
+    {
+        if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal))
+        {
+            hiveSeen = true;
+            return true;
+        }
+
+        if (string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
+        {
+            reproSeen = true;
+            return true;
+        }
+
+        if (string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal))
+        {
+            speciationSeen = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeFailureReason(string? value, string fallback)
+        => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
     private async Task HandleSpawnBrain(IContext context, SpawnBrainViaIO message)
     {

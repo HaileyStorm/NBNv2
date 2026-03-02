@@ -1697,6 +1697,63 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task ReproduceByArtifacts_Uses_Discovered_Repro_Endpoint_From_Snapshot()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var expected = new Repro.ReproduceResult
+        {
+            Report = new Repro.SimilarityReport
+            {
+                Compatible = true,
+                AbortReason = string.Empty,
+                SimilarityScore = 0.61f
+            },
+            Summary = new Repro.MutationSummary(),
+            Spawned = false
+        };
+        var reproProbe = root.Spawn(Props.FromProducer(() => new ReproFixedResponseProbe(expected)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        root.Send(
+            gateway,
+            new IoGatewayActor.DiscoverySnapshotApplied(
+                new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+                {
+                    [ServiceEndpointSettings.ReproductionManagerKey] = new ServiceEndpointRegistration(
+                        ServiceEndpointSettings.ReproductionManagerKey,
+                        new ServiceEndpoint(reproProbe.Address, reproProbe.Id),
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                }));
+
+        Nbn.Proto.Io.ReproduceResult? response = null;
+        await WaitForAsync(async () =>
+            {
+                response = await root.RequestAsync<Nbn.Proto.Io.ReproduceResult>(
+                    gateway,
+                    new ReproduceByArtifacts
+                    {
+                        Request = new Repro.ReproduceByArtifactsRequest()
+                    });
+
+                return !string.Equals(
+                    response.Result?.Report?.AbortReason,
+                    "repro_unavailable",
+                    StringComparison.Ordinal);
+            },
+            timeoutMs: 2000);
+
+        Assert.NotNull(response);
+        Assert.NotNull(response.Result);
+        Assert.NotNull(response.Result.Report);
+        Assert.True(response.Result.Report.Compatible);
+        Assert.Equal(string.Empty, response.Result.Report.AbortReason);
+        Assert.Equal(0.61f, response.Result.Report.SimilarityScore);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ReproduceByBrainIds_Returns_AbortReport_When_Repro_Response_Type_Is_Invalid()
     {
         var system = new ActorSystem();

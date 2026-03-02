@@ -43,6 +43,42 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task ReproduceByBrainIds_Uses_Discovered_Io_Endpoint_From_Snapshot()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ioProbe = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe()));
+        var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+        root.Send(
+            manager,
+            new ReproductionManagerActor.DiscoverySnapshotApplied(
+                new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+                {
+                    [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                        ServiceEndpointSettings.IoGatewayKey,
+                        new ServiceEndpoint(ioProbe.Address, ioProbe.Id),
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                }));
+
+        var response = await root.RequestAsync<Repro.ReproduceResult>(
+            manager,
+            new Repro.ReproduceByBrainIdsRequest
+            {
+                ParentA = Guid.NewGuid().ToProtoUuid(),
+                ParentB = Guid.NewGuid().ToProtoUuid(),
+                Config = new Repro.ReproduceConfig()
+            });
+
+        Assert.NotNull(response.Report);
+        Assert.False(response.Report.Compatible);
+        Assert.Equal("repro_parent_a_brain_not_found", response.Report.AbortReason);
+        Assert.False(response.Spawned);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ReproduceByBrainIds_Resolves_Parents_FromIoGateway()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-brainid-{Guid.NewGuid():N}");

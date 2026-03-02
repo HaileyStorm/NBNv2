@@ -29,12 +29,18 @@ public sealed class ReproductionManagerActor : IActor
     private static readonly byte[] PreferredActivationFunctionIds = { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
     private static readonly byte[] PreferredResetFunctionIds = { 0, 1, 3, 17, 30, 43, 44, 45, 47, 48, 49, 58 };
     private static readonly byte[] PreferredAccumulationFunctionIds = { 0, 0, 2, 2, 1 };
-    private readonly PID? _ioGatewayPid;
+    private readonly PID? _configuredIoGatewayPid;
+    private PID? _ioGatewayPid;
 
     public ReproductionManagerActor(PID? ioGatewayPid = null)
     {
+        _configuredIoGatewayPid = ioGatewayPid;
         _ioGatewayPid = ioGatewayPid;
     }
+
+    public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
+
+    public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
 
     public async Task ReceiveAsync(IContext context)
     {
@@ -52,6 +58,50 @@ public sealed class ReproductionManagerActor : IActor
             case AssessCompatibilityByArtifactsRequest message:
                 context.Respond(await HandleAssessCompatibilityByArtifactsAsync(context, message).ConfigureAwait(false));
                 break;
+            case DiscoverySnapshotApplied snapshot:
+                ApplyDiscoverySnapshot(snapshot);
+                break;
+            case EndpointStateObserved observed:
+                ApplyObservedEndpoint(observed.Observation);
+                break;
+        }
+    }
+
+    private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
+    {
+        if (snapshot.Registrations is null)
+        {
+            return;
+        }
+
+        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var registration))
+        {
+            _ioGatewayPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        _ioGatewayPid = _configuredIoGatewayPid;
+    }
+
+    private void ApplyObservedEndpoint(ServiceEndpointObservation observation)
+    {
+        if (!string.Equals(observation.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (observation.Kind == ServiceEndpointObservationKind.Upserted
+            && observation.Registration is ServiceEndpointRegistration registration)
+        {
+            _ioGatewayPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        if (observation.Kind == ServiceEndpointObservationKind.Removed
+            || observation.Kind == ServiceEndpointObservationKind.Invalid
+            || observation.Kind == ServiceEndpointObservationKind.Upserted)
+        {
+            _ioGatewayPid = _configuredIoGatewayPid;
         }
     }
 

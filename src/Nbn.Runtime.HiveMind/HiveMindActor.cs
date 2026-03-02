@@ -26,7 +26,8 @@ public sealed class HiveMindActor : IActor
     private readonly HiveMindOptions _options;
     private readonly BackpressureController _backpressure;
     private readonly PID? _settingsPid;
-    private readonly PID? _ioPid;
+    private readonly PID? _configuredIoPid;
+    private PID? _ioPid;
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
     private bool _debugStreamEnabled;
@@ -102,7 +103,8 @@ public sealed class HiveMindActor : IActor
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
         _settingsPid = settingsPid ?? BuildSettingsPid(options);
-        _ioPid = ioPid ?? BuildIoPid(options);
+        _configuredIoPid = ioPid ?? BuildIoPid(options);
+        _ioPid = _configuredIoPid;
         var resolvedObs = ObservabilityTargets.Resolve(options.SettingsHost);
         _debugHubPid = debugHubPid ?? resolvedObs.DebugHub;
         _vizHubPid = vizHubPid ?? resolvedObs.VizHub;
@@ -349,6 +351,8 @@ public sealed class HiveMindActor : IActor
         {
             context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
         }
+
+        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = ServiceEndpointSettings.IoGatewayKey });
     }
 
     private void HandleSettingValue(IContext context, ProtoSettings.SettingValue message)
@@ -361,6 +365,11 @@ public sealed class HiveMindActor : IActor
         if (TryApplyDebugSetting(message.Key, message.Value))
         {
             UpdateAllShardRuntimeConfig(context);
+        }
+
+        if (TryApplyIoEndpointSetting(message.Key, message.Value))
+        {
+            RegisterAllBrainsWithIo(context);
         }
 
         if (TryApplySystemCostEnergySetting(message.Key, message.Value))
@@ -414,6 +423,11 @@ public sealed class HiveMindActor : IActor
             UpdateAllShardRuntimeConfig(context);
         }
 
+        if (TryApplyIoEndpointSetting(message.Key, message.Value))
+        {
+            RegisterAllBrainsWithIo(context);
+        }
+
         if (TryApplySystemCostEnergySetting(message.Key, message.Value))
         {
             UpdateAllShardRuntimeConfig(context);
@@ -451,6 +465,45 @@ public sealed class HiveMindActor : IActor
         {
             UpdateAllShardVisualizationConfig(context);
         }
+    }
+
+    private bool TryApplyIoEndpointSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, ServiceEndpointSettings.IoGatewayKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var nextPid = _configuredIoPid;
+        if (ServiceEndpointSettings.TryParseValue(value, out var endpoint))
+        {
+            nextPid = endpoint.ToPid();
+        }
+
+        if (SamePid(_ioPid, nextPid))
+        {
+            return false;
+        }
+
+        _ioPid = nextPid;
+        return true;
+    }
+
+    private static bool SamePid(PID? left, PID? right)
+    {
+        if (left is null && right is null)
+        {
+            return true;
+        }
+
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return string.Equals(left.Address, right.Address, StringComparison.Ordinal)
+               && string.Equals(left.Id, right.Id, StringComparison.Ordinal);
     }
 
     private bool TryApplyDebugSetting(string? key, string? value)
