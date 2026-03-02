@@ -921,98 +921,73 @@ public sealed class SpeciationManagerActor : IActor
             ? null
             : orderedParentArtifactRefs[0];
 
-        if (resolved.CandidateMode == ProtoSpec.SpeciationCandidateMode.BrainId)
+        var existingMembership = await _store.GetMembershipAsync(epoch.EpochId, resolved.BrainId).ConfigureAwait(false);
+        if (!commit)
         {
-            var existingMembership = await _store.GetMembershipAsync(epoch.EpochId, resolved.BrainId).ConfigureAwait(false);
-            if (!commit)
+            if (existingMembership is not null)
             {
-                if (existingMembership is not null)
-                {
-                    return CreateDecisionFromMembership(
-                        applyMode,
-                        existingMembership,
-                        created: false,
-                        immutableConflict: false,
-                        committed: false,
-                        failureReason: ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
-                        failureDetail: string.Empty);
-                }
-
-                return new ProtoSpec.SpeciationDecision
-                {
-                    ApplyMode = applyMode,
-                    CandidateMode = resolved.CandidateMode,
-                    Success = true,
-                    Created = false,
-                    ImmutableConflict = false,
-                    FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
-                    FailureDetail = string.Empty,
-                    SpeciesId = assignmentResolution.SpeciesId,
-                    SpeciesDisplayName = assignmentResolution.SpeciesDisplayName,
-                    DecisionReason = resolvedDecisionReason,
-                    DecisionMetadataJson = resolvedDecisionMetadata,
-                    Committed = false
-                };
+                return CreateDecisionFromMembership(
+                    applyMode,
+                    resolved.CandidateMode,
+                    existingMembership,
+                    created: false,
+                    immutableConflict: false,
+                    committed: false,
+                    failureReason: ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                    failureDetail: string.Empty);
             }
 
-            var assignment = new SpeciationAssignment(
-                resolved.BrainId,
-                assignmentResolution.SpeciesId,
-                assignmentResolution.SpeciesDisplayName,
-                resolvedPolicyVersion,
-                resolvedDecisionReason,
-                resolvedDecisionMetadata,
-                parentBrainId,
-                parentArtifactRef);
-            var outcome = await _store.TryAssignMembershipAsync(
-                epoch.EpochId,
-                assignment,
-                decisionTimeMs,
-                cancellationToken: default,
-                lineageParentBrainIds: orderedParentBrainIds,
-                lineageMetadataJson: resolvedDecisionMetadata).ConfigureAwait(false);
-
-            var success = !outcome.ImmutableConflict;
-            var reason = outcome.ImmutableConflict
-                ? ProtoSpec.SpeciationFailureReason.SpeciationFailureMembershipImmutable
-                : ProtoSpec.SpeciationFailureReason.SpeciationFailureNone;
-            var detail = outcome.ImmutableConflict
-                ? "Membership is immutable within the current epoch."
-                : string.Empty;
-            return CreateDecisionFromMembership(
-                applyMode,
-                outcome.Membership,
-                created: outcome.Created,
-                immutableConflict: outcome.ImmutableConflict,
-                committed: outcome.Created,
-                failureReason: reason,
-                failureDetail: detail,
-                successOverride: success);
+            return new ProtoSpec.SpeciationDecision
+            {
+                ApplyMode = applyMode,
+                CandidateMode = resolved.CandidateMode,
+                Success = true,
+                Created = false,
+                ImmutableConflict = false,
+                FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                FailureDetail = string.Empty,
+                SpeciesId = assignmentResolution.SpeciesId,
+                SpeciesDisplayName = assignmentResolution.SpeciesDisplayName,
+                DecisionReason = resolvedDecisionReason,
+                DecisionMetadataJson = resolvedDecisionMetadata,
+                Committed = false
+            };
         }
 
-        if (commit)
-        {
-            return CreateDecisionFailure(
-                applyMode,
-                ProtoSpec.SpeciationFailureReason.SpeciationFailureUnsupportedCandidate,
-                "Commit operations require brain_id candidates.");
-        }
+        var assignment = new SpeciationAssignment(
+            resolved.BrainId,
+            assignmentResolution.SpeciesId,
+            assignmentResolution.SpeciesDisplayName,
+            resolvedPolicyVersion,
+            resolvedDecisionReason,
+            resolvedDecisionMetadata,
+            parentBrainId,
+            resolved.SourceArtifactRef ?? parentArtifactRef);
+        var outcome = await _store.TryAssignMembershipAsync(
+            epoch.EpochId,
+            assignment,
+            decisionTimeMs,
+            cancellationToken: default,
+            lineageParentBrainIds: orderedParentBrainIds,
+            lineageMetadataJson: resolvedDecisionMetadata).ConfigureAwait(false);
 
-        return new ProtoSpec.SpeciationDecision
-        {
-            ApplyMode = applyMode,
-            CandidateMode = resolved.CandidateMode,
-            Success = true,
-            Created = false,
-            ImmutableConflict = false,
-            FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
-            FailureDetail = string.Empty,
-            SpeciesId = assignmentResolution.SpeciesId,
-            SpeciesDisplayName = assignmentResolution.SpeciesDisplayName,
-            DecisionReason = resolvedDecisionReason,
-            DecisionMetadataJson = resolvedDecisionMetadata,
-            Committed = false
-        };
+        var success = !outcome.ImmutableConflict;
+        var reason = outcome.ImmutableConflict
+            ? ProtoSpec.SpeciationFailureReason.SpeciationFailureMembershipImmutable
+            : ProtoSpec.SpeciationFailureReason.SpeciationFailureNone;
+        var detail = outcome.ImmutableConflict
+            ? "Membership is immutable within the current epoch."
+            : string.Empty;
+        return CreateDecisionFromMembership(
+            applyMode,
+            resolved.CandidateMode,
+            outcome.Membership,
+            created: outcome.Created,
+            immutableConflict: outcome.ImmutableConflict,
+            committed: outcome.Created,
+            failureReason: reason,
+            failureDetail: detail,
+            successOverride: success);
     }
 
     private static bool TryResolveCandidate(
@@ -1032,31 +1007,82 @@ public sealed class SpeciationManagerActor : IActor
                 {
                     resolvedCandidate = new ResolvedCandidate(
                         ProtoSpec.SpeciationCandidateMode.BrainId,
-                        brainId);
+                        brainId,
+                        SourceArtifactRef: null);
                     return true;
                 }
                 return false;
             case ProtoSpec.SpeciationCandidateRef.CandidateOneofCase.ArtifactRef:
                 if (HasUsableArtifactReference(candidate.ArtifactRef))
                 {
+                    var sourceArtifactRef = BuildArtifactLabel(candidate.ArtifactRef!);
+                    var derivedBrainId = CreateDeterministicCandidateBrainId(
+                        BuildArtifactIdentityKey(candidate.ArtifactRef!));
                     resolvedCandidate = new ResolvedCandidate(
                         ProtoSpec.SpeciationCandidateMode.ArtifactRef,
-                        Guid.Empty);
+                        derivedBrainId,
+                        sourceArtifactRef);
                     return true;
                 }
                 return false;
             case ProtoSpec.SpeciationCandidateRef.CandidateOneofCase.ArtifactUri:
                 if (!string.IsNullOrWhiteSpace(candidate.ArtifactUri))
                 {
+                    var normalizedUri = candidate.ArtifactUri.Trim();
+                    var derivedBrainId = CreateDeterministicCandidateBrainId($"artifact_uri|{normalizedUri}");
                     resolvedCandidate = new ResolvedCandidate(
                         ProtoSpec.SpeciationCandidateMode.ArtifactUri,
-                        Guid.Empty);
+                        derivedBrainId,
+                        normalizedUri);
                     return true;
                 }
                 return false;
             default:
                 return false;
         }
+    }
+
+    private static string? BuildArtifactLabel(ArtifactRef artifactRef)
+    {
+        if (artifactRef.TryToSha256Hex(out var sha))
+        {
+            return $"sha256:{sha}";
+        }
+
+        return string.IsNullOrWhiteSpace(artifactRef.StoreUri)
+            ? null
+            : artifactRef.StoreUri.Trim();
+    }
+
+    private static string BuildArtifactIdentityKey(ArtifactRef artifactRef)
+    {
+        var sha = artifactRef.TryToSha256Hex(out var sha256Hex)
+            ? sha256Hex
+            : string.Empty;
+        var storeUri = string.IsNullOrWhiteSpace(artifactRef.StoreUri)
+            ? string.Empty
+            : artifactRef.StoreUri.Trim();
+        var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
+            ? string.Empty
+            : artifactRef.MediaType.Trim();
+        return $"artifact_ref|sha256={sha}|size={artifactRef.SizeBytes}|media_type={mediaType}|store_uri={storeUri}";
+    }
+
+    private static Guid CreateDeterministicCandidateBrainId(string identityKey)
+    {
+        if (string.IsNullOrWhiteSpace(identityKey))
+        {
+            return Guid.Empty;
+        }
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(identityKey.Trim()));
+        Span<byte> guidBytes = stackalloc byte[16];
+        bytes.AsSpan(0, 16).CopyTo(guidBytes);
+
+        // Mark as RFC 4122 variant and version-5 style UUID for deterministic artifact identities.
+        guidBytes[6] = (byte)((guidBytes[6] & 0x0F) | 0x50);
+        guidBytes[8] = (byte)((guidBytes[8] & 0x3F) | 0x80);
+        return new Guid(guidBytes);
     }
 
     private static bool HasUsableArtifactReference(ArtifactRef? artifactRef)
@@ -1921,6 +1947,7 @@ public sealed class SpeciationManagerActor : IActor
 
     private static ProtoSpec.SpeciationDecision CreateDecisionFromMembership(
         ProtoSpec.SpeciationApplyMode applyMode,
+        ProtoSpec.SpeciationCandidateMode candidateMode,
         SpeciationMembershipRecord membership,
         bool created,
         bool immutableConflict,
@@ -1933,7 +1960,7 @@ public sealed class SpeciationManagerActor : IActor
         return new ProtoSpec.SpeciationDecision
         {
             ApplyMode = applyMode,
-            CandidateMode = ProtoSpec.SpeciationCandidateMode.BrainId,
+            CandidateMode = candidateMode,
             Success = success,
             Created = created,
             ImmutableConflict = immutableConflict,
@@ -2058,7 +2085,8 @@ public sealed class SpeciationManagerActor : IActor
 
     private readonly record struct ResolvedCandidate(
         ProtoSpec.SpeciationCandidateMode CandidateMode,
-        Guid BrainId);
+        Guid BrainId,
+        string? SourceArtifactRef);
 
     private bool TryGetCurrentEpoch(out SpeciationEpochInfo epoch)
     {

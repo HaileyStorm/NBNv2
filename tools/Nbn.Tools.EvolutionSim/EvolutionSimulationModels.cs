@@ -18,8 +18,47 @@ public sealed record EvolutionSimulationOptions
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(10);
     public bool CommitToSpeciation { get; init; } = true;
     public bool SpawnChildren { get; init; }
+    public EvolutionParentMode ParentMode { get; init; } = EvolutionParentMode.ArtifactRefs;
     public Repro.StrengthSource StrengthSource { get; init; } = Repro.StrengthSource.StrengthBaseOnly;
     public InverseCompatibilityRunPolicy RunPolicy { get; init; } = InverseCompatibilityRunPolicy.Default;
+}
+
+public enum EvolutionParentMode
+{
+    ArtifactRefs = 0,
+    BrainIds = 1
+}
+
+public readonly record struct EvolutionParentRef
+{
+    public Guid? BrainId { get; }
+    public ArtifactRef? ArtifactRef { get; }
+
+    public bool IsBrainId => BrainId.HasValue;
+    public bool IsArtifactRef => ArtifactRef is not null;
+
+    private EvolutionParentRef(Guid? brainId, ArtifactRef? artifactRef)
+    {
+        BrainId = brainId;
+        ArtifactRef = artifactRef;
+    }
+
+    public static EvolutionParentRef FromBrainId(Guid brainId)
+    {
+        if (brainId == Guid.Empty)
+        {
+            throw new ArgumentOutOfRangeException(nameof(brainId), "Parent brain_id must be non-empty.");
+        }
+
+        return new EvolutionParentRef(brainId, null);
+    }
+
+    public static EvolutionParentRef FromArtifactRef(ArtifactRef artifactRef)
+    {
+        return artifactRef is null
+            ? throw new ArgumentNullException(nameof(artifactRef))
+            : new EvolutionParentRef(null, artifactRef);
+    }
 }
 
 public readonly record struct InverseCompatibilityRunPolicy(uint MinRuns, uint MaxRuns, double Gamma)
@@ -82,15 +121,15 @@ public readonly record struct SpeciationCommitOutcome(
 public interface IEvolutionSimulationClient
 {
     Task<CompatibilityAssessment> AssessCompatibilityAsync(
-        ArtifactRef parentA,
-        ArtifactRef parentB,
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
         ulong seed,
         Repro.StrengthSource strengthSource,
         CancellationToken cancellationToken);
 
     Task<ReproductionOutcome> ReproduceAsync(
-        ArtifactRef parentA,
-        ArtifactRef parentB,
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
         ulong seed,
         uint runCount,
         bool spawnChildren,
@@ -99,8 +138,8 @@ public interface IEvolutionSimulationClient
 
     Task<SpeciationCommitOutcome> CommitSpeciationAsync(
         SpeciationCommitCandidate candidate,
-        ArtifactRef parentA,
-        ArtifactRef parentB,
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
         CancellationToken cancellationToken);
 }
 

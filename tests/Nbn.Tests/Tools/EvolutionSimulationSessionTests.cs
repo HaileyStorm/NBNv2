@@ -84,17 +84,52 @@ public sealed class EvolutionSimulationSessionTests
         Assert.Equal((ulong)3, status.ReproductionCalls);
     }
 
-    private static IReadOnlyList<ArtifactRef> CreateParentPool()
+    [Fact]
+    public async Task RunAsync_BrainIdParentMode_UsesBrainIds_AndCommitsWithoutSpawn()
+    {
+        var parents = CreateBrainParentPool();
+        var options = CreateOptions(
+            seed: 7001UL,
+            maxIterations: 4,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds);
+        var client = new DeterministicFakeClient();
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.True(client.ObservedBrainIdParents);
+        Assert.False(client.ObservedArtifactParents);
+        Assert.True(status.ReproductionCalls > 0);
+        Assert.True(status.SpeciationCommitAttempts > 0);
+        Assert.Equal(status.SpeciationCommitAttempts, status.SpeciationCommitSuccesses);
+    }
+
+    private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]
         {
-            BuildArtifact("parent-a", "file:///tmp/a"),
-            BuildArtifact("parent-b", "file:///tmp/b"),
-            BuildArtifact("parent-c", "file:///tmp/c")
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-a", "file:///tmp/a")),
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-b", "file:///tmp/b")),
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-c", "file:///tmp/c"))
         };
     }
 
-    private static EvolutionSimulationOptions CreateOptions(ulong seed, int maxIterations, bool commitToSpeciation)
+    private static IReadOnlyList<EvolutionParentRef> CreateBrainParentPool()
+    {
+        return new[]
+        {
+            EvolutionParentRef.FromBrainId(Guid.Parse("11111111-1111-1111-1111-111111111111")),
+            EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222")),
+            EvolutionParentRef.FromBrainId(Guid.Parse("33333333-3333-3333-3333-333333333333"))
+        };
+    }
+
+    private static EvolutionSimulationOptions CreateOptions(
+        ulong seed,
+        int maxIterations,
+        bool commitToSpeciation,
+        EvolutionParentMode parentMode = EvolutionParentMode.ArtifactRefs)
     {
         return new EvolutionSimulationOptions
         {
@@ -107,6 +142,7 @@ public sealed class EvolutionSimulationSessionTests
             RequestTimeout = TimeSpan.FromSeconds(2),
             CommitToSpeciation = commitToSpeciation,
             SpawnChildren = false,
+            ParentMode = parentMode,
             StrengthSource = Repro.StrengthSource.StrengthBaseOnly,
             RunPolicy = new InverseCompatibilityRunPolicy(1, 8, 1d)
         };
@@ -148,10 +184,12 @@ public sealed class EvolutionSimulationSessionTests
 
         public List<string> Events { get; } = new();
         public List<uint> RequestedRunCounts { get; } = new();
+        public bool ObservedBrainIdParents { get; private set; }
+        public bool ObservedArtifactParents { get; private set; }
 
         public async Task<CompatibilityAssessment> AssessCompatibilityAsync(
-            ArtifactRef parentA,
-            ArtifactRef parentB,
+            EvolutionParentRef parentA,
+            EvolutionParentRef parentB,
             ulong seed,
             Repro.StrengthSource strengthSource,
             CancellationToken cancellationToken)
@@ -171,6 +209,7 @@ public sealed class EvolutionSimulationSessionTests
                 similarity = (float)((seed % 1000UL) / 999d);
             }
 
+            ObserveParentKinds(parentA, parentB);
             var compatible = similarity >= 0.2f;
             Events.Add($"assess:{seed}:{Short(parentA)}:{Short(parentB)}:{similarity:F3}:{compatible}");
             return new CompatibilityAssessment(
@@ -181,8 +220,8 @@ public sealed class EvolutionSimulationSessionTests
         }
 
         public Task<ReproductionOutcome> ReproduceAsync(
-            ArtifactRef parentA,
-            ArtifactRef parentB,
+            EvolutionParentRef parentA,
+            EvolutionParentRef parentB,
             ulong seed,
             uint runCount,
             bool spawnChildren,
@@ -190,8 +229,11 @@ public sealed class EvolutionSimulationSessionTests
             CancellationToken cancellationToken)
         {
             RequestedRunCounts.Add(runCount);
+            ObserveParentKinds(parentA, parentB);
             Events.Add($"repro:{seed}:{runCount}:{Short(parentA)}:{Short(parentB)}");
-            var child = BuildArtifact($"child:{seed}:{runCount}:{Short(parentA)}:{Short(parentB)}", parentA.StoreUri);
+            var child = BuildArtifact(
+                $"child:{seed}:{runCount}:{Short(parentA)}:{Short(parentB)}",
+                parentA.ArtifactRef?.StoreUri);
             return Task.FromResult(
                 new ReproductionOutcome(
                     Success: true,
@@ -208,14 +250,15 @@ public sealed class EvolutionSimulationSessionTests
 
         public Task<SpeciationCommitOutcome> CommitSpeciationAsync(
             SpeciationCommitCandidate candidate,
-            ArtifactRef parentA,
-            ArtifactRef parentB,
+            EvolutionParentRef parentA,
+            EvolutionParentRef parentB,
             CancellationToken cancellationToken)
         {
+            ObserveParentKinds(parentA, parentB);
             var candidateLabel = candidate.ChildBrainId is Guid brainId && brainId != Guid.Empty
                 ? $"brain:{brainId:D}"
                 : candidate.ChildDefinition is { } definition
-                    ? $"artifact:{Short(definition)}"
+                    ? $"artifact:{ShortArtifact(definition)}"
                     : "missing";
             Events.Add($"speciation:{candidateLabel}");
             return Task.FromResult(new SpeciationCommitOutcome(
@@ -224,9 +267,35 @@ public sealed class EvolutionSimulationSessionTests
                 ExpectedNoOp: false));
         }
 
-        private static string Short(ArtifactRef reference)
+        private void ObserveParentKinds(EvolutionParentRef parentA, EvolutionParentRef parentB)
         {
-            return reference.TryToSha256Hex(out var sha)
+            if (parentA.IsBrainId || parentB.IsBrainId)
+            {
+                ObservedBrainIdParents = true;
+            }
+
+            if (parentA.IsArtifactRef || parentB.IsArtifactRef)
+            {
+                ObservedArtifactParents = true;
+            }
+        }
+
+        private static string Short(EvolutionParentRef reference)
+        {
+            if (reference.BrainId is Guid brainId && brainId != Guid.Empty)
+            {
+                var label = $"brain:{brainId:D}";
+                return label.Length <= 14 ? label : label[..14];
+            }
+
+            return reference.ArtifactRef is { } artifact
+                ? ShortArtifact(artifact)
+                : "missing";
+        }
+
+        private static string ShortArtifact(ArtifactRef artifactRef)
+        {
+            return artifactRef.TryToSha256Hex(out var sha)
                 ? sha[..8]
                 : "missing";
         }

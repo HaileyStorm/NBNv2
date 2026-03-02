@@ -1218,9 +1218,9 @@ message ReproduceResult {
 
 Implementation semantics used by current runtime assignment engine:
 
-* For `brain_id` candidates without explicit `species_id`, runtime assignment derives species deterministically from parent membership evidence (`parents`) plus optional similarity metrics carried in `decision_metadata_json` (for example reproduction `similarity_score`).
+* For `brain_id`, `artifact_ref`, or `artifact_uri` candidates without explicit `species_id`, runtime assignment derives species deterministically from parent membership evidence (`parents`) plus optional similarity metrics carried in `decision_metadata_json` (for example reproduction `similarity_score`).
 * `SpeciationRuntimeConfig.config_snapshot_json` may include an `assignment_policy` object (`lineage_match_threshold`, `lineage_split_threshold`, `parent_consensus_threshold`, `lineage_hysteresis_margin`, `create_derived_species_on_divergence`, `derived_species_prefix`) controlling threshold and hysteresis behavior.
-* Assignment provenance is recorded in `SpeciationDecision.decision_metadata_json` (strategy, policy snapshot, lineage inputs, parsed scores) and committed `brain_id` assignments ingest lineage edges for provided parent brain references.
+* Assignment provenance is recorded in `SpeciationDecision.decision_metadata_json` (strategy, policy snapshot, lineage inputs, parsed scores); artifact candidates commit using deterministic synthetic membership identity, and committed assignments ingest lineage edges for provided parent brain references.
 * Membership remains immutable within an epoch; changing species for an already-assigned brain requires a new epoch (`SpeciationSetConfig.start_new_epoch=true` or reset flow).
 
 ```proto

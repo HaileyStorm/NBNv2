@@ -56,12 +56,12 @@ static async Task RunAsync(string[] args)
             throw new InvalidOperationException("--max-runs must be <= 64.");
         }
 
-        var parentPool = ResolveParentPool(args);
-        if (parentPool.Count < 2)
+        var parentResolution = ResolveParentPool(args);
+        if (parentResolution.Parents.Count < 2)
         {
             throw new InvalidOperationException("At least two parent references are required.");
         }
-        ValidateParentPool(parentPool);
+        ValidateParentPool(parentResolution);
 
         var options = new EvolutionSimulationOptions
         {
@@ -78,12 +78,13 @@ static async Task RunAsync(string[] args)
             RequestTimeout = TimeSpan.FromSeconds(requestTimeoutSeconds),
             CommitToSpeciation = commitToSpeciation,
             SpawnChildren = spawnChildren,
+            ParentMode = parentResolution.Mode,
             StrengthSource = strengthSource,
             RunPolicy = new InverseCompatibilityRunPolicy(minRuns, maxRuns, gamma)
         };
 
         await using var runtimeClient = await EvolutionRuntimeClient.StartAsync(options).ConfigureAwait(false);
-        var session = new EvolutionSimulationSession(options, parentPool, runtimeClient);
+        var session = new EvolutionSimulationSession(options, parentResolution.Parents, runtimeClient);
         var controller = new EvolutionSimulationController(session);
         if (!controller.Start())
         {
@@ -135,7 +136,46 @@ static async Task RunAsync(string[] args)
     }
 }
 
-static IReadOnlyList<ArtifactRef> ResolveParentPool(string[] args)
+static (EvolutionParentMode Mode, IReadOnlyList<EvolutionParentRef> Parents) ResolveParentPool(string[] args)
+{
+    var brainParents = ResolveBrainParentPool(args);
+    var artifactParents = ResolveArtifactParentPool(args);
+
+    if (brainParents.Count > 0 && artifactParents.Count > 0)
+    {
+        throw new InvalidOperationException("Do not mix artifact parents and brain_id parents in the same run.");
+    }
+
+    if (brainParents.Count > 0)
+    {
+        return (
+            EvolutionParentMode.BrainIds,
+            brainParents.Select(EvolutionParentRef.FromBrainId).ToArray());
+    }
+
+    return (
+        EvolutionParentMode.ArtifactRefs,
+        artifactParents.Select(EvolutionParentRef.FromArtifactRef).ToArray());
+}
+
+static IReadOnlyList<Guid> ResolveBrainParentPool(string[] args)
+{
+    var pool = new List<Guid>();
+    foreach (var rawBrainId in GetArgs(args, "--parent-brain"))
+    {
+        pool.Add(ParseParentBrainId(rawBrainId, "--parent-brain"));
+    }
+
+    var parentsFile = GetArg(args, "--parents-brain-file");
+    if (!string.IsNullOrWhiteSpace(parentsFile))
+    {
+        pool.AddRange(LoadBrainParentsFile(parentsFile));
+    }
+
+    return pool;
+}
+
+static IReadOnlyList<ArtifactRef> ResolveArtifactParentPool(string[] args)
 {
     var pool = new List<ArtifactRef>();
     var defaultStoreUri = GetArg(args, "--store-uri");
@@ -204,6 +244,38 @@ static IReadOnlyList<ArtifactRef> LoadParentsFile(string path, string? defaultSt
     return entries;
 }
 
+static IReadOnlyList<Guid> LoadBrainParentsFile(string path)
+{
+    if (!File.Exists(path))
+    {
+        throw new InvalidOperationException($"--parents-brain-file not found: {path}");
+    }
+
+    var entries = new List<Guid>();
+    foreach (var line in File.ReadLines(path))
+    {
+        var trimmed = line.Trim();
+        if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+        {
+            continue;
+        }
+
+        entries.Add(ParseParentBrainId(trimmed, "--parents-brain-file"));
+    }
+
+    return entries;
+}
+
+static Guid ParseParentBrainId(string raw, string sourceLabel)
+{
+    if (!Guid.TryParse(raw.Trim(), out var brainId) || brainId == Guid.Empty)
+    {
+        throw new InvalidOperationException($"Invalid brain_id '{raw}' from {sourceLabel}.");
+    }
+
+    return brainId;
+}
+
 static ArtifactRef ParseParentSpec(string raw, string? defaultStoreUri)
 {
     var tokens = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
@@ -223,17 +295,27 @@ static ArtifactRef ParseParentSpec(string raw, string? defaultStoreUri)
     return tokens[0].ToArtifactRef(sizeBytes, mediaType, storeUri);
 }
 
-static void ValidateParentPool(IReadOnlyList<ArtifactRef> parentPool)
+static void ValidateParentPool((EvolutionParentMode Mode, IReadOnlyList<EvolutionParentRef> Parents) resolution)
 {
-    for (var i = 0; i < parentPool.Count; i++)
+    for (var i = 0; i < resolution.Parents.Count; i++)
     {
-        var parent = parentPool[i];
-        if (!parent.TryToSha256Hex(out _))
+        var parent = resolution.Parents[i];
+        if (resolution.Mode == EvolutionParentMode.BrainIds)
         {
-            throw new InvalidOperationException($"Parent reference at index {i} is missing a valid sha256.");
+            if (parent.BrainId is not Guid brainId || brainId == Guid.Empty)
+            {
+                throw new InvalidOperationException($"Parent brain_id at index {i} is invalid.");
+            }
+
+            continue;
         }
 
-        if (string.IsNullOrWhiteSpace(parent.StoreUri))
+        if (parent.ArtifactRef is null || !parent.ArtifactRef.TryToSha256Hex(out _))
+        {
+            throw new InvalidOperationException($"Parent artifact at index {i} is missing a valid sha256.");
+        }
+
+        if (string.IsNullOrWhiteSpace(parent.ArtifactRef.StoreUri))
         {
             throw new InvalidOperationException(
                 $"Parent reference at index {i} is missing store_uri. Provide --store-uri, set NBN_ARTIFACT_ROOT, or include store_uri in --parent entries.");
@@ -414,7 +496,8 @@ static void PrintHelp()
     Console.WriteLine("      [--strength-source base|live] [--commit-to-speciation <bool>] [--spawn-children <bool>]");
     Console.WriteLine("      [--store-uri <path|file://uri>] [--parent <sha256,size[,store_uri][,media_type]> ...]");
     Console.WriteLine("      store-uri fallback: --store-uri, then NBN_ARTIFACT_ROOT env var.");
-    Console.WriteLine("      [--parents-file <path>] [--json]");
+    Console.WriteLine("      [--parents-file <path>] [--parent-brain <uuid> ...] [--parents-brain-file <path>] [--json]");
+    Console.WriteLine("      parent mode is selected by input: artifact parents (default) or brain_id parents (mutually exclusive).");
     Console.WriteLine("  fallback parent flags (if --parent/--parents-file omitted):");
     Console.WriteLine("      --parent-a-sha256 <hex> --parent-a-size <bytes>");
     Console.WriteLine("      [--parent-b-sha256 <hex>] [--parent-b-size <bytes>]");

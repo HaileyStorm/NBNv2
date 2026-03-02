@@ -8,7 +8,7 @@ public sealed class EvolutionSimulationSession
     private readonly EvolutionSimulationOptions _options;
     private readonly IEvolutionSimulationClient _client;
     private readonly object _gate = new();
-    private readonly List<ArtifactRef> _parentPool;
+    private readonly List<EvolutionParentRef> _parentPool;
     private readonly HashSet<string> _parentPoolKeys;
     private readonly DeterministicRandom _random;
 
@@ -27,7 +27,7 @@ public sealed class EvolutionSimulationSession
 
     public EvolutionSimulationSession(
         EvolutionSimulationOptions options,
-        IReadOnlyList<ArtifactRef> initialParents,
+        IReadOnlyList<EvolutionParentRef> initialParents,
         IEvolutionSimulationClient client)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -36,15 +36,15 @@ public sealed class EvolutionSimulationSession
 
         if (initialParents is null || initialParents.Count < 2)
         {
-            throw new ArgumentException("At least two parent artifact references are required.", nameof(initialParents));
+            throw new ArgumentException("At least two parent references are required.", nameof(initialParents));
         }
 
-        _parentPool = new List<ArtifactRef>(initialParents.Count);
+        _parentPool = new List<EvolutionParentRef>(initialParents.Count);
         _parentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parent in initialParents)
         {
             _parentPool.Add(parent);
-            if (TryBuildArtifactKey(parent, out var key))
+            if (TryBuildParentKey(parent, out var key))
             {
                 _parentPoolKeys.Add(key);
             }
@@ -120,7 +120,7 @@ public sealed class EvolutionSimulationSession
         return GetStatus();
     }
 
-    private async Task ExecuteIterationAsync(ArtifactRef parentA, ArtifactRef parentB, CancellationToken cancellationToken)
+    private async Task ExecuteIterationAsync(EvolutionParentRef parentA, EvolutionParentRef parentB, CancellationToken cancellationToken)
     {
         var assessSeed = NextSeed();
         var assessment = await _client.AssessCompatibilityAsync(
@@ -176,7 +176,7 @@ public sealed class EvolutionSimulationSession
             return;
         }
 
-        AddChildrenToPool(reproduction.ChildDefinitions);
+        AddChildrenToPool(reproduction);
 
         if (!_options.CommitToSpeciation || reproduction.CommitCandidates.Count == 0)
         {
@@ -217,14 +217,14 @@ public sealed class EvolutionSimulationSession
         }
     }
 
-    private bool TrySelectParents(out ArtifactRef parentA, out ArtifactRef parentB)
+    private bool TrySelectParents(out EvolutionParentRef parentA, out EvolutionParentRef parentB)
     {
         lock (_gate)
         {
             if (_parentPool.Count < 2)
             {
-                parentA = new ArtifactRef();
-                parentB = new ArtifactRef();
+                parentA = default;
+                parentB = default;
                 return false;
             }
 
@@ -241,19 +241,30 @@ public sealed class EvolutionSimulationSession
         }
     }
 
-    private List<ArtifactRef> AddChildrenToPool(IReadOnlyList<ArtifactRef> children)
+    private int AddChildrenToPool(ReproductionOutcome reproduction)
+    {
+        if (_options.ParentMode == EvolutionParentMode.BrainIds)
+        {
+            return AddSpawnedChildrenToBrainPool(reproduction.CommitCandidates);
+        }
+
+        return AddChildrenToArtifactPool(reproduction.ChildDefinitions);
+    }
+
+    private int AddChildrenToArtifactPool(IReadOnlyList<ArtifactRef> children)
     {
         if (children.Count == 0)
         {
-            return new List<ArtifactRef>();
+            return 0;
         }
 
-        var added = new List<ArtifactRef>(children.Count);
+        var addedCount = 0;
         lock (_gate)
         {
             foreach (var child in children)
             {
-                if (!TryBuildArtifactKey(child, out var key))
+                var candidate = EvolutionParentRef.FromArtifactRef(child);
+                if (!TryBuildParentKey(candidate, out var key))
                 {
                     continue;
                 }
@@ -268,14 +279,57 @@ public sealed class EvolutionSimulationSession
                     break;
                 }
 
-                _parentPool.Add(child);
+                _parentPool.Add(candidate);
                 _parentPoolKeys.Add(key);
                 _childrenAddedToPool++;
-                added.Add(child);
+                addedCount++;
             }
         }
 
-        return added;
+        return addedCount;
+    }
+
+    private int AddSpawnedChildrenToBrainPool(IReadOnlyList<SpeciationCommitCandidate> candidates)
+    {
+        if (candidates.Count == 0)
+        {
+            return 0;
+        }
+
+        var addedCount = 0;
+        lock (_gate)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (candidate.ChildBrainId is not Guid childBrainId || childBrainId == Guid.Empty)
+                {
+                    continue;
+                }
+
+                var parentRef = EvolutionParentRef.FromBrainId(childBrainId);
+                if (!TryBuildParentKey(parentRef, out var key))
+                {
+                    continue;
+                }
+
+                if (_parentPoolKeys.Contains(key))
+                {
+                    continue;
+                }
+
+                if (_parentPool.Count >= _options.MaxParentPoolSize)
+                {
+                    break;
+                }
+
+                _parentPool.Add(parentRef);
+                _parentPoolKeys.Add(key);
+                _childrenAddedToPool++;
+                addedCount++;
+            }
+        }
+
+        return addedCount;
     }
 
     private async Task DelayBetweenIterationsAsync(CancellationToken cancellationToken)
@@ -393,15 +447,21 @@ public sealed class EvolutionSimulationSession
         }
     }
 
-    private static bool TryBuildArtifactKey(ArtifactRef artifact, out string key)
+    private static bool TryBuildParentKey(EvolutionParentRef parentRef, out string key)
     {
         key = string.Empty;
-        if (!artifact.TryToSha256Hex(out var sha))
+        if (parentRef.BrainId is Guid brainId && brainId != Guid.Empty)
         {
-            return false;
+            key = $"brain:{brainId:D}";
+            return true;
         }
 
-        key = $"{sha}|{artifact.StoreUri}|{artifact.MediaType}|{artifact.SizeBytes}";
-        return true;
+        if (parentRef.ArtifactRef is not null && parentRef.ArtifactRef.TryToSha256Hex(out var sha))
+        {
+            key = $"artifact:{sha}|{parentRef.ArtifactRef.StoreUri}|{parentRef.ArtifactRef.MediaType}|{parentRef.ArtifactRef.SizeBytes}";
+            return true;
+        }
+
+        return false;
     }
 }

@@ -421,7 +421,7 @@ public sealed class SpeciationManagerActorTests
                         },
                         new ProtoSpec.SpeciationBatchItem
                         {
-                            ItemId = "artifact-commit-unsupported",
+                            ItemId = "artifact-commit",
                             Candidate = new ProtoSpec.SpeciationCandidateRef
                             {
                                 ArtifactRef = artifactRef
@@ -449,7 +449,7 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, batch.FailureReason);
             Assert.Equal((uint)3, batch.RequestedCount);
             Assert.Equal((uint)3, batch.ProcessedCount);
-            Assert.Equal((uint)1, batch.CommittedCount);
+            Assert.Equal((uint)2, batch.CommittedCount);
             Assert.Equal(3, batch.Results.Count);
 
             var committed = batch.Results.Single(item => item.ItemId == "brain-commit").Decision;
@@ -457,10 +457,12 @@ public sealed class SpeciationManagerActorTests
             Assert.True(committed.Committed);
             Assert.Equal(ProtoSpec.SpeciationCandidateMode.BrainId, committed.CandidateMode);
 
-            var unsupported = batch.Results.Single(item => item.ItemId == "artifact-commit-unsupported").Decision;
-            Assert.False(unsupported.Success);
-            Assert.False(unsupported.Committed);
-            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureUnsupportedCandidate, unsupported.FailureReason);
+            var artifactCommitted = batch.Results.Single(item => item.ItemId == "artifact-commit").Decision;
+            Assert.True(artifactCommitted.Success);
+            Assert.True(artifactCommitted.Committed);
+            Assert.Equal(ProtoSpec.SpeciationCandidateMode.ArtifactRef, artifactCommitted.CandidateMode);
+            Assert.NotNull(artifactCommitted.Membership);
+            Assert.False(string.IsNullOrWhiteSpace(artifactCommitted.Membership.SourceArtifactRef));
 
             var dryRun = batch.Results.Single(item => item.ItemId == "artifact-dry-run").Decision;
             Assert.True(dryRun.Success);
@@ -476,6 +478,69 @@ public sealed class SpeciationManagerActorTests
                 });
             Assert.True(query.Found);
             Assert.Equal("species-batch", query.Membership.SpeciesId);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoAssign_Commit_ArtifactRef_PersistsMembership_And_IsImmutableWithinEpoch()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig();
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            await WaitForEpochAsync(system, managerPid);
+            var artifactRef = new string('b', 64).ToArtifactRef(321, "application/x-nbn", "artifact-store");
+
+            var firstAssign = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        ArtifactRef = artifactRef
+                    },
+                    SpeciesId = "species-artifact",
+                    SpeciesDisplayName = "Species Artifact",
+                    DecisionReason = "artifact_commit"
+                });
+
+            Assert.True(firstAssign.Decision.Success);
+            Assert.True(firstAssign.Decision.Committed);
+            Assert.Equal(ProtoSpec.SpeciationCandidateMode.ArtifactRef, firstAssign.Decision.CandidateMode);
+            Assert.NotNull(firstAssign.Decision.Membership);
+            Assert.False(string.IsNullOrWhiteSpace(firstAssign.Decision.Membership.SourceArtifactRef));
+
+            var secondAssign = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        ArtifactRef = artifactRef
+                    },
+                    SpeciesId = "species-other",
+                    SpeciesDisplayName = "Species Other",
+                    DecisionReason = "artifact_reassign"
+                });
+
+            Assert.False(secondAssign.Decision.Success);
+            Assert.False(secondAssign.Decision.Committed);
+            Assert.True(secondAssign.Decision.ImmutableConflict);
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureMembershipImmutable, secondAssign.Decision.FailureReason);
+            Assert.Equal(ProtoSpec.SpeciationCandidateMode.ArtifactRef, secondAssign.Decision.CandidateMode);
         }
         finally
         {
