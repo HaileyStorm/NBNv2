@@ -36,6 +36,7 @@ public static class ServiceEndpointSettings
     public const string HiveMindKey = EndpointPrefix + "hivemind";
     public const string IoGatewayKey = EndpointPrefix + "io_gateway";
     public const string ReproductionManagerKey = EndpointPrefix + "reproduction_manager";
+    public const string SpeciationManagerKey = EndpointPrefix + "speciation_manager";
     public const string WorkerNodeKey = EndpointPrefix + "worker_node";
     public const string ObservabilityKey = EndpointPrefix + "observability";
 
@@ -44,6 +45,7 @@ public static class ServiceEndpointSettings
         HiveMindKey,
         IoGatewayKey,
         ReproductionManagerKey,
+        SpeciationManagerKey,
         WorkerNodeKey,
         ObservabilityKey
     ];
