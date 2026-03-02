@@ -113,6 +113,24 @@ public class OrchestratorPanelViewModelTests
                         Key = ServiceEndpointSettings.IoGatewayKey,
                         Value = "10.20.30.41:12052/io-remote",
                         UpdatedMs = 12
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.ReproductionManagerKey,
+                        Value = "10.20.30.42:12072/repro-remote",
+                        UpdatedMs = 13
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.WorkerNodeKey,
+                        Value = "10.20.30.43:12044/worker-remote",
+                        UpdatedMs = 14
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.ObservabilityKey,
+                        Value = "10.20.30.44:12064/DebugHubRemote",
+                        UpdatedMs = 15
                     }
                 }
             }
@@ -129,6 +147,15 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("10.20.30.41", connections.IoHost);
         Assert.Equal("12052", connections.IoPortText);
         Assert.Equal("io-remote", connections.IoGateway);
+        Assert.Equal("10.20.30.42", connections.ReproHost);
+        Assert.Equal("12072", connections.ReproPortText);
+        Assert.Equal("repro-remote", connections.ReproManager);
+        Assert.Equal("10.20.30.43", connections.WorkerHost);
+        Assert.Equal("12044", connections.WorkerPortText);
+        Assert.Equal("worker-remote", connections.WorkerRootName);
+        Assert.Equal("10.20.30.44", connections.ObsHost);
+        Assert.Equal("12064", connections.ObsPortText);
+        Assert.Equal("DebugHubRemote", connections.DebugHub);
     }
 
     [Fact]
@@ -141,7 +168,16 @@ public class OrchestratorPanelViewModelTests
             HiveMindName = "HiveMind",
             IoHost = "127.0.0.1",
             IoPortText = "12050",
-            IoGateway = "io-gateway"
+            IoGateway = "io-gateway",
+            ReproHost = "127.0.0.1",
+            ReproPortText = "12070",
+            ReproManager = "ReproductionManager",
+            WorkerHost = "127.0.0.1",
+            WorkerPortText = "12041",
+            WorkerRootName = "worker-node",
+            ObsHost = "127.0.0.1",
+            ObsPortText = "12060",
+            DebugHub = "DebugHub"
         };
         var client = new FakeWorkbenchClient
         {
@@ -162,6 +198,24 @@ public class OrchestratorPanelViewModelTests
                         Key = ServiceEndpointSettings.IoGatewayKey,
                         Value = "127.0.0.1:not-a-port/io-gateway",
                         UpdatedMs = 32
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.ReproductionManagerKey,
+                        Value = "127.0.0.1:not-a-port/repro",
+                        UpdatedMs = 33
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.WorkerNodeKey,
+                        Value = "invalid-worker-value",
+                        UpdatedMs = 34
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.ObservabilityKey,
+                        Value = "127.0.0.1:not-a-port/debug",
+                        UpdatedMs = 35
                     }
                 }
             }
@@ -178,6 +232,15 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("127.0.0.1", connections.IoHost);
         Assert.Equal("12050", connections.IoPortText);
         Assert.Equal("io-gateway", connections.IoGateway);
+        Assert.Equal("127.0.0.1", connections.ReproHost);
+        Assert.Equal("12070", connections.ReproPortText);
+        Assert.Equal("ReproductionManager", connections.ReproManager);
+        Assert.Equal("127.0.0.1", connections.WorkerHost);
+        Assert.Equal("12041", connections.WorkerPortText);
+        Assert.Equal("worker-node", connections.WorkerRootName);
+        Assert.Equal("127.0.0.1", connections.ObsHost);
+        Assert.Equal("12060", connections.ObsPortText);
+        Assert.Equal("DebugHub", connections.DebugHub);
     }
 
     [Fact]
@@ -194,6 +257,18 @@ public class OrchestratorPanelViewModelTests
             ServiceEndpointSettings.HiveMindKey,
             "192.168.100.10:13020/HiveProd",
             "2"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.ReproductionManagerKey,
+            "192.168.100.11:13070/ReproProd",
+            "3"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.WorkerNodeKey,
+            "192.168.100.12:13041/worker-prod",
+            "4"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.ObservabilityKey,
+            "192.168.100.13:13060/DebugProd",
+            "5"));
 
         await WaitForAsync(() =>
             string.Equals(connections.IoHost, "192.168.100.9", StringComparison.Ordinal)
@@ -201,7 +276,58 @@ public class OrchestratorPanelViewModelTests
             && string.Equals(connections.IoGateway, "io-prod", StringComparison.Ordinal)
             && string.Equals(connections.HiveMindHost, "192.168.100.10", StringComparison.Ordinal)
             && string.Equals(connections.HiveMindPortText, "13020", StringComparison.Ordinal)
-            && string.Equals(connections.HiveMindName, "HiveProd", StringComparison.Ordinal));
+            && string.Equals(connections.HiveMindName, "HiveProd", StringComparison.Ordinal)
+            && string.Equals(connections.ReproHost, "192.168.100.11", StringComparison.Ordinal)
+            && string.Equals(connections.ReproPortText, "13070", StringComparison.Ordinal)
+            && string.Equals(connections.ReproManager, "ReproProd", StringComparison.Ordinal)
+            && string.Equals(connections.WorkerHost, "192.168.100.12", StringComparison.Ordinal)
+            && string.Equals(connections.WorkerPortText, "13041", StringComparison.Ordinal)
+            && string.Equals(connections.WorkerRootName, "worker-prod", StringComparison.Ordinal)
+            && string.Equals(connections.ObsHost, "192.168.100.13", StringComparison.Ordinal)
+            && string.Equals(connections.ObsPortText, "13060", StringComparison.Ordinal)
+            && string.Equals(connections.DebugHub, "DebugProd", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UpdateSetting_InvalidServiceEndpointValues_DoNotOverwriteConnectionInputs()
+    {
+        var connections = new ConnectionViewModel
+        {
+            ReproHost = "127.0.0.1",
+            ReproPortText = "12070",
+            ReproManager = "ReproductionManager",
+            WorkerHost = "127.0.0.1",
+            WorkerPortText = "12041",
+            WorkerRootName = "worker-node",
+            ObsHost = "127.0.0.1",
+            ObsPortText = "12060",
+            DebugHub = "DebugHub"
+        };
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.ReproductionManagerKey,
+            "127.0.0.1:not-a-port/repro",
+            "1"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.WorkerNodeKey,
+            "invalid-worker-value",
+            "2"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.ObservabilityKey,
+            "127.0.0.1:not-a-port/debug",
+            "3"));
+
+        await WaitForAsync(() =>
+            string.Equals(connections.ReproHost, "127.0.0.1", StringComparison.Ordinal)
+            && string.Equals(connections.ReproPortText, "12070", StringComparison.Ordinal)
+            && string.Equals(connections.ReproManager, "ReproductionManager", StringComparison.Ordinal)
+            && string.Equals(connections.WorkerHost, "127.0.0.1", StringComparison.Ordinal)
+            && string.Equals(connections.WorkerPortText, "12041", StringComparison.Ordinal)
+            && string.Equals(connections.WorkerRootName, "worker-node", StringComparison.Ordinal)
+            && string.Equals(connections.ObsHost, "127.0.0.1", StringComparison.Ordinal)
+            && string.Equals(connections.ObsPortText, "12060", StringComparison.Ordinal)
+            && string.Equals(connections.DebugHub, "DebugHub", StringComparison.Ordinal));
     }
 
     [Fact]

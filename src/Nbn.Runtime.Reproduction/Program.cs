@@ -28,6 +28,18 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ServiceName,
     options.ManagerName);
 
+var publishedReproEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    ServiceEndpointSettings.ReproductionManagerKey,
+    new ServiceEndpoint(nodeAddress, options.ManagerName));
+if (!publishedReproEndpoint)
+{
+    Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.ReproductionManagerKey}'.");
+}
+
 Console.WriteLine("NBN Reproduction node online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");

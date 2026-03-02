@@ -54,6 +54,18 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.RootActorName,
     capabilities: heartbeatCapabilities);
 
+var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    ServiceEndpointSettings.WorkerNodeKey,
+    new ServiceEndpoint(nodeAddress, options.RootActorName));
+if (!publishedWorkerEndpoint)
+{
+    Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.WorkerNodeKey}'.");
+}
+
 ServiceEndpointDiscoveryClient? discoveryClient = null;
 using var discoveryLoopCancellation = new CancellationTokenSource();
 Task discoveryLoopTask = Task.CompletedTask;
@@ -166,7 +178,14 @@ static async Task RunDiscoveryBootstrapLoopAsync(
     ServiceEndpointDiscoveryClient discoveryClient,
     CancellationToken cancellationToken)
 {
-    string[] watchedKeys = [ServiceEndpointSettings.HiveMindKey, ServiceEndpointSettings.IoGatewayKey];
+    string[] watchedKeys =
+    [
+        ServiceEndpointSettings.HiveMindKey,
+        ServiceEndpointSettings.IoGatewayKey,
+        ServiceEndpointSettings.ReproductionManagerKey,
+        ServiceEndpointSettings.WorkerNodeKey,
+        ServiceEndpointSettings.ObservabilityKey
+    ];
     var refreshInterval = TimeSpan.FromSeconds(15);
     var attempt = 0;
     var bootstrapped = false;

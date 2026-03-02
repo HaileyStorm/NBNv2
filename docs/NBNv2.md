@@ -132,6 +132,7 @@ NBN treats placement as a runtime concern:
 
 * Registry: nodes, addresses, root actor names, leases/heartbeats
 * Settings store: global configuration and mutable runtime settings
+* Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
 * Capability store: node CPU/GPU characteristics and benchmark scores
 * All other services report via SettingsMonitor proto messages (no direct DB access); HiveMind publishes brain lifecycle/tick/controller updates
 

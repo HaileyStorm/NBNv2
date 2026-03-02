@@ -935,6 +935,30 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return true;
         }
 
+        if (string.Equals(item.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.ReproHost = host;
+            Connections.ReproPortText = port.ToString();
+            Connections.ReproManager = endpoint.ActorName;
+            return true;
+        }
+
+        if (string.Equals(item.Key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.WorkerHost = host;
+            Connections.WorkerPortText = port.ToString();
+            Connections.WorkerRootName = endpoint.ActorName;
+            return true;
+        }
+
+        if (string.Equals(item.Key, ServiceEndpointSettings.ObservabilityKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.ObsHost = host;
+            Connections.ObsPortText = port.ToString();
+            Connections.DebugHub = endpoint.ActorName;
+            return true;
+        }
+
         return false;
     }
 

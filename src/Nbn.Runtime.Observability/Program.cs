@@ -45,6 +45,18 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ServiceName,
     rootActorName);
 
+var publishedObsEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+    system,
+    options.SettingsHost,
+    options.SettingsPort,
+    options.SettingsName,
+    ServiceEndpointSettings.ObservabilityKey,
+    new ServiceEndpoint(nodeAddress, rootActorName));
+if (!publishedObsEndpoint)
+{
+    Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.ObservabilityKey}'.");
+}
+
 Console.WriteLine("NBN Observability node online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");

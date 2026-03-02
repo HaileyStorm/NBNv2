@@ -35,11 +35,17 @@ public static class ServiceEndpointSettings
     public const string EndpointPrefix = "service.endpoint.";
     public const string HiveMindKey = EndpointPrefix + "hivemind";
     public const string IoGatewayKey = EndpointPrefix + "io_gateway";
+    public const string ReproductionManagerKey = EndpointPrefix + "reproduction_manager";
+    public const string WorkerNodeKey = EndpointPrefix + "worker_node";
+    public const string ObservabilityKey = EndpointPrefix + "observability";
 
     private static readonly string[] KnownEndpointKeys =
     [
         HiveMindKey,
-        IoGatewayKey
+        IoGatewayKey,
+        ReproductionManagerKey,
+        WorkerNodeKey,
+        ObservabilityKey
     ];
 
     public static IReadOnlyList<string> AllKeys => KnownEndpointKeys;
