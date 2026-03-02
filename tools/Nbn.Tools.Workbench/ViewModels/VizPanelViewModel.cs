@@ -43,8 +43,13 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultLodHighZoomBudget = 360;
     private const uint DefaultVizTickMinIntervalMs = 250u;
     private const uint DefaultVizStreamMinIntervalMs = 250u;
-    private const uint MaxVisualizationIntervalMs = 60_000u;
-    private const string DefaultTickOverrideSummary = "Tick override: default runtime backpressure target.";
+    private const uint MinVisualizationIntervalMs = 100u;
+    private const uint MaxVisualizationIntervalMs = 3_000u;
+    private const double TickSliderMinMs = 1d;
+    private const double TickSliderMaxMs = 1000d;
+    private const double VizSliderMinMs = MinVisualizationIntervalMs;
+    private const double VizSliderMaxMs = MaxVisualizationIntervalMs;
+    private const string DefaultTickOverrideSummary = "Tick cadence control is not set.";
     private const string DefaultTickCadenceSummary = "Current cadence: awaiting HiveMind status.";
     private const int EmptyBrainRefreshClearThreshold = 3;
     private const int SelectionMissRefreshClearThreshold = 3;
@@ -127,8 +132,15 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _tickRateOverrideText = string.Empty;
     private string _tickRateOverrideSummary = DefaultTickOverrideSummary;
     private string _tickCadenceSummary = DefaultTickCadenceSummary;
-    private string _vizTickMinIntervalMsText = DefaultVizTickMinIntervalMs.ToString(CultureInfo.InvariantCulture);
-    private string _vizStreamMinIntervalMsText = DefaultVizStreamMinIntervalMs.ToString(CultureInfo.InvariantCulture);
+    private double _tickCadenceSliderMs = 100d;
+    private bool _tickCadenceSliderSyncInProgress;
+    private bool _tickCadenceTextSyncInProgress;
+    private string _vizCadenceText = FormattableString.Invariant($"{DefaultVizStreamMinIntervalMs}ms");
+    private double _vizCadenceSliderMs = DefaultVizStreamMinIntervalMs;
+    private bool _vizCadenceSliderSyncInProgress;
+    private bool _vizCadenceTextSyncInProgress;
+    private uint _vizTickMinIntervalMs = DefaultVizTickMinIntervalMs;
+    private uint _vizStreamMinIntervalMs = DefaultVizStreamMinIntervalMs;
     private string _vizCadenceSummary = BuildVisualizationCadenceSummary(DefaultVizTickMinIntervalMs, DefaultVizStreamMinIntervalMs);
     private bool _includeLowSignalEvents;
     private bool _enableAdaptiveLod = true;
@@ -250,8 +262,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         ToggleVisualizationStreamCommand = new RelayCommand(() => ShowVisualizationStream = !ShowVisualizationStream);
         CopyCanvasDiagnosticsCommand = new AsyncRelayCommand(CopyCanvasDiagnosticsAsync);
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
-        ApplyTickRateOverrideCommand = new AsyncRelayCommand(ApplyTickRateOverrideAsync);
-        ClearTickRateOverrideCommand = new AsyncRelayCommand(ClearTickRateOverrideAsync);
+        ApplyTickRateOverrideCommand = new AsyncRelayCommand(ApplyTickCadenceAsync);
         ApplyVizCadenceCommand = new AsyncRelayCommand(ApplyVisualizationCadenceAsync);
         ResetVizCadenceCommand = new AsyncRelayCommand(ResetVisualizationCadenceAsync);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
@@ -267,6 +278,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         FocusSelectedRouteTargetCommand = new RelayCommand(FocusSelectedRouteTargetRegion, () => _selectedRouteTargetRegionId.HasValue);
         PrepareInputPulseCommand = new RelayCommand(PrepareInputPulseForSelection, CanPrepareInputPulseForSelection);
         ApplyRuntimeStateCommand = new RelayCommand(ApplyRuntimeStateForSelection, CanApplyRuntimeStateForSelection);
+        SyncVizCadenceSliderFromText(VizCadenceText);
         UpdateLodSummary();
         RefreshActivityProjection();
     }
@@ -498,7 +510,13 @@ public sealed class VizPanelViewModel : ViewModelBase
     public string TickRateOverrideText
     {
         get => _tickRateOverrideText;
-        set => SetProperty(ref _tickRateOverrideText, value);
+        set
+        {
+            if (SetProperty(ref _tickRateOverrideText, value))
+            {
+                SyncTickCadenceSliderFromText(value);
+            }
+        }
     }
 
     public string TickRateOverrideSummary
@@ -513,16 +531,64 @@ public sealed class VizPanelViewModel : ViewModelBase
         private set => SetProperty(ref _tickCadenceSummary, value);
     }
 
-    public string VizTickMinIntervalMsText
+    public double TickCadenceSliderMs
     {
-        get => _vizTickMinIntervalMsText;
-        set => SetProperty(ref _vizTickMinIntervalMsText, value);
+        get => _tickCadenceSliderMs;
+        set
+        {
+            var clamped = Math.Clamp(value, TickSliderMinMs, TickSliderMaxMs);
+            if (SetProperty(ref _tickCadenceSliderMs, clamped))
+            {
+                SyncTickCadenceTextFromSlider(clamped);
+            }
+        }
     }
 
-    public string VizStreamMinIntervalMsText
+    public double TickCadenceSliderMin => TickSliderMinMs;
+
+    public double TickCadenceSliderMax => TickSliderMaxMs;
+
+    public string VizCadenceText
     {
-        get => _vizStreamMinIntervalMsText;
-        set => SetProperty(ref _vizStreamMinIntervalMsText, value);
+        get => _vizCadenceText;
+        set
+        {
+            if (SetProperty(ref _vizCadenceText, value))
+            {
+                SyncVizCadenceSliderFromText(value);
+            }
+        }
+    }
+
+    public double VizCadenceSliderMs
+    {
+        get => _vizCadenceSliderMs;
+        set
+        {
+            var clamped = Math.Clamp(value, VizCadenceSliderEffectiveMin, VizSliderMaxMs);
+            if (SetProperty(ref _vizCadenceSliderMs, clamped))
+            {
+                SyncVizCadenceTextFromSlider(clamped);
+            }
+        }
+    }
+
+    public double VizCadenceSliderMin => VizSliderMinMs;
+
+    public double VizCadenceSliderMax => VizSliderMaxMs;
+
+    public double VizCadenceSliderEffectiveMin
+    {
+        get
+        {
+            var tickCadenceMs = ResolveEffectiveTickCadenceMs();
+            if (!tickCadenceMs.HasValue)
+            {
+                return VizSliderMinMs;
+            }
+
+            return Math.Clamp(tickCadenceMs.Value, VizSliderMinMs, VizSliderMaxMs);
+        }
     }
 
     public string VizCadenceSummary
@@ -842,8 +908,6 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand ApplyTickRateOverrideCommand { get; }
 
-    public AsyncRelayCommand ClearTickRateOverrideCommand { get; }
-
     public AsyncRelayCommand ApplyVizCadenceCommand { get; }
 
     public AsyncRelayCommand ResetVizCadenceCommand { get; }
@@ -986,21 +1050,25 @@ public sealed class VizPanelViewModel : ViewModelBase
             _currentTargetTickHz = targetTickHz;
             TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
             TickRateOverrideSummary = hasOverride
-                ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target {FormatTickCadence(targetTickHz)}."
-                : $"{DefaultTickOverrideSummary} Current target {FormatTickCadence(targetTickHz)}.";
+                ? $"Tick cadence control target: {FormatTickCadence(overrideTickHz)}. Current runtime target {FormatTickCadence(targetTickHz)}."
+                : $"Tick cadence control is not set. Current runtime target {FormatTickCadence(targetTickHz)}.";
+            OnPropertyChanged(nameof(VizCadenceSliderEffectiveMin));
+            EnsureVizCadenceSliderWithinEffectiveMinimum();
             RefreshActivityProjection();
             return;
         }
 
         TickRateOverrideSummary = hasOverride
-            ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target n/a."
-            : DefaultTickOverrideSummary;
+            ? $"Tick cadence control target: {FormatTickCadence(overrideTickHz)}. Current runtime target n/a."
+            : "Tick cadence control is not set.";
+        OnPropertyChanged(nameof(VizCadenceSliderEffectiveMin));
+        EnsureVizCadenceSliderWithinEffectiveMinimum();
         RefreshActivityProjection();
     }
 
     public bool ApplySetting(SettingItem item)
     {
-        if (string.Equals(item.Key, TickSettingsKeys.OverrideHzKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, TickSettingsKeys.CadenceHzKey, StringComparison.OrdinalIgnoreCase))
         {
             if (TryParseTickRateOverrideSettingValue(item.Value, out var overrideHz))
             {
@@ -1014,17 +1082,15 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         if (string.Equals(item.Key, VisualizationSettingsKeys.TickMinIntervalMsKey, StringComparison.OrdinalIgnoreCase))
         {
-            var parsed = ParseVisualizationIntervalSetting(item.Value, DefaultVizTickMinIntervalMs);
-            VizTickMinIntervalMsText = parsed.ToString(CultureInfo.InvariantCulture);
-            UpdateVisualizationCadenceSummary();
+            _vizTickMinIntervalMs = ParseVisualizationIntervalSetting(item.Value, DefaultVizTickMinIntervalMs);
+            UpdateVisualizationCadenceFromSettings();
             return true;
         }
 
         if (string.Equals(item.Key, VisualizationSettingsKeys.StreamMinIntervalMsKey, StringComparison.OrdinalIgnoreCase))
         {
-            var parsed = ParseVisualizationIntervalSetting(item.Value, DefaultVizStreamMinIntervalMs);
-            VizStreamMinIntervalMsText = parsed.ToString(CultureInfo.InvariantCulture);
-            UpdateVisualizationCadenceSummary();
+            _vizStreamMinIntervalMs = ParseVisualizationIntervalSetting(item.Value, DefaultVizStreamMinIntervalMs);
+            UpdateVisualizationCadenceFromSettings();
             return true;
         }
 
@@ -1565,47 +1631,54 @@ public sealed class VizPanelViewModel : ViewModelBase
         Status = $"Applied activity options (tick window {tickWindow}, mini chart top N {topN}, mini range {rangeSeconds:0.###}s, adaptive LOD {(EnableAdaptiveLod ? "on" : "off")}).";
     }
 
-    private async Task ApplyTickRateOverrideAsync()
+    private async Task ApplyTickCadenceAsync()
     {
         if (!TryParseTickRateOverrideInput(TickRateOverrideText, out var targetTickHz))
         {
-            Status = "Tick override must be a positive value (e.g. 12.5Hz or 80ms).";
+            Status = "Tick cadence must be a positive value (e.g. 12.5Hz or 80ms).";
             return;
         }
 
-        var ack = await _brain.SetTickRateOverrideAsync(targetTickHz).ConfigureAwait(false);
-        UpdateTickRateOverrideStatus(ack, "Tick override request failed: HiveMind unavailable.");
-    }
+        var tickCadenceMs = 1000d / targetTickHz;
+        if (!double.IsFinite(tickCadenceMs)
+            || tickCadenceMs < TickSliderMinMs
+            || tickCadenceMs > TickSliderMaxMs)
+        {
+            Status = $"Tick cadence must be between {TickSliderMinMs:0} ms and {TickSliderMaxMs:0} ms (or equivalent Hz).";
+            return;
+        }
 
-    private async Task ClearTickRateOverrideAsync()
-    {
-        var ack = await _brain.SetTickRateOverrideAsync(null).ConfigureAwait(false);
-        UpdateTickRateOverrideStatus(ack, "Tick override clear failed: HiveMind unavailable.");
+        var setting = await _brain
+            .SetSettingAsync(TickSettingsKeys.CadenceHzKey, targetTickHz.ToString("0.###", CultureInfo.InvariantCulture))
+            .ConfigureAwait(false);
+        if (setting is null)
+        {
+            Status = "Tick cadence update failed: SettingsMonitor unavailable.";
+            return;
+        }
+
+        ApplySetting(new SettingItem(setting.Key, setting.Value, setting.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+        Status = $"Tick cadence target set to {FormatTickCadence(targetTickHz)}.";
     }
 
     private async Task ApplyVisualizationCadenceAsync()
     {
-        if (!TryParseVisualizationIntervalInput(VizTickMinIntervalMsText, out var tickIntervalMs))
+        if (!TryParseVisualizationIntervalInput(VizCadenceText, out var cadenceMs))
         {
-            Status = $"Viz tick cadence must be 0-{MaxVisualizationIntervalMs} ms (or positive Hz).";
+            Status = $"Viz cadence must be {MinVisualizationIntervalMs}-{MaxVisualizationIntervalMs} ms (or equivalent Hz).";
             return;
         }
 
-        if (!TryParseVisualizationIntervalInput(VizStreamMinIntervalMsText, out var streamIntervalMs))
-        {
-            Status = $"Viz stream cadence must be 0-{MaxVisualizationIntervalMs} ms (or positive Hz).";
-            return;
-        }
-
+        var adjustedCadenceMs = NormalizeVizCadenceForTickFloor(cadenceMs, out var enforcedFloorMs);
         var tickResult = await _brain
             .SetSettingAsync(
                 VisualizationSettingsKeys.TickMinIntervalMsKey,
-                tickIntervalMs.ToString(CultureInfo.InvariantCulture))
+                adjustedCadenceMs.ToString(CultureInfo.InvariantCulture))
             .ConfigureAwait(false);
         var streamResult = await _brain
             .SetSettingAsync(
                 VisualizationSettingsKeys.StreamMinIntervalMsKey,
-                streamIntervalMs.ToString(CultureInfo.InvariantCulture))
+                adjustedCadenceMs.ToString(CultureInfo.InvariantCulture))
             .ConfigureAwait(false);
 
         if (tickResult is not null)
@@ -1630,62 +1703,22 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        Status = BuildVisualizationCadenceSummary(
-            ParseVisualizationIntervalSetting(tickResult.Value, tickIntervalMs),
-            ParseVisualizationIntervalSetting(streamResult.Value, streamIntervalMs));
+        if (enforcedFloorMs.HasValue)
+        {
+            Status = $"Viz cadence clamped to {enforcedFloorMs.Value} ms to stay at or slower than tick cadence.";
+        }
+        else
+        {
+            Status = BuildVisualizationCadenceSummary(
+                ParseVisualizationIntervalSetting(tickResult.Value, adjustedCadenceMs),
+                ParseVisualizationIntervalSetting(streamResult.Value, adjustedCadenceMs));
+        }
     }
 
     private Task ResetVisualizationCadenceAsync()
     {
-        VizTickMinIntervalMsText = DefaultVizTickMinIntervalMs.ToString(CultureInfo.InvariantCulture);
-        VizStreamMinIntervalMsText = DefaultVizStreamMinIntervalMs.ToString(CultureInfo.InvariantCulture);
+        VizCadenceText = FormattableString.Invariant($"{DefaultVizStreamMinIntervalMs}ms");
         return ApplyVisualizationCadenceAsync();
-    }
-
-    private void UpdateTickRateOverrideStatus(Nbn.Proto.Control.SetTickRateOverrideAck? ack, string fallbackStatus)
-    {
-        if (ack is null)
-        {
-            Status = fallbackStatus;
-            return;
-        }
-
-        var targetTickHz = ack.TargetTickHz;
-        if (targetTickHz > 0f && float.IsFinite(targetTickHz))
-        {
-            RebaseMiniChartWindowOnCadenceChange(_currentTargetTickHz, targetTickHz);
-            _currentTargetTickHz = targetTickHz;
-            TickCadenceSummary = $"Current cadence: {FormatTickCadence(targetTickHz)}.";
-        }
-
-        if (ack.Accepted)
-        {
-            TickRateOverrideSummary = ack.HasOverride
-                ? $"Tick override active: {FormatTickCadence(ack.OverrideTickHz)}. Current target {FormatTickCadence(targetTickHz)}."
-                : $"Tick override cleared. Current target {FormatTickCadence(targetTickHz)}.";
-
-            if (ack.HasOverride)
-            {
-                if (ack.OverrideTickHz > 0f && float.IsFinite(ack.OverrideTickHz))
-                {
-                    var cadenceMs = 1000d / ack.OverrideTickHz;
-                    TickRateOverrideText = FormattableString.Invariant($"{cadenceMs:0.###}ms");
-                }
-                else
-                {
-                    TickRateOverrideText = ack.OverrideTickHz.ToString("0.###", CultureInfo.InvariantCulture);
-                }
-            }
-            else
-            {
-                TickRateOverrideText = string.Empty;
-            }
-        }
-
-        Status = string.IsNullOrWhiteSpace(ack.Message)
-            ? (ack.Accepted ? TickRateOverrideSummary : "Tick override request rejected.")
-            : ack.Message;
-        RefreshActivityProjection();
     }
 
     private void Clear()
@@ -1726,6 +1759,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         TickCadenceSummary = DefaultTickCadenceSummary;
         UpdateVisualizationCadenceSummary();
         _currentTargetTickHz = null;
+        OnPropertyChanged(nameof(VizCadenceSliderEffectiveMin));
+        EnsureVizCadenceSliderWithinEffectiveMinimum();
         ResetCanvasInteractionState(clearPins: true);
         ExportCommand.RaiseCanExecuteChanged();
         RefreshActivityProjection();
@@ -4942,7 +4977,7 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         if (!float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
             || !float.IsFinite(parsed)
-            || parsed < 0f)
+            || parsed <= 0f)
         {
             return false;
         }
@@ -4955,7 +4990,7 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
 
             var computedMs = 1000d / parsed;
-            if (!double.IsFinite(computedMs) || computedMs < 0d)
+            if (!double.IsFinite(computedMs) || computedMs <= 0d)
             {
                 return false;
             }
@@ -4963,13 +4998,8 @@ public sealed class VizPanelViewModel : ViewModelBase
             parsed = (float)computedMs;
         }
 
-        if (parsed > MaxVisualizationIntervalMs)
-        {
-            return false;
-        }
-
         intervalMs = (uint)Math.Round(parsed, MidpointRounding.AwayFromZero);
-        return intervalMs <= MaxVisualizationIntervalMs;
+        return intervalMs >= MinVisualizationIntervalMs && intervalMs <= MaxVisualizationIntervalMs;
     }
 
     private static uint ParseVisualizationIntervalSetting(string? value, uint fallback)
@@ -4980,14 +5010,199 @@ public sealed class VizPanelViewModel : ViewModelBase
             return fallback;
         }
 
-        return Math.Min(parsed, MaxVisualizationIntervalMs);
+        return Math.Clamp(parsed, MinVisualizationIntervalMs, MaxVisualizationIntervalMs);
     }
 
     private void UpdateVisualizationCadenceSummary()
     {
-        var tickMs = ParseVisualizationIntervalSetting(VizTickMinIntervalMsText, DefaultVizTickMinIntervalMs);
-        var streamMs = ParseVisualizationIntervalSetting(VizStreamMinIntervalMsText, DefaultVizStreamMinIntervalMs);
-        VizCadenceSummary = BuildVisualizationCadenceSummary(tickMs, streamMs);
+        VizCadenceSummary = BuildVisualizationCadenceSummary(_vizTickMinIntervalMs, _vizStreamMinIntervalMs);
+    }
+
+    private void UpdateVisualizationCadenceFromSettings()
+    {
+        UpdateVisualizationCadenceSummary();
+        if (_vizTickMinIntervalMs == _vizStreamMinIntervalMs)
+        {
+            var effectiveMin = VizCadenceSliderEffectiveMin;
+            var sliderValue = Math.Clamp((double)_vizTickMinIntervalMs, effectiveMin, VizSliderMaxMs);
+            _vizCadenceSliderSyncInProgress = true;
+            try
+            {
+                VizCadenceSliderMs = sliderValue;
+            }
+            finally
+            {
+                _vizCadenceSliderSyncInProgress = false;
+            }
+
+            VizCadenceText = FormattableString.Invariant($"{_vizTickMinIntervalMs}ms");
+        }
+        else
+        {
+            var effectiveMin = VizCadenceSliderEffectiveMin;
+            var sliderValue = Math.Clamp((double)_vizStreamMinIntervalMs, effectiveMin, VizSliderMaxMs);
+            _vizCadenceSliderSyncInProgress = true;
+            try
+            {
+                VizCadenceSliderMs = sliderValue;
+            }
+            finally
+            {
+                _vizCadenceSliderSyncInProgress = false;
+            }
+
+            VizCadenceText = FormattableString.Invariant($"{_vizStreamMinIntervalMs}ms");
+        }
+    }
+
+    private double? ResolveEffectiveTickCadenceMs()
+    {
+        if (TryParseTickRateOverrideInput(TickRateOverrideText, out var overrideHz))
+        {
+            var overrideMs = 1000d / overrideHz;
+            if (double.IsFinite(overrideMs) && overrideMs > 0d)
+            {
+                return overrideMs;
+            }
+        }
+
+        if (_currentTargetTickHz.HasValue && float.IsFinite(_currentTargetTickHz.Value) && _currentTargetTickHz.Value > 0f)
+        {
+            var targetMs = 1000d / _currentTargetTickHz.Value;
+            if (double.IsFinite(targetMs) && targetMs > 0d)
+            {
+                return targetMs;
+            }
+        }
+
+        return null;
+    }
+
+    private uint NormalizeVizCadenceForTickFloor(uint requestedCadenceMs, out uint? enforcedFloorMs)
+    {
+        enforcedFloorMs = null;
+        var tickCadenceMs = ResolveEffectiveTickCadenceMs();
+        if (!tickCadenceMs.HasValue)
+        {
+            return requestedCadenceMs;
+        }
+
+        var floorMs = (uint)Math.Clamp(
+            Math.Ceiling(tickCadenceMs.Value),
+            (double)MinVisualizationIntervalMs,
+            MaxVisualizationIntervalMs);
+        if (requestedCadenceMs >= floorMs)
+        {
+            return requestedCadenceMs;
+        }
+
+        enforcedFloorMs = floorMs;
+        return floorMs;
+    }
+
+    private void SyncTickCadenceTextFromSlider(double sliderMs)
+    {
+        if (_tickCadenceSliderSyncInProgress)
+        {
+            return;
+        }
+
+        _tickCadenceTextSyncInProgress = true;
+        try
+        {
+            TickRateOverrideText = FormattableString.Invariant($"{sliderMs:0.###}ms");
+        }
+        finally
+        {
+            _tickCadenceTextSyncInProgress = false;
+        }
+    }
+
+    private void SyncTickCadenceSliderFromText(string? text)
+    {
+        if (_tickCadenceTextSyncInProgress || !TryParseTickRateOverrideInput(text, out var targetHz))
+        {
+            return;
+        }
+
+        var targetMs = 1000d / targetHz;
+        if (!double.IsFinite(targetMs) || targetMs <= 0d)
+        {
+            return;
+        }
+
+        _tickCadenceSliderSyncInProgress = true;
+        try
+        {
+            TickCadenceSliderMs = Math.Clamp(targetMs, TickSliderMinMs, TickSliderMaxMs);
+        }
+        finally
+        {
+            _tickCadenceSliderSyncInProgress = false;
+        }
+
+        OnPropertyChanged(nameof(VizCadenceSliderEffectiveMin));
+        EnsureVizCadenceSliderWithinEffectiveMinimum();
+    }
+
+    private void SyncVizCadenceTextFromSlider(double sliderMs)
+    {
+        if (_vizCadenceSliderSyncInProgress)
+        {
+            return;
+        }
+
+        var effectiveMin = VizCadenceSliderEffectiveMin;
+        var normalizedMs = Math.Clamp(sliderMs, effectiveMin, VizSliderMaxMs);
+        _vizCadenceTextSyncInProgress = true;
+        try
+        {
+            VizCadenceText = FormattableString.Invariant($"{normalizedMs:0.###}ms");
+        }
+        finally
+        {
+            _vizCadenceTextSyncInProgress = false;
+        }
+    }
+
+    private void SyncVizCadenceSliderFromText(string? text)
+    {
+        if (_vizCadenceTextSyncInProgress || !TryParseVisualizationIntervalInput(text, out var parsedIntervalMs))
+        {
+            return;
+        }
+
+        var effectiveMin = VizCadenceSliderEffectiveMin;
+        var sliderTarget = Math.Clamp((double)parsedIntervalMs, effectiveMin, VizSliderMaxMs);
+
+        _vizCadenceSliderSyncInProgress = true;
+        try
+        {
+            VizCadenceSliderMs = sliderTarget;
+        }
+        finally
+        {
+            _vizCadenceSliderSyncInProgress = false;
+        }
+    }
+
+    private void EnsureVizCadenceSliderWithinEffectiveMinimum()
+    {
+        var effectiveMin = VizCadenceSliderEffectiveMin;
+        if (_vizCadenceSliderMs >= effectiveMin)
+        {
+            return;
+        }
+
+        _vizCadenceSliderSyncInProgress = true;
+        try
+        {
+            VizCadenceSliderMs = effectiveMin;
+        }
+        finally
+        {
+            _vizCadenceSliderSyncInProgress = false;
+        }
     }
 
     private static string BuildVisualizationCadenceSummary(uint tickMinIntervalMs, uint streamMinIntervalMs)

@@ -638,7 +638,7 @@ public sealed class HiveMindActor : IActor
     private bool TryApplyTickRateOverrideSetting(IContext context, string? key, string? value)
     {
         if (string.IsNullOrWhiteSpace(key)
-            || !string.Equals(key, TickSettingsKeys.OverrideHzKey, StringComparison.OrdinalIgnoreCase))
+            || !string.Equals(key, TickSettingsKeys.CadenceHzKey, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -649,7 +649,7 @@ public sealed class HiveMindActor : IActor
                 context,
                 ProtoSeverity.SevWarn,
                 "tick.override.setting.invalid",
-                $"Ignoring invalid tick override setting '{TickSettingsKeys.OverrideHzKey}'='{value ?? string.Empty}'.");
+                $"Ignoring invalid tick cadence setting '{TickSettingsKeys.CadenceHzKey}'='{value ?? string.Empty}'.");
             return false;
         }
 
@@ -5516,7 +5516,7 @@ public sealed class HiveMindActor : IActor
 
         context.Send(_settingsPid, new ProtoSettings.SettingSet
         {
-            Key = TickSettingsKeys.OverrideHzKey,
+            Key = TickSettingsKeys.CadenceHzKey,
             Value = value
         });
     }

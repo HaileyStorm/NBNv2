@@ -47,29 +47,35 @@
                   CornerRadius="10"
                   Background="{DynamicResource NbnSurfaceAltBrush}"
                   Padding="8">
-            <Grid ColumnDefinitions="Auto,260,Auto,Auto,*"
+            <Grid ColumnDefinitions="Auto,*,Auto,*"
                   RowDefinitions="Auto,Auto,Auto"
                   ColumnSpacing="8"
                   RowSpacing="4">
               <TextBlock Text="Tick cadence"
-                         Classes="row-title"
-                         VerticalAlignment="Center" />
-              <TextBox Grid.Column="1"
-                       Text="{Binding TickRateOverrideText}"
-                       Watermark="e.g. 80ms or 12.5Hz" />
+                          Classes="row-title"
+                          VerticalAlignment="Center" />
+              <StackPanel Grid.Column="1"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          VerticalAlignment="Center">
+                <TextBox Width="120"
+                         Text="{Binding TickRateOverrideText}"
+                         Watermark="80ms or 12.5Hz" />
+                <Slider Width="220"
+                        Minimum="{Binding TickCadenceSliderMin}"
+                        Maximum="{Binding TickCadenceSliderMax}"
+                        Value="{Binding TickCadenceSliderMs}" />
+              </StackPanel>
               <Button Grid.Column="2"
-                      Content="Apply cadence"
+                      Content="Apply rate"
                       Command="{Binding ApplyTickRateOverrideCommand}" />
-              <Button Grid.Column="3"
-                      Content="Clear"
-                      Command="{Binding ClearTickRateOverrideCommand}" />
-              <TextBlock Grid.Column="4"
-                         Text="{Binding TickCadenceSummary}"
-                         Classes="row-title"
-                         VerticalAlignment="Center"
-                         TextWrapping="Wrap" />
+              <TextBlock Grid.Column="3"
+                          Text="{Binding TickCadenceSummary}"
+                          Classes="row-title"
+                          VerticalAlignment="Center"
+                          TextWrapping="Wrap" />
               <TextBlock Grid.Row="1"
-                         Grid.ColumnSpan="5"
+                         Grid.ColumnSpan="4"
                          Text="{Binding TickRateOverrideSummary}"
                          Classes="muted"
                          VerticalAlignment="Center"
@@ -83,29 +89,24 @@
                           Orientation="Horizontal"
                           Spacing="8"
                           VerticalAlignment="Center">
-                <TextBlock Text="Tick ms" Classes="muted" VerticalAlignment="Center" />
-                <TextBox Width="64"
-                         Text="{Binding VizTickMinIntervalMsText}"
-                         Watermark="250" />
-                <TextBlock Text="Stream ms" Classes="muted" VerticalAlignment="Center" />
-                <TextBox Width="64"
-                         Text="{Binding VizStreamMinIntervalMsText}"
-                         Watermark="250" />
+                <TextBox Width="120"
+                         Text="{Binding VizCadenceText}"
+                         Watermark="250ms or 4Hz" />
+                <Slider Width="220"
+                        Minimum="{Binding VizCadenceSliderEffectiveMin}"
+                        Maximum="{Binding VizCadenceSliderMax}"
+                        Value="{Binding VizCadenceSliderMs}" />
               </StackPanel>
               <Button Grid.Row="2"
                       Grid.Column="2"
                       Content="Apply viz"
                       Command="{Binding ApplyVizCadenceCommand}" />
-              <Button Grid.Row="2"
-                      Grid.Column="3"
-                      Content="Default"
-                      Command="{Binding ResetVizCadenceCommand}" />
               <TextBlock Grid.Row="2"
-                         Grid.Column="4"
+                         Grid.Column="3"
                          Text="{Binding VizCadenceSummary}"
-                         Classes="row-title"
-                         VerticalAlignment="Center"
-                         TextWrapping="Wrap" />
+                          Classes="row-title"
+                          VerticalAlignment="Center"
+                          TextWrapping="Wrap" />
             </Grid>
           </Border>
           <Grid ColumnDefinitions="Auto,220,Auto,Auto,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">

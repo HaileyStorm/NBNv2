@@ -4,7 +4,9 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Proto.Io;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -58,6 +60,16 @@ public class VizPanelViewModelInteractionTests
             "_selectedCanvasRouteLabel",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("_selectedCanvasRouteLabel field not found.");
+    private static readonly MethodInfo ApplyVisualizationCadenceAsyncMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "ApplyVisualizationCadenceAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ApplyVisualizationCadenceAsync method not found.");
+    private static readonly MethodInfo ApplyTickCadenceAsyncMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "ApplyTickCadenceAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ApplyTickCadenceAsync method not found.");
 
     [Fact]
     public void TryResolveCanvasHit_NodeHoverStickyTolerance_ResolvesNearMiss()
@@ -777,12 +789,12 @@ public class VizPanelViewModelInteractionTests
         vm.ApplyHiveMindTickStatus(targetTickHz: 8f, hasOverride: false, overrideTickHz: 0f);
 
         Assert.Equal("Current cadence: 8 Hz (125 ms/tick).", vm.TickCadenceSummary);
-        Assert.Equal("Tick override: default runtime backpressure target. Current target 8 Hz (125 ms/tick).", vm.TickRateOverrideSummary);
+        Assert.Equal("Tick cadence control is not set. Current runtime target 8 Hz (125 ms/tick).", vm.TickRateOverrideSummary);
 
         vm.ApplyHiveMindTickStatus(targetTickHz: 12.5f, hasOverride: true, overrideTickHz: 25f);
 
         Assert.Equal("Current cadence: 12.5 Hz (80 ms/tick).", vm.TickCadenceSummary);
-        Assert.Equal("Tick override active: 25 Hz (40 ms/tick). Current target 12.5 Hz (80 ms/tick).", vm.TickRateOverrideSummary);
+        Assert.Equal("Tick cadence control target: 25 Hz (40 ms/tick). Current runtime target 12.5 Hz (80 ms/tick).", vm.TickRateOverrideSummary);
     }
 
     [Theory]
@@ -810,6 +822,50 @@ public class VizPanelViewModelInteractionTests
 
         Assert.False(ok);
         Assert.Equal(0f, hz);
+    }
+
+    [Fact]
+    public async Task ApplyTickCadenceAsync_RejectsOutOfRangeCadence()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.TickRateOverrideText = "0.5ms";
+
+        await InvokePrivateAsync(ApplyTickCadenceAsyncMethod, vm);
+
+        Assert.Equal("Tick cadence must be between 1 ms and 1000 ms (or equivalent Hz).", vm.Status);
+        Assert.Empty(client.SetSettingCalls);
+    }
+
+    [Fact]
+    public async Task ApplyVisualizationCadenceAsync_RejectsOutOfRangeCadence()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.VizCadenceText = "50ms";
+
+        await InvokePrivateAsync(ApplyVisualizationCadenceAsyncMethod, vm);
+
+        Assert.Equal("Viz cadence must be 100-3000 ms (or equivalent Hz).", vm.Status);
+        Assert.Empty(client.SetSettingCalls);
+    }
+
+    [Fact]
+    public async Task ApplyVisualizationCadenceAsync_ClampsToTickCadenceFloor()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.TickRateOverrideText = "500ms";
+        vm.VizCadenceText = "100ms";
+
+        await InvokePrivateAsync(ApplyVisualizationCadenceAsyncMethod, vm);
+
+        Assert.Equal("500", client.SettingsByKey[VisualizationSettingsKeys.TickMinIntervalMsKey]);
+        Assert.Equal("500", client.SettingsByKey[VisualizationSettingsKeys.StreamMinIntervalMsKey]);
+        Assert.Equal("Viz cadence clamped to 500 ms to stay at or slower than tick cadence.", vm.Status);
+        Assert.Equal(500d, vm.VizCadenceSliderEffectiveMin);
+        Assert.Equal(500d, vm.VizCadenceSliderMs);
+        Assert.Equal("500ms", vm.VizCadenceText);
     }
 
     [Fact]
@@ -1306,6 +1362,13 @@ public class VizPanelViewModelInteractionTests
         return new VizPanelViewModel(dispatcher, io);
     }
 
+    private static async Task InvokePrivateAsync(MethodInfo method, object instance)
+    {
+        var task = method.Invoke(instance, Array.Empty<object>()) as Task;
+        Assert.NotNull(task);
+        await task!;
+    }
+
     private static (double X, double Y) ParseMiniChartFirstPoint(string pathData)
     {
         Assert.False(string.IsNullOrWhiteSpace(pathData));
@@ -1350,6 +1413,8 @@ public class VizPanelViewModelInteractionTests
         }
 
         public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
+        public Dictionary<string, string> SettingsByKey { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<(string Key, string Value)> SetSettingCalls { get; } = new();
 
         public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
         {
@@ -1359,6 +1424,18 @@ public class VizPanelViewModelInteractionTests
             }
 
             return Task.FromResult<BrainInfo?>(null);
+        }
+
+        public override Task<SettingValue?> SetSettingAsync(string key, string value)
+        {
+            SetSettingCalls.Add((key, value));
+            SettingsByKey[key] = value;
+            return Task.FromResult<SettingValue?>(new SettingValue
+            {
+                Key = key,
+                Value = value,
+                UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
         }
     }
 

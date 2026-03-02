@@ -39,7 +39,7 @@ public static class SettingsMonitorDefaults
             { PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, "true" },
             { IoCoordinatorSettingsKeys.InputCoordinatorModeKey, "dirty_on_change" },
             { IoCoordinatorSettingsKeys.OutputVectorSourceKey, "potential" },
-            { TickSettingsKeys.OverrideHzKey, string.Empty },
+            { TickSettingsKeys.CadenceHzKey, string.Empty },
             { VisualizationSettingsKeys.TickMinIntervalMsKey, "250" },
             { VisualizationSettingsKeys.StreamMinIntervalMsKey, "250" }
         };
