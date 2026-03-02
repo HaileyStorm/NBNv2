@@ -5,6 +5,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Proto.Speciation;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
@@ -22,6 +23,7 @@ public class ProtoCompatibilityTests
         Assert.Equal("nbn.control", NbnControlReflection.Descriptor.Package);
         Assert.Equal("nbn.io", NbnIoReflection.Descriptor.Package);
         Assert.Equal("nbn.repro", NbnReproReflection.Descriptor.Package);
+        Assert.Equal("nbn.speciation", NbnSpeciationReflection.Descriptor.Package);
         Assert.Equal("nbn.settings", NbnSettingsReflection.Descriptor.Package);
         Assert.Equal("nbn.signal", NbnSignalsReflection.Descriptor.Package);
         Assert.Equal("nbn.debug", NbnDebugReflection.Descriptor.Package);
@@ -661,6 +663,127 @@ public class ProtoCompatibilityTests
 
         var assessResult = descriptor.MessageTypes.Single(message => message.Name == "AssessCompatibilityResult");
         AssertField(assessResult, "result", 1, FieldType.Message, "nbn.repro.ReproduceResult");
+    }
+
+    [Fact]
+    public void ProtoIo_SpeciationWrappers_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var status = descriptor.MessageTypes.Single(message => message.Name == "SpeciationStatus");
+        AssertField(status, "request", 1, FieldType.Message, "nbn.speciation.SpeciationStatusRequest");
+
+        var statusResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationStatusResult");
+        AssertField(statusResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationStatusResponse");
+
+        var getConfig = descriptor.MessageTypes.Single(message => message.Name == "SpeciationGetConfig");
+        AssertField(getConfig, "request", 1, FieldType.Message, "nbn.speciation.SpeciationGetConfigRequest");
+
+        var getConfigResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationGetConfigResult");
+        AssertField(getConfigResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationGetConfigResponse");
+
+        var setConfig = descriptor.MessageTypes.Single(message => message.Name == "SpeciationSetConfig");
+        AssertField(setConfig, "request", 1, FieldType.Message, "nbn.speciation.SpeciationSetConfigRequest");
+
+        var setConfigResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationSetConfigResult");
+        AssertField(setConfigResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationSetConfigResponse");
+
+        var evaluate = descriptor.MessageTypes.Single(message => message.Name == "SpeciationEvaluate");
+        AssertField(evaluate, "request", 1, FieldType.Message, "nbn.speciation.SpeciationEvaluateRequest");
+
+        var evaluateResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationEvaluateResult");
+        AssertField(evaluateResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationEvaluateResponse");
+
+        var assign = descriptor.MessageTypes.Single(message => message.Name == "SpeciationAssign");
+        AssertField(assign, "request", 1, FieldType.Message, "nbn.speciation.SpeciationAssignRequest");
+
+        var assignResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationAssignResult");
+        AssertField(assignResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationAssignResponse");
+
+        var batch = descriptor.MessageTypes.Single(message => message.Name == "SpeciationBatchEvaluateApply");
+        AssertField(batch, "request", 1, FieldType.Message, "nbn.speciation.SpeciationBatchEvaluateApplyRequest");
+
+        var batchResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationBatchEvaluateApplyResult");
+        AssertField(batchResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationBatchEvaluateApplyResponse");
+
+        var listMemberships = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListMemberships");
+        AssertField(listMemberships, "request", 1, FieldType.Message, "nbn.speciation.SpeciationListMembershipsRequest");
+
+        var listMembershipsResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListMembershipsResult");
+        AssertField(listMembershipsResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationListMembershipsResponse");
+
+        var queryMembership = descriptor.MessageTypes.Single(message => message.Name == "SpeciationQueryMembership");
+        AssertField(queryMembership, "request", 1, FieldType.Message, "nbn.speciation.SpeciationQueryMembershipRequest");
+
+        var queryMembershipResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationQueryMembershipResult");
+        AssertField(queryMembershipResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationQueryMembershipResponse");
+
+        var listHistory = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListHistory");
+        AssertField(listHistory, "request", 1, FieldType.Message, "nbn.speciation.SpeciationListHistoryRequest");
+
+        var listHistoryResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListHistoryResult");
+        AssertField(listHistoryResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationListHistoryResponse");
+    }
+
+    [Fact]
+    public void ProtoSpeciation_ContractFields_AreStable()
+    {
+        var descriptor = NbnSpeciationReflection.Descriptor;
+
+        var failureReason = descriptor.EnumTypes.Single(@enum => @enum.Name == "SpeciationFailureReason");
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_NONE", 0);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_SERVICE_INITIALIZING", 1);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_SERVICE_UNAVAILABLE", 2);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_INVALID_REQUEST", 3);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_INVALID_CANDIDATE", 4);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_UNSUPPORTED_CANDIDATE", 5);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_STORE_ERROR", 6);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_MEMBERSHIP_IMMUTABLE", 7);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_EMPTY_RESPONSE", 8);
+        AssertEnumValue(failureReason, "SPECIATION_FAILURE_REQUEST_FAILED", 9);
+
+        var applyMode = descriptor.EnumTypes.Single(@enum => @enum.Name == "SpeciationApplyMode");
+        AssertEnumValue(applyMode, "SPECIATION_APPLY_MODE_DRY_RUN", 0);
+        AssertEnumValue(applyMode, "SPECIATION_APPLY_MODE_COMMIT", 1);
+
+        var candidateMode = descriptor.EnumTypes.Single(@enum => @enum.Name == "SpeciationCandidateMode");
+        AssertEnumValue(candidateMode, "SPECIATION_CANDIDATE_MODE_UNKNOWN", 0);
+        AssertEnumValue(candidateMode, "SPECIATION_CANDIDATE_MODE_BRAIN_ID", 1);
+        AssertEnumValue(candidateMode, "SPECIATION_CANDIDATE_MODE_ARTIFACT_REF", 2);
+        AssertEnumValue(candidateMode, "SPECIATION_CANDIDATE_MODE_ARTIFACT_URI", 3);
+
+        var config = descriptor.MessageTypes.Single(message => message.Name == "SpeciationRuntimeConfig");
+        AssertField(config, "policy_version", 1, FieldType.String);
+        AssertField(config, "config_snapshot_json", 2, FieldType.String);
+        AssertField(config, "default_species_id", 3, FieldType.String);
+        AssertField(config, "default_species_display_name", 4, FieldType.String);
+        AssertField(config, "startup_reconcile_decision_reason", 5, FieldType.String);
+
+        var candidate = descriptor.MessageTypes.Single(message => message.Name == "SpeciationCandidateRef");
+        AssertField(candidate, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(candidate, "artifact_ref", 2, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(candidate, "artifact_uri", 3, FieldType.String);
+
+        var decision = descriptor.MessageTypes.Single(message => message.Name == "SpeciationDecision");
+        AssertField(decision, "apply_mode", 1, FieldType.Enum, "nbn.speciation.SpeciationApplyMode");
+        AssertField(decision, "candidate_mode", 2, FieldType.Enum, "nbn.speciation.SpeciationCandidateMode");
+        AssertField(decision, "failure_reason", 6, FieldType.Enum, "nbn.speciation.SpeciationFailureReason");
+        AssertField(decision, "committed", 12, FieldType.Bool);
+        AssertField(decision, "membership", 13, FieldType.Message, "nbn.speciation.SpeciationMembershipRecord");
+
+        var assign = descriptor.MessageTypes.Single(message => message.Name == "SpeciationAssignRequest");
+        AssertField(assign, "apply_mode", 1, FieldType.Enum, "nbn.speciation.SpeciationApplyMode");
+        AssertField(assign, "candidate", 2, FieldType.Message, "nbn.speciation.SpeciationCandidateRef");
+        AssertRepeatedField(assign, "parents", 3, FieldType.Message, "nbn.speciation.SpeciationParentRef");
+
+        var batch = descriptor.MessageTypes.Single(message => message.Name == "SpeciationBatchEvaluateApplyRequest");
+        AssertField(batch, "apply_mode", 1, FieldType.Enum, "nbn.speciation.SpeciationApplyMode");
+        AssertRepeatedField(batch, "items", 2, FieldType.Message, "nbn.speciation.SpeciationBatchItem");
+
+        var listHistory = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListHistoryResponse");
+        AssertField(listHistory, "failure_reason", 1, FieldType.Enum, "nbn.speciation.SpeciationFailureReason");
+        AssertRepeatedField(listHistory, "history", 3, FieldType.Message, "nbn.speciation.SpeciationMembershipRecord");
+        AssertField(listHistory, "total_records", 4, FieldType.UInt32);
     }
 
     [Fact]

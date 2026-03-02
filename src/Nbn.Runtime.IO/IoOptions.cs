@@ -13,7 +13,9 @@ public sealed record IoOptions(
     string? HiveMindAddress,
     string? HiveMindName,
     string? ReproAddress,
-    string? ReproName)
+    string? ReproName,
+    string? SpeciationAddress = null,
+    string? SpeciationName = null)
 {
     public static IoOptions FromArgs(string[] args)
     {
@@ -30,6 +32,8 @@ public sealed record IoOptions(
         var hiveMindName = GetEnv("NBN_IO_HIVEMIND_NAME");
         var reproAddress = GetEnv("NBN_IO_REPRO_ADDRESS");
         var reproName = GetEnv("NBN_IO_REPRO_NAME");
+        var speciationAddress = GetEnv("NBN_IO_SPECIATION_ADDRESS");
+        var speciationName = GetEnv("NBN_IO_SPECIATION_NAME");
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -120,6 +124,18 @@ public sealed record IoOptions(
                     if (i + 1 < args.Length)
                     {
                         reproName = args[++i];
+                    }
+                    continue;
+                case "--speciation-address":
+                    if (i + 1 < args.Length)
+                    {
+                        speciationAddress = args[++i];
+                    }
+                    continue;
+                case "--speciation-name":
+                    if (i + 1 < args.Length)
+                    {
+                        speciationName = args[++i];
                     }
                     continue;
             }
@@ -214,6 +230,18 @@ public sealed record IoOptions(
             if (arg.StartsWith("--repro-name=", StringComparison.OrdinalIgnoreCase))
             {
                 reproName = arg.Substring("--repro-name=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--speciation-address=", StringComparison.OrdinalIgnoreCase))
+            {
+                speciationAddress = arg.Substring("--speciation-address=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--speciation-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                speciationName = arg.Substring("--speciation-name=".Length);
             }
         }
 
@@ -230,7 +258,9 @@ public sealed record IoOptions(
             hiveMindAddress,
             hiveMindName,
             reproAddress,
-            reproName);
+            reproName,
+            speciationAddress,
+            speciationName);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -257,5 +287,7 @@ public sealed record IoOptions(
         Console.WriteLine("  --hivemind-name <name>           HiveMind actor name");
         Console.WriteLine("  --repro-address <host:port>      Reproduction manager remote address");
         Console.WriteLine("  --repro-name <name>              Reproduction manager actor name");
+        Console.WriteLine("  --speciation-address <host:port> Speciation manager remote address");
+        Console.WriteLine("  --speciation-name <name>         Speciation manager actor name");
     }
 }

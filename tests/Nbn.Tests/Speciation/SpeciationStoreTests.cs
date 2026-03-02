@@ -102,6 +102,49 @@ public sealed class SpeciationStoreTests
     }
 
     [Fact]
+    public async Task TryAssignMembershipAsync_WithLineageParents_PersistsEdgesAndSupportsLatestChildLookup()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SpeciationStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var runtimeConfig = CreateRuntimeConfig();
+        var epoch = await store.EnsureCurrentEpochAsync(runtimeConfig, createdMs: 100);
+        var parentA = Guid.NewGuid();
+        var parentB = Guid.NewGuid();
+        var child = Guid.NewGuid();
+
+        var outcome = await store.TryAssignMembershipAsync(
+            epoch.EpochId,
+            new SpeciationAssignment(
+                BrainId: child,
+                SpeciesId: "species-lineage",
+                SpeciesDisplayName: "Species Lineage",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "lineage_assign",
+                DecisionMetadataJson: "{\"source\":\"store-test\"}"),
+            decisionTimeMs: 200,
+            lineageParentBrainIds: new[] { parentB, parentA, parentA, Guid.Empty, child },
+            lineageMetadataJson: "{\"source\":\"lineage_ingest\"}");
+
+        Assert.True(outcome.Created);
+        Assert.False(outcome.ImmutableConflict);
+
+        var status = await store.GetStatusAsync(epoch.EpochId);
+        Assert.Equal(2, status.LineageEdgeCount);
+
+        var latestForParentA = await store.GetLatestChildMembershipForParentAsync(epoch.EpochId, parentA);
+        var latestForParentB = await store.GetLatestChildMembershipForParentAsync(epoch.EpochId, parentB);
+        var missingParent = await store.GetLatestChildMembershipForParentAsync(epoch.EpochId, Guid.NewGuid());
+
+        Assert.NotNull(latestForParentA);
+        Assert.NotNull(latestForParentB);
+        Assert.Equal("species-lineage", latestForParentA!.SpeciesId);
+        Assert.Equal("species-lineage", latestForParentB!.SpeciesId);
+        Assert.Null(missingParent);
+    }
+
+    [Fact]
     public async Task ResetEpochAsync_CreatesNewEpochWithoutRewritingHistoricalMembership()
     {
         using var db = new TempDatabaseScope();

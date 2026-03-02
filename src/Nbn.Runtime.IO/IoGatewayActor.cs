@@ -1,9 +1,10 @@
-using Nbn.Proto;
+﻿using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
 using Nbn.Shared;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoSpec = Nbn.Proto.Speciation;
 
 namespace Nbn.Runtime.IO;
 
@@ -15,6 +16,7 @@ public sealed class IoGatewayActor : IActor
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan SpeciationRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan ExportRequestTimeout = TimeSpan.FromSeconds(45);
     private const float DefaultPlasticityRate = 0.001f;
     private const float DefaultPlasticityDelta = DefaultPlasticityRate;
@@ -35,12 +37,14 @@ public sealed class IoGatewayActor : IActor
     private readonly Dictionary<Guid, string> _routerRegistration = new();
     private readonly PID? _hiveMindPid;
     private readonly PID? _reproPid;
+    private readonly PID? _speciationPid;
 
-    public IoGatewayActor(IoOptions options, PID? hiveMindPid = null, PID? reproPid = null)
+    public IoGatewayActor(IoOptions options, PID? hiveMindPid = null, PID? reproPid = null, PID? speciationPid = null)
     {
         _options = options;
         _hiveMindPid = hiveMindPid ?? TryCreatePid(options.HiveMindAddress, options.HiveMindName);
         _reproPid = reproPid ?? TryCreatePid(options.ReproAddress, options.ReproName);
+        _speciationPid = speciationPid ?? TryCreatePid(options.SpeciationAddress, options.SpeciationName);
     }
 
     public async Task ReceiveAsync(IContext context)
@@ -133,6 +137,33 @@ public sealed class IoGatewayActor : IActor
                 break;
             case AssessCompatibilityByArtifacts message:
                 HandleAssessCompatibilityByArtifacts(context, message);
+                break;
+            case SpeciationStatus message:
+                HandleSpeciationStatus(context, message);
+                break;
+            case SpeciationGetConfig message:
+                HandleSpeciationGetConfig(context, message);
+                break;
+            case SpeciationSetConfig message:
+                HandleSpeciationSetConfig(context, message);
+                break;
+            case SpeciationEvaluate message:
+                HandleSpeciationEvaluate(context, message);
+                break;
+            case SpeciationAssign message:
+                HandleSpeciationAssign(context, message);
+                break;
+            case SpeciationBatchEvaluateApply message:
+                HandleSpeciationBatchEvaluateApply(context, message);
+                break;
+            case SpeciationListMemberships message:
+                HandleSpeciationListMemberships(context, message);
+                break;
+            case SpeciationQueryMembership message:
+                HandleSpeciationQueryMembership(context, message);
+                break;
+            case SpeciationListHistory message:
+                HandleSpeciationListHistory(context, message);
                 break;
         }
     }
@@ -1305,6 +1336,272 @@ public sealed class IoGatewayActor : IActor
         });
     }
 
+    private void HandleSpeciationStatus(IContext context, SpeciationStatus message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationStatusRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationStatusResult { Response = response },
+            static (reason, detail) => CreateSpeciationStatusFailure(reason, detail),
+            operationName: nameof(SpeciationStatus));
+    }
+
+    private void HandleSpeciationGetConfig(IContext context, SpeciationGetConfig message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationGetConfigRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationGetConfigResult { Response = response },
+            static (reason, detail) => CreateSpeciationGetConfigFailure(reason, detail),
+            operationName: nameof(SpeciationGetConfig));
+    }
+
+    private void HandleSpeciationSetConfig(IContext context, SpeciationSetConfig message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationSetConfigRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationSetConfigResult { Response = response },
+            static (reason, detail) => CreateSpeciationSetConfigFailure(reason, detail),
+            operationName: nameof(SpeciationSetConfig));
+    }
+
+    private void HandleSpeciationEvaluate(IContext context, SpeciationEvaluate message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationEvaluateRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationEvaluateResult { Response = response },
+            static (reason, detail) => new ProtoSpec.SpeciationEvaluateResponse
+            {
+                Decision = CreateSpeciationDecisionFailure(
+                    ProtoSpec.SpeciationApplyMode.DryRun,
+                    reason,
+                    detail)
+            },
+            operationName: nameof(SpeciationEvaluate));
+    }
+
+    private void HandleSpeciationAssign(IContext context, SpeciationAssign message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationAssignRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationAssignResult { Response = response },
+            (reason, detail) => new ProtoSpec.SpeciationAssignResponse
+            {
+                Decision = CreateSpeciationDecisionFailure(
+                    NormalizeSpeciationApplyMode(request.ApplyMode),
+                    reason,
+                    detail)
+            },
+            operationName: nameof(SpeciationAssign));
+    }
+
+    private void HandleSpeciationBatchEvaluateApply(IContext context, SpeciationBatchEvaluateApply message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationBatchEvaluateApplyRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationBatchEvaluateApplyResult { Response = response },
+            (reason, detail) => new ProtoSpec.SpeciationBatchEvaluateApplyResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                ApplyMode = NormalizeSpeciationApplyMode(request.ApplyMode),
+                RequestedCount = (uint)request.Items.Count,
+                ProcessedCount = 0,
+                CommittedCount = 0
+            },
+            operationName: nameof(SpeciationBatchEvaluateApply));
+    }
+
+    private void HandleSpeciationListMemberships(IContext context, SpeciationListMemberships message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationListMembershipsRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationListMembershipsResult { Response = response },
+            static (reason, detail) => new ProtoSpec.SpeciationListMembershipsResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail
+            },
+            operationName: nameof(SpeciationListMemberships));
+    }
+
+    private void HandleSpeciationQueryMembership(IContext context, SpeciationQueryMembership message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationQueryMembershipRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationQueryMembershipResult { Response = response },
+            static (reason, detail) => new ProtoSpec.SpeciationQueryMembershipResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                Found = false
+            },
+            operationName: nameof(SpeciationQueryMembership));
+    }
+
+    private void HandleSpeciationListHistory(IContext context, SpeciationListHistory message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationListHistoryRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationListHistoryResult { Response = response },
+            static (reason, detail) => new ProtoSpec.SpeciationListHistoryResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                TotalRecords = 0
+            },
+            operationName: nameof(SpeciationListHistory));
+    }
+
+    private void ForwardSpeciationRequest<TRequest, TResponse, TResult>(
+        IContext context,
+        TRequest request,
+        Func<TResponse, TResult> wrapResponse,
+        Func<ProtoSpec.SpeciationFailureReason, string, TResponse> createFailureResponse,
+        string operationName)
+        where TRequest : class
+        where TResponse : class
+        where TResult : class
+    {
+        if (_speciationPid is null)
+        {
+            context.Respond(
+                wrapResponse(
+                    createFailureResponse(
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceUnavailable,
+                        $"{operationName} failed: speciation manager endpoint is not configured.")));
+            return;
+        }
+
+        var requestTask = context.RequestAsync<TResponse>(_speciationPid, request, SpeciationRequestTimeout);
+        context.ReenterAfter(requestTask, completed =>
+        {
+            if (completed.IsCompletedSuccessfully)
+            {
+                var response = completed.Result;
+                if (response is null)
+                {
+                    context.Respond(
+                        wrapResponse(
+                            createFailureResponse(
+                                ProtoSpec.SpeciationFailureReason.SpeciationFailureEmptyResponse,
+                                $"{operationName} failed: speciation manager returned an empty response.")));
+                    return Task.CompletedTask;
+                }
+
+                context.Respond(wrapResponse(response));
+                return Task.CompletedTask;
+            }
+
+            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+            Console.WriteLine($"{operationName} failed: {detail}");
+            context.Respond(
+                wrapResponse(
+                    createFailureResponse(
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureRequestFailed,
+                        $"{operationName} failed: forwarding request to speciation manager failed ({detail}).")));
+            return Task.CompletedTask;
+        });
+    }
+
+    private static ProtoSpec.SpeciationStatusResponse CreateSpeciationStatusFailure(
+        ProtoSpec.SpeciationFailureReason reason,
+        string detail)
+    {
+        return new ProtoSpec.SpeciationStatusResponse
+        {
+            FailureReason = reason,
+            FailureDetail = detail,
+            Status = new ProtoSpec.SpeciationStatusSnapshot(),
+            CurrentEpoch = new ProtoSpec.SpeciationEpochInfo(),
+            Config = CreateDefaultSpeciationConfig()
+        };
+    }
+
+    private static ProtoSpec.SpeciationGetConfigResponse CreateSpeciationGetConfigFailure(
+        ProtoSpec.SpeciationFailureReason reason,
+        string detail)
+    {
+        return new ProtoSpec.SpeciationGetConfigResponse
+        {
+            FailureReason = reason,
+            FailureDetail = detail,
+            Config = CreateDefaultSpeciationConfig(),
+            CurrentEpoch = new ProtoSpec.SpeciationEpochInfo()
+        };
+    }
+
+    private static ProtoSpec.SpeciationSetConfigResponse CreateSpeciationSetConfigFailure(
+        ProtoSpec.SpeciationFailureReason reason,
+        string detail)
+    {
+        return new ProtoSpec.SpeciationSetConfigResponse
+        {
+            FailureReason = reason,
+            FailureDetail = detail,
+            Config = CreateDefaultSpeciationConfig(),
+            PreviousEpoch = new ProtoSpec.SpeciationEpochInfo(),
+            CurrentEpoch = new ProtoSpec.SpeciationEpochInfo()
+        };
+    }
+
+    private static ProtoSpec.SpeciationRuntimeConfig CreateDefaultSpeciationConfig()
+    {
+        return new ProtoSpec.SpeciationRuntimeConfig
+        {
+            PolicyVersion = "unknown",
+            ConfigSnapshotJson = "{}",
+            DefaultSpeciesId = "default",
+            DefaultSpeciesDisplayName = "Default",
+            StartupReconcileDecisionReason = "startup_reconcile"
+        };
+    }
+
+    private static ProtoSpec.SpeciationDecision CreateSpeciationDecisionFailure(
+        ProtoSpec.SpeciationApplyMode applyMode,
+        ProtoSpec.SpeciationFailureReason failureReason,
+        string failureDetail)
+    {
+        return new ProtoSpec.SpeciationDecision
+        {
+            ApplyMode = applyMode,
+            CandidateMode = ProtoSpec.SpeciationCandidateMode.Unknown,
+            Success = false,
+            Created = false,
+            ImmutableConflict = false,
+            FailureReason = failureReason,
+            FailureDetail = failureDetail,
+            SpeciesId = string.Empty,
+            SpeciesDisplayName = string.Empty,
+            DecisionReason = string.Empty,
+            DecisionMetadataJson = "{}",
+            Committed = false
+        };
+    }
+
+    private static ProtoSpec.SpeciationApplyMode NormalizeSpeciationApplyMode(ProtoSpec.SpeciationApplyMode applyMode)
+    {
+        return applyMode == ProtoSpec.SpeciationApplyMode.Commit
+            ? ProtoSpec.SpeciationApplyMode.Commit
+            : ProtoSpec.SpeciationApplyMode.DryRun;
+    }
+
     private static Nbn.Proto.Io.ReproduceResult CreateReproFailure(string reason)
         => new()
         {
@@ -1935,4 +2232,5 @@ public sealed class IoGatewayActor : IActor
 
     private sealed record ClientInfo(PID Pid, string Name);
 }
+
 

@@ -570,6 +570,7 @@ package nbn.io;
 import "nbn_common.proto";
 import "nbn_control.proto";
 import "nbn_repro.proto";
+import "nbn_speciation.proto";
 import "nbn_signals.proto";
 
 message Connect {
@@ -844,6 +845,78 @@ message ReproduceResult {
 
 message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
+}
+
+message SpeciationStatus {
+  nbn.speciation.SpeciationStatusRequest request = 1;
+}
+
+message SpeciationStatusResult {
+  nbn.speciation.SpeciationStatusResponse response = 1;
+}
+
+message SpeciationGetConfig {
+  nbn.speciation.SpeciationGetConfigRequest request = 1;
+}
+
+message SpeciationGetConfigResult {
+  nbn.speciation.SpeciationGetConfigResponse response = 1;
+}
+
+message SpeciationSetConfig {
+  nbn.speciation.SpeciationSetConfigRequest request = 1;
+}
+
+message SpeciationSetConfigResult {
+  nbn.speciation.SpeciationSetConfigResponse response = 1;
+}
+
+message SpeciationEvaluate {
+  nbn.speciation.SpeciationEvaluateRequest request = 1;
+}
+
+message SpeciationEvaluateResult {
+  nbn.speciation.SpeciationEvaluateResponse response = 1;
+}
+
+message SpeciationAssign {
+  nbn.speciation.SpeciationAssignRequest request = 1;
+}
+
+message SpeciationAssignResult {
+  nbn.speciation.SpeciationAssignResponse response = 1;
+}
+
+message SpeciationBatchEvaluateApply {
+  nbn.speciation.SpeciationBatchEvaluateApplyRequest request = 1;
+}
+
+message SpeciationBatchEvaluateApplyResult {
+  nbn.speciation.SpeciationBatchEvaluateApplyResponse response = 1;
+}
+
+message SpeciationListMemberships {
+  nbn.speciation.SpeciationListMembershipsRequest request = 1;
+}
+
+message SpeciationListMembershipsResult {
+  nbn.speciation.SpeciationListMembershipsResponse response = 1;
+}
+
+message SpeciationQueryMembership {
+  nbn.speciation.SpeciationQueryMembershipRequest request = 1;
+}
+
+message SpeciationQueryMembershipResult {
+  nbn.speciation.SpeciationQueryMembershipResponse response = 1;
+}
+
+message SpeciationListHistory {
+  nbn.speciation.SpeciationListHistoryRequest request = 1;
+}
+
+message SpeciationListHistoryResult {
+  nbn.speciation.SpeciationListHistoryResponse response = 1;
 }
 ```
 
@@ -1138,6 +1211,247 @@ message ReproduceResult {
   nbn.Uuid child_brain_id = 12; // valid if spawned==true
   repeated ReproduceRunOutcome runs = 20; // deterministic order by run_index
   uint32 requested_run_count = 21; // normalized effective run count
+}
+```
+
+### 19.10 `nbn_speciation.proto`
+
+Implementation semantics used by current runtime assignment engine:
+
+* For `brain_id` candidates without explicit `species_id`, runtime assignment derives species deterministically from parent membership evidence (`parents`) plus optional similarity metrics carried in `decision_metadata_json` (for example reproduction `similarity_score`).
+* `SpeciationRuntimeConfig.config_snapshot_json` may include an `assignment_policy` object (`lineage_match_threshold`, `lineage_split_threshold`, `parent_consensus_threshold`, `lineage_hysteresis_margin`, `create_derived_species_on_divergence`, `derived_species_prefix`) controlling threshold and hysteresis behavior.
+* Assignment provenance is recorded in `SpeciationDecision.decision_metadata_json` (strategy, policy snapshot, lineage inputs, parsed scores) and committed `brain_id` assignments ingest lineage edges for provided parent brain references.
+* Membership remains immutable within an epoch; changing species for an already-assigned brain requires a new epoch (`SpeciationSetConfig.start_new_epoch=true` or reset flow).
+
+```proto
+syntax = "proto3";
+package nbn.speciation;
+
+import "nbn_common.proto";
+
+enum SpeciationFailureReason {
+  SPECIATION_FAILURE_NONE = 0;
+  SPECIATION_FAILURE_SERVICE_INITIALIZING = 1;
+  SPECIATION_FAILURE_SERVICE_UNAVAILABLE = 2;
+  SPECIATION_FAILURE_INVALID_REQUEST = 3;
+  SPECIATION_FAILURE_INVALID_CANDIDATE = 4;
+  SPECIATION_FAILURE_UNSUPPORTED_CANDIDATE = 5;
+  SPECIATION_FAILURE_STORE_ERROR = 6;
+  SPECIATION_FAILURE_MEMBERSHIP_IMMUTABLE = 7;
+  SPECIATION_FAILURE_EMPTY_RESPONSE = 8;
+  SPECIATION_FAILURE_REQUEST_FAILED = 9;
+}
+
+enum SpeciationApplyMode {
+  SPECIATION_APPLY_MODE_DRY_RUN = 0;
+  SPECIATION_APPLY_MODE_COMMIT = 1;
+}
+
+enum SpeciationCandidateMode {
+  SPECIATION_CANDIDATE_MODE_UNKNOWN = 0;
+  SPECIATION_CANDIDATE_MODE_BRAIN_ID = 1;
+  SPECIATION_CANDIDATE_MODE_ARTIFACT_REF = 2;
+  SPECIATION_CANDIDATE_MODE_ARTIFACT_URI = 3;
+}
+
+message SpeciationRuntimeConfig {
+  string policy_version = 1;
+  string config_snapshot_json = 2;
+  string default_species_id = 3;
+  string default_species_display_name = 4;
+  string startup_reconcile_decision_reason = 5;
+}
+
+message SpeciationEpochInfo {
+  fixed64 epoch_id = 1;
+  fixed64 created_ms = 2;
+  string policy_version = 3;
+  string config_snapshot_json = 4;
+}
+
+message SpeciationStatusSnapshot {
+  fixed64 epoch_id = 1;
+  uint32 membership_count = 2;
+  uint32 species_count = 3;
+  uint32 lineage_edge_count = 4;
+}
+
+message SpeciationMembershipRecord {
+  fixed64 epoch_id = 1;
+  nbn.Uuid brain_id = 2;
+  string species_id = 3;
+  string species_display_name = 4;
+  fixed64 assigned_ms = 5;
+  string policy_version = 6;
+  string decision_reason = 7;
+  string decision_metadata_json = 8;
+  bool has_source_brain_id = 9;
+  nbn.Uuid source_brain_id = 10;
+  string source_artifact_ref = 11;
+  fixed64 decision_id = 12;
+}
+
+message SpeciationCandidateRef {
+  oneof candidate {
+    nbn.Uuid brain_id = 1;
+    nbn.ArtifactRef artifact_ref = 2;
+    string artifact_uri = 3;
+  }
+}
+
+message SpeciationParentRef {
+  oneof parent {
+    nbn.Uuid brain_id = 1;
+    nbn.ArtifactRef artifact_ref = 2;
+    string artifact_uri = 3;
+  }
+}
+
+message SpeciationDecision {
+  SpeciationApplyMode apply_mode = 1;
+  SpeciationCandidateMode candidate_mode = 2;
+  bool success = 3;
+  bool created = 4;
+  bool immutable_conflict = 5;
+  SpeciationFailureReason failure_reason = 6;
+  string failure_detail = 7;
+  string species_id = 8;
+  string species_display_name = 9;
+  string decision_reason = 10;
+  string decision_metadata_json = 11;
+  bool committed = 12;
+  SpeciationMembershipRecord membership = 13;
+}
+
+message SpeciationStatusRequest {}
+message SpeciationStatusResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  SpeciationStatusSnapshot status = 3;
+  SpeciationEpochInfo current_epoch = 4;
+  SpeciationRuntimeConfig config = 5;
+}
+
+message SpeciationGetConfigRequest {}
+message SpeciationGetConfigResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  SpeciationRuntimeConfig config = 3;
+  SpeciationEpochInfo current_epoch = 4;
+}
+
+message SpeciationSetConfigRequest {
+  SpeciationRuntimeConfig config = 1;
+  bool start_new_epoch = 2;
+  fixed64 apply_time_ms = 3;
+  bool has_apply_time_ms = 4;
+}
+message SpeciationSetConfigResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  SpeciationEpochInfo previous_epoch = 3;
+  SpeciationEpochInfo current_epoch = 4;
+  SpeciationRuntimeConfig config = 5;
+}
+
+message SpeciationEvaluateRequest {
+  SpeciationCandidateRef candidate = 1;
+  repeated SpeciationParentRef parents = 2;
+  string species_id = 3;
+  string species_display_name = 4;
+  string policy_version = 5;
+  string decision_reason = 6;
+  string decision_metadata_json = 7;
+  fixed64 decision_time_ms = 8;
+  bool has_decision_time_ms = 9;
+}
+message SpeciationEvaluateResponse {
+  SpeciationDecision decision = 1;
+}
+
+message SpeciationAssignRequest {
+  SpeciationApplyMode apply_mode = 1;
+  SpeciationCandidateRef candidate = 2;
+  repeated SpeciationParentRef parents = 3;
+  string species_id = 4;
+  string species_display_name = 5;
+  string policy_version = 6;
+  string decision_reason = 7;
+  string decision_metadata_json = 8;
+  fixed64 decision_time_ms = 9;
+  bool has_decision_time_ms = 10;
+}
+message SpeciationAssignResponse {
+  SpeciationDecision decision = 1;
+}
+
+message SpeciationBatchItem {
+  string item_id = 1;
+  SpeciationCandidateRef candidate = 2;
+  repeated SpeciationParentRef parents = 3;
+  string species_id = 4;
+  string species_display_name = 5;
+  string policy_version = 6;
+  string decision_reason = 7;
+  string decision_metadata_json = 8;
+  fixed64 decision_time_ms = 9;
+  bool has_decision_time_ms = 10;
+  SpeciationApplyMode apply_mode_override = 11;
+  bool has_apply_mode_override = 12;
+}
+
+message SpeciationBatchEvaluateApplyRequest {
+  SpeciationApplyMode apply_mode = 1;
+  repeated SpeciationBatchItem items = 2;
+}
+message SpeciationBatchItemResult {
+  string item_id = 1;
+  SpeciationDecision decision = 2;
+}
+message SpeciationBatchEvaluateApplyResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  SpeciationApplyMode apply_mode = 3;
+  uint32 requested_count = 4;
+  uint32 processed_count = 5;
+  uint32 committed_count = 6;
+  repeated SpeciationBatchItemResult results = 7;
+}
+
+message SpeciationListMembershipsRequest {
+  bool has_epoch_id = 1;
+  fixed64 epoch_id = 2;
+}
+message SpeciationListMembershipsResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  repeated SpeciationMembershipRecord memberships = 3;
+}
+
+message SpeciationQueryMembershipRequest {
+  nbn.Uuid brain_id = 1;
+  bool has_epoch_id = 2;
+  fixed64 epoch_id = 3;
+}
+message SpeciationQueryMembershipResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  bool found = 3;
+  SpeciationMembershipRecord membership = 4;
+}
+
+message SpeciationListHistoryRequest {
+  bool has_epoch_id = 1;
+  fixed64 epoch_id = 2;
+  bool has_brain_id = 3;
+  nbn.Uuid brain_id = 4;
+  uint32 limit = 5;
+}
+message SpeciationListHistoryResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  repeated SpeciationMembershipRecord history = 3;
+  uint32 total_records = 4;
 }
 ```
 

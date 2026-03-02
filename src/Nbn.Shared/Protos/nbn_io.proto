@@ -6,6 +6,7 @@ option csharp_namespace = "Nbn.Proto.Io";
 import "nbn_common.proto";
 import "nbn_control.proto";
 import "nbn_repro.proto";
+import "nbn_speciation.proto";
 import "nbn_signals.proto";
 
 message Connect {
@@ -321,4 +322,76 @@ message ReproduceResult {
 
 message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
+}
+
+message SpeciationStatus {
+  nbn.speciation.SpeciationStatusRequest request = 1;
+}
+
+message SpeciationStatusResult {
+  nbn.speciation.SpeciationStatusResponse response = 1;
+}
+
+message SpeciationGetConfig {
+  nbn.speciation.SpeciationGetConfigRequest request = 1;
+}
+
+message SpeciationGetConfigResult {
+  nbn.speciation.SpeciationGetConfigResponse response = 1;
+}
+
+message SpeciationSetConfig {
+  nbn.speciation.SpeciationSetConfigRequest request = 1;
+}
+
+message SpeciationSetConfigResult {
+  nbn.speciation.SpeciationSetConfigResponse response = 1;
+}
+
+message SpeciationEvaluate {
+  nbn.speciation.SpeciationEvaluateRequest request = 1;
+}
+
+message SpeciationEvaluateResult {
+  nbn.speciation.SpeciationEvaluateResponse response = 1;
+}
+
+message SpeciationAssign {
+  nbn.speciation.SpeciationAssignRequest request = 1;
+}
+
+message SpeciationAssignResult {
+  nbn.speciation.SpeciationAssignResponse response = 1;
+}
+
+message SpeciationBatchEvaluateApply {
+  nbn.speciation.SpeciationBatchEvaluateApplyRequest request = 1;
+}
+
+message SpeciationBatchEvaluateApplyResult {
+  nbn.speciation.SpeciationBatchEvaluateApplyResponse response = 1;
+}
+
+message SpeciationListMemberships {
+  nbn.speciation.SpeciationListMembershipsRequest request = 1;
+}
+
+message SpeciationListMembershipsResult {
+  nbn.speciation.SpeciationListMembershipsResponse response = 1;
+}
+
+message SpeciationQueryMembership {
+  nbn.speciation.SpeciationQueryMembershipRequest request = 1;
+}
+
+message SpeciationQueryMembershipResult {
+  nbn.speciation.SpeciationQueryMembershipResponse response = 1;
+}
+
+message SpeciationListHistory {
+  nbn.speciation.SpeciationListHistoryRequest request = 1;
+}
+
+message SpeciationListHistoryResult {
+  nbn.speciation.SpeciationListHistoryResponse response = 1;
 }

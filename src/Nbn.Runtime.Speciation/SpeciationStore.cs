@@ -243,6 +243,34 @@ INSERT INTO lineage_edges (
 );
 """;
 
+    private const string SelectLatestChildMembershipForParentSql = """
+SELECT
+    m.epoch_id AS EpochId,
+    m.brain_id AS BrainId,
+    m.species_id AS SpeciesId,
+    s.display_name AS SpeciesDisplayName,
+    m.assigned_ms AS AssignedMs,
+    d.policy_version AS PolicyVersion,
+    d.decision_reason AS DecisionReason,
+    d.decision_metadata_json AS DecisionMetadataJson,
+    d.source_brain_id AS SourceBrainId,
+    d.source_artifact_ref AS SourceArtifactRef,
+    d.decision_id AS DecisionId
+FROM lineage_edges AS e
+JOIN species_membership AS m
+    ON m.epoch_id = e.epoch_id
+   AND m.brain_id = e.child_brain_id
+JOIN species AS s
+    ON s.epoch_id = m.epoch_id
+   AND s.species_id = m.species_id
+JOIN speciation_decisions AS d
+    ON d.decision_id = m.decision_id
+WHERE e.epoch_id = @epoch_id
+  AND e.parent_brain_id = @parent_brain_id
+ORDER BY e.created_ms DESC, e.edge_id DESC, m.assigned_ms DESC, m.brain_id
+LIMIT 1;
+""";
+
     private const string CountMembershipSql = """
 SELECT COUNT(1)
 FROM species_membership
@@ -411,7 +439,9 @@ WHERE epoch_id = @epoch_id;
         long epochId,
         SpeciationAssignment assignment,
         long? decisionTimeMs = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<Guid>? lineageParentBrainIds = null,
+        string? lineageMetadataJson = null)
     {
         if (epochId <= 0)
         {
@@ -420,6 +450,12 @@ WHERE epoch_id = @epoch_id;
 
         var normalized = NormalizeAssignment(assignment);
         var decidedMs = decisionTimeMs ?? NowMs();
+        var normalizedLineageParentIds = NormalizeLineageParentIds(lineageParentBrainIds, normalized.BrainId);
+        var normalizedLineageMetadata = normalizedLineageParentIds.Count == 0
+            ? null
+            : NormalizeJson(
+                lineageMetadataJson ?? "{\"source\":\"assignment_lineage_ingest\"}",
+                nameof(lineageMetadataJson));
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -486,6 +522,26 @@ WHERE epoch_id = @epoch_id;
                     },
                     transaction,
                     cancellationToken: cancellationToken));
+
+            if (normalizedLineageMetadata is not null)
+            {
+                foreach (var parentBrainId in normalizedLineageParentIds)
+                {
+                    await connection.ExecuteAsync(
+                        new CommandDefinition(
+                            InsertLineageEdgeSql,
+                            new
+                            {
+                                epoch_id = epochId,
+                                parent_brain_id = parentBrainId,
+                                child_brain_id = normalized.BrainId,
+                                metadata_json = normalizedLineageMetadata,
+                                created_ms = decidedMs
+                            },
+                            transaction,
+                            cancellationToken: cancellationToken));
+                }
+            }
 
             var created = await GetMembershipInternalAsync(
                 connection,
@@ -642,6 +698,29 @@ WHERE epoch_id = @epoch_id;
                 cancellationToken: cancellationToken));
     }
 
+    public async Task<SpeciationMembershipRecord?> GetLatestChildMembershipForParentAsync(
+        long epochId,
+        Guid parentBrainId,
+        CancellationToken cancellationToken = default)
+    {
+        if (epochId <= 0 || parentBrainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var row = await connection.QuerySingleOrDefaultAsync<MembershipRow>(
+            new CommandDefinition(
+                SelectLatestChildMembershipForParentSql,
+                new
+                {
+                    epoch_id = epochId,
+                    parent_brain_id = parentBrainId
+                },
+                cancellationToken: cancellationToken));
+        return row is null ? null : ToMembershipRecord(row);
+    }
+
     public async Task<SpeciationStatusSnapshot> GetStatusAsync(
         long epochId,
         CancellationToken cancellationToken = default)
@@ -727,6 +806,22 @@ WHERE epoch_id = @epoch_id;
                 ? null
                 : assignment.SourceBrainId
         };
+    }
+
+    private static IReadOnlyList<Guid> NormalizeLineageParentIds(
+        IReadOnlyList<Guid>? lineageParentBrainIds,
+        Guid childBrainId)
+    {
+        if (lineageParentBrainIds is null || lineageParentBrainIds.Count == 0)
+        {
+            return Array.Empty<Guid>();
+        }
+
+        return lineageParentBrainIds
+            .Where(id => id != Guid.Empty && id != childBrainId)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
     }
 
     private static string NormalizeRequired(string? value, string paramName)

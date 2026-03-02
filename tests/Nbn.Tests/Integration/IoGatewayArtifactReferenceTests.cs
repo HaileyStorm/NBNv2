@@ -11,6 +11,7 @@ using Proto;
 using ProtoControl = Nbn.Proto.Control;
 using ProtoSettings = Nbn.Proto.Settings;
 using Repro = Nbn.Proto.Repro;
+using ProtoSpec = Nbn.Proto.Speciation;
 
 namespace Nbn.Tests.Integration;
 
@@ -1906,6 +1907,162 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task SpeciationEvaluate_Returns_ServiceUnavailable_When_Speciation_Is_Not_Configured()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<SpeciationEvaluateResult>(
+            gateway,
+            new SpeciationEvaluate
+            {
+                Request = new ProtoSpec.SpeciationEvaluateRequest
+                {
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        ArtifactUri = "store://speciation/test/eval"
+                    }
+                }
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.NotNull(response.Response.Decision);
+        Assert.False(response.Response.Decision.Success);
+        Assert.Equal(
+            ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceUnavailable,
+            response.Response.Decision.FailureReason);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SpeciationAssign_Returns_RequestFailed_When_Speciation_Response_Type_Is_Invalid()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var speciationProbe = root.Spawn(Props.FromProducer(() => new SpeciationInvalidResponseProbe()));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), speciationPid: speciationProbe)));
+        var brainId = Guid.NewGuid();
+
+        var response = await root.RequestAsync<SpeciationAssignResult>(
+            gateway,
+            new SpeciationAssign
+            {
+                Request = new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = brainId.ToProtoUuid()
+                    },
+                    SpeciesId = "species-invalid",
+                    SpeciesDisplayName = "Species Invalid"
+                }
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.NotNull(response.Response.Decision);
+        Assert.False(response.Response.Decision.Success);
+        Assert.Equal(
+            ProtoSpec.SpeciationFailureReason.SpeciationFailureRequestFailed,
+            response.Response.Decision.FailureReason);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SpeciationBatchEvaluateApply_Forwards_Response_And_Preserves_DryRunCommit_Semantics()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var expected = new ProtoSpec.SpeciationBatchEvaluateApplyResponse
+        {
+            FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+            FailureDetail = string.Empty,
+            ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+            RequestedCount = 2,
+            ProcessedCount = 2,
+            CommittedCount = 1
+        };
+        expected.Results.Add(new ProtoSpec.SpeciationBatchItemResult
+        {
+            ItemId = "commit-item",
+            Decision = new ProtoSpec.SpeciationDecision
+            {
+                ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                CandidateMode = ProtoSpec.SpeciationCandidateMode.BrainId,
+                Success = true,
+                Created = true,
+                Committed = true,
+                FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                SpeciesId = "species-commit",
+                SpeciesDisplayName = "Species Commit"
+            }
+        });
+        expected.Results.Add(new ProtoSpec.SpeciationBatchItemResult
+        {
+            ItemId = "dry-item",
+            Decision = new ProtoSpec.SpeciationDecision
+            {
+                ApplyMode = ProtoSpec.SpeciationApplyMode.DryRun,
+                CandidateMode = ProtoSpec.SpeciationCandidateMode.ArtifactUri,
+                Success = true,
+                Created = false,
+                Committed = false,
+                FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                SpeciesId = "species-dry",
+                SpeciesDisplayName = "Species Dry"
+            }
+        });
+
+        var speciationProbe = root.Spawn(Props.FromProducer(() => new SpeciationFixedResponseProbe(expected)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), speciationPid: speciationProbe)));
+
+        var response = await root.RequestAsync<SpeciationBatchEvaluateApplyResult>(
+            gateway,
+            new SpeciationBatchEvaluateApply
+            {
+                Request = new ProtoSpec.SpeciationBatchEvaluateApplyRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Items =
+                    {
+                        new ProtoSpec.SpeciationBatchItem
+                        {
+                            ItemId = "commit-item",
+                            Candidate = new ProtoSpec.SpeciationCandidateRef
+                            {
+                                BrainId = brainId.ToProtoUuid()
+                            }
+                        },
+                        new ProtoSpec.SpeciationBatchItem
+                        {
+                            ItemId = "dry-item",
+                            HasApplyModeOverride = true,
+                            ApplyModeOverride = ProtoSpec.SpeciationApplyMode.DryRun,
+                            Candidate = new ProtoSpec.SpeciationCandidateRef
+                            {
+                                ArtifactUri = "store://speciation/test/dry"
+                            }
+                        }
+                    }
+                }
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, response.Response.FailureReason);
+        Assert.Equal((uint)2, response.Response.ProcessedCount);
+        Assert.Equal((uint)1, response.Response.CommittedCount);
+        Assert.Equal(2, response.Response.Results.Count);
+        Assert.True(response.Response.Results.Single(item => item.ItemId == "commit-item").Decision.Committed);
+        Assert.False(response.Response.Results.Single(item => item.ItemId == "dry-item").Decision.Committed);
+
+        await system.ShutdownAsync();
+    }
+
     private static async Task<(string ArtifactRoot, ArtifactRef BrainDef)> StoreBrainDefinitionAsync()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-io-spawn-{Guid.NewGuid():N}");
@@ -2444,6 +2601,49 @@ public class IoGatewayArtifactReferenceTests
                 case Repro.AssessCompatibilityByBrainIdsRequest:
                 case Repro.AssessCompatibilityByArtifactsRequest:
                     context.Respond("unexpected-response-type");
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SpeciationFixedResponseProbe : IActor
+    {
+        private readonly ProtoSpec.SpeciationBatchEvaluateApplyResponse _response;
+
+        public SpeciationFixedResponseProbe(ProtoSpec.SpeciationBatchEvaluateApplyResponse response)
+        {
+            _response = response;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoSpec.SpeciationBatchEvaluateApplyRequest)
+            {
+                context.Respond(_response.Clone());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SpeciationInvalidResponseProbe : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoSpec.SpeciationStatusRequest:
+                case ProtoSpec.SpeciationGetConfigRequest:
+                case ProtoSpec.SpeciationSetConfigRequest:
+                case ProtoSpec.SpeciationEvaluateRequest:
+                case ProtoSpec.SpeciationAssignRequest:
+                case ProtoSpec.SpeciationBatchEvaluateApplyRequest:
+                case ProtoSpec.SpeciationListMembershipsRequest:
+                case ProtoSpec.SpeciationQueryMembershipRequest:
+                case ProtoSpec.SpeciationListHistoryRequest:
+                    context.Respond("unexpected-speciation-response");
                     break;
             }
 

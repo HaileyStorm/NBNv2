@@ -1,4 +1,5 @@
 using Nbn.Proto;
+using Nbn.Proto.Speciation;
 using Nbn.Proto.Settings;
 using Proto.Remote;
 
@@ -37,6 +38,7 @@ public static class SpeciationRemote
 
         config = config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
+            NbnSpeciationReflection.Descriptor,
             NbnSettingsReflection.Descriptor);
 
         return config;
