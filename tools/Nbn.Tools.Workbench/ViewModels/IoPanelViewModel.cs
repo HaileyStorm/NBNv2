@@ -749,6 +749,9 @@ public sealed class IoPanelViewModel : ViewModelBase
     public Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
         => _client.RequestBrainInfoAsync(brainId);
 
+    public Task<Nbn.Proto.Control.HiveMindStatus?> GetHiveMindStatusAsync()
+        => _client.GetHiveMindStatusAsync();
+
     public Task<Nbn.Proto.ArtifactRef?> ExportBrainDefinitionReferenceAsync(Guid brainId, bool rebaseOverlays = false)
         => _client.ExportBrainDefinitionAsync(brainId, rebaseOverlays);
 

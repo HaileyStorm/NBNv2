@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
@@ -838,6 +839,28 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public async Task ApplyTickCadenceAsync_UpdatesCurrentCadenceLabel()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            HiveMindStatusResponse = new HiveMindStatus
+            {
+                TargetTickHz = 10f,
+                HasTickRateOverride = true,
+                TickRateOverrideHz = 10f
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.TickRateOverrideText = "10hz";
+
+        await InvokePrivateAsync(ApplyTickCadenceAsyncMethod, vm);
+
+        Assert.Equal("Current cadence: 10 Hz (100 ms/tick).", vm.TickCadenceSummary);
+        Assert.Equal("Tick cadence control target: 10 Hz (100 ms/tick). Current runtime target 10 Hz (100 ms/tick).", vm.TickRateOverrideSummary);
+        Assert.Equal("100ms", vm.TickRateOverrideText);
+    }
+
+    [Fact]
     public async Task ApplyVisualizationCadenceAsync_RejectsOutOfRangeCadence()
     {
         var client = new FakeWorkbenchClient();
@@ -1415,6 +1438,7 @@ public class VizPanelViewModelInteractionTests
         public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
         public Dictionary<string, string> SettingsByKey { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<(string Key, string Value)> SetSettingCalls { get; } = new();
+        public HiveMindStatus? HiveMindStatusResponse { get; set; }
 
         public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
         {
@@ -1437,6 +1461,9 @@ public class VizPanelViewModelInteractionTests
                 UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             });
         }
+
+        public override Task<HiveMindStatus?> GetHiveMindStatusAsync()
+            => Task.FromResult(HiveMindStatusResponse);
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

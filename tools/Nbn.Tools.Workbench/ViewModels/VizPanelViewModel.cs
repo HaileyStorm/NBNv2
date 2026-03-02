@@ -1657,8 +1657,24 @@ public sealed class VizPanelViewModel : ViewModelBase
             return;
         }
 
-        ApplySetting(new SettingItem(setting.Key, setting.Value, setting.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
-        Status = $"Tick cadence target set to {FormatTickCadence(targetTickHz)}.";
+        var hiveMindStatus = await _brain.GetHiveMindStatusAsync().ConfigureAwait(false);
+        _dispatcher.Post(() =>
+        {
+            ApplySetting(new SettingItem(setting.Key, setting.Value, setting.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            if (hiveMindStatus is not null)
+            {
+                ApplyHiveMindTickStatus(
+                    hiveMindStatus.TargetTickHz,
+                    hiveMindStatus.HasTickRateOverride,
+                    hiveMindStatus.TickRateOverrideHz);
+            }
+            else
+            {
+                ApplyHiveMindTickStatus(targetTickHz, hasOverride: true, overrideTickHz: targetTickHz);
+            }
+
+            Status = $"Tick cadence target set to {FormatTickCadence(targetTickHz)}.";
+        });
     }
 
     private async Task ApplyVisualizationCadenceAsync()
@@ -1681,38 +1697,41 @@ public sealed class VizPanelViewModel : ViewModelBase
                 adjustedCadenceMs.ToString(CultureInfo.InvariantCulture))
             .ConfigureAwait(false);
 
-        if (tickResult is not null)
+        _dispatcher.Post(() =>
         {
-            ApplySetting(new SettingItem(
-                tickResult.Key,
-                tickResult.Value,
-                tickResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
-        }
+            if (tickResult is not null)
+            {
+                ApplySetting(new SettingItem(
+                    tickResult.Key,
+                    tickResult.Value,
+                    tickResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            }
 
-        if (streamResult is not null)
-        {
-            ApplySetting(new SettingItem(
-                streamResult.Key,
-                streamResult.Value,
-                streamResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
-        }
+            if (streamResult is not null)
+            {
+                ApplySetting(new SettingItem(
+                    streamResult.Key,
+                    streamResult.Value,
+                    streamResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            }
 
-        if (tickResult is null || streamResult is null)
-        {
-            Status = "Viz cadence update failed: SettingsMonitor unavailable.";
-            return;
-        }
+            if (tickResult is null || streamResult is null)
+            {
+                Status = "Viz cadence update failed: SettingsMonitor unavailable.";
+                return;
+            }
 
-        if (enforcedFloorMs.HasValue)
-        {
-            Status = $"Viz cadence clamped to {enforcedFloorMs.Value} ms to stay at or slower than tick cadence.";
-        }
-        else
-        {
-            Status = BuildVisualizationCadenceSummary(
-                ParseVisualizationIntervalSetting(tickResult.Value, adjustedCadenceMs),
-                ParseVisualizationIntervalSetting(streamResult.Value, adjustedCadenceMs));
-        }
+            if (enforcedFloorMs.HasValue)
+            {
+                Status = $"Viz cadence clamped to {enforcedFloorMs.Value} ms to stay at or slower than tick cadence.";
+            }
+            else
+            {
+                Status = BuildVisualizationCadenceSummary(
+                    ParseVisualizationIntervalSetting(tickResult.Value, adjustedCadenceMs),
+                    ParseVisualizationIntervalSetting(streamResult.Value, adjustedCadenceMs));
+            }
+        });
     }
 
     private Task ResetVisualizationCadenceAsync()

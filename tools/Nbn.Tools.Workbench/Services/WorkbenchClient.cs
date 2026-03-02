@@ -366,6 +366,28 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public virtual async Task<HiveMindStatus?> GetHiveMindStatusAsync()
+    {
+        if (_root is null || _hiveMindPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<HiveMindStatus>(
+                    _hiveMindPid,
+                    new GetHiveMindStatus(),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnHiveMindStatus($"HiveMind status request failed: {ex.Message}", true);
+            return null;
+        }
+    }
+
     public async Task<SetTickRateOverrideAck?> SetTickRateOverrideAsync(float? targetTickHz)
     {
         if (_root is null || _hiveMindPid is null)

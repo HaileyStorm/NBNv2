@@ -248,13 +248,16 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnSettingChanged(SettingItem item)
     {
-        Orchestrator.UpdateSetting(item);
-        Io.ApplySetting(item);
-        Viz.ApplySetting(item);
-        if (Debug.ApplySetting(item))
+        _dispatcher.Post(() =>
         {
-            _dispatcher.Post(UpdateObservabilitySubscriptions);
-        }
+            Orchestrator.UpdateSetting(item);
+            Io.ApplySetting(item);
+            Viz.ApplySetting(item);
+            if (Debug.ApplySetting(item))
+            {
+                UpdateObservabilitySubscriptions();
+            }
+        });
     }
 
     public async ValueTask DisposeAsync()
@@ -491,10 +494,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 continue;
             }
 
-            Debug.ApplySetting(new SettingItem(
-                key,
-                setting.Value ?? string.Empty,
-                setting.UpdatedMs.ToString()));
+            _dispatcher.Post(() =>
+                Debug.ApplySetting(new SettingItem(
+                    key,
+                    setting.Value ?? string.Empty,
+                    setting.UpdatedMs.ToString())));
         }
 
         foreach (var key in CostEnergySettingsKeys.AllKeys
@@ -507,10 +511,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 continue;
             }
 
-            Io.ApplySetting(new SettingItem(
-                key,
-                setting.Value ?? string.Empty,
-                setting.UpdatedMs.ToString()));
+            _dispatcher.Post(() =>
+                Io.ApplySetting(new SettingItem(
+                    key,
+                    setting.Value ?? string.Empty,
+                    setting.UpdatedMs.ToString())));
         }
 
         foreach (var key in TickSettingsKeys.AllKeys.Concat(VisualizationSettingsKeys.AllKeys))
@@ -521,10 +526,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 continue;
             }
 
-            Viz.ApplySetting(new SettingItem(
-                key,
-                setting.Value ?? string.Empty,
-                setting.UpdatedMs.ToString()));
+            _dispatcher.Post(() =>
+                Viz.ApplySetting(new SettingItem(
+                    key,
+                    setting.Value ?? string.Empty,
+                    setting.UpdatedMs.ToString())));
         }
 
         _dispatcher.Post(UpdateObservabilitySubscriptions);
