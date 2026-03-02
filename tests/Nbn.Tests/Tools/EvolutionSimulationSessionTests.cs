@@ -197,17 +197,31 @@ public sealed class EvolutionSimulationSessionTests
                     Success: true,
                     Compatible: true,
                     AbortReason: string.Empty,
-                    ChildDefinitions: new[] { child }));
+                    ChildDefinitions: new[] { child },
+                    CommitCandidates: new[]
+                    {
+                        new SpeciationCommitCandidate(
+                            ChildBrainId: null,
+                            ChildDefinition: child)
+                    }));
         }
 
         public Task<SpeciationCommitOutcome> CommitSpeciationAsync(
-            ArtifactRef childDefinition,
+            SpeciationCommitCandidate candidate,
             ArtifactRef parentA,
             ArtifactRef parentB,
             CancellationToken cancellationToken)
         {
-            Events.Add($"speciation:{Short(childDefinition)}");
-            return Task.FromResult(new SpeciationCommitOutcome(Success: true, FailureDetail: string.Empty));
+            var candidateLabel = candidate.ChildBrainId is Guid brainId && brainId != Guid.Empty
+                ? $"brain:{brainId:D}"
+                : candidate.ChildDefinition is { } definition
+                    ? $"artifact:{Short(definition)}"
+                    : "missing";
+            Events.Add($"speciation:{candidateLabel}");
+            return Task.FromResult(new SpeciationCommitOutcome(
+                Success: true,
+                FailureDetail: string.Empty,
+                ExpectedNoOp: false));
         }
 
         private static string Short(ArtifactRef reference)

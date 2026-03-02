@@ -125,12 +125,13 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                 .ConfigureAwait(false);
             var result = response?.Result;
             var report = result?.Report;
-            var childDefinitions = ExtractChildDefinitions(result);
+            var reproductionData = ExtractReproductionData(result);
             return new ReproductionOutcome(
                 Success: result is not null,
                 Compatible: report?.Compatible ?? false,
                 AbortReason: NormalizeReason(report?.AbortReason),
-                ChildDefinitions: childDefinitions);
+                ChildDefinitions: reproductionData.ChildDefinitions,
+                CommitCandidates: reproductionData.CommitCandidates);
         }
         catch (OperationCanceledException)
         {
@@ -142,23 +143,29 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                 Success: false,
                 Compatible: false,
                 AbortReason: $"repro_request_failed:{ex.GetBaseException().Message}",
-                ChildDefinitions: Array.Empty<ArtifactRef>());
+                ChildDefinitions: Array.Empty<ArtifactRef>(),
+                CommitCandidates: Array.Empty<SpeciationCommitCandidate>());
         }
     }
 
     public async Task<SpeciationCommitOutcome> CommitSpeciationAsync(
-        ArtifactRef childDefinition,
+        SpeciationCommitCandidate candidate,
         ArtifactRef parentA,
         ArtifactRef parentB,
         CancellationToken cancellationToken)
     {
+        if (!TryBuildCandidateRef(candidate, out var candidateRef))
+        {
+            return new SpeciationCommitOutcome(
+                Success: false,
+                FailureDetail: "speciation_candidate_missing",
+                ExpectedNoOp: false);
+        }
+
         var request = new ProtoSpec.SpeciationAssignRequest
         {
             ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
-            Candidate = new ProtoSpec.SpeciationCandidateRef
-            {
-                ArtifactRef = childDefinition
-            }
+            Candidate = candidateRef
         };
         request.Parents.Add(new ProtoSpec.SpeciationParentRef { ArtifactRef = parentA });
         request.Parents.Add(new ProtoSpec.SpeciationParentRef { ArtifactRef = parentB });
@@ -177,19 +184,35 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
 
             if (success)
             {
-                return new SpeciationCommitOutcome(true, string.Empty);
+                return new SpeciationCommitOutcome(
+                    Success: true,
+                    FailureDetail: string.Empty,
+                    ExpectedNoOp: false);
             }
 
             if (decision is null)
             {
-                return new SpeciationCommitOutcome(false, "speciation_empty_response");
+                return new SpeciationCommitOutcome(
+                    Success: false,
+                    FailureDetail: "speciation_empty_response",
+                    ExpectedNoOp: false);
+            }
+
+            if (decision.FailureReason == ProtoSpec.SpeciationFailureReason.SpeciationFailureUnsupportedCandidate
+                && decision.FailureDetail.Contains("brain_id", StringComparison.OrdinalIgnoreCase))
+            {
+                return new SpeciationCommitOutcome(
+                    Success: false,
+                    FailureDetail: "speciation_commit_skipped_artifact_candidate_requires_brain_id",
+                    ExpectedNoOp: true);
             }
 
             var reason = decision.FailureReason.ToString();
             var detail = NormalizeReason(decision.FailureDetail);
             return new SpeciationCommitOutcome(
                 Success: false,
-                FailureDetail: string.IsNullOrWhiteSpace(detail) ? reason : $"{reason}:{detail}");
+                FailureDetail: string.IsNullOrWhiteSpace(detail) ? reason : $"{reason}:{detail}",
+                ExpectedNoOp: false);
         }
         catch (OperationCanceledException)
         {
@@ -199,7 +222,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         {
             return new SpeciationCommitOutcome(
                 Success: false,
-                FailureDetail: $"speciation_commit_request_failed:{ex.GetBaseException().Message}");
+                FailureDetail: $"speciation_commit_request_failed:{ex.GetBaseException().Message}",
+                ExpectedNoOp: false);
         }
     }
 
@@ -215,23 +239,27 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         await _system.ShutdownAsync().ConfigureAwait(false);
     }
 
-    private static IReadOnlyList<ArtifactRef> ExtractChildDefinitions(Repro.ReproduceResult? result)
+    private static (IReadOnlyList<ArtifactRef> ChildDefinitions, IReadOnlyList<SpeciationCommitCandidate> CommitCandidates) ExtractReproductionData(Repro.ReproduceResult? result)
     {
         if (result is null)
         {
-            return Array.Empty<ArtifactRef>();
+            return (Array.Empty<ArtifactRef>(), Array.Empty<SpeciationCommitCandidate>());
         }
 
         var children = new List<ArtifactRef>();
         var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var commitCandidates = new List<SpeciationCommitCandidate>();
+        var seenCommitCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var run in result.Runs)
         {
             AddArtifactIfValid(run.ChildDef, children, seenKeys);
+            AddCommitCandidateIfValid(run.ChildBrainId, run.ChildDef, commitCandidates, seenCommitCandidates);
         }
 
         AddArtifactIfValid(result.ChildDef, children, seenKeys);
-        return children;
+        AddCommitCandidateIfValid(result.ChildBrainId, result.ChildDef, commitCandidates, seenCommitCandidates);
+        return (children, commitCandidates);
     }
 
     private static void AddArtifactIfValid(ArtifactRef? reference, ICollection<ArtifactRef> children, ISet<string> seenKeys)
@@ -248,6 +276,70 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
 
         children.Add(reference);
+    }
+
+    private static void AddCommitCandidateIfValid(
+        Uuid? childBrainId,
+        ArtifactRef? childDefinition,
+        ICollection<SpeciationCommitCandidate> candidates,
+        ISet<string> seenKeys)
+    {
+        Guid? parsedBrainId = null;
+        if (childBrainId is not null && childBrainId.TryToGuid(out var guid) && guid != Guid.Empty)
+        {
+            parsedBrainId = guid;
+        }
+
+        ArtifactRef? definition = null;
+        if (childDefinition is not null && childDefinition.TryToSha256Hex(out _))
+        {
+            definition = childDefinition;
+        }
+
+        if (parsedBrainId is null && definition is null)
+        {
+            return;
+        }
+
+        string key;
+        if (parsedBrainId.HasValue)
+        {
+            key = $"brain:{parsedBrainId.Value:D}";
+        }
+        else if (definition is not null && definition.TryToSha256Hex(out var sha))
+        {
+            key = $"artifact:{sha}|{definition.SizeBytes}|{definition.MediaType}|{definition.StoreUri}";
+        }
+        else
+        {
+            key = string.Empty;
+        }
+        if (string.IsNullOrWhiteSpace(key) || !seenKeys.Add(key))
+        {
+            return;
+        }
+
+        candidates.Add(new SpeciationCommitCandidate(parsedBrainId, definition));
+    }
+
+    private static bool TryBuildCandidateRef(
+        SpeciationCommitCandidate candidate,
+        out ProtoSpec.SpeciationCandidateRef candidateRef)
+    {
+        candidateRef = new ProtoSpec.SpeciationCandidateRef();
+        if (candidate.ChildBrainId is Guid childBrainId && childBrainId != Guid.Empty)
+        {
+            candidateRef.BrainId = childBrainId.ToProtoUuid();
+            return true;
+        }
+
+        if (candidate.ChildDefinition is not null && candidate.ChildDefinition.TryToSha256Hex(out _))
+        {
+            candidateRef.ArtifactRef = candidate.ChildDefinition;
+            return true;
+        }
+
+        return false;
     }
 
     private static string NormalizeReason(string? reason)

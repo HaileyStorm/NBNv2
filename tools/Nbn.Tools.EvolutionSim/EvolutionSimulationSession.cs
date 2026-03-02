@@ -176,18 +176,18 @@ public sealed class EvolutionSimulationSession
             return;
         }
 
-        var addedChildren = AddChildrenToPool(reproduction.ChildDefinitions);
+        AddChildrenToPool(reproduction.ChildDefinitions);
 
-        if (!_options.CommitToSpeciation || addedChildren.Count == 0)
+        if (!_options.CommitToSpeciation || reproduction.CommitCandidates.Count == 0)
         {
             return;
         }
 
-        foreach (var childDefinition in addedChildren)
+        foreach (var candidate in reproduction.CommitCandidates)
         {
             IncrementSpeciationCommitAttempts();
             var commitOutcome = await _client.CommitSpeciationAsync(
-                childDefinition,
+                candidate,
                 parentA,
                 parentB,
                 cancellationToken).ConfigureAwait(false);
@@ -196,7 +196,8 @@ public sealed class EvolutionSimulationSession
             {
                 IncrementSpeciationCommitSuccesses();
             }
-            else if (!string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
+            else if (!commitOutcome.ExpectedNoOp
+                     && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
             {
                 SetLastFailure(commitOutcome.FailureDetail);
             }

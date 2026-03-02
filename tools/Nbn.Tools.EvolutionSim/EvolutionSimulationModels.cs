@@ -67,9 +67,17 @@ public sealed record ReproductionOutcome(
     bool Success,
     bool Compatible,
     string AbortReason,
-    IReadOnlyList<ArtifactRef> ChildDefinitions);
+    IReadOnlyList<ArtifactRef> ChildDefinitions,
+    IReadOnlyList<SpeciationCommitCandidate> CommitCandidates);
 
-public readonly record struct SpeciationCommitOutcome(bool Success, string FailureDetail);
+public readonly record struct SpeciationCommitCandidate(
+    Guid? ChildBrainId,
+    ArtifactRef? ChildDefinition);
+
+public readonly record struct SpeciationCommitOutcome(
+    bool Success,
+    string FailureDetail,
+    bool ExpectedNoOp);
 
 public interface IEvolutionSimulationClient
 {
@@ -90,7 +98,7 @@ public interface IEvolutionSimulationClient
         CancellationToken cancellationToken);
 
     Task<SpeciationCommitOutcome> CommitSpeciationAsync(
-        ArtifactRef childDefinition,
+        SpeciationCommitCandidate candidate,
         ArtifactRef parentA,
         ArtifactRef parentB,
         CancellationToken cancellationToken);
