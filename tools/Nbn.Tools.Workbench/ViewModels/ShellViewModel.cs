@@ -533,6 +533,21 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                     setting.UpdatedMs.ToString())));
         }
 
+        foreach (var key in ServiceEndpointSettings.AllKeys)
+        {
+            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
+            if (setting is null)
+            {
+                continue;
+            }
+
+            _dispatcher.Post(() =>
+                Orchestrator.UpdateSetting(new SettingItem(
+                    key,
+                    setting.Value ?? string.Empty,
+                    setting.UpdatedMs.ToString())));
+        }
+
         _dispatcher.Post(UpdateObservabilitySubscriptions);
     }
 

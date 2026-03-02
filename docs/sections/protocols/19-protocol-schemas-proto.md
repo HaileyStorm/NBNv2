@@ -1024,6 +1024,14 @@ message ReproduceConfig {
 
   // Child spawn
   SpawnChildPolicy spawn_child = 80;
+
+  // IO-region neuron-count policy (defaults to true when unset)
+  optional bool protect_io_region_neuron_counts = 81;
+}
+
+message ManualIoNeuronEdit {
+  uint32 region_id = 1; // only input (0) or output (31)
+  uint32 neuron_id = 2; // neuron locus within the selected region
 }
 
 message ReproduceByBrainIdsRequest {
@@ -1032,6 +1040,8 @@ message ReproduceByBrainIdsRequest {
   StrengthSource strength_source = 3;
   ReproduceConfig config = 4;
   fixed64 seed = 5;
+  repeated ManualIoNeuronEdit manual_io_neuron_adds = 6;
+  repeated ManualIoNeuronEdit manual_io_neuron_removes = 7;
 }
 
 message ReproduceByArtifactsRequest {
@@ -1042,6 +1052,8 @@ message ReproduceByArtifactsRequest {
   StrengthSource strength_source = 5;
   ReproduceConfig config = 6;
   fixed64 seed = 7;
+  repeated ManualIoNeuronEdit manual_io_neuron_adds = 8;
+  repeated ManualIoNeuronEdit manual_io_neuron_removes = 9;
 }
 
 message SimilarityReport {
@@ -1051,6 +1063,7 @@ message SimilarityReport {
   float region_span_score = 10;
   float function_score = 11;
   float connectivity_score = 12;
+  float similarity_score = 13;
 
   uint32 regions_present_A = 20;
   uint32 regions_present_B = 21;

@@ -91,7 +91,9 @@ public sealed class ReproductionManagerActor : IActor
                     ParentBState = parentBResolution.ParentState,
                     StrengthSource = request.StrengthSource,
                     Config = request.Config,
-                    Seed = request.Seed
+                    Seed = request.Seed,
+                    ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
+                    ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves }
                 })
             .ConfigureAwait(false);
     }
@@ -183,7 +185,9 @@ public sealed class ReproductionManagerActor : IActor
                     request.ParentADef,
                     request.ParentBDef,
                     request.Config,
-                    request.Seed)
+                    request.Seed,
+                    request.ManualIoNeuronAdds,
+                    request.ManualIoNeuronRemoves)
                 .ConfigureAwait(false);
         }
         catch
@@ -201,7 +205,9 @@ public sealed class ReproductionManagerActor : IActor
         ArtifactRef parentARef,
         ArtifactRef parentBRef,
         ReproduceConfig? config,
-        ulong seed)
+        ulong seed,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves)
     {
         var presentA = CountPresentRegions(gateParentA.Header);
         var presentB = CountPresentRegions(gateParentB.Header);
@@ -280,7 +286,9 @@ public sealed class ReproductionManagerActor : IActor
                 parentARef,
                 parentBRef,
                 config,
-                seed)
+                seed,
+                manualIoNeuronAdds,
+                manualIoNeuronRemoves)
             .ConfigureAwait(false);
 
         if (childBuild.AbortReason is not null)
@@ -314,9 +322,24 @@ public sealed class ReproductionManagerActor : IActor
         ArtifactRef parentARef,
         ArtifactRef parentBRef,
         ReproduceConfig? config,
-        ulong seed)
+        ulong seed,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves)
     {
-        var childSections = BuildChildSections(parentA, parentB, config, seed, out var summary);
+        if (!TryBuildChildSections(
+                parentA,
+                parentB,
+                config,
+                seed,
+                manualIoNeuronAdds,
+                manualIoNeuronRemoves,
+                out var childSections,
+                out var summary,
+                out var abortReason))
+        {
+            return new ChildBuildResult(null, null, abortReason ?? "repro_manual_io_neuron_ops_invalid");
+        }
+
         var childHeader = BuildChildHeader(parentA.Header, parentB.Header, childSections, seed);
         var validation = NbnBinaryValidator.ValidateNbn(childHeader, childSections);
         if (!validation.IsValid)
@@ -338,13 +361,18 @@ public sealed class ReproductionManagerActor : IActor
         return new ChildBuildResult(childRef, summary, null, CountPresentRegions(childHeader));
     }
 
-    private static List<NbnRegionSection> BuildChildSections(
+    private static bool TryBuildChildSections(
         ParsedParent parentA,
         ParsedParent parentB,
         ReproduceConfig? config,
         ulong seed,
-        out MutationSummary summary)
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves,
+        out List<NbnRegionSection> childSections,
+        out MutationSummary summary,
+        out string? abortReason)
     {
+        abortReason = null;
         var sectionsA = BuildSectionMap(parentA.Regions);
         var sectionsB = BuildSectionMap(parentB.Regions);
         var state = seed == 0 ? DefaultSpotCheckSeed : seed;
@@ -357,7 +385,20 @@ public sealed class ReproductionManagerActor : IActor
             ref state,
             budgets);
         ApplyStructuralMutations(mutableRegions, config, ref state, budgets);
-        var childSections = BuildSectionsFromMutableRegions(mutableRegions, parentA.Header.AxonStride, budgets);
+        if (!TryApplyManualIoNeuronOperations(
+                mutableRegions,
+                config,
+                manualIoNeuronAdds,
+                manualIoNeuronRemoves,
+                budgets,
+                out abortReason))
+        {
+            childSections = new List<NbnRegionSection>();
+            summary = new MutationSummary();
+            return false;
+        }
+
+        childSections = BuildSectionsFromMutableRegions(mutableRegions, parentA.Header.AxonStride, budgets);
 
         summary = new MutationSummary
         {
@@ -370,7 +411,7 @@ public sealed class ReproductionManagerActor : IActor
             StrengthCodesChanged = budgets.StrengthCodesChanged
         };
 
-        return childSections;
+        return true;
     }
 
     private static Dictionary<int, MutableRegion> BuildBaseChildRegions(
@@ -891,19 +932,9 @@ public sealed class ReproductionManagerActor : IActor
                 continue;
             }
 
-            var defaultNeuron = new NeuronRecord(
-                axonCount: 0,
-                paramBCode: 0,
-                paramACode: 0,
-                activationThresholdCode: 0,
-                preActivationThresholdCode: 0,
-                resetFunctionId: 0,
-                activationFunctionId: 1,
-                accumulationFunctionId: 0,
-                exists: true);
             regions[regionId] = new MutableRegion(
                 regionId,
-                new List<MutableNeuron> { new(defaultNeuron, true, new List<AxonRecord>()) });
+                new List<MutableNeuron> { CreateDefaultMutableNeuron() });
             budgets.ConsumeNeuronAdded();
             budgets.ConsumeRegionAdded();
         }
@@ -1101,6 +1132,190 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         EnforceAverageOutDegree(regions, config, ref state, budgets, addedConnections);
+    }
+
+    private static MutableNeuron CreateDefaultMutableNeuron()
+    {
+        var defaultNeuron = new NeuronRecord(
+            axonCount: 0,
+            paramBCode: 0,
+            paramACode: 0,
+            activationThresholdCode: 0,
+            preActivationThresholdCode: 0,
+            resetFunctionId: 0,
+            activationFunctionId: 1,
+            accumulationFunctionId: 0,
+            exists: true);
+        return new MutableNeuron(defaultNeuron, true, new List<AxonRecord>());
+    }
+
+    private static bool TryApplyManualIoNeuronOperations(
+        Dictionary<int, MutableRegion> regions,
+        ReproduceConfig? config,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
+        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves,
+        MutationBudgets budgets,
+        out string? abortReason)
+    {
+        abortReason = null;
+        if (manualIoNeuronAdds.Count == 0 && manualIoNeuronRemoves.Count == 0)
+        {
+            return true;
+        }
+
+        if (ResolveProtectIoRegionNeuronCounts(config))
+        {
+            abortReason = "repro_io_neuron_count_protected";
+            return false;
+        }
+
+        if (!TryNormalizeManualIoNeuronEdits(manualIoNeuronAdds, out var normalizedAdds)
+            || !TryNormalizeManualIoNeuronEdits(manualIoNeuronRemoves, out var normalizedRemoves)
+            || !ApplyManualIoNeuronRemovals(regions, normalizedRemoves, budgets)
+            || !ApplyManualIoNeuronAdds(regions, normalizedAdds, budgets))
+        {
+            abortReason = "repro_manual_io_neuron_ops_invalid";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool ResolveProtectIoRegionNeuronCounts(ReproduceConfig? config)
+    {
+        if (config is null)
+        {
+            return true;
+        }
+
+        return !config.HasProtectIoRegionNeuronCounts || config.ProtectIoRegionNeuronCounts;
+    }
+
+    private static bool TryNormalizeManualIoNeuronEdits(
+        IReadOnlyList<ManualIoNeuronEdit> edits,
+        out List<(int RegionId, int NeuronId)> normalized)
+    {
+        normalized = new List<(int RegionId, int NeuronId)>(edits.Count);
+        for (var i = 0; i < edits.Count; i++)
+        {
+            var edit = edits[i];
+            if (edit.RegionId > int.MaxValue || edit.NeuronId > int.MaxValue)
+            {
+                return false;
+            }
+
+            var regionId = (int)edit.RegionId;
+            var neuronId = (int)edit.NeuronId;
+            if ((regionId != NbnConstants.InputRegionId && regionId != NbnConstants.OutputRegionId)
+                || !NbnInvariants.IsValidAxonTargetNeuronId(neuronId))
+            {
+                return false;
+            }
+
+            normalized.Add((regionId, neuronId));
+        }
+
+        return true;
+    }
+
+    private static bool ApplyManualIoNeuronRemovals(
+        Dictionary<int, MutableRegion> regions,
+        IReadOnlyList<(int RegionId, int NeuronId)> removals,
+        MutationBudgets budgets)
+    {
+        ulong state = 0;
+        foreach (var removal in removals
+                     .OrderBy(static op => op.RegionId)
+                     .ThenByDescending(static op => op.NeuronId))
+        {
+            if (!regions.TryGetValue(removal.RegionId, out var region)
+                || removal.NeuronId < 0
+                || removal.NeuronId >= region.Neurons.Count
+                || !region.Neurons[removal.NeuronId].Exists
+                || CountExistingNeurons(region) <= 1
+                || !budgets.CanRemoveNeuron)
+            {
+                return false;
+            }
+
+            if (!HandleNeuronDeletionSideEffects(
+                    regions,
+                    removal.RegionId,
+                    removal.NeuronId,
+                    rerouteInboundProbability: 0f,
+                    inboundRerouteMaxRingDistance: 0,
+                    ref state,
+                    budgets))
+            {
+                return false;
+            }
+
+            region.Neurons.RemoveAt(removal.NeuronId);
+            ReindexTargetNeuronIdsAfterRemoval(regions, removal.RegionId, removal.NeuronId);
+            budgets.ConsumeNeuronRemoved();
+        }
+
+        return true;
+    }
+
+    private static bool ApplyManualIoNeuronAdds(
+        Dictionary<int, MutableRegion> regions,
+        IReadOnlyList<(int RegionId, int NeuronId)> additions,
+        MutationBudgets budgets)
+    {
+        foreach (var add in additions
+                     .OrderBy(static op => op.RegionId)
+                     .ThenBy(static op => op.NeuronId))
+        {
+            if (!regions.TryGetValue(add.RegionId, out var region)
+                || add.NeuronId != region.Neurons.Count
+                || !budgets.CanAddNeuron)
+            {
+                return false;
+            }
+
+            var nextSpan = region.Neurons.Count + 1;
+            if (!NbnInvariants.IsValidRegionSpan(nextSpan))
+            {
+                return false;
+            }
+
+            region.Neurons.Add(CreateDefaultMutableNeuron());
+            budgets.ConsumeNeuronAdded();
+        }
+
+        return true;
+    }
+
+    private static void ReindexTargetNeuronIdsAfterRemoval(
+        IReadOnlyDictionary<int, MutableRegion> regions,
+        int targetRegionId,
+        int removedNeuronId)
+    {
+        foreach (var pair in regions)
+        {
+            var sourceRegion = pair.Value;
+            for (var sourceNeuronId = 0; sourceNeuronId < sourceRegion.Neurons.Count; sourceNeuronId++)
+            {
+                var sourceNeuron = sourceRegion.Neurons[sourceNeuronId];
+                if (!sourceNeuron.Exists || sourceNeuron.Axons.Count == 0)
+                {
+                    continue;
+                }
+
+                for (var axonIndex = 0; axonIndex < sourceNeuron.Axons.Count; axonIndex++)
+                {
+                    var axon = sourceNeuron.Axons[axonIndex];
+                    if (axon.TargetRegionId == targetRegionId && axon.TargetNeuronId > removedNeuronId)
+                    {
+                        sourceNeuron.Axons[axonIndex] = new AxonRecord(
+                            axon.StrengthCode,
+                            axon.TargetNeuronId - 1,
+                            axon.TargetRegionId);
+                    }
+                }
+            }
+        }
     }
 
     private static void EnforceAverageOutDegree(

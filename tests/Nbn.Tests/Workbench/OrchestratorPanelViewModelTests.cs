@@ -91,6 +91,120 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_MapsServiceEndpointSettings_ToConnectionInputs()
+    {
+        var connections = new ConnectionViewModel();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse(),
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.HiveMindKey,
+                        Value = "10.20.30.40:12022/HiveRemote",
+                        UpdatedMs = 11
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.IoGatewayKey,
+                        Value = "10.20.30.41:12052/io-remote",
+                        UpdatedMs = 12
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Equal("10.20.30.40", connections.HiveMindHost);
+        Assert.Equal("12022", connections.HiveMindPortText);
+        Assert.Equal("HiveRemote", connections.HiveMindName);
+        Assert.Equal("10.20.30.41", connections.IoHost);
+        Assert.Equal("12052", connections.IoPortText);
+        Assert.Equal("io-remote", connections.IoGateway);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_InvalidServiceEndpointSettings_DoNotOverwriteConnectionInputs()
+    {
+        var connections = new ConnectionViewModel
+        {
+            HiveMindHost = "127.0.0.1",
+            HiveMindPortText = "12020",
+            HiveMindName = "HiveMind",
+            IoHost = "127.0.0.1",
+            IoPortText = "12050",
+            IoGateway = "io-gateway"
+        };
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse(),
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.HiveMindKey,
+                        Value = "invalid-hive-value",
+                        UpdatedMs = 31
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.IoGatewayKey,
+                        Value = "127.0.0.1:not-a-port/io-gateway",
+                        UpdatedMs = 32
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Equal("127.0.0.1", connections.HiveMindHost);
+        Assert.Equal("12020", connections.HiveMindPortText);
+        Assert.Equal("HiveMind", connections.HiveMindName);
+        Assert.Equal("127.0.0.1", connections.IoHost);
+        Assert.Equal("12050", connections.IoPortText);
+        Assert.Equal("io-gateway", connections.IoGateway);
+    }
+
+    [Fact]
+    public async Task UpdateSetting_ServiceEndpointValues_UpdateConnectionInputs()
+    {
+        var connections = new ConnectionViewModel();
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.IoGatewayKey,
+            "192.168.100.9:13050/io-prod",
+            "1"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.HiveMindKey,
+            "192.168.100.10:13020/HiveProd",
+            "2"));
+
+        await WaitForAsync(() =>
+            string.Equals(connections.IoHost, "192.168.100.9", StringComparison.Ordinal)
+            && string.Equals(connections.IoPortText, "13050", StringComparison.Ordinal)
+            && string.Equals(connections.IoGateway, "io-prod", StringComparison.Ordinal)
+            && string.Equals(connections.HiveMindHost, "192.168.100.10", StringComparison.Ordinal)
+            && string.Equals(connections.HiveMindPortText, "13020", StringComparison.Ordinal)
+            && string.Equals(connections.HiveMindName, "HiveProd", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_TracksMultipleActiveWorkerEndpoints()
     {
         var connections = new ConnectionViewModel

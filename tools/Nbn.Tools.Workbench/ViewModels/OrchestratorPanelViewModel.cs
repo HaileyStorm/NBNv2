@@ -213,6 +213,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             {
                 Settings.Add(new SettingEntryViewModel(item.Key, item.Value, FormatUpdated(item.Updated)));
             }
+
+            TryApplyServiceEndpointSetting(item);
         });
     }
 
@@ -489,7 +491,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 .ToArray();
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            UpdateHiveMindEndpoint(nodes, nowMs);
             var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
@@ -542,6 +543,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     {
                         existing.UpdateFromServer(entry.Value, FormatUpdated(entry.Updated), preserveEdits: true);
                     }
+                }
+
+                var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(settings);
+                if (!hiveMindFromSettings)
+                {
+                    UpdateHiveMindEndpoint(nodes, nowMs);
                 }
 
                 WorkerEndpointSummary = workerEndpointState.SummaryText;
@@ -883,23 +890,52 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return value;
     }
 
-    private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes)
+    private bool ApplyServiceEndpointSettingsToConnections(IEnumerable<SettingItem> settings)
     {
-        var match = nodes.FirstOrDefault(node =>
-            string.Equals(node.RootActorName, Connections.HiveMindName, StringComparison.OrdinalIgnoreCase));
-
-        if (match is null)
+        var hiveMindApplied = false;
+        foreach (var setting in settings)
         {
-            return;
+            if (!TryApplyServiceEndpointSetting(setting))
+            {
+                continue;
+            }
+
+            if (string.Equals(setting.Key, ServiceEndpointSettings.HiveMindKey, StringComparison.OrdinalIgnoreCase))
+            {
+                hiveMindApplied = true;
+            }
         }
 
-        if (!TryParseHostPort(match.Address, out var host, out var port))
+        return hiveMindApplied;
+    }
+
+    private bool TryApplyServiceEndpointSetting(SettingItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.Key)
+            || !ServiceEndpointSettings.IsKnownKey(item.Key)
+            || !ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint)
+            || !TryParseHostPort(endpoint.HostPort, out var host, out var port))
         {
-            return;
+            return false;
         }
 
-        Connections.HiveMindHost = host;
-        Connections.HiveMindPortText = port.ToString();
+        if (string.Equals(item.Key, ServiceEndpointSettings.HiveMindKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.HiveMindHost = host;
+            Connections.HiveMindPortText = port.ToString();
+            Connections.HiveMindName = endpoint.ActorName;
+            return true;
+        }
+
+        if (string.Equals(item.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.IoHost = host;
+            Connections.IoPortText = port.ToString();
+            Connections.IoGateway = endpoint.ActorName;
+            return true;
+        }
+
+        return false;
     }
 
     private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)

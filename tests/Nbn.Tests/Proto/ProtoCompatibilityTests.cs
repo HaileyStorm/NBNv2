@@ -693,6 +693,19 @@ public class ProtoCompatibilityTests
         AssertField(byBrainIds, "strength_source", 3, FieldType.Enum, "nbn.repro.StrengthSource");
         AssertField(byBrainIds, "config", 4, FieldType.Message, "nbn.repro.ReproduceConfig");
         AssertField(byBrainIds, "seed", 5, FieldType.Fixed64);
+        AssertRepeatedField(byBrainIds, "manual_io_neuron_adds", 6, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertRepeatedField(byBrainIds, "manual_io_neuron_removes", 7, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+
+        var byArtifacts = descriptor.MessageTypes.Single(message => message.Name == "ReproduceByArtifactsRequest");
+        AssertField(byArtifacts, "parentA_def", 1, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(byArtifacts, "parentA_state", 2, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(byArtifacts, "parentB_def", 3, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(byArtifacts, "parentB_state", 4, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(byArtifacts, "strength_source", 5, FieldType.Enum, "nbn.repro.StrengthSource");
+        AssertField(byArtifacts, "config", 6, FieldType.Message, "nbn.repro.ReproduceConfig");
+        AssertField(byArtifacts, "seed", 7, FieldType.Fixed64);
+        AssertRepeatedField(byArtifacts, "manual_io_neuron_adds", 8, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
+        AssertRepeatedField(byArtifacts, "manual_io_neuron_removes", 9, FieldType.Message, "nbn.repro.ManualIoNeuronEdit");
 
         var config = descriptor.MessageTypes.Single(message => message.Name == "ReproduceConfig");
         AssertField(config, "max_region_span_diff_ratio", 1, FieldType.Float);
@@ -703,10 +716,15 @@ public class ProtoCompatibilityTests
         AssertRepeatedField(config, "per_region_out_degree_caps", 62, FieldType.Message, "nbn.repro.RegionOutDegreeCap");
         AssertField(config, "limits", 70, FieldType.Message, "nbn.repro.ReproduceLimits");
         AssertField(config, "spawn_child", 80, FieldType.Enum, "nbn.repro.SpawnChildPolicy");
+        AssertField(config, "protect_io_region_neuron_counts", 81, FieldType.Bool);
 
         var regionCap = descriptor.MessageTypes.Single(message => message.Name == "RegionOutDegreeCap");
         AssertField(regionCap, "region_id", 1, FieldType.UInt32);
         AssertField(regionCap, "max_avg_out_degree", 2, FieldType.Float);
+
+        var manualIoEdit = descriptor.MessageTypes.Single(message => message.Name == "ManualIoNeuronEdit");
+        AssertField(manualIoEdit, "region_id", 1, FieldType.UInt32);
+        AssertField(manualIoEdit, "neuron_id", 2, FieldType.UInt32);
 
         var report = descriptor.MessageTypes.Single(message => message.Name == "SimilarityReport");
         AssertField(report, "similarity_score", 13, FieldType.Float);
