@@ -172,6 +172,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         if (Guid.TryParse(item.BrainId, out var brainId))
         {
             OnBrainDiscovered(brainId);
+            Io.ObserveTick(brainId, item.TickId);
         }
     }
 
@@ -179,11 +180,6 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnVizEvent(VizEventItem item)
     {
-        if (string.Equals(item.Type, "VizTick", StringComparison.OrdinalIgnoreCase))
-        {
-            Io.ObserveTick(item.TickId);
-        }
-
         Debug.AddVizEvent(item);
         Viz.AddVizEvent(item);
     }
@@ -254,6 +250,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
         Orchestrator.UpdateSetting(item);
         Io.ApplySetting(item);
+        Viz.ApplySetting(item);
         if (Debug.ApplySetting(item))
         {
             _dispatcher.Post(UpdateObservabilitySubscriptions);
@@ -500,7 +497,9 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 setting.UpdatedMs.ToString()));
         }
 
-        foreach (var key in CostEnergySettingsKeys.AllKeys.Concat(PlasticitySettingsKeys.AllKeys))
+        foreach (var key in CostEnergySettingsKeys.AllKeys
+                     .Concat(PlasticitySettingsKeys.AllKeys)
+                     .Concat(IoCoordinatorSettingsKeys.AllKeys))
         {
             var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
             if (setting is null)
@@ -509,6 +508,20 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             }
 
             Io.ApplySetting(new SettingItem(
+                key,
+                setting.Value ?? string.Empty,
+                setting.UpdatedMs.ToString()));
+        }
+
+        foreach (var key in TickSettingsKeys.AllKeys.Concat(VisualizationSettingsKeys.AllKeys))
+        {
+            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
+            if (setting is null)
+            {
+                continue;
+            }
+
+            Viz.ApplySetting(new SettingItem(
                 key,
                 setting.Value ?? string.Empty,
                 setting.UpdatedMs.ToString()));

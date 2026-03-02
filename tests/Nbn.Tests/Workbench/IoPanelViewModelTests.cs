@@ -76,6 +76,26 @@ public class IoPanelViewModelTests
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
         Assert.False(vm.AutoSendInputVectorEveryTick);
+        Assert.True(vm.AutoSendInputVectorEveryTickAvailable);
+        Assert.Equal(InputCoordinatorMode.DirtyOnChange, vm.SelectedInputCoordinatorMode.Mode);
+        Assert.Equal(OutputVectorSource.Potential, vm.SelectedOutputVectorSource.Source);
+    }
+
+    [Fact]
+    public void ApplyBrainInfo_ReplayInputCoordinator_DisablesAutoSendToggle()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.AutoSendInputVectorEveryTick = true;
+
+        ApplyBrainInfo(vm, new BrainInfo
+        {
+            InputWidth = 3,
+            OutputWidth = 2,
+            InputCoordinatorMode = InputCoordinatorMode.ReplayLatestVector
+        });
+
+        Assert.False(vm.AutoSendInputVectorEveryTickAvailable);
+        Assert.False(vm.AutoSendInputVectorEveryTick);
     }
 
     [Fact]
@@ -116,7 +136,7 @@ public class IoPanelViewModelTests
         vm.InputVectorText = string.Empty;
         vm.AutoSendInputVectorEveryTick = true;
 
-        vm.ObserveTick(tickId: 55);
+        vm.ObserveTick(brainId, tickId: 55);
         await WaitForAsync(() => vm.BrainInfoSummary.Contains("Vector is empty.", StringComparison.OrdinalIgnoreCase));
 
         Assert.Empty(client.InputVectorCalls);
@@ -132,15 +152,35 @@ public class IoPanelViewModelTests
         vm.InputVectorText = "0.9,0.8,0.7";
         vm.AutoSendInputVectorEveryTick = true;
 
-        vm.ObserveTick(tickId: 77);
-        vm.ObserveTick(tickId: 77);
-        vm.ObserveTick(tickId: 78);
+        vm.ObserveTick(brainId, tickId: 77);
+        vm.ObserveTick(brainId, tickId: 77);
+        vm.ObserveTick(brainId, tickId: 78);
 
         await WaitForAsync(() => client.InputVectorCalls.Count == 2);
 
         Assert.All(client.InputVectorCalls, call => Assert.Equal(brainId, call.BrainId));
         Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[0].Values);
         Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[1].Values);
+    }
+
+    [Fact]
+    public async Task ObserveTick_AutoSendEnabled_IgnoresNonSelectedBrainTicks()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var selectedBrainId = Guid.NewGuid();
+        var otherBrainId = Guid.NewGuid();
+        vm.SelectBrain(selectedBrainId);
+        vm.InputVectorText = "0.9,0.8,0.7";
+        vm.AutoSendInputVectorEveryTick = true;
+
+        vm.ObserveTick(otherBrainId, tickId: 77);
+        vm.ObserveTick(selectedBrainId, tickId: 78);
+
+        await WaitForAsync(() => client.InputVectorCalls.Count == 1);
+
+        Assert.Single(client.InputVectorCalls);
+        Assert.Equal(selectedBrainId, client.InputVectorCalls[0].BrainId);
     }
 
     [Fact]
@@ -154,7 +194,7 @@ public class IoPanelViewModelTests
         vm.InputVectorText = "1.0, -0.25, 0.5";
         vm.AutoSendInputVectorEveryTick = true;
 
-        vm.ObserveTick(tickId: 56);
+        vm.ObserveTick(brainId, tickId: 56);
         await WaitForAsync(() => vm.BrainInfoSummary.Contains("expected 4, got 3", StringComparison.OrdinalIgnoreCase));
 
         Assert.Empty(client.InputVectorCalls);
@@ -232,6 +272,37 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public async Task InputCoordinatorModeSelection_AutoApplies_System_Setting()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.AutoSendInputVectorEveryTick = true;
+        vm.SelectedInputCoordinatorModeDraft = vm.InputCoordinatorModes.First(mode => mode.Mode == InputCoordinatorMode.ReplayLatestVector);
+
+        await WaitForAsync(() => client.SettingCalls.Any(call => call.Key == IoCoordinatorSettingsKeys.InputCoordinatorModeKey));
+
+        Assert.Contains(client.SettingCalls, call => call.Key == IoCoordinatorSettingsKeys.InputCoordinatorModeKey && call.Value == "replay_latest_vector");
+        Assert.Equal(InputCoordinatorMode.ReplayLatestVector, vm.SelectedInputCoordinatorMode.Mode);
+        Assert.Equal(InputCoordinatorMode.ReplayLatestVector, vm.SelectedInputCoordinatorModeDraft.Mode);
+        Assert.False(vm.AutoSendInputVectorEveryTickAvailable);
+        Assert.False(vm.AutoSendInputVectorEveryTick);
+    }
+
+    [Fact]
+    public async Task OutputVectorSourceSelection_AutoApplies_System_Setting()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.SelectedOutputVectorSourceDraft = vm.OutputVectorSources.First(source => source.Source == OutputVectorSource.Buffer);
+
+        await WaitForAsync(() => client.SettingCalls.Any(call => call.Key == IoCoordinatorSettingsKeys.OutputVectorSourceKey));
+
+        Assert.Contains(client.SettingCalls, call => call.Key == IoCoordinatorSettingsKeys.OutputVectorSourceKey && call.Value == "buffer");
+        Assert.Equal(OutputVectorSource.Buffer, vm.SelectedOutputVectorSource.Source);
+        Assert.Equal(OutputVectorSource.Buffer, vm.SelectedOutputVectorSourceDraft.Source);
+    }
+
+    [Fact]
     public void SuppressedFlags_Track_Inverse_Enabled_State()
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
@@ -272,6 +343,15 @@ public class IoPanelViewModelTests
         Assert.False(vm.SystemPlasticityProbabilisticUpdates);
         Assert.False(vm.SystemPlasticityProbabilisticUpdatesDraft);
         Assert.False(vm.SelectedSystemPlasticityModeDraft.Probabilistic);
+
+        Assert.True(vm.ApplySetting(new SettingItem(IoCoordinatorSettingsKeys.InputCoordinatorModeKey, "replay_latest_vector", string.Empty)));
+        Assert.Equal(InputCoordinatorMode.ReplayLatestVector, vm.SelectedInputCoordinatorMode.Mode);
+        Assert.Equal(InputCoordinatorMode.ReplayLatestVector, vm.SelectedInputCoordinatorModeDraft.Mode);
+        Assert.False(vm.AutoSendInputVectorEveryTickAvailable);
+
+        Assert.True(vm.ApplySetting(new SettingItem(IoCoordinatorSettingsKeys.OutputVectorSourceKey, "buffer", string.Empty)));
+        Assert.Equal(OutputVectorSource.Buffer, vm.SelectedOutputVectorSource.Source);
+        Assert.Equal(OutputVectorSource.Buffer, vm.SelectedOutputVectorSourceDraft.Source);
     }
 
     [Fact]
@@ -624,3 +704,4 @@ public class IoPanelViewModelTests
         public void OnSettingChanged(SettingItem item) { }
     }
 }
+

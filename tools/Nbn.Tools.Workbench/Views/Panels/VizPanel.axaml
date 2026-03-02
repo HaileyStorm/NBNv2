@@ -47,8 +47,8 @@
                   CornerRadius="10"
                   Background="{DynamicResource NbnSurfaceAltBrush}"
                   Padding="8">
-            <Grid ColumnDefinitions="Auto,180,Auto,Auto,*"
-                  RowDefinitions="Auto,Auto"
+            <Grid ColumnDefinitions="Auto,260,Auto,Auto,*"
+                  RowDefinitions="Auto,Auto,Auto"
                   ColumnSpacing="8"
                   RowSpacing="4">
               <TextBlock Text="Tick cadence"
@@ -74,9 +74,41 @@
                          Classes="muted"
                          VerticalAlignment="Center"
                          TextWrapping="Wrap" />
+              <TextBlock Grid.Row="2"
+                         Text="Viz cadence"
+                         Classes="row-title"
+                         VerticalAlignment="Center" />
+              <StackPanel Grid.Row="2"
+                          Grid.Column="1"
+                          Orientation="Horizontal"
+                          Spacing="8"
+                          VerticalAlignment="Center">
+                <TextBlock Text="Tick ms" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Width="64"
+                         Text="{Binding VizTickMinIntervalMsText}"
+                         Watermark="250" />
+                <TextBlock Text="Stream ms" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Width="64"
+                         Text="{Binding VizStreamMinIntervalMsText}"
+                         Watermark="250" />
+              </StackPanel>
+              <Button Grid.Row="2"
+                      Grid.Column="2"
+                      Content="Apply viz"
+                      Command="{Binding ApplyVizCadenceCommand}" />
+              <Button Grid.Row="2"
+                      Grid.Column="3"
+                      Content="Default"
+                      Command="{Binding ResetVizCadenceCommand}" />
+              <TextBlock Grid.Row="2"
+                         Grid.Column="4"
+                         Text="{Binding VizCadenceSummary}"
+                         Classes="row-title"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
             </Grid>
           </Border>
-          <Grid ColumnDefinitions="Auto,220,Auto,Auto,120,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+          <Grid ColumnDefinitions="Auto,220,Auto,Auto,120,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
             <TextBlock Text="Region focus" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Column="1" Text="{Binding RegionFocusText}" Watermark="blank = full brain" />
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
@@ -117,11 +149,20 @@
             <TextBlock Grid.Row="1" Grid.Column="4" Text="Search" Classes="muted" VerticalAlignment="Center" />
             <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding SearchFilterText}" Watermark="Type, event id, source, target" />
 
-            <TextBlock Grid.Row="2" Text="Color mode" Classes="muted" VerticalAlignment="Center" />
-            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding CanvasColorModeOptions}" SelectedItem="{Binding SelectedCanvasColorMode}" Width="180">
+            <TextBlock Grid.Row="2"
+                       Text="Color mode"
+                       Classes="muted"
+                       VerticalAlignment="Center"
+                       ToolTip.Tip="{Binding CanvasColorModeTooltip}" />
+            <ComboBox Grid.Row="2"
+                      Grid.Column="1"
+                      ItemsSource="{Binding CanvasColorModeOptions}"
+                      SelectedItem="{Binding SelectedCanvasColorMode}"
+                      Width="180"
+                      ToolTip.Tip="{Binding CanvasColorModeTooltip}">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:VizCanvasColorModeOption">
-                  <TextBlock Text="{Binding Label}" />
+                  <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Tooltip}" />
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
@@ -131,17 +172,44 @@
                        Text="{Binding CanvasColorModeHint}"
                        Classes="muted"
                        VerticalAlignment="Center"
-                       TextWrapping="Wrap" />
+                       TextWrapping="Wrap"
+                       ToolTip.Tip="{Binding CanvasColorModeTooltip}" />
 
-            <TextBlock Grid.Row="3" Text="Layout mode" Classes="muted" VerticalAlignment="Center" />
-            <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding LayoutModeOptions}" SelectedItem="{Binding SelectedLayoutMode}" Width="180">
+            <TextBlock Grid.Row="3"
+                       Text="Color curve"
+                       Classes="muted"
+                       VerticalAlignment="Center"
+                       ToolTip.Tip="{Binding CanvasColorCurveTooltip}" />
+            <ComboBox Grid.Row="3"
+                      Grid.Column="1"
+                      ItemsSource="{Binding CanvasTransferCurveOptions}"
+                      SelectedItem="{Binding SelectedCanvasTransferCurve}"
+                      Width="180"
+                      ToolTip.Tip="{Binding CanvasColorCurveTooltip}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:VizCanvasTransferCurveOption">
+                  <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Tooltip}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Row="3"
+                       Grid.Column="2"
+                       Grid.ColumnSpan="4"
+                       Text="{Binding CanvasColorCurveHint}"
+                       Classes="muted"
+                       VerticalAlignment="Center"
+                       TextWrapping="Wrap"
+                       ToolTip.Tip="{Binding CanvasColorCurveTooltip}" />
+
+            <TextBlock Grid.Row="4" Text="Layout mode" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding LayoutModeOptions}" SelectedItem="{Binding SelectedLayoutMode}" Width="180">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:VizCanvasLayoutModeOption">
                   <TextBlock Text="{Binding Label}" />
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
-            <StackPanel Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="8">
+            <StackPanel Grid.Row="4" Grid.Column="2" Grid.ColumnSpan="4" Orientation="Horizontal" Spacing="8">
               <CheckBox Content="Adaptive LOD"
                         IsChecked="{Binding EnableAdaptiveLod}"
                         VerticalAlignment="Center" />
@@ -621,9 +689,27 @@
                 <Button Content="Send Vector" Command="{Binding Brain.SendVectorCommand}" />
                 <CheckBox Content="Continuous"
                           IsChecked="{Binding Brain.AutoSendInputVectorEveryTick}"
-                          ToolTip.Tip="Send the current vector every tick while enabled."
+                          IsEnabled="{Binding Brain.AutoSendInputVectorEveryTickAvailable}"
+                          ToolTip.Tip="Send the current vector every tick while enabled (disabled when IO input coordinator replay mode is active)."
                           VerticalAlignment="Center" />
               </StackPanel>
+              <Border Height="1" Background="#22000000" Margin="0,4,0,2" />
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto" RowSpacing="6">
+                <TextBlock Text="Input policy" Classes="muted" VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding Brain.InputCoordinatorModes}"
+                          SelectedItem="{Binding Brain.SelectedInputCoordinatorModeDraft}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock Grid.Row="1"
+                           Grid.ColumnSpan="2"
+                           Text="{Binding Brain.SystemInputCoordinatorModeStateLabel}"
+                           Classes="muted" />
+              </Grid>
             </StackPanel>
           </Border>
         </StackPanel>
@@ -676,6 +762,22 @@
           <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
             <CheckBox Content="Hide zero vectors" IsChecked="{Binding Brain.FilterZeroVectorOutputs}" />
             <TextBlock Grid.Column="1" Text="{Binding Brain.VectorUiUpdatesStatus}" Classes="muted" VerticalAlignment="Center" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto" RowSpacing="6">
+            <TextBlock Text="Vector source" Classes="muted" VerticalAlignment="Center" />
+            <ComboBox Grid.Column="1"
+                      ItemsSource="{Binding Brain.OutputVectorSources}"
+                      SelectedItem="{Binding Brain.SelectedOutputVectorSourceDraft}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Grid.Row="1"
+                       Grid.ColumnSpan="2"
+                       Text="{Binding Brain.SystemOutputVectorSourceStateLabel}"
+                       Classes="muted" />
           </Grid>
           <TextBlock Text="{Binding Brain.LastOutputTickLabel, StringFormat='Last tick: {0}'}" Classes="muted" />
           <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

@@ -18,6 +18,10 @@ Runtime behavior:
 * HiveMind applies `debug.stream.enabled` + `debug.stream.min_severity` before sending `DebugOutbound`.
 * HiveMind propagates those gates to RegionShards via `UpdateShardRuntimeConfig` (`debug_enabled`, `debug_min_severity`).
 * RegionShards apply the same emitter-side gate before sending debug events to DebugHub.
+* Visualization cadence is settings-backed:
+* `viz.tick.min_interval_ms` throttles HiveMind `VizTick` emissions.
+* `viz.stream.min_interval_ms` throttles RegionShard visualization stream collection/emission.
+* When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
 
 ### 15.2 OpenTelemetry (NBN-managed)
 

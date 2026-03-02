@@ -1299,12 +1299,146 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_StateValueMode_UsesLatestBufferSignInRegionMap()
+    {
+        const uint regionId = 9;
+        var projection = VizActivityProjectionBuilder.Build(
+            new[]
+            {
+                CreateEvent("VizNeuronBuffer", tick: 1500, region: regionId, source: Address(regionId, 0), target: Address(regionId, 0), value: -0.9f, strength: 0f),
+                CreateEvent("VizNeuronBuffer", tick: 1501, region: regionId, source: Address(regionId, 0), target: Address(regionId, 0), value: 0.9f, strength: 0f)
+            },
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial2D,
+                1.0,
+                new VizActivityCanvasLodOptions(Enabled: false, LowZoomRouteBudget: 120, MediumZoomRouteBudget: 220, HighZoomRouteBudget: 360),
+                VizActivityCanvasTransferCurve.PerceptualLog));
+
+        var node = Assert.Single(layout.Nodes, item => item.RegionId == regionId);
+        var rgb = ParseHexColor(node.Fill);
+        Assert.True(
+            rgb.R > rgb.B,
+            $"Expected latest positive buffer sample to produce warm state color. fill={node.Fill}");
+    }
+
+    [Fact]
+    public void Build_FocusStateValueMode_UsesLatestBufferSignPerNeuron()
+    {
+        const uint focusRegionId = 0;
+        var projection = VizActivityProjectionBuilder.Build(
+            new[]
+            {
+                CreateEvent("VizNeuronBuffer", tick: 1600, region: focusRegionId, source: Address(focusRegionId, 1), target: Address(focusRegionId, 1), value: -0.9f, strength: 0f),
+                CreateEvent("VizNeuronBuffer", tick: 1601, region: focusRegionId, source: Address(focusRegionId, 1), target: Address(focusRegionId, 1), value: 0.9f, strength: 0f),
+                CreateEvent("VizNeuronBuffer", tick: 1601, region: focusRegionId, source: Address(focusRegionId, 2), target: Address(focusRegionId, 2), value: -0.9f, strength: 0f)
+            },
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId));
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: focusRegionId),
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial2D,
+                1.0,
+                new VizActivityCanvasLodOptions(Enabled: false, LowZoomRouteBudget: 120, MediumZoomRouteBudget: 220, HighZoomRouteBudget: 360),
+                VizActivityCanvasTransferCurve.PerceptualLog));
+
+        var positiveNode = Assert.Single(layout.Nodes, item => item.RegionId == focusRegionId && item.NeuronId == 1);
+        var negativeNode = Assert.Single(layout.Nodes, item => item.RegionId == focusRegionId && item.NeuronId == 2);
+        var positiveRgb = ParseHexColor(positiveNode.Fill);
+        var negativeRgb = ParseHexColor(negativeNode.Fill);
+
+        Assert.True(
+            positiveRgb.R > positiveRgb.B,
+            $"Expected latest positive sample to be warm in focus mode. fill={positiveNode.Fill}");
+        Assert.True(
+            negativeRgb.B > negativeRgb.R,
+            $"Expected negative sample to be cool in focus mode. fill={negativeNode.Fill}");
+    }
+
+    [Fact]
+    public void Build_StateValueMode_PerceptualCurveAmplifiesLowMagnitudeContrast()
+    {
+        const uint regionId = 9;
+        var projection = VizActivityProjectionBuilder.Build(
+            new[]
+            {
+                CreateEvent("VizNeuronBuffer", tick: 1500, region: regionId, source: Address(regionId, 0), target: Address(regionId, 0), value: 0.12f, strength: 0f)
+            },
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+        var options = new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null);
+        var lod = new VizActivityCanvasLodOptions(Enabled: false, LowZoomRouteBudget: 120, MediumZoomRouteBudget: 220, HighZoomRouteBudget: 360);
+
+        var linear = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            options,
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial2D,
+                1.0,
+                lod,
+                VizActivityCanvasTransferCurve.Linear));
+        var perceptual = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            options,
+            VizActivityCanvasInteractionState.Empty,
+            VizActivityCanvasTopology.Empty,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial2D,
+                1.0,
+                lod,
+                VizActivityCanvasTransferCurve.PerceptualLog));
+
+        var linearNode = Assert.Single(linear.Nodes, node => node.RegionId == regionId);
+        var perceptualNode = Assert.Single(perceptual.Nodes, node => node.RegionId == regionId);
+        var linearRgb = ParseHexColor(linearNode.Fill);
+        var perceptualRgb = ParseHexColor(perceptualNode.Fill);
+        var linearWarmth = linearRgb.R - linearRgb.B;
+        var perceptualWarmth = perceptualRgb.R - perceptualRgb.B;
+
+        Assert.True(
+            perceptualWarmth > linearWarmth + 8,
+            $"Expected perceptual curve to increase low-signal warmth contrast. linear={linearNode.Fill} perceptual={perceptualNode.Fill}");
+    }
+
+    [Fact]
     public void CanvasColorModeOptions_IncludeEnergyPrefixedModes()
     {
         var options = VizCanvasColorModeOption.CreateDefaults();
 
         Assert.Contains(options, option => option.Mode == VizActivityCanvasColorMode.EnergyReserve && option.Label.StartsWith("Energy:", StringComparison.Ordinal));
         Assert.Contains(options, option => option.Mode == VizActivityCanvasColorMode.EnergyCostPressure && option.Label.StartsWith("Energy:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CanvasColorModeOptions_AndTransferCurveOptions_IncludeDetailedTooltipMetadata()
+    {
+        var colorOptions = VizCanvasColorModeOption.CreateDefaults();
+        var state = Assert.Single(colorOptions, option => option.Mode == VizActivityCanvasColorMode.StateValue);
+        var pressure = Assert.Single(colorOptions, option => option.Mode == VizActivityCanvasColorMode.EnergyCostPressure);
+
+        Assert.Contains("#E69F00", state.Tooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("#0072B2", state.Tooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("#D55E00", pressure.Tooltip, StringComparison.OrdinalIgnoreCase);
+
+        var curveOptions = VizCanvasTransferCurveOption.CreateDefaults();
+        Assert.Equal(VizActivityCanvasTransferCurve.PerceptualLog, curveOptions[0].Curve);
+        Assert.Contains("symlog", curveOptions[0].LegendHint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Linear", curveOptions[1].Label, StringComparison.OrdinalIgnoreCase);
     }
 
     private static VizActivityProjection BuildProjection()

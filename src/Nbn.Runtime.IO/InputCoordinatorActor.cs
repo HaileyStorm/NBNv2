@@ -2,8 +2,11 @@ using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Shared;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.IO;
+
+public sealed record UpdateInputCoordinatorMode(ProtoControl.InputCoordinatorMode Mode);
 
 public sealed class InputCoordinatorActor : IActor
 {
@@ -12,13 +15,18 @@ public sealed class InputCoordinatorActor : IActor
     private readonly float[] _values;
     private readonly bool[] _dirty;
     private readonly List<int> _dirtyIndices = new();
+    private ProtoControl.InputCoordinatorMode _mode;
 
-    public InputCoordinatorActor(Guid brainId, uint inputWidth)
+    public InputCoordinatorActor(
+        Guid brainId,
+        uint inputWidth,
+        ProtoControl.InputCoordinatorMode mode = ProtoControl.InputCoordinatorMode.DirtyOnChange)
     {
         _brainId = brainId;
         _inputWidth = checked((int)inputWidth);
         _values = new float[_inputWidth];
         _dirty = new bool[_inputWidth];
+        _mode = NormalizeMode(mode);
     }
 
     public Task ReceiveAsync(IContext context)
@@ -33,6 +41,9 @@ public sealed class InputCoordinatorActor : IActor
                 break;
             case DrainInputs message:
                 Drain(context, message);
+                break;
+            case UpdateInputCoordinatorMode message:
+                ApplyMode(message);
                 break;
         }
 
@@ -87,6 +98,12 @@ public sealed class InputCoordinatorActor : IActor
             return;
         }
 
+        if (_mode == ProtoControl.InputCoordinatorMode.ReplayLatestVector)
+        {
+            context.Respond(BuildFullVectorDrain(message.TickId));
+            return;
+        }
+
         if (_dirtyIndices.Count == 0)
         {
             context.Respond(new InputDrain
@@ -118,6 +135,33 @@ public sealed class InputCoordinatorActor : IActor
         context.Respond(drain);
     }
 
+    private InputDrain BuildFullVectorDrain(ulong tickId)
+    {
+        var drain = new InputDrain
+        {
+            BrainId = _brainId.ToProtoUuid(),
+            TickId = tickId
+        };
+
+        if (_inputWidth <= 0)
+        {
+            ClearDirtyState();
+            return drain;
+        }
+
+        for (var i = 0; i < _inputWidth; i++)
+        {
+            drain.Contribs.Add(new Contribution
+            {
+                TargetNeuronId = (uint)i,
+                Value = _values[i]
+            });
+        }
+
+        ClearDirtyState();
+        return drain;
+    }
+
     private bool TryMatchBrain(Nbn.Proto.Uuid? brainId)
     {
         if (brainId is null || !brainId.TryToGuid(out var guid))
@@ -138,4 +182,33 @@ public sealed class InputCoordinatorActor : IActor
         _dirty[index] = true;
         _dirtyIndices.Add(index);
     }
+
+    private void ApplyMode(UpdateInputCoordinatorMode message)
+    {
+        _mode = NormalizeMode(message.Mode);
+        if (_mode == ProtoControl.InputCoordinatorMode.ReplayLatestVector)
+        {
+            ClearDirtyState();
+        }
+    }
+
+    private void ClearDirtyState()
+    {
+        foreach (var index in _dirtyIndices)
+        {
+            _dirty[index] = false;
+        }
+
+        _dirtyIndices.Clear();
+    }
+
+    private static ProtoControl.InputCoordinatorMode NormalizeMode(ProtoControl.InputCoordinatorMode mode)
+    {
+        return mode switch
+        {
+            ProtoControl.InputCoordinatorMode.ReplayLatestVector => mode,
+            _ => ProtoControl.InputCoordinatorMode.DirtyOnChange
+        };
+    }
 }
+

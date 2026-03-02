@@ -36,6 +36,11 @@ public static class SettingsMonitorDefaults
             { CostEnergySettingsKeys.TierCMultiplierKey, "1" },
             { PlasticitySettingsKeys.SystemEnabledKey, "true" },
             { PlasticitySettingsKeys.SystemRateKey, "0.001" },
-            { PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, "true" }
+            { PlasticitySettingsKeys.SystemProbabilisticUpdatesKey, "true" },
+            { IoCoordinatorSettingsKeys.InputCoordinatorModeKey, "dirty_on_change" },
+            { IoCoordinatorSettingsKeys.OutputVectorSourceKey, "potential" },
+            { TickSettingsKeys.OverrideHzKey, string.Empty },
+            { VisualizationSettingsKeys.TickMinIntervalMsKey, "250" },
+            { VisualizationSettingsKeys.StreamMinIntervalMsKey, "250" }
         };
 }

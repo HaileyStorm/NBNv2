@@ -38,6 +38,12 @@ public sealed class HiveMindActor : IActor
     private float _costTierBMultiplier = 1f;
     private float _costTierCMultiplier = 1f;
     private bool _systemPlasticityEnabled = true;
+    private ProtoControl.InputCoordinatorMode _inputCoordinatorMode =
+        ProtoControl.InputCoordinatorMode.DirtyOnChange;
+    private ProtoControl.OutputVectorSource _outputVectorSource =
+        ProtoControl.OutputVectorSource.Potential;
+    private uint _vizTickMinIntervalMs = 250;
+    private uint _vizStreamMinIntervalMs = 250;
     private ProtoSeverity _debugMinSeverity;
     private bool _debugSettingsSubscribed;
     private readonly Dictionary<Guid, BrainState> _brains = new();
@@ -51,6 +57,7 @@ public sealed class HiveMindActor : IActor
     private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private ulong _vizSequence;
+    private ulong _lastVizTickEmittedTickId;
     private long _nextVisualizationShardSyncMs;
     private long _workerCatalogSnapshotMs;
     private static readonly bool LogTickBarrier = IsEnvTrue("NBN_HIVEMIND_LOG_TICK_BARRIER");
@@ -330,6 +337,18 @@ public sealed class HiveMindActor : IActor
             context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
         }
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = PlasticitySettingsKeys.SystemEnabledKey });
+        foreach (var key in IoCoordinatorSettingsKeys.AllKeys)
+        {
+            context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
+        }
+        foreach (var key in TickSettingsKeys.AllKeys)
+        {
+            context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
+        }
+        foreach (var key in VisualizationSettingsKeys.AllKeys)
+        {
+            context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
+        }
     }
 
     private void HandleSettingValue(IContext context, ProtoSettings.SettingValue message)
@@ -355,6 +374,32 @@ public sealed class HiveMindActor : IActor
             UpdateAllShardRuntimeConfig(context);
             RegisterAllBrainsWithIo(context);
         }
+
+        if (TryApplyInputCoordinatorModeSetting(message.Key, message.Value))
+        {
+            RegisterAllBrainsWithIo(context);
+        }
+
+        if (TryApplyOutputVectorSourceSetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
+        }
+
+        if (TryApplyTickRateOverrideSetting(context, message.Key, message.Value))
+        {
+            // Tick-rate status is reported via HiveMindStatus on next status poll.
+        }
+
+        if (TryApplyVisualizationTickMinIntervalSetting(message.Key, message.Value))
+        {
+            // Tick sampling applies on next tick dispatch automatically.
+        }
+
+        if (TryApplyVisualizationStreamMinIntervalSetting(message.Key, message.Value))
+        {
+            UpdateAllShardVisualizationConfig(context);
+        }
     }
 
     private void HandleSettingChanged(IContext context, ProtoSettings.SettingChanged message)
@@ -379,6 +424,32 @@ public sealed class HiveMindActor : IActor
         {
             UpdateAllShardRuntimeConfig(context);
             RegisterAllBrainsWithIo(context);
+        }
+
+        if (TryApplyInputCoordinatorModeSetting(message.Key, message.Value))
+        {
+            RegisterAllBrainsWithIo(context);
+        }
+
+        if (TryApplyOutputVectorSourceSetting(message.Key, message.Value))
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
+        }
+
+        if (TryApplyTickRateOverrideSetting(context, message.Key, message.Value))
+        {
+            // Tick-rate status is reported via HiveMindStatus on next status poll.
+        }
+
+        if (TryApplyVisualizationTickMinIntervalSetting(message.Key, message.Value))
+        {
+            // Tick sampling applies on next tick dispatch automatically.
+        }
+
+        if (TryApplyVisualizationStreamMinIntervalSetting(message.Key, message.Value))
+        {
+            UpdateAllShardVisualizationConfig(context);
         }
     }
 
@@ -528,11 +599,150 @@ public sealed class HiveMindActor : IActor
         return true;
     }
 
+    private bool TryApplyInputCoordinatorModeSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, IoCoordinatorSettingsKeys.InputCoordinatorModeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parsed = ParseInputCoordinatorModeSetting(value, _inputCoordinatorMode);
+        if (parsed == _inputCoordinatorMode)
+        {
+            return false;
+        }
+
+        _inputCoordinatorMode = parsed;
+        return true;
+    }
+
+    private bool TryApplyOutputVectorSourceSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, IoCoordinatorSettingsKeys.OutputVectorSourceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parsed = ParseOutputVectorSourceSetting(value, _outputVectorSource);
+        if (parsed == _outputVectorSource)
+        {
+            return false;
+        }
+
+        _outputVectorSource = parsed;
+        return true;
+    }
+
+    private bool TryApplyTickRateOverrideSetting(IContext context, string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, TickSettingsKeys.OverrideHzKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!TryParseTickRateOverrideSetting(value, out var requestedOverride))
+        {
+            EmitDebug(
+                context,
+                ProtoSeverity.SevWarn,
+                "tick.override.setting.invalid",
+                $"Ignoring invalid tick override setting '{TickSettingsKeys.OverrideHzKey}'='{value ?? string.Empty}'.");
+            return false;
+        }
+
+        if (HasEquivalentTickRateOverride(requestedOverride))
+        {
+            return false;
+        }
+
+        var accepted = _backpressure.TrySetTickRateOverride(requestedOverride, out var summary);
+        if (accepted)
+        {
+            EmitDebug(context, ProtoSeverity.SevInfo, "tick.override.setting", summary);
+            return true;
+        }
+
+        EmitDebug(context, ProtoSeverity.SevWarn, "tick.override.setting.invalid", summary);
+        return false;
+    }
+
+    private bool HasEquivalentTickRateOverride(float? requestedOverride)
+    {
+        if (!requestedOverride.HasValue)
+        {
+            return !_backpressure.HasTickRateOverride;
+        }
+
+        if (!_backpressure.HasTickRateOverride)
+        {
+            return false;
+        }
+
+        return MathF.Abs(requestedOverride.Value - _backpressure.TickRateOverrideHz) <= 1e-3f;
+    }
+
+    private bool TryApplyVisualizationTickMinIntervalSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, VisualizationSettingsKeys.TickMinIntervalMsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parsed = ParseVisualizationMinIntervalSetting(value, _vizTickMinIntervalMs);
+        if (parsed == _vizTickMinIntervalMs)
+        {
+            return false;
+        }
+
+        _vizTickMinIntervalMs = parsed;
+        return true;
+    }
+
+    private bool TryApplyVisualizationStreamMinIntervalSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, VisualizationSettingsKeys.StreamMinIntervalMsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parsed = ParseVisualizationMinIntervalSetting(value, _vizStreamMinIntervalMs);
+        if (parsed == _vizStreamMinIntervalMs)
+        {
+            return false;
+        }
+
+        _vizStreamMinIntervalMs = parsed;
+        return true;
+    }
+
     private void UpdateAllShardRuntimeConfig(IContext context)
     {
         foreach (var brain in _brains.Values)
         {
             UpdateShardRuntimeConfig(context, brain);
+        }
+    }
+
+    private void UpdateAllShardVisualizationConfig(IContext context)
+    {
+        foreach (var brain in _brains.Values)
+        {
+            foreach (var entry in brain.Shards)
+            {
+                SendShardVisualizationUpdate(
+                    context,
+                    brain.BrainId,
+                    entry.Key,
+                    entry.Value,
+                    brain.VisualizationEnabled,
+                    brain.VisualizationFocusRegionId,
+                    _vizStreamMinIntervalMs);
+            }
         }
     }
 
@@ -546,6 +756,115 @@ public sealed class HiveMindActor : IActor
 
     private static bool ParseDebugEnabledSetting(string? value, bool fallback)
         => ParseBooleanSetting(value, fallback);
+
+    private static ProtoControl.InputCoordinatorMode ParseInputCoordinatorModeSetting(
+        string? value,
+        ProtoControl.InputCoordinatorMode fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant().Replace('-', '_');
+        return normalized switch
+        {
+            "0" or "dirty" or "dirty_on_change" => ProtoControl.InputCoordinatorMode.DirtyOnChange,
+            "1" or "replay" or "replay_latest_vector" => ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+            _ => fallback
+        };
+    }
+
+    private static ProtoControl.OutputVectorSource ParseOutputVectorSourceSetting(
+        string? value,
+        ProtoControl.OutputVectorSource fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant().Replace('-', '_');
+        return normalized switch
+        {
+            "0" or "potential" => ProtoControl.OutputVectorSource.Potential,
+            "1" or "buffer" => ProtoControl.OutputVectorSource.Buffer,
+            _ => fallback
+        };
+    }
+
+    private static bool TryParseTickRateOverrideSetting(string? value, out float? overrideHz)
+    {
+        overrideHz = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var trimmed = value.Trim();
+        var normalized = trimmed.ToLowerInvariant();
+        if (normalized is "0" or "off" or "none" or "clear" or "default")
+        {
+            return true;
+        }
+
+        if (normalized.EndsWith("ms", StringComparison.Ordinal))
+        {
+            var numeric = trimmed[..^2].Trim();
+            if (!float.TryParse(numeric, NumberStyles.Float, CultureInfo.InvariantCulture, out var ms)
+                || !float.IsFinite(ms)
+                || ms <= 0f)
+            {
+                return false;
+            }
+
+            overrideHz = 1000f / ms;
+            return float.IsFinite(overrideHz.Value) && overrideHz.Value > 0f;
+        }
+
+        if (normalized.EndsWith("hz", StringComparison.Ordinal))
+        {
+            trimmed = trimmed[..^2].Trim();
+        }
+
+        if (!float.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var hz)
+            || !float.IsFinite(hz)
+            || hz <= 0f)
+        {
+            return false;
+        }
+
+        overrideHz = hz;
+        return true;
+    }
+
+    private static uint ParseVisualizationMinIntervalSetting(string? value, uint fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !uint.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Min(parsed, 60_000u);
+    }
+
+    private static uint ComputeVizStride(float targetTickHz, uint minIntervalMs)
+    {
+        if (minIntervalMs == 0u || !float.IsFinite(targetTickHz) || targetTickHz <= 0f)
+        {
+            return 1u;
+        }
+
+        var tickMs = 1000f / targetTickHz;
+        if (!float.IsFinite(tickMs) || tickMs <= 0f || tickMs >= minIntervalMs)
+        {
+            return 1u;
+        }
+
+        var stride = (uint)Math.Ceiling(minIntervalMs / tickMs);
+        return Math.Max(1u, stride);
+    }
 
     private static bool ParseBooleanSetting(string? value, bool fallback)
     {
@@ -790,7 +1109,8 @@ public sealed class HiveMindActor : IActor
             shardId,
             normalized,
             brain.VisualizationEnabled,
-            brain.VisualizationFocusRegionId);
+            brain.VisualizationFocusRegionId,
+            _vizStreamMinIntervalMs);
         var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
         var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
         var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
@@ -826,6 +1146,7 @@ public sealed class HiveMindActor : IActor
             _costTierAMultiplier,
             _costTierBMultiplier,
             _costTierCMultiplier,
+            _outputVectorSource,
             _debugStreamEnabled,
             _debugMinSeverity);
         UpdateRoutingTable(context, brain);
@@ -3972,7 +4293,8 @@ public sealed class HiveMindActor : IActor
                     entry.Key,
                     entry.Value,
                     enabled: true,
-                    brain.VisualizationFocusRegionId);
+                    brain.VisualizationFocusRegionId,
+                    _vizStreamMinIntervalMs);
             }
         }
     }
@@ -4235,7 +4557,34 @@ public sealed class HiveMindActor : IActor
 
     private void EmitTickVisualizationEvents(IContext context, ulong tickId)
     {
+        if (!ShouldEmitVizTick(tickId))
+        {
+            return;
+        }
+
+        _lastVizTickEmittedTickId = tickId;
         EmitVizEvent(context, VizEventType.VizTick, tickId: tickId);
+    }
+
+    private bool ShouldEmitVizTick(ulong tickId)
+    {
+        if (tickId == 0)
+        {
+            return false;
+        }
+
+        var stride = ComputeVizStride(_backpressure.TargetTickHz, _vizTickMinIntervalMs);
+        if (stride <= 1)
+        {
+            return true;
+        }
+
+        if (_lastVizTickEmittedTickId == 0)
+        {
+            return true;
+        }
+
+        return tickId - _lastVizTickEmittedTickId >= stride;
     }
 
     private void HandleTickComputeDone(IContext context, ProtoControl.TickComputeDone message)
@@ -5137,6 +5486,7 @@ public sealed class HiveMindActor : IActor
         if (accepted)
         {
             EmitDebug(context, ProtoSeverity.SevInfo, "tick.override", summary);
+            PersistTickRateOverrideSetting(context);
         }
         else
         {
@@ -5150,6 +5500,24 @@ public sealed class HiveMindActor : IActor
             TargetTickHz = _backpressure.TargetTickHz,
             HasOverride = _backpressure.HasTickRateOverride,
             OverrideTickHz = _backpressure.TickRateOverrideHz
+        });
+    }
+
+    private void PersistTickRateOverrideSetting(IContext context)
+    {
+        if (_settingsPid is null)
+        {
+            return;
+        }
+
+        var value = _backpressure.HasTickRateOverride
+            ? _backpressure.TickRateOverrideHz.ToString("0.###", CultureInfo.InvariantCulture)
+            : string.Empty;
+
+        context.Send(_settingsPid, new ProtoSettings.SettingSet
+        {
+            Key = TickSettingsKeys.OverrideHzKey,
+            Value = value
         });
     }
 
@@ -5194,7 +5562,9 @@ public sealed class HiveMindActor : IActor
         {
             return new ProtoControl.BrainIoInfo
             {
-                BrainId = brainId.ToProtoUuid()
+                BrainId = brainId.ToProtoUuid(),
+                InputCoordinatorMode = _inputCoordinatorMode,
+                OutputVectorSource = _outputVectorSource
             };
         }
 
@@ -5202,7 +5572,9 @@ public sealed class HiveMindActor : IActor
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             InputWidth = (uint)Math.Max(0, brain.InputWidth),
-            OutputWidth = (uint)Math.Max(0, brain.OutputWidth)
+            OutputWidth = (uint)Math.Max(0, brain.OutputWidth),
+            InputCoordinatorMode = _inputCoordinatorMode,
+            OutputVectorSource = _outputVectorSource
         };
     }
 
@@ -5951,7 +6323,8 @@ public sealed class HiveMindActor : IActor
                 entry.Key,
                 entry.Value,
                 nextEnabled,
-                brain.VisualizationFocusRegionId);
+                brain.VisualizationFocusRegionId,
+                _vizStreamMinIntervalMs);
         }
 
         EmitDebug(
@@ -6096,6 +6469,7 @@ public sealed class HiveMindActor : IActor
                 _costTierAMultiplier,
                 _costTierBMultiplier,
                 _costTierCMultiplier,
+                _outputVectorSource,
                 _debugStreamEnabled,
                 _debugMinSeverity);
         }
@@ -6132,7 +6506,12 @@ public sealed class HiveMindActor : IActor
         var inputWidth = rawInputWidth == 0 ? 1u : rawInputWidth;
         var outputWidth = rawOutputWidth == 0 ? 1u : rawOutputWidth;
 
-        if (!force && brain.IoRegistered && brain.IoRegisteredInputWidth == inputWidth && brain.IoRegisteredOutputWidth == outputWidth)
+        if (!force
+            && brain.IoRegistered
+            && brain.IoRegisteredInputWidth == inputWidth
+            && brain.IoRegisteredOutputWidth == outputWidth
+            && brain.IoRegisteredInputCoordinatorMode == _inputCoordinatorMode
+            && brain.IoRegisteredOutputVectorSource == _outputVectorSource)
         {
             if (LogMetadataDiagnostics)
             {
@@ -6173,6 +6552,8 @@ public sealed class HiveMindActor : IActor
             HomeostasisEnergyCouplingEnabled = brain.HomeostasisEnergyCouplingEnabled,
             HomeostasisEnergyTargetScale = brain.HomeostasisEnergyTargetScale,
             HomeostasisEnergyProbabilityScale = brain.HomeostasisEnergyProbabilityScale,
+            InputCoordinatorMode = _inputCoordinatorMode,
+            OutputVectorSource = _outputVectorSource,
             LastTickCost = brain.LastTickCost
         };
 
@@ -6198,6 +6579,8 @@ public sealed class HiveMindActor : IActor
         brain.IoRegistered = true;
         brain.IoRegisteredInputWidth = inputWidth;
         brain.IoRegisteredOutputWidth = outputWidth;
+        brain.IoRegisteredInputCoordinatorMode = _inputCoordinatorMode;
+        brain.IoRegisteredOutputVectorSource = _outputVectorSource;
     }
 
     private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID? outputSink)
@@ -6224,7 +6607,8 @@ public sealed class HiveMindActor : IActor
         ShardId32 shardId,
         PID shardPid,
         bool enabled,
-        uint? focusRegionId)
+        uint? focusRegionId,
+        uint vizStreamMinIntervalMs)
     {
         try
         {
@@ -6235,7 +6619,8 @@ public sealed class HiveMindActor : IActor
                 ShardIndex = (uint)shardId.ShardIndex,
                 Enabled = enabled,
                 HasFocusRegion = focusRegionId.HasValue,
-                FocusRegionId = focusRegionId ?? 0
+                FocusRegionId = focusRegionId ?? 0,
+                VizStreamMinIntervalMs = vizStreamMinIntervalMs
             });
         }
         catch (Exception ex)
@@ -6276,6 +6661,7 @@ public sealed class HiveMindActor : IActor
         float costTierAMultiplier,
         float costTierBMultiplier,
         float costTierCMultiplier,
+        ProtoControl.OutputVectorSource outputVectorSource,
         bool debugEnabled,
         ProtoSeverity debugMinSeverity)
     {
@@ -6313,6 +6699,7 @@ public sealed class HiveMindActor : IActor
                 CostTierAMultiplier = costTierAMultiplier,
                 CostTierBMultiplier = costTierBMultiplier,
                 CostTierCMultiplier = costTierCMultiplier,
+                OutputVectorSource = outputVectorSource,
                 DebugEnabled = debugEnabled,
                 DebugMinSeverity = debugMinSeverity
             });
@@ -6481,6 +6868,10 @@ public sealed class HiveMindActor : IActor
         public int OutputWidth { get; set; }
         public uint IoRegisteredInputWidth { get; set; }
         public uint IoRegisteredOutputWidth { get; set; }
+        public ProtoControl.InputCoordinatorMode IoRegisteredInputCoordinatorMode { get; set; } =
+            ProtoControl.InputCoordinatorMode.DirtyOnChange;
+        public ProtoControl.OutputVectorSource IoRegisteredOutputVectorSource { get; set; } =
+            ProtoControl.OutputVectorSource.Potential;
         public bool IoRegistered { get; set; }
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }
@@ -6874,3 +7265,4 @@ public sealed class HiveMindActor : IActor
         return new PID(options.IoAddress, options.IoName);
     }
 }
+

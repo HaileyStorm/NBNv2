@@ -105,6 +105,26 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void SelectedCanvasColorModeAndCurve_UpdateHintsAndTooltips()
+    {
+        var vm = CreateViewModel();
+        var topologyMode = Assert.Single(
+            vm.CanvasColorModeOptions,
+            option => option.Mode == VizActivityCanvasColorMode.Topology);
+        var linearCurve = Assert.Single(
+            vm.CanvasTransferCurveOptions,
+            option => option.Curve == VizActivityCanvasTransferCurve.Linear);
+
+        vm.SelectedCanvasColorMode = topologyMode;
+        vm.SelectedCanvasTransferCurve = linearCurve;
+
+        Assert.Equal(topologyMode.LegendHint, vm.CanvasColorModeHint);
+        Assert.Equal(topologyMode.Tooltip, vm.CanvasColorModeTooltip);
+        Assert.Equal(linearCurve.LegendHint, vm.CanvasColorCurveHint);
+        Assert.Equal(linearCurve.Tooltip, vm.CanvasColorCurveTooltip);
+    }
+
+    [Fact]
     public void TryResolveCanvasHit_EdgeHoverStickyTolerance_ResolvesNearMiss()
     {
         var vm = CreateViewModel();

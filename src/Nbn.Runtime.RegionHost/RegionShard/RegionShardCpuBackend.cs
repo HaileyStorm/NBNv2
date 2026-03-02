@@ -12,6 +12,7 @@ namespace Nbn.Runtime.RegionHost;
 public sealed class RegionShardCpuBackend
 {
     private const float BufferVizEpsilon = 1e-6f;
+    private const float RuntimeSignalLimit = 1f;
     private const float PlasticityPredictiveNudgeGain = 0.35f;
     private const float PlasticitySourceMemoryGain = 0.15f;
     private const float PlasticitySaturationGain = 0.25f;
@@ -77,6 +78,7 @@ public sealed class RegionShardCpuBackend
         float? costTierAMultiplier = null,
         float? costTierBMultiplier = null,
         float? costTierCMultiplier = null,
+        ProtoControl.OutputVectorSource outputVectorSource = ProtoControl.OutputVectorSource.Potential,
         long previousTickCostTotal = 0)
     {
         routing ??= RegionShardRoutingTable.CreateSingleShard(_state.RegionId, _state.NeuronCount);
@@ -131,6 +133,8 @@ public sealed class RegionShardCpuBackend
             : null;
         List<OutputEvent>? outputs = _state.IsOutputRegion ? new List<OutputEvent>() : null;
         float[]? outputVector = _state.IsOutputRegion ? new float[_state.NeuronCount] : null;
+        var outputVectorFromBuffer = outputVector is not null
+                                     && outputVectorSource == ProtoControl.OutputVectorSource.Buffer;
         var brainProto = brainId.ToProtoUuid();
 
         var regionDistanceCache = new int?[NbnConstants.RegionCount];
@@ -167,6 +171,10 @@ public sealed class RegionShardCpuBackend
             var buffer = NormalizeBuffer(i);
             ApplyHomeostasis(tickId, i, homeostasis, costEnergyEnabled);
             buffer = NormalizeBuffer(i);
+            if (outputVectorFromBuffer)
+            {
+                outputVector![i] = buffer;
+            }
 
             var sourceNeuronId = _state.NeuronStart + i;
             var sourceAddress = ComposeAddress(_state.RegionId, sourceNeuronId);
@@ -183,7 +191,8 @@ public sealed class RegionShardCpuBackend
                 }
             }
 
-            if (buffer <= _state.PreActivationThreshold[i])
+            var preActivationThreshold = NormalizePreActivationThreshold(_state.PreActivationThreshold[i]);
+            if (buffer <= preActivationThreshold)
             {
                 continue;
             }
@@ -193,16 +202,10 @@ public sealed class RegionShardCpuBackend
                 costActivation += ResolveFunctionCost(activationCostLookup!, _state.ActivationFunctions[i]);
             }
             var potential = Activate((ActivationFunction)_state.ActivationFunctions[i], buffer, _state.ParamA[i], _state.ParamB[i]);
-            if (!float.IsFinite(potential))
-            {
-                potential = 0f;
-            }
-
-            var reset = Reset((ResetFunction)_state.ResetFunctions[i], buffer, potential, _state.ActivationThreshold[i], _state.AxonCounts[i]);
-            if (!float.IsFinite(reset))
-            {
-                reset = 0f;
-            }
+            potential = ClampSignal(potential);
+            var activationThreshold = NormalizeActivationThreshold(_state.ActivationThreshold[i]);
+            var reset = Reset((ResetFunction)_state.ResetFunctions[i], buffer, potential, activationThreshold, _state.AxonCounts[i]);
+            reset = ClampSignal(reset);
 
             _state.Buffer[i] = reset;
             if (costEnergyEnabled)
@@ -210,12 +213,12 @@ public sealed class RegionShardCpuBackend
                 costReset += ResolveFunctionCost(resetCostLookup!, _state.ResetFunctions[i]);
             }
 
-            if (outputVector is not null)
+            if (outputVector is not null && !outputVectorFromBuffer)
             {
                 outputVector[i] = potential;
             }
 
-            if (MathF.Abs(potential) <= _state.ActivationThreshold[i])
+            if (MathF.Abs(potential) <= activationThreshold)
             {
                 continue;
             }
@@ -247,7 +250,7 @@ public sealed class RegionShardCpuBackend
                 var destRegion = _state.Axons.TargetRegionIds[index];
                 var destNeuron = _state.Axons.TargetNeuronIds[index];
                 var strength = NormalizeAxonStrength(index);
-                var value = potential * strength;
+                var value = ClampSignal(potential * strength);
 
                 if (!routing.TryGetShard(destRegion, destNeuron, out var destShard))
                 {
@@ -715,13 +718,13 @@ public sealed class RegionShardCpuBackend
     private float NormalizeBuffer(int index)
     {
         var buffer = _state.Buffer[index];
-        if (!float.IsFinite(buffer))
+        var normalized = ClampSignal(buffer);
+        if (normalized != buffer)
         {
-            buffer = 0f;
-            _state.Buffer[index] = 0f;
+            _state.Buffer[index] = normalized;
         }
 
-        return buffer;
+        return normalized;
     }
 
     private void MergeInbox(int index)
@@ -753,6 +756,7 @@ public sealed class RegionShardCpuBackend
 
         _state.Inbox[index] = 0f;
         _state.InboxHasInput[index] = false;
+        _state.Buffer[index] = ClampSignal(_state.Buffer[index]);
     }
 
     private static float Activate(ActivationFunction function, float buffer, float paramA, float paramB)
@@ -871,6 +875,36 @@ public sealed class RegionShardCpuBackend
     private static float Clamp(float value, float limit)
     {
         return Math.Clamp(value, -limit, limit);
+    }
+
+    private static float ClampSignal(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            return 0f;
+        }
+
+        return Math.Clamp(value, -RuntimeSignalLimit, RuntimeSignalLimit);
+    }
+
+    private static float NormalizePreActivationThreshold(float threshold)
+    {
+        if (!float.IsFinite(threshold))
+        {
+            return 0f;
+        }
+
+        return Math.Clamp(threshold, -RuntimeSignalLimit, RuntimeSignalLimit);
+    }
+
+    private static float NormalizeActivationThreshold(float threshold)
+    {
+        if (!float.IsFinite(threshold))
+        {
+            return 0f;
+        }
+
+        return Math.Clamp(threshold, 0f, RuntimeSignalLimit);
     }
 
     private static float SafeInverse(float value)
@@ -1179,20 +1213,11 @@ public sealed class RegionShardCpuBackend
                 continue;
             }
 
-            var buffer = _state.Buffer[i];
-            if (!float.IsFinite(buffer))
-            {
-                buffer = 0f;
-            }
-
-            var preThreshold = _state.PreActivationThreshold[i];
-            var activationThreshold = _state.ActivationThreshold[i];
+            var buffer = ClampSignal(_state.Buffer[i]);
+            var preThreshold = NormalizePreActivationThreshold(_state.PreActivationThreshold[i]);
+            var activationThreshold = NormalizeActivationThreshold(_state.ActivationThreshold[i]);
             var activation = (ActivationFunction)_state.ActivationFunctions[i];
-            var potential = Activate(activation, buffer, _state.ParamA[i], _state.ParamB[i]);
-            if (!float.IsFinite(potential))
-            {
-                potential = 0f;
-            }
+            var potential = ClampSignal(Activate(activation, buffer, _state.ParamA[i], _state.ParamB[i]));
 
             var passesBufferGate = buffer > preThreshold;
             var passesFireGate = MathF.Abs(potential) > activationThreshold;
@@ -1363,3 +1388,4 @@ public readonly record struct RegionShardPlasticityEnergyCostConfig(
         MinScale: 0.1f,
         MaxScale: 1f);
 }
+

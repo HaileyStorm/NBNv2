@@ -153,6 +153,12 @@ public enum VizActivityCanvasColorMode
     EnergyCostPressure = 4
 }
 
+public enum VizActivityCanvasTransferCurve
+{
+    Linear = 0,
+    PerceptualLog = 1
+}
+
 public enum VizActivityCanvasLayoutMode
 {
     Axial2D = 0,
@@ -168,7 +174,8 @@ public sealed record VizActivityCanvasLodOptions(
 public sealed record VizActivityCanvasRenderOptions(
     VizActivityCanvasLayoutMode LayoutMode,
     double ViewportScale,
-    VizActivityCanvasLodOptions Lod)
+    VizActivityCanvasLodOptions Lod,
+    VizActivityCanvasTransferCurve ColorCurve = VizActivityCanvasTransferCurve.Linear)
 {
     public static VizActivityCanvasRenderOptions Default { get; } = new(
         VizActivityCanvasLayoutMode.Axial2D,
@@ -177,7 +184,8 @@ public sealed record VizActivityCanvasRenderOptions(
             Enabled: false,
             LowZoomRouteBudget: 160,
             MediumZoomRouteBudget: 280,
-            HighZoomRouteBudget: 420));
+            HighZoomRouteBudget: 420),
+        VizActivityCanvasTransferCurve.Linear);
 }
 
 public static class VizActivityCanvasLayoutBuilder
@@ -198,6 +206,7 @@ public static class VizActivityCanvasLayoutBuilder
     private const double EdgeNodeClearance = 4;
     private const double BaseEdgeStroke = 1.1;
     private const double MaxEdgeStrokeBoost = 2.8;
+    private const double PerceptualLogGain = 63.0;
     private const int MinAdaptiveRouteBudget = 16;
     private const int MaxAdaptiveRouteBudget = 4096;
     private const int EdgeCurveCacheMaxEntries = 4096;
@@ -278,18 +287,20 @@ public static class VizActivityCanvasLayoutBuilder
             regionRouteDegrees.TryGetValue(regionId, out var routeDegree);
             var structureRatio = Math.Clamp((double)(routeDegree.OutboundCount + routeDegree.InboundCount) / maxRouteDegree, 0.0, 1.0);
             var reserveValue = bufferMetrics.BufferCount > 0 ? bufferMetrics.LatestBufferValue : stats.SignedValue;
+            var stateSignal = bufferMetrics.BufferCount > 0 ? reserveValue : stats.SignedValue;
             var emphasis = (isSelected ? 0.25 : 0.0) + (isHovered ? 0.14 : 0.0) + (isPinned ? 0.18 : 0.0);
             var stroke = GetTopologyStrokeColor(regionId, isDormant);
             var fill = ResolveRegionFillColor(
                 colorMode,
                 regionId,
-                stats.SignedValue,
+                stateSignal,
                 reserveValue,
                 bufferMetrics.BufferCount,
                 loadRatio,
                 tickRecency,
                 structureRatio,
-                isDormant);
+                isDormant,
+                renderOptions.ColorCurve);
             var fillOpacity = Math.Clamp((isDormant ? 0.14 : 0.36 + (0.45 * loadRatio)) + emphasis, 0.12, 1.0);
             var pulseOpacity = Math.Clamp((isDormant ? 0.1 : 0.25 + (0.45 * tickRecency)) + (emphasis * 0.6), 0.08, 1.0);
             var strokeThickness = 1.3
@@ -336,7 +347,7 @@ public static class VizActivityCanvasLayoutBuilder
             nodeByRegion[regionId] = node;
         }
 
-        var edges = BuildRegionEdges(projection, options, topology, nodeByRegion, interaction, latestTick);
+        var edges = BuildRegionEdges(projection, options, topology, nodeByRegion, interaction, latestTick, renderOptions);
         var layoutLegend = used3DProjection
             ? "Layout 3D-projected"
             : fellBackTo2D
@@ -406,16 +417,18 @@ public static class VizActivityCanvasLayoutBuilder
             var strokeThickness = 1.2 + (isPinned ? 0.8 : 0.0) + (isHovered ? 0.6 : 0.0) + (isSelected ? 0.9 : 0.0);
             var stroke = GetTopologyStrokeColor(focusRegionId, isDormant);
             var reserveValue = stats.BufferCount > 0 ? stats.LatestBufferValue : stats.AverageValue;
+            var stateSignal = stats.BufferCount > 0 ? stats.LatestValue : stats.AverageValue;
             var fill = ResolveFocusFillColor(
                 colorMode,
                 focusRegionId,
-                stats.AverageValue,
+                stateSignal,
                 reserveValue,
                 stats.BufferCount,
                 loadRatio,
                 tickRecency,
                 structureRatio,
-                isDormant);
+                isDormant,
+                renderOptions.ColorCurve);
             var bufferAverageText = FormatBufferAverage(stats.BufferCount, stats.AverageBufferValue);
             var bufferLatestText = FormatBufferLatest(stats.BufferCount, stats.LatestBufferValue, stats.LatestBufferTick);
             var detail = $"R{focusRegionId}N{neuronId} | events {stats.EventCount} | last tick {stats.LastTick}"
@@ -520,16 +533,18 @@ public static class VizActivityCanvasLayoutBuilder
             var radius = MinGatewayNodeRadius
                          + ((MaxGatewayNodeRadius - MinGatewayNodeRadius) * ((structureRatio * 0.8) + (activityRatio * 0.2)));
             var reserveValue = bufferMetrics.BufferCount > 0 ? bufferMetrics.LatestBufferValue : aggregateAverageSigned;
+            var stateSignal = bufferMetrics.BufferCount > 0 ? reserveValue : aggregateAverageSigned;
             var fill = ResolveFocusFillColor(
                 colorMode,
                 regionId,
-                aggregateAverageSigned,
+                stateSignal,
                 reserveValue,
                 bufferMetrics.BufferCount,
                 aggregateLoadRatio,
                 aggregateRecency,
                 structureRatio,
-                isDormant: aggregateDormant);
+                isDormant: aggregateDormant,
+                curve: renderOptions.ColorCurve);
             var stroke = aggregateDormant ? DimColor(topologyStroke) : topologyStroke;
             var bufferAverageText = FormatBufferAverage(bufferMetrics);
             var bufferLatestText = FormatBufferLatest(bufferMetrics);
@@ -684,7 +699,8 @@ public static class VizActivityCanvasLayoutBuilder
         VizActivityCanvasTopology topology,
         IReadOnlyDictionary<uint, VizActivityCanvasNode> nodeByRegion,
         VizActivityCanvasInteractionState interaction,
-        ulong latestTick)
+        ulong latestTick,
+        VizActivityCanvasRenderOptions renderOptions)
     {
         var aggregates = new Dictionary<VizActivityCanvasRegionRoute, RouteAggregate>();
         foreach (var edge in projection.Edges)
@@ -778,7 +794,7 @@ public static class VizActivityCanvasLayoutBuilder
             }
 
             var directionStroke = GetRegionEdgeDirectionColor(edgeKind, isDormant);
-            var activityStroke = GetActivityEdgeColor(signedSignal, activityIntensity, isDormant);
+            var activityStroke = GetActivityEdgeColor(signedSignal, activityIntensity, isDormant, renderOptions.ColorCurve);
             edges.Add(new VizActivityCanvasEdge(
                 routeLabel,
                 detail,
@@ -1095,7 +1111,7 @@ public static class VizActivityCanvasLayoutBuilder
             }
 
             var directionStroke = GetFocusedEdgeDirectionColor(kind, isDormant);
-            var activityStroke = GetActivityEdgeColor(signedSignal, activityIntensity, isDormant);
+            var activityStroke = GetActivityEdgeColor(signedSignal, activityIntensity, isDormant, renderOptions.ColorCurve);
             edges.Add(new VizActivityCanvasEdge(
                 routeLabel,
                 detail,
@@ -1899,16 +1915,22 @@ public static class VizActivityCanvasLayoutBuilder
         return isDormant ? DimColor(color) : color;
     }
 
-    private static string GetActivityEdgeColor(double signedSignal, double intensity, bool isDormant)
+    private static string GetActivityEdgeColor(
+        double signedSignal,
+        double intensity,
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
     {
         var neutral = isDormant ? "#4F565D" : "#56606A";
-        if (Math.Abs(signedSignal) < 1e-5)
+        var curvedSignal = ApplySignedTransferCurve(signedSignal, curve);
+        var curvedIntensity = ApplyPositiveTransferCurve(intensity, curve);
+        if (Math.Abs(curvedSignal) < 1e-5)
         {
-            return BlendColor(neutral, "#8EA4B8", intensity * 0.45);
+            return BlendColor(neutral, "#8EA4B8", curvedIntensity * 0.45);
         }
 
-        var target = signedSignal > 0 ? "#E69F00" : "#0072B2";
-        var blend = Math.Clamp((0.30 + (0.70 * intensity)) * Math.Abs(signedSignal), 0.0, 1.0);
+        var target = curvedSignal > 0 ? "#E69F00" : "#0072B2";
+        var blend = Math.Clamp((0.30 + (0.70 * curvedIntensity)) * Math.Abs(curvedSignal), 0.0, 1.0);
         return BlendColor(neutral, target, blend);
     }
 
@@ -1921,14 +1943,15 @@ public static class VizActivityCanvasLayoutBuilder
         double loadRatio,
         double tickRecency,
         double structureRatio,
-        bool isDormant)
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
         => colorMode switch
         {
             VizActivityCanvasColorMode.Topology => GetTopologyFillColor(regionId, isDormant),
-            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, loadRatio, tickRecency, isDormant),
-            VizActivityCanvasColorMode.EnergyReserve => GetEnergyReserveFillColor(reserveValue, reserveSampleCount, isDormant),
-            VizActivityCanvasColorMode.EnergyCostPressure => GetEnergyCostPressureFillColor(loadRatio, tickRecency, structureRatio, reserveValue, reserveSampleCount, isDormant),
-            _ => GetStateFillColor(signedValue, isDormant)
+            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, loadRatio, tickRecency, isDormant, curve),
+            VizActivityCanvasColorMode.EnergyReserve => GetEnergyReserveFillColor(reserveValue, reserveSampleCount, isDormant, curve),
+            VizActivityCanvasColorMode.EnergyCostPressure => GetEnergyCostPressureFillColor(loadRatio, tickRecency, structureRatio, reserveValue, reserveSampleCount, isDormant, curve),
+            _ => GetStateFillColor(signedValue, isDormant, curve)
         };
 
     private static string ResolveFocusFillColor(
@@ -1940,14 +1963,15 @@ public static class VizActivityCanvasLayoutBuilder
         double activityRatio,
         double tickRecency,
         double structureRatio,
-        bool isDormant)
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
         => colorMode switch
         {
             VizActivityCanvasColorMode.Topology => GetTopologyFillColor(regionId, isDormant),
-            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, activityRatio, tickRecency, isDormant),
-            VizActivityCanvasColorMode.EnergyReserve => GetEnergyReserveFillColor(reserveValue, reserveSampleCount, isDormant),
-            VizActivityCanvasColorMode.EnergyCostPressure => GetEnergyCostPressureFillColor(activityRatio, tickRecency, structureRatio, reserveValue, reserveSampleCount, isDormant),
-            _ => GetStateFillColor(signedValue, isDormant)
+            VizActivityCanvasColorMode.Activity => GetActivityFillColor(regionId, activityRatio, tickRecency, isDormant, curve),
+            VizActivityCanvasColorMode.EnergyReserve => GetEnergyReserveFillColor(reserveValue, reserveSampleCount, isDormant, curve),
+            VizActivityCanvasColorMode.EnergyCostPressure => GetEnergyCostPressureFillColor(activityRatio, tickRecency, structureRatio, reserveValue, reserveSampleCount, isDormant, curve),
+            _ => GetStateFillColor(signedValue, isDormant, curve)
         };
 
     private static string GetTopologyFillColor(uint regionId, bool isDormant)
@@ -1962,17 +1986,26 @@ public static class VizActivityCanvasLayoutBuilder
         return isDormant ? DimColor(color) : color;
     }
 
-    private static string GetActivityFillColor(uint regionId, double loadRatio, double recency, bool isDormant)
+    private static string GetActivityFillColor(
+        uint regionId,
+        double loadRatio,
+        double recency,
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
     {
         var baseColor = GetTopologyFillColor(regionId, isDormant);
         var neutral = isDormant ? "#4E5863" : "#5B6772";
-        var intensity = Math.Clamp((0.65 * loadRatio) + (0.35 * recency), 0.0, 1.0);
+        var curvedLoad = ApplyPositiveTransferCurve(loadRatio, curve);
+        var intensity = Math.Clamp((0.65 * curvedLoad) + (0.35 * recency), 0.0, 1.0);
         return BlendColor(neutral, baseColor, 0.18 + (0.72 * intensity));
     }
 
-    private static string GetStateFillColor(double signedValue, bool isDormant)
+    private static string GetStateFillColor(
+        double signedValue,
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
     {
-        var clamped = Clamp(signedValue, -1.0, 1.0);
+        var clamped = ApplySignedTransferCurve(Clamp(signedValue, -1.0, 1.0), curve);
         var neutral = isDormant ? "#4E5863" : "#5E6873";
         var magnitude = Math.Abs(clamped);
         if (magnitude < 1e-5)
@@ -1981,15 +2014,23 @@ public static class VizActivityCanvasLayoutBuilder
         }
 
         var target = clamped >= 0 ? "#E69F00" : "#0072B2";
-        var minBlend = isDormant ? 0.22 : 0.38;
-        var maxBlend = isDormant ? 0.60 : 0.88;
+        var minBlend = curve == VizActivityCanvasTransferCurve.PerceptualLog
+            ? (isDormant ? 0.12 : 0.20)
+            : (isDormant ? 0.22 : 0.38);
+        var maxBlend = curve == VizActivityCanvasTransferCurve.PerceptualLog
+            ? (isDormant ? 0.84 : 1.00)
+            : (isDormant ? 0.60 : 0.88);
         return BlendColor(neutral, target, minBlend + ((maxBlend - minBlend) * magnitude));
     }
 
-    private static string GetEnergyReserveFillColor(double reserveValue, int reserveSampleCount, bool isDormant)
+    private static string GetEnergyReserveFillColor(
+        double reserveValue,
+        int reserveSampleCount,
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
     {
         var neutral = isDormant ? "#4E5863" : "#5E6873";
-        var normalized = NormalizeEnergySignal(reserveValue);
+        var normalized = ApplySignedTransferCurve(NormalizeEnergySignal(reserveValue), curve);
         var magnitude = Math.Abs(normalized);
         if (magnitude < 1e-5)
         {
@@ -2012,12 +2053,13 @@ public static class VizActivityCanvasLayoutBuilder
         double structureRatio,
         double reserveValue,
         int reserveSampleCount,
-        bool isDormant)
+        bool isDormant,
+        VizActivityCanvasTransferCurve curve)
     {
-        var activity = Clamp(activityRatio, 0.0, 1.0);
+        var activity = ApplyPositiveTransferCurve(Clamp(activityRatio, 0.0, 1.0), curve);
         var recency = Clamp(tickRecency, 0.0, 1.0);
         var structure = Clamp(structureRatio, 0.0, 1.0);
-        var reserveMagnitude = Math.Abs(NormalizeEnergySignal(reserveValue));
+        var reserveMagnitude = Math.Abs(ApplySignedTransferCurve(NormalizeEnergySignal(reserveValue), curve));
         var reserveDeficit = reserveSampleCount > 0
             ? 1.0 - reserveMagnitude
             : 0.6;
@@ -2038,6 +2080,35 @@ public static class VizActivityCanvasLayoutBuilder
 
         var normalized = value / (1.0 + Math.Abs(value));
         return Clamp(normalized, -1.0, 1.0);
+    }
+
+    private static double ApplyPositiveTransferCurve(double value, VizActivityCanvasTransferCurve curve)
+    {
+        var clamped = Clamp(value, 0.0, 1.0);
+        if (curve != VizActivityCanvasTransferCurve.PerceptualLog)
+        {
+            return clamped;
+        }
+
+        var denominator = Math.Log(1.0 + PerceptualLogGain);
+        if (denominator <= 1e-8)
+        {
+            return clamped;
+        }
+
+        return Clamp(Math.Log(1.0 + (PerceptualLogGain * clamped)) / denominator, 0.0, 1.0);
+    }
+
+    private static double ApplySignedTransferCurve(double value, VizActivityCanvasTransferCurve curve)
+    {
+        var clamped = Clamp(value, -1.0, 1.0);
+        if (curve != VizActivityCanvasTransferCurve.PerceptualLog)
+        {
+            return clamped;
+        }
+
+        var magnitude = ApplyPositiveTransferCurve(Math.Abs(clamped), curve);
+        return clamped < 0.0 ? -magnitude : magnitude;
     }
 
     private static (string Fill, string Stroke) GetGatewayPalette(string role)

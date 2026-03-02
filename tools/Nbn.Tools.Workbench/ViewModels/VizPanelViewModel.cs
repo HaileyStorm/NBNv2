@@ -41,6 +41,9 @@ public sealed class VizPanelViewModel : ViewModelBase
     private const int DefaultLodLowZoomBudget = 120;
     private const int DefaultLodMediumZoomBudget = 220;
     private const int DefaultLodHighZoomBudget = 360;
+    private const uint DefaultVizTickMinIntervalMs = 250u;
+    private const uint DefaultVizStreamMinIntervalMs = 250u;
+    private const uint MaxVisualizationIntervalMs = 60_000u;
     private const string DefaultTickOverrideSummary = "Tick override: default runtime backpressure target.";
     private const string DefaultTickCadenceSummary = "Current cadence: awaiting HiveMind status.";
     private const int EmptyBrainRefreshClearThreshold = 3;
@@ -115,6 +118,7 @@ public sealed class VizPanelViewModel : ViewModelBase
     private BrainListItem? _selectedBrain;
     private VizPanelTypeOption _selectedVizType;
     private VizCanvasColorModeOption _selectedCanvasColorMode;
+    private VizCanvasTransferCurveOption _selectedCanvasTransferCurve;
     private VizCanvasLayoutModeOption _selectedLayoutMode;
     private bool _suspendSelection;
     private VizEventItem? _selectedEvent;
@@ -123,6 +127,9 @@ public sealed class VizPanelViewModel : ViewModelBase
     private string _tickRateOverrideText = string.Empty;
     private string _tickRateOverrideSummary = DefaultTickOverrideSummary;
     private string _tickCadenceSummary = DefaultTickCadenceSummary;
+    private string _vizTickMinIntervalMsText = DefaultVizTickMinIntervalMs.ToString(CultureInfo.InvariantCulture);
+    private string _vizStreamMinIntervalMsText = DefaultVizStreamMinIntervalMs.ToString(CultureInfo.InvariantCulture);
+    private string _vizCadenceSummary = BuildVisualizationCadenceSummary(DefaultVizTickMinIntervalMs, DefaultVizStreamMinIntervalMs);
     private bool _includeLowSignalEvents;
     private bool _enableAdaptiveLod = true;
     private string _lodLowZoomBudgetText = DefaultLodLowZoomBudget.ToString(CultureInfo.InvariantCulture);
@@ -231,6 +238,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         _selectedVizType = VizPanelTypeOptions[0];
         CanvasColorModeOptions = new ObservableCollection<VizCanvasColorModeOption>(VizCanvasColorModeOption.CreateDefaults());
         _selectedCanvasColorMode = CanvasColorModeOptions[0];
+        CanvasTransferCurveOptions = new ObservableCollection<VizCanvasTransferCurveOption>(VizCanvasTransferCurveOption.CreateDefaults());
+        _selectedCanvasTransferCurve = CanvasTransferCurveOptions[0];
         LayoutModeOptions = new ObservableCollection<VizCanvasLayoutModeOption>(VizCanvasLayoutModeOption.CreateDefaults());
         _selectedLayoutMode = LayoutModeOptions[0];
         ClearCommand = new RelayCommand(Clear);
@@ -243,6 +252,8 @@ public sealed class VizPanelViewModel : ViewModelBase
         ApplyActivityOptionsCommand = new RelayCommand(ApplyActivityOptions);
         ApplyTickRateOverrideCommand = new AsyncRelayCommand(ApplyTickRateOverrideAsync);
         ClearTickRateOverrideCommand = new AsyncRelayCommand(ClearTickRateOverrideAsync);
+        ApplyVizCadenceCommand = new AsyncRelayCommand(ApplyVisualizationCadenceAsync);
+        ResetVizCadenceCommand = new AsyncRelayCommand(ResetVisualizationCadenceAsync);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => VizEvents.Count > 0);
         ApplyEnergyCreditCommand = new RelayCommand(() => _brain.ApplyEnergyCreditSelected());
         ApplyEnergyRateCommand = new RelayCommand(() => _brain.ApplyEnergyRateSelected());
@@ -313,6 +324,8 @@ public sealed class VizPanelViewModel : ViewModelBase
     public ObservableCollection<VizPanelTypeOption> VizPanelTypeOptions { get; }
 
     public ObservableCollection<VizCanvasColorModeOption> CanvasColorModeOptions { get; }
+
+    public ObservableCollection<VizCanvasTransferCurveOption> CanvasTransferCurveOptions { get; }
 
     public ObservableCollection<VizCanvasLayoutModeOption> LayoutModeOptions { get; }
 
@@ -385,6 +398,21 @@ public sealed class VizPanelViewModel : ViewModelBase
             if (SetProperty(ref _selectedCanvasColorMode, value))
             {
                 OnPropertyChanged(nameof(CanvasColorModeHint));
+                OnPropertyChanged(nameof(CanvasColorModeTooltip));
+                RefreshCanvasLayoutOnly();
+            }
+        }
+    }
+
+    public VizCanvasTransferCurveOption SelectedCanvasTransferCurve
+    {
+        get => _selectedCanvasTransferCurve;
+        set
+        {
+            if (SetProperty(ref _selectedCanvasTransferCurve, value))
+            {
+                OnPropertyChanged(nameof(CanvasColorCurveHint));
+                OnPropertyChanged(nameof(CanvasColorCurveTooltip));
                 RefreshCanvasLayoutOnly();
             }
         }
@@ -403,6 +431,12 @@ public sealed class VizPanelViewModel : ViewModelBase
     }
 
     public string CanvasColorModeHint => SelectedCanvasColorMode.LegendHint;
+
+    public string CanvasColorModeTooltip => SelectedCanvasColorMode.Tooltip;
+
+    public string CanvasColorCurveHint => SelectedCanvasTransferCurve.LegendHint;
+
+    public string CanvasColorCurveTooltip => SelectedCanvasTransferCurve.Tooltip;
 
     public bool EnableAdaptiveLod
     {
@@ -477,6 +511,24 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         get => _tickCadenceSummary;
         private set => SetProperty(ref _tickCadenceSummary, value);
+    }
+
+    public string VizTickMinIntervalMsText
+    {
+        get => _vizTickMinIntervalMsText;
+        set => SetProperty(ref _vizTickMinIntervalMsText, value);
+    }
+
+    public string VizStreamMinIntervalMsText
+    {
+        get => _vizStreamMinIntervalMsText;
+        set => SetProperty(ref _vizStreamMinIntervalMsText, value);
+    }
+
+    public string VizCadenceSummary
+    {
+        get => _vizCadenceSummary;
+        private set => SetProperty(ref _vizCadenceSummary, value);
     }
 
     public bool IncludeLowSignalEvents
@@ -792,6 +844,10 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand ClearTickRateOverrideCommand { get; }
 
+    public AsyncRelayCommand ApplyVizCadenceCommand { get; }
+
+    public AsyncRelayCommand ResetVizCadenceCommand { get; }
+
     public AsyncRelayCommand ExportCommand { get; }
 
     public RelayCommand ApplyEnergyCreditCommand { get; }
@@ -940,6 +996,39 @@ public sealed class VizPanelViewModel : ViewModelBase
             ? $"Tick override active: {FormatTickCadence(overrideTickHz)}. Current target n/a."
             : DefaultTickOverrideSummary;
         RefreshActivityProjection();
+    }
+
+    public bool ApplySetting(SettingItem item)
+    {
+        if (string.Equals(item.Key, TickSettingsKeys.OverrideHzKey, StringComparison.OrdinalIgnoreCase))
+        {
+            if (TryParseTickRateOverrideSettingValue(item.Value, out var overrideHz))
+            {
+                TickRateOverrideText = overrideHz.HasValue
+                    ? (1000d / overrideHz.Value).ToString("0.###", CultureInfo.InvariantCulture) + "ms"
+                    : string.Empty;
+            }
+
+            return true;
+        }
+
+        if (string.Equals(item.Key, VisualizationSettingsKeys.TickMinIntervalMsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseVisualizationIntervalSetting(item.Value, DefaultVizTickMinIntervalMs);
+            VizTickMinIntervalMsText = parsed.ToString(CultureInfo.InvariantCulture);
+            UpdateVisualizationCadenceSummary();
+            return true;
+        }
+
+        if (string.Equals(item.Key, VisualizationSettingsKeys.StreamMinIntervalMsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseVisualizationIntervalSetting(item.Value, DefaultVizStreamMinIntervalMs);
+            VizStreamMinIntervalMsText = parsed.ToString(CultureInfo.InvariantCulture);
+            UpdateVisualizationCadenceSummary();
+            return true;
+        }
+
+        return false;
     }
 
     public void AddVizEvent(VizEventItem item)
@@ -1494,6 +1583,65 @@ public sealed class VizPanelViewModel : ViewModelBase
         UpdateTickRateOverrideStatus(ack, "Tick override clear failed: HiveMind unavailable.");
     }
 
+    private async Task ApplyVisualizationCadenceAsync()
+    {
+        if (!TryParseVisualizationIntervalInput(VizTickMinIntervalMsText, out var tickIntervalMs))
+        {
+            Status = $"Viz tick cadence must be 0-{MaxVisualizationIntervalMs} ms (or positive Hz).";
+            return;
+        }
+
+        if (!TryParseVisualizationIntervalInput(VizStreamMinIntervalMsText, out var streamIntervalMs))
+        {
+            Status = $"Viz stream cadence must be 0-{MaxVisualizationIntervalMs} ms (or positive Hz).";
+            return;
+        }
+
+        var tickResult = await _brain
+            .SetSettingAsync(
+                VisualizationSettingsKeys.TickMinIntervalMsKey,
+                tickIntervalMs.ToString(CultureInfo.InvariantCulture))
+            .ConfigureAwait(false);
+        var streamResult = await _brain
+            .SetSettingAsync(
+                VisualizationSettingsKeys.StreamMinIntervalMsKey,
+                streamIntervalMs.ToString(CultureInfo.InvariantCulture))
+            .ConfigureAwait(false);
+
+        if (tickResult is not null)
+        {
+            ApplySetting(new SettingItem(
+                tickResult.Key,
+                tickResult.Value,
+                tickResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        if (streamResult is not null)
+        {
+            ApplySetting(new SettingItem(
+                streamResult.Key,
+                streamResult.Value,
+                streamResult.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        if (tickResult is null || streamResult is null)
+        {
+            Status = "Viz cadence update failed: SettingsMonitor unavailable.";
+            return;
+        }
+
+        Status = BuildVisualizationCadenceSummary(
+            ParseVisualizationIntervalSetting(tickResult.Value, tickIntervalMs),
+            ParseVisualizationIntervalSetting(streamResult.Value, streamIntervalMs));
+    }
+
+    private Task ResetVisualizationCadenceAsync()
+    {
+        VizTickMinIntervalMsText = DefaultVizTickMinIntervalMs.ToString(CultureInfo.InvariantCulture);
+        VizStreamMinIntervalMsText = DefaultVizStreamMinIntervalMs.ToString(CultureInfo.InvariantCulture);
+        return ApplyVisualizationCadenceAsync();
+    }
+
     private void UpdateTickRateOverrideStatus(Nbn.Proto.Control.SetTickRateOverrideAck? ack, string fallbackStatus)
     {
         if (ack is null)
@@ -1576,6 +1724,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         SelectedPayload = string.Empty;
         TickRateOverrideSummary = DefaultTickOverrideSummary;
         TickCadenceSummary = DefaultTickCadenceSummary;
+        UpdateVisualizationCadenceSummary();
         _currentTargetTickHz = null;
         ResetCanvasInteractionState(clearPins: true);
         ExportCommand.RaiseCanExecuteChanged();
@@ -1906,7 +2055,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         }
 
         sb.AppendLine(
-            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} mini_top_n={ParseMiniActivityTopNOrDefault()} mini_range_s={ParseMiniActivityRangeSecondsOrDefault():0.###} mini_tick_window={ParseMiniActivityTickWindowOrDefault()} tick_hz={(_currentTargetTickHz ?? 0f):0.###} include_low_signal={IncludeLowSignalEvents} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
+            $"focus={NormalizeDiagnosticText(RegionFocusText)} region_filter={NormalizeDiagnosticText(RegionFilterText)} search={NormalizeDiagnosticText(SearchFilterText)} tick_window={ParseTickWindowOrDefault()} mini_top_n={ParseMiniActivityTopNOrDefault()} mini_range_s={ParseMiniActivityRangeSecondsOrDefault():0.###} mini_tick_window={ParseMiniActivityTickWindowOrDefault()} tick_hz={(_currentTargetTickHz ?? 0f):0.###} include_low_signal={IncludeLowSignalEvents} color_mode={SelectedCanvasColorMode.Mode} color_curve={SelectedCanvasTransferCurve.Curve} layout_mode={SelectedLayoutMode.Mode} viewport_scale={_canvasViewportScale:0.###} adaptive_lod={EnableAdaptiveLod}");
         sb.AppendLine(
             $"events table={_allEvents.Count} projection={_projectionEvents.Count} filtered_table={VizEvents.Count} filtered_projection={_filteredProjectionEvents.Count} canvas_nodes={CanvasNodes.Count} canvas_edges={CanvasEdges.Count} stats={ActivityStats.Count} region_rows={RegionActivity.Count} edge_rows={EdgeActivity.Count} tick_rows={TickActivity.Count} mini_series={MiniActivityChartSeries.Count} mini_enabled={ShowMiniActivityChart}");
         sb.AppendLine(
@@ -2103,7 +2252,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
         _lastCanvasEdgeDiffStats = ApplyKeyedDiff(CanvasEdges, canvas.Edges, static item => item.RouteLabel);
         RebuildCanvasHitIndex(canvas.Nodes, canvas.Edges);
-        ActivityCanvasLegend = $"{canvas.Legend} | Color mode: {SelectedCanvasColorMode.Label} ({SelectedCanvasColorMode.LegendHint})";
+        ActivityCanvasLegend = $"{canvas.Legend} | Color mode: {SelectedCanvasColorMode.Label} ({SelectedCanvasColorMode.LegendHint}) | Curve: {SelectedCanvasTransferCurve.Label} ({SelectedCanvasTransferCurve.LegendHint})";
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
         RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
         _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
@@ -2177,7 +2326,7 @@ public sealed class VizPanelViewModel : ViewModelBase
         _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
         _lastCanvasEdgeDiffStats = ApplyKeyedDiff(CanvasEdges, canvas.Edges, static item => item.RouteLabel);
         RebuildCanvasHitIndex(canvas.Nodes, canvas.Edges);
-        ActivityCanvasLegend = $"{canvas.Legend} | Color mode: {SelectedCanvasColorMode.Label} ({SelectedCanvasColorMode.LegendHint})";
+        ActivityCanvasLegend = $"{canvas.Legend} | Color mode: {SelectedCanvasColorMode.Label} ({SelectedCanvasColorMode.LegendHint}) | Curve: {SelectedCanvasTransferCurve.Label} ({SelectedCanvasTransferCurve.LegendHint})";
         UpdateCanvasInteractionSummaries(canvas.Nodes, canvas.Edges);
         RefreshCanvasHoverCard(canvas.Nodes, canvas.Edges);
         _lastCanvasApplyMs = StopwatchElapsedMs(applyStart);
@@ -2513,7 +2662,8 @@ public sealed class VizPanelViewModel : ViewModelBase
                 EnableAdaptiveLod,
                 ParseLodRouteBudgetOrDefault(LodLowZoomBudgetText, DefaultLodLowZoomBudget),
                 ParseLodRouteBudgetOrDefault(LodMediumZoomBudgetText, DefaultLodMediumZoomBudget),
-                ParseLodRouteBudgetOrDefault(LodHighZoomBudgetText, DefaultLodHighZoomBudget)));
+                ParseLodRouteBudgetOrDefault(LodHighZoomBudgetText, DefaultLodHighZoomBudget)),
+            SelectedCanvasTransferCurve.Curve);
 
     private static int ParseLodRouteBudgetOrDefault(string value, int fallback)
         => TryParseLodRouteBudget(value, out var parsed) ? parsed : fallback;
@@ -4747,6 +4897,106 @@ public sealed class VizPanelViewModel : ViewModelBase
         return true;
     }
 
+    private static bool TryParseTickRateOverrideSettingValue(string? value, out float? overrideHz)
+    {
+        overrideHz = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        if (normalized is "0" or "off" or "none" or "clear" or "default")
+        {
+            return true;
+        }
+
+        if (!TryParseTickRateOverrideInput(value, out var parsed))
+        {
+            return false;
+        }
+
+        overrideHz = parsed;
+        return true;
+    }
+
+    private static bool TryParseVisualizationIntervalInput(string? value, out uint intervalMs)
+    {
+        intervalMs = 0u;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        var parseAsHz = false;
+        if (normalized.EndsWith("hz", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..^2].Trim();
+            parseAsHz = true;
+        }
+        else if (normalized.EndsWith("ms", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..^2].Trim();
+        }
+
+        if (!float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed)
+            || parsed < 0f)
+        {
+            return false;
+        }
+
+        if (parseAsHz)
+        {
+            if (parsed <= 0f)
+            {
+                return false;
+            }
+
+            var computedMs = 1000d / parsed;
+            if (!double.IsFinite(computedMs) || computedMs < 0d)
+            {
+                return false;
+            }
+
+            parsed = (float)computedMs;
+        }
+
+        if (parsed > MaxVisualizationIntervalMs)
+        {
+            return false;
+        }
+
+        intervalMs = (uint)Math.Round(parsed, MidpointRounding.AwayFromZero);
+        return intervalMs <= MaxVisualizationIntervalMs;
+    }
+
+    private static uint ParseVisualizationIntervalSetting(string? value, uint fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !uint.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Min(parsed, MaxVisualizationIntervalMs);
+    }
+
+    private void UpdateVisualizationCadenceSummary()
+    {
+        var tickMs = ParseVisualizationIntervalSetting(VizTickMinIntervalMsText, DefaultVizTickMinIntervalMs);
+        var streamMs = ParseVisualizationIntervalSetting(VizStreamMinIntervalMsText, DefaultVizStreamMinIntervalMs);
+        VizCadenceSummary = BuildVisualizationCadenceSummary(tickMs, streamMs);
+    }
+
+    private static string BuildVisualizationCadenceSummary(uint tickMinIntervalMs, uint streamMinIntervalMs)
+    {
+        var tickSummary = tickMinIntervalMs == 0u ? "every tick" : $">= {tickMinIntervalMs} ms";
+        var streamSummary = streamMinIntervalMs == 0u ? "every tick" : $">= {streamMinIntervalMs} ms";
+        return $"Viz cadence settings: tick events {tickSummary}, stream events {streamSummary}.";
+    }
+
     private static string FormatTickCadence(float tickHz)
     {
         if (!float.IsFinite(tickHz) || tickHz <= 0f)
@@ -5048,7 +5298,7 @@ public sealed record VizPanelTypeOption(string Label, string? TypeFilter)
     }
 }
 
-public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasColorMode Mode, string LegendHint)
+public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasColorMode Mode, string LegendHint, string Tooltip)
 {
     public static IReadOnlyList<VizCanvasColorModeOption> CreateDefaults()
         => new[]
@@ -5056,23 +5306,46 @@ public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasCol
             new VizCanvasColorModeOption(
                 "State priority",
                 VizActivityCanvasColorMode.StateValue,
-                "fill=value sign/magnitude, pulse=activity, border=topology"),
+                "fill=signed state value (orange + / blue -), pulse=activity, border=topology",
+                "State value colors: orange (#E69F00) means positive signal, blue (#0072B2) means negative signal, and gray means near-zero or dormant. Magnitude pushes color farther from gray; pulse opacity still tracks recent activity and border stroke follows topology."),
             new VizCanvasColorModeOption(
                 "Activity priority",
                 VizActivityCanvasColorMode.Activity,
-                "fill=activity load/recency, border=topology"),
+                "fill=activity load+recency, border=topology slice",
+                "Activity colors: each region trends toward its topology slice color as activity rises. Gray indicates low/stale activity, while stronger saturation indicates higher recent load. Border remains topology-driven for structural readability."),
             new VizCanvasColorModeOption(
                 "Energy: Reserve",
                 VizActivityCanvasColorMode.EnergyReserve,
-                "fill=latest value reserve sign/magnitude, pulse=activity"),
+                "fill=signed reserve estimate (orange + / blue -), pulse=activity",
+                "Reserve colors: orange (#E69F00) means positive reserve, blue (#0072B2) means negative reserve/debt, and muted gray/blue means near-zero or sparse samples. Magnitude controls distance from neutral."),
             new VizCanvasColorModeOption(
                 "Energy: Cost pressure",
                 VizActivityCanvasColorMode.EnergyCostPressure,
-                "fill=estimated cost pressure (activity+fanout vs reserve), border=topology"),
+                "fill=estimated pressure (activity+fanout vs reserve), border=topology",
+                "Cost pressure colors: cool blue (#0072B2) means lower pressure and warm orange-red (#D55E00) means higher pressure. Pressure combines activity load, recency, fanout structure, and reserve deficit."),
             new VizCanvasColorModeOption(
                 "Topology reference",
                 VizActivityCanvasColorMode.Topology,
-                "fill=topology slices, pulse=activity")
+                "fill=topology slices, pulse=activity",
+                "Topology colors: fixed region-slice palette by region id banding (blue/green/magenta/yellow/orange/red). Color is structural, not activity-driven; pulse still reflects recent activity.")
+        };
+}
+
+public sealed record VizCanvasTransferCurveOption(string Label, VizActivityCanvasTransferCurve Curve, string LegendHint, string Tooltip)
+{
+    public static IReadOnlyList<VizCanvasTransferCurveOption> CreateDefaults()
+        => new[]
+        {
+            new VizCanvasTransferCurveOption(
+                "Perceptual log/symlog",
+                VizActivityCanvasTransferCurve.PerceptualLog,
+                "log1p for non-negative metrics; symlog for signed metrics",
+                "Perceptual mapping boosts low-to-mid activity differences so subtle patterns separate better. Non-negative terms use log(1+gain*x); signed terms use a symmetric log by sign, with high magnitudes gently compressed."),
+            new VizCanvasTransferCurveOption(
+                "Linear",
+                VizActivityCanvasTransferCurve.Linear,
+                "literal linear magnitude mapping",
+                "Linear mapping keeps color change directly proportional to metric magnitude. Useful for absolute comparisons when low-end contrast amplification is not desired.")
         };
 }
 

@@ -1,4 +1,4 @@
-﻿
+
 using System.Diagnostics;
 using Google.Protobuf;
 using Nbn.Proto;
@@ -767,7 +767,10 @@ public sealed class WorkerNodeActor : IActor
         var pid = SpawnOrResolveNamed(
             context,
             actorName,
-            Props.FromProducer(() => new InputCoordinatorActor(brain.BrainId, (uint)inputWidth)),
+            Props.FromProducer(() => new InputCoordinatorActor(
+                brain.BrainId,
+                (uint)inputWidth,
+                ProtoControl.InputCoordinatorMode.DirtyOnChange)),
             brain.InputCoordinatorPid);
 
         brain.InputCoordinatorPid = pid;
@@ -2230,3 +2233,4 @@ internal static class WorkerNodeUuidExtensions
         return guid;
     }
 }
+

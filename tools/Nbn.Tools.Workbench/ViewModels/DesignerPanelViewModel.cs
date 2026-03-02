@@ -40,12 +40,21 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const int DefaultInputActivationFunctionId = 1; // ACT_IDENTITY
     private const int DefaultOutputActivationFunctionId = 11; // ACT_TANH
     private const int DefaultInputResetFunctionId = 0; // RESET_ZERO
+    private const int ResetHoldFunctionId = 1; // RESET_HOLD
+    private const int ResetHalfFunctionId = 43; // RESET_HALF
+    private const int ResetTenthFunctionId = 44; // RESET_TENTH
+    private const int ResetHundredthFunctionId = 45; // RESET_HUNDREDTH
     private const int ActivityDriverActivationFunctionId = 17; // ACT_ADD
     private const int ActivityDriverResetFunctionId = 0; // RESET_ZERO
     private const int ActivityDriverParamACode = 63;
     private const int ActivityDriverStrengthCode = 31;
+    private const int GuidedPathStrengthMinCode = 20;
+    private const int GuidedPathStrengthMaxCode = 27;
+    private const int RecurrentBridgeStrengthMinCode = 17;
+    private const int RecurrentBridgeStrengthMaxCode = 19;
+    private const double OutputEndpointRecurrenceProbability = 0.82;
+    private const double OutputEndpointRecurrenceProbabilityWithoutBaseline = 0.62;
     private const int AccumulationFunctionSumId = 0;
-    private const int AccumulationFunctionMaxId = 2;
     private const int AccumulationFunctionNoneId = 3;
     private const int MaxRandomPreActivationThresholdCode = 36;
     private const int MaxRandomActivationThresholdCode = 40;
@@ -68,15 +77,15 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private const double MinCanvasHeight = 620;
     private const int RegionIntrasliceUnit = 3;
     private const int RegionAxialUnit = 5;
-    private const double InterRegionWeight = 1.25;
-    private const double IntraRegionWeight = 0.85;
-    private const double ForwardRegionWeight = 1.2;
-    private const double BackwardRegionWeight = 0.85;
-    private const double OutputRegionWeight = 1.2;
+    private const double InterRegionWeight = 0.48;
+    private const double IntraRegionWeight = 2.3;
+    private const double ForwardRegionWeight = 1.0;
+    private const double BackwardRegionWeight = 1.05;
+    private const double OutputRegionWeight = 1.12;
     private const double AxonCountLowBiasPower = 1.7;
     private const double OutputAxonCountLowBiasPower = 2.6;
     private static readonly int[] ActivationFunctionIds = Enumerable.Range(0, MaxKnownActivationFunctionId + 1).ToArray();
-    private static readonly int[] RandomInternalActivationFunctionIds = { 1, 5, 6, 7, 8, 9, 11, 18, 28 };
+    private static readonly int[] RandomInternalActivationFunctionIds = { 1, 2, 3, 4, 6, 9, 11, 18, 20 };
     private static readonly int[] ParamAActivationFunctionIds = { 12, 14, 16, 17, 20, 21, 22, 24, 25, 26, 27, 29 };
     private static readonly int[] ParamBActivationFunctionIds = { 20, 24, 25, 29 };
     private static readonly int[] InputAllowedActivationFunctionIds = { 1, 6, 7, 11, 16, 17, 25 };
@@ -84,22 +93,15 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static readonly int[] RandomOutputActivationFunctionIds = { 6, 11, 18 };
     private static readonly int[] ResetFunctionIds = Enumerable.Range(0, MaxKnownResetFunctionId + 1).ToArray();
     private static readonly int[] InputAllowedResetFunctionIds = { 0, 1, 3, 17, 30 };
-    private static readonly int[] StableOutputResetFunctionIds = { DefaultInputResetFunctionId, 43, 44, 45, 47, 48, 49, 58 };
-    private static readonly int[] RandomOutputResetFunctionIds =
+    private static readonly int[] RandomOutputResetFunctionIds = { DefaultInputResetFunctionId };
+    private static readonly int[] RandomInternalResetFunctionIds =
     {
-        DefaultInputResetFunctionId,
-        DefaultInputResetFunctionId,
-        DefaultInputResetFunctionId,
-        DefaultInputResetFunctionId,
-        43,
-        44,
-        45,
-        47,
-        48,
-        49,
-        58
+        ResetHoldFunctionId,
+        ResetHalfFunctionId,
+        ResetTenthFunctionId,
+        ResetHundredthFunctionId,
+        DefaultInputResetFunctionId
     };
-    private static readonly int[] RandomInternalResetFunctionIds = ResetFunctionIds.Where(IsStableRandomResetFunctionId).ToArray();
     private static readonly int[] AccumulationFunctionIds = { 0, 1, 2, 3 };
     private static readonly int[] RandomAccumulationFunctionIds = { 0, 1, 2 };
     private static readonly double[] RandomAccumulationFunctionWeights = { 1.3, 0.35, 1.1 };
@@ -835,6 +837,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         EnsureNeuronOutboundCoverage(rng, brain, options);
         EnsureRegionInboundConnectivity(rng, brain, options);
         EnsureOutputInbound(rng, brain, options);
+        EnsureInputOutputInfluencePath(rng, brain, options);
+        EnsureOutputEndpointRecurrence(rng, brain, options);
         if (options.SeedBaselineActivityPath)
         {
             EnsureBaselineActivityPath(rng, brain);
@@ -3276,17 +3280,25 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             return;
         }
 
+        if (options.ActivationMode != RandomFunctionSelectionMode.Fixed)
+        {
+            var randomAllowed = GetRandomAllowedActivationFunctionIdsForRegion(neuron.RegionId);
+            if (!randomAllowed.Contains(neuron.ActivationFunctionId))
+            {
+                neuron.ActivationFunctionId = GetDefaultActivationFunctionIdForRegion(neuron.RegionId);
+            }
+        }
+
         if (neuron.RegionId == NbnConstants.OutputRegionId)
         {
-            if (options.ResetMode != RandomFunctionSelectionMode.Fixed
-                && !StableOutputResetFunctionIds.Contains(neuron.ResetFunctionId))
+            if (options.ResetMode != RandomFunctionSelectionMode.Fixed)
             {
                 neuron.ResetFunctionId = DefaultInputResetFunctionId;
             }
 
             if (options.AccumulationMode != RandomFunctionSelectionMode.Fixed)
             {
-                neuron.AccumulationFunctionId = AccumulationFunctionMaxId;
+                neuron.AccumulationFunctionId = AccumulationFunctionSumId;
             }
 
             if (options.ThresholdMode != RandomRangeMode.Fixed)
@@ -3296,7 +3308,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             }
         }
         else if (options.ResetMode != RandomFunctionSelectionMode.Fixed
-                 && !IsStableRandomResetFunctionId(neuron.ResetFunctionId))
+                 && !RandomInternalResetFunctionIds.Contains(neuron.ResetFunctionId))
         {
             neuron.ResetFunctionId = GetDefaultResetFunctionIdForRegion(neuron.RegionId);
         }
@@ -3411,9 +3423,6 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static bool IsResetFunctionAllowedForRegion(int regionId, int functionId)
         => IsKnownResetFunctionId(functionId)
            && GetAllowedResetFunctionIdsForRegion(regionId).Contains(functionId);
-
-    private static bool IsStableRandomResetFunctionId(int functionId)
-        => functionId != 2 && (functionId < 4 || functionId > 16);
 
     private static bool IsKnownActivationFunctionId(int functionId)
         => functionId >= 0 && functionId <= MaxKnownActivationFunctionId;
@@ -4091,6 +4100,417 @@ public sealed class DesignerPanelViewModel : ViewModelBase
         }
     }
 
+    private static void EnsureInputOutputInfluencePath(Random rng, DesignerBrainViewModel brain, RandomBrainGenerationOptions options)
+    {
+        if (!options.AllowInterRegion || options.AxonCountMax <= 0)
+        {
+            return;
+        }
+
+        var inputRegion = brain.Regions[NbnConstants.InputRegionId];
+        var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+        if (inputRegion.NeuronCount == 0 || outputRegion.NeuronCount == 0)
+        {
+            return;
+        }
+
+        if (HasInputToOutputPath(brain))
+        {
+            return;
+        }
+
+        var sourceCandidates = inputRegion.Neurons
+            .Where(neuron => neuron.Exists && neuron.Axons.Count < NbnConstants.MaxAxonsPerNeuron)
+            .ToList();
+        if (sourceCandidates.Count == 0)
+        {
+            return;
+        }
+
+        var targetCandidates = outputRegion.Neurons.Where(neuron => neuron.Exists).ToList();
+        if (targetCandidates.Count == 0)
+        {
+            return;
+        }
+
+        var relayCandidates = brain.Regions
+            .Where(region => region.RegionId != NbnConstants.InputRegionId
+                             && region.RegionId != NbnConstants.OutputRegionId
+                             && region.NeuronCount > 0)
+            .SelectMany(region => region.Neurons
+                .Where(neuron => neuron.Exists)
+                .Select(neuron => (region, neuron)))
+            .ToList();
+
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var sourceNeuron = sourceCandidates[rng.Next(sourceCandidates.Count)];
+            var outputNeuron = targetCandidates[rng.Next(targetCandidates.Count)];
+
+            if (relayCandidates.Count > 0)
+            {
+                var relay = relayCandidates[rng.Next(relayCandidates.Count)];
+                var hasInputRelay = TryAddGuidedAxon(
+                    rng,
+                    sourceNeuron,
+                    inputRegion.RegionId,
+                    relay.region.RegionId,
+                    relay.neuron.NeuronId,
+                    options,
+                    GuidedPathStrengthMinCode,
+                    GuidedPathStrengthMaxCode);
+                var hasRelayOutput = TryAddGuidedAxon(
+                    rng,
+                    relay.neuron,
+                    relay.region.RegionId,
+                    outputRegion.RegionId,
+                    outputNeuron.NeuronId,
+                    options,
+                    GuidedPathStrengthMinCode,
+                    GuidedPathStrengthMaxCode);
+                if (hasInputRelay && hasRelayOutput)
+                {
+                    inputRegion.UpdateCounts();
+                    relay.region.UpdateCounts();
+                    return;
+                }
+            }
+
+            if (TryAddGuidedAxon(
+                    rng,
+                    sourceNeuron,
+                    inputRegion.RegionId,
+                    outputRegion.RegionId,
+                    outputNeuron.NeuronId,
+                    options,
+                    GuidedPathStrengthMinCode,
+                    GuidedPathStrengthMaxCode))
+            {
+                inputRegion.UpdateCounts();
+                return;
+            }
+        }
+    }
+
+    private static void EnsureOutputEndpointRecurrence(Random rng, DesignerBrainViewModel brain, RandomBrainGenerationOptions options)
+    {
+        if (!options.AllowInterRegion || options.AxonCountMax <= 0)
+        {
+            return;
+        }
+
+        var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
+        if (outputRegion.NeuronCount == 0)
+        {
+            return;
+        }
+
+        var outputNeurons = outputRegion.Neurons.Where(neuron => neuron.Exists).ToList();
+        if (outputNeurons.Count == 0)
+        {
+            return;
+        }
+
+        var endpointTargets = CollectInputEndpointTargets(brain);
+        if (endpointTargets.Count == 0 && TrySeedInputEndpoint(rng, brain, options))
+        {
+            endpointTargets = CollectInputEndpointTargets(brain);
+        }
+
+        if (endpointTargets.Count == 0)
+        {
+            return;
+        }
+
+        var endpointKeys = endpointTargets
+            .Select(target => (target.region.RegionId, target.neuron.NeuronId))
+            .ToHashSet();
+        var usedTargets = new HashSet<(int regionId, int neuronId)>();
+        var recurrenceProbability = options.SeedBaselineActivityPath
+            ? OutputEndpointRecurrenceProbability
+            : OutputEndpointRecurrenceProbabilityWithoutBaseline;
+
+        for (var i = outputNeurons.Count - 1; i > 0; i--)
+        {
+            var j = rng.Next(i + 1);
+            (outputNeurons[i], outputNeurons[j]) = (outputNeurons[j], outputNeurons[i]);
+        }
+
+        foreach (var outputNeuron in outputNeurons)
+        {
+            var existingBridge = outputNeuron.Axons
+                .Select(axon => (axon.TargetRegionId, axon.TargetNeuronId))
+                .FirstOrDefault(endpointKeys.Contains);
+            if (existingBridge != default)
+            {
+                usedTargets.Add(existingBridge);
+                continue;
+            }
+
+            if (outputNeuron.Axons.Count >= NbnConstants.MaxAxonsPerNeuron
+                || rng.NextDouble() > recurrenceProbability)
+            {
+                continue;
+            }
+
+            var candidates = endpointTargets
+                .Where(target => !outputNeuron.Axons.Any(axon => axon.TargetRegionId == target.region.RegionId
+                                                                 && axon.TargetNeuronId == target.neuron.NeuronId))
+                .ToList();
+            if (candidates.Count == 0)
+            {
+                continue;
+            }
+
+            var uniqueCandidates = candidates
+                .Where(target => !usedTargets.Contains((target.region.RegionId, target.neuron.NeuronId)))
+                .ToList();
+            var selectedPool = uniqueCandidates.Count > 0 ? uniqueCandidates : candidates;
+            var selected = selectedPool[rng.Next(selectedPool.Count)];
+            if (!TryAddGuidedAxon(
+                    rng,
+                    outputNeuron,
+                    outputRegion.RegionId,
+                    selected.region.RegionId,
+                    selected.neuron.NeuronId,
+                    options,
+                    RecurrentBridgeStrengthMinCode,
+                    RecurrentBridgeStrengthMaxCode))
+            {
+                continue;
+            }
+
+            usedTargets.Add((selected.region.RegionId, selected.neuron.NeuronId));
+        }
+
+        outputRegion.UpdateCounts();
+    }
+
+    private static bool TrySeedInputEndpoint(Random rng, DesignerBrainViewModel brain, RandomBrainGenerationOptions options)
+    {
+        if (!options.AllowInterRegion)
+        {
+            return false;
+        }
+
+        var inputRegion = brain.Regions[NbnConstants.InputRegionId];
+        if (inputRegion.NeuronCount == 0)
+        {
+            return false;
+        }
+
+        var inputSources = inputRegion.Neurons
+            .Where(neuron => neuron.Exists && neuron.Axons.Count < NbnConstants.MaxAxonsPerNeuron)
+            .ToList();
+        if (inputSources.Count == 0)
+        {
+            return false;
+        }
+
+        var internalTargets = brain.Regions
+            .Where(region => region.RegionId != NbnConstants.InputRegionId
+                             && region.RegionId != NbnConstants.OutputRegionId
+                             && region.NeuronCount > 0)
+            .SelectMany(region => region.Neurons
+                .Where(neuron => neuron.Exists)
+                .Select(neuron => (region, neuron)))
+            .ToList();
+        if (internalTargets.Count == 0)
+        {
+            return false;
+        }
+
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var sourceNeuron = inputSources[rng.Next(inputSources.Count)];
+            var target = internalTargets[rng.Next(internalTargets.Count)];
+            if (!TryAddGuidedAxon(
+                    rng,
+                    sourceNeuron,
+                    inputRegion.RegionId,
+                    target.region.RegionId,
+                    target.neuron.NeuronId,
+                    options,
+                    GuidedPathStrengthMinCode,
+                    GuidedPathStrengthMaxCode))
+            {
+                continue;
+            }
+
+            inputRegion.UpdateCounts();
+            target.region.UpdateCounts();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static List<(DesignerRegionViewModel region, DesignerNeuronViewModel neuron)> CollectInputEndpointTargets(DesignerBrainViewModel brain)
+    {
+        var inputRegion = brain.Regions[NbnConstants.InputRegionId];
+        if (inputRegion.NeuronCount == 0)
+        {
+            return new List<(DesignerRegionViewModel region, DesignerNeuronViewModel neuron)>();
+        }
+
+        var seen = new HashSet<(int regionId, int neuronId)>();
+        var targets = new List<(DesignerRegionViewModel region, DesignerNeuronViewModel neuron)>();
+        foreach (var inputNeuron in inputRegion.Neurons.Where(neuron => neuron.Exists))
+        {
+            foreach (var axon in inputNeuron.Axons)
+            {
+                if (axon.TargetRegionId == NbnConstants.InputRegionId || axon.TargetRegionId == NbnConstants.OutputRegionId)
+                {
+                    continue;
+                }
+
+                if (axon.TargetRegionId < 0 || axon.TargetRegionId >= brain.Regions.Count)
+                {
+                    continue;
+                }
+
+                var targetRegion = brain.Regions[axon.TargetRegionId];
+                if (axon.TargetNeuronId < 0 || axon.TargetNeuronId >= targetRegion.NeuronCount)
+                {
+                    continue;
+                }
+
+                var targetNeuron = targetRegion.Neurons[axon.TargetNeuronId];
+                if (!targetNeuron.Exists)
+                {
+                    continue;
+                }
+
+                if (!seen.Add((targetRegion.RegionId, targetNeuron.NeuronId)))
+                {
+                    continue;
+                }
+
+                targets.Add((targetRegion, targetNeuron));
+            }
+        }
+
+        return targets;
+    }
+
+    private static bool TryAddGuidedAxon(
+        Random rng,
+        DesignerNeuronViewModel sourceNeuron,
+        int sourceRegionId,
+        int targetRegionId,
+        int targetNeuronId,
+        RandomBrainGenerationOptions options,
+        int preferredMinStrengthCode,
+        int preferredMaxStrengthCode)
+    {
+        if (!sourceNeuron.Exists
+            || targetRegionId == NbnConstants.InputRegionId
+            || (sourceRegionId == NbnConstants.OutputRegionId && targetRegionId == NbnConstants.OutputRegionId)
+            || (!options.AllowInterRegion && sourceRegionId != targetRegionId)
+            || (!options.AllowIntraRegion && sourceRegionId == targetRegionId)
+            || (!options.AllowSelfLoops && sourceRegionId == targetRegionId && sourceNeuron.NeuronId == targetNeuronId))
+        {
+            return false;
+        }
+
+        if (sourceNeuron.Axons.Any(axon => axon.TargetRegionId == targetRegionId && axon.TargetNeuronId == targetNeuronId))
+        {
+            return true;
+        }
+
+        if (sourceNeuron.Axons.Count >= NbnConstants.MaxAxonsPerNeuron)
+        {
+            return false;
+        }
+
+        var strengthCode = PickGuidedStrengthCode(rng, options, preferredMinStrengthCode, preferredMaxStrengthCode);
+        sourceNeuron.Axons.Add(new DesignerAxonViewModel(targetRegionId, targetNeuronId, strengthCode));
+        sourceNeuron.UpdateAxonCount();
+        return true;
+    }
+
+    private static int PickGuidedStrengthCode(Random rng, RandomBrainGenerationOptions options, int preferredMinCode, int preferredMaxCode)
+    {
+        var min = Math.Clamp(options.StrengthMinCode, 0, 31);
+        var max = Math.Clamp(options.StrengthMaxCode, 0, 31);
+        if (max < min)
+        {
+            (min, max) = (max, min);
+        }
+
+        var guidedMin = Math.Clamp(preferredMinCode, min, max);
+        var guidedMax = Math.Clamp(preferredMaxCode, guidedMin, max);
+        return PickLowBiasedInt(rng, guidedMin, guidedMax, 1.35);
+    }
+
+    private static bool HasInputToOutputPath(DesignerBrainViewModel brain)
+    {
+        var existing = new HashSet<(int regionId, int neuronId)>();
+        var adjacency = new Dictionary<(int regionId, int neuronId), List<(int regionId, int neuronId)>>();
+        foreach (var region in brain.Regions)
+        {
+            foreach (var neuron in region.Neurons.Where(neuron => neuron.Exists))
+            {
+                existing.Add((region.RegionId, neuron.NeuronId));
+            }
+        }
+
+        foreach (var region in brain.Regions)
+        {
+            foreach (var neuron in region.Neurons.Where(neuron => neuron.Exists))
+            {
+                var source = (region.RegionId, neuron.NeuronId);
+                foreach (var axon in neuron.Axons)
+                {
+                    var target = (axon.TargetRegionId, axon.TargetNeuronId);
+                    if (!existing.Contains(target))
+                    {
+                        continue;
+                    }
+
+                    if (!adjacency.TryGetValue(source, out var targets))
+                    {
+                        targets = new List<(int regionId, int neuronId)>();
+                        adjacency[source] = targets;
+                    }
+
+                    targets.Add(target);
+                }
+            }
+        }
+
+        var queue = new Queue<(int regionId, int neuronId)>(existing.Where(node => node.regionId == NbnConstants.InputRegionId));
+        var visited = new HashSet<(int regionId, int neuronId)>();
+        while (queue.Count > 0)
+        {
+            var node = queue.Dequeue();
+            if (!visited.Add(node))
+            {
+                continue;
+            }
+
+            if (node.regionId == NbnConstants.OutputRegionId)
+            {
+                return true;
+            }
+
+            if (!adjacency.TryGetValue(node, out var next))
+            {
+                continue;
+            }
+
+            foreach (var target in next)
+            {
+                if (!visited.Contains(target))
+                {
+                    queue.Enqueue(target);
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static void EnsureBaselineActivityPath(Random rng, DesignerBrainViewModel brain)
     {
         var outputRegion = brain.Regions[NbnConstants.OutputRegionId];
@@ -4230,7 +4650,22 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             6.0  // ACT_QUAD
         };
 
-        return BuildInverseCostWeights(costs, minWeight: 0.1, maxWeight: 2.4);
+        var weights = BuildInverseCostWeights(costs, minWeight: 0.1, maxWeight: 2.4);
+        weights[1] = 0.16;  // ACT_IDENTITY
+        weights[2] = 0.10;  // ACT_STEP_UP
+        weights[3] = 0.10;  // ACT_STEP_MID
+        weights[4] = 0.08;  // ACT_STEP_DOWN
+        weights[6] = 0.34;  // ACT_CLAMP
+        weights[9] = 0.14;  // ACT_SIN
+        weights[11] = 0.38; // ACT_TANH
+        weights[18] = 0.28; // ACT_SIG
+        weights[20] = 0.20; // ACT_PCLAMP
+        weights[7] = 0.06;  // ACT_RELU
+        weights[8] = 0.06;  // ACT_NRELU
+        weights[13] = 0.04; // ACT_EXP
+        weights[28] = 0.01; // ACT_GAUSS
+        weights[29] = 0.01; // ACT_QUAD
+        return weights;
     }
 
     private static double[] BuildResetFunctionWeights()
@@ -4300,7 +4735,13 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             1.8  // RESET_INVERSE
         };
 
-        return BuildInverseCostWeights(costs, minWeight: 0.1, maxWeight: 2.4);
+        var weights = BuildInverseCostWeights(costs, minWeight: 0.1, maxWeight: 2.4);
+        weights[ResetHoldFunctionId] = 0.35;
+        weights[ResetHalfFunctionId] = 0.30;
+        weights[ResetTenthFunctionId] = 0.20;
+        weights[ResetHundredthFunctionId] = 0.10;
+        weights[DefaultInputResetFunctionId] = 0.05;
+        return weights;
     }
 
     private static double[] BuildAccumulationFunctionWeights()

@@ -63,6 +63,8 @@ public sealed class RegionShardActor : IActor
     private bool _homeostasisEnergyCouplingEnabled = RegionShardHomeostasisConfig.Default.EnergyCouplingEnabled;
     private float _homeostasisEnergyTargetScale = RegionShardHomeostasisConfig.Default.EnergyTargetScale;
     private float _homeostasisEnergyProbabilityScale = RegionShardHomeostasisConfig.Default.EnergyProbabilityScale;
+    private OutputVectorSource _outputVectorSource = OutputVectorSource.Potential;
+    private uint _vizStreamMinIntervalMs = 250;
     private bool _hasComputed;
     private ulong _lastComputeTickId;
     private long _lastTickCostTotal;
@@ -205,6 +207,7 @@ public sealed class RegionShardActor : IActor
         _vizFocusRegionId = message.Enabled && message.HasFocusRegion
             ? message.FocusRegionId
             : null;
+        _vizStreamMinIntervalMs = NormalizeVisualizationMinIntervalMs(message.VizStreamMinIntervalMs);
 
         if (LogViz || LogVizDiagnostics)
         {
@@ -213,7 +216,7 @@ public sealed class RegionShardActor : IActor
                 ? "(null)"
                 : (string.IsNullOrWhiteSpace(_vizHub.Address) ? _vizHub.Id : $"{_vizHub.Address}/{_vizHub.Id}");
             Console.WriteLine(
-                $"[RegionShard] Viz config updated brain={_brainId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} hub={hubLabel}.");
+                $"[RegionShard] Viz config updated brain={_brainId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} streamMinIntervalMs={_vizStreamMinIntervalMs} hub={hubLabel}.");
         }
     }
 
@@ -259,6 +262,7 @@ public sealed class RegionShardActor : IActor
         _homeostasisEnergyCouplingEnabled = message.HomeostasisEnergyCouplingEnabled;
         _homeostasisEnergyTargetScale = message.HomeostasisEnergyTargetScale;
         _homeostasisEnergyProbabilityScale = message.HomeostasisEnergyProbabilityScale;
+        _outputVectorSource = NormalizeOutputVectorSource(message.OutputVectorSource);
         _debugEnabled = message.DebugEnabled;
         _debugMinSeverity = message.DebugMinSeverity;
     }
@@ -446,7 +450,8 @@ public sealed class RegionShardActor : IActor
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var vizScope = _vizEnabled
+        var collectVisualization = ShouldCollectVisualizationForTick(tick.TickId, tick.TargetTickHz);
+        var vizScope = collectVisualization
             ? new RegionShardVisualizationComputeScope(true, _vizFocusRegionId)
             : RegionShardVisualizationComputeScope.Disabled;
         var result = _cpu.Compute(
@@ -483,6 +488,7 @@ public sealed class RegionShardActor : IActor
             _costTierAMultiplier,
             _costTierBMultiplier,
             _costTierCMultiplier,
+            _outputVectorSource,
             _lastTickCostTotal);
         stopwatch.Stop();
 
@@ -492,8 +498,9 @@ public sealed class RegionShardActor : IActor
             var hubLabel = _vizHub is null
                 ? "(null)"
                 : (string.IsNullOrWhiteSpace(_vizHub.Address) ? _vizHub.Id : $"{_vizHub.Address}/{_vizHub.Id}");
+            var vizStride = ComputeVizStride(tick.TargetTickHz, _vizStreamMinIntervalMs);
             Console.WriteLine(
-                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} hub={hubLabel} axonEvents={result.AxonVizEvents.Count} bufferEvents={result.BufferNeuronEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
+                $"[RegionShard] Viz compute tick={tick.TickId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} streamMinIntervalMs={_vizStreamMinIntervalMs} stride={vizStride} collect={collectVisualization} hub={hubLabel} axonEvents={result.AxonVizEvents.Count} bufferEvents={result.BufferNeuronEvents.Count} firedEvents={result.FiredNeuronEvents.Count}.");
         }
 
         if (result.PlasticityStrengthCodeChanges > 0)
@@ -793,6 +800,44 @@ public sealed class RegionShardActor : IActor
         return false;
     }
 
+    private bool ShouldCollectVisualizationForTick(ulong tickId, float targetTickHz)
+    {
+        if (!_vizEnabled || tickId == 0)
+        {
+            return false;
+        }
+
+        var stride = ComputeVizStride(targetTickHz, _vizStreamMinIntervalMs);
+        if (stride <= 1u)
+        {
+            return true;
+        }
+
+        var strideAsUlong = (ulong)stride;
+        var phase = ((ulong)(uint)_state.RegionId) % strideAsUlong;
+        return tickId % strideAsUlong == phase;
+    }
+
+    private static uint NormalizeVisualizationMinIntervalMs(uint value)
+        => Math.Min(value, 60_000u);
+
+    private static uint ComputeVizStride(float targetTickHz, uint minIntervalMs)
+    {
+        if (minIntervalMs == 0u || !float.IsFinite(targetTickHz) || targetTickHz <= 0f)
+        {
+            return 1u;
+        }
+
+        var tickMs = 1000f / targetTickHz;
+        if (!float.IsFinite(tickMs) || tickMs <= 0f || tickMs >= minIntervalMs)
+        {
+            return 1u;
+        }
+
+        var stride = (uint)Math.Ceiling(minIntervalMs / tickMs);
+        return Math.Max(1u, stride);
+    }
+
     private void EmitDebug(IContext context, ProtoSeverity severity, string category, string message)
     {
         if (!_debugEnabled || severity < _debugMinSeverity)
@@ -905,6 +950,15 @@ public sealed class RegionShardActor : IActor
             : 1f;
     }
 
+    private static OutputVectorSource NormalizeOutputVectorSource(OutputVectorSource source)
+    {
+        return source switch
+        {
+            OutputVectorSource.Buffer => source,
+            _ => OutputVectorSource.Potential
+        };
+    }
+
     private static float NormalizeFiniteInRange(float value, float min, float max, float fallback)
     {
         if (!float.IsFinite(value))
@@ -943,3 +997,4 @@ public sealed class RegionShardActor : IActor
         return true;
     }
 }
+

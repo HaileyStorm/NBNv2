@@ -22,6 +22,10 @@ public sealed class IoGatewayActor : IActor
     private const float DefaultPlasticityEnergyCostResponseStrength = 1f;
     private const float DefaultPlasticityEnergyCostMinScale = 0.1f;
     private const float DefaultPlasticityEnergyCostMaxScale = 1f;
+    private const ProtoControl.InputCoordinatorMode DefaultInputCoordinatorMode =
+        ProtoControl.InputCoordinatorMode.DirtyOnChange;
+    private const ProtoControl.OutputVectorSource DefaultOutputVectorSource =
+        ProtoControl.OutputVectorSource.Potential;
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     private readonly IoOptions _options;
@@ -229,6 +233,8 @@ public sealed class IoGatewayActor : IActor
                 PlasticityEnergyCostResponseStrength = DefaultPlasticityEnergyCostResponseStrength,
                 PlasticityEnergyCostMinScale = DefaultPlasticityEnergyCostMinScale,
                 PlasticityEnergyCostMaxScale = DefaultPlasticityEnergyCostMaxScale,
+                InputCoordinatorMode = DefaultInputCoordinatorMode,
+                OutputVectorSource = DefaultOutputVectorSource,
                 LastTickCost = 0,
                 BaseDefinition = new ArtifactRef(),
                 LastSnapshot = new ArtifactRef()
@@ -273,6 +279,8 @@ public sealed class IoGatewayActor : IActor
             HomeostasisEnergyTargetScale = entry.Energy.HomeostasisEnergyTargetScale,
             HomeostasisEnergyProbabilityScale = entry.Energy.HomeostasisEnergyProbabilityScale,
             LastTickCost = entry.Energy.LastTickCost,
+            InputCoordinatorMode = entry.InputCoordinatorMode,
+            OutputVectorSource = entry.OutputVectorSource,
             BaseDefinition = entry.BaseDefinition ?? new ArtifactRef(),
             LastSnapshot = entry.LastSnapshot ?? new ArtifactRef()
         };
@@ -698,6 +706,9 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
+        var inputCoordinatorMode = NormalizeInputCoordinatorMode(message.InputCoordinatorMode);
+        var outputVectorSource = NormalizeOutputVectorSource(message.OutputVectorSource);
+
         if (_brains.TryGetValue(brainId, out var existing))
         {
             if (existing.InputWidth != message.InputWidth || existing.OutputWidth != message.OutputWidth)
@@ -758,6 +769,14 @@ public sealed class IoGatewayActor : IActor
                     message.LastTickCost);
             }
 
+            var inputModeChanged = existing.InputCoordinatorMode != inputCoordinatorMode;
+            existing.InputCoordinatorMode = inputCoordinatorMode;
+            existing.OutputVectorSource = outputVectorSource;
+            if (inputModeChanged)
+            {
+                context.Send(existing.InputPid, new UpdateInputCoordinatorMode(inputCoordinatorMode));
+            }
+
             if (LogMetadataDiagnostics)
             {
                 Console.WriteLine(
@@ -776,11 +795,13 @@ public sealed class IoGatewayActor : IActor
         PID outputPid;
         try
         {
-            inputPid = context.SpawnNamed(Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth)), inputName);
+            inputPid = context.SpawnNamed(
+                Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth, inputCoordinatorMode)),
+                inputName);
         }
         catch
         {
-            inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth)));
+            inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth, inputCoordinatorMode)));
         }
 
         try
@@ -826,7 +847,15 @@ public sealed class IoGatewayActor : IActor
                 message.LastTickCost);
         }
 
-        var entry = new BrainIoEntry(brainId, inputPid, outputPid, message.InputWidth, message.OutputWidth, energy)
+        var entry = new BrainIoEntry(
+            brainId,
+            inputPid,
+            outputPid,
+            message.InputWidth,
+            message.OutputWidth,
+            energy,
+            inputCoordinatorMode,
+            outputVectorSource)
         {
             BaseDefinition = message.BaseDefinition,
             LastSnapshot = message.LastSnapshot
@@ -1325,7 +1354,9 @@ public sealed class IoGatewayActor : IActor
             {
                 BrainId = brainId.ToProtoUuid(),
                 InputWidth = info.InputWidth,
-                OutputWidth = info.OutputWidth
+                OutputWidth = info.OutputWidth,
+                InputCoordinatorMode = info.InputCoordinatorMode,
+                OutputVectorSource = info.OutputVectorSource
             };
             await RegisterBrainAsync(context, register);
 
@@ -1447,6 +1478,24 @@ public sealed class IoGatewayActor : IActor
         }
 
         return brainId.TryToGuid(out guid);
+    }
+
+    private static ProtoControl.InputCoordinatorMode NormalizeInputCoordinatorMode(ProtoControl.InputCoordinatorMode mode)
+    {
+        return mode switch
+        {
+            ProtoControl.InputCoordinatorMode.ReplayLatestVector => mode,
+            _ => DefaultInputCoordinatorMode
+        };
+    }
+
+    private static ProtoControl.OutputVectorSource NormalizeOutputVectorSource(ProtoControl.OutputVectorSource source)
+    {
+        return source switch
+        {
+            ProtoControl.OutputVectorSource.Buffer => source,
+            _ => DefaultOutputVectorSource
+        };
     }
 
     private static bool IsSupportedHomeostasisTargetMode(ProtoControl.HomeostasisTargetMode mode)
@@ -1803,3 +1852,4 @@ public sealed class IoGatewayActor : IActor
 
     private sealed record ClientInfo(PID Pid, string Name);
 }
+

@@ -26,7 +26,12 @@ External World writes to `input_index i`, mapped to:
 
 Input width equals the number of neurons in region 0.
 
-InputCoordinator buffers writes between ticks and emits them as contributions during the tick delivery phase so they are visible on the next tick compute phase.
+InputCoordinator supports two runtime modes:
+
+* `dirty_on_change` (default): buffers writes between ticks and emits only changed inputs as contributions during tick delivery (visible on next tick compute).
+* `replay_latest_vector`: stores the latest full input vector and emits all indices every tick during delivery, even when values did not change.
+
+When multiple input writes arrive within one tick window, the most recent value for each index is the value emitted at the next tick boundary.
 
 External World may also send a vector of values for all inputs (length must == input width).
 
@@ -45,6 +50,11 @@ Output events are emitted per tick and delivered to subscribed clients.
 
 * **OutputEvent (single):** emitted when an output neuron fires (abs(potential) > ActivationThreshold).
 * **OutputVectorEvent (vector):** emitted by IO as one full brain-level vector per tick with deterministic ordering by `output_index` (`0..output_width-1`). For sharded output regions, shard-local vectors are merged by absolute output-index ranges before publication. Invalid vector payloads (width/range/overlap/late-tick violations) are rejected and surfaced via deterministic IO telemetry/debug paths.
+
+Output vector source is runtime-selectable:
+
+* `potential` (default): vector samples activation potential semantics (existing behavior).
+* `buffer`: vector samples each output neuron's current persistent buffer value each tick, without requiring a fire event.
 
 External World may subscribe, per Brain, to individual and/or vector outputs.
 

@@ -1,4 +1,5 @@
 using Nbn.Proto;
+using Nbn.Proto.Control;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using Nbn.Shared.Quantization;
@@ -237,6 +238,41 @@ public class RegionShardCpuBackendVisualizationTests
         Assert.Empty(unfocused.BufferNeuronEvents);
     }
 
+    [Fact]
+    public void Compute_OutputVectorSourceBuffer_UsesNeuronBufferInsteadOfPotential()
+    {
+        const int sourceRegionId = NbnConstants.OutputRegionId;
+        const int destRegionId = 9;
+        var state = CreateSingleNeuronState(sourceRegionId, destRegionId);
+        state.Buffer[0] = 0.42f;
+        state.PreActivationThreshold[0] = 0.9f;
+        state.ActivationThreshold[0] = 0.9f;
+
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(sourceRegionId, sourceCount: 1, destRegionId, destCount: 1);
+
+        var potentialVector = backend.Compute(
+            tickId: 60,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            outputVectorSource: OutputVectorSource.Potential);
+
+        var bufferVector = backend.Compute(
+            tickId: 61,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(sourceRegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            outputVectorSource: OutputVectorSource.Buffer);
+
+        Assert.Single(potentialVector.OutputVector);
+        Assert.Single(bufferVector.OutputVector);
+        Assert.Equal(0f, potentialVector.OutputVector[0]);
+        Assert.Equal(0.42f, bufferVector.OutputVector[0]);
+    }
+
     private static RegionShardState CreateSingleNeuronState(int sourceRegionId, int destRegionId)
     {
         var regionSpans = new int[NbnConstants.RegionCount];
@@ -319,3 +355,4 @@ public class RegionShardCpuBackendVisualizationTests
             });
     }
 }
+

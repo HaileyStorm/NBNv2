@@ -40,7 +40,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _costEnergyEnabled;
     private bool _systemCostEnergyEnabled;
     private bool _systemCostEnergyEnabledDraft;
-    private bool _systemPlasticitySettingsSyncInProgress;
+    private bool _systemSettingsSyncInProgress;
     private bool _plasticityEnabled = true;
     private bool _systemPlasticityEnabled = true;
     private bool _systemPlasticityEnabledDraft = true;
@@ -52,15 +52,21 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _homeostasisEnergyCouplingEnabled;
     private PlasticityModeOption _selectedPlasticityMode;
     private PlasticityModeOption _selectedSystemPlasticityModeDraft;
+    private InputCoordinatorModeOption _selectedInputCoordinatorMode = null!;
+    private InputCoordinatorModeOption _selectedInputCoordinatorModeDraft = null!;
+    private OutputVectorSourceOption _selectedOutputVectorSource = null!;
+    private OutputVectorSourceOption _selectedOutputVectorSourceDraft = null!;
     private HomeostasisTargetModeOption _selectedHomeostasisTargetMode;
     private HomeostasisUpdateModeOption _selectedHomeostasisUpdateMode;
     private string _brainInfoSummary = "No brain selected.";
     private string _activeBrainsSummary = "No active brains loaded.";
     private string _feedbackBrainSummary = "No known brain selected.";
     private string _lastOutputTickLabel = "-";
+    private bool _selectedBrainInputReplayEveryTick;
     private Guid _lastAutoVectorSendBrainId = Guid.Empty;
     private ulong _lastAutoVectorSendTickId;
     private bool _hasLastAutoVectorSendTick;
+    private bool _systemInputReplayEveryTick;
     private List<Guid> _activeBrains = new();
     private readonly Dictionary<Guid, KnownBrainOption> _knownBrainsById = new();
     private KnownBrainOption? _selectedFeedbackBrain;
@@ -81,6 +87,20 @@ public sealed class IoPanelViewModel : ViewModelBase
         };
         _selectedPlasticityMode = PlasticityModes[0];
         _selectedSystemPlasticityModeDraft = PlasticityModes[0];
+        InputCoordinatorModes = new ObservableCollection<InputCoordinatorModeOption>
+        {
+            new("Dirty on change", InputCoordinatorMode.DirtyOnChange, "dirty_on_change"),
+            new("Replay latest vector every tick", InputCoordinatorMode.ReplayLatestVector, "replay_latest_vector")
+        };
+        _selectedInputCoordinatorMode = InputCoordinatorModes[0];
+        _selectedInputCoordinatorModeDraft = InputCoordinatorModes[0];
+        OutputVectorSources = new ObservableCollection<OutputVectorSourceOption>
+        {
+            new("Potential (activation)", OutputVectorSource.Potential, "potential"),
+            new("Buffer (persistent)", OutputVectorSource.Buffer, "buffer")
+        };
+        _selectedOutputVectorSource = OutputVectorSources[0];
+        _selectedOutputVectorSourceDraft = OutputVectorSources[0];
         KnownBrains = new ObservableCollection<KnownBrainOption>();
         HomeostasisTargetModes = new ObservableCollection<HomeostasisTargetModeOption>
         {
@@ -236,7 +256,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _systemCostEnergyEnabledDraft, value)
-                && !_systemPlasticitySettingsSyncInProgress)
+                && !_systemSettingsSyncInProgress)
             {
                 _ = ApplyCostEnergyAsync();
             }
@@ -298,7 +318,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _systemPlasticityEnabledDraft, value)
-                && !_systemPlasticitySettingsSyncInProgress)
+                && !_systemSettingsSyncInProgress)
             {
                 _ = ApplyPlasticityAsync();
             }
@@ -359,6 +379,76 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
     }
 
+    public ObservableCollection<InputCoordinatorModeOption> InputCoordinatorModes { get; }
+
+    public InputCoordinatorModeOption SelectedInputCoordinatorMode
+    {
+        get => _selectedInputCoordinatorMode;
+        private set
+        {
+            var normalized = value ?? InputCoordinatorModes[0];
+            if (SetProperty(ref _selectedInputCoordinatorMode, normalized))
+            {
+                _systemInputReplayEveryTick = normalized.Mode == InputCoordinatorMode.ReplayLatestVector;
+                OnPropertyChanged(nameof(SystemInputCoordinatorModeStateLabel));
+                OnPropertyChanged(nameof(AutoSendInputVectorEveryTickAvailable));
+                if (_systemInputReplayEveryTick && AutoSendInputVectorEveryTick)
+                {
+                    AutoSendInputVectorEveryTick = false;
+                }
+            }
+        }
+    }
+
+    public InputCoordinatorModeOption SelectedInputCoordinatorModeDraft
+    {
+        get => _selectedInputCoordinatorModeDraft;
+        set
+        {
+            var normalized = value ?? InputCoordinatorModes[0];
+            if (SetProperty(ref _selectedInputCoordinatorModeDraft, normalized)
+                && !_systemSettingsSyncInProgress)
+            {
+                _ = ApplyInputCoordinatorModeAsync();
+            }
+        }
+    }
+
+    public string SystemInputCoordinatorModeStateLabel =>
+        $"System policy: {FormatInputCoordinatorMode(SelectedInputCoordinatorMode.Mode)}";
+
+    public ObservableCollection<OutputVectorSourceOption> OutputVectorSources { get; }
+
+    public OutputVectorSourceOption SelectedOutputVectorSource
+    {
+        get => _selectedOutputVectorSource;
+        private set
+        {
+            var normalized = value ?? OutputVectorSources[0];
+            if (SetProperty(ref _selectedOutputVectorSource, normalized))
+            {
+                OnPropertyChanged(nameof(SystemOutputVectorSourceStateLabel));
+            }
+        }
+    }
+
+    public OutputVectorSourceOption SelectedOutputVectorSourceDraft
+    {
+        get => _selectedOutputVectorSourceDraft;
+        set
+        {
+            var normalized = value ?? OutputVectorSources[0];
+            if (SetProperty(ref _selectedOutputVectorSourceDraft, normalized)
+                && !_systemSettingsSyncInProgress)
+            {
+                _ = ApplyOutputVectorSourceAsync();
+            }
+        }
+    }
+
+    public string SystemOutputVectorSourceStateLabel =>
+        $"System policy: {FormatOutputVectorSource(SelectedOutputVectorSource.Source)}";
+
     public bool HomeostasisEnabled
     {
         get => _homeostasisEnabled;
@@ -407,9 +497,12 @@ public sealed class IoPanelViewModel : ViewModelBase
         get => _autoSendInputVectorEveryTick;
         set
         {
-            if (SetProperty(ref _autoSendInputVectorEveryTick, value))
+            var normalized = value && !AutoSendInputVectorEveryTickAvailable
+                ? false
+                : value;
+            if (SetProperty(ref _autoSendInputVectorEveryTick, normalized))
             {
-                if (!value)
+                if (!normalized)
                 {
                     ResetAutoVectorSendTickGate();
                 }
@@ -418,6 +511,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             }
         }
     }
+
+    public bool AutoSendInputVectorEveryTickAvailable => !_selectedBrainInputReplayEveryTick && !_systemInputReplayEveryTick;
 
     public string PlasticityRateText
     {
@@ -588,16 +683,16 @@ public sealed class IoPanelViewModel : ViewModelBase
         });
     }
 
-    public void ObserveTick(ulong tickId)
+    public void ObserveTick(Guid brainId, ulong tickId)
     {
         _dispatcher.Post(() =>
         {
-            if (!_selectedBrainId.HasValue)
+            if (!_selectedBrainId.HasValue || _selectedBrainId.Value != brainId)
             {
                 return;
             }
 
-            TryAutoSendInputVectorForTick(_selectedBrainId.Value, tickId);
+            TryAutoSendInputVectorForTick(brainId, tickId);
         });
     }
 
@@ -616,6 +711,8 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         _selectedBrainId = brainId;
         _selectedBrainInputWidth = -1;
+        _selectedBrainInputReplayEveryTick = false;
+        OnPropertyChanged(nameof(AutoSendInputVectorEveryTickAvailable));
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
         TrackKnownBrain(brainId);
         ResetAutoVectorSendTickGate();
@@ -657,6 +754,9 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     public Task<Nbn.Proto.Control.SetTickRateOverrideAck?> SetTickRateOverrideAsync(float? targetTickHz)
         => _client.SetTickRateOverrideAsync(targetTickHz);
+
+    public Task<SettingValue?> SetSettingAsync(string key, string value)
+        => _client.SetSettingAsync(key, value);
 
     public void UpdateActiveBrains(IReadOnlyList<Guid> brains)
     {
@@ -731,7 +831,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         if (string.Equals(item.Key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = ParseBooleanSetting(item.Value, SystemCostEnergyEnabled);
-            _systemPlasticitySettingsSyncInProgress = true;
+            _systemSettingsSyncInProgress = true;
             try
             {
                 SystemCostEnergyEnabled = parsed;
@@ -739,7 +839,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             }
             finally
             {
-                _systemPlasticitySettingsSyncInProgress = false;
+                _systemSettingsSyncInProgress = false;
             }
             return true;
         }
@@ -747,7 +847,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         if (string.Equals(item.Key, PlasticitySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = ParseBooleanSetting(item.Value, SystemPlasticityEnabled);
-            _systemPlasticitySettingsSyncInProgress = true;
+            _systemSettingsSyncInProgress = true;
             try
             {
                 SystemPlasticityEnabled = parsed;
@@ -755,7 +855,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             }
             finally
             {
-                _systemPlasticitySettingsSyncInProgress = false;
+                _systemSettingsSyncInProgress = false;
             }
             return true;
         }
@@ -764,14 +864,14 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             var parsed = ParseSystemPlasticityRateText(item.Value, fallback: SystemPlasticityRateText);
             SystemPlasticityRateText = parsed;
-            _systemPlasticitySettingsSyncInProgress = true;
+            _systemSettingsSyncInProgress = true;
             try
             {
                 SystemPlasticityRateTextDraft = parsed;
             }
             finally
             {
-                _systemPlasticitySettingsSyncInProgress = false;
+                _systemSettingsSyncInProgress = false;
             }
             return true;
         }
@@ -781,7 +881,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             var parsed = ParseBooleanSetting(item.Value, SystemPlasticityProbabilisticUpdates);
             SystemPlasticityProbabilisticUpdates = parsed;
             var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == parsed) ?? PlasticityModes[0];
-            _systemPlasticitySettingsSyncInProgress = true;
+            _systemSettingsSyncInProgress = true;
             try
             {
                 SystemPlasticityProbabilisticUpdatesDraft = parsed;
@@ -789,7 +889,41 @@ public sealed class IoPanelViewModel : ViewModelBase
             }
             finally
             {
-                _systemPlasticitySettingsSyncInProgress = false;
+                _systemSettingsSyncInProgress = false;
+            }
+            return true;
+        }
+
+        if (string.Equals(item.Key, IoCoordinatorSettingsKeys.InputCoordinatorModeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseInputCoordinatorModeSetting(item.Value, SelectedInputCoordinatorMode.Mode);
+            var selectedMode = InputCoordinatorModes.FirstOrDefault(option => option.Mode == parsed) ?? InputCoordinatorModes[0];
+            _systemSettingsSyncInProgress = true;
+            try
+            {
+                SelectedInputCoordinatorMode = selectedMode;
+                SelectedInputCoordinatorModeDraft = selectedMode;
+            }
+            finally
+            {
+                _systemSettingsSyncInProgress = false;
+            }
+            return true;
+        }
+
+        if (string.Equals(item.Key, IoCoordinatorSettingsKeys.OutputVectorSourceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseOutputVectorSourceSetting(item.Value, SelectedOutputVectorSource.Source);
+            var selectedSource = OutputVectorSources.FirstOrDefault(option => option.Source == parsed) ?? OutputVectorSources[0];
+            _systemSettingsSyncInProgress = true;
+            try
+            {
+                SelectedOutputVectorSource = selectedSource;
+                SelectedOutputVectorSourceDraft = selectedSource;
+            }
+            finally
+            {
+                _systemSettingsSyncInProgress = false;
             }
             return true;
         }
@@ -917,12 +1051,21 @@ public sealed class IoPanelViewModel : ViewModelBase
         if (info is null)
         {
             _selectedBrainInputWidth = -1;
+            _selectedBrainInputReplayEveryTick = false;
+            OnPropertyChanged(nameof(AutoSendInputVectorEveryTickAvailable));
             BrainInfoSummary = "Brain not found or IO unavailable.";
             return;
         }
 
         var inputWidth = checked((int)Math.Max(0, info.InputWidth));
         _selectedBrainInputWidth = inputWidth;
+        _selectedBrainInputReplayEveryTick =
+            info.InputCoordinatorMode == InputCoordinatorMode.ReplayLatestVector;
+        OnPropertyChanged(nameof(AutoSendInputVectorEveryTickAvailable));
+        if (_selectedBrainInputReplayEveryTick && AutoSendInputVectorEveryTick)
+        {
+            AutoSendInputVectorEveryTick = false;
+        }
         CostEnabled = info.CostEnabled;
         EnergyEnabled = info.EnergyEnabled;
         PlasticityEnabled = info.PlasticityEnabled;
@@ -1084,6 +1227,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private void TryAutoSendInputVectorForTick(Guid brainId, ulong tickId)
     {
         if (!AutoSendInputVectorEveryTick
+            || !AutoSendInputVectorEveryTickAvailable
             || !_selectedBrainId.HasValue
             || _selectedBrainId.Value != brainId)
         {
@@ -1281,6 +1425,68 @@ public sealed class IoPanelViewModel : ViewModelBase
         var enabled = SystemPlasticityEnabledDraft;
         var result = await _client.SetSettingAsync(PlasticitySettingsKeys.SystemEnabledKey, enabled ? "true" : "false").ConfigureAwait(false);
         ApplySystemBooleanSettingToSummary("Plasticity system policy", PlasticitySettingsKeys.SystemEnabledKey, enabled, result);
+    }
+
+    private async Task ApplyInputCoordinatorModeAsync()
+    {
+        var selected = SelectedInputCoordinatorModeDraft ?? InputCoordinatorModes[0];
+        var result = await _client.SetSettingAsync(
+                IoCoordinatorSettingsKeys.InputCoordinatorModeKey,
+                selected.SettingValue)
+            .ConfigureAwait(false);
+        _dispatcher.Post(() =>
+        {
+            if (result is null)
+            {
+                BrainInfoSummary = "Input coordinator mode: update failed (settings unavailable).";
+                return;
+            }
+
+            if (!string.Equals(result.Key, IoCoordinatorSettingsKeys.InputCoordinatorModeKey, StringComparison.OrdinalIgnoreCase))
+            {
+                BrainInfoSummary = $"Input coordinator mode: update returned unexpected key '{result.Key}'.";
+                return;
+            }
+
+            ApplySetting(new SettingItem(result.Key, result.Value, result.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            var persisted = ParseInputCoordinatorModeSetting(result.Value, selected.Mode);
+            BrainInfoSummary = $"Input coordinator mode: applied ({FormatInputCoordinatorMode(persisted)}).";
+            if (_selectedBrainId.HasValue)
+            {
+                _ = _client.RequestBrainInfoAsync(_selectedBrainId.Value, ApplyBrainInfo);
+            }
+        });
+    }
+
+    private async Task ApplyOutputVectorSourceAsync()
+    {
+        var selected = SelectedOutputVectorSourceDraft ?? OutputVectorSources[0];
+        var result = await _client.SetSettingAsync(
+                IoCoordinatorSettingsKeys.OutputVectorSourceKey,
+                selected.SettingValue)
+            .ConfigureAwait(false);
+        _dispatcher.Post(() =>
+        {
+            if (result is null)
+            {
+                BrainInfoSummary = "Output vector source: update failed (settings unavailable).";
+                return;
+            }
+
+            if (!string.Equals(result.Key, IoCoordinatorSettingsKeys.OutputVectorSourceKey, StringComparison.OrdinalIgnoreCase))
+            {
+                BrainInfoSummary = $"Output vector source: update returned unexpected key '{result.Key}'.";
+                return;
+            }
+
+            ApplySetting(new SettingItem(result.Key, result.Value, result.UpdatedMs.ToString(CultureInfo.InvariantCulture)));
+            var persisted = ParseOutputVectorSourceSetting(result.Value, selected.Source);
+            BrainInfoSummary = $"Output vector source: applied ({FormatOutputVectorSource(persisted)}).";
+            if (_selectedBrainId.HasValue)
+            {
+                _ = _client.RequestBrainInfoAsync(_selectedBrainId.Value, ApplyBrainInfo);
+            }
+        });
     }
 
     private async Task ApplySystemPlasticityModeRateAsync()
@@ -1694,8 +1900,28 @@ public sealed class IoPanelViewModel : ViewModelBase
                                      ?? info.HomeostasisTargetMode.ToString();
         var homeostasisUpdateLabel = HomeostasisUpdateModes.FirstOrDefault(mode => mode.Mode == info.HomeostasisUpdateMode)?.Label
                                      ?? info.HomeostasisUpdateMode.ToString();
+        var inputCoordinatorModeLabel = FormatInputCoordinatorMode(info.InputCoordinatorMode);
+        var outputVectorSourceLabel = FormatOutputVectorSource(info.OutputVectorSource);
         return
-            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######}) | Homeostasis: {(info.HomeostasisEnabled ? "on" : "off")} ({homeostasisTargetLabel}, {homeostasisUpdateLabel}, p={info.HomeostasisBaseProbability:0.######}, step={info.HomeostasisMinStepCodes}, coupling={(info.HomeostasisEnergyCouplingEnabled ? "on" : "off")})";
+            $"Inputs: {info.InputWidth} | Outputs: {info.OutputWidth} | IO: input={inputCoordinatorModeLabel}, output_vector={outputVectorSourceLabel} | Energy: {info.EnergyRemaining} @ {info.EnergyRateUnitsPerSecond}/s | LastCost: {info.LastTickCost} | Plasticity: {(info.PlasticityEnabled ? "on" : "off")} ({plasticityModeLabel}, {info.PlasticityRate:0.######}) | Homeostasis: {(info.HomeostasisEnabled ? "on" : "off")} ({homeostasisTargetLabel}, {homeostasisUpdateLabel}, p={info.HomeostasisBaseProbability:0.######}, step={info.HomeostasisMinStepCodes}, coupling={(info.HomeostasisEnergyCouplingEnabled ? "on" : "off")})";
+    }
+
+    private static string FormatInputCoordinatorMode(InputCoordinatorMode mode)
+    {
+        return mode switch
+        {
+            InputCoordinatorMode.ReplayLatestVector => "replay_latest_vector",
+            _ => "dirty_on_change"
+        };
+    }
+
+    private static string FormatOutputVectorSource(OutputVectorSource source)
+    {
+        return source switch
+        {
+            OutputVectorSource.Buffer => "buffer",
+            _ => "potential"
+        };
     }
 
     private bool TryParseSystemPlasticityRateDraft(out float rate, out string normalizedText)
@@ -1722,6 +1948,36 @@ public sealed class IoPanelViewModel : ViewModelBase
         }
 
         return parsed.ToString("0.######", CultureInfo.InvariantCulture);
+    }
+
+    private static InputCoordinatorMode ParseInputCoordinatorModeSetting(string? value, InputCoordinatorMode fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "0" or "dirty" or "dirty_on_change" => InputCoordinatorMode.DirtyOnChange,
+            "1" or "replay" or "replay_latest_vector" => InputCoordinatorMode.ReplayLatestVector,
+            _ => fallback
+        };
+    }
+
+    private static OutputVectorSource ParseOutputVectorSourceSetting(string? value, OutputVectorSource fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "0" or "potential" => OutputVectorSource.Potential,
+            "1" or "buffer" => OutputVectorSource.Buffer,
+            _ => fallback
+        };
     }
 
     private static bool ParseBooleanSetting(string? value, bool fallback)
@@ -1770,6 +2026,8 @@ public sealed class IoPanelViewModel : ViewModelBase
 }
 
 public sealed record PlasticityModeOption(string Label, bool Probabilistic);
+public sealed record InputCoordinatorModeOption(string Label, InputCoordinatorMode Mode, string SettingValue);
+public sealed record OutputVectorSourceOption(string Label, OutputVectorSource Source, string SettingValue);
 public sealed record HomeostasisTargetModeOption(string Label, HomeostasisTargetMode Mode);
 public sealed record HomeostasisUpdateModeOption(string Label, HomeostasisUpdateMode Mode);
 
@@ -1801,4 +2059,5 @@ public sealed class KnownBrainOption : ViewModelBase
         ? $"{BrainId:D} (active)"
         : $"{BrainId:D} (known)";
 }
+
 

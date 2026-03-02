@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Proto;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.IO;
 
@@ -7,7 +8,15 @@ internal sealed class BrainIoEntry
 {
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    public BrainIoEntry(Guid brainId, PID inputPid, PID outputPid, uint inputWidth, uint outputWidth, BrainEnergyState energy)
+    public BrainIoEntry(
+        Guid brainId,
+        PID inputPid,
+        PID outputPid,
+        uint inputWidth,
+        uint outputWidth,
+        BrainEnergyState energy,
+        ProtoControl.InputCoordinatorMode inputCoordinatorMode,
+        ProtoControl.OutputVectorSource outputVectorSource)
     {
         BrainId = brainId;
         InputPid = inputPid;
@@ -15,6 +24,8 @@ internal sealed class BrainIoEntry
         InputWidth = inputWidth;
         OutputWidth = outputWidth;
         Energy = energy;
+        InputCoordinatorMode = inputCoordinatorMode;
+        OutputVectorSource = outputVectorSource;
         RegisteredAtMs = NowMs();
     }
 
@@ -24,6 +35,8 @@ internal sealed class BrainIoEntry
     public uint InputWidth { get; set; }
     public uint OutputWidth { get; set; }
     public BrainEnergyState Energy { get; }
+    public ProtoControl.InputCoordinatorMode InputCoordinatorMode { get; set; }
+    public ProtoControl.OutputVectorSource OutputVectorSource { get; set; }
     public ArtifactRef? BaseDefinition { get; set; }
     public ArtifactRef? LastSnapshot { get; set; }
     public bool EnergyDepletedSignaled { get; set; }

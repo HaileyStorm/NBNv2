@@ -109,6 +109,16 @@ message SetBrainHomeostasis {
   float homeostasis_energy_probability_scale = 9;
 }
 
+enum InputCoordinatorMode {
+  INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE = 0;
+  INPUT_COORDINATOR_MODE_REPLAY_LATEST_VECTOR = 1;
+}
+
+enum OutputVectorSource {
+  OUTPUT_VECTOR_SOURCE_POTENTIAL = 0;
+  OUTPUT_VECTOR_SOURCE_BUFFER = 1;
+}
+
 message UpdateShardOutputSink {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;
@@ -123,6 +133,7 @@ message UpdateShardVisualization {
   bool enabled = 4;
   bool has_focus_region = 5;
   uint32 focus_region_id = 6;
+  uint32 viz_stream_min_interval_ms = 7;
 }
 
 message UpdateShardRuntimeConfig {
@@ -158,6 +169,7 @@ message UpdateShardRuntimeConfig {
   float plasticity_energy_cost_response_strength = 30;
   float plasticity_energy_cost_min_scale = 31;
   float plasticity_energy_cost_max_scale = 32;
+  OutputVectorSource output_vector_source = 33;
 }
 
 message SnapshotOverlayRecord {
@@ -194,6 +206,8 @@ message BrainIoInfo {
   nbn.Uuid brain_id = 1;
   uint32 input_width = 2;
   uint32 output_width = 3;
+  InputCoordinatorMode input_coordinator_mode = 4;
+  OutputVectorSource output_vector_source = 5;
 }
 
 enum ShardPlanMode {

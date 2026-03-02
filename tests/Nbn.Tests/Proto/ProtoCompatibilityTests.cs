@@ -132,6 +132,23 @@ public class ProtoCompatibilityTests
         AssertField(homeostasis, "homeostasis_energy_target_scale", 8, FieldType.Float);
         AssertField(homeostasis, "homeostasis_energy_probability_scale", 9, FieldType.Float);
 
+        var inputCoordinatorMode = descriptor.EnumTypes.Single(@enum => @enum.Name == "InputCoordinatorMode");
+        AssertEnumValue(inputCoordinatorMode, "INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE", 0);
+        AssertEnumValue(inputCoordinatorMode, "INPUT_COORDINATOR_MODE_REPLAY_LATEST_VECTOR", 1);
+
+        var outputVectorSource = descriptor.EnumTypes.Single(@enum => @enum.Name == "OutputVectorSource");
+        AssertEnumValue(outputVectorSource, "OUTPUT_VECTOR_SOURCE_POTENTIAL", 0);
+        AssertEnumValue(outputVectorSource, "OUTPUT_VECTOR_SOURCE_BUFFER", 1);
+
+        var shardVisualization = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardVisualization");
+        AssertField(shardVisualization, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(shardVisualization, "region_id", 2, FieldType.UInt32);
+        AssertField(shardVisualization, "shard_index", 3, FieldType.UInt32);
+        AssertField(shardVisualization, "enabled", 4, FieldType.Bool);
+        AssertField(shardVisualization, "has_focus_region", 5, FieldType.Bool);
+        AssertField(shardVisualization, "focus_region_id", 6, FieldType.UInt32);
+        AssertField(shardVisualization, "viz_stream_min_interval_ms", 7, FieldType.UInt32);
+
         var shardRuntime = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardRuntimeConfig");
         AssertField(shardRuntime, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(shardRuntime, "region_id", 2, FieldType.UInt32);
@@ -165,6 +182,14 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "plasticity_energy_cost_response_strength", 30, FieldType.Float);
         AssertField(shardRuntime, "plasticity_energy_cost_min_scale", 31, FieldType.Float);
         AssertField(shardRuntime, "plasticity_energy_cost_max_scale", 32, FieldType.Float);
+        AssertField(shardRuntime, "output_vector_source", 33, FieldType.Enum, "nbn.control.OutputVectorSource");
+
+        var brainIoInfo = descriptor.MessageTypes.Single(message => message.Name == "BrainIoInfo");
+        AssertField(brainIoInfo, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(brainIoInfo, "input_width", 2, FieldType.UInt32);
+        AssertField(brainIoInfo, "output_width", 3, FieldType.UInt32);
+        AssertField(brainIoInfo, "input_coordinator_mode", 4, FieldType.Enum, "nbn.control.InputCoordinatorMode");
+        AssertField(brainIoInfo, "output_vector_source", 5, FieldType.Enum, "nbn.control.OutputVectorSource");
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);
@@ -482,6 +507,8 @@ public class ProtoCompatibilityTests
         AssertField(brainInfo, "plasticity_energy_cost_response_strength", 27, FieldType.Float);
         AssertField(brainInfo, "plasticity_energy_cost_min_scale", 28, FieldType.Float);
         AssertField(brainInfo, "plasticity_energy_cost_max_scale", 29, FieldType.Float);
+        AssertField(brainInfo, "input_coordinator_mode", 30, FieldType.Enum, "nbn.control.InputCoordinatorMode");
+        AssertField(brainInfo, "output_vector_source", 31, FieldType.Enum, "nbn.control.OutputVectorSource");
     }
 
     [Fact]
@@ -608,6 +635,8 @@ public class ProtoCompatibilityTests
         AssertField(registerBrain, "plasticity_energy_cost_response_strength", 27, FieldType.Float);
         AssertField(registerBrain, "plasticity_energy_cost_min_scale", 28, FieldType.Float);
         AssertField(registerBrain, "plasticity_energy_cost_max_scale", 29, FieldType.Float);
+        AssertField(registerBrain, "input_coordinator_mode", 30, FieldType.Enum, "nbn.control.InputCoordinatorMode");
+        AssertField(registerBrain, "output_vector_source", 31, FieldType.Enum, "nbn.control.OutputVectorSource");
     }
 
     [Fact]

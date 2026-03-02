@@ -53,6 +53,8 @@ message BrainInfo {
   float plasticity_energy_cost_response_strength = 27;
   float plasticity_energy_cost_min_scale = 28;
   float plasticity_energy_cost_max_scale = 29;
+  nbn.control.InputCoordinatorMode input_coordinator_mode = 30;
+  nbn.control.OutputVectorSource output_vector_source = 31;
 }
 
 message BrainEnergyState {
@@ -112,6 +114,8 @@ message RegisterBrain {
   float plasticity_energy_cost_response_strength = 27;
   float plasticity_energy_cost_min_scale = 28;
   float plasticity_energy_cost_max_scale = 29;
+  nbn.control.InputCoordinatorMode input_coordinator_mode = 30;
+  nbn.control.OutputVectorSource output_vector_source = 31;
 }
 
 message UnregisterBrain {
