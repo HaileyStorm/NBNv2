@@ -16,17 +16,21 @@
               <TextBox Grid.Column="2" Text="{Binding Connections.SettingsName}" Width="140" />
             </Grid>
             <StackPanel Spacing="4" Margin="4,0,0,0">
-              <Border Classes="row" HorizontalAlignment="Left" Padding="0" Margin="0">
-                <Border Classes="pill"
-                        Background="{Binding Connections.SettingsChipBackground}"
-                        BorderBrush="{Binding Connections.SettingsChipBorder}"
-                        BorderThickness="1">
-                  <TextBlock Text="{Binding Connections.SettingsStatusLabel}"
-                             Foreground="{Binding Connections.SettingsChipForeground}" />
-                </Border>
+              <Border Classes="row" HorizontalAlignment="Left" Margin="0">
+                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="8">
+                  <Border Classes="pill"
+                          Background="{Binding Connections.SettingsChipBackground}"
+                          BorderBrush="{Binding Connections.SettingsChipBorder}"
+                          BorderThickness="1">
+                    <TextBlock Text="{Binding Connections.SettingsStatusLabel}"
+                               Foreground="{Binding Connections.SettingsChipForeground}" />
+                  </Border>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock Text="SettingsMonitor" Classes="row-title" />
+                    <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Grid>
               </Border>
-              <TextBlock Text="SettingsMonitor" Classes="row-title" />
-              <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" TextWrapping="Wrap" />
             </StackPanel>
           </StackPanel>
         </Border>
