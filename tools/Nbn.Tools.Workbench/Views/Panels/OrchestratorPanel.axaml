@@ -15,13 +15,14 @@
               <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
               <TextBox Grid.Column="2" Text="{Binding Connections.SettingsName}" Width="140" />
             </Grid>
-            <StackPanel Spacing="4">
+            <StackPanel Spacing="4" Margin="4,0,0,0">
               <Border Classes="pill"
                       Background="{Binding Connections.SettingsChipBackground}"
                       BorderBrush="{Binding Connections.SettingsChipBorder}"
                       BorderThickness="1"
                       HorizontalAlignment="Left">
-                <TextBlock Text="{Binding Connections.SettingsStatusLabel}" />
+                <TextBlock Text="{Binding Connections.SettingsStatusLabel}"
+                           Foreground="{Binding Connections.SettingsChipForeground}" />
               </Border>
               <TextBlock Text="SettingsMonitor" Classes="row-title" />
               <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" TextWrapping="Wrap" />

@@ -259,6 +259,7 @@ public sealed class ConnectionViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(SettingsChipBackground));
                 OnPropertyChanged(nameof(SettingsChipBorder));
+                OnPropertyChanged(nameof(SettingsChipForeground));
                 OnPropertyChanged(nameof(SettingsStatusLabel));
             }
         }
@@ -450,9 +451,11 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public IBrush WorkerChipBorder => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
-    public IBrush SettingsChipBackground => SettingsConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+    public IBrush SettingsChipBackground => SettingsConnected ? new SolidColorBrush(Color.Parse("#DDF5E5")) : new SolidColorBrush(Color.Parse("#FBE8E8"));
 
-    public IBrush SettingsChipBorder => SettingsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+    public IBrush SettingsChipBorder => SettingsConnected ? new SolidColorBrush(Color.Parse("#2D9A5E")) : new SolidColorBrush(Color.Parse("#C04A4A"));
+
+    public IBrush SettingsChipForeground => SettingsConnected ? new SolidColorBrush(Color.Parse("#0F5832")) : new SolidColorBrush(Color.Parse("#6B1F1F"));
 
     public IBrush HiveMindChipBackground => HiveMindDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
@@ -466,7 +469,7 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public string WorkerStatusLabel => WorkerDiscoverable ? "Worker online" : "Worker offline";
 
-    public string SettingsStatusLabel => SettingsConnected ? "Settings connected" : "Settings disconnected";
+    public string SettingsStatusLabel => SettingsConnected ? "online" : "offline";
 
     public string HiveMindStatusLabel => HiveMindDiscoverable ? "HiveMind online" : "HiveMind offline";
 
