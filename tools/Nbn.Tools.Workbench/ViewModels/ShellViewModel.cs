@@ -29,9 +29,9 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Viz = new VizPanelViewModel(_dispatcher, Io);
         Viz.VisualizationSelectionChanged += UpdateObservabilitySubscriptions;
         Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, OnBrainDiscovered, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
-        Debug = new DebugPanelViewModel(_client, _dispatcher);
+        Debug = new DebugPanelViewModel(_client, _dispatcher, Connections);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
-        Repro = new ReproPanelViewModel(_client);
+        Repro = new ReproPanelViewModel(_client, Connections);
         Speciation = new SpeciationPanelViewModel(
             _dispatcher,
             Connections,

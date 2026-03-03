@@ -10,6 +10,54 @@ namespace Nbn.Tests.Workbench;
 public class ReproPanelViewModelTests
 {
     [Fact]
+    public async Task RunCommand_WhenServicesNotReady_ShowsPrereqMessage_AndSkipsRequest()
+    {
+        var client = new FakeWorkbenchClient();
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Disconnected",
+            IoStatus = "Offline",
+            ReproStatus = "Offline"
+        };
+        var vm = CreateViewModel(client, connections);
+        SetActiveBrains(vm);
+
+        vm.RunCommand.Execute(null);
+        await WaitForAsync(() => vm.Status == "Connect Settings, IO, and Reproduction first.");
+
+        Assert.Null(client.LastBrainIdsRequest);
+        Assert.Null(client.LastArtifactRequest);
+    }
+
+    [Fact]
+    public async Task RunCommand_WhenStatusesShowReady_AllowsRequestEvenIfFlagsLag()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            BrainIdsResult = new ReproduceResult
+            {
+                Report = new SimilarityReport
+                {
+                    Compatible = true
+                }
+            }
+        };
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Ready",
+            IoStatus = "Connected",
+            ReproStatus = "Online"
+        };
+        var vm = CreateViewModel(client, connections);
+        SetActiveBrains(vm);
+
+        vm.RunCommand.Execute(null);
+        await WaitForAsync(() => client.LastBrainIdsRequest is not null);
+
+        Assert.NotNull(client.LastBrainIdsRequest);
+    }
+
+    [Fact]
     public async Task RunCommand_WhenAbortResultReturned_ShowsAbortReasonAndNotSpawnedStatus()
     {
         var client = new FakeWorkbenchClient
@@ -279,9 +327,9 @@ public class ReproPanelViewModelTests
         Assert.Equal((uint)6, request.Config.Limits.MaxRegionsRemovedAbs);
     }
 
-    private static ReproPanelViewModel CreateViewModel(WorkbenchClient client)
+    private static ReproPanelViewModel CreateViewModel(WorkbenchClient client, ConnectionViewModel? connections = null)
     {
-        return new ReproPanelViewModel(client);
+        return new ReproPanelViewModel(client, connections);
     }
 
     private static void SetActiveBrains(ReproPanelViewModel vm)

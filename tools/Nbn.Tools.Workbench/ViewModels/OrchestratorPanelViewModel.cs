@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -58,6 +59,33 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _workerEndpointSummary = "No active workers.";
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
     private readonly CancellationTokenSource _refreshCts = new();
+    private static readonly HashSet<string> EndpointRefreshTriggerProperties = new(StringComparer.Ordinal)
+    {
+        nameof(ConnectionViewModel.SettingsConnected),
+        nameof(ConnectionViewModel.SettingsStatus),
+        nameof(ConnectionViewModel.SettingsHost),
+        nameof(ConnectionViewModel.SettingsPortText),
+        nameof(ConnectionViewModel.SettingsName),
+        nameof(ConnectionViewModel.HiveMindConnected),
+        nameof(ConnectionViewModel.HiveMindDiscoverable),
+        nameof(ConnectionViewModel.HiveMindStatus),
+        nameof(ConnectionViewModel.HiveMindEndpointDisplay),
+        nameof(ConnectionViewModel.IoConnected),
+        nameof(ConnectionViewModel.IoDiscoverable),
+        nameof(ConnectionViewModel.IoStatus),
+        nameof(ConnectionViewModel.IoEndpointDisplay),
+        nameof(ConnectionViewModel.ReproConnected),
+        nameof(ConnectionViewModel.ReproDiscoverable),
+        nameof(ConnectionViewModel.ReproStatus),
+        nameof(ConnectionViewModel.ReproEndpointDisplay),
+        nameof(ConnectionViewModel.SpeciationDiscoverable),
+        nameof(ConnectionViewModel.SpeciationStatus),
+        nameof(ConnectionViewModel.SpeciationEndpointDisplay),
+        nameof(ConnectionViewModel.ObsConnected),
+        nameof(ConnectionViewModel.ObsDiscoverable),
+        nameof(ConnectionViewModel.ObsStatus),
+        nameof(ConnectionViewModel.ObsEndpointDisplay)
+    };
     private readonly TimeSpan _autoRefreshInterval = TimeSpan.FromSeconds(3);
     private Guid? _sampleBrainId;
 
@@ -77,6 +105,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
         _disconnectAll = disconnectAll;
+        _connections.PropertyChanged += OnConnectionsPropertyChanged;
         Nodes = new ObservableCollection<NodeStatusItem>();
         WorkerEndpoints = new ObservableCollection<WorkerEndpointItem>();
         Endpoints = new ObservableCollection<EndpointStatusItem>();
@@ -246,6 +275,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public async Task StopAllAsyncForShutdown()
     {
+        _connections.PropertyChanged -= OnConnectionsPropertyChanged;
         _refreshCts.Cancel();
         _disconnectAll?.Invoke();
         await StopSampleBrainAsync().ConfigureAwait(false);
@@ -663,7 +693,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         if (!HasSpawnServiceReadiness())
         {
-            SampleBrainStatus = "Connect Settings, HiveMind, and IO first.";
+            SampleBrainStatus = Connections.BuildSpawnReadinessGuidance();
             return;
         }
 
@@ -1560,20 +1590,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private void RefreshEndpointRows()
     {
         Endpoints.Clear();
-        Endpoints.Add(CreateEndpointStatusItem("IO Gateway", Connections.IoEndpointDisplay, Connections.IoDiscoverable));
-        Endpoints.Add(CreateEndpointStatusItem("Observability", Connections.ObsEndpointDisplay, Connections.ObsDiscoverable));
-        Endpoints.Add(CreateEndpointStatusItem("Reproduction", Connections.ReproEndpointDisplay, Connections.ReproDiscoverable));
-        Endpoints.Add(CreateEndpointStatusItem("Speciation", Connections.SpeciationEndpointDisplay, Connections.SpeciationDiscoverable));
-        Endpoints.Add(CreateEndpointStatusItem("SettingsMonitor", BuildSettingsEndpointDisplay(), Connections.SettingsConnected));
-        Endpoints.Add(CreateEndpointStatusItem("HiveMind", Connections.HiveMindEndpointDisplay, Connections.HiveMindDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("IO Gateway", Connections.IoEndpointDisplay, Connections.IsIoServiceReady()));
+        Endpoints.Add(CreateEndpointStatusItem("Observability", Connections.ObsEndpointDisplay, Connections.IsObsServiceReady()));
+        Endpoints.Add(CreateEndpointStatusItem("Reproduction", Connections.ReproEndpointDisplay, Connections.IsReproServiceReady()));
+        Endpoints.Add(CreateEndpointStatusItem("Speciation", Connections.SpeciationEndpointDisplay, Connections.IsSpeciationServiceReady()));
+        Endpoints.Add(CreateEndpointStatusItem("SettingsMonitor", BuildSettingsEndpointDisplay(), Connections.IsSettingsServiceReady()));
+        Endpoints.Add(CreateEndpointStatusItem("HiveMind", Connections.HiveMindEndpointDisplay, Connections.IsHiveMindServiceReady()));
     }
 
     private bool HasSpawnServiceReadiness()
     {
-        var settingsReady = Connections.SettingsConnected;
-        var hiveMindReady = Connections.HiveMindDiscoverable || Connections.HiveMindConnected;
-        var ioReady = Connections.IoDiscoverable || Connections.IoConnected;
-        return settingsReady && hiveMindReady && ioReady;
+        return Connections.HasSpawnServiceReadiness();
     }
 
     private static EndpointStatusItem CreateEndpointStatusItem(string serviceName, string endpointDisplay, bool discoverable)
@@ -1583,6 +1610,17 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             serviceName,
             normalizedEndpointDisplay,
             discoverable ? "online" : "offline");
+    }
+
+    private void OnConnectionsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (string.IsNullOrWhiteSpace(args.PropertyName)
+            || !EndpointRefreshTriggerProperties.Contains(args.PropertyName))
+        {
+            return;
+        }
+
+        _dispatcher.Post(RefreshEndpointRows);
     }
 
     private string BuildSettingsEndpointDisplay()

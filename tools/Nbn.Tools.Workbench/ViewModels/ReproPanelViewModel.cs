@@ -21,6 +21,7 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class ReproPanelViewModel : ViewModelBase
 {
     private readonly WorkbenchClient _client;
+    private readonly ConnectionViewModel? _connections;
     private string _parentAGuidText = string.Empty;
     private string _parentBGuidText = string.Empty;
     private string _parentADefPath = string.Empty;
@@ -76,9 +77,10 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _similaritySummary = "No result yet.";
     private string _mutationSummary = "No result yet.";
 
-    public ReproPanelViewModel(WorkbenchClient client)
+    public ReproPanelViewModel(WorkbenchClient client, ConnectionViewModel? connections = null)
     {
         _client = client;
+        _connections = connections;
         StrengthSources = new List<StrengthSourceOption>
         {
             new("Base only", StrengthSource.StrengthBaseOnly),
@@ -482,6 +484,12 @@ public sealed class ReproPanelViewModel : ViewModelBase
 
     private async Task RunAsync()
     {
+        if (_connections is not null && !_connections.HasReproductionServiceReadiness())
+        {
+            Status = "Connect Settings, IO, and Reproduction first.";
+            return;
+        }
+
         var config = BuildConfig();
         var seed = ParseUlong(SeedText, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 

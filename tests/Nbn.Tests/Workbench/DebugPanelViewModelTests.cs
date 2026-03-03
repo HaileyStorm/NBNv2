@@ -96,6 +96,49 @@ public sealed class DebugPanelViewModelTests
         Assert.Equal("brain.terminated", client.Settings[DebugSettingsKeys.ExcludeSummaryPrefixesKey]);
     }
 
+    [Fact]
+    public void ApplyFilter_WhenServicesNotReady_ShowsPrereqMessage_AndSkipsSettingWrites()
+    {
+        var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink());
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Disconnected",
+            ObsStatus = "Offline"
+        };
+        var viewModel = new DebugPanelViewModel(client, new UiDispatcher(), connections);
+
+        viewModel.ApplyFilterCommand.Execute(null);
+
+        var blocked = SpinWait.SpinUntil(
+            () => string.Equals(viewModel.Status, "Connect Settings and Observability first.", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(2));
+        Assert.True(blocked);
+        Assert.Empty(client.Settings);
+    }
+
+    [Fact]
+    public void ApplyFilter_WhenStatusesShowReady_AllowsApplyEvenIfFlagsLag()
+    {
+        var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink());
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Ready",
+            ObsStatus = "Connected"
+        };
+        var viewModel = new DebugPanelViewModel(client, new UiDispatcher(), connections)
+        {
+            StreamEnabled = true
+        };
+
+        viewModel.ApplyFilterCommand.Execute(null);
+
+        var applied = SpinWait.SpinUntil(
+            () => client.Settings.ContainsKey(DebugSettingsKeys.EnabledKey),
+            TimeSpan.FromSeconds(2));
+        Assert.True(applied);
+        Assert.Equal("true", client.Settings[DebugSettingsKeys.EnabledKey]);
+    }
+
     private static DebugPanelViewModel CreateViewModel()
         => new(new WorkbenchClient(new NullWorkbenchEventSink()), new UiDispatcher());
 

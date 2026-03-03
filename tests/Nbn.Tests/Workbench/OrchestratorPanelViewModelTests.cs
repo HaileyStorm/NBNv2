@@ -633,6 +633,53 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task Endpoints_SettingsChip_TracksSettingsConnectionWithoutManualRefresh()
+    {
+        var connections = new ConnectionViewModel();
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+
+        var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");
+        Assert.Equal("offline", settingsEndpoint.Status);
+
+        connections.SettingsConnected = true;
+        await WaitForAsync(() =>
+            string.Equals(
+                vm.Endpoints.Single(endpoint => endpoint.ServiceName == "SettingsMonitor").Status,
+                "online",
+                StringComparison.Ordinal));
+
+        connections.SettingsConnected = false;
+        await WaitForAsync(() =>
+            string.Equals(
+                vm.Endpoints.Single(endpoint => endpoint.ServiceName == "SettingsMonitor").Status,
+                "offline",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Endpoints_IoAndHiveMindChips_UseReadinessSignalsWhenDiscoveryLags()
+    {
+        var connections = new ConnectionViewModel
+        {
+            IoConnected = true,
+            HiveMindConnected = true,
+            IoDiscoverable = false,
+            HiveMindDiscoverable = false
+        };
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+
+        await WaitForAsync(() =>
+            string.Equals(
+                vm.Endpoints.Single(endpoint => endpoint.ServiceName == "IO Gateway").Status,
+                "online",
+                StringComparison.Ordinal)
+            && string.Equals(
+                vm.Endpoints.Single(endpoint => endpoint.ServiceName == "HiveMind").Status,
+                "online",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_ObservabilityConnected_WhenDebugHubNodeIsAlive()
     {
         var connections = new ConnectionViewModel();
@@ -1249,6 +1296,37 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task SpawnSampleBrainCommand_AllowsPositiveStatuses_WhenConnectionFlagsAndDiscoveryLag()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = false,
+            HiveMindConnected = false,
+            IoConnected = false,
+            SettingsStatus = "Ready",
+            HiveMindStatus = "Online",
+            IoStatus = "Connected"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 2)
+                : null
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SpawnSampleBrainCommand_UsesIoSpawnPath_WithInvalidLocalEndpointText()
     {
         var connections = new ConnectionViewModel
@@ -1438,6 +1516,45 @@ public class OrchestratorPanelViewModelTests
             IoConnected = false,
             HiveMindDiscoverable = true,
             IoDiscoverable = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
+                : null
+        };
+        var vm = new DesignerPanelViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.Status.Contains("Brain spawned", StringComparison.Ordinal), timeoutMs: 5000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DesignerSpawn_AllowsPositiveStatuses_WhenConnectionFlagsAndDiscoveryLag()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = false,
+            HiveMindConnected = false,
+            IoConnected = false,
+            HiveMindDiscoverable = false,
+            IoDiscoverable = false,
+            SettingsStatus = "Ready",
+            HiveMindStatus = "Online",
+            IoStatus = "Connected",
             SettingsPortText = "bad",
             HiveMindPortText = "bad",
             IoPortText = "bad"

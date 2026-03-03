@@ -529,6 +529,92 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public string HiveMindStatusLabel => HiveMindDiscoverable ? "HiveMind online" : "HiveMind offline";
 
+    public bool IsSettingsServiceReady()
+        => SettingsConnected || HasPositiveStatus(SettingsStatus);
+
+    public bool IsHiveMindServiceReady()
+        => HiveMindDiscoverable || HiveMindConnected || HasPositiveStatus(HiveMindStatus);
+
+    public bool IsIoServiceReady()
+        => IoDiscoverable || IoConnected || HasPositiveStatus(IoStatus);
+
+    public bool IsReproServiceReady()
+        => ReproDiscoverable || ReproConnected || HasPositiveStatus(ReproStatus);
+
+    public bool IsObsServiceReady()
+        => ObsDiscoverable || ObsConnected || HasPositiveStatus(ObsStatus);
+
+    public bool IsSpeciationServiceReady()
+        => SpeciationDiscoverable || HasPositiveStatus(SpeciationStatus);
+
+    public bool HasSpawnServiceReadiness()
+        => IsSettingsServiceReady() && IsHiveMindServiceReady() && IsIoServiceReady();
+
+    public bool HasReproductionServiceReadiness()
+        => IsSettingsServiceReady() && IsIoServiceReady() && IsReproServiceReady();
+
+    public bool HasDebugServiceReadiness()
+        => IsSettingsServiceReady() && IsObsServiceReady();
+
+    public bool HasSpeciationServiceReadiness()
+        => IsSettingsServiceReady() && IsSpeciationServiceReady();
+
+    public string BuildSpawnReadinessGuidance()
+    {
+        var missing = new List<string>(3);
+        if (!IsSettingsServiceReady())
+        {
+            missing.Add("Settings");
+        }
+
+        if (!IsHiveMindServiceReady())
+        {
+            missing.Add("HiveMind");
+        }
+
+        if (!IsIoServiceReady())
+        {
+            missing.Add("IO");
+        }
+
+        return missing.Count == 0
+            ? "Connect Settings, HiveMind, and IO first."
+            : $"Connect {JoinReadableList(missing)} first.";
+    }
+
+    private static string JoinReadableList(IReadOnlyList<string> items)
+    {
+        if (items.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (items.Count == 1)
+        {
+            return items[0];
+        }
+
+        if (items.Count == 2)
+        {
+            return $"{items[0]} and {items[1]}";
+        }
+
+        return $"{string.Join(", ", items.Take(items.Count - 1))}, and {items[^1]}";
+    }
+
+    private static bool HasPositiveStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return false;
+        }
+
+        var normalized = status.Trim();
+        return normalized.Equals("connected", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("online", StringComparison.OrdinalIgnoreCase)
+               || normalized.Equals("ready", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string BuildDefaultSettingsDbPath()
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

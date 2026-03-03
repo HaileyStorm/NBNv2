@@ -30,4 +30,56 @@ public sealed class ConnectionViewModelTests
         Assert.Equal("DebugHub", vm.DebugHub);
         Assert.Equal("VisualizationHub", vm.VizHub);
     }
+
+    [Fact]
+    public void ServiceReadiness_AllowsPositiveStatuses_WhenFlagsLag()
+    {
+        var vm = new ConnectionViewModel
+        {
+            SettingsStatus = "Ready",
+            IoStatus = "Connected",
+            HiveMindStatus = "Online",
+            ReproStatus = "Online",
+            ObsStatus = "Connected",
+            SpeciationStatus = "Online"
+        };
+
+        Assert.True(vm.HasSpawnServiceReadiness());
+        Assert.True(vm.HasReproductionServiceReadiness());
+        Assert.True(vm.HasDebugServiceReadiness());
+        Assert.True(vm.HasSpeciationServiceReadiness());
+    }
+
+    [Fact]
+    public void ServiceReadiness_FailsWithoutFlagsOrPositiveStatuses()
+    {
+        var vm = new ConnectionViewModel
+        {
+            SettingsStatus = "Disconnected",
+            IoStatus = "Offline",
+            HiveMindStatus = "Offline",
+            ReproStatus = "Offline",
+            ObsStatus = "Offline",
+            SpeciationStatus = "Offline"
+        };
+
+        Assert.False(vm.HasSpawnServiceReadiness());
+        Assert.False(vm.HasReproductionServiceReadiness());
+        Assert.False(vm.HasDebugServiceReadiness());
+        Assert.False(vm.HasSpeciationServiceReadiness());
+    }
+
+    [Fact]
+    public void BuildSpawnReadinessGuidance_ReportsOnlyMissingServices()
+    {
+        var vm = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            IoDiscoverable = true,
+            HiveMindDiscoverable = false,
+            HiveMindStatus = "Offline"
+        };
+
+        Assert.Equal("Connect HiveMind first.", vm.BuildSpawnReadinessGuidance());
+    }
 }

@@ -22,6 +22,7 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private const int MaxEvents = 400;
     private readonly UiDispatcher _dispatcher;
     private readonly WorkbenchClient _client;
+    private readonly ConnectionViewModel? _connections;
     private readonly List<DebugEventItem> _allEvents = new();
     private readonly List<VizEventItem> _allVizEvents = new();
     private bool _streamEnabled;
@@ -42,10 +43,11 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private VizEventItem? _selectedVizEvent;
     private string _selectedVizPayload = string.Empty;
 
-    public DebugPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
+    public DebugPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher, ConnectionViewModel? connections = null)
     {
         _client = client;
         _dispatcher = dispatcher;
+        _connections = connections;
         DebugEvents = new ObservableCollection<DebugEventItem>();
         SeverityOptions = new ObservableCollection<SeverityOption>(SeverityOption.CreateDefaults());
         _selectedSeverity = SeverityOptions[2];
@@ -314,6 +316,12 @@ public sealed class DebugPanelViewModel : ViewModelBase
 
     private async Task ApplyFilterAsync()
     {
+        if (_connections is not null && !_connections.HasDebugServiceReadiness())
+        {
+            Status = "Connect Settings and Observability first.";
+            return;
+        }
+
         Status = "Applying filter...";
         var filter = BuildSubscriptionFilter();
         var settingsApplied = true;

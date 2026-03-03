@@ -1136,7 +1136,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         if (!HasSpawnServiceReadiness())
         {
-            Status = "Connect Settings, HiveMind, and IO first.";
+            Status = _connections.BuildSpawnReadinessGuidance();
             return;
         }
 
@@ -4102,10 +4102,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private bool HasSpawnServiceReadiness()
     {
-        var settingsReady = _connections.SettingsConnected;
-        var hiveMindReady = _connections.HiveMindDiscoverable || _connections.HiveMindConnected;
-        var ioReady = _connections.IoDiscoverable || _connections.IoConnected;
-        return settingsReady && hiveMindReady && ioReady;
+        return _connections.HasSpawnServiceReadiness();
     }
 
     private static void EnsureInputOutputInfluencePath(Random rng, DesignerBrainViewModel brain, RandomBrainGenerationOptions options)
