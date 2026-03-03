@@ -1311,15 +1311,15 @@ public class IoGatewayArtifactReferenceTests
             }
         });
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        await connected.Task.WaitAsync(cts.Token);
+        using var connectedCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await connected.Task.WaitAsync(connectedCts.Token);
 
         root.Send(gateway, new ApplyTickCost(brainId, 88, 10));
-        var kill = await firstKill.Task.WaitAsync(cts.Token);
+        using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var kill = await firstKill.Task.WaitAsync(killCts.Token);
         Assert.True(kill.BrainId.TryToGuid(out var killedBrainId));
         Assert.Equal(brainId, killedBrainId);
 
-        var terminationTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         root.Send(gateway, new ProtoControl.BrainTerminated
         {
             BrainId = brainId.ToProtoUuid(),
@@ -1328,10 +1328,11 @@ public class IoGatewayArtifactReferenceTests
             LastSnapshot = new ArtifactRef(),
             LastEnergyRemaining = 0,
             LastTickCost = 0,
-            TimeMs = terminationTimeMs
+            TimeMs = 0
         });
 
-        var broadcast = await terminated.Task.WaitAsync(cts.Token);
+        using var terminatedCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var broadcast = await terminated.Task.WaitAsync(terminatedCts.Token);
         Assert.Equal("energy_exhausted", broadcast.Reason);
         Assert.Equal(-5, broadcast.LastEnergyRemaining);
         Assert.Equal(10, broadcast.LastTickCost);
@@ -1432,10 +1433,9 @@ public class IoGatewayArtifactReferenceTests
 
         root.Send(gateway, new ApplyTickCost(brainId, 14, 7));
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        await connected.Task.WaitAsync(cts.Token);
+        using var connectedCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await connected.Task.WaitAsync(connectedCts.Token);
 
-        var terminationTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         root.Send(gateway, new ProtoControl.BrainTerminated
         {
             BrainId = brainId.ToProtoUuid(),
@@ -1444,10 +1444,11 @@ public class IoGatewayArtifactReferenceTests
             LastSnapshot = new ArtifactRef(),
             LastEnergyRemaining = 0,
             LastTickCost = 0,
-            TimeMs = terminationTimeMs
+            TimeMs = 0
         });
 
-        var broadcast = await terminated.Task.WaitAsync(cts.Token);
+        using var terminatedCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var broadcast = await terminated.Task.WaitAsync(terminatedCts.Token);
         Assert.Equal("killed", broadcast.Reason);
         Assert.Equal(43, broadcast.LastEnergyRemaining);
         Assert.Equal(7, broadcast.LastTickCost);

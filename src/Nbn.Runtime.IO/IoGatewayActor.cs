@@ -64,6 +64,9 @@ public sealed class IoGatewayActor : IActor
             case Started:
                 Console.WriteLine($"IO Gateway actor online: {PidLabel(context.Self)}");
                 break;
+            case Terminated terminated:
+                HandleClientTerminated(context, terminated);
+                break;
             case Connect message:
                 HandleConnect(context, message);
                 break;
@@ -192,6 +195,11 @@ public sealed class IoGatewayActor : IActor
         }
 
         var key = PidKey(context.Sender);
+        if (!_clients.ContainsKey(key))
+        {
+            context.Watch(context.Sender);
+        }
+
         _clients[key] = new ClientInfo(context.Sender, message.ClientName ?? string.Empty);
 
         context.Respond(new ConnectAck
@@ -199,6 +207,20 @@ public sealed class IoGatewayActor : IActor
             ServerName = _options.ServerName,
             ServerTimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
+    }
+
+    private void HandleClientTerminated(IContext context, Terminated terminated)
+    {
+        if (terminated.Who is null)
+        {
+            return;
+        }
+
+        var key = PidKey(terminated.Who);
+        if (_clients.Remove(key))
+        {
+            context.Unwatch(terminated.Who);
+        }
     }
 
     private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
@@ -2235,9 +2257,17 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        foreach (var client in _clients.Values)
+        foreach (var client in _clients.ToArray())
         {
-            context.Send(client.Pid, message);
+            try
+            {
+                context.Send(client.Value.Pid, message);
+            }
+            catch
+            {
+                _clients.Remove(client.Key);
+                context.Unwatch(client.Value.Pid);
+            }
         }
     }
 
