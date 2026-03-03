@@ -25,11 +25,21 @@ public class OrchestratorPanelViewModelTests
         };
 
         var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+        try
+        {
+            vm.StartAllCommand.Execute(null);
+            await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Invalid worker port.", StringComparison.Ordinal));
+            await WaitForAsync(() => string.Equals(vm.ReproLaunchStatus, "Invalid Reproduction port.", StringComparison.Ordinal));
+            await WaitForAsync(() => string.Equals(vm.IoLaunchStatus, "Invalid IO port.", StringComparison.Ordinal));
+            await WaitForAsync(() => string.Equals(vm.ObsLaunchStatus, "Invalid Obs port.", StringComparison.Ordinal));
 
-        vm.StartAllCommand.Execute(null);
-        await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Invalid worker port.", StringComparison.Ordinal));
-
-        Assert.Equal("Invalid worker port.", vm.WorkerLaunchStatus);
+            Assert.Equal("Invalid worker port.", vm.WorkerLaunchStatus);
+            Assert.Equal("Invalid Settings port for Speciation.", vm.StatusMessage);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
     }
 
     [Fact]

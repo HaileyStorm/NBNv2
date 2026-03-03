@@ -356,9 +356,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
+        {
+            StatusMessage = "Invalid Settings port for Speciation.";
+            return;
+        }
+
         var speciationPort = ResolveSpeciationPort();
         var args = $"--bind-host {Connections.SettingsHost} --port {speciationPort}"
-                 + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Speciation", args);
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _speciationRunner.StartAsync(startInfo, waitForExit: false, label: "Speciation");
