@@ -561,7 +561,13 @@ public class OrchestratorPanelViewModelTests
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
         Assert.Equal(6, vm.Endpoints.Count);
-        Assert.All(vm.Endpoints, endpoint => Assert.Equal("offline", endpoint.Status));
+        Assert.DoesNotContain(vm.Endpoints, endpoint => endpoint.ServiceName == "Worker Node");
+        var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");
+        Assert.Equal("online", settingsEndpoint.Status);
+        Assert.Equal($"{connections.SettingsHost}:{connections.SettingsPortText}/{connections.SettingsName}", settingsEndpoint.EndpointDisplay);
+        Assert.All(
+            vm.Endpoints.Where(endpoint => endpoint.ServiceName != "SettingsMonitor"),
+            endpoint => Assert.Equal("offline", endpoint.Status));
     }
 
     [Fact]
@@ -616,8 +622,14 @@ public class OrchestratorPanelViewModelTests
         Assert.Empty(vm.Actors);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
         Assert.Equal(6, vm.Endpoints.Count);
+        Assert.DoesNotContain(vm.Endpoints, endpoint => endpoint.ServiceName == "Worker Node");
+        var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");
+        Assert.Equal("offline", settingsEndpoint.Status);
+        Assert.Equal($"{connections.SettingsHost}:{connections.SettingsPortText}/{connections.SettingsName}", settingsEndpoint.EndpointDisplay);
         Assert.All(vm.Endpoints, endpoint => Assert.Equal("offline", endpoint.Status));
-        Assert.All(vm.Endpoints, endpoint => Assert.Equal("Missing", endpoint.EndpointDisplay));
+        Assert.All(
+            vm.Endpoints.Where(endpoint => endpoint.ServiceName != "SettingsMonitor"),
+            endpoint => Assert.Equal("Missing", endpoint.EndpointDisplay));
     }
 
     [Fact]
@@ -1207,6 +1219,36 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task SpawnSampleBrainCommand_AllowsDiscoveryReady_WhenConnectionFlagsAreFalse()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = false,
+            IoConnected = false,
+            HiveMindDiscoverable = true,
+            IoDiscoverable = true
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 2)
+                : null
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SpawnSampleBrainCommand_UsesIoSpawnPath_WithInvalidLocalEndpointText()
     {
         var connections = new ConnectionViewModel
@@ -1384,6 +1426,42 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DesignerSpawn_AllowsDiscoveryReady_WhenConnectionFlagsAreFalse()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = false,
+            IoConnected = false,
+            HiveMindDiscoverable = true,
+            IoDiscoverable = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
+                : null
+        };
+        var vm = new DesignerPanelViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.Status.Contains("Brain spawned", StringComparison.Ordinal), timeoutMs: 5000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

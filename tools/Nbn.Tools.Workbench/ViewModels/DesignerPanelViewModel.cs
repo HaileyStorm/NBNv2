@@ -1134,7 +1134,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             return;
         }
 
-        if (!_connections.SettingsConnected || !_connections.HiveMindConnected || !_connections.IoConnected)
+        if (!HasSpawnServiceReadiness())
         {
             Status = "Connect Settings, HiveMind, and IO first.";
             return;
@@ -4098,6 +4098,14 @@ public sealed class DesignerPanelViewModel : ViewModelBase
             sourceRegion.UpdateCounts();
             return;
         }
+    }
+
+    private bool HasSpawnServiceReadiness()
+    {
+        var settingsReady = _connections.SettingsConnected;
+        var hiveMindReady = _connections.HiveMindDiscoverable || _connections.HiveMindConnected;
+        var ioReady = _connections.IoDiscoverable || _connections.IoConnected;
+        return settingsReady && hiveMindReady && ioReady;
     }
 
     private static void EnsureInputOutputInfluencePath(Random rng, DesignerBrainViewModel brain, RandomBrainGenerationOptions options)

@@ -661,7 +661,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private async Task SpawnSampleBrainAsync()
     {
-        if (!Connections.SettingsConnected || !Connections.HiveMindConnected || !Connections.IoConnected)
+        if (!HasSpawnServiceReadiness())
         {
             SampleBrainStatus = "Connect Settings, HiveMind, and IO first.";
             return;
@@ -1564,8 +1564,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Endpoints.Add(CreateEndpointStatusItem("Observability", Connections.ObsEndpointDisplay, Connections.ObsDiscoverable));
         Endpoints.Add(CreateEndpointStatusItem("Reproduction", Connections.ReproEndpointDisplay, Connections.ReproDiscoverable));
         Endpoints.Add(CreateEndpointStatusItem("Speciation", Connections.SpeciationEndpointDisplay, Connections.SpeciationDiscoverable));
-        Endpoints.Add(CreateEndpointStatusItem("Worker Node", Connections.WorkerEndpointDisplay, Connections.WorkerDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("SettingsMonitor", BuildSettingsEndpointDisplay(), Connections.SettingsConnected));
         Endpoints.Add(CreateEndpointStatusItem("HiveMind", Connections.HiveMindEndpointDisplay, Connections.HiveMindDiscoverable));
+    }
+
+    private bool HasSpawnServiceReadiness()
+    {
+        var settingsReady = Connections.SettingsConnected;
+        var hiveMindReady = Connections.HiveMindDiscoverable || Connections.HiveMindConnected;
+        var ioReady = Connections.IoDiscoverable || Connections.IoConnected;
+        return settingsReady && hiveMindReady && ioReady;
     }
 
     private static EndpointStatusItem CreateEndpointStatusItem(string serviceName, string endpointDisplay, bool discoverable)
@@ -1575,6 +1583,30 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             serviceName,
             normalizedEndpointDisplay,
             discoverable ? "online" : "offline");
+    }
+
+    private string BuildSettingsEndpointDisplay()
+    {
+        var host = Connections.SettingsHost?.Trim() ?? string.Empty;
+        var port = Connections.SettingsPortText?.Trim() ?? string.Empty;
+        var actorName = Connections.SettingsName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(host) && string.IsNullOrWhiteSpace(port) && string.IsNullOrWhiteSpace(actorName))
+        {
+            return "Missing";
+        }
+
+        var address = host;
+        if (!string.IsNullOrWhiteSpace(port))
+        {
+            address = string.IsNullOrWhiteSpace(address) ? port : $"{address}:{port}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(actorName))
+        {
+            address = string.IsNullOrWhiteSpace(address) ? actorName : $"{address}/{actorName}";
+        }
+
+        return string.IsNullOrWhiteSpace(address) ? "Missing" : address;
     }
 
     private void RecordBrainTerminations(IReadOnlyList<BrainListItem> current)
