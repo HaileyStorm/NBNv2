@@ -5,112 +5,76 @@
              x:DataType="vm:OrchestratorPanelViewModel">
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
-      <Border Classes="card">
-        <StackPanel Spacing="10">
-          <TextBlock Text="Settings Discovery" Classes="card-title" />
-          <TextBlock Text="Use these coordinates when SettingsMonitor was launched externally. All other endpoint identities are discovered from SettingsMonitor." Classes="muted" TextWrapping="Wrap" />
-          <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
-            <TextBox Text="{Binding Connections.SettingsHost}" Width="160" />
-            <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
-            <TextBox Grid.Column="2" Text="{Binding Connections.SettingsName}" Width="140" />
-          </Grid>
-        </StackPanel>
-      </Border>
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Settings Discovery" Classes="card-title" />
+            <TextBlock Text="Use these coordinates when SettingsMonitor was launched externally. All other endpoint identities are discovered from SettingsMonitor." Classes="muted" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+              <TextBox Text="{Binding Connections.SettingsHost}" Width="160" />
+              <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
+              <TextBox Grid.Column="2" Text="{Binding Connections.SettingsName}" Width="140" />
+            </Grid>
+          </StackPanel>
+        </Border>
 
-      <Border Classes="card">
-        <StackPanel Spacing="10">
-          <TextBlock Text="Endpoints" Classes="card-title" />
-          <TextBlock Text="Core service discovery status. Missing services remain visible as offline chips." Classes="muted" TextWrapping="Wrap" />
-          <WrapPanel>
-            <StackPanel Spacing="4" Width="170" Margin="0,0,16,10">
-              <Border Classes="chip"
-                      Background="{Binding Connections.IoChipBackground}"
-                      BorderBrush="{Binding Connections.IoChipBorder}">
-                <TextBlock Text="{Binding Connections.IoStatusLabel}" />
-              </Border>
-              <TextBlock Text="{Binding Connections.IoEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Spacing="4" Width="170" Margin="0,0,16,10">
-              <Border Classes="chip"
-                      Background="{Binding Connections.ObsChipBackground}"
-                      BorderBrush="{Binding Connections.ObsChipBorder}">
-                <TextBlock Text="{Binding Connections.ObsStatusLabel}" />
-              </Border>
-              <TextBlock Text="{Binding Connections.ObsEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Spacing="4" Width="170" Margin="0,0,16,10">
-              <Border Classes="chip"
-                      Background="{Binding Connections.ReproChipBackground}"
-                      BorderBrush="{Binding Connections.ReproChipBorder}">
-                <TextBlock Text="{Binding Connections.ReproStatusLabel}" />
-              </Border>
-              <TextBlock Text="{Binding Connections.ReproEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Spacing="4" Width="170" Margin="0,0,16,10">
-              <Border Classes="chip"
-                      Background="{Binding Connections.WorkerChipBackground}"
-                      BorderBrush="{Binding Connections.WorkerChipBorder}">
-                <TextBlock Text="{Binding Connections.WorkerStatusLabel}" />
-              </Border>
-              <TextBlock Text="{Binding Connections.WorkerEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Spacing="4" Width="170" Margin="0,0,16,10">
-              <Border Classes="chip"
-                      Background="{Binding Connections.SettingsChipBackground}"
-                      BorderBrush="{Binding Connections.SettingsChipBorder}">
-                <TextBlock Text="{Binding Connections.SettingsStatusLabel}" />
-              </Border>
-              <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Spacing="4" Width="170" Margin="0,0,16,10">
-              <Border Classes="chip"
-                      Background="{Binding Connections.HiveMindChipBackground}"
-                      BorderBrush="{Binding Connections.HiveMindChipBorder}">
-                <TextBlock Text="{Binding Connections.HiveMindStatusLabel}" />
-              </Border>
-              <TextBlock Text="{Binding Connections.HiveMindEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
-            </StackPanel>
-          </WrapPanel>
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card">
-        <StackPanel Spacing="6">
-          <TextBlock Text="Worker Hosts" Classes="card-title" />
-          <TextBlock Text="SettingsMonitor registration/heartbeat view. Active workers appear first; degraded/failed entries are retained briefly for loss visibility." Classes="muted" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
-          <ScrollViewer MaxHeight="240" HorizontalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{Binding WorkerEndpoints}">
-              <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                  <UniformGrid Columns="3" />
-                </ItemsPanelTemplate>
-              </ItemsControl.ItemsPanel>
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Classes="row" Margin="6,4">
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                      <Border Classes="pill"
-                              Background="{Binding StatusChipBackground}"
-                              BorderBrush="{Binding StatusChipBorder}"
-                              BorderThickness="1">
-                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
-                      </Border>
-                      <StackPanel Grid.Column="1">
-                        <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
-                        <TextBlock Text="{Binding Address}" Classes="muted" />
-                        <TextBlock Text="{Binding RootActor}" Classes="muted" />
-                        <TextBlock Text="{Binding BrainHints, StringFormat='Brains: {0}'}" Classes="muted" TextWrapping="Wrap" />
-                      </StackPanel>
-                      <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </ScrollViewer>
-        </StackPanel>
-      </Border>
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Endpoints" Classes="card-title" />
+            <TextBlock Text="Core service discovery status. Missing services remain visible as offline chips." Classes="muted" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+              <StackPanel Spacing="4">
+                <Border Classes="chip"
+                        Background="{Binding Connections.IoChipBackground}"
+                        BorderBrush="{Binding Connections.IoChipBorder}">
+                  <TextBlock Text="{Binding Connections.IoStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.IoEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="4">
+                <Border Classes="chip"
+                        Background="{Binding Connections.ObsChipBackground}"
+                        BorderBrush="{Binding Connections.ObsChipBorder}">
+                  <TextBlock Text="{Binding Connections.ObsStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.ObsEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Row="1" Spacing="4">
+                <Border Classes="chip"
+                        Background="{Binding Connections.ReproChipBackground}"
+                        BorderBrush="{Binding Connections.ReproChipBorder}">
+                  <TextBlock Text="{Binding Connections.ReproStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.ReproEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
+                <Border Classes="chip"
+                        Background="{Binding Connections.WorkerChipBackground}"
+                        BorderBrush="{Binding Connections.WorkerChipBorder}">
+                  <TextBlock Text="{Binding Connections.WorkerStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.WorkerEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Row="2" Spacing="4">
+                <Border Classes="chip"
+                        Background="{Binding Connections.SettingsChipBackground}"
+                        BorderBrush="{Binding Connections.SettingsChipBorder}">
+                  <TextBlock Text="{Binding Connections.SettingsStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.SettingsStatus}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Row="2" Grid.Column="1" Spacing="4">
+                <Border Classes="chip"
+                        Background="{Binding Connections.HiveMindChipBackground}"
+                        BorderBrush="{Binding Connections.HiveMindChipBorder}">
+                  <TextBlock Text="{Binding Connections.HiveMindStatusLabel}" />
+                </Border>
+                <TextBlock Text="{Binding Connections.HiveMindEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
+              </StackPanel>
+            </Grid>
+          </StackPanel>
+        </Border>
+      </Grid>
 
       <Border Classes="card">
         <StackPanel Spacing="8">
@@ -179,9 +143,10 @@
         <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
           <Border Classes="card" Grid.Column="0">
             <StackPanel Spacing="8">
-              <TextBlock Text="Nodes" Classes="card-title" />
+              <TextBlock Text="Worker Hosts" Classes="card-title" />
+              <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
               <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding Nodes}">
+                <ItemsControl ItemsSource="{Binding WorkerEndpoints}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Border Classes="row">
@@ -196,6 +161,7 @@
                             <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
                             <TextBlock Text="{Binding Address}" Classes="muted" />
                             <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                            <TextBlock Text="{Binding BrainHints, StringFormat='Brains: {0}'}" Classes="muted" TextWrapping="Wrap" />
                           </StackPanel>
                           <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
                         </Grid>
