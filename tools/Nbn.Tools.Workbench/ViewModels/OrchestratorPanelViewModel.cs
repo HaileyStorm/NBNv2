@@ -448,6 +448,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 StatusMessage = "SettingsMonitor not connected.";
                 Connections.SettingsStatus = "Disconnected";
             }
+            SetDiscoveryUnavailable();
             _refreshGate.Release();
             return;
         }
@@ -492,6 +493,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     entry.Value ?? string.Empty,
                     FormatUpdated(entry.UpdatedMs)))
                 .ToList() ?? new List<SettingItem>();
+            var discoveredServiceEndpoints = BuildServiceEndpointLookup(settings);
 
             _dispatcher.Post(() =>
             {
@@ -547,7 +549,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Trim(Settings);
             });
 
-            UpdateConnectionStatusesFromNodes(nodes, nowMs, workerEndpointState);
+            UpdateConnectionStatusesFromNodes(nodes, nowMs, workerEndpointState, discoveredServiceEndpoints);
 
             var controllerMap = controllers
                 .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
@@ -589,6 +591,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         {
             StatusMessage = $"Settings load failed: {ex.Message}";
             Connections.SettingsStatus = "Error";
+            SetDiscoveryUnavailable();
             WorkbenchLog.Warn($"Settings refresh failed: {ex.Message}");
         }
         finally
@@ -879,6 +882,136 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         return value;
+    }
+
+    private void SetDiscoveryUnavailable()
+    {
+        _dispatcher.Post(() =>
+        {
+            Nodes.Clear();
+            WorkerEndpoints.Clear();
+            Actors.Clear();
+            WorkerEndpointSummary = "No active workers.";
+
+            Connections.HiveMindDiscoverable = false;
+            Connections.HiveMindStatus = "Offline";
+            Connections.HiveMindEndpointDisplay = "Missing";
+
+            Connections.IoDiscoverable = false;
+            Connections.IoStatus = "Offline";
+            Connections.IoEndpointDisplay = "Missing";
+
+            Connections.ReproDiscoverable = false;
+            Connections.ReproStatus = "Offline";
+            Connections.ReproEndpointDisplay = "Missing";
+
+            Connections.WorkerDiscoverable = false;
+            Connections.WorkerStatus = "Offline";
+            Connections.WorkerEndpointDisplay = "Missing";
+
+            Connections.ObsDiscoverable = false;
+            Connections.ObsStatus = "Offline";
+            Connections.ObsEndpointDisplay = "Missing";
+        });
+    }
+
+    private static IReadOnlyDictionary<string, ServiceEndpoint> BuildServiceEndpointLookup(IEnumerable<SettingItem> settings)
+    {
+        var lookup = new Dictionary<string, ServiceEndpoint>(StringComparer.OrdinalIgnoreCase);
+        foreach (var setting in settings)
+        {
+            if (string.IsNullOrWhiteSpace(setting.Key)
+                || !ServiceEndpointSettings.IsKnownKey(setting.Key)
+                || !ServiceEndpointSettings.TryParseValue(setting.Value, out var endpoint))
+            {
+                continue;
+            }
+
+            lookup[setting.Key] = endpoint;
+        }
+
+        return lookup;
+    }
+
+    private static string ResolveDiscoveredActorName(
+        IReadOnlyDictionary<string, ServiceEndpoint> discoveredServiceEndpoints,
+        string serviceEndpointKey,
+        string fallbackActorName)
+    {
+        if (discoveredServiceEndpoints.TryGetValue(serviceEndpointKey, out var endpoint)
+            && !string.IsNullOrWhiteSpace(endpoint.ActorName))
+        {
+            return endpoint.ActorName.Trim();
+        }
+
+        return fallbackActorName?.Trim() ?? string.Empty;
+    }
+
+    private static string ResolveEndpointDisplay(
+        IReadOnlyDictionary<string, ServiceEndpoint> discoveredServiceEndpoints,
+        string serviceEndpointKey,
+        string fallbackActorName)
+    {
+        if (discoveredServiceEndpoints.TryGetValue(serviceEndpointKey, out var endpoint))
+        {
+            return FormatEndpointDisplay(endpoint.HostPort, endpoint.ActorName);
+        }
+
+        return string.IsNullOrWhiteSpace(fallbackActorName)
+            ? "Missing"
+            : fallbackActorName.Trim();
+    }
+
+    private static string[] BuildActorCandidates(params string?[] names)
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in names)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            candidates.Add(name.Trim());
+        }
+
+        return candidates.ToArray();
+    }
+
+    private static bool IsAnyFreshNodeMatch(
+        IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
+        long nowMs,
+        params string[] actorCandidates)
+    {
+        if (actorCandidates.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var node in nodes)
+        {
+            if (!node.IsAlive || !IsFresh(node.LastSeenMs, nowMs))
+            {
+                continue;
+            }
+
+            foreach (var actor in actorCandidates)
+            {
+                if (string.Equals(node.RootActorName, actor, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string FormatEndpointDisplay(string? hostPort, string? actorName)
+    {
+        var hostPortToken = string.IsNullOrWhiteSpace(hostPort) ? "?" : hostPort.Trim();
+        var actorToken = string.IsNullOrWhiteSpace(actorName) ? "?" : actorName.Trim();
+        return $"{hostPortToken}/{actorToken}";
     }
 
     private bool ApplyServiceEndpointSettingsToConnections(IEnumerable<SettingItem> settings)
@@ -1290,55 +1423,75 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private void UpdateConnectionStatusesFromNodes(
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         long nowMs,
-        WorkerEndpointState workerEndpointState)
+        WorkerEndpointState workerEndpointState,
+        IReadOnlyDictionary<string, ServiceEndpoint> discoveredServiceEndpoints)
     {
-        var hiveAlive = false;
-        var ioAlive = false;
-        var reproAlive = false;
-        var obsAlive = false;
-        foreach (var node in nodes)
-        {
-            var fresh = node.IsAlive && IsFresh(node.LastSeenMs, nowMs);
-            if (string.Equals(node.RootActorName, Connections.HiveMindName, StringComparison.OrdinalIgnoreCase))
-            {
-                hiveAlive = hiveAlive || fresh;
-            }
+        var hiveActorName = ResolveDiscoveredActorName(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.HiveMindKey,
+            Connections.HiveMindName);
+        var ioActorName = ResolveDiscoveredActorName(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.IoGatewayKey,
+            Connections.IoGateway);
+        var reproActorName = ResolveDiscoveredActorName(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.ReproductionManagerKey,
+            Connections.ReproManager);
+        var obsActorName = ResolveDiscoveredActorName(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.ObservabilityKey,
+            Connections.DebugHub);
+        var obsCandidates = BuildActorCandidates(obsActorName, Connections.DebugHub, Connections.VizHub);
 
-            if (string.Equals(node.RootActorName, Connections.IoGateway, StringComparison.OrdinalIgnoreCase))
-            {
-                ioAlive = ioAlive || fresh;
-            }
+        var hiveAlive = IsAnyFreshNodeMatch(nodes, nowMs, hiveActorName);
+        var ioAlive = IsAnyFreshNodeMatch(nodes, nowMs, ioActorName);
+        var reproAlive = IsAnyFreshNodeMatch(nodes, nowMs, reproActorName);
+        var obsAlive = IsAnyFreshNodeMatch(nodes, nowMs, obsCandidates);
 
-            if (string.Equals(node.RootActorName, Connections.ReproManager, StringComparison.OrdinalIgnoreCase))
-            {
-                reproAlive = reproAlive || fresh;
-            }
-
-            if (string.Equals(node.RootActorName, Connections.DebugHub, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(node.RootActorName, Connections.VizHub, StringComparison.OrdinalIgnoreCase))
-            {
-                obsAlive = obsAlive || fresh;
-            }
-        }
+        var hiveEndpointDisplay = ResolveEndpointDisplay(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.HiveMindKey,
+            hiveActorName);
+        var ioEndpointDisplay = ResolveEndpointDisplay(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.IoGatewayKey,
+            ioActorName);
+        var reproEndpointDisplay = ResolveEndpointDisplay(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.ReproductionManagerKey,
+            reproActorName);
+        var obsEndpointDisplay = ResolveEndpointDisplay(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.ObservabilityKey,
+            obsActorName);
+        var workerEndpointDisplay = workerEndpointState.Rows.Count > 0
+            ? workerEndpointState.SummaryText
+            : "Missing";
 
         _dispatcher.Post(() =>
         {
-            Connections.HiveMindConnected = hiveAlive;
-            Connections.HiveMindStatus = hiveAlive ? "Connected" : "Offline";
+            Connections.HiveMindDiscoverable = hiveAlive;
+            Connections.HiveMindStatus = hiveAlive ? "Online" : "Offline";
+            Connections.HiveMindEndpointDisplay = hiveEndpointDisplay;
 
-            Connections.IoConnected = ioAlive;
-            Connections.IoStatus = ioAlive ? "Connected" : "Offline";
+            Connections.IoDiscoverable = ioAlive;
+            Connections.IoStatus = ioAlive ? "Online" : "Offline";
+            Connections.IoEndpointDisplay = ioEndpointDisplay;
 
-            Connections.ReproConnected = reproAlive;
-            Connections.ReproStatus = reproAlive ? "Connected" : "Offline";
+            Connections.ReproDiscoverable = reproAlive;
+            Connections.ReproStatus = reproAlive ? "Online" : "Offline";
+            Connections.ReproEndpointDisplay = reproEndpointDisplay;
 
-            Connections.WorkerConnected = workerEndpointState.ActiveCount > 0;
+            Connections.WorkerDiscoverable = workerEndpointState.ActiveCount > 0;
             Connections.WorkerStatus = workerEndpointState.Rows.Count > 0
                 ? workerEndpointState.SummaryText
                 : "Offline";
+            Connections.WorkerEndpointDisplay = workerEndpointDisplay;
 
-            Connections.ObsConnected = obsAlive;
-            Connections.ObsStatus = obsAlive ? "Connected" : "Offline";
+            Connections.ObsDiscoverable = obsAlive;
+            Connections.ObsStatus = obsAlive ? "Online" : "Offline";
+            Connections.ObsEndpointDisplay = obsEndpointDisplay;
         });
     }
 

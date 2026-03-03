@@ -77,7 +77,7 @@ public class OrchestratorPanelViewModelTests
 
         await vm.RefreshSettingsAsync();
 
-        Assert.True(connections.WorkerConnected);
+        Assert.True(connections.WorkerDiscoverable);
         Assert.Equal("1 active worker", connections.WorkerStatus);
         var workerNode = Assert.Single(vm.Nodes);
         Assert.Equal(connections.WorkerLogicalName, workerNode.LogicalName);
@@ -156,6 +156,60 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("10.20.30.44", connections.ObsHost);
         Assert.Equal("12064", connections.ObsPortText);
         Assert.Equal("DebugHubRemote", connections.DebugHub);
+        Assert.Equal("10.20.30.40:12022/HiveRemote", connections.HiveMindEndpointDisplay);
+        Assert.Equal("10.20.30.41:12052/io-remote", connections.IoEndpointDisplay);
+        Assert.Equal("10.20.30.42:12072/repro-remote", connections.ReproEndpointDisplay);
+        Assert.Equal("10.20.30.44:12064/DebugHubRemote", connections.ObsEndpointDisplay);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_UsesDiscoveredActorNames_ForOnlineStatus()
+    {
+        var connections = new ConnectionViewModel
+        {
+            IoGateway = "io-default"
+        };
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "io-remote-node",
+                        Address = "10.20.30.41:12052",
+                        RootActorName = "io-remote",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.IoGatewayKey,
+                        Value = "10.20.30.41:12052/io-remote",
+                        UpdatedMs = 21
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.IoDiscoverable);
+        Assert.Equal("10.20.30.41:12052/io-remote", connections.IoEndpointDisplay);
+        Assert.Equal("Online", connections.IoStatus);
     }
 
     [Fact]
@@ -375,7 +429,7 @@ public class OrchestratorPanelViewModelTests
 
         await vm.RefreshSettingsAsync();
 
-        Assert.True(connections.WorkerConnected);
+        Assert.True(connections.WorkerDiscoverable);
         Assert.Equal("2 active workers", connections.WorkerStatus);
         Assert.Equal(2, vm.WorkerEndpoints.Count);
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("active", endpoint.Status));
@@ -425,7 +479,7 @@ public class OrchestratorPanelViewModelTests
 
         await vm.RefreshSettingsAsync();
 
-        Assert.False(connections.WorkerConnected);
+        Assert.False(connections.WorkerDiscoverable);
         Assert.Equal("1 degraded worker, 1 failed worker", connections.WorkerStatus);
         Assert.Equal(2, vm.WorkerEndpoints.Count);
         Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == degradedWorker && endpoint.Status == "degraded");
@@ -450,9 +504,56 @@ public class OrchestratorPanelViewModelTests
 
         await vm.RefreshSettingsAsync();
 
-        Assert.False(connections.WorkerConnected);
+        Assert.False(connections.WorkerDiscoverable);
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Empty(vm.WorkerEndpoints);
+        Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WhenSettingsDisconnected_ClearsDiscoveryIndicators()
+    {
+        var connections = new ConnectionViewModel
+        {
+            IoDiscoverable = true,
+            ObsDiscoverable = true,
+            ReproDiscoverable = true,
+            WorkerDiscoverable = true,
+            HiveMindDiscoverable = true,
+            IoStatus = "Online",
+            ObsStatus = "Online",
+            ReproStatus = "Online",
+            WorkerStatus = "1 active worker",
+            HiveMindStatus = "Online",
+            IoEndpointDisplay = "10.0.0.1:12050/io",
+            ObsEndpointDisplay = "10.0.0.2:12060/debug",
+            ReproEndpointDisplay = "10.0.0.3:12070/repro",
+            WorkerEndpointDisplay = "1 active worker",
+            HiveMindEndpointDisplay = "10.0.0.4:12020/hive"
+        };
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+        connections.SettingsConnected = false;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.False(connections.IoDiscoverable);
+        Assert.False(connections.ObsDiscoverable);
+        Assert.False(connections.ReproDiscoverable);
+        Assert.False(connections.WorkerDiscoverable);
+        Assert.False(connections.HiveMindDiscoverable);
+        Assert.Equal("Offline", connections.IoStatus);
+        Assert.Equal("Offline", connections.ObsStatus);
+        Assert.Equal("Offline", connections.ReproStatus);
+        Assert.Equal("Offline", connections.WorkerStatus);
+        Assert.Equal("Offline", connections.HiveMindStatus);
+        Assert.Equal("Missing", connections.IoEndpointDisplay);
+        Assert.Equal("Missing", connections.ObsEndpointDisplay);
+        Assert.Equal("Missing", connections.ReproEndpointDisplay);
+        Assert.Equal("Missing", connections.WorkerEndpointDisplay);
+        Assert.Equal("Missing", connections.HiveMindEndpointDisplay);
+        Assert.Empty(vm.Nodes);
+        Assert.Empty(vm.WorkerEndpoints);
+        Assert.Empty(vm.Actors);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
     }
 
@@ -487,8 +588,8 @@ public class OrchestratorPanelViewModelTests
 
         await vm.RefreshSettingsAsync();
 
-        Assert.True(connections.ObsConnected);
-        Assert.Equal("Connected", connections.ObsStatus);
+        Assert.True(connections.ObsDiscoverable);
+        Assert.Equal("Online", connections.ObsStatus);
     }
 
     [Fact]
@@ -522,7 +623,7 @@ public class OrchestratorPanelViewModelTests
 
         await vm.RefreshSettingsAsync();
 
-        Assert.False(connections.ObsConnected);
+        Assert.False(connections.ObsDiscoverable);
         Assert.Equal("Offline", connections.ObsStatus);
     }
 

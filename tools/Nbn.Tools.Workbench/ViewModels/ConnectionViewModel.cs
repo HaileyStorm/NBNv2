@@ -42,6 +42,16 @@ public sealed class ConnectionViewModel : ViewModelBase
     private bool _obsConnected;
     private bool _settingsConnected;
     private bool _hiveMindConnected;
+    private bool _ioDiscoverable;
+    private bool _reproDiscoverable;
+    private bool _workerDiscoverable;
+    private bool _obsDiscoverable;
+    private bool _hiveMindDiscoverable;
+    private string _ioEndpointDisplay = "Missing";
+    private string _reproEndpointDisplay = "Missing";
+    private string _workerEndpointDisplay = "Missing";
+    private string _obsEndpointDisplay = "Missing";
+    private string _hiveMindEndpointDisplay = "Missing";
 
     public string LocalBindHost
     {
@@ -324,41 +334,141 @@ public sealed class ConnectionViewModel : ViewModelBase
         }
     }
 
-    public IBrush IoChipBackground => IoConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+    public bool HiveMindDiscoverable
+    {
+        get => _hiveMindDiscoverable;
+        set
+        {
+            if (SetProperty(ref _hiveMindDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(HiveMindChipBackground));
+                OnPropertyChanged(nameof(HiveMindChipBorder));
+                OnPropertyChanged(nameof(HiveMindStatusLabel));
+            }
+        }
+    }
 
-    public IBrush IoChipBorder => IoConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+    public bool IoDiscoverable
+    {
+        get => _ioDiscoverable;
+        set
+        {
+            if (SetProperty(ref _ioDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(IoChipBackground));
+                OnPropertyChanged(nameof(IoChipBorder));
+                OnPropertyChanged(nameof(IoStatusLabel));
+            }
+        }
+    }
 
-    public IBrush ObsChipBackground => ObsConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+    public bool ReproDiscoverable
+    {
+        get => _reproDiscoverable;
+        set
+        {
+            if (SetProperty(ref _reproDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(ReproChipBackground));
+                OnPropertyChanged(nameof(ReproChipBorder));
+                OnPropertyChanged(nameof(ReproStatusLabel));
+            }
+        }
+    }
 
-    public IBrush ObsChipBorder => ObsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+    public bool WorkerDiscoverable
+    {
+        get => _workerDiscoverable;
+        set
+        {
+            if (SetProperty(ref _workerDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(WorkerChipBackground));
+                OnPropertyChanged(nameof(WorkerChipBorder));
+                OnPropertyChanged(nameof(WorkerStatusLabel));
+            }
+        }
+    }
 
-    public IBrush ReproChipBackground => ReproConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+    public bool ObsDiscoverable
+    {
+        get => _obsDiscoverable;
+        set
+        {
+            if (SetProperty(ref _obsDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(ObsChipBackground));
+                OnPropertyChanged(nameof(ObsChipBorder));
+                OnPropertyChanged(nameof(ObsStatusLabel));
+            }
+        }
+    }
 
-    public IBrush ReproChipBorder => ReproConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+    public string IoEndpointDisplay
+    {
+        get => _ioEndpointDisplay;
+        set => SetProperty(ref _ioEndpointDisplay, value);
+    }
 
-    public IBrush WorkerChipBackground => WorkerConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+    public string ReproEndpointDisplay
+    {
+        get => _reproEndpointDisplay;
+        set => SetProperty(ref _reproEndpointDisplay, value);
+    }
 
-    public IBrush WorkerChipBorder => WorkerConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+    public string WorkerEndpointDisplay
+    {
+        get => _workerEndpointDisplay;
+        set => SetProperty(ref _workerEndpointDisplay, value);
+    }
+
+    public string ObsEndpointDisplay
+    {
+        get => _obsEndpointDisplay;
+        set => SetProperty(ref _obsEndpointDisplay, value);
+    }
+
+    public string HiveMindEndpointDisplay
+    {
+        get => _hiveMindEndpointDisplay;
+        set => SetProperty(ref _hiveMindEndpointDisplay, value);
+    }
+
+    public IBrush IoChipBackground => IoDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush IoChipBorder => IoDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
+    public IBrush ObsChipBackground => ObsDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush ObsChipBorder => ObsDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
+    public IBrush ReproChipBackground => ReproDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush ReproChipBorder => ReproDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
+    public IBrush WorkerChipBackground => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush WorkerChipBorder => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
     public IBrush SettingsChipBackground => SettingsConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
     public IBrush SettingsChipBorder => SettingsConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
-    public IBrush HiveMindChipBackground => HiveMindConnected ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+    public IBrush HiveMindChipBackground => HiveMindDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
-    public IBrush HiveMindChipBorder => HiveMindConnected ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+    public IBrush HiveMindChipBorder => HiveMindDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
-    public string IoStatusLabel => IoConnected ? "IO connected" : "IO disconnected";
+    public string IoStatusLabel => IoDiscoverable ? "IO online" : "IO offline";
 
-    public string ObsStatusLabel => ObsConnected ? "Obs connected" : "Obs disconnected";
+    public string ObsStatusLabel => ObsDiscoverable ? "Obs online" : "Obs offline";
 
-    public string ReproStatusLabel => ReproConnected ? "Repro connected" : "Repro disconnected";
+    public string ReproStatusLabel => ReproDiscoverable ? "Repro online" : "Repro offline";
 
-    public string WorkerStatusLabel => WorkerConnected ? "Worker connected" : "Worker disconnected";
+    public string WorkerStatusLabel => WorkerDiscoverable ? "Worker online" : "Worker offline";
 
     public string SettingsStatusLabel => SettingsConnected ? "Settings connected" : "Settings disconnected";
 
-    public string HiveMindStatusLabel => HiveMindConnected ? "HiveMind connected" : "HiveMind disconnected";
+    public string HiveMindStatusLabel => HiveMindDiscoverable ? "HiveMind online" : "HiveMind offline";
 
     private static string BuildDefaultSettingsDbPath()
     {
