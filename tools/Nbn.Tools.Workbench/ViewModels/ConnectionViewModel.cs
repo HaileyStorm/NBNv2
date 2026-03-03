@@ -13,6 +13,9 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _reproHost = "127.0.0.1";
     private string _reproPortText = "12070";
     private string _reproManager = "ReproductionManager";
+    private string _speciationHost = "127.0.0.1";
+    private string _speciationPortText = "12080";
+    private string _speciationManager = "SpeciationManager";
     private string _workerHost = "127.0.0.1";
     private string _workerPortText = "12041";
     private string _workerRootName = "worker-node";
@@ -32,6 +35,7 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _hiveMindStatus = "Disconnected";
     private string _ioStatus = "Disconnected";
     private string _reproStatus = "Disconnected";
+    private string _speciationStatus = "Disconnected";
     private string _workerStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
@@ -44,11 +48,13 @@ public sealed class ConnectionViewModel : ViewModelBase
     private bool _hiveMindConnected;
     private bool _ioDiscoverable;
     private bool _reproDiscoverable;
+    private bool _speciationDiscoverable;
     private bool _workerDiscoverable;
     private bool _obsDiscoverable;
     private bool _hiveMindDiscoverable;
     private string _ioEndpointDisplay = "Missing";
     private string _reproEndpointDisplay = "Missing";
+    private string _speciationEndpointDisplay = "Missing";
     private string _workerEndpointDisplay = "Missing";
     private string _obsEndpointDisplay = "Missing";
     private string _hiveMindEndpointDisplay = "Missing";
@@ -99,6 +105,24 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _reproManager;
         set => SetProperty(ref _reproManager, value);
+    }
+
+    public string SpeciationHost
+    {
+        get => _speciationHost;
+        set => SetProperty(ref _speciationHost, value);
+    }
+
+    public string SpeciationPortText
+    {
+        get => _speciationPortText;
+        set => SetProperty(ref _speciationPortText, value);
+    }
+
+    public string SpeciationManager
+    {
+        get => _speciationManager;
+        set => SetProperty(ref _speciationManager, value);
     }
 
     public string WorkerHost
@@ -236,6 +260,12 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _reproStatus;
         set => SetProperty(ref _reproStatus, value);
+    }
+
+    public string SpeciationStatus
+    {
+        get => _speciationStatus;
+        set => SetProperty(ref _speciationStatus, value);
     }
 
     public string WorkerStatus
@@ -377,6 +407,20 @@ public sealed class ConnectionViewModel : ViewModelBase
         }
     }
 
+    public bool SpeciationDiscoverable
+    {
+        get => _speciationDiscoverable;
+        set
+        {
+            if (SetProperty(ref _speciationDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(SpeciationChipBackground));
+                OnPropertyChanged(nameof(SpeciationChipBorder));
+                OnPropertyChanged(nameof(SpeciationStatusLabel));
+            }
+        }
+    }
+
     public bool WorkerDiscoverable
     {
         get => _workerDiscoverable;
@@ -417,6 +461,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _reproEndpointDisplay, value);
     }
 
+    public string SpeciationEndpointDisplay
+    {
+        get => _speciationEndpointDisplay;
+        set => SetProperty(ref _speciationEndpointDisplay, value);
+    }
+
     public string WorkerEndpointDisplay
     {
         get => _workerEndpointDisplay;
@@ -447,6 +497,10 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public IBrush ReproChipBorder => ReproDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
+    public IBrush SpeciationChipBackground => SpeciationDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush SpeciationChipBorder => SpeciationDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
     public IBrush WorkerChipBackground => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
     public IBrush WorkerChipBorder => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
@@ -466,6 +520,8 @@ public sealed class ConnectionViewModel : ViewModelBase
     public string ObsStatusLabel => ObsDiscoverable ? "Obs online" : "Obs offline";
 
     public string ReproStatusLabel => ReproDiscoverable ? "Repro online" : "Repro offline";
+
+    public string SpeciationStatusLabel => SpeciationDiscoverable ? "Speciation online" : "Speciation offline";
 
     public string WorkerStatusLabel => WorkerDiscoverable ? "Worker online" : "Worker offline";
 

@@ -1,0 +1,1297 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using Nbn.Proto.Speciation;
+using Nbn.Shared;
+using Nbn.Tools.Workbench.Models;
+using Nbn.Tools.Workbench.Services;
+
+namespace Nbn.Tools.Workbench.ViewModels;
+
+public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
+{
+    private readonly UiDispatcher _dispatcher;
+    private readonly ConnectionViewModel _connections;
+    private readonly WorkbenchClient _client;
+    private readonly Func<Task>? _startSpeciationService;
+    private readonly Func<Task>? _stopSpeciationService;
+    private readonly Func<Task>? _refreshOrchestrator;
+    private readonly LocalServiceRunner _evolutionRunner = new();
+    private CancellationTokenSource? _simPollCts;
+    private string? _simStdoutLogPath;
+
+    private string _status = "Idle";
+    private string _serviceSummary = "Service status not loaded.";
+    private string _configStatus = "Config not loaded.";
+    private string _historyStatus = "History not loaded.";
+    private string _simStatus = "Simulator idle.";
+    private string _simSessionId = "(none)";
+    private string _simProgress = "No session.";
+    private string _simLastFailure = "(none)";
+    private long _currentEpochId;
+    private uint _currentMembershipCount;
+    private uint _currentSpeciesCount;
+    private uint _currentLineageEdgeCount;
+    private bool _configEnabled = true;
+    private string _policyVersion = "default";
+    private string _defaultSpeciesId = "species.default";
+    private string _defaultSpeciesDisplayName = "Default species";
+    private string _startupReconcileReason = "startup_reconcile";
+    private string _lineageMatchThreshold = "0.70";
+    private string _lineageSplitThreshold = "0.60";
+    private string _parentConsensusThreshold = "0.50";
+    private string _hysteresisMargin = "0.10";
+    private bool _createDerivedSpecies = true;
+    private string _derivedSpeciesPrefix = "branch";
+    private bool _startNewEpochConfirmPending;
+    private string _epochFilterText = string.Empty;
+    private string _historyLimitText = "256";
+    private string _historyBrainIdText = string.Empty;
+    private bool _simUseBrainParents;
+    private string _simParentsFilePath = string.Empty;
+    private string _simBrainParentsFilePath = string.Empty;
+    private string _simStoreUri = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT") ?? string.Empty;
+    private string _simBindHost = "127.0.0.1";
+    private string _simPortText = "12074";
+    private string _simSeedText = "12345";
+    private string _simIntervalMsText = "1000";
+    private string _simStatusSecondsText = "2";
+    private string _simTimeoutSecondsText = "10";
+    private string _simMaxIterationsText = "0";
+    private string _simMaxParentPoolText = "512";
+    private string _simMinRunsText = "1";
+    private string _simMaxRunsText = "6";
+    private string _simGammaText = "1";
+    private bool _simCommitToSpeciation = true;
+    private bool _simSpawnChildren;
+
+    public SpeciationPanelViewModel(
+        UiDispatcher dispatcher,
+        ConnectionViewModel connections,
+        WorkbenchClient client,
+        Func<Task>? startSpeciationService = null,
+        Func<Task>? stopSpeciationService = null,
+        Func<Task>? refreshOrchestrator = null)
+    {
+        _dispatcher = dispatcher;
+        _connections = connections;
+        _client = client;
+        _startSpeciationService = startSpeciationService;
+        _stopSpeciationService = stopSpeciationService;
+        _refreshOrchestrator = refreshOrchestrator;
+        _simBindHost = _connections.LocalBindHost;
+
+        SpeciesCounts = new ObservableCollection<SpeciationSpeciesCountItem>();
+        HistoryRows = new ObservableCollection<SpeciationHistoryItem>();
+        EpochSummaries = new ObservableCollection<SpeciationEpochSummaryItem>();
+
+        RefreshAllCommand = new AsyncRelayCommand(RefreshAllAsync);
+        RefreshStatusCommand = new AsyncRelayCommand(RefreshStatusAsync);
+        LoadConfigCommand = new AsyncRelayCommand(LoadConfigAsync);
+        ApplyConfigCommand = new AsyncRelayCommand(ApplyConfigAsync);
+        StartNewEpochCommand = new AsyncRelayCommand(StartNewEpochAsync);
+        RefreshMembershipsCommand = new AsyncRelayCommand(RefreshMembershipsAsync);
+        RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync);
+        StartServiceCommand = new AsyncRelayCommand(StartServiceAsync);
+        StopServiceCommand = new AsyncRelayCommand(StopServiceAsync);
+        StartSimulatorCommand = new AsyncRelayCommand(StartSimulatorAsync);
+        StopSimulatorCommand = new AsyncRelayCommand(StopSimulatorAsync);
+        RefreshSimulatorStatusCommand = new AsyncRelayCommand(RefreshSimulatorStatusAsync);
+    }
+
+    public ConnectionViewModel Connections => _connections;
+
+    public ObservableCollection<SpeciationSpeciesCountItem> SpeciesCounts { get; }
+    public ObservableCollection<SpeciationHistoryItem> HistoryRows { get; }
+    public ObservableCollection<SpeciationEpochSummaryItem> EpochSummaries { get; }
+
+    public AsyncRelayCommand RefreshAllCommand { get; }
+    public AsyncRelayCommand RefreshStatusCommand { get; }
+    public AsyncRelayCommand LoadConfigCommand { get; }
+    public AsyncRelayCommand ApplyConfigCommand { get; }
+    public AsyncRelayCommand StartNewEpochCommand { get; }
+    public AsyncRelayCommand RefreshMembershipsCommand { get; }
+    public AsyncRelayCommand RefreshHistoryCommand { get; }
+    public AsyncRelayCommand StartServiceCommand { get; }
+    public AsyncRelayCommand StopServiceCommand { get; }
+    public AsyncRelayCommand StartSimulatorCommand { get; }
+    public AsyncRelayCommand StopSimulatorCommand { get; }
+    public AsyncRelayCommand RefreshSimulatorStatusCommand { get; }
+
+    public string Status
+    {
+        get => _status;
+        set => SetProperty(ref _status, value);
+    }
+
+    public string ServiceSummary
+    {
+        get => _serviceSummary;
+        set => SetProperty(ref _serviceSummary, value);
+    }
+
+    public string ConfigStatus
+    {
+        get => _configStatus;
+        set => SetProperty(ref _configStatus, value);
+    }
+
+    public string HistoryStatus
+    {
+        get => _historyStatus;
+        set => SetProperty(ref _historyStatus, value);
+    }
+
+    public string SimulatorStatus
+    {
+        get => _simStatus;
+        set => SetProperty(ref _simStatus, value);
+    }
+
+    public string SimulatorSessionId
+    {
+        get => _simSessionId;
+        set => SetProperty(ref _simSessionId, value);
+    }
+
+    public string SimulatorProgress
+    {
+        get => _simProgress;
+        set => SetProperty(ref _simProgress, value);
+    }
+
+    public string SimulatorLastFailure
+    {
+        get => _simLastFailure;
+        set => SetProperty(ref _simLastFailure, value);
+    }
+
+    public long CurrentEpochId
+    {
+        get => _currentEpochId;
+        set
+        {
+            if (SetProperty(ref _currentEpochId, value))
+            {
+                OnPropertyChanged(nameof(CurrentEpochLabel));
+            }
+        }
+    }
+
+    public string CurrentEpochLabel => CurrentEpochId > 0 ? CurrentEpochId.ToString(CultureInfo.InvariantCulture) : "(unknown)";
+
+    public uint CurrentMembershipCount
+    {
+        get => _currentMembershipCount;
+        set => SetProperty(ref _currentMembershipCount, value);
+    }
+
+    public uint CurrentSpeciesCount
+    {
+        get => _currentSpeciesCount;
+        set => SetProperty(ref _currentSpeciesCount, value);
+    }
+
+    public uint CurrentLineageEdgeCount
+    {
+        get => _currentLineageEdgeCount;
+        set => SetProperty(ref _currentLineageEdgeCount, value);
+    }
+
+    public bool ConfigEnabled
+    {
+        get => _configEnabled;
+        set => SetProperty(ref _configEnabled, value);
+    }
+
+    public string PolicyVersion
+    {
+        get => _policyVersion;
+        set => SetProperty(ref _policyVersion, value);
+    }
+
+    public string DefaultSpeciesId
+    {
+        get => _defaultSpeciesId;
+        set => SetProperty(ref _defaultSpeciesId, value);
+    }
+
+    public string DefaultSpeciesDisplayName
+    {
+        get => _defaultSpeciesDisplayName;
+        set => SetProperty(ref _defaultSpeciesDisplayName, value);
+    }
+
+    public string StartupReconcileReason
+    {
+        get => _startupReconcileReason;
+        set => SetProperty(ref _startupReconcileReason, value);
+    }
+
+    public string LineageMatchThreshold
+    {
+        get => _lineageMatchThreshold;
+        set => SetProperty(ref _lineageMatchThreshold, value);
+    }
+
+    public string LineageSplitThreshold
+    {
+        get => _lineageSplitThreshold;
+        set => SetProperty(ref _lineageSplitThreshold, value);
+    }
+
+    public string ParentConsensusThreshold
+    {
+        get => _parentConsensusThreshold;
+        set => SetProperty(ref _parentConsensusThreshold, value);
+    }
+
+    public string HysteresisMargin
+    {
+        get => _hysteresisMargin;
+        set => SetProperty(ref _hysteresisMargin, value);
+    }
+
+    public bool CreateDerivedSpecies
+    {
+        get => _createDerivedSpecies;
+        set => SetProperty(ref _createDerivedSpecies, value);
+    }
+
+    public string DerivedSpeciesPrefix
+    {
+        get => _derivedSpeciesPrefix;
+        set => SetProperty(ref _derivedSpeciesPrefix, value);
+    }
+
+    public string EpochFilterText
+    {
+        get => _epochFilterText;
+        set => SetProperty(ref _epochFilterText, value);
+    }
+
+    public string HistoryLimitText
+    {
+        get => _historyLimitText;
+        set => SetProperty(ref _historyLimitText, value);
+    }
+
+    public string HistoryBrainIdText
+    {
+        get => _historyBrainIdText;
+        set => SetProperty(ref _historyBrainIdText, value);
+    }
+
+    public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
+
+    public bool SimUseBrainParents
+    {
+        get => _simUseBrainParents;
+        set => SetProperty(ref _simUseBrainParents, value);
+    }
+
+    public string SimParentsFilePath
+    {
+        get => _simParentsFilePath;
+        set => SetProperty(ref _simParentsFilePath, value);
+    }
+
+    public string SimBrainParentsFilePath
+    {
+        get => _simBrainParentsFilePath;
+        set => SetProperty(ref _simBrainParentsFilePath, value);
+    }
+
+    public string SimStoreUri
+    {
+        get => _simStoreUri;
+        set => SetProperty(ref _simStoreUri, value);
+    }
+
+    public string SimBindHost
+    {
+        get => _simBindHost;
+        set => SetProperty(ref _simBindHost, value);
+    }
+
+    public string SimPortText
+    {
+        get => _simPortText;
+        set => SetProperty(ref _simPortText, value);
+    }
+
+    public string SimSeedText
+    {
+        get => _simSeedText;
+        set => SetProperty(ref _simSeedText, value);
+    }
+
+    public string SimIntervalMsText
+    {
+        get => _simIntervalMsText;
+        set => SetProperty(ref _simIntervalMsText, value);
+    }
+
+    public string SimStatusSecondsText
+    {
+        get => _simStatusSecondsText;
+        set => SetProperty(ref _simStatusSecondsText, value);
+    }
+
+    public string SimTimeoutSecondsText
+    {
+        get => _simTimeoutSecondsText;
+        set => SetProperty(ref _simTimeoutSecondsText, value);
+    }
+
+    public string SimMaxIterationsText
+    {
+        get => _simMaxIterationsText;
+        set => SetProperty(ref _simMaxIterationsText, value);
+    }
+
+    public string SimMaxParentPoolText
+    {
+        get => _simMaxParentPoolText;
+        set => SetProperty(ref _simMaxParentPoolText, value);
+    }
+
+    public string SimMinRunsText
+    {
+        get => _simMinRunsText;
+        set => SetProperty(ref _simMinRunsText, value);
+    }
+
+    public string SimMaxRunsText
+    {
+        get => _simMaxRunsText;
+        set => SetProperty(ref _simMaxRunsText, value);
+    }
+
+    public string SimGammaText
+    {
+        get => _simGammaText;
+        set => SetProperty(ref _simGammaText, value);
+    }
+
+    public bool SimCommitToSpeciation
+    {
+        get => _simCommitToSpeciation;
+        set => SetProperty(ref _simCommitToSpeciation, value);
+    }
+
+    public bool SimSpawnChildren
+    {
+        get => _simSpawnChildren;
+        set => SetProperty(ref _simSpawnChildren, value);
+    }
+
+    public bool SimRunnerActive => _evolutionRunner.IsRunning;
+
+    public async ValueTask DisposeAsync()
+    {
+        _simPollCts?.Cancel();
+        await StopSimulatorAsync().ConfigureAwait(false);
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        await RefreshStatusAsync().ConfigureAwait(false);
+        await LoadConfigAsync().ConfigureAwait(false);
+        await RefreshMembershipsAsync().ConfigureAwait(false);
+        await RefreshHistoryAsync().ConfigureAwait(false);
+        await RefreshSimulatorStatusAsync().ConfigureAwait(false);
+    }
+
+    private async Task RefreshStatusAsync()
+    {
+        var response = await _client.GetSpeciationStatusAsync().ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            ServiceSummary = $"Status failed: {reason}";
+            Status = ServiceSummary;
+            return;
+        }
+
+        ApplyConfig(response.Config);
+        _dispatcher.Post(() =>
+        {
+            CurrentEpochId = (long)response.CurrentEpoch.EpochId;
+            CurrentMembershipCount = response.Status.MembershipCount;
+            CurrentSpeciesCount = response.Status.SpeciesCount;
+            CurrentLineageEdgeCount = response.Status.LineageEdgeCount;
+            ServiceSummary = $"Epoch {CurrentEpochLabel} | memberships={CurrentMembershipCount} species={CurrentSpeciesCount} lineage={CurrentLineageEdgeCount}";
+            Status = "Speciation status refreshed.";
+        });
+    }
+
+    private async Task LoadConfigAsync()
+    {
+        var response = await _client.GetSpeciationConfigAsync().ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            ConfigStatus = $"Load failed: {reason}";
+            Status = ConfigStatus;
+            return;
+        }
+
+        ApplyConfig(response.Config);
+        _dispatcher.Post(() =>
+        {
+            CurrentEpochId = (long)response.CurrentEpoch.EpochId;
+            ConfigStatus = "Config loaded.";
+            Status = "Speciation config refreshed.";
+        });
+    }
+
+    private async Task ApplyConfigAsync()
+    {
+        _startNewEpochConfirmPending = false;
+        OnPropertyChanged(nameof(StartNewEpochLabel));
+
+        var config = BuildRuntimeConfigFromDraft();
+        var response = await _client.SetSpeciationConfigAsync(config, startNewEpoch: false).ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            ConfigStatus = $"Apply failed: {reason}";
+            Status = ConfigStatus;
+            return;
+        }
+
+        ApplyConfig(response.Config);
+        _dispatcher.Post(() =>
+        {
+            CurrentEpochId = (long)response.CurrentEpoch.EpochId;
+            ConfigStatus = "Config applied.";
+            Status = "Speciation config updated.";
+        });
+
+        if (_refreshOrchestrator is not null)
+        {
+            await _refreshOrchestrator().ConfigureAwait(false);
+        }
+    }
+
+    private async Task StartNewEpochAsync()
+    {
+        if (!_startNewEpochConfirmPending)
+        {
+            _startNewEpochConfirmPending = true;
+            OnPropertyChanged(nameof(StartNewEpochLabel));
+            ConfigStatus = "Click Start New Epoch again to confirm.";
+            Status = ConfigStatus;
+            return;
+        }
+
+        _startNewEpochConfirmPending = false;
+        OnPropertyChanged(nameof(StartNewEpochLabel));
+
+        var config = BuildRuntimeConfigFromDraft();
+        var response = await _client.SetSpeciationConfigAsync(config, startNewEpoch: true).ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            ConfigStatus = $"New epoch failed: {reason}";
+            Status = ConfigStatus;
+            return;
+        }
+
+        ApplyConfig(response.Config);
+        _dispatcher.Post(() =>
+        {
+            CurrentEpochId = (long)response.CurrentEpoch.EpochId;
+            ConfigStatus = $"New epoch started ({CurrentEpochLabel}).";
+            Status = "Speciation epoch advanced.";
+        });
+
+        await RefreshMembershipsAsync().ConfigureAwait(false);
+        await RefreshHistoryAsync().ConfigureAwait(false);
+    }
+
+    private async Task RefreshMembershipsAsync()
+    {
+        var requestedEpochId = ResolveEpochFilter();
+        var response = await _client.ListSpeciationMembershipsAsync(requestedEpochId).ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            HistoryStatus = $"Membership load failed: {reason}";
+            Status = HistoryStatus;
+            return;
+        }
+
+        var rows = response.Memberships
+            .GroupBy(m => new
+            {
+                SpeciesId = string.IsNullOrWhiteSpace(m.SpeciesId) ? "(unknown)" : m.SpeciesId.Trim(),
+                SpeciesName = string.IsNullOrWhiteSpace(m.SpeciesDisplayName) ? "(unnamed)" : m.SpeciesDisplayName.Trim()
+            })
+            .Select(group => new
+            {
+                group.Key.SpeciesId,
+                group.Key.SpeciesName,
+                Count = group.Count()
+            })
+            .OrderByDescending(entry => entry.Count)
+            .ThenBy(entry => entry.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var total = rows.Sum(entry => entry.Count);
+        var maxCount = rows.Count == 0 ? 0 : rows.Max(entry => entry.Count);
+
+        _dispatcher.Post(() =>
+        {
+            SpeciesCounts.Clear();
+            foreach (var row in rows)
+            {
+                var ratio = total > 0 ? row.Count / (double)total : 0d;
+                var bar = BuildBar(row.Count, maxCount);
+                SpeciesCounts.Add(new SpeciationSpeciesCountItem(
+                    row.SpeciesId,
+                    row.SpeciesName,
+                    row.Count,
+                    ratio.ToString("P1", CultureInfo.InvariantCulture),
+                    bar));
+            }
+
+            HistoryStatus = $"Loaded {total} memberships across {rows.Count} species.";
+            Status = HistoryStatus;
+        });
+    }
+
+    private async Task RefreshHistoryAsync()
+    {
+        var historyLimit = ParseUInt(HistoryLimitText, 256u);
+        var epochFilter = ResolveEpochFilter();
+        var brainFilter = Guid.TryParse(HistoryBrainIdText, out var parsedBrainId) && parsedBrainId != Guid.Empty
+            ? parsedBrainId
+            : (Guid?)null;
+        var response = await _client.ListSpeciationHistoryAsync(
+                epochId: epochFilter,
+                brainId: brainFilter,
+                limit: historyLimit)
+            .ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            HistoryStatus = $"History load failed: {reason}";
+            Status = HistoryStatus;
+            return;
+        }
+
+        var historyRows = response.History
+            .OrderByDescending(entry => entry.AssignedMs)
+            .Select(entry => new SpeciationHistoryItem(
+                (long)entry.EpochId,
+                entry.BrainId?.TryToGuid(out var brainId) == true ? brainId.ToString("D") : "(none)",
+                string.IsNullOrWhiteSpace(entry.SpeciesId) ? "(unknown)" : entry.SpeciesId.Trim(),
+                string.IsNullOrWhiteSpace(entry.SpeciesDisplayName) ? "(unnamed)" : entry.SpeciesDisplayName.Trim(),
+                string.IsNullOrWhiteSpace(entry.DecisionReason) ? "(none)" : entry.DecisionReason.Trim(),
+                FormatTimestamp(entry.AssignedMs)))
+            .ToList();
+
+        var epochRows = response.History
+            .GroupBy(entry => (long)entry.EpochId)
+            .Select(group =>
+            {
+                var firstAssigned = group.Min(entry => entry.AssignedMs);
+                var lastAssigned = group.Max(entry => entry.AssignedMs);
+                var speciesCount = group
+                    .Select(entry => string.IsNullOrWhiteSpace(entry.SpeciesId) ? "(unknown)" : entry.SpeciesId.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+                return new SpeciationEpochSummaryItem(
+                    EpochId: group.Key,
+                    MembershipCount: group.Count(),
+                    SpeciesCount: speciesCount,
+                    FirstAssigned: FormatTimestamp(firstAssigned),
+                    LastAssigned: FormatTimestamp(lastAssigned));
+            })
+            .OrderByDescending(entry => entry.EpochId)
+            .ToList();
+
+        _dispatcher.Post(() =>
+        {
+            HistoryRows.Clear();
+            foreach (var row in historyRows)
+            {
+                HistoryRows.Add(row);
+            }
+
+            EpochSummaries.Clear();
+            foreach (var row in epochRows)
+            {
+                EpochSummaries.Add(row);
+            }
+
+            HistoryStatus = $"History loaded: {historyRows.Count} rows (total={response.TotalRecords}).";
+            Status = HistoryStatus;
+        });
+    }
+
+    private async Task StartServiceAsync()
+    {
+        if (_startSpeciationService is null)
+        {
+            ServiceSummary = "Speciation launcher is unavailable.";
+            Status = ServiceSummary;
+            return;
+        }
+
+        await _startSpeciationService().ConfigureAwait(false);
+        if (_refreshOrchestrator is not null)
+        {
+            await _refreshOrchestrator().ConfigureAwait(false);
+        }
+
+        ServiceSummary = $"Speciation service launch requested ({Connections.SpeciationStatusLabel}).";
+        Status = ServiceSummary;
+    }
+
+    private async Task StopServiceAsync()
+    {
+        if (_stopSpeciationService is null)
+        {
+            ServiceSummary = "Speciation stopper is unavailable.";
+            Status = ServiceSummary;
+            return;
+        }
+
+        await _stopSpeciationService().ConfigureAwait(false);
+        if (_refreshOrchestrator is not null)
+        {
+            await _refreshOrchestrator().ConfigureAwait(false);
+        }
+
+        ServiceSummary = "Speciation service stop requested.";
+        Status = ServiceSummary;
+    }
+
+    private async Task StartSimulatorAsync()
+    {
+        if (!TryParsePort(Connections.IoPortText, out var ioPort))
+        {
+            SimulatorStatus = "Invalid IO port for simulator.";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        if (!TryParsePort(SimPortText, out var simPort))
+        {
+            SimulatorStatus = "Invalid simulator port.";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        var projectPath = RepoLocator.ResolvePathFromRepo("tools", "Nbn.Tools.EvolutionSim");
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            SimulatorStatus = "EvolutionSim project not found.";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        if (!ValidateParentSource(out var parentError))
+        {
+            SimulatorStatus = parentError;
+            Status = SimulatorStatus;
+            return;
+        }
+
+        var args = BuildEvolutionSimArgs(ioPort, simPort);
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = $"run --project \"{projectPath}\" -c Release --no-build -- {args}",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        var startResult = await _evolutionRunner.StartAsync(startInfo, waitForExit: false, label: "EvolutionSim").ConfigureAwait(false);
+        SimulatorStatus = startResult.Message;
+        Status = $"Evolution simulator: {startResult.Message}";
+        OnPropertyChanged(nameof(SimRunnerActive));
+
+        _simStdoutLogPath = ExtractLogPath(startResult.Message);
+        _simPollCts?.Cancel();
+        if (startResult.Success)
+        {
+            _simPollCts = new CancellationTokenSource();
+            _ = PollSimulatorStatusAsync(_simPollCts.Token);
+        }
+    }
+
+    private async Task StopSimulatorAsync()
+    {
+        _simPollCts?.Cancel();
+        _simPollCts = null;
+
+        var stopMessage = await _evolutionRunner.StopAsync().ConfigureAwait(false);
+        SimulatorStatus = stopMessage;
+        Status = $"Evolution simulator: {stopMessage}";
+        OnPropertyChanged(nameof(SimRunnerActive));
+    }
+
+    private Task RefreshSimulatorStatusAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_simStdoutLogPath))
+        {
+            if (_evolutionRunner.IsRunning)
+            {
+                SimulatorProgress = "Running (enable Workbench logging for live session details).";
+            }
+            else
+            {
+                SimulatorProgress = "No active simulator session.";
+            }
+
+            return Task.CompletedTask;
+        }
+
+        if (!File.Exists(_simStdoutLogPath))
+        {
+            SimulatorProgress = _evolutionRunner.IsRunning
+                ? "Waiting for simulator status stream..."
+                : "Simulator log not found.";
+            return Task.CompletedTask;
+        }
+
+        var lastLine = ReadLastNonEmptyLine(_simStdoutLogPath);
+        if (string.IsNullOrWhiteSpace(lastLine))
+        {
+            SimulatorProgress = _evolutionRunner.IsRunning
+                ? "Waiting for simulator status stream..."
+                : "No simulator status rows.";
+            return Task.CompletedTask;
+        }
+
+        if (!TryParseSimulatorStatus(lastLine, out var snapshot))
+        {
+            return Task.CompletedTask;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            SimulatorSessionId = snapshot.SessionId;
+            SimulatorProgress =
+                $"running={snapshot.Running} iter={snapshot.Iterations} pool={snapshot.ParentPoolSize} compat={snapshot.CompatiblePairs}/{snapshot.CompatibilityChecks} " +
+                $"repro_fail={snapshot.ReproductionFailures} speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts}";
+            SimulatorLastFailure = string.IsNullOrWhiteSpace(snapshot.LastFailure) ? "(none)" : snapshot.LastFailure;
+            if (!snapshot.Running)
+            {
+                SimulatorStatus = "Completed.";
+            }
+        });
+
+        return Task.CompletedTask;
+    }
+
+    private async Task PollSimulatorStatusAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            await RefreshSimulatorStatusAsync().ConfigureAwait(false);
+        }
+    }
+
+    private void ApplyConfig(SpeciationRuntimeConfig config)
+    {
+        if (config is null)
+        {
+            return;
+        }
+
+        var snapshot = ParseSnapshot(config.ConfigSnapshotJson);
+        _dispatcher.Post(() =>
+        {
+            PolicyVersion = string.IsNullOrWhiteSpace(config.PolicyVersion) ? "default" : config.PolicyVersion.Trim();
+            DefaultSpeciesId = string.IsNullOrWhiteSpace(config.DefaultSpeciesId) ? "species.default" : config.DefaultSpeciesId.Trim();
+            DefaultSpeciesDisplayName = string.IsNullOrWhiteSpace(config.DefaultSpeciesDisplayName)
+                ? "Default species"
+                : config.DefaultSpeciesDisplayName.Trim();
+            StartupReconcileReason = string.IsNullOrWhiteSpace(config.StartupReconcileDecisionReason)
+                ? "startup_reconcile"
+                : config.StartupReconcileDecisionReason.Trim();
+
+            ConfigEnabled = snapshot.Enabled;
+            LineageMatchThreshold = snapshot.MatchThreshold.ToString("0.###", CultureInfo.InvariantCulture);
+            LineageSplitThreshold = snapshot.SplitThreshold.ToString("0.###", CultureInfo.InvariantCulture);
+            ParentConsensusThreshold = snapshot.ParentConsensusThreshold.ToString("0.###", CultureInfo.InvariantCulture);
+            HysteresisMargin = snapshot.HysteresisMargin.ToString("0.###", CultureInfo.InvariantCulture);
+            CreateDerivedSpecies = snapshot.CreateDerivedSpecies;
+            DerivedSpeciesPrefix = snapshot.DerivedSpeciesPrefix;
+        });
+    }
+
+    private SpeciationRuntimeConfig BuildRuntimeConfigFromDraft()
+    {
+        var matchThreshold = Clamp01(ParseDouble(LineageMatchThreshold, 0.70));
+        var splitThreshold = Clamp01(ParseDouble(LineageSplitThreshold, Math.Max(0d, matchThreshold - 0.10d)));
+        if (splitThreshold > matchThreshold)
+        {
+            splitThreshold = matchThreshold;
+        }
+
+        var parentConsensus = Clamp01(ParseDouble(ParentConsensusThreshold, 0.50));
+        var hysteresisMargin = Math.Max(0d, ParseDouble(HysteresisMargin, Math.Max(0d, matchThreshold - splitThreshold)));
+        var derivedPrefix = string.IsNullOrWhiteSpace(DerivedSpeciesPrefix) ? "branch" : DerivedSpeciesPrefix.Trim();
+        var snapshot = new JsonObject
+        {
+            ["enabled"] = ConfigEnabled,
+            ["assignment_policy"] = new JsonObject
+            {
+                ["lineage_match_threshold"] = matchThreshold,
+                ["lineage_split_threshold"] = splitThreshold,
+                ["parent_consensus_threshold"] = parentConsensus,
+                ["lineage_hysteresis_margin"] = hysteresisMargin,
+                ["create_derived_species_on_divergence"] = CreateDerivedSpecies,
+                ["derived_species_prefix"] = derivedPrefix
+            }
+        };
+
+        return new SpeciationRuntimeConfig
+        {
+            PolicyVersion = string.IsNullOrWhiteSpace(PolicyVersion) ? "default" : PolicyVersion.Trim(),
+            ConfigSnapshotJson = snapshot.ToJsonString(),
+            DefaultSpeciesId = string.IsNullOrWhiteSpace(DefaultSpeciesId) ? "species.default" : DefaultSpeciesId.Trim(),
+            DefaultSpeciesDisplayName = string.IsNullOrWhiteSpace(DefaultSpeciesDisplayName)
+                ? "Default species"
+                : DefaultSpeciesDisplayName.Trim(),
+            StartupReconcileDecisionReason = string.IsNullOrWhiteSpace(StartupReconcileReason)
+                ? "startup_reconcile"
+                : StartupReconcileReason.Trim()
+        };
+    }
+
+    private (bool Enabled, double MatchThreshold, double SplitThreshold, double ParentConsensusThreshold, double HysteresisMargin, bool CreateDerivedSpecies, string DerivedSpeciesPrefix) ParseSnapshot(string snapshotJson)
+    {
+        var defaults = (
+            Enabled: true,
+            MatchThreshold: 0.70d,
+            SplitThreshold: 0.60d,
+            ParentConsensusThreshold: 0.50d,
+            HysteresisMargin: 0.10d,
+            CreateDerivedSpecies: true,
+            DerivedSpeciesPrefix: "branch");
+
+        if (string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            return defaults;
+        }
+
+        try
+        {
+            var root = JsonNode.Parse(snapshotJson) as JsonObject;
+            if (root is null)
+            {
+                return defaults;
+            }
+
+            var policy = root["assignment_policy"] as JsonObject
+                         ?? root["assignmentPolicy"] as JsonObject
+                         ?? root;
+            var enabled = TryReadBool(root, "enabled") ?? defaults.Enabled;
+            var match = Clamp01(TryReadDouble(policy, "lineage_match_threshold", "lineageMatchThreshold") ?? defaults.MatchThreshold);
+            var split = Clamp01(TryReadDouble(policy, "lineage_split_threshold", "lineageSplitThreshold") ?? defaults.SplitThreshold);
+            var consensus = Clamp01(TryReadDouble(policy, "parent_consensus_threshold", "parentConsensusThreshold") ?? defaults.ParentConsensusThreshold);
+            var hysteresis = Math.Max(0d, TryReadDouble(policy, "lineage_hysteresis_margin", "lineageHysteresisMargin") ?? defaults.HysteresisMargin);
+            var createDerived = TryReadBool(policy, "create_derived_species_on_divergence", "createDerivedSpeciesOnDivergence")
+                                ?? defaults.CreateDerivedSpecies;
+            var prefix = TryReadString(policy, "derived_species_prefix", "derivedSpeciesPrefix")
+                         ?? defaults.DerivedSpeciesPrefix;
+            return (enabled, match, split, consensus, hysteresis, createDerived, string.IsNullOrWhiteSpace(prefix) ? "branch" : prefix.Trim());
+        }
+        catch (JsonException)
+        {
+            return defaults;
+        }
+    }
+
+    private static bool? TryReadBool(JsonObject source, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (source[key] is not JsonNode node)
+            {
+                continue;
+            }
+
+            if (node is JsonValue value)
+            {
+                if (value.TryGetValue<bool>(out var boolValue))
+                {
+                    return boolValue;
+                }
+
+                if (value.TryGetValue<string>(out var stringValue)
+                    && bool.TryParse(stringValue, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static double? TryReadDouble(JsonObject source, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (source[key] is not JsonNode node)
+            {
+                continue;
+            }
+
+            if (node is JsonValue value)
+            {
+                if (value.TryGetValue<double>(out var asDouble))
+                {
+                    return asDouble;
+                }
+
+                if (value.TryGetValue<float>(out var asFloat))
+                {
+                    return asFloat;
+                }
+
+                if (value.TryGetValue<string>(out var asString)
+                    && double.TryParse(asString, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? TryReadString(JsonObject source, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (source[key] is JsonValue value && value.TryGetValue<string>(out var stringValue))
+            {
+                return stringValue;
+            }
+        }
+
+        return null;
+    }
+
+    private static string NormalizeFailure(SpeciationFailureReason reason, string? detail)
+    {
+        var reasonText = reason.ToString();
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            return reasonText;
+        }
+
+        return $"{reasonText}: {detail.Trim()}";
+    }
+
+    private long? ResolveEpochFilter()
+    {
+        if (string.IsNullOrWhiteSpace(EpochFilterText))
+        {
+            return CurrentEpochId > 0 ? CurrentEpochId : null;
+        }
+
+        return long.TryParse(EpochFilterText.Trim(), out var parsed) && parsed > 0 ? parsed : null;
+    }
+
+    private bool ValidateParentSource(out string error)
+    {
+        if (SimUseBrainParents)
+        {
+            if (string.IsNullOrWhiteSpace(SimBrainParentsFilePath))
+            {
+                error = "Simulator requires --parents-brain-file.";
+                return false;
+            }
+
+            if (!File.Exists(SimBrainParentsFilePath))
+            {
+                error = $"Brain parent file not found: {SimBrainParentsFilePath}";
+                return false;
+            }
+
+            error = string.Empty;
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(SimParentsFilePath))
+        {
+            error = "Simulator requires --parents-file.";
+            return false;
+        }
+
+        if (!File.Exists(SimParentsFilePath))
+        {
+            error = $"Parent file not found: {SimParentsFilePath}";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private string BuildEvolutionSimArgs(int ioPort, int simPort)
+    {
+        var args = new List<string>
+        {
+            "run",
+            $"--io-address {Connections.IoHost}:{ioPort}",
+            $"--io-id {QuoteIfNeeded(Connections.IoGateway)}",
+            $"--bind-host {QuoteIfNeeded(SimBindHost)}",
+            $"--port {simPort}",
+            $"--seed {ParseULong(SimSeedText, 12345UL)}",
+            $"--interval-ms {ParseInt(SimIntervalMsText, 1000)}",
+            $"--status-seconds {Math.Max(1, ParseInt(SimStatusSecondsText, 2))}",
+            $"--timeout-seconds {Math.Max(1, ParseInt(SimTimeoutSecondsText, 10))}",
+            $"--max-iterations {Math.Max(0, ParseInt(SimMaxIterationsText, 0))}",
+            $"--max-parent-pool {Math.Max(2, ParseInt(SimMaxParentPoolText, 512))}",
+            $"--min-runs {Math.Max(1, ParseInt(SimMinRunsText, 1))}",
+            $"--max-runs {Math.Min(64, Math.Max(1, ParseInt(SimMaxRunsText, 6)))}",
+            $"--run-gamma {ParseDouble(SimGammaText, 1d).ToString("0.###", CultureInfo.InvariantCulture)}",
+            $"--commit-to-speciation {(SimCommitToSpeciation ? "true" : "false")}",
+            $"--spawn-children {(SimSpawnChildren ? "true" : "false")}",
+            "--json"
+        };
+
+        if (SimUseBrainParents)
+        {
+            args.Add($"--parents-brain-file {QuoteIfNeeded(SimBrainParentsFilePath)}");
+        }
+        else
+        {
+            args.Add($"--parents-file {QuoteIfNeeded(SimParentsFilePath)}");
+            if (!string.IsNullOrWhiteSpace(SimStoreUri))
+            {
+                args.Add($"--store-uri {QuoteIfNeeded(SimStoreUri)}");
+            }
+        }
+
+        return string.Join(" ", args);
+    }
+
+    private static string QuoteIfNeeded(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "\"\"";
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.Contains(' ') ? $"\"{trimmed}\"" : trimmed;
+    }
+
+    private static int ParseInt(string raw, int fallback)
+    {
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static uint ParseUInt(string raw, uint fallback)
+    {
+        return uint.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static ulong ParseULong(string raw, ulong fallback)
+    {
+        return ulong.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static double ParseDouble(string raw, double fallback)
+    {
+        return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private static bool TryParsePort(string raw, out int port)
+    {
+        return int.TryParse(raw, out port) && port > 0 && port < 65536;
+    }
+
+    private static string BuildBar(int count, int maxCount)
+    {
+        if (count <= 0 || maxCount <= 0)
+        {
+            return string.Empty;
+        }
+
+        var width = Math.Clamp((int)Math.Round((count / (double)maxCount) * 16d, MidpointRounding.AwayFromZero), 1, 16);
+        return new string('#', width);
+    }
+
+    private static double Clamp01(double value)
+    {
+        if (value < 0d)
+        {
+            return 0d;
+        }
+
+        if (value > 1d)
+        {
+            return 1d;
+        }
+
+        return value;
+    }
+
+    private static string FormatTimestamp(ulong ms)
+    {
+        if (ms == 0)
+        {
+            return "(n/a)";
+        }
+
+        try
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds((long)ms).ToLocalTime().ToString("g");
+        }
+        catch
+        {
+            return "(n/a)";
+        }
+    }
+
+    private static string? ExtractLogPath(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        const string token = "Logs:";
+        var index = message.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        var path = message[(index + token.Length)..].Trim();
+        return string.IsNullOrWhiteSpace(path) ? null : path;
+    }
+
+    private static string? ReadLastNonEmptyLine(string path)
+    {
+        try
+        {
+            var lines = File.ReadAllLines(path);
+            for (var i = lines.Length - 1; i >= 0; i--)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[i]))
+                {
+                    return lines[i].Trim();
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static bool TryParseSimulatorStatus(string rawLine, out EvolutionSimStatusSnapshot snapshot)
+    {
+        snapshot = default;
+        if (string.IsNullOrWhiteSpace(rawLine))
+        {
+            return false;
+        }
+
+        var jsonIndex = rawLine.IndexOf('{');
+        if (jsonIndex < 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rawLine[jsonIndex..]);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("type", out var typeNode)
+                || !string.Equals(typeNode.GetString(), "evolution_sim_status", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            snapshot = new EvolutionSimStatusSnapshot(
+                SessionId: root.TryGetProperty("session_id", out var sessionIdNode) ? sessionIdNode.GetString() ?? "(unknown)" : "(unknown)",
+                Running: root.TryGetProperty("running", out var runningNode) && runningNode.GetBoolean(),
+                Iterations: root.TryGetProperty("iterations", out var iterationsNode) ? iterationsNode.GetUInt64() : 0UL,
+                ParentPoolSize: root.TryGetProperty("parent_pool_size", out var poolNode) ? poolNode.GetInt32() : 0,
+                CompatibilityChecks: root.TryGetProperty("compatibility_checks", out var checksNode) ? checksNode.GetUInt64() : 0UL,
+                CompatiblePairs: root.TryGetProperty("compatible_pairs", out var pairsNode) ? pairsNode.GetUInt64() : 0UL,
+                ReproductionFailures: root.TryGetProperty("reproduction_failures", out var failuresNode) ? failuresNode.GetUInt64() : 0UL,
+                SpeciationCommitAttempts: root.TryGetProperty("speciation_commit_attempts", out var attemptsNode) ? attemptsNode.GetUInt64() : 0UL,
+                SpeciationCommitSuccesses: root.TryGetProperty("speciation_commit_successes", out var successNode) ? successNode.GetUInt64() : 0UL,
+                LastFailure: root.TryGetProperty("last_failure", out var lastFailureNode) ? lastFailureNode.GetString() ?? string.Empty : string.Empty);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private readonly record struct EvolutionSimStatusSnapshot(
+        string SessionId,
+        bool Running,
+        ulong Iterations,
+        int ParentPoolSize,
+        ulong CompatibilityChecks,
+        ulong CompatiblePairs,
+        ulong ReproductionFailures,
+        ulong SpeciationCommitAttempts,
+        ulong SpeciationCommitSuccesses,
+        string LastFailure);
+}
+
+public sealed record SpeciationSpeciesCountItem(
+    string SpeciesId,
+    string SpeciesDisplayName,
+    int Count,
+    string PercentLabel,
+    string BarLabel);
+
+public sealed record SpeciationHistoryItem(
+    long EpochId,
+    string BrainId,
+    string SpeciesId,
+    string SpeciesDisplayName,
+    string DecisionReason,
+    string AssignedAt);
+
+public sealed record SpeciationEpochSummaryItem(
+    long EpochId,
+    int MembershipCount,
+    int SpeciesCount,
+    string FirstAssigned,
+    string LastAssigned);

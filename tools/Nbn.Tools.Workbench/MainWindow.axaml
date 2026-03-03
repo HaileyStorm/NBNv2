@@ -73,6 +73,9 @@
         <DataTemplate DataType="vm:ReproPanelViewModel">
           <views:ReproPanel />
         </DataTemplate>
+        <DataTemplate DataType="vm:SpeciationPanelViewModel">
+          <views:SpeciationPanel />
+        </DataTemplate>
       </ContentControl.DataTemplates>
     </ContentControl>
   </Grid>

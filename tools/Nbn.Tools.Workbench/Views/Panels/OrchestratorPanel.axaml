@@ -108,24 +108,30 @@
               <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding IoLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
             </Grid>
 
-            <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+            <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
               <TextBlock Text="Reproduction" Classes="muted" />
               <TextBox Grid.Column="1" Text="{Binding Connections.ReproPortText}" Width="90" />
               <Button Grid.Column="2" Content="Start" Command="{Binding StartReproCommand}" Classes="accent" />
               <Button Grid.Column="3" Content="Stop" Command="{Binding StopReproCommand}" />
               <TextBlock Grid.Column="4" Text="{Binding ReproLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
-              <TextBlock Grid.Row="1" Text="Observability" Classes="muted" />
-              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
-              <Button Grid.Row="1" Grid.Column="2" Content="Start" Command="{Binding StartObsCommand}" Classes="accent" />
-              <Button Grid.Row="1" Grid.Column="3" Content="Stop" Command="{Binding StopObsCommand}" />
-              <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="1" Text="Speciation" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Connections.SpeciationPortText}" Width="90" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Start" Command="{Binding StartSpeciationCommand}" Classes="accent" />
+              <Button Grid.Row="1" Grid.Column="3" Content="Stop" Command="{Binding StopSpeciationCommand}" />
+              <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding SpeciationLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
-              <TextBlock Grid.Row="2" Text="Worker Node" Classes="muted" />
-              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.WorkerPortText}" Width="90" />
-              <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
-              <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
-              <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="2" Text="Observability" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
+              <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartObsCommand}" Classes="accent" />
+              <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopObsCommand}" />
+              <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+
+              <TextBlock Grid.Row="3" Text="Worker Node" Classes="muted" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.WorkerPortText}" Width="90" />
+              <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
+              <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
+              <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
             </Grid>
           </Grid>
         </StackPanel>

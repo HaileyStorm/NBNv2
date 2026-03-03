@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Proto.Speciation;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Proto.Control;
@@ -21,6 +22,7 @@ public class WorkbenchClient : IAsyncDisposable
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan SpeciationRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private readonly IWorkbenchEventSink _sink;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -1110,6 +1112,129 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public virtual Task<SpeciationStatusResponse> GetSpeciationStatusAsync(CancellationToken cancellationToken = default)
+    {
+        return RequestSpeciationAsync<SpeciationStatusResult, SpeciationStatusResponse>(
+            new SpeciationStatus { Request = new SpeciationStatusRequest() },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationStatusResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                Status = new SpeciationStatusSnapshot(),
+                CurrentEpoch = new SpeciationEpochInfo(),
+                Config = CreateDefaultSpeciationConfig()
+            },
+            "Speciation status failed",
+            cancellationToken);
+    }
+
+    public virtual Task<SpeciationGetConfigResponse> GetSpeciationConfigAsync(CancellationToken cancellationToken = default)
+    {
+        return RequestSpeciationAsync<SpeciationGetConfigResult, SpeciationGetConfigResponse>(
+            new SpeciationGetConfig { Request = new SpeciationGetConfigRequest() },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationGetConfigResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                Config = CreateDefaultSpeciationConfig(),
+                CurrentEpoch = new SpeciationEpochInfo()
+            },
+            "Speciation get-config failed",
+            cancellationToken);
+    }
+
+    public virtual Task<SpeciationSetConfigResponse> SetSpeciationConfigAsync(
+        SpeciationRuntimeConfig config,
+        bool startNewEpoch,
+        long? applyTimeMs = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new SpeciationSetConfigRequest
+        {
+            Config = config ?? CreateDefaultSpeciationConfig(),
+            StartNewEpoch = startNewEpoch
+        };
+
+        if (applyTimeMs.HasValue && applyTimeMs.Value > 0)
+        {
+            request.HasApplyTimeMs = true;
+            request.ApplyTimeMs = (ulong)applyTimeMs.Value;
+        }
+
+        return RequestSpeciationAsync<SpeciationSetConfigResult, SpeciationSetConfigResponse>(
+            new SpeciationSetConfig { Request = request },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationSetConfigResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                Config = CreateDefaultSpeciationConfig(),
+                PreviousEpoch = new SpeciationEpochInfo(),
+                CurrentEpoch = new SpeciationEpochInfo()
+            },
+            "Speciation set-config failed",
+            cancellationToken);
+    }
+
+    public virtual Task<SpeciationListMembershipsResponse> ListSpeciationMembershipsAsync(
+        long? epochId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new SpeciationListMembershipsRequest();
+        if (epochId.HasValue && epochId.Value > 0)
+        {
+            request.HasEpochId = true;
+            request.EpochId = (ulong)epochId.Value;
+        }
+
+        return RequestSpeciationAsync<SpeciationListMembershipsResult, SpeciationListMembershipsResponse>(
+            new SpeciationListMemberships { Request = request },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationListMembershipsResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail
+            },
+            "Speciation list-memberships failed",
+            cancellationToken);
+    }
+
+    public virtual Task<SpeciationListHistoryResponse> ListSpeciationHistoryAsync(
+        long? epochId = null,
+        Guid? brainId = null,
+        uint limit = 256,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new SpeciationListHistoryRequest
+        {
+            Limit = Math.Max(1u, limit)
+        };
+        if (epochId.HasValue && epochId.Value > 0)
+        {
+            request.HasEpochId = true;
+            request.EpochId = (ulong)epochId.Value;
+        }
+
+        if (brainId.HasValue && brainId.Value != Guid.Empty)
+        {
+            request.HasBrainId = true;
+            request.BrainId = brainId.Value.ToProtoUuid();
+        }
+
+        return RequestSpeciationAsync<SpeciationListHistoryResult, SpeciationListHistoryResponse>(
+            new SpeciationListHistory { Request = request },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationListHistoryResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail
+            },
+            "Speciation list-history failed",
+            cancellationToken);
+    }
+
     private static Nbn.Proto.Repro.ReproduceResult BuildReproFailureResult(string reasonCode)
     {
         return new Nbn.Proto.Repro.ReproduceResult
@@ -1125,6 +1250,65 @@ public class WorkbenchClient : IAsyncDisposable
             },
             Summary = new MutationSummary(),
             Spawned = false
+        };
+    }
+
+    private async Task<TResponse> RequestSpeciationAsync<TResult, TResponse>(
+        object requestMessage,
+        Func<TResult?, TResponse?> resolveResponse,
+        Func<SpeciationFailureReason, string, TResponse> createFailureResponse,
+        string failurePrefix,
+        CancellationToken cancellationToken)
+        where TResult : class
+        where TResponse : class
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            return createFailureResponse(
+                SpeciationFailureReason.SpeciationFailureServiceUnavailable,
+                "IO gateway is not connected.");
+        }
+
+        try
+        {
+            var requestTask = _root.RequestAsync<TResult>(_ioGatewayPid, requestMessage, SpeciationRequestTimeout);
+            var result = cancellationToken.CanBeCanceled
+                ? await requestTask.WaitAsync(cancellationToken).ConfigureAwait(false)
+                : await requestTask.ConfigureAwait(false);
+            var response = resolveResponse(result);
+            if (response is not null)
+            {
+                return response;
+            }
+
+            return createFailureResponse(
+                SpeciationFailureReason.SpeciationFailureEmptyResponse,
+                "Speciation returned an empty response.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return createFailureResponse(
+                SpeciationFailureReason.SpeciationFailureRequestFailed,
+                "Speciation request canceled.");
+        }
+        catch (Exception ex)
+        {
+            _sink.OnIoStatus($"{failurePrefix}: {ex.Message}", false);
+            return createFailureResponse(
+                SpeciationFailureReason.SpeciationFailureRequestFailed,
+                ex.GetBaseException().Message);
+        }
+    }
+
+    private static SpeciationRuntimeConfig CreateDefaultSpeciationConfig()
+    {
+        return new SpeciationRuntimeConfig
+        {
+            PolicyVersion = "default",
+            ConfigSnapshotJson = "{}",
+            DefaultSpeciesId = "species.default",
+            DefaultSpeciesDisplayName = "Default species",
+            StartupReconcileDecisionReason = "startup_reconcile"
         };
     }
 

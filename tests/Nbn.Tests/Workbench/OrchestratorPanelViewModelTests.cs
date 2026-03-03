@@ -34,7 +34,7 @@ public class OrchestratorPanelViewModelTests
             await WaitForAsync(() => string.Equals(vm.ObsLaunchStatus, "Invalid Obs port.", StringComparison.Ordinal));
 
             Assert.Equal("Invalid worker port.", vm.WorkerLaunchStatus);
-            Assert.Equal("Invalid Settings port for Speciation.", vm.StatusMessage);
+            Assert.Equal("Invalid Settings port.", vm.SpeciationLaunchStatus);
         }
         finally
         {
@@ -132,15 +132,21 @@ public class OrchestratorPanelViewModelTests
                     },
                     new SettingValue
                     {
+                        Key = ServiceEndpointSettings.SpeciationManagerKey,
+                        Value = "10.20.30.45:12082/speciation-remote",
+                        UpdatedMs = 14
+                    },
+                    new SettingValue
+                    {
                         Key = ServiceEndpointSettings.WorkerNodeKey,
                         Value = "10.20.30.43:12044/worker-remote",
-                        UpdatedMs = 14
+                        UpdatedMs = 15
                     },
                     new SettingValue
                     {
                         Key = ServiceEndpointSettings.ObservabilityKey,
                         Value = "10.20.30.44:12064/DebugHubRemote",
-                        UpdatedMs = 15
+                        UpdatedMs = 16
                     }
                 }
             }
@@ -160,6 +166,9 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("10.20.30.42", connections.ReproHost);
         Assert.Equal("12072", connections.ReproPortText);
         Assert.Equal("repro-remote", connections.ReproManager);
+        Assert.Equal("10.20.30.45", connections.SpeciationHost);
+        Assert.Equal("12082", connections.SpeciationPortText);
+        Assert.Equal("speciation-remote", connections.SpeciationManager);
         Assert.Equal("10.20.30.43", connections.WorkerHost);
         Assert.Equal("12044", connections.WorkerPortText);
         Assert.Equal("worker-remote", connections.WorkerRootName);
@@ -169,6 +178,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("10.20.30.40:12022/HiveRemote", connections.HiveMindEndpointDisplay);
         Assert.Equal("10.20.30.41:12052/io-remote", connections.IoEndpointDisplay);
         Assert.Equal("10.20.30.42:12072/repro-remote", connections.ReproEndpointDisplay);
+        Assert.Equal("10.20.30.45:12082/speciation-remote", connections.SpeciationEndpointDisplay);
         Assert.Equal("10.20.30.44:12064/DebugHubRemote", connections.ObsEndpointDisplay);
     }
 
@@ -239,6 +249,9 @@ public class OrchestratorPanelViewModelTests
             ReproHost = "127.0.0.1",
             ReproPortText = "12070",
             ReproManager = "ReproductionManager",
+            SpeciationHost = "127.0.0.1",
+            SpeciationPortText = "12080",
+            SpeciationManager = "SpeciationManager",
             WorkerHost = "127.0.0.1",
             WorkerPortText = "12041",
             WorkerRootName = "worker-node",
@@ -274,15 +287,21 @@ public class OrchestratorPanelViewModelTests
                     },
                     new SettingValue
                     {
+                        Key = ServiceEndpointSettings.SpeciationManagerKey,
+                        Value = "invalid-speciation-value",
+                        UpdatedMs = 34
+                    },
+                    new SettingValue
+                    {
                         Key = ServiceEndpointSettings.WorkerNodeKey,
                         Value = "invalid-worker-value",
-                        UpdatedMs = 34
+                        UpdatedMs = 35
                     },
                     new SettingValue
                     {
                         Key = ServiceEndpointSettings.ObservabilityKey,
                         Value = "127.0.0.1:not-a-port/debug",
-                        UpdatedMs = 35
+                        UpdatedMs = 36
                     }
                 }
             }
@@ -302,6 +321,9 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("127.0.0.1", connections.ReproHost);
         Assert.Equal("12070", connections.ReproPortText);
         Assert.Equal("ReproductionManager", connections.ReproManager);
+        Assert.Equal("127.0.0.1", connections.SpeciationHost);
+        Assert.Equal("12080", connections.SpeciationPortText);
+        Assert.Equal("SpeciationManager", connections.SpeciationManager);
         Assert.Equal("127.0.0.1", connections.WorkerHost);
         Assert.Equal("12041", connections.WorkerPortText);
         Assert.Equal("worker-node", connections.WorkerRootName);
@@ -329,13 +351,17 @@ public class OrchestratorPanelViewModelTests
             "192.168.100.11:13070/ReproProd",
             "3"));
         vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.SpeciationManagerKey,
+            "192.168.100.14:13080/SpeciationProd",
+            "4"));
+        vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.WorkerNodeKey,
             "192.168.100.12:13041/worker-prod",
-            "4"));
+            "5"));
         vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.ObservabilityKey,
             "192.168.100.13:13060/DebugProd",
-            "5"));
+            "6"));
 
         await WaitForAsync(() =>
             string.Equals(connections.IoHost, "192.168.100.9", StringComparison.Ordinal)
@@ -347,6 +373,9 @@ public class OrchestratorPanelViewModelTests
             && string.Equals(connections.ReproHost, "192.168.100.11", StringComparison.Ordinal)
             && string.Equals(connections.ReproPortText, "13070", StringComparison.Ordinal)
             && string.Equals(connections.ReproManager, "ReproProd", StringComparison.Ordinal)
+            && string.Equals(connections.SpeciationHost, "192.168.100.14", StringComparison.Ordinal)
+            && string.Equals(connections.SpeciationPortText, "13080", StringComparison.Ordinal)
+            && string.Equals(connections.SpeciationManager, "SpeciationProd", StringComparison.Ordinal)
             && string.Equals(connections.WorkerHost, "192.168.100.12", StringComparison.Ordinal)
             && string.Equals(connections.WorkerPortText, "13041", StringComparison.Ordinal)
             && string.Equals(connections.WorkerRootName, "worker-prod", StringComparison.Ordinal)
@@ -363,6 +392,9 @@ public class OrchestratorPanelViewModelTests
             ReproHost = "127.0.0.1",
             ReproPortText = "12070",
             ReproManager = "ReproductionManager",
+            SpeciationHost = "127.0.0.1",
+            SpeciationPortText = "12080",
+            SpeciationManager = "SpeciationManager",
             WorkerHost = "127.0.0.1",
             WorkerPortText = "12041",
             WorkerRootName = "worker-node",
@@ -377,18 +409,25 @@ public class OrchestratorPanelViewModelTests
             "127.0.0.1:not-a-port/repro",
             "1"));
         vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.SpeciationManagerKey,
+            "127.0.0.1:not-a-port/speciation",
+            "2"));
+        vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.WorkerNodeKey,
             "invalid-worker-value",
-            "2"));
+            "3"));
         vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.ObservabilityKey,
             "127.0.0.1:not-a-port/debug",
-            "3"));
+            "4"));
 
         await WaitForAsync(() =>
             string.Equals(connections.ReproHost, "127.0.0.1", StringComparison.Ordinal)
             && string.Equals(connections.ReproPortText, "12070", StringComparison.Ordinal)
             && string.Equals(connections.ReproManager, "ReproductionManager", StringComparison.Ordinal)
+            && string.Equals(connections.SpeciationHost, "127.0.0.1", StringComparison.Ordinal)
+            && string.Equals(connections.SpeciationPortText, "12080", StringComparison.Ordinal)
+            && string.Equals(connections.SpeciationManager, "SpeciationManager", StringComparison.Ordinal)
             && string.Equals(connections.WorkerHost, "127.0.0.1", StringComparison.Ordinal)
             && string.Equals(connections.WorkerPortText, "12041", StringComparison.Ordinal)
             && string.Equals(connections.WorkerRootName, "worker-node", StringComparison.Ordinal)
@@ -521,7 +560,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
-        Assert.Equal(5, vm.Endpoints.Count);
+        Assert.Equal(6, vm.Endpoints.Count);
         Assert.All(vm.Endpoints, endpoint => Assert.Equal("offline", endpoint.Status));
     }
 
@@ -533,16 +572,19 @@ public class OrchestratorPanelViewModelTests
             IoDiscoverable = true,
             ObsDiscoverable = true,
             ReproDiscoverable = true,
+            SpeciationDiscoverable = true,
             WorkerDiscoverable = true,
             HiveMindDiscoverable = true,
             IoStatus = "Online",
             ObsStatus = "Online",
             ReproStatus = "Online",
+            SpeciationStatus = "Online",
             WorkerStatus = "1 active worker",
             HiveMindStatus = "Online",
             IoEndpointDisplay = "10.0.0.1:12050/io",
             ObsEndpointDisplay = "10.0.0.2:12060/debug",
             ReproEndpointDisplay = "10.0.0.3:12070/repro",
+            SpeciationEndpointDisplay = "10.0.0.6:12080/speciation",
             WorkerEndpointDisplay = "1 active worker",
             HiveMindEndpointDisplay = "10.0.0.4:12020/hive"
         };
@@ -554,23 +596,26 @@ public class OrchestratorPanelViewModelTests
         Assert.False(connections.IoDiscoverable);
         Assert.False(connections.ObsDiscoverable);
         Assert.False(connections.ReproDiscoverable);
+        Assert.False(connections.SpeciationDiscoverable);
         Assert.False(connections.WorkerDiscoverable);
         Assert.False(connections.HiveMindDiscoverable);
         Assert.Equal("Offline", connections.IoStatus);
         Assert.Equal("Offline", connections.ObsStatus);
         Assert.Equal("Offline", connections.ReproStatus);
+        Assert.Equal("Offline", connections.SpeciationStatus);
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Equal("Offline", connections.HiveMindStatus);
         Assert.Equal("Missing", connections.IoEndpointDisplay);
         Assert.Equal("Missing", connections.ObsEndpointDisplay);
         Assert.Equal("Missing", connections.ReproEndpointDisplay);
+        Assert.Equal("Missing", connections.SpeciationEndpointDisplay);
         Assert.Equal("Missing", connections.WorkerEndpointDisplay);
         Assert.Equal("Missing", connections.HiveMindEndpointDisplay);
         Assert.Empty(vm.Nodes);
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Empty(vm.Actors);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
-        Assert.Equal(5, vm.Endpoints.Count);
+        Assert.Equal(6, vm.Endpoints.Count);
         Assert.All(vm.Endpoints, endpoint => Assert.Equal("offline", endpoint.Status));
         Assert.All(vm.Endpoints, endpoint => Assert.Equal("Missing", endpoint.EndpointDisplay));
     }

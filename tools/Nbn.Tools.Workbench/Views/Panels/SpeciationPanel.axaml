@@ -1,0 +1,277 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+             x:Class="Nbn.Tools.Workbench.Views.Panels.SpeciationPanel"
+             x:DataType="vm:SpeciationPanelViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="16">
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBlock Text="Speciation Service" Classes="card-title" />
+              <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshStatusCommand}" />
+            </Grid>
+            <TextBlock Text="Service lifecycle and health from Settings discovery + runtime status APIs." Classes="muted" TextWrapping="Wrap" />
+            <Border Classes="row">
+              <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                <Border Classes="pill"
+                        Background="{Binding Connections.SpeciationChipBackground}"
+                        BorderBrush="{Binding Connections.SpeciationChipBorder}"
+                        BorderThickness="1">
+                  <TextBlock Text="{Binding Connections.SpeciationStatusLabel}" />
+                </Border>
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="{Binding Connections.SpeciationEndpointDisplay}" Classes="row-title" />
+                  <TextBlock Text="{Binding Connections.SpeciationStatus}" Classes="muted" />
+                </StackPanel>
+              </Grid>
+            </Border>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Start Service" Classes="accent" Command="{Binding StartServiceCommand}" />
+              <Button Content="Stop Service" Command="{Binding StopServiceCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding ServiceSummary}" Classes="muted" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+              <Border Classes="row">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="Epoch" Classes="muted" />
+                  <TextBlock Text="{Binding CurrentEpochLabel}" Classes="row-title" />
+                </StackPanel>
+              </Border>
+              <Border Classes="row" Grid.Column="1">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="Memberships" Classes="muted" />
+                  <TextBlock Text="{Binding CurrentMembershipCount}" Classes="row-title" />
+                </StackPanel>
+              </Border>
+              <Border Classes="row" Grid.Column="2">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="Species" Classes="muted" />
+                  <TextBlock Text="{Binding CurrentSpeciesCount}" Classes="row-title" />
+                </StackPanel>
+              </Border>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBlock Text="Policy Config" Classes="card-title" />
+              <Button Grid.Column="1" Content="Load" Command="{Binding LoadConfigCommand}" />
+            </Grid>
+            <TextBlock Text="Edit policy and apply through SpeciationSetConfig (with explicit new-epoch confirmation)." Classes="muted" TextWrapping="Wrap" />
+            <CheckBox Content="Enabled" IsChecked="{Binding ConfigEnabled}" />
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
+              <TextBlock Text="Policy version" Classes="muted" />
+              <TextBox Grid.Column="1" Text="{Binding PolicyVersion}" />
+
+              <TextBlock Grid.Row="1" Text="Default species id" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding DefaultSpeciesId}" />
+
+              <TextBlock Grid.Row="2" Text="Default species name" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding DefaultSpeciesDisplayName}" />
+
+              <TextBlock Grid.Row="3" Text="Startup reconcile reason" Classes="muted" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding StartupReconcileReason}" />
+            </Grid>
+            <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <StackPanel>
+                <TextBlock Text="Match" Classes="muted" />
+                <TextBox Text="{Binding LineageMatchThreshold}" Width="84" />
+              </StackPanel>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="Split" Classes="muted" />
+                <TextBox Text="{Binding LineageSplitThreshold}" Width="84" />
+              </StackPanel>
+              <StackPanel Grid.Column="2">
+                <TextBlock Text="Consensus" Classes="muted" />
+                <TextBox Text="{Binding ParentConsensusThreshold}" Width="84" />
+              </StackPanel>
+              <StackPanel Grid.Row="1">
+                <TextBlock Text="Hysteresis" Classes="muted" />
+                <TextBox Text="{Binding HysteresisMargin}" Width="84" />
+              </StackPanel>
+              <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2">
+                <TextBlock Text="Derived prefix" Classes="muted" />
+                <TextBox Text="{Binding DerivedSpeciesPrefix}" />
+              </StackPanel>
+            </Grid>
+            <CheckBox Content="Create derived species on divergence" IsChecked="{Binding CreateDerivedSpecies}" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Apply Config" Classes="accent" Command="{Binding ApplyConfigCommand}" />
+              <Button Content="{Binding StartNewEpochLabel}" Command="{Binding StartNewEpochCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding ConfigStatus}" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+              <TextBlock Text="Species Counts" Classes="card-title" />
+              <TextBox Grid.Column="1" Width="110" Watermark="Epoch (blank=current)" Text="{Binding EpochFilterText}" />
+              <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshMembershipsCommand}" />
+            </Grid>
+            <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding SpeciesCounts}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="row">
+                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock Text="{Binding SpeciesId}" Classes="row-title" />
+                        <TextBlock Grid.Column="1" Text="{Binding SpeciesDisplayName}" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Grid.Column="2" Text="{Binding Count}" />
+                        <TextBlock Grid.Column="3" Text="{Binding PercentLabel}" Classes="muted" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+            <TextBlock Text="{Binding HistoryStatus}" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Epoch Trend" Classes="card-title" />
+            <TextBlock Text="Epoch-aware summary of recent membership history." Classes="muted" TextWrapping="Wrap" />
+            <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding EpochSummaries}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="row">
+                      <Grid ColumnDefinitions="Auto,Auto,Auto,*,*" ColumnSpacing="8">
+                        <TextBlock Text="{Binding EpochId}" Classes="row-title" />
+                        <TextBlock Grid.Column="1" Text="{Binding MembershipCount, StringFormat='memberships {0}'}" Classes="muted" />
+                        <TextBlock Grid.Column="2" Text="{Binding SpeciesCount, StringFormat='species {0}'}" Classes="muted" />
+                        <TextBlock Grid.Column="3" Text="{Binding FirstAssigned}" Classes="muted" />
+                        <TextBlock Grid.Column="4" Text="{Binding LastAssigned}" Classes="muted" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+            <TextBlock Text="Speciation History" Classes="card-title" />
+            <TextBox Grid.Column="1" Width="110" Watermark="Limit" Text="{Binding HistoryLimitText}" />
+            <TextBox Grid.Column="2" Width="220" Watermark="Filter brain id (optional)" Text="{Binding HistoryBrainIdText}" />
+            <Button Grid.Column="3" Content="Refresh" Command="{Binding RefreshHistoryCommand}" />
+          </Grid>
+          <ScrollViewer MaxHeight="300" HorizontalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding HistoryRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Classes="row">
+                    <Grid ColumnDefinitions="Auto,*,Auto,*,*,*" ColumnSpacing="8">
+                      <TextBlock Text="{Binding EpochId}" Classes="row-title" />
+                      <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="muted" />
+                      <TextBlock Grid.Column="2" Text="{Binding SpeciesId}" />
+                      <TextBlock Grid.Column="3" Text="{Binding SpeciesDisplayName}" Classes="muted" />
+                      <TextBlock Grid.Column="4" Text="{Binding DecisionReason}" Classes="muted" />
+                      <TextBlock Grid.Column="5" Text="{Binding AssignedAt}" Classes="muted" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Reproduction Simulator" Classes="card-title" />
+          <TextBlock Text="Standalone EvolutionSim controls for stress runs (artifact or brain parent mode)." Classes="muted" TextWrapping="Wrap" />
+
+          <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+            <StackPanel>
+              <TextBlock Text="Bind host" Classes="muted" />
+              <TextBox Width="130" Text="{Binding SimBindHost}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="Port" Classes="muted" />
+              <TextBox Width="90" Text="{Binding SimPortText}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Text="Seed" Classes="muted" />
+              <TextBox Width="110" Text="{Binding SimSeedText}" />
+            </StackPanel>
+            <StackPanel Grid.Column="3">
+              <TextBlock Text="Interval ms" Classes="muted" />
+              <TextBox Width="90" Text="{Binding SimIntervalMsText}" />
+            </StackPanel>
+            <StackPanel Grid.Column="4">
+              <TextBlock Text="Min runs" Classes="muted" />
+              <TextBox Width="80" Text="{Binding SimMinRunsText}" />
+            </StackPanel>
+            <StackPanel Grid.Column="5">
+              <TextBlock Text="Max runs" Classes="muted" />
+              <TextBox Width="80" Text="{Binding SimMaxRunsText}" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="1">
+              <TextBlock Text="Gamma" Classes="muted" />
+              <TextBox Width="90" Text="{Binding SimGammaText}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="1">
+              <TextBlock Text="Status sec" Classes="muted" />
+              <TextBox Width="90" Text="{Binding SimStatusSecondsText}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="2">
+              <TextBlock Text="Timeout sec" Classes="muted" />
+              <TextBox Width="90" Text="{Binding SimTimeoutSecondsText}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="3">
+              <TextBlock Text="Max iterations" Classes="muted" />
+              <TextBox Width="110" Text="{Binding SimMaxIterationsText}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="4">
+              <TextBlock Text="Max pool" Classes="muted" />
+              <TextBox Width="90" Text="{Binding SimMaxParentPoolText}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="5" Orientation="Vertical" Spacing="2">
+              <CheckBox Content="Commit to speciation" IsChecked="{Binding SimCommitToSpeciation}" />
+              <CheckBox Content="Spawn children" IsChecked="{Binding SimSpawnChildren}" />
+            </StackPanel>
+          </Grid>
+
+          <CheckBox Content="Use brain parent file mode" IsChecked="{Binding SimUseBrainParents}" />
+          <TextBox Watermark="Artifact parents file path" Text="{Binding SimParentsFilePath}" />
+          <TextBox Watermark="Brain parents file path" Text="{Binding SimBrainParentsFilePath}" />
+          <TextBox Watermark="Store URI (optional for artifact mode)" Text="{Binding SimStoreUri}" />
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Start Simulator" Classes="accent" Command="{Binding StartSimulatorCommand}" />
+            <Button Content="Stop Simulator" Command="{Binding StopSimulatorCommand}" />
+            <Button Content="Refresh Session" Command="{Binding RefreshSimulatorStatusCommand}" />
+          </StackPanel>
+
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="4">
+            <TextBlock Text="Runner" Classes="muted" />
+            <TextBlock Grid.Column="1" Text="{Binding SimulatorStatus}" Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="1" Text="Session" Classes="muted" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SimulatorSessionId}" Classes="row-title" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="2" Text="Progress" Classes="muted" />
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SimulatorProgress}" Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="3" Text="Last failure" Classes="muted" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SimulatorLastFailure}" Classes="muted" TextWrapping="Wrap" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" />
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

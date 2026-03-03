@@ -51,6 +51,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _hiveMindLaunchStatus = "Idle";
     private string _ioLaunchStatus = "Idle";
     private string _reproLaunchStatus = "Idle";
+    private string _speciationLaunchStatus = "Idle";
     private string _workerLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _sampleBrainStatus = "Not running.";
@@ -92,6 +93,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopIoCommand = new AsyncRelayCommand(() => StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value));
         StartReproCommand = new AsyncRelayCommand(StartReproAsync);
         StopReproCommand = new AsyncRelayCommand(() => StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value));
+        StartSpeciationCommand = new AsyncRelayCommand(StartSpeciationAsync);
+        StopSpeciationCommand = new AsyncRelayCommand(() => StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value));
         StartWorkerCommand = new AsyncRelayCommand(StartWorkerAsync);
         StopWorkerCommand = new AsyncRelayCommand(() => StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value));
         StartObsCommand = new AsyncRelayCommand(StartObsAsync);
@@ -143,6 +146,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand StopWorkerCommand { get; }
 
+    public AsyncRelayCommand StartSpeciationCommand { get; }
+
+    public AsyncRelayCommand StopSpeciationCommand { get; }
+
     public AsyncRelayCommand StartObsCommand { get; }
 
     public AsyncRelayCommand StopObsCommand { get; }
@@ -176,6 +183,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _reproLaunchStatus;
         set => SetProperty(ref _reproLaunchStatus, value);
+    }
+
+    public string SpeciationLaunchStatus
+    {
+        get => _speciationLaunchStatus;
+        set => SetProperty(ref _speciationLaunchStatus, value);
     }
 
     public string WorkerLaunchStatus
@@ -241,7 +254,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
         await StopRunnerAsync(_reproRunner, _ => { }).ConfigureAwait(false);
-        await StopRunnerAsync(_speciationRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_obsRunner, _ => { }).ConfigureAwait(false);
     }
 
@@ -355,22 +368,29 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Speciation");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
-            StatusMessage = "Speciation project not found.";
+            SpeciationLaunchStatus = "Speciation project not found.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SpeciationPortText, out var speciationPort))
+        {
+            SpeciationLaunchStatus = "Invalid Speciation port.";
             return;
         }
 
         if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
         {
-            StatusMessage = "Invalid Settings port for Speciation.";
+            SpeciationLaunchStatus = "Invalid Settings port.";
             return;
         }
 
-        var speciationPort = ResolveSpeciationPort();
-        var args = $"--bind-host {Connections.SettingsHost} --port {speciationPort}"
+        var args = $"--bind-host {Connections.SpeciationHost} --port {speciationPort}"
+                 + $" --manager-name {Connections.SpeciationManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Speciation", args);
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _speciationRunner.StartAsync(startInfo, waitForExit: false, label: "Speciation");
+        SpeciationLaunchStatus = result.Message;
         StatusMessage = $"Speciation launch: {result.Message}";
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
@@ -442,6 +462,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         await RefreshAsync(force: true).ConfigureAwait(false);
     }
+
+    public Task StartSpeciationServiceAsync()
+        => StartSpeciationAsync();
+
+    public Task StopSpeciationServiceAsync()
+        => StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value);
 
     private async Task RefreshAsync(bool force)
     {
@@ -627,7 +653,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value).ConfigureAwait(false);
-        await StopRunnerAsync(_speciationRunner, _ => { }).ConfigureAwait(false);
+        await StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
@@ -914,6 +940,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ReproStatus = "Offline";
             Connections.ReproEndpointDisplay = "Missing";
 
+            Connections.SpeciationDiscoverable = false;
+            Connections.SpeciationStatus = "Offline";
+            Connections.SpeciationEndpointDisplay = "Missing";
+
             Connections.WorkerDiscoverable = false;
             Connections.WorkerStatus = "Offline";
             Connections.WorkerEndpointDisplay = "Missing";
@@ -1074,6 +1104,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ReproHost = host;
             Connections.ReproPortText = port.ToString();
             Connections.ReproManager = endpoint.ActorName;
+            return true;
+        }
+
+        if (string.Equals(item.Key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.SpeciationHost = host;
+            Connections.SpeciationPortText = port.ToString();
+            Connections.SpeciationManager = endpoint.ActorName;
             return true;
         }
 
@@ -1448,6 +1486,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             discoveredServiceEndpoints,
             ServiceEndpointSettings.ReproductionManagerKey,
             Connections.ReproManager);
+        var speciationActorName = ResolveDiscoveredActorName(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.SpeciationManagerKey,
+            Connections.SpeciationManager);
         var obsActorName = ResolveDiscoveredActorName(
             discoveredServiceEndpoints,
             ServiceEndpointSettings.ObservabilityKey,
@@ -1457,6 +1499,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var hiveAlive = IsAnyFreshNodeMatch(nodes, nowMs, hiveActorName);
         var ioAlive = IsAnyFreshNodeMatch(nodes, nowMs, ioActorName);
         var reproAlive = IsAnyFreshNodeMatch(nodes, nowMs, reproActorName);
+        var speciationAlive = IsAnyFreshNodeMatch(nodes, nowMs, speciationActorName);
         var obsAlive = IsAnyFreshNodeMatch(nodes, nowMs, obsCandidates);
 
         var hiveEndpointDisplay = ResolveEndpointDisplay(
@@ -1471,6 +1514,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             discoveredServiceEndpoints,
             ServiceEndpointSettings.ReproductionManagerKey,
             reproActorName);
+        var speciationEndpointDisplay = ResolveEndpointDisplay(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.SpeciationManagerKey,
+            speciationActorName);
         var obsEndpointDisplay = ResolveEndpointDisplay(
             discoveredServiceEndpoints,
             ServiceEndpointSettings.ObservabilityKey,
@@ -1493,6 +1540,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ReproStatus = reproAlive ? "Online" : "Offline";
             Connections.ReproEndpointDisplay = reproEndpointDisplay;
 
+            Connections.SpeciationDiscoverable = speciationAlive;
+            Connections.SpeciationStatus = speciationAlive ? "Online" : "Offline";
+            Connections.SpeciationEndpointDisplay = speciationEndpointDisplay;
+
             Connections.WorkerDiscoverable = workerEndpointState.ActiveCount > 0;
             Connections.WorkerStatus = workerEndpointState.Rows.Count > 0
                 ? workerEndpointState.SummaryText
@@ -1512,6 +1563,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Endpoints.Add(CreateEndpointStatusItem("IO Gateway", Connections.IoEndpointDisplay, Connections.IoDiscoverable));
         Endpoints.Add(CreateEndpointStatusItem("Observability", Connections.ObsEndpointDisplay, Connections.ObsDiscoverable));
         Endpoints.Add(CreateEndpointStatusItem("Reproduction", Connections.ReproEndpointDisplay, Connections.ReproDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("Speciation", Connections.SpeciationEndpointDisplay, Connections.SpeciationDiscoverable));
         Endpoints.Add(CreateEndpointStatusItem("Worker Node", Connections.WorkerEndpointDisplay, Connections.WorkerDiscoverable));
         Endpoints.Add(CreateEndpointStatusItem("HiveMind", Connections.HiveMindEndpointDisplay, Connections.HiveMindDiscoverable));
     }
@@ -1675,12 +1727,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         {
             return false;
         }
-    }
-
-    private static int ResolveSpeciationPort()
-    {
-        var configured = Environment.GetEnvironmentVariable("NBN_SPECIATION_PORT");
-        return int.TryParse(configured, out var parsed) && parsed > 0 ? parsed : 12080;
     }
 
     private async Task<HostedActorRowsResult> BuildActorRowsAsync(

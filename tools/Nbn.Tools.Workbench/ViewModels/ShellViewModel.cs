@@ -32,6 +32,13 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Debug = new DebugPanelViewModel(_client, _dispatcher);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client);
+        Speciation = new SpeciationPanelViewModel(
+            _dispatcher,
+            Connections,
+            _client,
+            Orchestrator.StartSpeciationServiceAsync,
+            Orchestrator.StopSpeciationServiceAsync,
+            Orchestrator.RefreshSettingsAsync);
         Designer = new DesignerPanelViewModel(Connections, _client, OnSpawnedBrainDiscovered);
 
         Navigation = new ObservableCollection<NavItemViewModel>
@@ -41,6 +48,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             new("Designer", "Build + import", "S", Designer),
             new("Energy + Plasticity", "System policy controls", "I", Io),
             new("Reproduction", "Spawn variants", "R", Repro),
+            new("Speciation", "Taxonomy + simulation", "T", Speciation),
             new("Debug", "Logs & filters", "D", Debug)
         };
 
@@ -64,6 +72,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public VizPanelViewModel Viz { get; }
 
     public ReproPanelViewModel Repro { get; }
+
+    public SpeciationPanelViewModel Speciation { get; }
 
     public DesignerPanelViewModel Designer { get; }
 
@@ -262,6 +272,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public async ValueTask DisposeAsync()
     {
+        await Speciation.DisposeAsync();
         await Orchestrator.StopAllAsyncForShutdown();
         _connectCts?.Cancel();
         _connectCts = null;
