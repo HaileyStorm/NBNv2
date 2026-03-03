@@ -113,6 +113,31 @@ public sealed record WorkerEndpointItem(
             : "#6B1F1F";
 }
 
+public sealed record EndpointStatusItem(
+    string ServiceName,
+    string EndpointDisplay,
+    string Status)
+{
+    private string StatusKey => (Status ?? string.Empty).Trim().ToLowerInvariant();
+    public bool IsOnline => StatusKey is "online" or "active";
+    private bool IsDegraded => StatusKey is "degraded" or "warning";
+    public string StatusChipBackground => IsOnline
+        ? "#DDF5E5"
+        : IsDegraded
+            ? "#F6E8BF"
+            : "#FBE8E8";
+    public string StatusChipBorder => IsOnline
+        ? "#2D9A5E"
+        : IsDegraded
+            ? "#C8A13F"
+            : "#C04A4A";
+    public string StatusChipForeground => IsOnline
+        ? "#0F5832"
+        : IsDegraded
+            ? "#5C4511"
+            : "#6B1F1F";
+}
+
 public sealed record SettingItem(string Key, string Value, string Updated);
 
 public sealed record BrainListItem(Guid BrainId, string State, bool ControllerAlive)

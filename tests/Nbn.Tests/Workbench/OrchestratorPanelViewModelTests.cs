@@ -220,6 +220,9 @@ public class OrchestratorPanelViewModelTests
         Assert.True(connections.IoDiscoverable);
         Assert.Equal("10.20.30.41:12052/io-remote", connections.IoEndpointDisplay);
         Assert.Equal("Online", connections.IoStatus);
+        var ioEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "IO Gateway");
+        Assert.Equal("online", ioEndpoint.Status);
+        Assert.Equal("10.20.30.41:12052/io-remote", ioEndpoint.EndpointDisplay);
     }
 
     [Fact]
@@ -518,6 +521,8 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
+        Assert.Equal(5, vm.Endpoints.Count);
+        Assert.All(vm.Endpoints, endpoint => Assert.Equal("offline", endpoint.Status));
     }
 
     [Fact]
@@ -565,6 +570,9 @@ public class OrchestratorPanelViewModelTests
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Empty(vm.Actors);
         Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
+        Assert.Equal(5, vm.Endpoints.Count);
+        Assert.All(vm.Endpoints, endpoint => Assert.Equal("offline", endpoint.Status));
+        Assert.All(vm.Endpoints, endpoint => Assert.Equal("Missing", endpoint.EndpointDisplay));
     }
 
     [Fact]

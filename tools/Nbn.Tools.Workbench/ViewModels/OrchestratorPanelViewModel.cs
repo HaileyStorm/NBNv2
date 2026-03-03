@@ -78,6 +78,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _disconnectAll = disconnectAll;
         Nodes = new ObservableCollection<NodeStatusItem>();
         WorkerEndpoints = new ObservableCollection<WorkerEndpointItem>();
+        Endpoints = new ObservableCollection<EndpointStatusItem>();
         Actors = new ObservableCollection<NodeStatusItem>();
         Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
@@ -99,11 +100,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopAllCommand = new AsyncRelayCommand(StopAllAsync);
         SpawnSampleBrainCommand = new AsyncRelayCommand(SpawnSampleBrainAsync);
         StopSampleBrainCommand = new AsyncRelayCommand(StopSampleBrainAsync);
+        RefreshEndpointRows();
         _ = StartAutoRefreshAsync();
     }
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
     public ObservableCollection<WorkerEndpointItem> WorkerEndpoints { get; }
+    public ObservableCollection<EndpointStatusItem> Endpoints { get; }
     public ObservableCollection<NodeStatusItem> Actors { get; }
     public ObservableCollection<SettingEntryViewModel> Settings { get; }
     public ObservableCollection<BrainTerminatedItem> Terminations { get; }
@@ -918,6 +921,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ObsDiscoverable = false;
             Connections.ObsStatus = "Offline";
             Connections.ObsEndpointDisplay = "Missing";
+            RefreshEndpointRows();
         });
     }
 
@@ -1498,7 +1502,27 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.ObsDiscoverable = obsAlive;
             Connections.ObsStatus = obsAlive ? "Online" : "Offline";
             Connections.ObsEndpointDisplay = obsEndpointDisplay;
+            RefreshEndpointRows();
         });
+    }
+
+    private void RefreshEndpointRows()
+    {
+        Endpoints.Clear();
+        Endpoints.Add(CreateEndpointStatusItem("IO Gateway", Connections.IoEndpointDisplay, Connections.IoDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("Observability", Connections.ObsEndpointDisplay, Connections.ObsDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("Reproduction", Connections.ReproEndpointDisplay, Connections.ReproDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("Worker Node", Connections.WorkerEndpointDisplay, Connections.WorkerDiscoverable));
+        Endpoints.Add(CreateEndpointStatusItem("HiveMind", Connections.HiveMindEndpointDisplay, Connections.HiveMindDiscoverable));
+    }
+
+    private static EndpointStatusItem CreateEndpointStatusItem(string serviceName, string endpointDisplay, bool discoverable)
+    {
+        var normalizedEndpointDisplay = string.IsNullOrWhiteSpace(endpointDisplay) ? "Missing" : endpointDisplay.Trim();
+        return new EndpointStatusItem(
+            serviceName,
+            normalizedEndpointDisplay,
+            discoverable ? "online" : "offline");
     }
 
     private void RecordBrainTerminations(IReadOnlyList<BrainListItem> current)
