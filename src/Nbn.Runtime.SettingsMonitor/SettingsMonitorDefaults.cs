@@ -11,7 +11,7 @@ public static class SettingsMonitorDefaults
     public const string ArtifactChunkCompressionOnlyIfSmallerKey = "artifact.chunk.compression.only_if_smaller";
 
     public static readonly ArtifactCompressionSettings ArtifactCompressionDefaults =
-        new("none", 3, 64 * 1024, true);
+        new("zstd", 3, 64 * 1024, true);
 
     public static readonly IReadOnlyDictionary<string, string> DefaultSettings = BuildDefaultSettings();
 
