@@ -2695,6 +2695,8 @@ public class IoGatewayArtifactReferenceTests
                 case ProtoSpec.SpeciationStatusRequest:
                 case ProtoSpec.SpeciationGetConfigRequest:
                 case ProtoSpec.SpeciationSetConfigRequest:
+                case ProtoSpec.SpeciationResetAllRequest:
+                case ProtoSpec.SpeciationDeleteEpochRequest:
                 case ProtoSpec.SpeciationEvaluateRequest:
                 case ProtoSpec.SpeciationAssignRequest:
                 case ProtoSpec.SpeciationBatchEvaluateApplyRequest:

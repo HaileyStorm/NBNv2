@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -80,6 +81,93 @@ public class SpeciationPanelViewModelTests
         Assert.Equal(1, client.SetConfigCallCount);
         Assert.True(client.LastStartNewEpoch);
         Assert.Equal(42L, vm.CurrentEpochId);
+    }
+
+    [Fact]
+    public async Task ClearAllHistoryCommand_RequiresConfirmation_ThenResets()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            GetStatusResponse = new SpeciationStatusResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Status = new SpeciationStatusSnapshot(),
+                CurrentEpoch = new SpeciationEpochInfo { EpochId = 100 },
+                Config = new SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "default",
+                    ConfigSnapshotJson = "{}",
+                    DefaultSpeciesId = "species.default",
+                    DefaultSpeciesDisplayName = "Default species",
+                    StartupReconcileDecisionReason = "startup_reconcile"
+                }
+            },
+            ResetAllResponse = new SpeciationResetAllResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                CurrentEpoch = new SpeciationEpochInfo { EpochId = 100 },
+                Config = new SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "default",
+                    ConfigSnapshotJson = "{}",
+                    DefaultSpeciesId = "species.default",
+                    DefaultSpeciesDisplayName = "Default species",
+                    StartupReconcileDecisionReason = "startup_reconcile"
+                },
+                DeletedEpochCount = 3,
+                DeletedMembershipCount = 12,
+                DeletedSpeciesCount = 2,
+                DeletedDecisionCount = 12
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.ClearAllHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryStatus.Contains("confirm", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(0, client.ResetAllCallCount);
+
+        vm.ClearAllHistoryCommand.Execute(null);
+        await WaitForAsync(() => client.ResetAllCallCount == 1);
+        await WaitForAsync(() => vm.CurrentEpochId == 100L);
+    }
+
+    [Fact]
+    public async Task DeleteEpochCommand_RequiresConfirmation_ThenDeletesEpoch()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            GetStatusResponse = new SpeciationStatusResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Status = new SpeciationStatusSnapshot(),
+                CurrentEpoch = new SpeciationEpochInfo { EpochId = 11 },
+                Config = new SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "default",
+                    ConfigSnapshotJson = "{}",
+                    DefaultSpeciesId = "species.default",
+                    DefaultSpeciesDisplayName = "Default species",
+                    StartupReconcileDecisionReason = "startup_reconcile"
+                }
+            },
+            DeleteEpochResponse = new SpeciationDeleteEpochResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                EpochId = 9,
+                Deleted = true,
+                CurrentEpoch = new SpeciationEpochInfo { EpochId = 11 }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.DeleteEpochText = "9";
+
+        vm.DeleteEpochCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryStatus.Contains("confirm", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(0, client.DeleteEpochCallCount);
+
+        vm.DeleteEpochCommand.Execute(null);
+        await WaitForAsync(() => client.DeleteEpochCallCount == 1);
+        Assert.Equal(9L, client.LastDeletedEpochId);
     }
 
     [Fact]
@@ -237,6 +325,90 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_ComputesMaxDivergenceForCurrentEpoch()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 17,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.2}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 17,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.b",
+                SpeciesDisplayName = "Beta",
+                AssignedMs = 1001,
+                DecisionMetadataJson = "{\"report\":{\"similarity_score\":0.75}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 16,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.c",
+                SpeciesDisplayName = "Gamma",
+                AssignedMs = 900,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.01}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 17;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryRows.Count == history.Length);
+
+        Assert.Contains("epoch 17", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("0.8", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshSimulatorStatusCommand_ParsesExtendedJsonStats()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        var logPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.sim.log");
+        var statusLine = "{\"type\":\"evolution_sim_status\",\"final\":true,\"session_id\":\"sess-123\",\"running\":false,\"iterations\":22,\"parent_pool_size\":14,\"compatibility_checks\":100,\"compatible_pairs\":4,\"reproduction_calls\":7,\"reproduction_failures\":3,\"children_added_to_pool\":5,\"speciation_commit_attempts\":6,\"speciation_commit_successes\":2,\"last_failure\":\"example_failure\",\"last_seed\":42}";
+        await File.WriteAllTextAsync(logPath, statusLine);
+
+        try
+        {
+            var field = typeof(SpeciationPanelViewModel).GetField("_simStdoutLogPath", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(field);
+            field!.SetValue(vm, logPath);
+
+            vm.RefreshSimulatorStatusCommand.Execute(null);
+            await WaitForAsync(() => vm.SimulatorSessionId == "sess-123");
+
+            Assert.Contains("final=True", vm.SimulatorProgress, StringComparison.Ordinal);
+            Assert.Contains("repro_calls=7", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("children=5", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("seed=42", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Equal("example_failure", vm.SimulatorLastFailure);
+        }
+        finally
+        {
+            if (File.Exists(logPath))
+            {
+                File.Delete(logPath);
+            }
+        }
+    }
+
+    [Fact]
     public async Task LiveChartsEnabled_AutoRefreshesHistory()
     {
         var client = new FakeWorkbenchClient
@@ -336,6 +508,26 @@ public class SpeciationPanelViewModelTests
             CurrentEpoch = new SpeciationEpochInfo()
         };
 
+        public SpeciationResetAllResponse ResetAllResponse { get; set; } = new()
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            CurrentEpoch = new SpeciationEpochInfo(),
+            Config = new SpeciationRuntimeConfig
+            {
+                PolicyVersion = "default",
+                ConfigSnapshotJson = "{}",
+                DefaultSpeciesId = "species.default",
+                DefaultSpeciesDisplayName = "Default species",
+                StartupReconcileDecisionReason = "startup_reconcile"
+            }
+        };
+
+        public SpeciationDeleteEpochResponse DeleteEpochResponse { get; set; } = new()
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            CurrentEpoch = new SpeciationEpochInfo()
+        };
+
         public SpeciationListMembershipsResponse MembershipsResponse { get; set; } = new()
         {
             FailureReason = SpeciationFailureReason.SpeciationFailureNone
@@ -347,7 +539,10 @@ public class SpeciationPanelViewModelTests
         };
 
         public int SetConfigCallCount { get; private set; }
+        public int ResetAllCallCount { get; private set; }
+        public int DeleteEpochCallCount { get; private set; }
         public bool LastStartNewEpoch { get; private set; }
+        public long LastDeletedEpochId { get; private set; }
         public long? LastMembershipEpochFilter { get; private set; }
         public int HistoryCallCount { get; private set; }
 
@@ -371,6 +566,23 @@ public class SpeciationPanelViewModelTests
             SetConfigCallCount++;
             LastStartNewEpoch = startNewEpoch;
             return Task.FromResult(SetConfigResponse);
+        }
+
+        public override Task<SpeciationResetAllResponse> ResetSpeciationHistoryAsync(
+            long? applyTimeMs = null,
+            CancellationToken cancellationToken = default)
+        {
+            ResetAllCallCount++;
+            return Task.FromResult(ResetAllResponse);
+        }
+
+        public override Task<SpeciationDeleteEpochResponse> DeleteSpeciationEpochAsync(
+            long epochId,
+            CancellationToken cancellationToken = default)
+        {
+            DeleteEpochCallCount++;
+            LastDeletedEpochId = epochId;
+            return Task.FromResult(DeleteEpochResponse);
         }
 
         public override Task<SpeciationListMembershipsResponse> ListSpeciationMembershipsAsync(

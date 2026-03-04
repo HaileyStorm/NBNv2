@@ -60,6 +60,22 @@ public sealed record SpeciationReconcileResult(
     int ExistingMemberships,
     IReadOnlyList<Guid> AddedBrainIds);
 
+public sealed record SpeciationResetAllResult(
+    SpeciationEpochInfo CurrentEpoch,
+    int DeletedEpochCount,
+    int DeletedMembershipCount,
+    int DeletedSpeciesCount,
+    int DeletedDecisionCount,
+    int DeletedLineageEdgeCount);
+
+public sealed record SpeciationDeleteEpochResult(
+    long EpochId,
+    bool Deleted,
+    int DeletedMembershipCount,
+    int DeletedSpeciesCount,
+    int DeletedDecisionCount,
+    int DeletedLineageEdgeCount);
+
 public sealed record SpeciationStatusRequest;
 
 public sealed record SpeciationStatusResponse(SpeciationStatusSnapshot Status);

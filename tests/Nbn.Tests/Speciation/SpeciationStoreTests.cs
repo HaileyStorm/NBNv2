@@ -202,6 +202,114 @@ public sealed class SpeciationStoreTests
     }
 
     [Fact]
+    public async Task DeleteEpochAsync_RemovesOnlyRequestedEpoch()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SpeciationStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var runtimeConfig = CreateRuntimeConfig();
+        var epochOne = await store.EnsureCurrentEpochAsync(runtimeConfig, createdMs: 100);
+        var brain = Guid.NewGuid();
+        await store.TryAssignMembershipAsync(
+            epochOne.EpochId,
+            new SpeciationAssignment(
+                brain,
+                "species-one",
+                "Species One",
+                "policy-v1",
+                "assign-one",
+                "{\"epoch\":1}"),
+            decisionTimeMs: 150);
+
+        var epochTwo = await store.ResetEpochAsync(runtimeConfig with
+        {
+            PolicyVersion = "policy-v2",
+            ConfigSnapshotJson = "{\"epoch\":2}"
+        }, resetTimeMs: 200);
+        await store.TryAssignMembershipAsync(
+            epochTwo.EpochId,
+            new SpeciationAssignment(
+                brain,
+                "species-two",
+                "Species Two",
+                "policy-v2",
+                "assign-two",
+                "{\"epoch\":2}"),
+            decisionTimeMs: 250);
+
+        var delete = await store.DeleteEpochAsync(epochOne.EpochId);
+        Assert.True(delete.Deleted);
+        Assert.Equal(epochOne.EpochId, delete.EpochId);
+        Assert.Equal(1, delete.DeletedMembershipCount);
+        Assert.Equal(1, delete.DeletedSpeciesCount);
+        Assert.Equal(1, delete.DeletedDecisionCount);
+
+        var epochOneAfter = await store.ListMembershipsAsync(epochOne.EpochId);
+        var epochTwoAfter = await store.ListMembershipsAsync(epochTwo.EpochId);
+        Assert.Empty(epochOneAfter);
+        Assert.Single(epochTwoAfter);
+        Assert.Equal("species-two", epochTwoAfter[0].SpeciesId);
+    }
+
+    [Fact]
+    public async Task ResetAllAsync_ClearsHistoryAndCreatesFreshEpoch()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SpeciationStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var runtimeConfig = CreateRuntimeConfig();
+        var firstEpoch = await store.EnsureCurrentEpochAsync(runtimeConfig, createdMs: 100);
+        var secondEpoch = await store.ResetEpochAsync(runtimeConfig with
+        {
+            PolicyVersion = "policy-v2",
+            ConfigSnapshotJson = "{\"epoch\":2}"
+        }, resetTimeMs: 200);
+
+        await store.TryAssignMembershipAsync(
+            firstEpoch.EpochId,
+            new SpeciationAssignment(
+                Guid.NewGuid(),
+                "species-first",
+                "Species First",
+                "policy-v1",
+                "assign-first",
+                "{\"epoch\":1}"),
+            decisionTimeMs: 125);
+        await store.TryAssignMembershipAsync(
+            secondEpoch.EpochId,
+            new SpeciationAssignment(
+                Guid.NewGuid(),
+                "species-second",
+                "Species Second",
+                "policy-v2",
+                "assign-second",
+                "{\"epoch\":2}"),
+            decisionTimeMs: 225);
+
+        var reset = await store.ResetAllAsync(runtimeConfig with
+        {
+            PolicyVersion = "policy-v3",
+            ConfigSnapshotJson = "{\"epoch\":\"reset\"}"
+        }, resetTimeMs: 300);
+
+        Assert.True(reset.CurrentEpoch.EpochId > secondEpoch.EpochId);
+        Assert.Equal("policy-v3", reset.CurrentEpoch.PolicyVersion);
+        Assert.Equal(2, reset.DeletedEpochCount);
+        Assert.Equal(2, reset.DeletedMembershipCount);
+        Assert.Equal(2, reset.DeletedSpeciesCount);
+        Assert.Equal(2, reset.DeletedDecisionCount);
+
+        var historical = await store.ListMembershipsAsync();
+        Assert.Empty(historical);
+        var status = await store.GetStatusAsync(reset.CurrentEpoch.EpochId);
+        Assert.Equal(0, status.MembershipCount);
+        Assert.Equal(0, status.SpeciesCount);
+        Assert.Equal(0, status.LineageEdgeCount);
+    }
+
+    [Fact]
     public async Task ReconcileMissingMembershipsAsync_AssignsMissingBrainsDeterministically()
     {
         using var db = new TempDatabaseScope();

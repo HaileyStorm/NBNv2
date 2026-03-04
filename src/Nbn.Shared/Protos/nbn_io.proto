@@ -348,6 +348,22 @@ message SpeciationSetConfigResult {
   nbn.speciation.SpeciationSetConfigResponse response = 1;
 }
 
+message SpeciationResetAll {
+  nbn.speciation.SpeciationResetAllRequest request = 1;
+}
+
+message SpeciationResetAllResult {
+  nbn.speciation.SpeciationResetAllResponse response = 1;
+}
+
+message SpeciationDeleteEpoch {
+  nbn.speciation.SpeciationDeleteEpochRequest request = 1;
+}
+
+message SpeciationDeleteEpochResult {
+  nbn.speciation.SpeciationDeleteEpochResponse response = 1;
+}
+
 message SpeciationEvaluate {
   nbn.speciation.SpeciationEvaluateRequest request = 1;
 }

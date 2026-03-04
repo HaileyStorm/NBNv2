@@ -178,6 +178,143 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public async Task ProtoResetAll_ClearsHistoryAndStartsFreshEpoch()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig();
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            var firstEpoch = await WaitForEpochAsync(system, managerPid);
+            var brainId = Guid.NewGuid();
+
+            var assign = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = brainId.ToProtoUuid()
+                    },
+                    SpeciesId = "species-one",
+                    SpeciesDisplayName = "Species One",
+                    DecisionReason = "seed"
+                });
+            Assert.True(assign.Decision.Success);
+
+            var reset = await system.Root.RequestAsync<ProtoSpec.SpeciationResetAllResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationResetAllRequest());
+
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, reset.FailureReason);
+            Assert.True((long)reset.CurrentEpoch.EpochId > firstEpoch.EpochId);
+            Assert.True(reset.DeletedEpochCount >= 1);
+            Assert.True(reset.DeletedMembershipCount >= 1);
+
+            var oldEpochHistory = await system.Root.RequestAsync<ProtoSpec.SpeciationListHistoryResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationListHistoryRequest
+                {
+                    HasEpochId = true,
+                    EpochId = (ulong)firstEpoch.EpochId
+                });
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, oldEpochHistory.FailureReason);
+            Assert.Empty(oldEpochHistory.History);
+            Assert.Equal((uint)0, oldEpochHistory.TotalRecords);
+
+            var currentMemberships = await system.Root.RequestAsync<ProtoSpec.SpeciationListMembershipsResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationListMembershipsRequest
+                {
+                    HasEpochId = true,
+                    EpochId = reset.CurrentEpoch.EpochId
+                });
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, currentMemberships.FailureReason);
+            Assert.Empty(currentMemberships.Memberships);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoDeleteEpoch_DeletesHistoricalEpoch_AndRejectsCurrentEpoch()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig();
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            var firstEpoch = await WaitForEpochAsync(system, managerPid);
+            var setConfig = await system.Root.RequestAsync<ProtoSpec.SpeciationSetConfigResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationSetConfigRequest
+                {
+                    Config = new ProtoSpec.SpeciationRuntimeConfig
+                    {
+                        PolicyVersion = "policy-v2",
+                        ConfigSnapshotJson = "{\"mode\":\"v2\"}",
+                        DefaultSpeciesId = runtimeConfig.DefaultSpeciesId,
+                        DefaultSpeciesDisplayName = runtimeConfig.DefaultSpeciesDisplayName,
+                        StartupReconcileDecisionReason = runtimeConfig.StartupReconcileDecisionReason
+                    },
+                    StartNewEpoch = true
+                });
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, setConfig.FailureReason);
+            var secondEpochId = (long)setConfig.CurrentEpoch.EpochId;
+            Assert.True(secondEpochId > firstEpoch.EpochId);
+
+            var deleteFirst = await system.Root.RequestAsync<ProtoSpec.SpeciationDeleteEpochResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationDeleteEpochRequest
+                {
+                    EpochId = (ulong)firstEpoch.EpochId
+                });
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, deleteFirst.FailureReason);
+            Assert.True(deleteFirst.Deleted);
+            Assert.Equal((ulong)firstEpoch.EpochId, deleteFirst.EpochId);
+
+            var deletedEpochHistory = await system.Root.RequestAsync<ProtoSpec.SpeciationListHistoryResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationListHistoryRequest
+                {
+                    HasEpochId = true,
+                    EpochId = (ulong)firstEpoch.EpochId
+                });
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, deletedEpochHistory.FailureReason);
+            Assert.Empty(deletedEpochHistory.History);
+            Assert.Equal((uint)0, deletedEpochHistory.TotalRecords);
+
+            var deleteCurrent = await system.Root.RequestAsync<ProtoSpec.SpeciationDeleteEpochResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationDeleteEpochRequest
+                {
+                    EpochId = (ulong)secondEpochId
+                });
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest, deleteCurrent.FailureReason);
+            Assert.False(deleteCurrent.Deleted);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task Restart_ReloadsPersistedEpochAndMembershipState()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");

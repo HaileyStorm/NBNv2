@@ -80,6 +80,12 @@ public sealed class SpeciationManagerActor : IActor
             case ProtoSpec.SpeciationSetConfigRequest message:
                 HandleProtoSetConfig(context, message);
                 break;
+            case ProtoSpec.SpeciationResetAllRequest message:
+                HandleProtoResetAll(context, message);
+                break;
+            case ProtoSpec.SpeciationDeleteEpochRequest message:
+                HandleProtoDeleteEpoch(context, message);
+                break;
             case ProtoSpec.SpeciationEvaluateRequest message:
                 HandleProtoEvaluate(context, message);
                 break;
@@ -515,6 +521,161 @@ public sealed class SpeciationManagerActor : IActor
             previousEpoch,
             _currentEpoch,
             _runtimeConfig));
+    }
+
+    private void HandleProtoResetAll(IContext context, ProtoSpec.SpeciationResetAllRequest message)
+    {
+        var previousEpoch = _currentEpoch ?? CreateFallbackEpoch();
+        if (!_initialized || _currentEpoch is null)
+        {
+            context.Respond(CreateProtoResetAllResponse(
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
+                "Speciation service is still initializing.",
+                previousEpoch,
+                previousEpoch,
+                _runtimeConfig,
+                deletedEpochCount: 0,
+                deletedMembershipCount: 0,
+                deletedSpeciesCount: 0,
+                deletedDecisionCount: 0,
+                deletedLineageEdgeCount: 0));
+            return;
+        }
+
+        var applyTime = message.HasApplyTimeMs ? (long?)message.ApplyTimeMs : null;
+        var resetTask = _store.ResetAllAsync(_runtimeConfig, applyTime);
+        context.ReenterAfter(resetTask, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"Speciation proto reset-all failed: {completed.Exception?.GetBaseException().Message}");
+                context.Respond(CreateProtoResetAllResponse(
+                    ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
+                    "Failed to clear speciation history.",
+                    previousEpoch,
+                    previousEpoch,
+                    _runtimeConfig,
+                    deletedEpochCount: 0,
+                    deletedMembershipCount: 0,
+                    deletedSpeciesCount: 0,
+                    deletedDecisionCount: 0,
+                    deletedLineageEdgeCount: 0));
+                return Task.CompletedTask;
+            }
+
+            var outcome = completed.Result;
+            _currentEpoch = outcome.CurrentEpoch;
+            context.Respond(CreateProtoResetAllResponse(
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                string.Empty,
+                previousEpoch,
+                outcome.CurrentEpoch,
+                _runtimeConfig,
+                deletedEpochCount: outcome.DeletedEpochCount,
+                deletedMembershipCount: outcome.DeletedMembershipCount,
+                deletedSpeciesCount: outcome.DeletedSpeciesCount,
+                deletedDecisionCount: outcome.DeletedDecisionCount,
+                deletedLineageEdgeCount: outcome.DeletedLineageEdgeCount));
+            return Task.CompletedTask;
+        });
+    }
+
+    private void HandleProtoDeleteEpoch(IContext context, ProtoSpec.SpeciationDeleteEpochRequest message)
+    {
+        var currentEpoch = _currentEpoch ?? CreateFallbackEpoch();
+        if (!_initialized || _currentEpoch is null)
+        {
+            context.Respond(CreateProtoDeleteEpochResponse(
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
+                "Speciation service is still initializing.",
+                epochId: 0,
+                deleted: false,
+                deletedMembershipCount: 0,
+                deletedSpeciesCount: 0,
+                deletedDecisionCount: 0,
+                deletedLineageEdgeCount: 0,
+                currentEpoch));
+            return;
+        }
+
+        var epochId = (long)message.EpochId;
+        if (epochId <= 0)
+        {
+            context.Respond(CreateProtoDeleteEpochResponse(
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest,
+                "Delete epoch requires a positive epoch_id.",
+                epochId: 0,
+                deleted: false,
+                deletedMembershipCount: 0,
+                deletedSpeciesCount: 0,
+                deletedDecisionCount: 0,
+                deletedLineageEdgeCount: 0,
+                currentEpoch));
+            return;
+        }
+
+        if (epochId == _currentEpoch.EpochId)
+        {
+            context.Respond(CreateProtoDeleteEpochResponse(
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest,
+                "Current epoch cannot be deleted.",
+                epochId,
+                deleted: false,
+                deletedMembershipCount: 0,
+                deletedSpeciesCount: 0,
+                deletedDecisionCount: 0,
+                deletedLineageEdgeCount: 0,
+                currentEpoch));
+            return;
+        }
+
+        var deleteTask = _store.DeleteEpochAsync(epochId);
+        context.ReenterAfter(deleteTask, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"Speciation proto delete epoch failed: {completed.Exception?.GetBaseException().Message}");
+                context.Respond(CreateProtoDeleteEpochResponse(
+                    ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
+                    "Failed to delete requested epoch.",
+                    epochId,
+                    deleted: false,
+                    deletedMembershipCount: 0,
+                    deletedSpeciesCount: 0,
+                    deletedDecisionCount: 0,
+                    deletedLineageEdgeCount: 0,
+                    _currentEpoch ?? currentEpoch));
+                return Task.CompletedTask;
+            }
+
+            var result = completed.Result;
+            if (!result.Deleted)
+            {
+                context.Respond(CreateProtoDeleteEpochResponse(
+                    ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest,
+                    $"Epoch {epochId} does not exist.",
+                    epochId,
+                    deleted: false,
+                    deletedMembershipCount: 0,
+                    deletedSpeciesCount: 0,
+                    deletedDecisionCount: 0,
+                    deletedLineageEdgeCount: 0,
+                    _currentEpoch ?? currentEpoch));
+                return Task.CompletedTask;
+            }
+
+            context.Respond(CreateProtoDeleteEpochResponse(
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                string.Empty,
+                epochId,
+                deleted: true,
+                deletedMembershipCount: result.DeletedMembershipCount,
+                deletedSpeciesCount: result.DeletedSpeciesCount,
+                deletedDecisionCount: result.DeletedDecisionCount,
+                deletedLineageEdgeCount: result.DeletedLineageEdgeCount,
+                _currentEpoch ?? currentEpoch));
+            return Task.CompletedTask;
+        });
     }
 
     private void HandleProtoEvaluate(IContext context, ProtoSpec.SpeciationEvaluateRequest message)
@@ -1920,6 +2081,58 @@ public sealed class SpeciationManagerActor : IActor
             PreviousEpoch = ToProtoEpochInfo(previousEpoch),
             CurrentEpoch = ToProtoEpochInfo(currentEpoch),
             Config = ToProtoRuntimeConfig(runtimeConfig)
+        };
+    }
+
+    private static ProtoSpec.SpeciationResetAllResponse CreateProtoResetAllResponse(
+        ProtoSpec.SpeciationFailureReason failureReason,
+        string failureDetail,
+        SpeciationEpochInfo previousEpoch,
+        SpeciationEpochInfo currentEpoch,
+        SpeciationRuntimeConfig runtimeConfig,
+        int deletedEpochCount,
+        int deletedMembershipCount,
+        int deletedSpeciesCount,
+        int deletedDecisionCount,
+        int deletedLineageEdgeCount)
+    {
+        return new ProtoSpec.SpeciationResetAllResponse
+        {
+            FailureReason = failureReason,
+            FailureDetail = failureDetail,
+            PreviousEpoch = ToProtoEpochInfo(previousEpoch),
+            CurrentEpoch = ToProtoEpochInfo(currentEpoch),
+            Config = ToProtoRuntimeConfig(runtimeConfig),
+            DeletedEpochCount = (uint)Math.Max(0, deletedEpochCount),
+            DeletedMembershipCount = (uint)Math.Max(0, deletedMembershipCount),
+            DeletedSpeciesCount = (uint)Math.Max(0, deletedSpeciesCount),
+            DeletedDecisionCount = (uint)Math.Max(0, deletedDecisionCount),
+            DeletedLineageEdgeCount = (uint)Math.Max(0, deletedLineageEdgeCount)
+        };
+    }
+
+    private static ProtoSpec.SpeciationDeleteEpochResponse CreateProtoDeleteEpochResponse(
+        ProtoSpec.SpeciationFailureReason failureReason,
+        string failureDetail,
+        long epochId,
+        bool deleted,
+        int deletedMembershipCount,
+        int deletedSpeciesCount,
+        int deletedDecisionCount,
+        int deletedLineageEdgeCount,
+        SpeciationEpochInfo currentEpoch)
+    {
+        return new ProtoSpec.SpeciationDeleteEpochResponse
+        {
+            FailureReason = failureReason,
+            FailureDetail = failureDetail,
+            EpochId = (ulong)Math.Max(0, epochId),
+            Deleted = deleted,
+            DeletedMembershipCount = (uint)Math.Max(0, deletedMembershipCount),
+            DeletedSpeciesCount = (uint)Math.Max(0, deletedSpeciesCount),
+            DeletedDecisionCount = (uint)Math.Max(0, deletedDecisionCount),
+            DeletedLineageEdgeCount = (uint)Math.Max(0, deletedLineageEdgeCount),
+            CurrentEpoch = ToProtoEpochInfo(currentEpoch)
         };
     }
 

@@ -688,6 +688,18 @@ public class ProtoCompatibilityTests
         var setConfigResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationSetConfigResult");
         AssertField(setConfigResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationSetConfigResponse");
 
+        var resetAll = descriptor.MessageTypes.Single(message => message.Name == "SpeciationResetAll");
+        AssertField(resetAll, "request", 1, FieldType.Message, "nbn.speciation.SpeciationResetAllRequest");
+
+        var resetAllResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationResetAllResult");
+        AssertField(resetAllResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationResetAllResponse");
+
+        var deleteEpoch = descriptor.MessageTypes.Single(message => message.Name == "SpeciationDeleteEpoch");
+        AssertField(deleteEpoch, "request", 1, FieldType.Message, "nbn.speciation.SpeciationDeleteEpochRequest");
+
+        var deleteEpochResult = descriptor.MessageTypes.Single(message => message.Name == "SpeciationDeleteEpochResult");
+        AssertField(deleteEpochResult, "response", 1, FieldType.Message, "nbn.speciation.SpeciationDeleteEpochResponse");
+
         var evaluate = descriptor.MessageTypes.Single(message => message.Name == "SpeciationEvaluate");
         AssertField(evaluate, "request", 1, FieldType.Message, "nbn.speciation.SpeciationEvaluateRequest");
 
@@ -775,6 +787,26 @@ public class ProtoCompatibilityTests
         AssertField(assign, "apply_mode", 1, FieldType.Enum, "nbn.speciation.SpeciationApplyMode");
         AssertField(assign, "candidate", 2, FieldType.Message, "nbn.speciation.SpeciationCandidateRef");
         AssertRepeatedField(assign, "parents", 3, FieldType.Message, "nbn.speciation.SpeciationParentRef");
+
+        var resetAll = descriptor.MessageTypes.Single(message => message.Name == "SpeciationResetAllRequest");
+        AssertField(resetAll, "apply_time_ms", 1, FieldType.Fixed64);
+        AssertField(resetAll, "has_apply_time_ms", 2, FieldType.Bool);
+
+        var resetAllResponse = descriptor.MessageTypes.Single(message => message.Name == "SpeciationResetAllResponse");
+        AssertField(resetAllResponse, "failure_reason", 1, FieldType.Enum, "nbn.speciation.SpeciationFailureReason");
+        AssertField(resetAllResponse, "current_epoch", 4, FieldType.Message, "nbn.speciation.SpeciationEpochInfo");
+        AssertField(resetAllResponse, "config", 5, FieldType.Message, "nbn.speciation.SpeciationRuntimeConfig");
+        AssertField(resetAllResponse, "deleted_epoch_count", 6, FieldType.UInt32);
+        AssertField(resetAllResponse, "deleted_lineage_edge_count", 10, FieldType.UInt32);
+
+        var deleteEpoch = descriptor.MessageTypes.Single(message => message.Name == "SpeciationDeleteEpochRequest");
+        AssertField(deleteEpoch, "epoch_id", 1, FieldType.Fixed64);
+
+        var deleteEpochResponse = descriptor.MessageTypes.Single(message => message.Name == "SpeciationDeleteEpochResponse");
+        AssertField(deleteEpochResponse, "failure_reason", 1, FieldType.Enum, "nbn.speciation.SpeciationFailureReason");
+        AssertField(deleteEpochResponse, "epoch_id", 3, FieldType.Fixed64);
+        AssertField(deleteEpochResponse, "deleted", 4, FieldType.Bool);
+        AssertField(deleteEpochResponse, "current_epoch", 9, FieldType.Message, "nbn.speciation.SpeciationEpochInfo");
 
         var batch = descriptor.MessageTypes.Single(message => message.Name == "SpeciationBatchEvaluateApplyRequest");
         AssertField(batch, "apply_mode", 1, FieldType.Enum, "nbn.speciation.SpeciationApplyMode");

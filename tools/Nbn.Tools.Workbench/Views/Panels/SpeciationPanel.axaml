@@ -141,6 +141,7 @@
           <StackPanel Spacing="8">
             <TextBlock Text="Epoch Trend" Classes="card-title" />
             <TextBlock Text="Epoch-aware summary of recent membership history." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding CurrentEpochMaxDivergenceLabel}" Classes="muted" TextWrapping="Wrap" />
             <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">
               <ItemsControl ItemsSource="{Binding EpochSummaries}">
                 <ItemsControl.ItemTemplate>
@@ -291,6 +292,17 @@
             <TextBox Grid.Column="2" Width="220" Watermark="Filter brain id (optional)" Text="{Binding HistoryBrainIdText}" />
             <Button Grid.Column="3" Content="Refresh" Command="{Binding RefreshHistoryCommand}" />
           </Grid>
+          <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
+            <TextBlock Text="Delete epoch" Classes="muted" VerticalAlignment="Center" />
+            <TextBox Grid.Column="1" Width="110" Watermark="Epoch id" Text="{Binding DeleteEpochText}" />
+            <Button Grid.Column="2" Content="{Binding DeleteEpochLabel}" Command="{Binding DeleteEpochCommand}" />
+            <TextBlock Grid.Column="3"
+                       Text="Removes one historical epoch. Current epoch cannot be deleted."
+                       Classes="muted"
+                       VerticalAlignment="Center"
+                       TextWrapping="Wrap" />
+            <Button Grid.Column="4" Content="{Binding ClearAllHistoryLabel}" Command="{Binding ClearAllHistoryCommand}" />
+          </Grid>
           <ScrollViewer MaxHeight="300" HorizontalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding HistoryRows}">
               <ItemsControl.ItemTemplate>
@@ -430,15 +442,17 @@
             <Button Content="Refresh Session" Command="{Binding RefreshSimulatorStatusCommand}" />
           </StackPanel>
 
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="4">
+          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="4">
             <TextBlock Text="Runner" Classes="muted" />
             <TextBlock Grid.Column="1" Text="{Binding SimulatorStatus}" Classes="muted" TextWrapping="Wrap" />
             <TextBlock Grid.Row="1" Text="Session" Classes="muted" />
             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SimulatorSessionId}" Classes="row-title" TextWrapping="Wrap" />
             <TextBlock Grid.Row="2" Text="Progress" Classes="muted" />
             <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SimulatorProgress}" Classes="muted" TextWrapping="Wrap" />
-            <TextBlock Grid.Row="3" Text="Last failure" Classes="muted" />
-            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SimulatorLastFailure}" Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="3" Text="Stats" Classes="muted" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SimulatorDetailedStats}" Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="4" Text="Last failure" Classes="muted" />
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SimulatorLastFailure}" Classes="muted" TextWrapping="Wrap" />
           </Grid>
         </StackPanel>
       </Border>

@@ -160,6 +160,12 @@ public sealed class IoGatewayActor : IActor
             case SpeciationSetConfig message:
                 HandleSpeciationSetConfig(context, message);
                 break;
+            case SpeciationResetAll message:
+                HandleSpeciationResetAll(context, message);
+                break;
+            case SpeciationDeleteEpoch message:
+                HandleSpeciationDeleteEpoch(context, message);
+                break;
             case SpeciationEvaluate message:
                 HandleSpeciationEvaluate(context, message);
                 break;
@@ -1548,6 +1554,51 @@ public sealed class IoGatewayActor : IActor
             static response => new SpeciationSetConfigResult { Response = response },
             static (reason, detail) => CreateSpeciationSetConfigFailure(reason, detail),
             operationName: nameof(SpeciationSetConfig));
+    }
+
+    private void HandleSpeciationResetAll(IContext context, SpeciationResetAll message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationResetAllRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationResetAllResult { Response = response },
+            static (reason, detail) => new ProtoSpec.SpeciationResetAllResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                PreviousEpoch = new ProtoSpec.SpeciationEpochInfo(),
+                CurrentEpoch = new ProtoSpec.SpeciationEpochInfo(),
+                Config = CreateDefaultSpeciationConfig(),
+                DeletedEpochCount = 0,
+                DeletedMembershipCount = 0,
+                DeletedSpeciesCount = 0,
+                DeletedDecisionCount = 0,
+                DeletedLineageEdgeCount = 0
+            },
+            operationName: nameof(SpeciationResetAll));
+    }
+
+    private void HandleSpeciationDeleteEpoch(IContext context, SpeciationDeleteEpoch message)
+    {
+        var request = message.Request ?? new ProtoSpec.SpeciationDeleteEpochRequest();
+        ForwardSpeciationRequest(
+            context,
+            request,
+            static response => new SpeciationDeleteEpochResult { Response = response },
+            static (reason, detail) => new ProtoSpec.SpeciationDeleteEpochResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                EpochId = 0,
+                Deleted = false,
+                DeletedMembershipCount = 0,
+                DeletedSpeciesCount = 0,
+                DeletedDecisionCount = 0,
+                DeletedLineageEdgeCount = 0,
+                CurrentEpoch = new ProtoSpec.SpeciationEpochInfo()
+            },
+            operationName: nameof(SpeciationDeleteEpoch));
     }
 
     private void HandleSpeciationEvaluate(IContext context, SpeciationEvaluate message)

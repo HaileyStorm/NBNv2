@@ -277,16 +277,107 @@ FROM species_membership
 WHERE epoch_id = @epoch_id;
 """;
 
+    private const string CountMembershipAllSql = """
+SELECT COUNT(1)
+FROM species_membership;
+""";
+
     private const string CountSpeciesSql = """
 SELECT COUNT(1)
 FROM species
 WHERE epoch_id = @epoch_id;
 """;
 
+    private const string CountSpeciesAllSql = """
+SELECT COUNT(1)
+FROM species;
+""";
+
+    private const string CountDecisionSql = """
+SELECT COUNT(1)
+FROM speciation_decisions
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string CountDecisionAllSql = """
+SELECT COUNT(1)
+FROM speciation_decisions;
+""";
+
     private const string CountLineageSql = """
 SELECT COUNT(1)
 FROM lineage_edges
 WHERE epoch_id = @epoch_id;
+""";
+
+    private const string CountLineageAllSql = """
+SELECT COUNT(1)
+FROM lineage_edges;
+""";
+
+    private const string CountEpochSql = """
+SELECT COUNT(1)
+FROM taxonomy_epochs
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string CountEpochAllSql = """
+SELECT COUNT(1)
+FROM taxonomy_epochs;
+""";
+
+    private const string DeleteEpochMembershipSql = """
+DELETE FROM species_membership
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string DeleteEpochLineageSql = """
+DELETE FROM lineage_edges
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string DeleteEpochDecisionSql = """
+DELETE FROM speciation_decisions
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string DeleteEpochSpeciesSql = """
+DELETE FROM species
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string DeleteEpochConfigSnapshotsSql = """
+DELETE FROM taxonomy_config_snapshots
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string DeleteEpochSql = """
+DELETE FROM taxonomy_epochs
+WHERE epoch_id = @epoch_id;
+""";
+
+    private const string DeleteAllMembershipSql = """
+DELETE FROM species_membership;
+""";
+
+    private const string DeleteAllLineageSql = """
+DELETE FROM lineage_edges;
+""";
+
+    private const string DeleteAllDecisionSql = """
+DELETE FROM speciation_decisions;
+""";
+
+    private const string DeleteAllSpeciesSql = """
+DELETE FROM species;
+""";
+
+    private const string DeleteAllConfigSnapshotsSql = """
+DELETE FROM taxonomy_config_snapshots;
+""";
+
+    private const string DeleteAllEpochsSql = """
+DELETE FROM taxonomy_epochs;
 """;
 
     private readonly string _databasePath;
@@ -433,6 +524,167 @@ WHERE epoch_id = @epoch_id;
             createdMs,
             normalizedConfig.PolicyVersion,
             normalizedConfig.ConfigSnapshotJson);
+    }
+
+    public async Task<SpeciationResetAllResult> ResetAllAsync(
+        SpeciationRuntimeConfig runtimeConfig,
+        long? resetTimeMs = null,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedConfig = NormalizeRuntimeConfig(runtimeConfig);
+        var createdMs = resetTimeMs ?? NowMs();
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var deletedEpochCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(CountEpochAllSql, transaction: transaction, cancellationToken: cancellationToken));
+        var deletedMembershipCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(CountMembershipAllSql, transaction: transaction, cancellationToken: cancellationToken));
+        var deletedSpeciesCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(CountSpeciesAllSql, transaction: transaction, cancellationToken: cancellationToken));
+        var deletedDecisionCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(CountDecisionAllSql, transaction: transaction, cancellationToken: cancellationToken));
+        var deletedLineageEdgeCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(CountLineageAllSql, transaction: transaction, cancellationToken: cancellationToken));
+
+        await connection.ExecuteAsync(new CommandDefinition(DeleteAllMembershipSql, transaction: transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(DeleteAllLineageSql, transaction: transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(DeleteAllDecisionSql, transaction: transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(DeleteAllSpeciesSql, transaction: transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(DeleteAllConfigSnapshotsSql, transaction: transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(DeleteAllEpochsSql, transaction: transaction, cancellationToken: cancellationToken));
+
+        var epochId = await CreateEpochAsync(connection, transaction, createdMs, cancellationToken);
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                InsertConfigSnapshotSql,
+                new
+                {
+                    epoch_id = epochId,
+                    policy_version = normalizedConfig.PolicyVersion,
+                    config_snapshot_json = normalizedConfig.ConfigSnapshotJson,
+                    captured_ms = createdMs
+                },
+                transaction,
+                cancellationToken: cancellationToken));
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return new SpeciationResetAllResult(
+            CurrentEpoch: new SpeciationEpochInfo(
+                epochId,
+                createdMs,
+                normalizedConfig.PolicyVersion,
+                normalizedConfig.ConfigSnapshotJson),
+            DeletedEpochCount: deletedEpochCount,
+            DeletedMembershipCount: deletedMembershipCount,
+            DeletedSpeciesCount: deletedSpeciesCount,
+            DeletedDecisionCount: deletedDecisionCount,
+            DeletedLineageEdgeCount: deletedLineageEdgeCount);
+    }
+
+    public async Task<SpeciationDeleteEpochResult> DeleteEpochAsync(
+        long epochId,
+        CancellationToken cancellationToken = default)
+    {
+        if (epochId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(epochId), "Epoch id must be greater than zero.");
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var exists = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                CountEpochSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        if (exists <= 0)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new SpeciationDeleteEpochResult(
+                EpochId: epochId,
+                Deleted: false,
+                DeletedMembershipCount: 0,
+                DeletedSpeciesCount: 0,
+                DeletedDecisionCount: 0,
+                DeletedLineageEdgeCount: 0);
+        }
+
+        var deletedMembershipCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                CountMembershipSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        var deletedSpeciesCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                CountSpeciesSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        var deletedDecisionCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                CountDecisionSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        var deletedLineageEdgeCount = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                CountLineageSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteEpochMembershipSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteEpochLineageSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteEpochDecisionSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteEpochSpeciesSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteEpochConfigSnapshotsSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteEpochSql,
+                new { epoch_id = epochId },
+                transaction,
+                cancellationToken: cancellationToken));
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return new SpeciationDeleteEpochResult(
+            EpochId: epochId,
+            Deleted: true,
+            DeletedMembershipCount: deletedMembershipCount,
+            DeletedSpeciesCount: deletedSpeciesCount,
+            DeletedDecisionCount: deletedDecisionCount,
+            DeletedLineageEdgeCount: deletedLineageEdgeCount);
     }
 
     public async Task<SpeciationAssignOutcome> TryAssignMembershipAsync(

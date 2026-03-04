@@ -1178,6 +1178,65 @@ public class WorkbenchClient : IAsyncDisposable
             cancellationToken);
     }
 
+    public virtual Task<SpeciationResetAllResponse> ResetSpeciationHistoryAsync(
+        long? applyTimeMs = null,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new SpeciationResetAllRequest();
+        if (applyTimeMs.HasValue && applyTimeMs.Value > 0)
+        {
+            request.HasApplyTimeMs = true;
+            request.ApplyTimeMs = (ulong)applyTimeMs.Value;
+        }
+
+        return RequestSpeciationAsync<SpeciationResetAllResult, SpeciationResetAllResponse>(
+            new SpeciationResetAll { Request = request },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationResetAllResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                PreviousEpoch = new SpeciationEpochInfo(),
+                CurrentEpoch = new SpeciationEpochInfo(),
+                Config = CreateDefaultSpeciationConfig(),
+                DeletedEpochCount = 0,
+                DeletedMembershipCount = 0,
+                DeletedSpeciesCount = 0,
+                DeletedDecisionCount = 0,
+                DeletedLineageEdgeCount = 0
+            },
+            "Speciation reset-all failed",
+            cancellationToken);
+    }
+
+    public virtual Task<SpeciationDeleteEpochResponse> DeleteSpeciationEpochAsync(
+        long epochId,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new SpeciationDeleteEpochRequest
+        {
+            EpochId = epochId > 0 ? (ulong)epochId : 0UL
+        };
+
+        return RequestSpeciationAsync<SpeciationDeleteEpochResult, SpeciationDeleteEpochResponse>(
+            new SpeciationDeleteEpoch { Request = request },
+            static result => result?.Response,
+            static (reason, detail) => new SpeciationDeleteEpochResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                EpochId = 0,
+                Deleted = false,
+                DeletedMembershipCount = 0,
+                DeletedSpeciesCount = 0,
+                DeletedDecisionCount = 0,
+                DeletedLineageEdgeCount = 0,
+                CurrentEpoch = new SpeciationEpochInfo()
+            },
+            "Speciation delete-epoch failed",
+            cancellationToken);
+    }
+
     public virtual Task<SpeciationListMembershipsResponse> ListSpeciationMembershipsAsync(
         long? epochId = null,
         CancellationToken cancellationToken = default)

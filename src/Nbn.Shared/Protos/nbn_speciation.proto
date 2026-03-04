@@ -133,6 +133,40 @@ message SpeciationSetConfigResponse {
   SpeciationRuntimeConfig config = 5;
 }
 
+message SpeciationResetAllRequest {
+  fixed64 apply_time_ms = 1;
+  bool has_apply_time_ms = 2;
+}
+
+message SpeciationResetAllResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  SpeciationEpochInfo previous_epoch = 3;
+  SpeciationEpochInfo current_epoch = 4;
+  SpeciationRuntimeConfig config = 5;
+  uint32 deleted_epoch_count = 6;
+  uint32 deleted_membership_count = 7;
+  uint32 deleted_species_count = 8;
+  uint32 deleted_decision_count = 9;
+  uint32 deleted_lineage_edge_count = 10;
+}
+
+message SpeciationDeleteEpochRequest {
+  fixed64 epoch_id = 1;
+}
+
+message SpeciationDeleteEpochResponse {
+  SpeciationFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  fixed64 epoch_id = 3;
+  bool deleted = 4;
+  uint32 deleted_membership_count = 5;
+  uint32 deleted_species_count = 6;
+  uint32 deleted_decision_count = 7;
+  uint32 deleted_lineage_edge_count = 8;
+  SpeciationEpochInfo current_epoch = 9;
+}
+
 message SpeciationEvaluateRequest {
   SpeciationCandidateRef candidate = 1;
   repeated SpeciationParentRef parents = 2;

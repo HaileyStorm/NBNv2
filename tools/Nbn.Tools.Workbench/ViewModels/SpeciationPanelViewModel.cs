@@ -68,11 +68,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _simStatus = "Simulator idle.";
     private string _simSessionId = "(none)";
     private string _simProgress = "No session.";
+    private string _simDetailedStats = "No simulator statistics yet.";
     private string _simLastFailure = "(none)";
     private long _currentEpochId;
     private uint _currentMembershipCount;
     private uint _currentSpeciesCount;
     private uint _currentLineageEdgeCount;
+    private string _currentEpochMaxDivergenceLabel = "Max divergence (current epoch): (n/a)";
     private bool _configEnabled = true;
     private string _policyVersion = "default";
     private string _defaultSpeciesId = "species.default";
@@ -85,6 +87,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private bool _createDerivedSpecies = true;
     private string _derivedSpeciesPrefix = "branch";
     private bool _startNewEpochConfirmPending;
+    private bool _clearAllHistoryConfirmPending;
+    private bool _deleteEpochConfirmPending;
+    private long? _deleteEpochConfirmTarget;
+    private string _deleteEpochText = string.Empty;
     private string _epochFilterText = string.Empty;
     private string _historyLimitText = "256";
     private string _historyBrainIdText = string.Empty;
@@ -151,6 +157,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         LoadConfigCommand = new AsyncRelayCommand(LoadConfigAsync);
         ApplyConfigCommand = new AsyncRelayCommand(ApplyConfigAsync);
         StartNewEpochCommand = new AsyncRelayCommand(StartNewEpochAsync);
+        ClearAllHistoryCommand = new AsyncRelayCommand(ClearAllHistoryAsync);
+        DeleteEpochCommand = new AsyncRelayCommand(DeleteEpochAsync);
         RefreshMembershipsCommand = new AsyncRelayCommand(RefreshMembershipsAsync);
         RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync);
         StartServiceCommand = new AsyncRelayCommand(StartServiceAsync);
@@ -187,6 +195,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public AsyncRelayCommand LoadConfigCommand { get; }
     public AsyncRelayCommand ApplyConfigCommand { get; }
     public AsyncRelayCommand StartNewEpochCommand { get; }
+    public AsyncRelayCommand ClearAllHistoryCommand { get; }
+    public AsyncRelayCommand DeleteEpochCommand { get; }
     public AsyncRelayCommand RefreshMembershipsCommand { get; }
     public AsyncRelayCommand RefreshHistoryCommand { get; }
     public AsyncRelayCommand StartServiceCommand { get; }
@@ -239,6 +249,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _simProgress, value);
     }
 
+    public string SimulatorDetailedStats
+    {
+        get => _simDetailedStats;
+        set => SetProperty(ref _simDetailedStats, value);
+    }
+
     public string SimulatorLastFailure
     {
         get => _simLastFailure;
@@ -275,6 +291,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _currentLineageEdgeCount;
         set => SetProperty(ref _currentLineageEdgeCount, value);
+    }
+
+    public string CurrentEpochMaxDivergenceLabel
+    {
+        get => _currentEpochMaxDivergenceLabel;
+        set => SetProperty(ref _currentEpochMaxDivergenceLabel, value);
     }
 
     public bool ConfigEnabled
@@ -349,6 +371,25 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _epochFilterText, value);
     }
 
+    public string DeleteEpochText
+    {
+        get => _deleteEpochText;
+        set
+        {
+            if (!SetProperty(ref _deleteEpochText, value))
+            {
+                return;
+            }
+
+            if (_deleteEpochConfirmPending)
+            {
+                _deleteEpochConfirmPending = false;
+                _deleteEpochConfirmTarget = null;
+                OnPropertyChanged(nameof(DeleteEpochLabel));
+            }
+        }
+    }
+
     public string HistoryLimitText
     {
         get => _historyLimitText;
@@ -362,6 +403,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
+    public string ClearAllHistoryLabel => _clearAllHistoryConfirmPending ? "Confirm Clear All" : "Clear All History";
+    public string DeleteEpochLabel => _deleteEpochConfirmPending ? "Confirm Delete Epoch" : "Delete Epoch";
 
     public SpeciationSimulatorBrainOption? SimSelectedParentABrain
     {
@@ -684,6 +727,22 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    private void ResetHistoryMutationConfirmations()
+    {
+        if (_clearAllHistoryConfirmPending)
+        {
+            _clearAllHistoryConfirmPending = false;
+            OnPropertyChanged(nameof(ClearAllHistoryLabel));
+        }
+
+        if (_deleteEpochConfirmPending || _deleteEpochConfirmTarget.HasValue)
+        {
+            _deleteEpochConfirmPending = false;
+            _deleteEpochConfirmTarget = null;
+            OnPropertyChanged(nameof(DeleteEpochLabel));
+        }
+    }
+
     private async Task RefreshStatusAsync()
     {
         var response = await _client.GetSpeciationStatusAsync().ConfigureAwait(false);
@@ -758,6 +817,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task StartNewEpochAsync()
     {
+        ResetHistoryMutationConfirmations();
         if (!_startNewEpochConfirmPending)
         {
             _startNewEpochConfirmPending = true;
@@ -788,6 +848,112 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             Status = "Speciation epoch advanced.";
         });
 
+        await RefreshMembershipsAsync().ConfigureAwait(false);
+        await RefreshHistoryAsync().ConfigureAwait(false);
+    }
+
+    private async Task ClearAllHistoryAsync()
+    {
+        _startNewEpochConfirmPending = false;
+        OnPropertyChanged(nameof(StartNewEpochLabel));
+
+        if (!_clearAllHistoryConfirmPending)
+        {
+            _clearAllHistoryConfirmPending = true;
+            _deleteEpochConfirmPending = false;
+            _deleteEpochConfirmTarget = null;
+            OnPropertyChanged(nameof(ClearAllHistoryLabel));
+            OnPropertyChanged(nameof(DeleteEpochLabel));
+            HistoryStatus = "Click Clear All History again to confirm. This removes all epoch history and starts a new epoch.";
+            Status = HistoryStatus;
+            return;
+        }
+
+        _clearAllHistoryConfirmPending = false;
+        OnPropertyChanged(nameof(ClearAllHistoryLabel));
+        var response = await _client.ResetSpeciationHistoryAsync().ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            HistoryStatus = $"Clear history failed: {reason}";
+            Status = HistoryStatus;
+            return;
+        }
+
+        ApplyConfig(response.Config);
+        _dispatcher.Post(() =>
+        {
+            CurrentEpochId = (long)response.CurrentEpoch.EpochId;
+            CurrentMembershipCount = 0;
+            CurrentSpeciesCount = 0;
+            CurrentLineageEdgeCount = 0;
+            CurrentEpochMaxDivergenceLabel = $"Max divergence (epoch {CurrentEpochLabel}): (n/a)";
+            HistoryStatus =
+                $"History cleared: deleted epochs={response.DeletedEpochCount}, memberships={response.DeletedMembershipCount}, species={response.DeletedSpeciesCount}, decisions={response.DeletedDecisionCount}.";
+            Status = HistoryStatus;
+        });
+
+        await RefreshStatusAsync().ConfigureAwait(false);
+        await RefreshMembershipsAsync().ConfigureAwait(false);
+        await RefreshHistoryAsync().ConfigureAwait(false);
+    }
+
+    private async Task DeleteEpochAsync()
+    {
+        _startNewEpochConfirmPending = false;
+        OnPropertyChanged(nameof(StartNewEpochLabel));
+
+        if (!long.TryParse(DeleteEpochText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var epochId) || epochId <= 0)
+        {
+            _deleteEpochConfirmPending = false;
+            _deleteEpochConfirmTarget = null;
+            OnPropertyChanged(nameof(DeleteEpochLabel));
+            HistoryStatus = "Enter a positive epoch id to delete.";
+            Status = HistoryStatus;
+            return;
+        }
+
+        if (!_deleteEpochConfirmPending || _deleteEpochConfirmTarget != epochId)
+        {
+            _deleteEpochConfirmPending = true;
+            _deleteEpochConfirmTarget = epochId;
+            _clearAllHistoryConfirmPending = false;
+            OnPropertyChanged(nameof(DeleteEpochLabel));
+            OnPropertyChanged(nameof(ClearAllHistoryLabel));
+            HistoryStatus = $"Click Delete Epoch again to confirm deletion of epoch {epochId}.";
+            Status = HistoryStatus;
+            return;
+        }
+
+        _deleteEpochConfirmPending = false;
+        _deleteEpochConfirmTarget = null;
+        OnPropertyChanged(nameof(DeleteEpochLabel));
+
+        var response = await _client.DeleteSpeciationEpochAsync(epochId).ConfigureAwait(false);
+        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            HistoryStatus = $"Delete epoch failed: {reason}";
+            Status = HistoryStatus;
+            return;
+        }
+
+        if (!response.Deleted)
+        {
+            HistoryStatus = $"Epoch {epochId} was not deleted.";
+            Status = HistoryStatus;
+            return;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            CurrentEpochId = (long)response.CurrentEpoch.EpochId;
+            HistoryStatus =
+                $"Deleted epoch {epochId}: memberships={response.DeletedMembershipCount}, species={response.DeletedSpeciesCount}, decisions={response.DeletedDecisionCount}.";
+            Status = HistoryStatus;
+        });
+
+        await RefreshStatusAsync().ConfigureAwait(false);
         await RefreshMembershipsAsync().ConfigureAwait(false);
         await RefreshHistoryAsync().ConfigureAwait(false);
     }
@@ -895,6 +1061,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .ToList();
         var populationSnapshot = BuildPopulationChartSnapshot(response.History);
         var flowSnapshot = BuildFlowChartSnapshot(response.History);
+        var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(response.History, CurrentEpochId);
 
         _dispatcher.Post(() =>
         {
@@ -912,6 +1079,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
             ApplyPopulationChartSnapshot(populationSnapshot);
             ApplyFlowChartSnapshot(flowSnapshot);
+            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label;
             HistoryStatus = $"History loaded: {historyRows.Count} rows (total={response.TotalRecords}).";
             Status = HistoryStatus;
         });
@@ -997,6 +1165,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var startResult = await _evolutionRunner.StartAsync(startInfo, waitForExit: false, label: "EvolutionSim").ConfigureAwait(false);
         SimulatorStatus = startResult.Message;
         Status = $"Evolution simulator: {startResult.Message}";
+        SimulatorDetailedStats = startResult.Success
+            ? "Starting simulator status polling..."
+            : "No simulator statistics yet.";
         OnPropertyChanged(nameof(SimRunnerActive));
 
         _simStdoutLogPath = ExtractLogPath(startResult.Message);
@@ -1016,6 +1187,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var stopMessage = await _evolutionRunner.StopAsync().ConfigureAwait(false);
         SimulatorStatus = stopMessage;
         Status = $"Evolution simulator: {stopMessage}";
+        SimulatorProgress = "No active simulator session.";
+        SimulatorDetailedStats = "No simulator statistics yet.";
         OnPropertyChanged(nameof(SimRunnerActive));
     }
 
@@ -1026,10 +1199,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             if (_evolutionRunner.IsRunning)
             {
                 SimulatorProgress = "Running (enable Workbench logging for live session details).";
+                SimulatorDetailedStats = "Waiting for first simulator status payload.";
             }
             else
             {
                 SimulatorProgress = "No active simulator session.";
+                SimulatorDetailedStats = "No simulator statistics yet.";
             }
 
             return Task.CompletedTask;
@@ -1040,6 +1215,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             SimulatorProgress = _evolutionRunner.IsRunning
                 ? "Waiting for simulator status stream..."
                 : "Simulator log not found.";
+            SimulatorDetailedStats = "No simulator statistics yet.";
             return Task.CompletedTask;
         }
 
@@ -1049,6 +1225,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             SimulatorProgress = _evolutionRunner.IsRunning
                 ? "Waiting for simulator status stream..."
                 : "No simulator status rows.";
+            SimulatorDetailedStats = "No simulator statistics yet.";
             return Task.CompletedTask;
         }
 
@@ -1061,12 +1238,16 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
             SimulatorSessionId = snapshot.SessionId;
             SimulatorProgress =
-                $"running={snapshot.Running} iter={snapshot.Iterations} pool={snapshot.ParentPoolSize} compat={snapshot.CompatiblePairs}/{snapshot.CompatibilityChecks} " +
-                $"repro_fail={snapshot.ReproductionFailures} speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts}";
+                $"running={snapshot.Running} final={snapshot.Final} iter={snapshot.Iterations} pool={snapshot.ParentPoolSize}";
+            SimulatorDetailedStats =
+                $"compat={snapshot.CompatiblePairs}/{snapshot.CompatibilityChecks} " +
+                $"repro_calls={snapshot.ReproductionCalls} repro_fail={snapshot.ReproductionFailures} " +
+                $"children={snapshot.ChildrenAddedToPool} speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts} " +
+                $"seed={snapshot.LastSeed}";
             SimulatorLastFailure = string.IsNullOrWhiteSpace(snapshot.LastFailure) ? "(none)" : snapshot.LastFailure;
             if (!snapshot.Running)
             {
-                SimulatorStatus = "Completed.";
+                SimulatorStatus = snapshot.Final ? "Completed." : "Stopped.";
             }
         });
 
@@ -1679,6 +1860,132 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return (epochRows, speciesOrder);
     }
 
+    private static DivergenceSnapshot BuildCurrentEpochDivergenceSnapshot(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        long currentEpochId)
+    {
+        if (history.Count == 0)
+        {
+            return new DivergenceSnapshot("Max divergence (current epoch): (n/a)");
+        }
+
+        var targetEpoch = currentEpochId > 0
+            ? currentEpochId
+            : history.Max(entry => (long)entry.EpochId);
+        double? maxDivergence = null;
+        double? minSimilarity = null;
+        string maxBrainLabel = "(unknown)";
+        var sampleCount = 0;
+
+        foreach (var record in history.Where(entry => (long)entry.EpochId == targetEpoch))
+        {
+            if (!TryExtractSimilarityScore(record.DecisionMetadataJson, out var similarity))
+            {
+                continue;
+            }
+
+            var boundedSimilarity = Clamp01(similarity);
+            var divergence = 1d - boundedSimilarity;
+            sampleCount++;
+            if (!minSimilarity.HasValue || boundedSimilarity < minSimilarity.Value)
+            {
+                minSimilarity = boundedSimilarity;
+            }
+
+            if (maxDivergence.HasValue && divergence <= maxDivergence.Value)
+            {
+                continue;
+            }
+
+            maxDivergence = divergence;
+            maxBrainLabel = record.BrainId?.TryToGuid(out var brainId) == true && brainId != Guid.Empty
+                ? brainId.ToString("D")
+                : "(none)";
+        }
+
+        if (!maxDivergence.HasValue || !minSimilarity.HasValue)
+        {
+            return new DivergenceSnapshot($"Max divergence (epoch {targetEpoch}): (n/a, no similarity scores)");
+        }
+
+        var label =
+            $"Max divergence (epoch {targetEpoch}) = {maxDivergence.Value:0.###} (min similarity {minSimilarity.Value:0.###}, samples={sampleCount}, brain={maxBrainLabel}).";
+        return new DivergenceSnapshot(label);
+    }
+
+    private static bool TryExtractSimilarityScore(string? metadataJson, out double similarityScore)
+    {
+        similarityScore = 0d;
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(metadataJson);
+            var root = document.RootElement;
+            if (TryGetSimilarityFromElement(root, out similarityScore))
+            {
+                return true;
+            }
+
+            if (root.TryGetProperty("report", out var report) && TryGetSimilarityFromElement(report, out similarityScore))
+            {
+                return true;
+            }
+
+            if (root.TryGetProperty("scores", out var scores) && TryGetSimilarityFromElement(scores, out similarityScore))
+            {
+                return true;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
+
+    private static bool TryGetSimilarityFromElement(JsonElement element, out double similarityScore)
+    {
+        similarityScore = 0d;
+        if (TryGetJsonDouble(element, "similarity_score", out similarityScore)
+            || TryGetJsonDouble(element, "similarityScore", out similarityScore))
+        {
+            return true;
+        }
+
+        if (element.TryGetProperty("scores", out var scores)
+            && (TryGetJsonDouble(scores, "similarity_score", out similarityScore)
+                || TryGetJsonDouble(scores, "similarityScore", out similarityScore)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetJsonDouble(JsonElement element, string propertyName, out double value)
+    {
+        value = 0d;
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number when property.TryGetDouble(out value) => true,
+            JsonValueKind.String when double.TryParse(
+                property.GetString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out value) => true,
+            _ => false
+        };
+    }
+
     private static string BuildLinePath(
         IReadOnlyList<double> values,
         double yMin,
@@ -2010,14 +2317,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             snapshot = new EvolutionSimStatusSnapshot(
                 SessionId: root.TryGetProperty("session_id", out var sessionIdNode) ? sessionIdNode.GetString() ?? "(unknown)" : "(unknown)",
                 Running: root.TryGetProperty("running", out var runningNode) && runningNode.GetBoolean(),
+                Final: root.TryGetProperty("final", out var finalNode) && finalNode.GetBoolean(),
                 Iterations: root.TryGetProperty("iterations", out var iterationsNode) ? iterationsNode.GetUInt64() : 0UL,
                 ParentPoolSize: root.TryGetProperty("parent_pool_size", out var poolNode) ? poolNode.GetInt32() : 0,
                 CompatibilityChecks: root.TryGetProperty("compatibility_checks", out var checksNode) ? checksNode.GetUInt64() : 0UL,
                 CompatiblePairs: root.TryGetProperty("compatible_pairs", out var pairsNode) ? pairsNode.GetUInt64() : 0UL,
+                ReproductionCalls: root.TryGetProperty("reproduction_calls", out var callsNode) ? callsNode.GetUInt64() : 0UL,
                 ReproductionFailures: root.TryGetProperty("reproduction_failures", out var failuresNode) ? failuresNode.GetUInt64() : 0UL,
+                ChildrenAddedToPool: root.TryGetProperty("children_added_to_pool", out var childrenNode) ? childrenNode.GetUInt64() : 0UL,
                 SpeciationCommitAttempts: root.TryGetProperty("speciation_commit_attempts", out var attemptsNode) ? attemptsNode.GetUInt64() : 0UL,
                 SpeciationCommitSuccesses: root.TryGetProperty("speciation_commit_successes", out var successNode) ? successNode.GetUInt64() : 0UL,
-                LastFailure: root.TryGetProperty("last_failure", out var lastFailureNode) ? lastFailureNode.GetString() ?? string.Empty : string.Empty);
+                LastFailure: root.TryGetProperty("last_failure", out var lastFailureNode) ? lastFailureNode.GetString() ?? string.Empty : string.Empty,
+                LastSeed: root.TryGetProperty("last_seed", out var lastSeedNode) ? lastSeedNode.GetUInt64() : 0UL);
             return true;
         }
         catch (JsonException)
@@ -2025,6 +2336,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return false;
         }
     }
+
+    private readonly record struct DivergenceSnapshot(string Label);
 
     private readonly record struct PopulationChartSnapshot(
         string RangeLabel,
@@ -2057,14 +2370,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly record struct EvolutionSimStatusSnapshot(
         string SessionId,
         bool Running,
+        bool Final,
         ulong Iterations,
         int ParentPoolSize,
         ulong CompatibilityChecks,
         ulong CompatiblePairs,
+        ulong ReproductionCalls,
         ulong ReproductionFailures,
+        ulong ChildrenAddedToPool,
         ulong SpeciationCommitAttempts,
         ulong SpeciationCommitSuccesses,
-        string LastFailure);
+        string LastFailure,
+        ulong LastSeed);
 
     private enum SimulatorParentFileKind
     {
