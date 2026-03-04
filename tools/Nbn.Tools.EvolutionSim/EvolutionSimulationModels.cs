@@ -111,7 +111,11 @@ public sealed record ReproductionOutcome(
 
 public readonly record struct SpeciationCommitCandidate(
     Guid? ChildBrainId,
-    ArtifactRef? ChildDefinition);
+    ArtifactRef? ChildDefinition,
+    float? SimilarityScore = null,
+    float? FunctionScore = null,
+    float? ConnectivityScore = null,
+    float? RegionSpanScore = null);
 
 public readonly record struct SpeciationCommitOutcome(
     bool Success,

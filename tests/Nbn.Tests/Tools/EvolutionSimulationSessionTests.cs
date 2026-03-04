@@ -105,6 +105,25 @@ public sealed class EvolutionSimulationSessionTests
         Assert.Equal(status.SpeciationCommitAttempts, status.SpeciationCommitSuccesses);
     }
 
+    [Fact]
+    public async Task RunAsync_CommitCandidates_FallBackToAssessmentSimilarity_WhenMissing()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 1442UL, maxIterations: 2, commitToSpeciation: true);
+        var client = new DeterministicFakeClient(similarities: new[] { 0.35f, 0.55f });
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.True(status.SpeciationCommitAttempts > 0);
+        Assert.NotEmpty(client.CommittedCandidates);
+        Assert.All(client.CommittedCandidates, candidate =>
+        {
+            Assert.True(candidate.SimilarityScore.HasValue);
+            Assert.InRange(candidate.SimilarityScore.Value, 0f, 1f);
+        });
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]
@@ -183,6 +202,7 @@ public sealed class EvolutionSimulationSessionTests
         }
 
         public List<string> Events { get; } = new();
+        public List<SpeciationCommitCandidate> CommittedCandidates { get; } = new();
         public List<uint> RequestedRunCounts { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
         public bool ObservedArtifactParents { get; private set; }
@@ -255,6 +275,7 @@ public sealed class EvolutionSimulationSessionTests
             CancellationToken cancellationToken)
         {
             ObserveParentKinds(parentA, parentB);
+            CommittedCandidates.Add(candidate);
             var candidateLabel = candidate.ChildBrainId is Guid brainId && brainId != Guid.Empty
                 ? $"brain:{brainId:D}"
                 : candidate.ChildDefinition is { } definition

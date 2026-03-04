@@ -4,6 +4,7 @@ using Nbn.Shared;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
+using System.Text.Json.Nodes;
 using Repro = Nbn.Proto.Repro;
 using ProtoSpec = Nbn.Proto.Speciation;
 
@@ -234,7 +235,9 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         var request = new ProtoSpec.SpeciationAssignRequest
         {
             ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
-            Candidate = candidateRef
+            Candidate = candidateRef,
+            DecisionReason = "evolution_sim_commit",
+            DecisionMetadataJson = BuildSpeciationDecisionMetadataJson(candidate)
         };
         if (!TryBuildParentRef(parentA, out var parentRefA)
             || !TryBuildParentRef(parentB, out var parentRefB))
@@ -322,11 +325,11 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         foreach (var run in result.Runs)
         {
             AddArtifactIfValid(run.ChildDef, children, seenKeys);
-            AddCommitCandidateIfValid(run.ChildBrainId, run.ChildDef, commitCandidates, seenCommitCandidates);
+            AddCommitCandidateIfValid(run.ChildBrainId, run.ChildDef, run.Report, commitCandidates, seenCommitCandidates);
         }
 
         AddArtifactIfValid(result.ChildDef, children, seenKeys);
-        AddCommitCandidateIfValid(result.ChildBrainId, result.ChildDef, commitCandidates, seenCommitCandidates);
+        AddCommitCandidateIfValid(result.ChildBrainId, result.ChildDef, result.Report, commitCandidates, seenCommitCandidates);
         return (children, commitCandidates);
     }
 
@@ -349,6 +352,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
     private static void AddCommitCandidateIfValid(
         Uuid? childBrainId,
         ArtifactRef? childDefinition,
+        Repro.SimilarityReport? report,
         ICollection<SpeciationCommitCandidate> candidates,
         ISet<string> seenKeys)
     {
@@ -387,7 +391,51 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             return;
         }
 
-        candidates.Add(new SpeciationCommitCandidate(parsedBrainId, definition));
+        candidates.Add(new SpeciationCommitCandidate(
+            ChildBrainId: parsedBrainId,
+            ChildDefinition: definition,
+            SimilarityScore: TryNormalizeScore(report?.SimilarityScore),
+            FunctionScore: TryNormalizeScore(report?.FunctionScore),
+            ConnectivityScore: TryNormalizeScore(report?.ConnectivityScore),
+            RegionSpanScore: TryNormalizeScore(report?.RegionSpanScore)));
+    }
+
+    private static string BuildSpeciationDecisionMetadataJson(SpeciationCommitCandidate candidate)
+    {
+        var metadata = new JsonObject
+        {
+            ["source"] = "evolution_sim"
+        };
+
+        var report = new JsonObject();
+        AddScore(report, "similarity_score", candidate.SimilarityScore);
+        AddScore(report, "function_score", candidate.FunctionScore);
+        AddScore(report, "connectivity_score", candidate.ConnectivityScore);
+        AddScore(report, "region_span_score", candidate.RegionSpanScore);
+        if (report.Count > 0)
+        {
+            metadata["report"] = report;
+        }
+
+        return metadata.ToJsonString();
+    }
+
+    private static float? TryNormalizeScore(float? value)
+    {
+        if (!value.HasValue || float.IsNaN(value.Value) || float.IsInfinity(value.Value))
+        {
+            return null;
+        }
+
+        return Math.Clamp(value.Value, 0f, 1f);
+    }
+
+    private static void AddScore(JsonObject target, string key, float? value)
+    {
+        if (value.HasValue && !float.IsNaN(value.Value) && !float.IsInfinity(value.Value))
+        {
+            target[key] = Math.Clamp(value.Value, 0f, 1f);
+        }
     }
 
     private static bool TryBuildCandidateRef(

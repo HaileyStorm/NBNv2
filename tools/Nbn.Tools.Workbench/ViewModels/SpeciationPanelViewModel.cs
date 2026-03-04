@@ -1237,12 +1237,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         _dispatcher.Post(() =>
         {
             SimulatorSessionId = snapshot.SessionId;
+            var childrenLabel = snapshot.ChildrenAddedToPool.ToString(CultureInfo.InvariantCulture);
+            if (!SimSpawnChildren && snapshot.ChildrenAddedToPool == 0 && snapshot.ReproductionCalls > 0)
+            {
+                childrenLabel = "0 (expected while spawn children is off)";
+            }
+
             SimulatorProgress =
                 $"running={snapshot.Running} final={snapshot.Final} iter={snapshot.Iterations} pool={snapshot.ParentPoolSize}";
             SimulatorDetailedStats =
                 $"compat={snapshot.CompatiblePairs}/{snapshot.CompatibilityChecks} " +
                 $"repro_calls={snapshot.ReproductionCalls} repro_fail={snapshot.ReproductionFailures} " +
-                $"children={snapshot.ChildrenAddedToPool} speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts} " +
+                $"children={childrenLabel} speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts} " +
                 $"seed={snapshot.LastSeed}";
             SimulatorLastFailure = string.IsNullOrWhiteSpace(snapshot.LastFailure) ? "(none)" : snapshot.LastFailure;
             if (!snapshot.Running)

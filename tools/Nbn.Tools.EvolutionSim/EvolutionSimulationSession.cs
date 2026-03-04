@@ -185,9 +185,20 @@ public sealed class EvolutionSimulationSession
 
         foreach (var candidate in reproduction.CommitCandidates)
         {
+            var commitCandidate = candidate;
+            if (!commitCandidate.SimilarityScore.HasValue
+                && !float.IsNaN(assessment.SimilarityScore)
+                && !float.IsInfinity(assessment.SimilarityScore))
+            {
+                commitCandidate = commitCandidate with
+                {
+                    SimilarityScore = Math.Clamp(assessment.SimilarityScore, 0f, 1f)
+                };
+            }
+
             IncrementSpeciationCommitAttempts();
             var commitOutcome = await _client.CommitSpeciationAsync(
-                candidate,
+                commitCandidate,
                 parentA,
                 parentB,
                 cancellationToken).ConfigureAwait(false);
