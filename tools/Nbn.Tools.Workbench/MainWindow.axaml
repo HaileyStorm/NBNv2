@@ -8,6 +8,7 @@
         x:Class="Nbn.Tools.Workbench.MainWindow"
         x:DataType="vm:ShellViewModel"
         Title="NothingButNeurons Workbench"
+        WindowState="Maximized"
         MinWidth="1100" MinHeight="700">
   <Grid ColumnDefinitions="260,*" RowDefinitions="Auto,*">
     <Border Classes="sidebar" Grid.RowSpan="2">
