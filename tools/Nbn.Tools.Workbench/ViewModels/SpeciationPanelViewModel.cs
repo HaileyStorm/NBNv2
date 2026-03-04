@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -17,6 +18,33 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 {
+    private const int DefaultLiveChartIntervalSeconds = 2;
+    private const int MinLiveChartIntervalSeconds = 1;
+    private const int MaxLiveChartIntervalSeconds = 30;
+    private const double PopulationChartPlotWidth = 360d;
+    private const double PopulationChartPlotHeight = 156d;
+    private const double PopulationChartPaddingX = 8d;
+    private const double PopulationChartPaddingY = 8d;
+    private const double FlowChartPlotWidth = 360d;
+    private const double FlowChartPlotHeight = 220d;
+    private const double FlowChartPaddingX = 8d;
+    private const double FlowChartPaddingY = 8d;
+    private static readonly string[] SpeciesChartPalette =
+    [
+        "#3B82F6",
+        "#E76F51",
+        "#2A9D8F",
+        "#F4A261",
+        "#A855F7",
+        "#1F7A8C",
+        "#BC6C25",
+        "#6C8F3A",
+        "#D9467A",
+        "#6D597A",
+        "#00A896",
+        "#577590"
+    ];
+
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
@@ -24,7 +52,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly Func<Task>? _stopSpeciationService;
     private readonly Func<Task>? _refreshOrchestrator;
     private readonly LocalServiceRunner _evolutionRunner = new();
+    private readonly bool _enableLiveChartsAutoRefresh;
     private CancellationTokenSource? _simPollCts;
+    private CancellationTokenSource? _liveChartsPollCts;
     private string? _simStdoutLogPath;
 
     private string _status = "Idle";
@@ -71,6 +101,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _simGammaText = "1";
     private bool _simCommitToSpeciation = true;
     private bool _simSpawnChildren;
+    private bool _liveChartsEnabled;
+    private string _liveChartsIntervalSecondsText = DefaultLiveChartIntervalSeconds.ToString(CultureInfo.InvariantCulture);
+    private string _liveChartsStatus = "Live chart updates disabled.";
+    private string _populationChartRangeLabel = "Epochs: (no data)";
+    private string _populationChartMetricLabel = "Population count by species.";
+    private string _populationChartYAxisTopLabel = "0";
+    private string _populationChartYAxisMidLabel = "0";
+    private string _populationChartYAxisBottomLabel = "0";
+    private int _populationChartLegendColumns = 2;
+    private string _flowChartRangeLabel = "Epochs: (no data)";
+    private string _flowChartStartEpochLabel = "(n/a)";
+    private string _flowChartEndEpochLabel = "(n/a)";
+    private int _flowChartLegendColumns = 2;
 
     public SpeciationPanelViewModel(
         UiDispatcher dispatcher,
@@ -78,7 +121,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         WorkbenchClient client,
         Func<Task>? startSpeciationService = null,
         Func<Task>? stopSpeciationService = null,
-        Func<Task>? refreshOrchestrator = null)
+        Func<Task>? refreshOrchestrator = null,
+        bool enableLiveChartsAutoRefresh = true)
     {
         _dispatcher = dispatcher;
         _connections = connections;
@@ -86,11 +130,16 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         _startSpeciationService = startSpeciationService;
         _stopSpeciationService = stopSpeciationService;
         _refreshOrchestrator = refreshOrchestrator;
+        _enableLiveChartsAutoRefresh = enableLiveChartsAutoRefresh;
         _simBindHost = _connections.LocalBindHost;
 
         SpeciesCounts = new ObservableCollection<SpeciationSpeciesCountItem>();
         HistoryRows = new ObservableCollection<SpeciationHistoryItem>();
         EpochSummaries = new ObservableCollection<SpeciationEpochSummaryItem>();
+        PopulationChartSeries = new ObservableCollection<SpeciationLineChartSeriesItem>();
+        PopulationChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
+        FlowChartAreas = new ObservableCollection<SpeciationFlowChartAreaItem>();
+        FlowChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
 
         RefreshAllCommand = new AsyncRelayCommand(RefreshAllAsync);
         RefreshStatusCommand = new AsyncRelayCommand(RefreshStatusAsync);
@@ -104,6 +153,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         StartSimulatorCommand = new AsyncRelayCommand(StartSimulatorAsync);
         StopSimulatorCommand = new AsyncRelayCommand(StopSimulatorAsync);
         RefreshSimulatorStatusCommand = new AsyncRelayCommand(RefreshSimulatorStatusAsync);
+
+        _liveChartsEnabled = _enableLiveChartsAutoRefresh;
+        _liveChartsStatus = _liveChartsEnabled
+            ? $"Live updates active ({DefaultLiveChartIntervalSeconds}s)."
+            : "Live chart updates disabled.";
+        if (_liveChartsEnabled)
+        {
+            StartLiveChartsPolling();
+        }
     }
 
     public ConnectionViewModel Connections => _connections;
@@ -111,6 +169,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public ObservableCollection<SpeciationSpeciesCountItem> SpeciesCounts { get; }
     public ObservableCollection<SpeciationHistoryItem> HistoryRows { get; }
     public ObservableCollection<SpeciationEpochSummaryItem> EpochSummaries { get; }
+    public ObservableCollection<SpeciationLineChartSeriesItem> PopulationChartSeries { get; }
+    public ObservableCollection<SpeciationChartLegendItem> PopulationChartLegend { get; }
+    public ObservableCollection<SpeciationFlowChartAreaItem> FlowChartAreas { get; }
+    public ObservableCollection<SpeciationChartLegendItem> FlowChartLegend { get; }
 
     public AsyncRelayCommand RefreshAllCommand { get; }
     public AsyncRelayCommand RefreshStatusCommand { get; }
@@ -395,8 +457,109 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     public bool SimRunnerActive => _evolutionRunner.IsRunning;
 
+    public bool LiveChartsEnabled
+    {
+        get => _liveChartsEnabled;
+        set
+        {
+            if (!SetProperty(ref _liveChartsEnabled, value))
+            {
+                return;
+            }
+
+            if (value)
+            {
+                LiveChartsStatus = $"Live updates active ({ParseLiveChartIntervalSecondsOrDefault()}s).";
+                StartLiveChartsPolling();
+            }
+            else
+            {
+                StopLiveChartsPolling();
+                LiveChartsStatus = "Live chart updates paused.";
+            }
+        }
+    }
+
+    public string LiveChartsIntervalSecondsText
+    {
+        get => _liveChartsIntervalSecondsText;
+        set => SetProperty(ref _liveChartsIntervalSecondsText, value);
+    }
+
+    public string LiveChartsStatus
+    {
+        get => _liveChartsStatus;
+        set => SetProperty(ref _liveChartsStatus, value);
+    }
+
+    public string PopulationChartRangeLabel
+    {
+        get => _populationChartRangeLabel;
+        set => SetProperty(ref _populationChartRangeLabel, value);
+    }
+
+    public string PopulationChartMetricLabel
+    {
+        get => _populationChartMetricLabel;
+        set => SetProperty(ref _populationChartMetricLabel, value);
+    }
+
+    public string PopulationChartYAxisTopLabel
+    {
+        get => _populationChartYAxisTopLabel;
+        set => SetProperty(ref _populationChartYAxisTopLabel, value);
+    }
+
+    public string PopulationChartYAxisMidLabel
+    {
+        get => _populationChartYAxisMidLabel;
+        set => SetProperty(ref _populationChartYAxisMidLabel, value);
+    }
+
+    public string PopulationChartYAxisBottomLabel
+    {
+        get => _populationChartYAxisBottomLabel;
+        set => SetProperty(ref _populationChartYAxisBottomLabel, value);
+    }
+
+    public int PopulationChartLegendColumns
+    {
+        get => _populationChartLegendColumns;
+        set => SetProperty(ref _populationChartLegendColumns, value);
+    }
+
+    public string FlowChartRangeLabel
+    {
+        get => _flowChartRangeLabel;
+        set => SetProperty(ref _flowChartRangeLabel, value);
+    }
+
+    public string FlowChartStartEpochLabel
+    {
+        get => _flowChartStartEpochLabel;
+        set => SetProperty(ref _flowChartStartEpochLabel, value);
+    }
+
+    public string FlowChartEndEpochLabel
+    {
+        get => _flowChartEndEpochLabel;
+        set => SetProperty(ref _flowChartEndEpochLabel, value);
+    }
+
+    public int FlowChartLegendColumns
+    {
+        get => _flowChartLegendColumns;
+        set => SetProperty(ref _flowChartLegendColumns, value);
+    }
+
+    public double PopulationChartWidth => PopulationChartPlotWidth;
+    public double PopulationChartHeight => PopulationChartPlotHeight;
+    public double FlowChartWidth => FlowChartPlotWidth;
+    public double FlowChartHeight => FlowChartPlotHeight;
+
     public async ValueTask DisposeAsync()
     {
+        StopLiveChartsPolling();
         _simPollCts?.Cancel();
         await StopSimulatorAsync().ConfigureAwait(false);
     }
@@ -408,6 +571,44 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         await RefreshMembershipsAsync().ConfigureAwait(false);
         await RefreshHistoryAsync().ConfigureAwait(false);
         await RefreshSimulatorStatusAsync().ConfigureAwait(false);
+    }
+
+    private void StartLiveChartsPolling()
+    {
+        StopLiveChartsPolling();
+        _liveChartsPollCts = new CancellationTokenSource();
+        _ = PollLiveChartsAsync(_liveChartsPollCts.Token);
+    }
+
+    private void StopLiveChartsPolling()
+    {
+        _liveChartsPollCts?.Cancel();
+        _liveChartsPollCts = null;
+    }
+
+    private async Task PollLiveChartsAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var intervalSeconds = ParseLiveChartIntervalSecondsOrDefault();
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            if (cancellationToken.IsCancellationRequested || !LiveChartsEnabled)
+            {
+                break;
+            }
+
+            await RefreshHistoryAsync().ConfigureAwait(false);
+            await RefreshMembershipsAsync().ConfigureAwait(false);
+            LiveChartsStatus = $"Live updates active ({intervalSeconds}s).";
+        }
     }
 
     private async Task RefreshStatusAsync()
@@ -619,6 +820,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             })
             .OrderByDescending(entry => entry.EpochId)
             .ToList();
+        var populationSnapshot = BuildPopulationChartSnapshot(response.History);
+        var flowSnapshot = BuildFlowChartSnapshot(response.History);
 
         _dispatcher.Post(() =>
         {
@@ -634,6 +837,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 EpochSummaries.Add(row);
             }
 
+            ApplyPopulationChartSnapshot(populationSnapshot);
+            ApplyFlowChartSnapshot(flowSnapshot);
             HistoryStatus = $"History loaded: {historyRows.Count} rows (total={response.TotalRecords}).";
             Status = HistoryStatus;
         });
@@ -1093,6 +1298,399 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return string.Join(" ", args);
     }
 
+    private int ParseLiveChartIntervalSecondsOrDefault()
+    {
+        var parsed = ParseInt(LiveChartsIntervalSecondsText, DefaultLiveChartIntervalSeconds);
+        return Math.Clamp(parsed, MinLiveChartIntervalSeconds, MaxLiveChartIntervalSeconds);
+    }
+
+    private static PopulationChartSnapshot BuildPopulationChartSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        var (epochRows, speciesOrder) = BuildEpochPopulationFrame(history);
+        if (epochRows.Count == 0 || speciesOrder.Count == 0)
+        {
+            return new PopulationChartSnapshot(
+                RangeLabel: "Epochs: (no data)",
+                MetricLabel: "Population count by species.",
+                YTopLabel: "0",
+                YMidLabel: "0",
+                YBottomLabel: "0",
+                LegendColumns: 2,
+                Series: Array.Empty<SpeciationLineChartSeriesItem>(),
+                Legend: Array.Empty<SpeciationChartLegendItem>());
+        }
+
+        var maxCount = Math.Max(1, epochRows.SelectMany(row => row.Counts.Values).DefaultIfEmpty(0).Max());
+        var series = new List<SpeciationLineChartSeriesItem>(speciesOrder.Count);
+        var legend = new List<SpeciationChartLegendItem>(speciesOrder.Count);
+        foreach (var species in speciesOrder)
+        {
+            var values = epochRows
+                .Select(row => row.Counts.TryGetValue(species.SpeciesId, out var count) ? count : 0)
+                .Select(value => (double)value)
+                .ToArray();
+            var path = BuildLinePath(
+                values,
+                yMin: 0d,
+                yMax: maxCount,
+                plotWidth: PopulationChartPlotWidth,
+                plotHeight: PopulationChartPlotHeight,
+                paddingX: PopulationChartPaddingX,
+                paddingY: PopulationChartPaddingY);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            var color = ResolveSpeciesColor(species.SpeciesId);
+            var latestCount = values.Length == 0 ? 0 : (int)values[^1];
+            var latestCountLabel = latestCount.ToString(CultureInfo.InvariantCulture);
+            series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestCountLabel));
+            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, $"now {latestCountLabel}"));
+        }
+
+        var legendColumns = Math.Clamp(series.Count <= 1 ? 2 : series.Count, 2, 4);
+        var minEpoch = epochRows[0].EpochId;
+        var maxEpoch = epochRows[^1].EpochId;
+        var rangeLabel = $"Epochs {minEpoch}..{maxEpoch} ({epochRows.Count} samples)";
+        return new PopulationChartSnapshot(
+            RangeLabel: rangeLabel,
+            MetricLabel: "Population count by species.",
+            YTopLabel: FormatAxisValue(maxCount),
+            YMidLabel: FormatAxisValue(maxCount / 2d),
+            YBottomLabel: "0",
+            LegendColumns: legendColumns,
+            Series: series,
+            Legend: legend);
+    }
+
+    private static FlowChartSnapshot BuildFlowChartSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        var (epochRows, speciesOrder) = BuildEpochPopulationFrame(history);
+        if (epochRows.Count == 0 || speciesOrder.Count == 0)
+        {
+            return new FlowChartSnapshot(
+                RangeLabel: "Epochs: (no data)",
+                StartEpochLabel: "(n/a)",
+                EndEpochLabel: "(n/a)",
+                LegendColumns: 2,
+                Areas: Array.Empty<SpeciationFlowChartAreaItem>(),
+                Legend: Array.Empty<SpeciationChartLegendItem>());
+        }
+
+        var speciesCount = speciesOrder.Count;
+        var epochCount = epochRows.Count;
+        var startsByEpoch = new List<double[]>(epochCount);
+        var endsByEpoch = new List<double[]>(epochCount);
+        foreach (var row in epochRows)
+        {
+            var starts = new double[speciesCount];
+            var ends = new double[speciesCount];
+            var cumulative = 0d;
+            var total = Math.Max(0, row.TotalCount);
+            for (var i = 0; i < speciesCount; i++)
+            {
+                starts[i] = cumulative;
+                var count = row.Counts.TryGetValue(speciesOrder[i].SpeciesId, out var value) ? value : 0;
+                var ratio = total > 0 ? count / (double)total : 0d;
+                cumulative = Math.Min(1d, cumulative + ratio);
+                ends[i] = cumulative;
+            }
+
+            startsByEpoch.Add(starts);
+            endsByEpoch.Add(ends);
+        }
+
+        var areas = new List<SpeciationFlowChartAreaItem>(speciesCount);
+        var legend = new List<SpeciationChartLegendItem>(speciesCount);
+        for (var speciesIndex = 0; speciesIndex < speciesCount; speciesIndex++)
+        {
+            var starts = new double[epochCount];
+            var ends = new double[epochCount];
+            for (var epochIndex = 0; epochIndex < epochCount; epochIndex++)
+            {
+                starts[epochIndex] = startsByEpoch[epochIndex][speciesIndex];
+                ends[epochIndex] = endsByEpoch[epochIndex][speciesIndex];
+            }
+
+            var path = BuildFlowAreaPath(
+                starts,
+                ends,
+                plotWidth: FlowChartPlotWidth,
+                plotHeight: FlowChartPlotHeight,
+                paddingX: FlowChartPaddingX,
+                paddingY: FlowChartPaddingY);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            var species = speciesOrder[speciesIndex];
+            var color = ResolveSpeciesColor(species.SpeciesId);
+            var fill = WithAlpha(color, 0x8C);
+            var lastShare = Math.Max(0d, ends[^1] - starts[^1]);
+            var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
+            areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel));
+            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, $"now {lastShareLabel}"));
+        }
+
+        var minEpoch = epochRows[0].EpochId;
+        var maxEpoch = epochRows[^1].EpochId;
+        var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, 4);
+        return new FlowChartSnapshot(
+            RangeLabel: $"Stacked share of total population per epoch ({minEpoch}..{maxEpoch}).",
+            StartEpochLabel: minEpoch.ToString(CultureInfo.InvariantCulture),
+            EndEpochLabel: maxEpoch.ToString(CultureInfo.InvariantCulture),
+            LegendColumns: legendColumns,
+            Areas: areas,
+            Legend: legend);
+    }
+
+    private void ApplyPopulationChartSnapshot(PopulationChartSnapshot snapshot)
+    {
+        ReplaceItems(PopulationChartSeries, snapshot.Series);
+        ReplaceItems(PopulationChartLegend, snapshot.Legend);
+        PopulationChartRangeLabel = snapshot.RangeLabel;
+        PopulationChartMetricLabel = snapshot.MetricLabel;
+        PopulationChartYAxisTopLabel = snapshot.YTopLabel;
+        PopulationChartYAxisMidLabel = snapshot.YMidLabel;
+        PopulationChartYAxisBottomLabel = snapshot.YBottomLabel;
+        PopulationChartLegendColumns = snapshot.LegendColumns;
+    }
+
+    private void ApplyFlowChartSnapshot(FlowChartSnapshot snapshot)
+    {
+        ReplaceItems(FlowChartAreas, snapshot.Areas);
+        ReplaceItems(FlowChartLegend, snapshot.Legend);
+        FlowChartRangeLabel = snapshot.RangeLabel;
+        FlowChartStartEpochLabel = snapshot.StartEpochLabel;
+        FlowChartEndEpochLabel = snapshot.EndEpochLabel;
+        FlowChartLegendColumns = snapshot.LegendColumns;
+    }
+
+    private static (List<EpochPopulationRow> EpochRows, List<SpeciesPopulationMeta> SpeciesOrder) BuildEpochPopulationFrame(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        if (history.Count == 0)
+        {
+            return (new List<EpochPopulationRow>(), new List<SpeciesPopulationMeta>());
+        }
+
+        var speciesStats = new Dictionary<string, SpeciesPopulationMeta>(StringComparer.OrdinalIgnoreCase);
+        var epochRows = history
+            .GroupBy(entry => (long)entry.EpochId)
+            .OrderBy(group => group.Key)
+            .Select(group =>
+            {
+                var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                foreach (var record in group)
+                {
+                    var speciesId = NormalizeSpeciesId(record.SpeciesId);
+                    var speciesName = NormalizeSpeciesName(record.SpeciesDisplayName, speciesId);
+                    counts.TryGetValue(speciesId, out var prior);
+                    counts[speciesId] = prior + 1;
+                    if (speciesStats.TryGetValue(speciesId, out var existing))
+                    {
+                        speciesStats[speciesId] = existing with
+                        {
+                            DisplayName = string.IsNullOrWhiteSpace(existing.DisplayName) ? speciesName : existing.DisplayName,
+                            TotalCount = existing.TotalCount + 1
+                        };
+                    }
+                    else
+                    {
+                        speciesStats[speciesId] = new SpeciesPopulationMeta(speciesId, speciesName, 1);
+                    }
+                }
+
+                return new EpochPopulationRow(group.Key, counts, counts.Values.Sum());
+            })
+            .ToList();
+        var speciesOrder = speciesStats.Values
+            .OrderByDescending(item => item.TotalCount)
+            .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return (epochRows, speciesOrder);
+    }
+
+    private static string BuildLinePath(
+        IReadOnlyList<double> values,
+        double yMin,
+        double yMax,
+        double plotWidth,
+        double plotHeight,
+        double paddingX,
+        double paddingY)
+    {
+        if (values.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var boundedMin = double.IsFinite(yMin) ? yMin : 0d;
+        var boundedMax = double.IsFinite(yMax) ? yMax : 1d;
+        if (!(boundedMax > boundedMin))
+        {
+            boundedMax = boundedMin + 1d;
+        }
+
+        var usableWidth = Math.Max(1d, plotWidth - (paddingX * 2d));
+        var usableHeight = Math.Max(1d, plotHeight - (paddingY * 2d));
+        var xStep = values.Count > 1 ? usableWidth / (values.Count - 1) : 0d;
+        var builder = new StringBuilder(values.Count * 26);
+        for (var i = 0; i < values.Count; i++)
+        {
+            var x = paddingX + (i * xStep);
+            var ratio = Math.Clamp((values[i] - boundedMin) / (boundedMax - boundedMin), 0d, 1d);
+            var y = paddingY + ((1d - ratio) * usableHeight);
+            builder.Append(i == 0 ? "M " : " L ");
+            builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
+            builder.Append(' ');
+            builder.Append(y.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildFlowAreaPath(
+        IReadOnlyList<double> starts,
+        IReadOnlyList<double> ends,
+        double plotWidth,
+        double plotHeight,
+        double paddingX,
+        double paddingY)
+    {
+        if (starts.Count == 0 || starts.Count != ends.Count)
+        {
+            return string.Empty;
+        }
+
+        var hasArea = false;
+        for (var i = 0; i < starts.Count; i++)
+        {
+            if ((ends[i] - starts[i]) > 1e-6d)
+            {
+                hasArea = true;
+                break;
+            }
+        }
+
+        if (!hasArea)
+        {
+            return string.Empty;
+        }
+
+        var usableWidth = Math.Max(1d, plotWidth - (paddingX * 2d));
+        var usableHeight = Math.Max(1d, plotHeight - (paddingY * 2d));
+        var yStep = starts.Count > 1 ? usableHeight / (starts.Count - 1) : 0d;
+        var builder = new StringBuilder(starts.Count * 48);
+        for (var i = 0; i < starts.Count; i++)
+        {
+            var x = paddingX + (Math.Clamp(ends[i], 0d, 1d) * usableWidth);
+            var y = paddingY + (i * yStep);
+            builder.Append(i == 0 ? "M " : " L ");
+            builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
+            builder.Append(' ');
+            builder.Append(y.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+
+        for (var i = starts.Count - 1; i >= 0; i--)
+        {
+            var x = paddingX + (Math.Clamp(starts[i], 0d, 1d) * usableWidth);
+            var y = paddingY + (i * yStep);
+            builder.Append(" L ");
+            builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
+            builder.Append(' ');
+            builder.Append(y.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+
+        builder.Append(" Z");
+        return builder.ToString();
+    }
+
+    private static string ResolveSpeciesColor(string speciesId)
+    {
+        if (string.IsNullOrWhiteSpace(speciesId))
+        {
+            return SpeciesChartPalette[0];
+        }
+
+        var hash = 17;
+        foreach (var ch in speciesId)
+        {
+            hash = (hash * 31) + ch;
+        }
+
+        var index = (hash & int.MaxValue) % SpeciesChartPalette.Length;
+        return SpeciesChartPalette[index];
+    }
+
+    private static string WithAlpha(string colorHex, byte alpha)
+    {
+        if (string.IsNullOrWhiteSpace(colorHex))
+        {
+            return $"#{alpha:X2}808080";
+        }
+
+        var normalized = colorHex.Trim();
+        if (normalized.StartsWith('#'))
+        {
+            normalized = normalized[1..];
+        }
+
+        if (normalized.Length == 8)
+        {
+            return $"#{alpha:X2}{normalized[2..]}";
+        }
+
+        if (normalized.Length == 6)
+        {
+            return $"#{alpha:X2}{normalized}";
+        }
+
+        return colorHex;
+    }
+
+    private static string FormatAxisValue(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return "n/a";
+        }
+
+        var abs = Math.Abs(value);
+        if (abs >= 1_000_000_000d)
+        {
+            return $"{value / 1_000_000_000d:0.##}B";
+        }
+
+        if (abs >= 1_000_000d)
+        {
+            return $"{value / 1_000_000d:0.##}M";
+        }
+
+        if (abs >= 1_000d)
+        {
+            return $"{value / 1_000d:0.##}K";
+        }
+
+        return value.ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
+    private static string NormalizeSpeciesId(string? speciesId)
+        => string.IsNullOrWhiteSpace(speciesId) ? "(unknown)" : speciesId.Trim();
+
+    private static string NormalizeSpeciesName(string? speciesName, string speciesId)
+        => string.IsNullOrWhiteSpace(speciesName) ? speciesId : speciesName.Trim();
+
+    private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
+    {
+        target.Clear();
+        foreach (var item in source)
+        {
+            target.Add(item);
+        }
+    }
+
     private static string QuoteIfNeeded(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1261,6 +1859,34 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    private readonly record struct PopulationChartSnapshot(
+        string RangeLabel,
+        string MetricLabel,
+        string YTopLabel,
+        string YMidLabel,
+        string YBottomLabel,
+        int LegendColumns,
+        IReadOnlyList<SpeciationLineChartSeriesItem> Series,
+        IReadOnlyList<SpeciationChartLegendItem> Legend);
+
+    private readonly record struct FlowChartSnapshot(
+        string RangeLabel,
+        string StartEpochLabel,
+        string EndEpochLabel,
+        int LegendColumns,
+        IReadOnlyList<SpeciationFlowChartAreaItem> Areas,
+        IReadOnlyList<SpeciationChartLegendItem> Legend);
+
+    private readonly record struct EpochPopulationRow(
+        long EpochId,
+        Dictionary<string, int> Counts,
+        int TotalCount);
+
+    private readonly record struct SpeciesPopulationMeta(
+        string SpeciesId,
+        string DisplayName,
+        int TotalCount);
+
     private readonly record struct EvolutionSimStatusSnapshot(
         string SessionId,
         bool Running,
@@ -1295,3 +1921,23 @@ public sealed record SpeciationEpochSummaryItem(
     int SpeciesCount,
     string FirstAssigned,
     string LastAssigned);
+
+public sealed record SpeciationLineChartSeriesItem(
+    string SpeciesId,
+    string Label,
+    string Stroke,
+    string PathData,
+    string LatestCountLabel);
+
+public sealed record SpeciationFlowChartAreaItem(
+    string SpeciesId,
+    string Label,
+    string Fill,
+    string Stroke,
+    string PathData,
+    string LatestShareLabel);
+
+public sealed record SpeciationChartLegendItem(
+    string Label,
+    string Color,
+    string ValueLabel);

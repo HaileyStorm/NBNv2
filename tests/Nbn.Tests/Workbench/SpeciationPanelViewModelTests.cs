@@ -129,7 +129,63 @@ public class SpeciationPanelViewModelTests
         Assert.Contains("Parent file not found", vm.SimulatorStatus, StringComparison.Ordinal);
     }
 
-    private static SpeciationPanelViewModel CreateViewModel(FakeWorkbenchClient client)
+    [Fact]
+    public async Task RefreshHistoryCommand_BuildsPopulationAndFlowCharts()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 1002, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 2000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2002, BrainId = Guid.NewGuid().ToProtoUuid() }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+
+        var vm = CreateViewModel(client);
+        vm.HistoryLimitText = "64";
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.PopulationChartSeries.Count == 2 && vm.FlowChartAreas.Count == 2);
+
+        Assert.Equal("Epochs 10..11 (2 samples)", vm.PopulationChartRangeLabel);
+        Assert.Equal("10", vm.FlowChartStartEpochLabel);
+        Assert.Equal("11", vm.FlowChartEndEpochLabel);
+        Assert.All(vm.PopulationChartSeries, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
+        Assert.All(vm.FlowChartAreas, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
+    }
+
+    [Fact]
+    public async Task LiveChartsEnabled_AutoRefreshesHistory()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone
+            }
+        };
+        var vm = CreateViewModel(client, enableAutoRefresh: false);
+        vm.LiveChartsIntervalSecondsText = "1";
+        vm.LiveChartsEnabled = true;
+
+        await WaitForAsync(() => client.HistoryCallCount > 0, timeoutMs: 4000);
+        Assert.Contains("active", vm.LiveChartsStatus, StringComparison.OrdinalIgnoreCase);
+
+        vm.LiveChartsEnabled = false;
+        await vm.DisposeAsync();
+    }
+
+    private static SpeciationPanelViewModel CreateViewModel(FakeWorkbenchClient client, bool enableAutoRefresh = false)
     {
         var connections = new ConnectionViewModel
         {
@@ -137,7 +193,14 @@ public class SpeciationPanelViewModelTests
             IoPortText = "12050",
             IoGateway = "io-gateway"
         };
-        return new SpeciationPanelViewModel(new UiDispatcher(), connections, client);
+        return new SpeciationPanelViewModel(
+            new UiDispatcher(),
+            connections,
+            client,
+            startSpeciationService: null,
+            stopSpeciationService: null,
+            refreshOrchestrator: null,
+            enableLiveChartsAutoRefresh: enableAutoRefresh);
     }
 
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)
@@ -214,6 +277,7 @@ public class SpeciationPanelViewModelTests
         public int SetConfigCallCount { get; private set; }
         public bool LastStartNewEpoch { get; private set; }
         public long? LastMembershipEpochFilter { get; private set; }
+        public int HistoryCallCount { get; private set; }
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -250,7 +314,10 @@ public class SpeciationPanelViewModelTests
             Guid? brainId = null,
             uint limit = 256,
             CancellationToken cancellationToken = default)
-            => Task.FromResult(HistoryResponse);
+        {
+            HistoryCallCount++;
+            return Task.FromResult(HistoryResponse);
+        }
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

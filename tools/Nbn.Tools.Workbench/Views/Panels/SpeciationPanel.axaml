@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shapes="clr-namespace:Avalonia.Controls.Shapes;assembly=Avalonia.Controls"
              xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
              x:Class="Nbn.Tools.Workbench.Views.Panels.SpeciationPanel"
              x:DataType="vm:SpeciationPanelViewModel">
@@ -157,6 +158,127 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
             </ScrollViewer>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card" Grid.Column="0">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+              <TextBlock Text="Population Over Time" Classes="card-title" />
+              <CheckBox Grid.Column="1" Content="Live update" IsChecked="{Binding LiveChartsEnabled}" VerticalAlignment="Center" />
+              <TextBox Grid.Column="2" Width="48" Text="{Binding LiveChartsIntervalSecondsText}" HorizontalContentAlignment="Center" />
+              <TextBlock Grid.Column="3" Text="sec" Classes="muted" VerticalAlignment="Center" />
+            </Grid>
+            <TextBlock Text="{Binding LiveChartsStatus}" Classes="muted" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="44,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <TextBlock Text="{Binding PopulationChartYAxisTopLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
+                <TextBlock Grid.Row="1" Text="{Binding PopulationChartYAxisMidLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Text="{Binding PopulationChartYAxisBottomLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+              </Grid>
+              <Grid Grid.Column="1"
+                    Width="{Binding PopulationChartWidth}"
+                    Height="{Binding PopulationChartHeight}"
+                    ClipToBounds="True">
+                <shapes:Line StartPoint="0,8" EndPoint="360,8" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,78" EndPoint="360,78" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,148" EndPoint="360,148" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <ItemsControl ItemsSource="{Binding PopulationChartSeries}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <Grid />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SpeciationLineChartSeriesItem">
+                      <shapes:Path Data="{Binding PathData}" Stroke="{Binding Stroke}" StrokeThickness="1.7" IsHitTestVisible="False" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+              <TextBlock Grid.Row="1"
+                         Grid.Column="1"
+                         Text="{Binding PopulationChartRangeLabel}"
+                         Classes="muted"
+                         FontSize="10"
+                         TextWrapping="NoWrap"
+                         TextTrimming="CharacterEllipsis" />
+            </Grid>
+            <TextBlock Text="{Binding PopulationChartMetricLabel}" Classes="muted" FontSize="10" TextWrapping="Wrap" />
+            <ItemsControl ItemsSource="{Binding PopulationChartLegend}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Columns="{Binding $parent[UserControl].DataContext.PopulationChartLegendColumns}" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
+                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
+                    <Border Width="12" Height="2" VerticalAlignment="Center" Background="{Binding Color}" />
+                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+                    <TextBlock Text="{Binding ValueLabel}" Classes="muted" FontSize="10" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Species Flow (Epoch Top to Bottom)" Classes="card-title" />
+            <TextBlock Text="Stacked widths show per-species population share each epoch (full width = 100%)." Classes="muted" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="44,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <TextBlock Text="{Binding FlowChartStartEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
+                <TextBlock Grid.Row="1" Text="time" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Text="{Binding FlowChartEndEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+              </Grid>
+              <Grid Grid.Column="1"
+                    Width="{Binding FlowChartWidth}"
+                    Height="{Binding FlowChartHeight}"
+                    ClipToBounds="True">
+                <shapes:Line StartPoint="8,0" EndPoint="8,220" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="180,0" EndPoint="180,220" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="352,0" EndPoint="352,220" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <ItemsControl ItemsSource="{Binding FlowChartAreas}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <Grid />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SpeciationFlowChartAreaItem">
+                      <shapes:Path Data="{Binding PathData}" Fill="{Binding Fill}" Stroke="{Binding Stroke}" StrokeThickness="1" IsHitTestVisible="False" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+              <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                <TextBlock Text="0%" Classes="muted" FontSize="10" />
+                <TextBlock Grid.Column="1" Text="50%" Classes="muted" FontSize="10" HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="100%" Classes="muted" FontSize="10" HorizontalAlignment="Right" />
+              </Grid>
+            </Grid>
+            <TextBlock Text="{Binding FlowChartRangeLabel}" Classes="muted" FontSize="10" TextWrapping="Wrap" />
+            <ItemsControl ItemsSource="{Binding FlowChartLegend}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Columns="{Binding $parent[UserControl].DataContext.FlowChartLegendColumns}" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
+                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
+                    <Border Width="12" Height="10" VerticalAlignment="Center" Background="{Binding Color}" />
+                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+                    <TextBlock Text="{Binding ValueLabel}" Classes="muted" FontSize="10" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
           </StackPanel>
         </Border>
       </Grid>
