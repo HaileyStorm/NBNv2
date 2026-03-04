@@ -124,6 +124,37 @@ public sealed class EvolutionSimulationSessionTests
         });
     }
 
+    [Fact]
+    public async Task RunAsync_SeedsInitialParentsIntoSpeciation_BeforeIterationCommits()
+    {
+        var parents = CreateBrainParentPool();
+        var options = CreateOptions(
+            seed: 7811UL,
+            maxIterations: 1,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds);
+        var client = new DeterministicFakeClient();
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        await session.RunAsync(CancellationToken.None);
+
+        var initialParentIds = parents
+            .Where(parent => parent.BrainId.HasValue)
+            .Select(parent => parent.BrainId!.Value)
+            .ToHashSet();
+        Assert.NotEmpty(initialParentIds);
+        Assert.Contains(
+            client.CommittedCandidates,
+            candidate => candidate.ChildBrainId.HasValue && initialParentIds.Contains(candidate.ChildBrainId.Value));
+
+        var firstSpeciationIndex = client.Events.FindIndex(
+            static entry => entry.StartsWith("speciation:", StringComparison.Ordinal));
+        var firstAssessIndex = client.Events.FindIndex(
+            static entry => entry.StartsWith("assess:", StringComparison.Ordinal));
+        Assert.True(firstSpeciationIndex >= 0);
+        Assert.True(firstAssessIndex < 0 || firstSpeciationIndex < firstAssessIndex);
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]

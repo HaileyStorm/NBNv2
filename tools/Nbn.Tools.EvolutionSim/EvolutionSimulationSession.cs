@@ -77,6 +77,8 @@ public sealed class EvolutionSimulationSession
         MarkRunStarted();
         try
         {
+            await SeedInitialParentsAsync(cancellationToken).ConfigureAwait(false);
+
             while (!cancellationToken.IsCancellationRequested)
             {
                 if (ReachedIterationLimit())
@@ -118,6 +120,58 @@ public sealed class EvolutionSimulationSession
         }
 
         return GetStatus();
+    }
+
+    private async Task SeedInitialParentsAsync(CancellationToken cancellationToken)
+    {
+        if (!_options.CommitToSpeciation)
+        {
+            return;
+        }
+
+        List<EvolutionParentRef> snapshot;
+        lock (_gate)
+        {
+            if (_parentPool.Count == 0)
+            {
+                return;
+            }
+
+            snapshot = _parentPool.ToList();
+        }
+
+        var seededKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parent in snapshot)
+        {
+            if (!TryBuildSeedCandidate(parent, out var candidate))
+            {
+                continue;
+            }
+
+            if (TryBuildParentKey(parent, out var seedKey)
+                && !seededKeys.Add(seedKey))
+            {
+                continue;
+            }
+
+            if (!TrySelectSeedPartner(snapshot, parent, out var seedPartner))
+            {
+                continue;
+            }
+
+            var commitOutcome = await _client.CommitSpeciationAsync(
+                candidate,
+                parent,
+                seedPartner,
+                cancellationToken).ConfigureAwait(false);
+
+            if (!commitOutcome.Success
+                && !commitOutcome.ExpectedNoOp
+                && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
+            {
+                SetLastFailure($"seed_parent_commit_failed:{commitOutcome.FailureDetail}");
+            }
+        }
     }
 
     private async Task ExecuteIterationAsync(EvolutionParentRef parentA, EvolutionParentRef parentB, CancellationToken cancellationToken)
@@ -474,5 +528,71 @@ public sealed class EvolutionSimulationSession
         }
 
         return false;
+    }
+
+    private static bool TryBuildSeedCandidate(EvolutionParentRef parentRef, out SpeciationCommitCandidate candidate)
+    {
+        if (parentRef.BrainId is Guid brainId && brainId != Guid.Empty)
+        {
+            candidate = new SpeciationCommitCandidate(
+                ChildBrainId: brainId,
+                ChildDefinition: null,
+                SimilarityScore: 1f,
+                FunctionScore: 1f,
+                ConnectivityScore: 1f,
+                RegionSpanScore: 1f);
+            return true;
+        }
+
+        if (parentRef.ArtifactRef is { } artifactRef
+            && artifactRef.TryToSha256Hex(out _))
+        {
+            candidate = new SpeciationCommitCandidate(
+                ChildBrainId: null,
+                ChildDefinition: artifactRef,
+                SimilarityScore: 1f,
+                FunctionScore: 1f,
+                ConnectivityScore: 1f,
+                RegionSpanScore: 1f);
+            return true;
+        }
+
+        candidate = default;
+        return false;
+    }
+
+    private static bool TrySelectSeedPartner(
+        IReadOnlyList<EvolutionParentRef> parentPoolSnapshot,
+        EvolutionParentRef parentRef,
+        out EvolutionParentRef partner)
+    {
+        if (parentPoolSnapshot.Count == 0)
+        {
+            partner = default;
+            return false;
+        }
+
+        if (!TryBuildParentKey(parentRef, out var seedKey))
+        {
+            partner = parentPoolSnapshot[0];
+            return true;
+        }
+
+        foreach (var candidate in parentPoolSnapshot)
+        {
+            if (!TryBuildParentKey(candidate, out var candidateKey))
+            {
+                continue;
+            }
+
+            if (!string.Equals(seedKey, candidateKey, StringComparison.OrdinalIgnoreCase))
+            {
+                partner = candidate;
+                return true;
+            }
+        }
+
+        partner = parentPoolSnapshot[0];
+        return true;
     }
 }
