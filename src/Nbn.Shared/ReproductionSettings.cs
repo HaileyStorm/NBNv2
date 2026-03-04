@@ -10,8 +10,8 @@ public static class ReproductionSettings
     public const Repro.PrunePolicy DefaultPrunePolicy = Repro.PrunePolicy.PruneLowestAbsStrengthFirst;
 
     public const float DefaultMaxRegionSpanDiffRatio = 0.15f;
-    public const float DefaultMaxFunctionHistDistance = 0.25f;
-    public const float DefaultMaxConnectivityHistDistance = 0.25f;
+    public const float DefaultMaxFunctionHistDistance = 0.40f;
+    public const float DefaultMaxConnectivityHistDistance = 0.40f;
     public const float DefaultProbAddNeuronToEmptyRegion = 0f;
     public const float DefaultProbRemoveLastNeuronFromRegion = 0f;
     public const float DefaultProbDisableNeuron = 0.01f;

@@ -8,7 +8,7 @@ Owns the runtime speciation control plane: taxonomy epochs, species membership p
 - SQLite persistence keeps immutable membership decisions within an epoch and retains historical epochs after reset.
 - Startup loads persisted epoch state, then reconciles missing memberships for currently registered brains from SettingsMonitor.
 - Handles canonical `nbn.speciation` proto contracts for status/config/evaluate/assign/list/query/history and batch evaluate/apply.
-- Supports explicit epoch-history hygiene controls via proto: clear-all reset (wipe all persisted epochs/history then seed a new epoch) and delete-specific-historical-epoch (current epoch deletion rejected).
+- Supports explicit epoch-history hygiene controls via proto: clear-all reset (wipe all persisted epochs/history, reset epoch/decision autoincrement counters, then seed a new epoch) and delete-specific-historical-epoch (current epoch deletion rejected).
 - Enforces contract-level dry-run versus commit semantics: dry-run never mutates state; commit accepts `brain_id`, artifact-ref, and artifact-URI candidates while preserving per-epoch membership immutability.
 - Artifact candidates commit with deterministic synthetic membership identity derived from candidate reference/URI so commit does not require child spawn.
 - Accepts parent references in both `brain_id` and artifact (`ArtifactRef`/URI) forms for assignment evidence and decision provenance.

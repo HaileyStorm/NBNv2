@@ -10,6 +10,7 @@ public sealed class EvolutionSimulationSession
     private readonly object _gate = new();
     private readonly List<EvolutionParentRef> _parentPool;
     private readonly HashSet<string> _parentPoolKeys;
+    private readonly HashSet<string> _protectedParentPoolKeys;
     private readonly DeterministicRandom _random;
 
     private string _sessionId = "not-started";
@@ -56,12 +57,14 @@ public sealed class EvolutionSimulationSession
 
         _parentPool = new List<EvolutionParentRef>(initialParents.Count);
         _parentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _protectedParentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parent in initialParents)
         {
             _parentPool.Add(parent);
             if (TryBuildParentKey(parent, out var key))
             {
                 _parentPoolKeys.Add(key);
+                _protectedParentPoolKeys.Add(key);
             }
         }
     }
@@ -373,13 +376,11 @@ public sealed class EvolutionSimulationSession
                     continue;
                 }
 
-                if (_parentPool.Count >= _options.MaxParentPoolSize)
+                if (!TryAddParentToPoolAtCapacity(candidate, key))
                 {
-                    break;
+                    continue;
                 }
 
-                _parentPool.Add(candidate);
-                _parentPoolKeys.Add(key);
                 _childrenAddedToPool++;
                 addedCount++;
             }
@@ -416,13 +417,11 @@ public sealed class EvolutionSimulationSession
                     continue;
                 }
 
-                if (_parentPool.Count >= _options.MaxParentPoolSize)
+                if (!TryAddParentToPoolAtCapacity(parentRef, key))
                 {
-                    break;
+                    continue;
                 }
 
-                _parentPool.Add(parentRef);
-                _parentPoolKeys.Add(key);
                 _childrenAddedToPool++;
                 addedCount++;
             }
@@ -722,6 +721,57 @@ public sealed class EvolutionSimulationSession
         {
             _lastFailure = reason.Trim();
         }
+    }
+
+    // Caller must hold _gate.
+    private bool TryAddParentToPoolAtCapacity(EvolutionParentRef candidate, string candidateKey)
+    {
+        if (_parentPool.Count < _options.MaxParentPoolSize)
+        {
+            _parentPool.Add(candidate);
+            _parentPoolKeys.Add(candidateKey);
+            return true;
+        }
+
+        if (!TrySelectEvictionIndex(out var evictionIndex))
+        {
+            return false;
+        }
+
+        var evicted = _parentPool[evictionIndex];
+        if (TryBuildParentKey(evicted, out var evictedKey))
+        {
+            _parentPoolKeys.Remove(evictedKey);
+        }
+
+        _parentPool[evictionIndex] = candidate;
+        _parentPoolKeys.Add(candidateKey);
+        return true;
+    }
+
+    // Caller must hold _gate.
+    private bool TrySelectEvictionIndex(out int evictionIndex)
+    {
+        var selectedIndex = -1;
+        var eligibleCount = 0;
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            var current = _parentPool[i];
+            if (TryBuildParentKey(current, out var currentKey)
+                && _protectedParentPoolKeys.Contains(currentKey))
+            {
+                continue;
+            }
+
+            eligibleCount++;
+            if (eligibleCount == 1 || _random.NextInt(eligibleCount) == 0)
+            {
+                selectedIndex = i;
+            }
+        }
+
+        evictionIndex = selectedIndex;
+        return selectedIndex >= 0;
     }
 
     private static bool TryBuildParentKey(EvolutionParentRef parentRef, out string key)

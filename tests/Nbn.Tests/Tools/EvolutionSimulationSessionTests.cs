@@ -179,6 +179,24 @@ public sealed class EvolutionSimulationSessionTests
         Assert.True(firstAssessIndex < 0 || firstSpeciationIndex < firstAssessIndex);
     }
 
+    [Fact]
+    public async Task RunAsync_WhenParentPoolReachesCapacity_ContinuesTurnoverWithNewChildren()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 42001UL, maxIterations: 12, commitToSpeciation: false) with
+        {
+            MaxParentPoolSize = 4
+        };
+        var client = new DeterministicFakeClient(similarities: Enumerable.Repeat(0.90f, 32));
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal(4, status.ParentPoolSize);
+        Assert.Equal((ulong)12, status.ReproductionCalls);
+        Assert.True(status.ChildrenAddedToPool > 1, "Expected replacement-based turnover after reaching capacity.");
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]

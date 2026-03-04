@@ -294,7 +294,7 @@ public sealed class SpeciationStoreTests
             ConfigSnapshotJson = "{\"epoch\":\"reset\"}"
         }, resetTimeMs: 300);
 
-        Assert.True(reset.CurrentEpoch.EpochId > secondEpoch.EpochId);
+        Assert.Equal(1L, reset.CurrentEpoch.EpochId);
         Assert.Equal("policy-v3", reset.CurrentEpoch.PolicyVersion);
         Assert.Equal(2, reset.DeletedEpochCount);
         Assert.Equal(2, reset.DeletedMembershipCount);

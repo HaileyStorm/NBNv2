@@ -380,6 +380,16 @@ DELETE FROM taxonomy_config_snapshots;
 DELETE FROM taxonomy_epochs;
 """;
 
+    private const string ResetAllAutoincrementSql = """
+DELETE FROM sqlite_sequence
+WHERE name IN (
+    'taxonomy_epochs',
+    'taxonomy_config_snapshots',
+    'speciation_decisions',
+    'lineage_edges'
+);
+""";
+
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
@@ -554,6 +564,7 @@ DELETE FROM taxonomy_epochs;
         await connection.ExecuteAsync(new CommandDefinition(DeleteAllSpeciesSql, transaction: transaction, cancellationToken: cancellationToken));
         await connection.ExecuteAsync(new CommandDefinition(DeleteAllConfigSnapshotsSql, transaction: transaction, cancellationToken: cancellationToken));
         await connection.ExecuteAsync(new CommandDefinition(DeleteAllEpochsSql, transaction: transaction, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(ResetAllAutoincrementSql, transaction: transaction, cancellationToken: cancellationToken));
 
         var epochId = await CreateEpochAsync(connection, transaction, createdMs, cancellationToken);
         await connection.ExecuteAsync(

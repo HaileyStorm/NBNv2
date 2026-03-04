@@ -30,9 +30,9 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _parentBStatePath = string.Empty;
     private string _artifactStoreRoot = BuildDefaultArtifactRoot();
     private string _seedText = string.Empty;
-    private string _maxRegionSpanDiffRatio = "0.15";
-    private string _maxFunctionHistDistance = "0.25";
-    private string _maxConnectivityHistDistance = "0.25";
+    private string _maxRegionSpanDiffRatio = ReproductionSettings.FormatFloat(ReproductionSettings.DefaultMaxRegionSpanDiffRatio);
+    private string _maxFunctionHistDistance = ReproductionSettings.FormatFloat(ReproductionSettings.DefaultMaxFunctionHistDistance);
+    private string _maxConnectivityHistDistance = ReproductionSettings.FormatFloat(ReproductionSettings.DefaultMaxConnectivityHistDistance);
     private string _maxAvgOutDegree = "100";
     private string _perRegionOutDegreeCaps = string.Empty;
     private string _probAddNeuronToEmptyRegion = "0";
@@ -802,9 +802,9 @@ public sealed class ReproPanelViewModel : ViewModelBase
     {
         return new ReproduceConfig
         {
-            MaxRegionSpanDiffRatio = ParseFloat(MaxRegionSpanDiffRatio, 0.15f),
-            MaxFunctionHistDistance = ParseFloat(MaxFunctionHistDistance, 0.25f),
-            MaxConnectivityHistDistance = ParseFloat(MaxConnectivityHistDistance, 0.25f),
+            MaxRegionSpanDiffRatio = ParseFloat(MaxRegionSpanDiffRatio, ReproductionSettings.DefaultMaxRegionSpanDiffRatio),
+            MaxFunctionHistDistance = ParseFloat(MaxFunctionHistDistance, ReproductionSettings.DefaultMaxFunctionHistDistance),
+            MaxConnectivityHistDistance = ParseFloat(MaxConnectivityHistDistance, ReproductionSettings.DefaultMaxConnectivityHistDistance),
             ProbAddNeuronToEmptyRegion = ParseFloat(ProbAddNeuronToEmptyRegion, 0f),
             ProbRemoveLastNeuronFromRegion = ParseFloat(ProbRemoveLastNeuronFromRegion, 0f),
             ProbDisableNeuron = ParseFloat(ProbDisableNeuron, 0.01f),

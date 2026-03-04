@@ -214,7 +214,7 @@ public sealed class SpeciationManagerActorTests
                 new ProtoSpec.SpeciationResetAllRequest());
 
             Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, reset.FailureReason);
-            Assert.True((long)reset.CurrentEpoch.EpochId > firstEpoch.EpochId);
+            Assert.Equal(1UL, reset.CurrentEpoch.EpochId);
             Assert.True(reset.DeletedEpochCount >= 1);
             Assert.True(reset.DeletedMembershipCount >= 1);
 
