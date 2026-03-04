@@ -197,6 +197,28 @@ public sealed class EvolutionSimulationSessionTests
         Assert.True(status.ChildrenAddedToPool > 1, "Expected replacement-based turnover after reaching capacity.");
     }
 
+    [Fact]
+    public async Task RunAsync_WhenCommitSimilarityPlateaus_IncreasesMutationPressureDeterministically()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 77001UL, maxIterations: 224, commitToSpeciation: true);
+        var client = new DeterministicFakeClient(similarities: Enumerable.Repeat(0.90f, 1024))
+        {
+            CommitCandidateSimilarity = 0.95f,
+            ReproductionDiagnosticSimilarity = 0.90f
+        };
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal((ulong)224, status.ReproductionCalls);
+        Assert.Equal((ulong)224, status.SpeciationCommitSuccesses);
+        Assert.True(client.RequestedRunCounts.Count > 100);
+        Assert.True(
+            client.RequestedRunCounts.Max() > client.RequestedRunCounts.Min(),
+            "Expected adaptive run pressure to raise run_count after commit-similarity plateau.");
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]

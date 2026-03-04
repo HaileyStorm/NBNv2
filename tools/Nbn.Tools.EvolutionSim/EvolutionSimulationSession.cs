@@ -5,6 +5,11 @@ namespace Nbn.Tools.EvolutionSim;
 
 public sealed class EvolutionSimulationSession
 {
+    private const ulong CommitSimilarityPlateauWindowSamples = 64;
+    private const float MaxRunPressureNudge = 0.35f;
+    private const float RunPressureNudgeStep = 0.05f;
+    private const float RunPressureRecoveryStep = 0.10f;
+
     private readonly EvolutionSimulationOptions _options;
     private readonly IEvolutionSimulationClient _client;
     private readonly object _gate = new();
@@ -38,6 +43,8 @@ public sealed class EvolutionSimulationSession
     private ulong _childrenAddedToPool;
     private ulong _speciationCommitAttempts;
     private ulong _speciationCommitSuccesses;
+    private ulong _speciationCommitSamplesSinceImprovement;
+    private float _runPressureNudge;
     private string _lastFailure = string.Empty;
     private ulong _lastSeed;
 
@@ -241,7 +248,8 @@ public sealed class EvolutionSimulationSession
 
         IncrementCompatiblePairs();
 
-        var runCount = _options.RunPolicy.ResolveRunCount(assessment.SimilarityScore);
+        var adjustedSimilarity = ApplyRunPressureNudge(assessment.SimilarityScore);
+        var runCount = _options.RunPolicy.ResolveRunCount(adjustedSimilarity);
         var reproduceSeed = NextSeed();
 
         IncrementReproductionCalls();
@@ -478,6 +486,8 @@ public sealed class EvolutionSimulationSession
             _childrenAddedToPool = 0;
             _speciationCommitAttempts = 0;
             _speciationCommitSuccesses = 0;
+            _speciationCommitSamplesSinceImprovement = 0;
+            _runPressureNudge = 0f;
             _lastFailure = string.Empty;
             _lastSeed = 0;
         }
@@ -631,6 +641,7 @@ public sealed class EvolutionSimulationSession
 
         lock (_gate)
         {
+            var improved = _speciationCommitSimilaritySamples == 0;
             if (_speciationCommitSimilaritySamples == 0)
             {
                 _minSpeciationCommitSimilarityObserved = normalizedMin;
@@ -638,11 +649,45 @@ public sealed class EvolutionSimulationSession
             }
             else
             {
+                improved = normalizedMin < _minSpeciationCommitSimilarityObserved;
                 _minSpeciationCommitSimilarityObserved = Math.Min(_minSpeciationCommitSimilarityObserved, normalizedMin);
                 _maxSpeciationCommitSimilarityObserved = Math.Max(_maxSpeciationCommitSimilarityObserved, normalizedMax);
             }
 
             _speciationCommitSimilaritySamples += samples;
+
+            if (improved)
+            {
+                _speciationCommitSamplesSinceImprovement = 0;
+                _runPressureNudge = Math.Max(0f, _runPressureNudge - RunPressureRecoveryStep);
+                return;
+            }
+
+            _speciationCommitSamplesSinceImprovement += samples;
+            while (_speciationCommitSamplesSinceImprovement >= CommitSimilarityPlateauWindowSamples)
+            {
+                _speciationCommitSamplesSinceImprovement -= CommitSimilarityPlateauWindowSamples;
+                _runPressureNudge = Math.Min(MaxRunPressureNudge, _runPressureNudge + RunPressureNudgeStep);
+                if (_runPressureNudge >= MaxRunPressureNudge)
+                {
+                    _speciationCommitSamplesSinceImprovement = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+    private float ApplyRunPressureNudge(float similarity)
+    {
+        if (float.IsNaN(similarity) || float.IsInfinity(similarity))
+        {
+            return 0f;
+        }
+
+        var normalized = Math.Clamp(similarity, 0f, 1f);
+        lock (_gate)
+        {
+            return Math.Clamp(normalized - _runPressureNudge, 0f, 1f);
         }
     }
 
