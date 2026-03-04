@@ -139,6 +139,9 @@ public readonly record struct SpeciationCommitCandidate(
     Guid? ChildBrainId,
     ArtifactRef? ChildDefinition,
     float? SimilarityScore = null,
+    float? LineageSimilarityScore = null,
+    float? LineageParentASimilarityScore = null,
+    float? LineageParentBSimilarityScore = null,
     float? FunctionScore = null,
     float? ConnectivityScore = null,
     float? RegionSpanScore = null);

@@ -546,7 +546,11 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         candidates.Add(new SpeciationCommitCandidate(
             ChildBrainId: parsedBrainId,
             ChildDefinition: definition,
-            SimilarityScore: TryNormalizeScore(report?.SimilarityScore),
+            SimilarityScore: TryNormalizeScore(report?.LineageSimilarityScore)
+                             ?? TryNormalizeScore(report?.SimilarityScore),
+            LineageSimilarityScore: TryNormalizeScore(report?.LineageSimilarityScore),
+            LineageParentASimilarityScore: TryNormalizeScore(report?.LineageParentASimilarityScore),
+            LineageParentBSimilarityScore: TryNormalizeScore(report?.LineageParentBSimilarityScore),
             FunctionScore: TryNormalizeScore(report?.FunctionScore),
             ConnectivityScore: TryNormalizeScore(report?.ConnectivityScore),
             RegionSpanScore: TryNormalizeScore(report?.RegionSpanScore)));
@@ -567,6 +571,15 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         if (report.Count > 0)
         {
             metadata["report"] = report;
+        }
+
+        var lineage = new JsonObject();
+        AddScore(lineage, "lineage_similarity_score", candidate.LineageSimilarityScore ?? candidate.SimilarityScore);
+        AddScore(lineage, "parent_a_similarity_score", candidate.LineageParentASimilarityScore);
+        AddScore(lineage, "parent_b_similarity_score", candidate.LineageParentBSimilarityScore);
+        if (lineage.Count > 0)
+        {
+            metadata["lineage"] = lineage;
         }
 
         return metadata.ToJsonString();

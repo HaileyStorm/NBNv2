@@ -438,6 +438,9 @@ public sealed class ReproductionManagerActor : IActor
             functionScore,
             connectivityScore,
             similarityScore,
+            childBuild.LineageSimilarityScore,
+            childBuild.LineageParentASimilarityScore,
+            childBuild.LineageParentBSimilarityScore,
             presentA,
             presentB,
             childBuild.RegionsPresentChild);
@@ -526,6 +529,14 @@ public sealed class ReproductionManagerActor : IActor
             return new ChildBuildResult(null, null, "repro_child_validation_failed");
         }
 
+        var lineageSimilarity = ComputeLineageSimilarityScores(
+            parentA,
+            parentB,
+            childHeader,
+            childSections,
+            ResolveSpanTolerance(config),
+            seed);
+
         var bytes = NbnBinary.WriteNbn(childHeader, childSections);
         var storeRoot = ResolveChildStoreRoot(parentARef.StoreUri, parentBRef.StoreUri);
         var storeUri = ResolveChildStoreUri(parentARef.StoreUri, parentBRef.StoreUri, storeRoot);
@@ -537,7 +548,14 @@ public sealed class ReproductionManagerActor : IActor
             (ulong)manifest.ByteLength,
             NbnMediaType,
             storeUri);
-        return new ChildBuildResult(childRef, summary, null, CountPresentRegions(childHeader));
+        return new ChildBuildResult(
+            childRef,
+            summary,
+            null,
+            CountPresentRegions(childHeader),
+            lineageSimilarity.LineageSimilarityScore,
+            lineageSimilarity.ParentASimilarityScore,
+            lineageSimilarity.ParentBSimilarityScore);
     }
 
     private static bool TryBuildChildSections(
@@ -2690,6 +2708,51 @@ public sealed class ReproductionManagerActor : IActor
         return Math.Clamp(total / 4f, 0f, 1f);
     }
 
+    private static LineageSimilarityScores ComputeLineageSimilarityScores(
+        ParsedParent parentA,
+        ParsedParent parentB,
+        NbnHeaderV2 childHeader,
+        IReadOnlyList<NbnRegionSection> childSections,
+        float spanTolerance,
+        ulong seed)
+    {
+        var child = new ParsedParent(childHeader, childSections);
+        var parentAScore = ComputeLineageSimilarityScore(
+            parentA,
+            child,
+            spanTolerance,
+            seed ^ 0x91E10DA5C79E7B1DUL);
+        var parentBScore = ComputeLineageSimilarityScore(
+            parentB,
+            child,
+            spanTolerance,
+            seed ^ 0xC2B2AE3D27D4EB4FUL);
+
+        return new LineageSimilarityScores(
+            LineageSimilarityScore: Math.Clamp((parentAScore + parentBScore) * 0.5f, 0f, 1f),
+            ParentASimilarityScore: parentAScore,
+            ParentBSimilarityScore: parentBScore);
+    }
+
+    private static float ComputeLineageSimilarityScore(
+        ParsedParent parent,
+        ParsedParent child,
+        float spanTolerance,
+        ulong seed)
+    {
+        var sectionMapParent = BuildSectionMap(parent.Regions);
+        var sectionMapChild = BuildSectionMap(child.Regions);
+        var spanScore = ComputeRegionSpanScore(
+            parent.Header,
+            child.Header,
+            spanTolerance,
+            out _);
+        var functionScore = 1f - ComputeFunctionDistance(sectionMapParent, sectionMapChild);
+        var connectivityScore = 1f - ComputeConnectivityDistance(sectionMapParent, sectionMapChild);
+        var spotCheckOverlap = ComputeSpotCheckOverlap(sectionMapParent, sectionMapChild, seed);
+        return ComputeSimilarityScore(spanScore, functionScore, connectivityScore, spotCheckOverlap);
+    }
+
     private static float ComputeNormalizedCountDistance(int[] leftCounts, int leftTotal, int[] rightCounts, int rightTotal)
     {
         if (leftTotal <= 0 && rightTotal <= 0)
@@ -3294,6 +3357,9 @@ public sealed class ReproductionManagerActor : IActor
         float functionScore,
         float connectivityScore,
         float similarityScore,
+        float lineageSimilarityScore,
+        float lineageParentASimilarityScore,
+        float lineageParentBSimilarityScore,
         int regionsPresentA,
         int regionsPresentB,
         int regionsPresentChild)
@@ -3307,6 +3373,9 @@ public sealed class ReproductionManagerActor : IActor
                 FunctionScore = Math.Clamp(functionScore, 0f, 1f),
                 ConnectivityScore = Math.Clamp(connectivityScore, 0f, 1f),
                 SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
+                LineageSimilarityScore = Math.Clamp(lineageSimilarityScore, 0f, 1f),
+                LineageParentASimilarityScore = Math.Clamp(lineageParentASimilarityScore, 0f, 1f),
+                LineageParentBSimilarityScore = Math.Clamp(lineageParentBSimilarityScore, 0f, 1f),
                 RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
                 RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
                 RegionsPresentChild = (uint)Math.Max(regionsPresentChild, 0)
@@ -3368,7 +3437,15 @@ public sealed class ReproductionManagerActor : IActor
         ArtifactRef? ChildDef,
         MutationSummary? Summary,
         string? AbortReason,
-        int RegionsPresentChild = 0);
+        int RegionsPresentChild = 0,
+        float LineageSimilarityScore = 0f,
+        float LineageParentASimilarityScore = 0f,
+        float LineageParentBSimilarityScore = 0f);
+
+    private readonly record struct LineageSimilarityScores(
+        float LineageSimilarityScore,
+        float ParentASimilarityScore,
+        float ParentBSimilarityScore);
 
     private sealed record ConnectivityHistogram(
         int[] OutDegreeCounts,

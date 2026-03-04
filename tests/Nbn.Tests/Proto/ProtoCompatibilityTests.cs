@@ -931,6 +931,9 @@ public class ProtoCompatibilityTests
 
         var report = descriptor.MessageTypes.Single(message => message.Name == "SimilarityReport");
         AssertField(report, "similarity_score", 13, FieldType.Float);
+        AssertField(report, "lineage_similarity_score", 14, FieldType.Float);
+        AssertField(report, "lineage_parent_a_similarity_score", 15, FieldType.Float);
+        AssertField(report, "lineage_parent_b_similarity_score", 16, FieldType.Float);
 
         var runOutcome = descriptor.MessageTypes.Single(message => message.Name == "ReproduceRunOutcome");
         AssertField(runOutcome, "run_index", 1, FieldType.UInt32);

@@ -2915,6 +2915,9 @@ public class ReproductionManagerActorTests
 
                 generationSuccesses++;
                 directParentScores.Add(generationResult.Report.SimilarityScore);
+                Assert.InRange(generationResult.Report.LineageSimilarityScore, 0f, 1f);
+                Assert.InRange(generationResult.Report.LineageParentASimilarityScore, 0f, 1f);
+                Assert.InRange(generationResult.Report.LineageParentBSimilarityScore, 0f, 1f);
                 var childRef = generationResult.ChildDef;
 
                 foreach (var directParentRef in new[] { currentLeft, currentRight })

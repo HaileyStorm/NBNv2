@@ -22,6 +22,9 @@ public sealed class EvolutionRuntimeClientMetadataTests
             {
                 Compatible = true,
                 SimilarityScore = 0.72f,
+                LineageSimilarityScore = 0.41f,
+                LineageParentASimilarityScore = 0.36f,
+                LineageParentBSimilarityScore = 0.46f,
                 FunctionScore = 0.68f,
                 ConnectivityScore = 0.55f,
                 RegionSpanScore = 0.91f
@@ -33,7 +36,10 @@ public sealed class EvolutionRuntimeClientMetadataTests
 
         var candidate = Assert.Single(candidates);
         Assert.NotNull(candidate.ChildDefinition);
-        Assert.Equal(0.72f, candidate.SimilarityScore!.Value, 3);
+        Assert.Equal(0.41f, candidate.SimilarityScore!.Value, 3);
+        Assert.Equal(0.41f, candidate.LineageSimilarityScore!.Value, 3);
+        Assert.Equal(0.36f, candidate.LineageParentASimilarityScore!.Value, 3);
+        Assert.Equal(0.46f, candidate.LineageParentBSimilarityScore!.Value, 3);
         Assert.Equal(0.68f, candidate.FunctionScore!.Value, 3);
         Assert.Equal(0.55f, candidate.ConnectivityScore!.Value, 3);
         Assert.Equal(0.91f, candidate.RegionSpanScore!.Value, 3);
@@ -60,6 +66,9 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.Equal(0.62d, report.GetProperty("function_score").GetDouble(), 3);
         Assert.Equal(0.73d, report.GetProperty("connectivity_score").GetDouble(), 3);
         Assert.Equal(0.48d, report.GetProperty("region_span_score").GetDouble(), 3);
+
+        var lineage = root.GetProperty("lineage");
+        Assert.Equal(0.81d, lineage.GetProperty("lineage_similarity_score").GetDouble(), 3);
     }
 
     [Fact]

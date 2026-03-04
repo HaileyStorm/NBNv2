@@ -1719,10 +1719,28 @@ public sealed class SpeciationManagerActor : IActor
             return new SimilarityEvidence(null, null, null, null);
         }
 
+        JsonNode? lineageNode = null;
+        if (node is JsonObject rootObject)
+        {
+            rootObject.TryGetPropertyValue("lineage", out lineageNode);
+        }
+
         var similarityScore = FindNumericValue(
-            node,
-            "similarity_score",
-            "similarityScore");
+            lineageNode,
+            "lineage_similarity_score",
+            "lineageSimilarityScore")
+            ?? FindNumericValue(
+                lineageNode,
+                "similarity_score",
+                "similarityScore")
+            ?? FindNumericValue(
+                node,
+                "lineage_similarity_score",
+                "lineageSimilarityScore")
+            ?? FindNumericValue(
+                node,
+                "similarity_score",
+                "similarityScore");
         var functionScore = FindNumericValue(
             node,
             "function_score",

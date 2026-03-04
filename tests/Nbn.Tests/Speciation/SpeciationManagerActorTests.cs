@@ -1052,6 +1052,71 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public async Task ProtoAssign_Commit_LineageSimilarityScore_TakesPrecedenceOverGenericSimilarity()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.80d,
+            lineageSplitThreshold: 0.30d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch"));
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            await WaitForEpochAsync(system, managerPid);
+            var parent = Guid.NewGuid();
+            var child = Guid.NewGuid();
+
+            var seedParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = parent.ToProtoUuid()
+                    },
+                    SpeciesId = "species-gamma",
+                    SpeciesDisplayName = "Species Gamma",
+                    DecisionReason = "seed_parent_species",
+                    DecisionMetadataJson = "{\"source\":\"seed\"}"
+                });
+            Assert.True(seedParent.Decision.Success);
+
+            var decision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = child.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = parent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.10},\"report\":{\"similarity_score\":0.95}}"
+                });
+
+            Assert.True(decision.Decision.Success);
+            Assert.True(decision.Decision.Created);
+            Assert.Equal("lineage_diverged_new_species", decision.Decision.DecisionReason);
+            Assert.StartsWith("species-gamma-branch-", decision.Decision.SpeciesId, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task ProtoAssign_Commit_ParallelRequests_RemainSingleWriterDeterministic()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");

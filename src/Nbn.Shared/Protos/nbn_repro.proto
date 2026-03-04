@@ -165,6 +165,9 @@ message SimilarityReport {
   float function_score = 11;
   float connectivity_score = 12;
   float similarity_score = 13;
+  float lineage_similarity_score = 14;
+  float lineage_parent_a_similarity_score = 15;
+  float lineage_parent_b_similarity_score = 16;
 
   uint32 regions_present_A = 20;
   uint32 regions_present_B = 21;

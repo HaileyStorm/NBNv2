@@ -7,6 +7,7 @@ Owns compatibility gates, child synthesis, mutation summaries, spawn policy beha
 - Function mutation keeps full ID-space compatibility (no hard bans), while biasing activation/reset/accumulation mutation targets toward lower-volatility families so child brains trend toward stable buffer ranges over generations.
 - Compatibility assessment requests run the same similarity gates as reproduction but do not synthesize child artifacts or attempt spawn.
 - `run_count` is normalized per request (`0` => `1`, bounded max) and response `runs` are emitted in deterministic `run_index` order while top-level result fields mirror run `0` for compatibility with legacy callers.
+- Successful reproduction reports carry both parent-pair gate similarity (`similarity_score`) and child-lineage similarity (`lineage_similarity_score` plus per-parent lineage scores) so downstream speciation can classify from child-vs-lineage evidence instead of parent-vs-parent gate similarity.
 
 ## Maintenance guidance
 
