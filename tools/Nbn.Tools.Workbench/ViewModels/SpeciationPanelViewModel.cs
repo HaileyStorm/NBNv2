@@ -1252,12 +1252,22 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 childrenLabel = "0 (no parent-pool growth yet)";
             }
 
+            var minSimilarityLabel = snapshot.SimilaritySamples > 0 && snapshot.MinSimilarityObserved.HasValue
+                ? snapshot.MinSimilarityObserved.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "n/a";
+            var maxSimilarityLabel = snapshot.SimilaritySamples > 0 && snapshot.MaxSimilarityObserved.HasValue
+                ? snapshot.MaxSimilarityObserved.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "n/a";
+
             SimulatorProgress =
-                $"running={snapshot.Running} final={snapshot.Final} iter={snapshot.Iterations} pool={snapshot.ParentPoolSize}";
+                $"running={snapshot.Running} final={snapshot.Final} iter={snapshot.Iterations} parent_pool_size={snapshot.ParentPoolSize}";
             SimulatorDetailedStats =
                 $"compat={snapshot.CompatiblePairs}/{snapshot.CompatibilityChecks} " +
                 $"repro_calls={snapshot.ReproductionCalls} repro_fail={snapshot.ReproductionFailures} " +
-                $"children={childrenLabel} speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts} " +
+                $"parent_pool_size={snapshot.ParentPoolSize} children_added_to_pool={childrenLabel} " +
+                $"runs={snapshot.ReproductionRunsObserved} runs_mutated={snapshot.ReproductionRunsWithMutations} mutation_events={snapshot.ReproductionMutationEvents} " +
+                $"min_similarity={minSimilarityLabel} max_similarity={maxSimilarityLabel} " +
+                $"speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts} " +
                 $"seed={snapshot.LastSeed}";
             SimulatorLastFailure = string.IsNullOrWhiteSpace(snapshot.LastFailure) ? "(none)" : snapshot.LastFailure;
             if (!snapshot.Running)
@@ -1687,6 +1697,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             "run",
             $"--io-address {Connections.IoHost}:{ioPort}",
             $"--io-id {QuoteIfNeeded(Connections.IoGateway)}",
+            $"--settings-address {Connections.SettingsHost}:{Math.Max(1, ParseInt(Connections.SettingsPortText, 12010))}",
+            $"--settings-name {QuoteIfNeeded(Connections.SettingsName)}",
             $"--bind-host {QuoteIfNeeded(SimBindHost)}",
             $"--port {simPort}",
             $"--seed {ParseULong(SimSeedText, 12345UL)}",
@@ -2402,6 +2414,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 CompatiblePairs: root.TryGetProperty("compatible_pairs", out var pairsNode) ? pairsNode.GetUInt64() : 0UL,
                 ReproductionCalls: root.TryGetProperty("reproduction_calls", out var callsNode) ? callsNode.GetUInt64() : 0UL,
                 ReproductionFailures: root.TryGetProperty("reproduction_failures", out var failuresNode) ? failuresNode.GetUInt64() : 0UL,
+                ReproductionRunsObserved: root.TryGetProperty("reproduction_runs_observed", out var runsNode) ? runsNode.GetUInt64() : 0UL,
+                ReproductionRunsWithMutations: root.TryGetProperty("reproduction_runs_with_mutations", out var runsMutatedNode) ? runsMutatedNode.GetUInt64() : 0UL,
+                ReproductionMutationEvents: root.TryGetProperty("reproduction_mutation_events", out var mutationEventsNode) ? mutationEventsNode.GetUInt64() : 0UL,
+                SimilaritySamples: root.TryGetProperty("similarity_samples", out var similaritySamplesNode) ? similaritySamplesNode.GetUInt64() : 0UL,
+                MinSimilarityObserved: TryGetJsonDouble(root, "min_similarity_observed", out var minSimilarityObserved) ? minSimilarityObserved : null,
+                MaxSimilarityObserved: TryGetJsonDouble(root, "max_similarity_observed", out var maxSimilarityObserved) ? maxSimilarityObserved : null,
                 ChildrenAddedToPool: root.TryGetProperty("children_added_to_pool", out var childrenNode) ? childrenNode.GetUInt64() : 0UL,
                 SpeciationCommitAttempts: root.TryGetProperty("speciation_commit_attempts", out var attemptsNode) ? attemptsNode.GetUInt64() : 0UL,
                 SpeciationCommitSuccesses: root.TryGetProperty("speciation_commit_successes", out var successNode) ? successNode.GetUInt64() : 0UL,
@@ -2455,6 +2473,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ulong CompatiblePairs,
         ulong ReproductionCalls,
         ulong ReproductionFailures,
+        ulong ReproductionRunsObserved,
+        ulong ReproductionRunsWithMutations,
+        ulong ReproductionMutationEvents,
+        ulong SimilaritySamples,
+        double? MinSimilarityObserved,
+        double? MaxSimilarityObserved,
         ulong ChildrenAddedToPool,
         ulong SpeciationCommitAttempts,
         ulong SpeciationCommitSuccesses,

@@ -78,4 +78,32 @@ public sealed class SettingsMonitorDefaultsTests
             out var value));
         Assert.Equal("true", value);
     }
+
+    [Fact]
+    public void DefaultSettings_Include_ReproductionMutationDefaults()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            ReproductionSettingsKeys.ProbMutateKey,
+            out var probMutate));
+        Assert.Equal(ReproductionSettings.FormatFloat(ReproductionSettings.DefaultProbMutate), probMutate);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            ReproductionSettingsKeys.ProbMutateFuncKey,
+            out var probMutateFunc));
+        Assert.Equal(ReproductionSettings.FormatFloat(ReproductionSettings.DefaultProbMutateFunc), probMutateFunc);
+    }
+
+    [Fact]
+    public void DefaultSettings_Include_ReproductionSpawnPolicyAndStrengthSource()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            ReproductionSettingsKeys.SpawnChildKey,
+            out var spawnChild));
+        Assert.Equal(ReproductionSettings.ToSettingValue(ReproductionSettings.DefaultSpawnChildPolicy), spawnChild);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            ReproductionSettingsKeys.StrengthSourceKey,
+            out var strengthSource));
+        Assert.Equal(ReproductionSettings.ToSettingValue(ReproductionSettings.DefaultStrengthSource), strengthSource);
+    }
 }

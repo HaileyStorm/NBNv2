@@ -213,6 +213,26 @@ public class ReproPanelViewModelTests
     }
 
     [Fact]
+    public void ApplySetting_WhenReproductionSettingChanges_UpdatesViewModelFields()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        Assert.True(vm.ApplySetting(new SettingItem(ReproductionSettingsKeys.ProbMutateKey, "0.17", "0")));
+        Assert.True(vm.ApplySetting(new SettingItem(ReproductionSettingsKeys.MaxRegionsRemovedAbsKey, "9", "0")));
+        Assert.True(vm.ApplySetting(new SettingItem(ReproductionSettingsKeys.SpawnChildKey, "spawn_child_never", "0")));
+        Assert.True(vm.ApplySetting(new SettingItem(ReproductionSettingsKeys.PrunePolicyKey, "prune_random", "0")));
+        Assert.True(vm.ApplySetting(new SettingItem(ReproductionSettingsKeys.StrengthSourceKey, "strength_live_codes", "0")));
+        Assert.True(vm.ApplySetting(new SettingItem(ReproductionSettingsKeys.StrengthTransformEnabledKey, "true", "0")));
+
+        Assert.Equal("0.17", vm.ProbMutate);
+        Assert.Equal("9", vm.MaxRegionsRemovedAbs);
+        Assert.Equal(SpawnChildPolicy.SpawnChildNever, vm.SelectedSpawnPolicy.Value);
+        Assert.Equal(PrunePolicy.PruneRandom, vm.SelectedPrunePolicy.Value);
+        Assert.Equal(StrengthSource.StrengthLiveCodes, vm.SelectedStrengthSource.Value);
+        Assert.True(vm.StrengthTransformEnabled);
+    }
+
+    [Fact]
     public async Task RunCommand_MapsAllConfiguredKnobs_IntoBrainIdsRequest()
     {
         var client = new FakeWorkbenchClient

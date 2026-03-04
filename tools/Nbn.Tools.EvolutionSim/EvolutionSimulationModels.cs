@@ -7,6 +7,8 @@ public sealed record EvolutionSimulationOptions
 {
     public required string IoAddress { get; init; }
     public string IoId { get; init; } = "io-gateway";
+    public string? SettingsAddress { get; init; }
+    public string SettingsName { get; init; } = "SettingsMonitor";
     public string BindHost { get; init; } = "127.0.0.1";
     public int Port { get; init; } = 12074;
     public string? AdvertiseHost { get; init; }
@@ -90,6 +92,12 @@ public readonly record struct EvolutionSimulationStatus(
     ulong CompatiblePairs,
     ulong ReproductionCalls,
     ulong ReproductionFailures,
+    ulong ReproductionRunsObserved,
+    ulong ReproductionRunsWithMutations,
+    ulong ReproductionMutationEvents,
+    ulong SimilaritySamples,
+    float MinSimilarityObserved,
+    float MaxSimilarityObserved,
     ulong ChildrenAddedToPool,
     ulong SpeciationCommitAttempts,
     ulong SpeciationCommitSuccesses,
@@ -107,7 +115,16 @@ public sealed record ReproductionOutcome(
     bool Compatible,
     string AbortReason,
     IReadOnlyList<ArtifactRef> ChildDefinitions,
-    IReadOnlyList<SpeciationCommitCandidate> CommitCandidates);
+    IReadOnlyList<SpeciationCommitCandidate> CommitCandidates,
+    ReproductionDiagnostics Diagnostics);
+
+public readonly record struct ReproductionDiagnostics(
+    ulong RunCount,
+    ulong RunsWithMutations,
+    ulong MutationEvents,
+    ulong SimilaritySamples,
+    float MinSimilarity,
+    float MaxSimilarity);
 
 public readonly record struct SpeciationCommitCandidate(
     Guid? ChildBrainId,

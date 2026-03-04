@@ -403,7 +403,7 @@ public class SpeciationPanelViewModelTests
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
         var logPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.sim.log");
-        var statusLine = "{\"type\":\"evolution_sim_status\",\"final\":true,\"session_id\":\"sess-123\",\"running\":false,\"iterations\":22,\"parent_pool_size\":14,\"compatibility_checks\":100,\"compatible_pairs\":4,\"reproduction_calls\":7,\"reproduction_failures\":3,\"children_added_to_pool\":5,\"speciation_commit_attempts\":6,\"speciation_commit_successes\":2,\"last_failure\":\"example_failure\",\"last_seed\":42}";
+        var statusLine = "{\"type\":\"evolution_sim_status\",\"final\":true,\"session_id\":\"sess-123\",\"running\":false,\"iterations\":22,\"parent_pool_size\":14,\"compatibility_checks\":100,\"compatible_pairs\":4,\"reproduction_calls\":7,\"reproduction_failures\":3,\"reproduction_runs_observed\":11,\"reproduction_runs_with_mutations\":9,\"reproduction_mutation_events\":23,\"similarity_samples\":11,\"min_similarity_observed\":0.61,\"max_similarity_observed\":0.97,\"children_added_to_pool\":5,\"speciation_commit_attempts\":6,\"speciation_commit_successes\":2,\"last_failure\":\"example_failure\",\"last_seed\":42}";
         await File.WriteAllTextAsync(logPath, statusLine);
 
         try
@@ -416,8 +416,13 @@ public class SpeciationPanelViewModelTests
             await WaitForAsync(() => vm.SimulatorSessionId == "sess-123");
 
             Assert.Contains("final=True", vm.SimulatorProgress, StringComparison.Ordinal);
+            Assert.Contains("parent_pool_size=14", vm.SimulatorProgress, StringComparison.Ordinal);
             Assert.Contains("repro_calls=7", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("children=5", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("children_added_to_pool=5", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("runs=11", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("runs_mutated=9", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("mutation_events=23", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("min_similarity=0.61", vm.SimulatorDetailedStats, StringComparison.Ordinal);
             Assert.Contains("seed=42", vm.SimulatorDetailedStats, StringComparison.Ordinal);
             Assert.Equal("example_failure", vm.SimulatorLastFailure);
         }

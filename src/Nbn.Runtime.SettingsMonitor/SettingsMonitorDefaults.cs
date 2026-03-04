@@ -13,8 +13,11 @@ public static class SettingsMonitorDefaults
     public static readonly ArtifactCompressionSettings ArtifactCompressionDefaults =
         new("none", 3, 64 * 1024, true);
 
-    public static readonly IReadOnlyDictionary<string, string> DefaultSettings =
-        new Dictionary<string, string>(StringComparer.Ordinal)
+    public static readonly IReadOnlyDictionary<string, string> DefaultSettings = BuildDefaultSettings();
+
+    private static IReadOnlyDictionary<string, string> BuildDefaultSettings()
+    {
+        var defaults = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             { ArtifactChunkCompressionKindKey, ArtifactCompressionDefaults.Kind },
             { ArtifactChunkCompressionLevelKey, ArtifactCompressionDefaults.Level.ToString(CultureInfo.InvariantCulture) },
@@ -43,4 +46,12 @@ public static class SettingsMonitorDefaults
             { VisualizationSettingsKeys.TickMinIntervalMsKey, "250" },
             { VisualizationSettingsKeys.StreamMinIntervalMsKey, "250" }
         };
+
+        foreach (var pair in ReproductionSettings.DefaultSettingValues)
+        {
+            defaults[pair.Key] = pair.Value;
+        }
+
+        return defaults;
+    }
 }

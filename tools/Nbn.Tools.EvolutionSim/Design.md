@@ -10,6 +10,8 @@ Owns standalone reproduction/speciation stress simulation runs driven from artif
 * Optional speciation commit after child creation (enabled by default, disable explicitly): commit accepts `brain_id`, artifact-ref, or artifact-URI candidates; artifact candidates commit using deterministic identity derivation without requiring spawn.
 * When speciation commit is enabled, simulator runs seed each unique initial parent into the current epoch before iteration commits so lineage-aware assignment has parent membership evidence even when spawn is disabled.
 * Parent pool mode supports artifact refs (default, with child-artifact pool growth) and `brain_id` parents (for runs that select live parents without artifact parent lists).
+* Reproduction request config is full-profile (not spawn-only): simulator resolves `repro.config.*` settings from SettingsMonitor when `--settings-address` is provided and otherwise falls back to shared defaults aligned with Workbench Reproduction defaults.
+* Status payload includes pool-growth and mutation observability counters (`parent_pool_size`, `children_added_to_pool`, run/mutation totals, min/max observed similarity) so operators can verify evolutionary progression and mutation activity during runs.
 * Session control surface is tool-local (`start`, `stop`, `status`) and is consumed by Workbench Speciation pane simulator controls.
 
 ## Maintenance guidance

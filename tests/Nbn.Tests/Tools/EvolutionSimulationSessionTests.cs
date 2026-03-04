@@ -296,7 +296,14 @@ public sealed class EvolutionSimulationSessionTests
                         new SpeciationCommitCandidate(
                             ChildBrainId: null,
                             ChildDefinition: child)
-                    }));
+                    },
+                    Diagnostics: new ReproductionDiagnostics(
+                        RunCount: runCount,
+                        RunsWithMutations: runCount,
+                        MutationEvents: runCount,
+                        SimilaritySamples: 1,
+                        MinSimilarity: 0.5f,
+                        MaxSimilarity: 0.5f)));
         }
 
         public Task<SpeciationCommitOutcome> CommitSpeciationAsync(

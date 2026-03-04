@@ -263,6 +263,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Orchestrator.UpdateSetting(item);
             Io.ApplySetting(item);
             Viz.ApplySetting(item);
+            Repro.ApplySetting(item);
             if (Debug.ApplySetting(item))
             {
                 UpdateObservabilitySubscriptions();
@@ -540,6 +541,21 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             _dispatcher.Post(() =>
                 Viz.ApplySetting(new SettingItem(
+                    key,
+                    setting.Value ?? string.Empty,
+                    setting.UpdatedMs.ToString())));
+        }
+
+        foreach (var key in ReproductionSettingsKeys.AllKeys)
+        {
+            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
+            if (setting is null)
+            {
+                continue;
+            }
+
+            _dispatcher.Post(() =>
+                Repro.ApplySetting(new SettingItem(
                     key,
                     setting.Value ?? string.Empty,
                     setting.UpdatedMs.ToString())));

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using Nbn.Proto;
 using Nbn.Shared;
 using Nbn.Tools.EvolutionSim;
@@ -33,6 +34,8 @@ static async Task RunAsync(string[] args)
         var ioAddress = GetArg(args, "--io-address")
                         ?? throw new InvalidOperationException("--io-address is required.");
         var ioId = GetArg(args, "--io-id") ?? "io-gateway";
+        var settingsAddress = GetArg(args, "--settings-address");
+        var settingsName = GetArg(args, "--settings-name") ?? "SettingsMonitor";
         var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
         var port = GetIntArg(args, "--port") ?? 12074;
         var advertisedHost = GetArg(args, "--advertise-host");
@@ -67,6 +70,8 @@ static async Task RunAsync(string[] args)
         {
             IoAddress = ioAddress,
             IoId = ioId,
+            SettingsAddress = settingsAddress,
+            SettingsName = settingsName,
             BindHost = bindHost,
             Port = port,
             AdvertiseHost = advertisedHost,
@@ -340,6 +345,12 @@ static void EmitStatus(EvolutionSimulationStatus status, bool jsonOnly, bool isF
             compatible_pairs = status.CompatiblePairs,
             reproduction_calls = status.ReproductionCalls,
             reproduction_failures = status.ReproductionFailures,
+            reproduction_runs_observed = status.ReproductionRunsObserved,
+            reproduction_runs_with_mutations = status.ReproductionRunsWithMutations,
+            reproduction_mutation_events = status.ReproductionMutationEvents,
+            similarity_samples = status.SimilaritySamples,
+            min_similarity_observed = status.SimilaritySamples == 0 ? (float?)null : status.MinSimilarityObserved,
+            max_similarity_observed = status.SimilaritySamples == 0 ? (float?)null : status.MaxSimilarityObserved,
             children_added_to_pool = status.ChildrenAddedToPool,
             speciation_commit_attempts = status.SpeciationCommitAttempts,
             speciation_commit_successes = status.SpeciationCommitSuccesses,
@@ -353,7 +364,11 @@ static void EmitStatus(EvolutionSimulationStatus status, bool jsonOnly, bool isF
     Console.WriteLine(
         $"session={status.SessionId} running={status.Running} final={isFinal} iter={status.Iterations} " +
         $"pool={status.ParentPoolSize} compat={status.CompatiblePairs}/{status.CompatibilityChecks} " +
-        $"repro_fail={status.ReproductionFailures} children={status.ChildrenAddedToPool} " +
+        $"repro_fail={status.ReproductionFailures} runs={status.ReproductionRunsObserved} " +
+        $"runs_mutated={status.ReproductionRunsWithMutations} mutation_events={status.ReproductionMutationEvents} " +
+        $"sim_min={(status.SimilaritySamples == 0 ? "n/a" : status.MinSimilarityObserved.ToString("0.###", CultureInfo.InvariantCulture))} " +
+        $"sim_max={(status.SimilaritySamples == 0 ? "n/a" : status.MaxSimilarityObserved.ToString("0.###", CultureInfo.InvariantCulture))} " +
+        $"children={status.ChildrenAddedToPool} " +
         $"speciation={status.SpeciationCommitSuccesses}/{status.SpeciationCommitAttempts} " +
         $"last_seed={status.LastSeed} last_failure={failure}");
 }
@@ -489,6 +504,7 @@ static void PrintHelp()
 {
     Console.WriteLine("NBN EvolutionSim usage:");
     Console.WriteLine("  run --io-address <host:port> [--io-id <name>] [--bind-host <host>] [--port <int>]");
+    Console.WriteLine("      [--settings-address <host:port>] [--settings-name <name>]");
     Console.WriteLine("      [--advertise-host <host>] [--advertise-port <int>] [--seed <uint64>]");
     Console.WriteLine("      [--interval-ms <int>] [--status-seconds <int>] [--timeout-seconds <int>]");
     Console.WriteLine("      [--max-iterations <int>] [--max-parent-pool <int>]");

@@ -482,6 +482,169 @@ public sealed class ReproPanelViewModel : ViewModelBase
             : ActiveBrains.Skip(1).FirstOrDefault();
     }
 
+    public bool ApplySetting(SettingItem item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.Key))
+        {
+            return false;
+        }
+
+        var key = item.Key.Trim();
+        var value = item.Value ?? string.Empty;
+        switch (key)
+        {
+            case ReproductionSettingsKeys.StrengthSourceKey:
+            {
+                var parsed = ReproductionSettings.ParseStrengthSource(value, ReproductionSettings.DefaultStrengthSource);
+                var selected = StrengthSources.FirstOrDefault(option => option.Value == parsed);
+                if (selected is not null)
+                {
+                    SelectedStrengthSource = selected;
+                }
+
+                return true;
+            }
+            case ReproductionSettingsKeys.MaxRegionSpanDiffRatioKey:
+                MaxRegionSpanDiffRatio = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxRegionSpanDiffRatio));
+                return true;
+            case ReproductionSettingsKeys.MaxFunctionHistDistanceKey:
+                MaxFunctionHistDistance = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxFunctionHistDistance));
+                return true;
+            case ReproductionSettingsKeys.MaxConnectivityHistDistanceKey:
+                MaxConnectivityHistDistance = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxConnectivityHistDistance));
+                return true;
+            case ReproductionSettingsKeys.ProbAddNeuronToEmptyRegionKey:
+                ProbAddNeuronToEmptyRegion = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbAddNeuronToEmptyRegion));
+                return true;
+            case ReproductionSettingsKeys.ProbRemoveLastNeuronFromRegionKey:
+                ProbRemoveLastNeuronFromRegion = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbRemoveLastNeuronFromRegion));
+                return true;
+            case ReproductionSettingsKeys.ProbDisableNeuronKey:
+                ProbDisableNeuron = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbDisableNeuron));
+                return true;
+            case ReproductionSettingsKeys.ProbReactivateNeuronKey:
+                ProbReactivateNeuron = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbReactivateNeuron));
+                return true;
+            case ReproductionSettingsKeys.ProbAddAxonKey:
+                ProbAddAxon = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbAddAxon));
+                return true;
+            case ReproductionSettingsKeys.ProbRemoveAxonKey:
+                ProbRemoveAxon = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbRemoveAxon));
+                return true;
+            case ReproductionSettingsKeys.ProbRerouteAxonKey:
+                ProbRerouteAxon = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbRerouteAxon));
+                return true;
+            case ReproductionSettingsKeys.ProbRerouteInboundAxonOnDeleteKey:
+                ProbRerouteInboundAxonOnDelete = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbRerouteInboundAxonOnDelete));
+                return true;
+            case ReproductionSettingsKeys.InboundRerouteMaxRingDistanceKey:
+                InboundRerouteMaxRingDistance = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultInboundRerouteMaxRingDistance));
+                return true;
+            case ReproductionSettingsKeys.ProbChooseParentAKey:
+                ProbChooseParentA = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbChooseParentA));
+                return true;
+            case ReproductionSettingsKeys.ProbChooseParentBKey:
+                ProbChooseParentB = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbChooseParentB));
+                return true;
+            case ReproductionSettingsKeys.ProbAverageKey:
+                ProbAverage = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbAverage));
+                return true;
+            case ReproductionSettingsKeys.ProbMutateKey:
+                ProbMutate = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbMutate));
+                return true;
+            case ReproductionSettingsKeys.ProbChooseFuncAKey:
+                ProbChooseFuncA = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbChooseFuncA));
+                return true;
+            case ReproductionSettingsKeys.ProbMutateFuncKey:
+                ProbMutateFunc = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbMutateFunc));
+                return true;
+            case ReproductionSettingsKeys.MaxAvgOutDegreeBrainKey:
+                MaxAvgOutDegree = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxAvgOutDegreeBrain));
+                return true;
+            case ReproductionSettingsKeys.PrunePolicyKey:
+            {
+                var parsed = ReproductionSettings.ParsePrunePolicy(value, ReproductionSettings.DefaultPrunePolicy);
+                var selected = PrunePolicies.FirstOrDefault(option => option.Value == parsed);
+                if (selected is not null)
+                {
+                    SelectedPrunePolicy = selected;
+                }
+
+                return true;
+            }
+            case ReproductionSettingsKeys.PerRegionOutDegreeCapsKey:
+                PerRegionOutDegreeCaps = value.Trim();
+                return true;
+            case ReproductionSettingsKeys.StrengthTransformEnabledKey:
+                StrengthTransformEnabled = ParseBool(value, ReproductionSettings.DefaultStrengthTransformEnabled);
+                return true;
+            case ReproductionSettingsKeys.ProbStrengthChooseAKey:
+                ProbStrengthChooseA = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbStrengthChooseA));
+                return true;
+            case ReproductionSettingsKeys.ProbStrengthChooseBKey:
+                ProbStrengthChooseB = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbStrengthChooseB));
+                return true;
+            case ReproductionSettingsKeys.ProbStrengthAverageKey:
+                ProbStrengthAverage = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbStrengthAverage));
+                return true;
+            case ReproductionSettingsKeys.ProbStrengthWeightedAverageKey:
+                ProbStrengthWeightedAverage = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbStrengthWeightedAverage));
+                return true;
+            case ReproductionSettingsKeys.StrengthWeightAKey:
+                StrengthWeightA = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultStrengthWeightA));
+                return true;
+            case ReproductionSettingsKeys.StrengthWeightBKey:
+                StrengthWeightB = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultStrengthWeightB));
+                return true;
+            case ReproductionSettingsKeys.ProbStrengthMutateKey:
+                ProbStrengthMutate = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultProbStrengthMutate));
+                return true;
+            case ReproductionSettingsKeys.MaxNeuronsAddedAbsKey:
+                MaxNeuronsAddedAbs = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultMaxNeuronsAddedAbs));
+                return true;
+            case ReproductionSettingsKeys.MaxNeuronsAddedPctKey:
+                MaxNeuronsAddedPct = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxNeuronsAddedPct));
+                return true;
+            case ReproductionSettingsKeys.MaxNeuronsRemovedAbsKey:
+                MaxNeuronsRemovedAbs = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultMaxNeuronsRemovedAbs));
+                return true;
+            case ReproductionSettingsKeys.MaxNeuronsRemovedPctKey:
+                MaxNeuronsRemovedPct = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxNeuronsRemovedPct));
+                return true;
+            case ReproductionSettingsKeys.MaxAxonsAddedAbsKey:
+                MaxAxonsAddedAbs = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultMaxAxonsAddedAbs));
+                return true;
+            case ReproductionSettingsKeys.MaxAxonsAddedPctKey:
+                MaxAxonsAddedPct = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxAxonsAddedPct));
+                return true;
+            case ReproductionSettingsKeys.MaxAxonsRemovedAbsKey:
+                MaxAxonsRemovedAbs = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultMaxAxonsRemovedAbs));
+                return true;
+            case ReproductionSettingsKeys.MaxAxonsRemovedPctKey:
+                MaxAxonsRemovedPct = ReproductionSettings.FormatFloat(ParseFloat(value, ReproductionSettings.DefaultMaxAxonsRemovedPct));
+                return true;
+            case ReproductionSettingsKeys.MaxRegionsAddedAbsKey:
+                MaxRegionsAddedAbs = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultMaxRegionsAddedAbs));
+                return true;
+            case ReproductionSettingsKeys.MaxRegionsRemovedAbsKey:
+                MaxRegionsRemovedAbs = ReproductionSettings.FormatUInt(ParseUInt(value, ReproductionSettings.DefaultMaxRegionsRemovedAbs));
+                return true;
+            case ReproductionSettingsKeys.SpawnChildKey:
+            {
+                var parsed = ReproductionSettings.ParseSpawnChildPolicy(value, ReproductionSettings.DefaultSpawnChildPolicy);
+                var selected = SpawnPolicies.FirstOrDefault(option => option.Value == parsed);
+                if (selected is not null)
+                {
+                    SelectedSpawnPolicy = selected;
+                }
+
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
     private async Task RunAsync()
     {
         if (_connections is not null && !_connections.HasReproductionServiceReadiness())
@@ -801,6 +964,26 @@ public sealed class ReproPanelViewModel : ViewModelBase
         return uint.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : fallback;
+    }
+
+    private static bool ParseBool(string? value, bool fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        if (bool.TryParse(value, out var parsed))
+        {
+            return parsed;
+        }
+
+        return value.Trim() switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => fallback
+        };
     }
 
     private static ulong ParseUlong(string value, ulong fallback)

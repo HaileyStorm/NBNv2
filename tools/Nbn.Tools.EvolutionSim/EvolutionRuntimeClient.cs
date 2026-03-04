@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Nbn.Proto.Io;
+using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Proto;
 using Proto.Remote;
@@ -15,13 +16,19 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
     private readonly ActorSystem _system;
     private readonly PID _ioPid;
     private readonly TimeSpan _requestTimeout;
+    private readonly Repro.ReproduceConfig _reproduceConfigTemplate;
     private bool _disposed;
 
-    private EvolutionRuntimeClient(ActorSystem system, PID ioPid, TimeSpan requestTimeout)
+    private EvolutionRuntimeClient(
+        ActorSystem system,
+        PID ioPid,
+        TimeSpan requestTimeout,
+        Repro.ReproduceConfig reproduceConfigTemplate)
     {
         _system = system;
         _ioPid = ioPid;
         _requestTimeout = requestTimeout;
+        _reproduceConfigTemplate = reproduceConfigTemplate ?? throw new ArgumentNullException(nameof(reproduceConfigTemplate));
     }
 
     public static async Task<EvolutionRuntimeClient> StartAsync(EvolutionSimulationOptions options)
@@ -39,7 +46,12 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             options.AdvertisePort);
         system.WithRemote(remoteConfig);
         await system.Remote().StartAsync().ConfigureAwait(false);
-        return new EvolutionRuntimeClient(system, new PID(options.IoAddress, options.IoId), options.RequestTimeout);
+        var configTemplate = await ResolveReproduceConfigTemplateAsync(system, options).ConfigureAwait(false);
+        return new EvolutionRuntimeClient(
+            system,
+            new PID(options.IoAddress, options.IoId),
+            options.RequestTimeout,
+            configTemplate);
     }
 
     public async Task<CompatibilityAssessment> AssessCompatibilityAsync(
@@ -61,10 +73,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     StrengthSource = strengthSource,
                     Seed = seed,
                     RunCount = 1,
-                    Config = new Repro.ReproduceConfig
-                    {
-                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
-                    }
+                    Config = BuildRequestConfig(Repro.SpawnChildPolicy.SpawnChildNever)
                 };
                 response = await _system.Root.RequestAsync<AssessCompatibilityResult>(
                         _ioPid,
@@ -82,10 +91,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     StrengthSource = strengthSource,
                     Seed = seed,
                     RunCount = 1,
-                    Config = new Repro.ReproduceConfig
-                    {
-                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
-                    }
+                    Config = BuildRequestConfig(Repro.SpawnChildPolicy.SpawnChildNever)
                 };
                 response = await _system.Root.RequestAsync<AssessCompatibilityResult>(
                         _ioPid,
@@ -146,12 +152,10 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     StrengthSource = strengthSource,
                     Seed = seed,
                     RunCount = runCount,
-                    Config = new Repro.ReproduceConfig
-                    {
-                        SpawnChild = spawnChildren
+                    Config = BuildRequestConfig(
+                        spawnChildren
                             ? Repro.SpawnChildPolicy.SpawnChildDefaultOn
-                            : Repro.SpawnChildPolicy.SpawnChildNever
-                    }
+                            : Repro.SpawnChildPolicy.SpawnChildNever)
                 };
                 response = await _system.Root.RequestAsync<ReproduceResult>(
                         _ioPid,
@@ -169,12 +173,10 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     StrengthSource = strengthSource,
                     Seed = seed,
                     RunCount = runCount,
-                    Config = new Repro.ReproduceConfig
-                    {
-                        SpawnChild = spawnChildren
+                    Config = BuildRequestConfig(
+                        spawnChildren
                             ? Repro.SpawnChildPolicy.SpawnChildDefaultOn
-                            : Repro.SpawnChildPolicy.SpawnChildNever
-                    }
+                            : Repro.SpawnChildPolicy.SpawnChildNever)
                 };
                 response = await _system.Root.RequestAsync<ReproduceResult>(
                         _ioPid,
@@ -190,7 +192,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     Compatible: false,
                     AbortReason: "repro_parent_mode_mismatch",
                     ChildDefinitions: Array.Empty<ArtifactRef>(),
-                    CommitCandidates: Array.Empty<SpeciationCommitCandidate>());
+                    CommitCandidates: Array.Empty<SpeciationCommitCandidate>(),
+                    Diagnostics: default);
             }
 
             var result = response?.Result;
@@ -201,7 +204,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                 Compatible: report?.Compatible ?? false,
                 AbortReason: NormalizeReason(report?.AbortReason),
                 ChildDefinitions: reproductionData.ChildDefinitions,
-                CommitCandidates: reproductionData.CommitCandidates);
+                CommitCandidates: reproductionData.CommitCandidates,
+                Diagnostics: reproductionData.Diagnostics);
         }
         catch (OperationCanceledException)
         {
@@ -214,7 +218,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                 Compatible: false,
                 AbortReason: $"repro_request_failed:{ex.GetBaseException().Message}",
                 ChildDefinitions: Array.Empty<ArtifactRef>(),
-                CommitCandidates: Array.Empty<SpeciationCommitCandidate>());
+                CommitCandidates: Array.Empty<SpeciationCommitCandidate>(),
+                Diagnostics: default);
         }
     }
 
@@ -310,11 +315,80 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         await _system.ShutdownAsync().ConfigureAwait(false);
     }
 
-    private static (IReadOnlyList<ArtifactRef> ChildDefinitions, IReadOnlyList<SpeciationCommitCandidate> CommitCandidates) ExtractReproductionData(Repro.ReproduceResult? result)
+    private Repro.ReproduceConfig BuildRequestConfig(Repro.SpawnChildPolicy spawnPolicy)
+    {
+        var config = _reproduceConfigTemplate.Clone();
+        config.SpawnChild = spawnPolicy;
+        return config;
+    }
+
+    private static async Task<Repro.ReproduceConfig> ResolveReproduceConfigTemplateAsync(
+        ActorSystem system,
+        EvolutionSimulationOptions options)
+    {
+        var defaultConfig = ReproductionSettings.CreateDefaultConfig();
+        if (string.IsNullOrWhiteSpace(options.SettingsAddress))
+        {
+            return defaultConfig;
+        }
+
+        var settingsName = string.IsNullOrWhiteSpace(options.SettingsName)
+            ? "SettingsMonitor"
+            : options.SettingsName.Trim();
+        var settingsPid = new PID(options.SettingsAddress.Trim(), settingsName);
+        var map = await TryLoadSettingsSnapshotAsync(system, settingsPid, options.RequestTimeout).ConfigureAwait(false);
+        if (map is null || map.Count == 0)
+        {
+            return defaultConfig;
+        }
+
+        return ReproductionSettings.CreateConfigFromSettings(map);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, string?>?> TryLoadSettingsSnapshotAsync(
+        ActorSystem system,
+        PID settingsPid,
+        TimeSpan timeout)
+    {
+        try
+        {
+            var response = await system.Root.RequestAsync<SettingListResponse>(
+                    settingsPid,
+                    new SettingListRequest(),
+                    timeout)
+                .ConfigureAwait(false);
+            if (response is null || response.Settings.Count == 0)
+            {
+                return null;
+            }
+
+            var map = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var setting in response.Settings)
+            {
+                if (string.IsNullOrWhiteSpace(setting.Key))
+                {
+                    continue;
+                }
+
+                map[setting.Key.Trim()] = setting.Value;
+            }
+
+            return map;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static (
+        IReadOnlyList<ArtifactRef> ChildDefinitions,
+        IReadOnlyList<SpeciationCommitCandidate> CommitCandidates,
+        ReproductionDiagnostics Diagnostics) ExtractReproductionData(Repro.ReproduceResult? result)
     {
         if (result is null)
         {
-            return (Array.Empty<ArtifactRef>(), Array.Empty<SpeciationCommitCandidate>());
+            return (Array.Empty<ArtifactRef>(), Array.Empty<SpeciationCommitCandidate>(), default);
         }
 
         var children = new List<ArtifactRef>();
@@ -330,7 +404,85 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
 
         AddArtifactIfValid(result.ChildDef, children, seenKeys);
         AddCommitCandidateIfValid(result.ChildBrainId, result.ChildDef, result.Report, commitCandidates, seenCommitCandidates);
-        return (children, commitCandidates);
+        return (children, commitCandidates, BuildReproductionDiagnostics(result));
+    }
+
+    private static ReproductionDiagnostics BuildReproductionDiagnostics(Repro.ReproduceResult result)
+    {
+        if (result.Runs.Count == 0)
+        {
+            var topLevelSimilarity = TryNormalizeScore(result.Report?.SimilarityScore);
+            var topLevelMutations = CountMutationEvents(result.Summary);
+            return new ReproductionDiagnostics(
+                RunCount: 1,
+                RunsWithMutations: topLevelMutations > 0 ? 1UL : 0UL,
+                MutationEvents: topLevelMutations,
+                SimilaritySamples: topLevelSimilarity.HasValue ? 1UL : 0UL,
+                MinSimilarity: topLevelSimilarity ?? 0f,
+                MaxSimilarity: topLevelSimilarity ?? 0f);
+        }
+
+        ulong runCount = 0;
+        ulong runsWithMutations = 0;
+        ulong mutationEvents = 0;
+        ulong similaritySamples = 0;
+        var minSimilarity = 0f;
+        var maxSimilarity = 0f;
+
+        foreach (var run in result.Runs)
+        {
+            runCount++;
+
+            var runMutationEvents = CountMutationEvents(run.Summary);
+            mutationEvents += runMutationEvents;
+            if (runMutationEvents > 0)
+            {
+                runsWithMutations++;
+            }
+
+            var runSimilarity = TryNormalizeScore(run.Report?.SimilarityScore);
+            if (!runSimilarity.HasValue)
+            {
+                continue;
+            }
+
+            if (similaritySamples == 0)
+            {
+                minSimilarity = runSimilarity.Value;
+                maxSimilarity = runSimilarity.Value;
+            }
+            else
+            {
+                minSimilarity = Math.Min(minSimilarity, runSimilarity.Value);
+                maxSimilarity = Math.Max(maxSimilarity, runSimilarity.Value);
+            }
+
+            similaritySamples++;
+        }
+
+        return new ReproductionDiagnostics(
+            RunCount: runCount,
+            RunsWithMutations: runsWithMutations,
+            MutationEvents: mutationEvents,
+            SimilaritySamples: similaritySamples,
+            MinSimilarity: similaritySamples == 0 ? 0f : minSimilarity,
+            MaxSimilarity: similaritySamples == 0 ? 0f : maxSimilarity);
+    }
+
+    private static ulong CountMutationEvents(Repro.MutationSummary? summary)
+    {
+        if (summary is null)
+        {
+            return 0;
+        }
+
+        return (ulong)summary.NeuronsAdded
+               + summary.NeuronsRemoved
+               + summary.AxonsAdded
+               + summary.AxonsRemoved
+               + summary.AxonsRerouted
+               + summary.FunctionsMutated
+               + summary.StrengthCodesChanged;
     }
 
     private static void AddArtifactIfValid(ArtifactRef? reference, ICollection<ArtifactRef> children, ISet<string> seenKeys)
@@ -518,6 +670,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         return config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
             NbnIoReflection.Descriptor,
+            NbnSettingsReflection.Descriptor,
             Repro.NbnReproReflection.Descriptor,
             ProtoSpec.NbnSpeciationReflection.Descriptor);
     }

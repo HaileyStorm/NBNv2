@@ -62,6 +62,37 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.Equal(0.48d, report.GetProperty("region_span_score").GetDouble(), 3);
     }
 
+    [Fact]
+    public void ExtractReproductionData_ComputesMutationAndSimilarityDiagnostics()
+    {
+        var result = new Repro.ReproduceResult
+        {
+            Runs =
+            {
+                new Repro.ReproduceRunOutcome
+                {
+                    Report = new Repro.SimilarityReport { SimilarityScore = 0.81f },
+                    Summary = new Repro.MutationSummary { AxonsAdded = 2 }
+                },
+                new Repro.ReproduceRunOutcome
+                {
+                    Report = new Repro.SimilarityReport { SimilarityScore = 0.44f },
+                    Summary = new Repro.MutationSummary()
+                }
+            }
+        };
+
+        var tuple = InvokeExtractReproductionData(result);
+        var diagnostics = GetTupleItem<ReproductionDiagnostics>(tuple, "Item3");
+
+        Assert.Equal(2UL, diagnostics.RunCount);
+        Assert.Equal(1UL, diagnostics.RunsWithMutations);
+        Assert.Equal(2UL, diagnostics.MutationEvents);
+        Assert.Equal(2UL, diagnostics.SimilaritySamples);
+        Assert.Equal(0.44f, diagnostics.MinSimilarity, 3);
+        Assert.Equal(0.81f, diagnostics.MaxSimilarity, 3);
+    }
+
     private static object InvokeExtractReproductionData(Repro.ReproduceResult result)
     {
         var method = typeof(EvolutionRuntimeClient).GetMethod(

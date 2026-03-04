@@ -19,6 +19,12 @@ public sealed class EvolutionSimulationSession
     private ulong _compatiblePairs;
     private ulong _reproductionCalls;
     private ulong _reproductionFailures;
+    private ulong _reproductionRunsObserved;
+    private ulong _reproductionRunsWithMutations;
+    private ulong _reproductionMutationEvents;
+    private ulong _similaritySamples;
+    private float _minSimilarityObserved;
+    private float _maxSimilarityObserved;
     private ulong _childrenAddedToPool;
     private ulong _speciationCommitAttempts;
     private ulong _speciationCommitSuccesses;
@@ -64,6 +70,12 @@ public sealed class EvolutionSimulationSession
                 _compatiblePairs,
                 _reproductionCalls,
                 _reproductionFailures,
+                _reproductionRunsObserved,
+                _reproductionRunsWithMutations,
+                _reproductionMutationEvents,
+                _similaritySamples,
+                _similaritySamples == 0 ? 0f : _minSimilarityObserved,
+                _similaritySamples == 0 ? 0f : _maxSimilarityObserved,
                 _childrenAddedToPool,
                 _speciationCommitAttempts,
                 _speciationCommitSuccesses,
@@ -194,6 +206,8 @@ public sealed class EvolutionSimulationSession
             return;
         }
 
+        RecordSimilarity(assessment.SimilarityScore);
+
         if (!assessment.Compatible)
         {
             if (!string.IsNullOrWhiteSpace(assessment.AbortReason))
@@ -218,6 +232,7 @@ public sealed class EvolutionSimulationSession
             _options.SpawnChildren,
             _options.StrengthSource,
             cancellationToken).ConfigureAwait(false);
+        RecordReproductionDiagnostics(reproduction.Diagnostics);
 
         if (!reproduction.Success || !reproduction.Compatible)
         {
@@ -427,11 +442,74 @@ public sealed class EvolutionSimulationSession
             _compatiblePairs = 0;
             _reproductionCalls = 0;
             _reproductionFailures = 0;
+            _reproductionRunsObserved = 0;
+            _reproductionRunsWithMutations = 0;
+            _reproductionMutationEvents = 0;
+            _similaritySamples = 0;
+            _minSimilarityObserved = 0f;
+            _maxSimilarityObserved = 0f;
             _childrenAddedToPool = 0;
             _speciationCommitAttempts = 0;
             _speciationCommitSuccesses = 0;
             _lastFailure = string.Empty;
             _lastSeed = 0;
+        }
+    }
+
+    private void RecordReproductionDiagnostics(ReproductionDiagnostics diagnostics)
+    {
+        lock (_gate)
+        {
+            _reproductionRunsObserved += diagnostics.RunCount;
+            _reproductionRunsWithMutations += diagnostics.RunsWithMutations;
+            _reproductionMutationEvents += diagnostics.MutationEvents;
+        }
+
+        if (diagnostics.SimilaritySamples > 0)
+        {
+            RecordSimilarityRange(diagnostics.MinSimilarity, diagnostics.MaxSimilarity, diagnostics.SimilaritySamples);
+        }
+    }
+
+    private void RecordSimilarity(float similarity)
+    {
+        if (float.IsNaN(similarity) || float.IsInfinity(similarity))
+        {
+            return;
+        }
+
+        var normalized = Math.Clamp(similarity, 0f, 1f);
+        RecordSimilarityRange(normalized, normalized, 1);
+    }
+
+    private void RecordSimilarityRange(float minSimilarity, float maxSimilarity, ulong samples)
+    {
+        if (samples == 0)
+        {
+            return;
+        }
+
+        var normalizedMin = Math.Clamp(minSimilarity, 0f, 1f);
+        var normalizedMax = Math.Clamp(maxSimilarity, 0f, 1f);
+        if (normalizedMax < normalizedMin)
+        {
+            (normalizedMin, normalizedMax) = (normalizedMax, normalizedMin);
+        }
+
+        lock (_gate)
+        {
+            if (_similaritySamples == 0)
+            {
+                _minSimilarityObserved = normalizedMin;
+                _maxSimilarityObserved = normalizedMax;
+            }
+            else
+            {
+                _minSimilarityObserved = Math.Min(_minSimilarityObserved, normalizedMin);
+                _maxSimilarityObserved = Math.Max(_maxSimilarityObserved, normalizedMax);
+            }
+
+            _similaritySamples += samples;
         }
     }
 
