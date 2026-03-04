@@ -778,6 +778,86 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public async Task ProtoAssign_Commit_ArtifactParents_ResolveLineageMembershipEvidence()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.80d,
+            lineageSplitThreshold: 0.40d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch"));
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            await WaitForEpochAsync(system, managerPid);
+
+            var parentARef = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+            var parentBRef = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+            var childRef = new string('c', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+
+            foreach (var parentRef in new[] { parentARef, parentBRef })
+            {
+                var seededParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                    managerPid,
+                    new ProtoSpec.SpeciationAssignRequest
+                    {
+                        ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                        Candidate = new ProtoSpec.SpeciationCandidateRef
+                        {
+                            ArtifactRef = parentRef
+                        },
+                        SpeciesId = "species-alpha",
+                        SpeciesDisplayName = "Species Alpha",
+                        DecisionReason = "seed_parent_species",
+                        DecisionMetadataJson = "{\"source\":\"seed\"}"
+                    });
+                Assert.True(seededParent.Decision.Success);
+                Assert.True(seededParent.Decision.Created);
+            }
+
+            var assign = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        ArtifactRef = childRef
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { ArtifactRef = parentARef },
+                        new ProtoSpec.SpeciationParentRef { ArtifactRef = parentBRef }
+                    },
+                    DecisionMetadataJson = "{\"report\":{\"similarity_score\":0.92}}"
+                });
+
+            Assert.True(assign.Decision.Success);
+            Assert.True(assign.Decision.Created);
+            Assert.Equal("species-alpha", assign.Decision.SpeciesId);
+            Assert.Equal("lineage_inherit_similarity_match", assign.Decision.DecisionReason);
+
+            using var metadata = JsonDocument.Parse(assign.Decision.DecisionMetadataJson);
+            Assert.Equal(2, metadata.RootElement.GetProperty("lineage").GetProperty("parent_membership_count").GetInt32());
+
+            var status = await system.Root.RequestAsync<ProtoSpec.SpeciationStatusResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationStatusRequest());
+            Assert.Equal((uint)2, status.Status.LineageEdgeCount);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task ProtoAssign_Commit_HysteresisBand_ReusesPriorLineageSpecies()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");

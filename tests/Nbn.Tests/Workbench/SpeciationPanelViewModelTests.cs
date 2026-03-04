@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using Nbn.Proto;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -287,6 +288,27 @@ public class SpeciationPanelViewModelTests
                 File.Delete(overridePath);
             }
         }
+    }
+
+    [Fact]
+    public void BuildEvolutionSimArgs_UsesArtifactParentSpecs()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+        var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "BuildEvolutionSimArgs",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: [typeof(int), typeof(int), typeof(ArtifactRef), typeof(ArtifactRef)],
+            modifiers: null);
+        Assert.NotNull(method);
+
+        var args = (string?)method!.Invoke(vm, [12050, 12074, parentA, parentB]);
+        Assert.NotNull(args);
+        Assert.Contains("--parent ", args!, StringComparison.Ordinal);
+        Assert.DoesNotContain("--parent-brain", args, StringComparison.Ordinal);
     }
 
     [Fact]

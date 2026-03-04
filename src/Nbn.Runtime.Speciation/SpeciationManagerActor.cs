@@ -1267,15 +1267,62 @@ public sealed class SpeciationManagerActor : IActor
             return Array.Empty<Guid>();
         }
 
-        return parents
-            .Where(parent => parent is not null && parent.ParentCase == ProtoSpec.SpeciationParentRef.ParentOneofCase.BrainId)
-            .Select(parent => parent.BrainId)
-            .Where(brainId => brainId is not null && brainId.TryToGuid(out _))
-            .Select(brainId => brainId!.ToGuid())
-            .Where(brainId => brainId != Guid.Empty)
+        var identities = new List<Guid>();
+        foreach (var parent in parents)
+        {
+            if (TryResolveParentIdentity(parent, out var parentIdentity) && parentIdentity != Guid.Empty)
+            {
+                identities.Add(parentIdentity);
+            }
+        }
+
+        return identities
             .Distinct()
-            .OrderBy(brainId => brainId)
+            .OrderBy(parentIdentity => parentIdentity)
             .ToArray();
+    }
+
+    private static bool TryResolveParentIdentity(ProtoSpec.SpeciationParentRef? parent, out Guid parentIdentity)
+    {
+        parentIdentity = Guid.Empty;
+        if (parent is null)
+        {
+            return false;
+        }
+
+        switch (parent.ParentCase)
+        {
+            case ProtoSpec.SpeciationParentRef.ParentOneofCase.BrainId:
+                if (parent.BrainId is not null
+                    && parent.BrainId.TryToGuid(out var parentBrainId)
+                    && parentBrainId != Guid.Empty)
+                {
+                    parentIdentity = parentBrainId;
+                    return true;
+                }
+
+                return false;
+            case ProtoSpec.SpeciationParentRef.ParentOneofCase.ArtifactRef:
+                if (HasUsableArtifactReference(parent.ArtifactRef))
+                {
+                    parentIdentity = CreateDeterministicCandidateBrainId(
+                        BuildArtifactIdentityKey(parent.ArtifactRef!));
+                    return parentIdentity != Guid.Empty;
+                }
+
+                return false;
+            case ProtoSpec.SpeciationParentRef.ParentOneofCase.ArtifactUri:
+                if (!string.IsNullOrWhiteSpace(parent.ArtifactUri))
+                {
+                    parentIdentity = CreateDeterministicCandidateBrainId(
+                        $"artifact_uri|{parent.ArtifactUri.Trim()}");
+                    return parentIdentity != Guid.Empty;
+                }
+
+                return false;
+            default:
+                return false;
+        }
     }
 
     private static IReadOnlyList<string> ExtractParentArtifactLabels(IEnumerable<ProtoSpec.SpeciationParentRef> parents)

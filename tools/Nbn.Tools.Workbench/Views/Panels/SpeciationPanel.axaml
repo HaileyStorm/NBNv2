@@ -327,7 +327,7 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Reproduction Simulator" Classes="card-title" />
-          <TextBlock Text="Standalone EvolutionSim controls for stress runs using two parent brain IDs (dropdown by default, optional per-parent file override)." Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="Standalone EvolutionSim controls for stress runs using two live parent brains (dropdown by default, optional per-parent GUID file override). Parent definitions are resolved at launch for artifact-first simulation runs." Classes="muted" TextWrapping="Wrap" />
 
           <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
             <StackPanel>
@@ -431,7 +431,7 @@
                        Classes="muted"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1"
-                       Text="Simulator always sends two --parent-brain values. Override file(s) take precedence for their parent slot."
+                       Text="Simulator resolves the selected brains to artifacts and sends two --parent values. Override file(s) take precedence for parent selection."
                        Classes="muted"
                        TextWrapping="Wrap" />
           </Grid>

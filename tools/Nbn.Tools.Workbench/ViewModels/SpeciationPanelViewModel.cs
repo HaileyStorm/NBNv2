@@ -13,6 +13,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
+using Nbn.Proto;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -1154,7 +1155,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        var args = BuildEvolutionSimArgs(ioPort, simPort, parentA, parentB);
+        var parentDefinitions = await TryResolveSimulatorParentArtifactsAsync(parentA, parentB).ConfigureAwait(false);
+        if (!parentDefinitions.Success || parentDefinitions.ParentARef is null || parentDefinitions.ParentBRef is null)
+        {
+            SimulatorStatus = parentDefinitions.Error;
+            Status = SimulatorStatus;
+            return;
+        }
+
+        var args = BuildEvolutionSimArgs(ioPort, simPort, parentDefinitions.ParentARef, parentDefinitions.ParentBRef);
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "dotnet",
@@ -1240,7 +1249,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var childrenLabel = snapshot.ChildrenAddedToPool.ToString(CultureInfo.InvariantCulture);
             if (!SimSpawnChildren && snapshot.ChildrenAddedToPool == 0 && snapshot.ReproductionCalls > 0)
             {
-                childrenLabel = "0 (expected while spawn children is off)";
+                childrenLabel = "0 (no parent-pool growth yet)";
             }
 
             SimulatorProgress =
@@ -1541,6 +1550,51 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return true;
     }
 
+    private async Task<(bool Success, ArtifactRef? ParentARef, ArtifactRef? ParentBRef, string Error)> TryResolveSimulatorParentArtifactsAsync(Guid parentA, Guid parentB)
+    {
+        var parentAResolution = await ResolveSimulatorParentArtifactAsync(parentA, "A").ConfigureAwait(false);
+        if (!parentAResolution.Success)
+        {
+            return (false, null, null, parentAResolution.Error);
+        }
+
+        var parentBResolution = await ResolveSimulatorParentArtifactAsync(parentB, "B").ConfigureAwait(false);
+        if (!parentBResolution.Success)
+        {
+            return (false, null, null, parentBResolution.Error);
+        }
+
+        return (true, parentAResolution.Artifact, parentBResolution.Artifact, string.Empty);
+    }
+
+    private async Task<(bool Success, ArtifactRef? Artifact, string Error)> ResolveSimulatorParentArtifactAsync(Guid brainId, string parentLabel)
+    {
+        ArtifactRef? parentArtifact = await _client.ExportBrainDefinitionAsync(brainId, rebaseOverlays: false).ConfigureAwait(false);
+        if (!HasUsableSimulatorParentArtifact(parentArtifact))
+        {
+            var info = await _client.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
+            if (HasUsableSimulatorParentArtifact(info?.BaseDefinition))
+            {
+                parentArtifact = info!.BaseDefinition;
+            }
+        }
+
+        if (!HasUsableSimulatorParentArtifact(parentArtifact))
+        {
+            return (false, null, $"Parent {parentLabel} definition unavailable for brain {brainId:D}. Ensure IO/Hive are connected and the brain is active.");
+        }
+
+        if (string.IsNullOrWhiteSpace(parentArtifact!.StoreUri))
+        {
+            return (false, null, $"Parent {parentLabel} definition missing store_uri for brain {brainId:D}. Configure artifact storage before running simulator.");
+        }
+
+        return (true, parentArtifact, string.Empty);
+    }
+
+    private static bool HasUsableSimulatorParentArtifact(ArtifactRef? artifactRef)
+        => artifactRef is not null && artifactRef.TryToSha256Hex(out _);
+
     private static bool TryResolveParentBrainId(
         SpeciationSimulatorBrainOption? selected,
         string? overrideFilePath,
@@ -1624,8 +1678,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private static string FormatPath(IStorageItem item)
         => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
-    private string BuildEvolutionSimArgs(int ioPort, int simPort, Guid parentA, Guid parentB)
+    private string BuildEvolutionSimArgs(int ioPort, int simPort, ArtifactRef parentARef, ArtifactRef parentBRef)
     {
+        var parentASpec = BuildEvolutionParentSpec(parentARef);
+        var parentBSpec = BuildEvolutionParentSpec(parentBRef);
         var args = new List<string>
         {
             "run",
@@ -1644,12 +1700,28 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             $"--run-gamma {ParseDouble(SimGammaText, 1d).ToString("0.###", CultureInfo.InvariantCulture)}",
             $"--commit-to-speciation {(SimCommitToSpeciation ? "true" : "false")}",
             $"--spawn-children {(SimSpawnChildren ? "true" : "false")}",
-            $"--parent-brain {parentA:D}",
-            $"--parent-brain {parentB:D}",
+            $"--parent {QuoteIfNeeded(parentASpec)}",
+            $"--parent {QuoteIfNeeded(parentBSpec)}",
             "--json"
         };
 
         return string.Join(" ", args);
+    }
+
+    private static string BuildEvolutionParentSpec(ArtifactRef artifactRef)
+    {
+        if (!artifactRef.TryToSha256Hex(out var sha))
+        {
+            return string.Empty;
+        }
+
+        var storeUri = string.IsNullOrWhiteSpace(artifactRef.StoreUri)
+            ? string.Empty
+            : artifactRef.StoreUri.Trim();
+        var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
+            ? "application/x-nbn"
+            : artifactRef.MediaType.Trim();
+        return $"{sha},{artifactRef.SizeBytes},{storeUri},{mediaType}";
     }
 
     private int ParseLiveChartIntervalSecondsOrDefault()
