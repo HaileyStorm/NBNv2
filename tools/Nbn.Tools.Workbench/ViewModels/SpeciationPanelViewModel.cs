@@ -9,6 +9,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -84,10 +88,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _epochFilterText = string.Empty;
     private string _historyLimitText = "256";
     private string _historyBrainIdText = string.Empty;
-    private bool _simUseBrainParents;
-    private string _simParentsFilePath = string.Empty;
-    private string _simBrainParentsFilePath = string.Empty;
-    private string _simStoreUri = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT") ?? string.Empty;
+    private string _simParentAOverrideFilePath = string.Empty;
+    private string _simParentBOverrideFilePath = string.Empty;
+    private SpeciationSimulatorBrainOption? _simSelectedParentABrain;
+    private SpeciationSimulatorBrainOption? _simSelectedParentBBrain;
     private string _simBindHost = "127.0.0.1";
     private string _simPortText = "12074";
     private string _simSeedText = "12345";
@@ -136,6 +140,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         SpeciesCounts = new ObservableCollection<SpeciationSpeciesCountItem>();
         HistoryRows = new ObservableCollection<SpeciationHistoryItem>();
         EpochSummaries = new ObservableCollection<SpeciationEpochSummaryItem>();
+        SimActiveBrains = new ObservableCollection<SpeciationSimulatorBrainOption>();
         PopulationChartSeries = new ObservableCollection<SpeciationLineChartSeriesItem>();
         PopulationChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
         FlowChartAreas = new ObservableCollection<SpeciationFlowChartAreaItem>();
@@ -153,6 +158,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         StartSimulatorCommand = new AsyncRelayCommand(StartSimulatorAsync);
         StopSimulatorCommand = new AsyncRelayCommand(StopSimulatorAsync);
         RefreshSimulatorStatusCommand = new AsyncRelayCommand(RefreshSimulatorStatusAsync);
+        BrowseSimParentAOverrideFileCommand = new AsyncRelayCommand(() => BrowseSimulatorParentFileAsync(SimulatorParentFileKind.ParentAOverride));
+        BrowseSimParentBOverrideFileCommand = new AsyncRelayCommand(() => BrowseSimulatorParentFileAsync(SimulatorParentFileKind.ParentBOverride));
 
         _liveChartsEnabled = _enableLiveChartsAutoRefresh;
         _liveChartsStatus = _liveChartsEnabled
@@ -169,6 +176,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public ObservableCollection<SpeciationSpeciesCountItem> SpeciesCounts { get; }
     public ObservableCollection<SpeciationHistoryItem> HistoryRows { get; }
     public ObservableCollection<SpeciationEpochSummaryItem> EpochSummaries { get; }
+    public ObservableCollection<SpeciationSimulatorBrainOption> SimActiveBrains { get; }
     public ObservableCollection<SpeciationLineChartSeriesItem> PopulationChartSeries { get; }
     public ObservableCollection<SpeciationChartLegendItem> PopulationChartLegend { get; }
     public ObservableCollection<SpeciationFlowChartAreaItem> FlowChartAreas { get; }
@@ -186,6 +194,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public AsyncRelayCommand StartSimulatorCommand { get; }
     public AsyncRelayCommand StopSimulatorCommand { get; }
     public AsyncRelayCommand RefreshSimulatorStatusCommand { get; }
+    public AsyncRelayCommand BrowseSimParentAOverrideFileCommand { get; }
+    public AsyncRelayCommand BrowseSimParentBOverrideFileCommand { get; }
 
     public string Status
     {
@@ -353,29 +363,51 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
 
-    public bool SimUseBrainParents
+    public SpeciationSimulatorBrainOption? SimSelectedParentABrain
     {
-        get => _simUseBrainParents;
-        set => SetProperty(ref _simUseBrainParents, value);
+        get => _simSelectedParentABrain;
+        set => SetProperty(ref _simSelectedParentABrain, value);
     }
 
-    public string SimParentsFilePath
+    public SpeciationSimulatorBrainOption? SimSelectedParentBBrain
     {
-        get => _simParentsFilePath;
-        set => SetProperty(ref _simParentsFilePath, value);
+        get => _simSelectedParentBBrain;
+        set => SetProperty(ref _simSelectedParentBBrain, value);
     }
 
-    public string SimBrainParentsFilePath
+    public string SimParentAOverrideFilePath
     {
-        get => _simBrainParentsFilePath;
-        set => SetProperty(ref _simBrainParentsFilePath, value);
+        get => _simParentAOverrideFilePath;
+        set
+        {
+            if (SetProperty(ref _simParentAOverrideFilePath, value))
+            {
+                OnPropertyChanged(nameof(SimParentAOverrideFilePathDisplay));
+            }
+        }
     }
 
-    public string SimStoreUri
+    public string SimParentBOverrideFilePath
     {
-        get => _simStoreUri;
-        set => SetProperty(ref _simStoreUri, value);
+        get => _simParentBOverrideFilePath;
+        set
+        {
+            if (SetProperty(ref _simParentBOverrideFilePath, value))
+            {
+                OnPropertyChanged(nameof(SimParentBOverrideFilePathDisplay));
+            }
+        }
     }
+
+    public string SimParentAOverrideFilePathDisplay
+        => string.IsNullOrWhiteSpace(SimParentAOverrideFilePath)
+            ? "(no Parent A override file)"
+            : SimParentAOverrideFilePath;
+
+    public string SimParentBOverrideFilePathDisplay
+        => string.IsNullOrWhiteSpace(SimParentBOverrideFilePath)
+            ? "(no Parent B override file)"
+            : SimParentBOverrideFilePath;
 
     public string SimBindHost
     {
@@ -556,6 +588,47 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public double PopulationChartHeight => PopulationChartPlotHeight;
     public double FlowChartWidth => FlowChartPlotWidth;
     public double FlowChartHeight => FlowChartPlotHeight;
+
+    public void UpdateActiveBrains(IReadOnlyList<BrainListItem> brains)
+    {
+        var options = brains
+            .Where(entry => entry.BrainId != Guid.Empty)
+            .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            .Select(entry => new SpeciationSimulatorBrainOption(entry.BrainId, entry.Display))
+            .GroupBy(entry => entry.BrainId)
+            .Select(group => group.First())
+            .OrderBy(entry => entry.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var selectedAId = SimSelectedParentABrain?.BrainId;
+        var selectedBId = SimSelectedParentBBrain?.BrainId;
+
+        _dispatcher.Post(() =>
+        {
+            SimActiveBrains.Clear();
+            foreach (var option in options)
+            {
+                SimActiveBrains.Add(option);
+            }
+
+            SimSelectedParentABrain = selectedAId.HasValue
+                ? SimActiveBrains.FirstOrDefault(entry => entry.BrainId == selectedAId.Value)
+                : null;
+            SimSelectedParentBBrain = selectedBId.HasValue
+                ? SimActiveBrains.FirstOrDefault(entry => entry.BrainId == selectedBId.Value)
+                : null;
+
+            if (SimSelectedParentABrain is null && SimActiveBrains.Count > 0)
+            {
+                SimSelectedParentABrain = SimActiveBrains[0];
+            }
+
+            if (SimSelectedParentBBrain is null)
+            {
+                SimSelectedParentBBrain = SimActiveBrains
+                    .FirstOrDefault(entry => entry.BrainId != SimSelectedParentABrain?.BrainId);
+            }
+        });
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -906,14 +979,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        if (!ValidateParentSource(out var parentError))
+        if (!TryResolveSimulatorParentIds(out var parentA, out var parentB, out var parentError))
         {
             SimulatorStatus = parentError;
             Status = SimulatorStatus;
             return;
         }
 
-        var args = BuildEvolutionSimArgs(ioPort, simPort);
+        var args = BuildEvolutionSimArgs(ioPort, simPort, parentA, parentB);
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "dotnet",
@@ -1223,35 +1296,57 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return long.TryParse(EpochFilterText.Trim(), out var parsed) && parsed > 0 ? parsed : null;
     }
 
-    private bool ValidateParentSource(out string error)
+    private async Task BrowseSimulatorParentFileAsync(SimulatorParentFileKind kind)
     {
-        if (SimUseBrainParents)
+        var title = kind == SimulatorParentFileKind.ParentAOverride
+            ? "Select Parent A override file"
+            : "Select Parent B override file";
+        var file = await PickOpenFileAsync(title).ConfigureAwait(false);
+        if (file is null)
         {
-            if (string.IsNullOrWhiteSpace(SimBrainParentsFilePath))
-            {
-                error = "Simulator requires --parents-brain-file.";
-                return false;
-            }
-
-            if (!File.Exists(SimBrainParentsFilePath))
-            {
-                error = $"Brain parent file not found: {SimBrainParentsFilePath}";
-                return false;
-            }
-
-            error = string.Empty;
-            return true;
+            return;
         }
 
-        if (string.IsNullOrWhiteSpace(SimParentsFilePath))
+        var path = FormatPath(file);
+        _dispatcher.Post(() =>
         {
-            error = "Simulator requires --parents-file.";
+            if (kind == SimulatorParentFileKind.ParentAOverride)
+            {
+                SimParentAOverrideFilePath = path;
+            }
+            else
+            {
+                SimParentBOverrideFilePath = path;
+            }
+        });
+    }
+
+    private bool TryResolveSimulatorParentIds(out Guid parentA, out Guid parentB, out string error)
+    {
+        if (!TryResolveParentBrainId(
+                selected: SimSelectedParentABrain,
+                overrideFilePath: SimParentAOverrideFilePath,
+                parentLabel: "A",
+                out parentA,
+                out error))
+        {
+            parentB = Guid.Empty;
             return false;
         }
 
-        if (!File.Exists(SimParentsFilePath))
+        if (!TryResolveParentBrainId(
+                selected: SimSelectedParentBBrain,
+                overrideFilePath: SimParentBOverrideFilePath,
+                parentLabel: "B",
+                out parentB,
+                out error))
         {
-            error = $"Parent file not found: {SimParentsFilePath}";
+            return false;
+        }
+
+        if (parentA == parentB)
+        {
+            error = "Simulator requires two distinct brain parents.";
             return false;
         }
 
@@ -1259,7 +1354,90 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return true;
     }
 
-    private string BuildEvolutionSimArgs(int ioPort, int simPort)
+    private static bool TryResolveParentBrainId(
+        SpeciationSimulatorBrainOption? selected,
+        string? overrideFilePath,
+        string parentLabel,
+        out Guid brainId,
+        out string error)
+    {
+        if (!string.IsNullOrWhiteSpace(overrideFilePath))
+        {
+            if (!File.Exists(overrideFilePath))
+            {
+                brainId = Guid.Empty;
+                error = $"Parent {parentLabel} override file not found: {overrideFilePath}";
+                return false;
+            }
+
+            foreach (var rawLine in File.ReadLines(overrideFilePath))
+            {
+                var line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (Guid.TryParse(line, out brainId) && brainId != Guid.Empty)
+                {
+                    error = string.Empty;
+                    return true;
+                }
+
+                brainId = Guid.Empty;
+                error = $"Parent {parentLabel} override file must contain a brain GUID: {overrideFilePath}";
+                return false;
+            }
+
+            brainId = Guid.Empty;
+            error = $"Parent {parentLabel} override file has no usable brain GUID: {overrideFilePath}";
+            return false;
+        }
+
+        if (selected is null || selected.BrainId == Guid.Empty)
+        {
+            brainId = Guid.Empty;
+            error = $"Simulator requires Parent {parentLabel}.";
+            return false;
+        }
+
+        brainId = selected.BrainId;
+        error = string.Empty;
+        return true;
+    }
+
+    private static async Task<IStorageFile?> PickOpenFileAsync(string title)
+    {
+        var provider = GetStorageProvider();
+        if (provider is null)
+        {
+            return null;
+        }
+
+        var options = new FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false
+        };
+        var results = await provider.OpenFilePickerAsync(options).ConfigureAwait(false);
+        return results.FirstOrDefault();
+    }
+
+    private static IStorageProvider? GetStorageProvider()
+    {
+        var window = GetMainWindow();
+        return window?.StorageProvider;
+    }
+
+    private static Window? GetMainWindow()
+        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
+
+    private static string FormatPath(IStorageItem item)
+        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
+
+    private string BuildEvolutionSimArgs(int ioPort, int simPort, Guid parentA, Guid parentB)
     {
         var args = new List<string>
         {
@@ -1279,21 +1457,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             $"--run-gamma {ParseDouble(SimGammaText, 1d).ToString("0.###", CultureInfo.InvariantCulture)}",
             $"--commit-to-speciation {(SimCommitToSpeciation ? "true" : "false")}",
             $"--spawn-children {(SimSpawnChildren ? "true" : "false")}",
+            $"--parent-brain {parentA:D}",
+            $"--parent-brain {parentB:D}",
             "--json"
         };
-
-        if (SimUseBrainParents)
-        {
-            args.Add($"--parents-brain-file {QuoteIfNeeded(SimBrainParentsFilePath)}");
-        }
-        else
-        {
-            args.Add($"--parents-file {QuoteIfNeeded(SimParentsFilePath)}");
-            if (!string.IsNullOrWhiteSpace(SimStoreUri))
-            {
-                args.Add($"--store-uri {QuoteIfNeeded(SimStoreUri)}");
-            }
-        }
 
         return string.Join(" ", args);
     }
@@ -1898,6 +2065,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ulong SpeciationCommitAttempts,
         ulong SpeciationCommitSuccesses,
         string LastFailure);
+
+    private enum SimulatorParentFileKind
+    {
+        ParentAOverride,
+        ParentBOverride
+    }
 }
 
 public sealed record SpeciationSpeciesCountItem(
@@ -1941,3 +2114,8 @@ public sealed record SpeciationChartLegendItem(
     string Label,
     string Color,
     string ValueLabel);
+
+public sealed record SpeciationSimulatorBrainOption(Guid BrainId, string Label)
+{
+    public string BrainIdLabel => BrainId.ToString("D");
+}

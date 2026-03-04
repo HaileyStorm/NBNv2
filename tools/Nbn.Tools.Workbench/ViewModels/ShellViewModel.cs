@@ -298,6 +298,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         {
             Viz.SetBrains(snapshot);
             Repro.UpdateActiveBrains(snapshot);
+            Speciation.UpdateActiveBrains(snapshot);
             var active = snapshot
                 .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
                 .Select(entry => entry.BrainId)

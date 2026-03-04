@@ -117,16 +117,88 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task StartSimulatorCommand_InvalidParentFile_FailsFast()
+    public async Task StartSimulatorCommand_InvalidParentOverrideFile_FailsFast()
     {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
         var vm = CreateViewModel(new FakeWorkbenchClient());
-        vm.SimUseBrainParents = false;
-        vm.SimParentsFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Active", true),
+            new BrainListItem(brainB, "Active", true)
+        ]);
+        vm.SimParentAOverrideFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
 
         vm.StartSimulatorCommand.Execute(null);
-        await WaitForAsync(() => vm.SimulatorStatus.StartsWith("Parent file not found", StringComparison.Ordinal));
+        await WaitForAsync(() => vm.SimulatorStatus.StartsWith("Parent A override file not found", StringComparison.Ordinal));
 
-        Assert.Contains("Parent file not found", vm.SimulatorStatus, StringComparison.Ordinal);
+        Assert.Contains("Parent A override file not found", vm.SimulatorStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateActiveBrains_PopulatesSimulatorBrainDropdownDefaults()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Active", true),
+            new BrainListItem(brainB, "Active", true),
+            new BrainListItem(brainC, "Dead", false)
+        ]);
+
+        Assert.Equal(2, vm.SimActiveBrains.Count);
+        Assert.NotNull(vm.SimSelectedParentABrain);
+        Assert.NotNull(vm.SimSelectedParentBBrain);
+        Assert.NotEqual(vm.SimSelectedParentABrain!.BrainId, vm.SimSelectedParentBBrain!.BrainId);
+    }
+
+    [Fact]
+    public async Task StartSimulatorCommand_BrainDropdownMode_RequiresDistinctParents()
+    {
+        var sharedBrain = Guid.NewGuid();
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.SimSelectedParentABrain = new SpeciationSimulatorBrainOption(sharedBrain, sharedBrain.ToString("D"));
+        vm.SimSelectedParentBBrain = new SpeciationSimulatorBrainOption(sharedBrain, sharedBrain.ToString("D"));
+
+        vm.StartSimulatorCommand.Execute(null);
+        await WaitForAsync(() => vm.SimulatorStatus == "Simulator requires two distinct brain parents.");
+
+        Assert.Equal("Simulator requires two distinct brain parents.", vm.SimulatorStatus);
+    }
+
+    [Fact]
+    public async Task StartSimulatorCommand_ParentOverrideFile_InvalidGuid_FailsFast()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var overridePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        await File.WriteAllTextAsync(overridePath, "not-a-guid");
+
+        try
+        {
+            var vm = CreateViewModel(new FakeWorkbenchClient());
+            vm.UpdateActiveBrains(
+            [
+                new BrainListItem(brainA, "Active", true),
+                new BrainListItem(brainB, "Active", true)
+            ]);
+            vm.SimParentBOverrideFilePath = overridePath;
+
+            vm.StartSimulatorCommand.Execute(null);
+            await WaitForAsync(() => vm.SimulatorStatus.StartsWith("Parent B override file must contain a brain GUID", StringComparison.Ordinal));
+            Assert.Contains("Parent B override file must contain a brain GUID", vm.SimulatorStatus, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (File.Exists(overridePath))
+            {
+                File.Delete(overridePath);
+            }
+        }
     }
 
     [Fact]
