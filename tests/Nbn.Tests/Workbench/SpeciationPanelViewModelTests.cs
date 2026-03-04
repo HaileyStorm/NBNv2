@@ -403,7 +403,7 @@ public class SpeciationPanelViewModelTests
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
         var logPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.sim.log");
-        var statusLine = "{\"type\":\"evolution_sim_status\",\"final\":true,\"session_id\":\"sess-123\",\"running\":false,\"iterations\":22,\"parent_pool_size\":14,\"compatibility_checks\":100,\"compatible_pairs\":4,\"reproduction_calls\":7,\"reproduction_failures\":3,\"reproduction_runs_observed\":11,\"reproduction_runs_with_mutations\":9,\"reproduction_mutation_events\":23,\"similarity_samples\":11,\"min_similarity_observed\":0.61,\"max_similarity_observed\":0.97,\"children_added_to_pool\":5,\"speciation_commit_attempts\":6,\"speciation_commit_successes\":2,\"last_failure\":\"example_failure\",\"last_seed\":42}";
+        var statusLine = "{\"type\":\"evolution_sim_status\",\"final\":true,\"session_id\":\"sess-123\",\"running\":false,\"iterations\":22,\"parent_pool_size\":14,\"compatibility_checks\":100,\"compatible_pairs\":4,\"reproduction_calls\":7,\"reproduction_failures\":3,\"reproduction_runs_observed\":11,\"reproduction_runs_with_mutations\":9,\"reproduction_mutation_events\":23,\"similarity_samples\":11,\"min_similarity_observed\":0.61,\"max_similarity_observed\":0.97,\"assessment_similarity_samples\":9,\"min_assessment_similarity_observed\":0.5,\"max_assessment_similarity_observed\":0.97,\"reproduction_similarity_samples\":7,\"min_reproduction_similarity_observed\":0.72,\"max_reproduction_similarity_observed\":0.96,\"speciation_commit_similarity_samples\":6,\"min_speciation_commit_similarity_observed\":0.73,\"max_speciation_commit_similarity_observed\":0.95,\"children_added_to_pool\":5,\"speciation_commit_attempts\":6,\"speciation_commit_successes\":2,\"last_failure\":\"example_failure\",\"last_seed\":42}";
         await File.WriteAllTextAsync(logPath, statusLine);
 
         try
@@ -422,7 +422,10 @@ public class SpeciationPanelViewModelTests
             Assert.Contains("runs=11", vm.SimulatorDetailedStats, StringComparison.Ordinal);
             Assert.Contains("runs_mutated=9", vm.SimulatorDetailedStats, StringComparison.Ordinal);
             Assert.Contains("mutation_events=23", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("min_similarity=0.61", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("sim_overall=0.61..0.97 (11)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("sim_assess=0.5..0.97 (9)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("sim_repro=0.72..0.96 (7)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+            Assert.Contains("sim_commit=0.73..0.95 (6)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
             Assert.Contains("seed=42", vm.SimulatorDetailedStats, StringComparison.Ordinal);
             Assert.Equal("example_failure", vm.SimulatorLastFailure);
         }

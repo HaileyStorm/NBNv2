@@ -25,6 +25,15 @@ public sealed class EvolutionSimulationSession
     private ulong _similaritySamples;
     private float _minSimilarityObserved;
     private float _maxSimilarityObserved;
+    private ulong _assessmentSimilaritySamples;
+    private float _minAssessmentSimilarityObserved;
+    private float _maxAssessmentSimilarityObserved;
+    private ulong _reproductionSimilaritySamples;
+    private float _minReproductionSimilarityObserved;
+    private float _maxReproductionSimilarityObserved;
+    private ulong _speciationCommitSimilaritySamples;
+    private float _minSpeciationCommitSimilarityObserved;
+    private float _maxSpeciationCommitSimilarityObserved;
     private ulong _childrenAddedToPool;
     private ulong _speciationCommitAttempts;
     private ulong _speciationCommitSuccesses;
@@ -76,6 +85,15 @@ public sealed class EvolutionSimulationSession
                 _similaritySamples,
                 _similaritySamples == 0 ? 0f : _minSimilarityObserved,
                 _similaritySamples == 0 ? 0f : _maxSimilarityObserved,
+                _assessmentSimilaritySamples,
+                _assessmentSimilaritySamples == 0 ? 0f : _minAssessmentSimilarityObserved,
+                _assessmentSimilaritySamples == 0 ? 0f : _maxAssessmentSimilarityObserved,
+                _reproductionSimilaritySamples,
+                _reproductionSimilaritySamples == 0 ? 0f : _minReproductionSimilarityObserved,
+                _reproductionSimilaritySamples == 0 ? 0f : _maxReproductionSimilarityObserved,
+                _speciationCommitSimilaritySamples,
+                _speciationCommitSimilaritySamples == 0 ? 0f : _minSpeciationCommitSimilarityObserved,
+                _speciationCommitSimilaritySamples == 0 ? 0f : _maxSpeciationCommitSimilarityObserved,
                 _childrenAddedToPool,
                 _speciationCommitAttempts,
                 _speciationCommitSuccesses,
@@ -206,7 +224,7 @@ public sealed class EvolutionSimulationSession
             return;
         }
 
-        RecordSimilarity(assessment.SimilarityScore);
+        RecordAssessmentSimilarity(assessment.SimilarityScore);
 
         if (!assessment.Compatible)
         {
@@ -275,6 +293,7 @@ public sealed class EvolutionSimulationSession
             if (commitOutcome.Success)
             {
                 IncrementSpeciationCommitSuccesses();
+                RecordSpeciationCommitSimilarity(commitCandidate.SimilarityScore);
             }
             else if (!commitOutcome.ExpectedNoOp
                      && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
@@ -448,6 +467,15 @@ public sealed class EvolutionSimulationSession
             _similaritySamples = 0;
             _minSimilarityObserved = 0f;
             _maxSimilarityObserved = 0f;
+            _assessmentSimilaritySamples = 0;
+            _minAssessmentSimilarityObserved = 0f;
+            _maxAssessmentSimilarityObserved = 0f;
+            _reproductionSimilaritySamples = 0;
+            _minReproductionSimilarityObserved = 0f;
+            _maxReproductionSimilarityObserved = 0f;
+            _speciationCommitSimilaritySamples = 0;
+            _minSpeciationCommitSimilarityObserved = 0f;
+            _maxSpeciationCommitSimilarityObserved = 0f;
             _childrenAddedToPool = 0;
             _speciationCommitAttempts = 0;
             _speciationCommitSuccesses = 0;
@@ -467,11 +495,12 @@ public sealed class EvolutionSimulationSession
 
         if (diagnostics.SimilaritySamples > 0)
         {
-            RecordSimilarityRange(diagnostics.MinSimilarity, diagnostics.MaxSimilarity, diagnostics.SimilaritySamples);
+            RecordOverallSimilarityRange(diagnostics.MinSimilarity, diagnostics.MaxSimilarity, diagnostics.SimilaritySamples);
+            RecordReproductionSimilarityRange(diagnostics.MinSimilarity, diagnostics.MaxSimilarity, diagnostics.SimilaritySamples);
         }
     }
 
-    private void RecordSimilarity(float similarity)
+    private void RecordAssessmentSimilarity(float similarity)
     {
         if (float.IsNaN(similarity) || float.IsInfinity(similarity))
         {
@@ -479,10 +508,22 @@ public sealed class EvolutionSimulationSession
         }
 
         var normalized = Math.Clamp(similarity, 0f, 1f);
-        RecordSimilarityRange(normalized, normalized, 1);
+        RecordOverallSimilarityRange(normalized, normalized, 1);
+        RecordAssessmentSimilarityRange(normalized, normalized, 1);
     }
 
-    private void RecordSimilarityRange(float minSimilarity, float maxSimilarity, ulong samples)
+    private void RecordSpeciationCommitSimilarity(float? similarity)
+    {
+        if (!similarity.HasValue || float.IsNaN(similarity.Value) || float.IsInfinity(similarity.Value))
+        {
+            return;
+        }
+
+        var normalized = Math.Clamp(similarity.Value, 0f, 1f);
+        RecordSpeciationCommitSimilarityRange(normalized, normalized, 1);
+    }
+
+    private void RecordOverallSimilarityRange(float minSimilarity, float maxSimilarity, ulong samples)
     {
         if (samples == 0)
         {
@@ -510,6 +551,99 @@ public sealed class EvolutionSimulationSession
             }
 
             _similaritySamples += samples;
+        }
+    }
+
+    private void RecordAssessmentSimilarityRange(float minSimilarity, float maxSimilarity, ulong samples)
+    {
+        if (samples == 0)
+        {
+            return;
+        }
+
+        var normalizedMin = Math.Clamp(minSimilarity, 0f, 1f);
+        var normalizedMax = Math.Clamp(maxSimilarity, 0f, 1f);
+        if (normalizedMax < normalizedMin)
+        {
+            (normalizedMin, normalizedMax) = (normalizedMax, normalizedMin);
+        }
+
+        lock (_gate)
+        {
+            if (_assessmentSimilaritySamples == 0)
+            {
+                _minAssessmentSimilarityObserved = normalizedMin;
+                _maxAssessmentSimilarityObserved = normalizedMax;
+            }
+            else
+            {
+                _minAssessmentSimilarityObserved = Math.Min(_minAssessmentSimilarityObserved, normalizedMin);
+                _maxAssessmentSimilarityObserved = Math.Max(_maxAssessmentSimilarityObserved, normalizedMax);
+            }
+
+            _assessmentSimilaritySamples += samples;
+        }
+    }
+
+    private void RecordReproductionSimilarityRange(float minSimilarity, float maxSimilarity, ulong samples)
+    {
+        if (samples == 0)
+        {
+            return;
+        }
+
+        var normalizedMin = Math.Clamp(minSimilarity, 0f, 1f);
+        var normalizedMax = Math.Clamp(maxSimilarity, 0f, 1f);
+        if (normalizedMax < normalizedMin)
+        {
+            (normalizedMin, normalizedMax) = (normalizedMax, normalizedMin);
+        }
+
+        lock (_gate)
+        {
+            if (_reproductionSimilaritySamples == 0)
+            {
+                _minReproductionSimilarityObserved = normalizedMin;
+                _maxReproductionSimilarityObserved = normalizedMax;
+            }
+            else
+            {
+                _minReproductionSimilarityObserved = Math.Min(_minReproductionSimilarityObserved, normalizedMin);
+                _maxReproductionSimilarityObserved = Math.Max(_maxReproductionSimilarityObserved, normalizedMax);
+            }
+
+            _reproductionSimilaritySamples += samples;
+        }
+    }
+
+    private void RecordSpeciationCommitSimilarityRange(float minSimilarity, float maxSimilarity, ulong samples)
+    {
+        if (samples == 0)
+        {
+            return;
+        }
+
+        var normalizedMin = Math.Clamp(minSimilarity, 0f, 1f);
+        var normalizedMax = Math.Clamp(maxSimilarity, 0f, 1f);
+        if (normalizedMax < normalizedMin)
+        {
+            (normalizedMin, normalizedMax) = (normalizedMax, normalizedMin);
+        }
+
+        lock (_gate)
+        {
+            if (_speciationCommitSimilaritySamples == 0)
+            {
+                _minSpeciationCommitSimilarityObserved = normalizedMin;
+                _maxSpeciationCommitSimilarityObserved = normalizedMax;
+            }
+            else
+            {
+                _minSpeciationCommitSimilarityObserved = Math.Min(_minSpeciationCommitSimilarityObserved, normalizedMin);
+                _maxSpeciationCommitSimilarityObserved = Math.Max(_maxSpeciationCommitSimilarityObserved, normalizedMax);
+            }
+
+            _speciationCommitSimilaritySamples += samples;
         }
     }
 

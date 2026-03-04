@@ -1252,12 +1252,22 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 childrenLabel = "0 (no parent-pool growth yet)";
             }
 
-            var minSimilarityLabel = snapshot.SimilaritySamples > 0 && snapshot.MinSimilarityObserved.HasValue
-                ? snapshot.MinSimilarityObserved.Value.ToString("0.###", CultureInfo.InvariantCulture)
-                : "n/a";
-            var maxSimilarityLabel = snapshot.SimilaritySamples > 0 && snapshot.MaxSimilarityObserved.HasValue
-                ? snapshot.MaxSimilarityObserved.Value.ToString("0.###", CultureInfo.InvariantCulture)
-                : "n/a";
+            var overallSimilarityLabel = FormatSimilarityRange(
+                snapshot.SimilaritySamples,
+                snapshot.MinSimilarityObserved,
+                snapshot.MaxSimilarityObserved);
+            var assessmentSimilarityLabel = FormatSimilarityRange(
+                snapshot.AssessmentSimilaritySamples,
+                snapshot.MinAssessmentSimilarityObserved,
+                snapshot.MaxAssessmentSimilarityObserved);
+            var reproductionSimilarityLabel = FormatSimilarityRange(
+                snapshot.ReproductionSimilaritySamples,
+                snapshot.MinReproductionSimilarityObserved,
+                snapshot.MaxReproductionSimilarityObserved);
+            var commitSimilarityLabel = FormatSimilarityRange(
+                snapshot.SpeciationCommitSimilaritySamples,
+                snapshot.MinSpeciationCommitSimilarityObserved,
+                snapshot.MaxSpeciationCommitSimilarityObserved);
 
             SimulatorProgress =
                 $"running={snapshot.Running} final={snapshot.Final} iter={snapshot.Iterations} parent_pool_size={snapshot.ParentPoolSize}";
@@ -1266,7 +1276,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 $"repro_calls={snapshot.ReproductionCalls} repro_fail={snapshot.ReproductionFailures} " +
                 $"parent_pool_size={snapshot.ParentPoolSize} children_added_to_pool={childrenLabel} " +
                 $"runs={snapshot.ReproductionRunsObserved} runs_mutated={snapshot.ReproductionRunsWithMutations} mutation_events={snapshot.ReproductionMutationEvents} " +
-                $"min_similarity={minSimilarityLabel} max_similarity={maxSimilarityLabel} " +
+                $"sim_overall={overallSimilarityLabel} sim_assess={assessmentSimilarityLabel} sim_repro={reproductionSimilarityLabel} sim_commit={commitSimilarityLabel} " +
                 $"speciation={snapshot.SpeciationCommitSuccesses}/{snapshot.SpeciationCommitAttempts} " +
                 $"seed={snapshot.LastSeed}";
             SimulatorLastFailure = string.IsNullOrWhiteSpace(snapshot.LastFailure) ? "(none)" : snapshot.LastFailure;
@@ -2076,6 +2086,16 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         };
     }
 
+    private static string FormatSimilarityRange(ulong samples, double? min, double? max)
+    {
+        if (samples == 0 || !min.HasValue || !max.HasValue)
+        {
+            return "n/a";
+        }
+
+        return $"{min.Value:0.###}..{max.Value:0.###} ({samples.ToString(CultureInfo.InvariantCulture)})";
+    }
+
     private static string BuildLinePath(
         IReadOnlyList<double> values,
         double yMin,
@@ -2420,6 +2440,33 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 SimilaritySamples: root.TryGetProperty("similarity_samples", out var similaritySamplesNode) ? similaritySamplesNode.GetUInt64() : 0UL,
                 MinSimilarityObserved: TryGetJsonDouble(root, "min_similarity_observed", out var minSimilarityObserved) ? minSimilarityObserved : null,
                 MaxSimilarityObserved: TryGetJsonDouble(root, "max_similarity_observed", out var maxSimilarityObserved) ? maxSimilarityObserved : null,
+                AssessmentSimilaritySamples: root.TryGetProperty("assessment_similarity_samples", out var assessmentSamplesNode)
+                    ? assessmentSamplesNode.GetUInt64()
+                    : (root.TryGetProperty("similarity_samples", out var overallSamplesNode) ? overallSamplesNode.GetUInt64() : 0UL),
+                MinAssessmentSimilarityObserved: TryGetJsonDouble(root, "min_assessment_similarity_observed", out var minAssessmentSimilarityObserved)
+                    ? minAssessmentSimilarityObserved
+                    : (TryGetJsonDouble(root, "min_similarity_observed", out var legacyMinAssessmentSimilarityObserved) ? legacyMinAssessmentSimilarityObserved : null),
+                MaxAssessmentSimilarityObserved: TryGetJsonDouble(root, "max_assessment_similarity_observed", out var maxAssessmentSimilarityObserved)
+                    ? maxAssessmentSimilarityObserved
+                    : (TryGetJsonDouble(root, "max_similarity_observed", out var legacyMaxAssessmentSimilarityObserved) ? legacyMaxAssessmentSimilarityObserved : null),
+                ReproductionSimilaritySamples: root.TryGetProperty("reproduction_similarity_samples", out var reproductionSamplesNode)
+                    ? reproductionSamplesNode.GetUInt64()
+                    : 0UL,
+                MinReproductionSimilarityObserved: TryGetJsonDouble(root, "min_reproduction_similarity_observed", out var minReproductionSimilarityObserved)
+                    ? minReproductionSimilarityObserved
+                    : null,
+                MaxReproductionSimilarityObserved: TryGetJsonDouble(root, "max_reproduction_similarity_observed", out var maxReproductionSimilarityObserved)
+                    ? maxReproductionSimilarityObserved
+                    : null,
+                SpeciationCommitSimilaritySamples: root.TryGetProperty("speciation_commit_similarity_samples", out var commitSamplesNode)
+                    ? commitSamplesNode.GetUInt64()
+                    : 0UL,
+                MinSpeciationCommitSimilarityObserved: TryGetJsonDouble(root, "min_speciation_commit_similarity_observed", out var minCommitSimilarityObserved)
+                    ? minCommitSimilarityObserved
+                    : null,
+                MaxSpeciationCommitSimilarityObserved: TryGetJsonDouble(root, "max_speciation_commit_similarity_observed", out var maxCommitSimilarityObserved)
+                    ? maxCommitSimilarityObserved
+                    : null,
                 ChildrenAddedToPool: root.TryGetProperty("children_added_to_pool", out var childrenNode) ? childrenNode.GetUInt64() : 0UL,
                 SpeciationCommitAttempts: root.TryGetProperty("speciation_commit_attempts", out var attemptsNode) ? attemptsNode.GetUInt64() : 0UL,
                 SpeciationCommitSuccesses: root.TryGetProperty("speciation_commit_successes", out var successNode) ? successNode.GetUInt64() : 0UL,
@@ -2479,6 +2526,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ulong SimilaritySamples,
         double? MinSimilarityObserved,
         double? MaxSimilarityObserved,
+        ulong AssessmentSimilaritySamples,
+        double? MinAssessmentSimilarityObserved,
+        double? MaxAssessmentSimilarityObserved,
+        ulong ReproductionSimilaritySamples,
+        double? MinReproductionSimilarityObserved,
+        double? MaxReproductionSimilarityObserved,
+        ulong SpeciationCommitSimilaritySamples,
+        double? MinSpeciationCommitSimilarityObserved,
+        double? MaxSpeciationCommitSimilarityObserved,
         ulong ChildrenAddedToPool,
         ulong SpeciationCommitAttempts,
         ulong SpeciationCommitSuccesses,

@@ -125,6 +125,30 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_TracksAssessmentAndCommitSimilaritySeparately()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 9123UL, maxIterations: 2, commitToSpeciation: true);
+        var client = new DeterministicFakeClient(similarities: new[] { 0.34f, 0.93f })
+        {
+            ReproductionDiagnosticSimilarity = 0.82f,
+            CommitCandidateSimilarity = 0.82f
+        };
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal((ulong)2, status.AssessmentSimilaritySamples);
+        Assert.Equal(0.34f, status.MinAssessmentSimilarityObserved, 3);
+        Assert.Equal((ulong)2, status.ReproductionSimilaritySamples);
+        Assert.Equal(0.82f, status.MinReproductionSimilarityObserved, 3);
+        Assert.True(status.SpeciationCommitSimilaritySamples >= 2);
+        Assert.Equal(0.82f, status.MinSpeciationCommitSimilarityObserved, 3);
+        Assert.True(status.MinSimilarityObserved <= status.MinAssessmentSimilarityObserved);
+        Assert.True(status.MinAssessmentSimilarityObserved < status.MinSpeciationCommitSimilarityObserved);
+    }
+
+    [Fact]
     public async Task RunAsync_SeedsInitialParentsIntoSpeciation_BeforeIterationCommits()
     {
         var parents = CreateBrainParentPool();
@@ -237,6 +261,8 @@ public sealed class EvolutionSimulationSessionTests
         public List<uint> RequestedRunCounts { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
         public bool ObservedArtifactParents { get; private set; }
+        public float ReproductionDiagnosticSimilarity { get; set; } = 0.5f;
+        public float? CommitCandidateSimilarity { get; set; }
 
         public async Task<CompatibilityAssessment> AssessCompatibilityAsync(
             EvolutionParentRef parentA,
@@ -295,15 +321,16 @@ public sealed class EvolutionSimulationSessionTests
                     {
                         new SpeciationCommitCandidate(
                             ChildBrainId: null,
-                            ChildDefinition: child)
+                            ChildDefinition: child,
+                            SimilarityScore: CommitCandidateSimilarity)
                     },
                     Diagnostics: new ReproductionDiagnostics(
                         RunCount: runCount,
                         RunsWithMutations: runCount,
                         MutationEvents: runCount,
                         SimilaritySamples: 1,
-                        MinSimilarity: 0.5f,
-                        MaxSimilarity: 0.5f)));
+                        MinSimilarity: ReproductionDiagnosticSimilarity,
+                        MaxSimilarity: ReproductionDiagnosticSimilarity)));
         }
 
         public Task<SpeciationCommitOutcome> CommitSpeciationAsync(

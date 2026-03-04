@@ -351,6 +351,15 @@ static void EmitStatus(EvolutionSimulationStatus status, bool jsonOnly, bool isF
             similarity_samples = status.SimilaritySamples,
             min_similarity_observed = status.SimilaritySamples == 0 ? (float?)null : status.MinSimilarityObserved,
             max_similarity_observed = status.SimilaritySamples == 0 ? (float?)null : status.MaxSimilarityObserved,
+            assessment_similarity_samples = status.AssessmentSimilaritySamples,
+            min_assessment_similarity_observed = status.AssessmentSimilaritySamples == 0 ? (float?)null : status.MinAssessmentSimilarityObserved,
+            max_assessment_similarity_observed = status.AssessmentSimilaritySamples == 0 ? (float?)null : status.MaxAssessmentSimilarityObserved,
+            reproduction_similarity_samples = status.ReproductionSimilaritySamples,
+            min_reproduction_similarity_observed = status.ReproductionSimilaritySamples == 0 ? (float?)null : status.MinReproductionSimilarityObserved,
+            max_reproduction_similarity_observed = status.ReproductionSimilaritySamples == 0 ? (float?)null : status.MaxReproductionSimilarityObserved,
+            speciation_commit_similarity_samples = status.SpeciationCommitSimilaritySamples,
+            min_speciation_commit_similarity_observed = status.SpeciationCommitSimilaritySamples == 0 ? (float?)null : status.MinSpeciationCommitSimilarityObserved,
+            max_speciation_commit_similarity_observed = status.SpeciationCommitSimilaritySamples == 0 ? (float?)null : status.MaxSpeciationCommitSimilarityObserved,
             children_added_to_pool = status.ChildrenAddedToPool,
             speciation_commit_attempts = status.SpeciationCommitAttempts,
             speciation_commit_successes = status.SpeciationCommitSuccesses,
@@ -366,8 +375,10 @@ static void EmitStatus(EvolutionSimulationStatus status, bool jsonOnly, bool isF
         $"pool={status.ParentPoolSize} compat={status.CompatiblePairs}/{status.CompatibilityChecks} " +
         $"repro_fail={status.ReproductionFailures} runs={status.ReproductionRunsObserved} " +
         $"runs_mutated={status.ReproductionRunsWithMutations} mutation_events={status.ReproductionMutationEvents} " +
-        $"sim_min={(status.SimilaritySamples == 0 ? "n/a" : status.MinSimilarityObserved.ToString("0.###", CultureInfo.InvariantCulture))} " +
-        $"sim_max={(status.SimilaritySamples == 0 ? "n/a" : status.MaxSimilarityObserved.ToString("0.###", CultureInfo.InvariantCulture))} " +
+        $"sim_overall={(status.SimilaritySamples == 0 ? "n/a" : $"{status.MinSimilarityObserved:0.###}..{status.MaxSimilarityObserved:0.###}")} " +
+        $"sim_assess={(status.AssessmentSimilaritySamples == 0 ? "n/a" : $"{status.MinAssessmentSimilarityObserved:0.###}..{status.MaxAssessmentSimilarityObserved:0.###}")} " +
+        $"sim_repro={(status.ReproductionSimilaritySamples == 0 ? "n/a" : $"{status.MinReproductionSimilarityObserved:0.###}..{status.MaxReproductionSimilarityObserved:0.###}")} " +
+        $"sim_commit={(status.SpeciationCommitSimilaritySamples == 0 ? "n/a" : $"{status.MinSpeciationCommitSimilarityObserved:0.###}..{status.MaxSpeciationCommitSimilarityObserved:0.###}")} " +
         $"children={status.ChildrenAddedToPool} " +
         $"speciation={status.SpeciationCommitSuccesses}/{status.SpeciationCommitAttempts} " +
         $"last_seed={status.LastSeed} last_failure={failure}");
