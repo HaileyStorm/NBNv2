@@ -54,6 +54,11 @@ public sealed record SpeciationAssignOutcome(
     bool ImmutableConflict,
     SpeciationMembershipRecord Membership);
 
+public sealed record SpeciationReassignOutcome(
+    bool Reassigned,
+    bool ImmutableConflict,
+    SpeciationMembershipRecord? Membership);
+
 public sealed record SpeciationReconcileResult(
     long EpochId,
     int AddedMemberships,

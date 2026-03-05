@@ -58,6 +58,8 @@ public static class SettingsMonitorDefaults
             { SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey, "1" },
             { SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey, "3" },
             { SpeciationSettingsKeys.LineageRealignMatchMarginKey, "0.05" },
+            { SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey, "6" },
+            { SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey, "0.015" },
             { SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey, "true" },
             { SpeciationSettingsKeys.DerivedSpeciesPrefixKey, "branch" },
             { SpeciationSettingsKeys.HistoryLimitKey, "100" }

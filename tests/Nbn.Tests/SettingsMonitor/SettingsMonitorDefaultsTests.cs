@@ -126,6 +126,16 @@ public sealed class SettingsMonitorDefaultsTests
         Assert.Equal("0.02", splitGuard);
 
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey,
+            out var hindsightWindow));
+        Assert.Equal("6", hindsightWindow);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey,
+            out var hindsightMargin));
+        Assert.Equal("0.015", hindsightMargin);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             SpeciationSettingsKeys.HistoryLimitKey,
             out var historyLimit));
         Assert.Equal("100", historyLimit);

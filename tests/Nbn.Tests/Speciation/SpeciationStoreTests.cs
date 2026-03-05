@@ -102,6 +102,133 @@ public sealed class SpeciationStoreTests
     }
 
     [Fact]
+    public async Task TryReassignMembershipAsync_ReassignsWhenExpectedSpeciesMatches()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SpeciationStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var runtimeConfig = CreateRuntimeConfig();
+        var epoch = await store.EnsureCurrentEpochAsync(runtimeConfig, createdMs: 100);
+        var brainId = Guid.NewGuid();
+
+        var first = await store.TryAssignMembershipAsync(
+            epoch.EpochId,
+            new SpeciationAssignment(
+                BrainId: brainId,
+                SpeciesId: "species-a",
+                SpeciesDisplayName: "Species A",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "manual_assign",
+                DecisionMetadataJson: "{\"reason\":\"first\"}"),
+            decisionTimeMs: 200);
+        Assert.True(first.Created);
+
+        var reassigned = await store.TryReassignMembershipAsync(
+            epoch.EpochId,
+            brainId,
+            expectedSpeciesId: "species-a",
+            assignment: new SpeciationAssignment(
+                BrainId: brainId,
+                SpeciesId: "species-b",
+                SpeciesDisplayName: "Species B",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "hindsight_reassign",
+                DecisionMetadataJson: "{\"reason\":\"reassigned\"}"),
+            decisionTimeMs: 250);
+
+        Assert.True(reassigned.Reassigned);
+        Assert.False(reassigned.ImmutableConflict);
+        Assert.NotNull(reassigned.Membership);
+        Assert.Equal("species-b", reassigned.Membership!.SpeciesId);
+        Assert.Equal("hindsight_reassign", reassigned.Membership.DecisionReason);
+
+        var conflicting = await store.TryReassignMembershipAsync(
+            epoch.EpochId,
+            brainId,
+            expectedSpeciesId: "species-a",
+            assignment: new SpeciationAssignment(
+                BrainId: brainId,
+                SpeciesId: "species-c",
+                SpeciesDisplayName: "Species C",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "unexpected_reassign",
+                DecisionMetadataJson: "{\"reason\":\"unexpected\"}"),
+            decisionTimeMs: 300);
+        Assert.False(conflicting.Reassigned);
+        Assert.True(conflicting.ImmutableConflict);
+        Assert.NotNull(conflicting.Membership);
+        Assert.Equal("species-b", conflicting.Membership!.SpeciesId);
+
+        var memberships = await store.ListMembershipsAsync(epoch.EpochId);
+        Assert.Single(memberships);
+        Assert.Equal("species-b", memberships[0].SpeciesId);
+    }
+
+    [Fact]
+    public async Task ListRecentMembershipsForSpeciesAsync_ReturnsNewestFirstWithinWindow()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SpeciationStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var runtimeConfig = CreateRuntimeConfig();
+        var epoch = await store.EnsureCurrentEpochAsync(runtimeConfig, createdMs: 100);
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
+
+        await store.TryAssignMembershipAsync(
+            epoch.EpochId,
+            new SpeciationAssignment(
+                BrainId: brainA,
+                SpeciesId: "species-a",
+                SpeciesDisplayName: "Species A",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "assign-a",
+                DecisionMetadataJson: "{}"),
+            decisionTimeMs: 100);
+        await store.TryAssignMembershipAsync(
+            epoch.EpochId,
+            new SpeciationAssignment(
+                BrainId: brainB,
+                SpeciesId: "species-a",
+                SpeciesDisplayName: "Species A",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "assign-b",
+                DecisionMetadataJson: "{}"),
+            decisionTimeMs: 200);
+        await store.TryAssignMembershipAsync(
+            epoch.EpochId,
+            new SpeciationAssignment(
+                BrainId: brainC,
+                SpeciesId: "species-a",
+                SpeciesDisplayName: "Species A",
+                PolicyVersion: "policy-v1",
+                DecisionReason: "assign-c",
+                DecisionMetadataJson: "{}"),
+            decisionTimeMs: 300);
+
+        var upto250 = await store.ListRecentMembershipsForSpeciesAsync(
+            epoch.EpochId,
+            "species-a",
+            maxAssignedMs: 250,
+            limit: 10);
+        Assert.Equal(2, upto250.Count);
+        Assert.Equal(brainB, upto250[0].BrainId);
+        Assert.Equal(brainA, upto250[1].BrainId);
+
+        var latestTwo = await store.ListRecentMembershipsForSpeciesAsync(
+            epoch.EpochId,
+            "species-a",
+            maxAssignedMs: 500,
+            limit: 2);
+        Assert.Equal(2, latestTwo.Count);
+        Assert.Equal(brainC, latestTwo[0].BrainId);
+        Assert.Equal(brainB, latestTwo[1].BrainId);
+    }
+
+    [Fact]
     public async Task TryAssignMembershipAsync_WithLineageParents_PersistsEdgesAndSupportsLatestChildLookup()
     {
         using var db = new TempDatabaseScope();

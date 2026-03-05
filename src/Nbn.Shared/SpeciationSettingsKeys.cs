@@ -17,6 +17,8 @@ public static class SpeciationSettingsKeys
     public const string LineageMinParentMembershipsBeforeSplitKey = Prefix + ".lineage_min_parent_memberships_before_split";
     public const string LineageRealignParentMembershipWindowKey = Prefix + ".lineage_realign_parent_membership_window";
     public const string LineageRealignMatchMarginKey = Prefix + ".lineage_realign_match_margin";
+    public const string LineageHindsightReassignCommitWindowKey = Prefix + ".lineage_hindsight_reassign_commit_window";
+    public const string LineageHindsightSimilarityMarginKey = Prefix + ".lineage_hindsight_similarity_margin";
     public const string CreateDerivedSpeciesOnDivergenceKey = Prefix + ".create_derived_species_on_divergence";
     public const string DerivedSpeciesPrefixKey = Prefix + ".derived_species_prefix";
     public const string HistoryLimitKey = Prefix + ".history_limit";
@@ -36,6 +38,8 @@ public static class SpeciationSettingsKeys
         LineageMinParentMembershipsBeforeSplitKey,
         LineageRealignParentMembershipWindowKey,
         LineageRealignMatchMarginKey,
+        LineageHindsightReassignCommitWindowKey,
+        LineageHindsightSimilarityMarginKey,
         CreateDerivedSpeciesOnDivergenceKey,
         DerivedSpeciesPrefixKey,
         HistoryLimitKey

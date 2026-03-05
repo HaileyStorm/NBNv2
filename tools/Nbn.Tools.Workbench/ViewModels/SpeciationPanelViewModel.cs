@@ -3316,6 +3316,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 && TryGetSimilarityFromElement(
                     lineage,
                     out similarityScore,
+                    "lineage_assignment_similarity_score",
+                    "lineageAssignmentSimilarityScore",
+                    "dominant_species_similarity_score",
+                    "dominantSpeciesSimilarityScore",
                     "lineage_similarity_score",
                     "lineageSimilarityScore",
                     "similarity_score",
@@ -3324,7 +3328,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 return true;
             }
 
-            if (TryGetSimilarityFromElement(root, out similarityScore, "lineage_similarity_score", "lineageSimilarityScore"))
+            if (TryGetSimilarityFromElement(
+                    root,
+                    out similarityScore,
+                    "lineage_assignment_similarity_score",
+                    "lineageAssignmentSimilarityScore",
+                    "dominant_species_similarity_score",
+                    "dominantSpeciesSimilarityScore",
+                    "lineage_similarity_score",
+                    "lineageSimilarityScore"))
             {
                 return true;
             }
@@ -3528,7 +3540,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var point = selected.Value;
         return
             $"Split proximity (epoch {targetEpoch}) min={FormatSignedDelta(point.MinProximity)} in {speciesName} ({speciesId}) " +
-            $"[lineage sim {point.MinSimilarity:0.###} vs effective split {point.SplitThreshold:0.###}, samples={point.SampleCount}].";
+            $"[assignment sim {point.MinSimilarity:0.###} vs effective split {point.SplitThreshold:0.###}, samples={point.SampleCount}].";
     }
 
     private static string FormatSimilarityRange(ulong samples, double? min, double? max)

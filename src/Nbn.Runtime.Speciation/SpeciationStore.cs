@@ -227,6 +227,43 @@ WHERE (@epoch_id IS NULL OR m.epoch_id = @epoch_id)
 ORDER BY m.epoch_id, m.brain_id;
 """;
 
+    private const string ListRecentMembershipsForSpeciesSql = """
+SELECT
+    m.epoch_id AS EpochId,
+    m.brain_id AS BrainId,
+    m.species_id AS SpeciesId,
+    s.display_name AS SpeciesDisplayName,
+    m.assigned_ms AS AssignedMs,
+    d.policy_version AS PolicyVersion,
+    d.decision_reason AS DecisionReason,
+    d.decision_metadata_json AS DecisionMetadataJson,
+    d.source_brain_id AS SourceBrainId,
+    d.source_artifact_ref AS SourceArtifactRef,
+    d.decision_id AS DecisionId
+FROM species_membership AS m
+JOIN species AS s
+    ON s.epoch_id = m.epoch_id
+   AND s.species_id = m.species_id
+JOIN speciation_decisions AS d
+    ON d.decision_id = m.decision_id
+WHERE m.epoch_id = @epoch_id
+  AND m.species_id = @species_id
+  AND m.assigned_ms <= @max_assigned_ms
+ORDER BY m.assigned_ms DESC, m.brain_id DESC
+LIMIT @limit;
+""";
+
+    private const string UpdateMembershipReassignSql = """
+UPDATE species_membership
+SET
+    species_id = @species_id,
+    assigned_ms = @assigned_ms,
+    decision_id = @decision_id
+WHERE epoch_id = @epoch_id
+  AND brain_id = @brain_id
+  AND species_id = @expected_species_id;
+""";
+
     private const string InsertLineageEdgeSql = """
 INSERT INTO lineage_edges (
     epoch_id,
@@ -850,6 +887,216 @@ WHERE name IN (
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         return await GetMembershipInternalAsync(connection, transaction: null, epochId, brainId, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<SpeciationMembershipRecord>> ListRecentMembershipsForSpeciesAsync(
+        long epochId,
+        string speciesId,
+        long maxAssignedMs,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (epochId <= 0
+            || string.IsNullOrWhiteSpace(speciesId)
+            || maxAssignedMs <= 0
+            || limit <= 0)
+        {
+            return Array.Empty<SpeciationMembershipRecord>();
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<MembershipRow>(
+            new CommandDefinition(
+                ListRecentMembershipsForSpeciesSql,
+                new
+                {
+                    epoch_id = epochId,
+                    species_id = speciesId.Trim(),
+                    max_assigned_ms = maxAssignedMs,
+                    limit = limit
+                },
+                cancellationToken: cancellationToken));
+        return rows.Select(ToMembershipRecord).ToArray();
+    }
+
+    public async Task<SpeciationReassignOutcome> TryReassignMembershipAsync(
+        long epochId,
+        Guid brainId,
+        string expectedSpeciesId,
+        SpeciationAssignment assignment,
+        long? decisionTimeMs = null,
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<Guid>? lineageParentBrainIds = null,
+        string? lineageMetadataJson = null)
+    {
+        if (epochId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(epochId), "Epoch id must be greater than zero.");
+        }
+
+        if (brainId == Guid.Empty)
+        {
+            throw new ArgumentException("Brain id is required.", nameof(brainId));
+        }
+
+        var normalizedExpectedSpeciesId = NormalizeRequired(expectedSpeciesId, nameof(expectedSpeciesId));
+        var normalized = NormalizeAssignment(assignment);
+        if (normalized.BrainId != brainId)
+        {
+            throw new ArgumentException("Assignment brain id must match requested brain id.", nameof(assignment));
+        }
+
+        var decidedMs = decisionTimeMs ?? NowMs();
+        var normalizedLineageParentIds = NormalizeLineageParentIds(lineageParentBrainIds, normalized.BrainId);
+        var normalizedLineageMetadata = normalizedLineageParentIds.Count == 0
+            ? null
+            : NormalizeJson(
+                lineageMetadataJson ?? "{\"source\":\"assignment_lineage_reassign\"}",
+                nameof(lineageMetadataJson));
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            var existing = await GetMembershipInternalAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized.BrainId,
+                cancellationToken);
+            if (existing is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new SpeciationReassignOutcome(
+                    Reassigned: false,
+                    ImmutableConflict: false,
+                    Membership: null);
+            }
+
+            if (!string.Equals(
+                    existing.SpeciesId,
+                    normalizedExpectedSpeciesId,
+                    StringComparison.Ordinal))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new SpeciationReassignOutcome(
+                    Reassigned: false,
+                    ImmutableConflict: true,
+                    Membership: existing);
+            }
+
+            if (string.Equals(existing.SpeciesId, normalized.SpeciesId, StringComparison.Ordinal))
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new SpeciationReassignOutcome(
+                    Reassigned: false,
+                    ImmutableConflict: false,
+                    Membership: existing);
+            }
+
+            await connection.ExecuteAsync(
+                new CommandDefinition(
+                    InsertSpeciesIfMissingSql,
+                    new
+                    {
+                        epoch_id = epochId,
+                        species_id = normalized.SpeciesId,
+                        display_name = normalized.SpeciesDisplayName,
+                        created_ms = decidedMs
+                    },
+                    transaction,
+                    cancellationToken: cancellationToken));
+
+            var decisionId = await connection.ExecuteScalarAsync<long>(
+                new CommandDefinition(
+                    InsertDecisionSql,
+                    new
+                    {
+                        epoch_id = epochId,
+                        brain_id = normalized.BrainId,
+                        species_id = normalized.SpeciesId,
+                        decided_ms = decidedMs,
+                        policy_version = normalized.PolicyVersion,
+                        decision_reason = normalized.DecisionReason,
+                        decision_metadata_json = normalized.DecisionMetadataJson,
+                        source_brain_id = normalized.SourceBrainId,
+                        source_artifact_ref = normalized.SourceArtifactRef
+                    },
+                    transaction,
+                    cancellationToken: cancellationToken));
+
+            var updatedRows = await connection.ExecuteAsync(
+                new CommandDefinition(
+                    UpdateMembershipReassignSql,
+                    new
+                    {
+                        epoch_id = epochId,
+                        brain_id = normalized.BrainId,
+                        expected_species_id = normalizedExpectedSpeciesId,
+                        species_id = normalized.SpeciesId,
+                        assigned_ms = decidedMs,
+                        decision_id = decisionId
+                    },
+                    transaction,
+                    cancellationToken: cancellationToken));
+            if (updatedRows != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                var latest = await GetMembershipAsync(epochId, normalized.BrainId, cancellationToken);
+                return new SpeciationReassignOutcome(
+                    Reassigned: false,
+                    ImmutableConflict: true,
+                    Membership: latest);
+            }
+
+            if (normalizedLineageMetadata is not null)
+            {
+                foreach (var parentBrainId in normalizedLineageParentIds)
+                {
+                    await connection.ExecuteAsync(
+                        new CommandDefinition(
+                            InsertLineageEdgeSql,
+                            new
+                            {
+                                epoch_id = epochId,
+                                parent_brain_id = parentBrainId,
+                                child_brain_id = normalized.BrainId,
+                                metadata_json = normalizedLineageMetadata,
+                                created_ms = decidedMs
+                            },
+                            transaction,
+                            cancellationToken: cancellationToken));
+                }
+            }
+
+            var reassigned = await GetMembershipInternalAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized.BrainId,
+                cancellationToken);
+            if (reassigned is null)
+            {
+                throw new InvalidOperationException(
+                    $"Membership reassign returned no record for epoch={epochId} brain={normalized.BrainId:D}.");
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return new SpeciationReassignOutcome(
+                Reassigned: true,
+                ImmutableConflict: false,
+                Membership: reassigned);
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            var existing = await GetMembershipAsync(epochId, normalized.BrainId, cancellationToken);
+            return new SpeciationReassignOutcome(
+                Reassigned: false,
+                ImmutableConflict: true,
+                Membership: existing);
+        }
     }
 
     public async Task<IReadOnlyList<SpeciationMembershipRecord>> ListMembershipsAsync(
