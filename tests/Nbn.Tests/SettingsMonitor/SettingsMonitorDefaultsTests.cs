@@ -106,4 +106,28 @@ public sealed class SettingsMonitorDefaultsTests
             out var strengthSource));
         Assert.Equal(ReproductionSettings.ToSettingValue(ReproductionSettings.DefaultStrengthSource), strengthSource);
     }
+
+    [Fact]
+    public void DefaultSettings_Include_WorkbenchSpeciationDefaults()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SpeciationSettingsKeys.LineageSplitThresholdKey,
+            out var splitThreshold));
+        Assert.Equal("0.86", splitThreshold);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SpeciationSettingsKeys.LineageHysteresisMarginKey,
+            out var hysteresis));
+        Assert.Equal("0.05", hysteresis);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SpeciationSettingsKeys.LineageSplitGuardMarginKey,
+            out var splitGuard));
+        Assert.Equal("0.04", splitGuard);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SpeciationSettingsKeys.HistoryLimitKey,
+            out var historyLimit));
+        Assert.Equal("100", historyLimit);
+    }
 }

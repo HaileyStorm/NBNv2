@@ -219,6 +219,82 @@ public sealed class EvolutionSimulationSessionTests
             "Expected adaptive run pressure to raise run_count after commit-similarity plateau.");
     }
 
+    [Fact]
+    public async Task RunAsync_WhenCommitSimilarityPlateaus_StabilityModeLowersRunPressureDeterministically()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 77002UL, maxIterations: 224, commitToSpeciation: true) with
+        {
+            RunPressureMode = EvolutionRunPressureMode.Stability
+        };
+        var client = new DeterministicFakeClient(similarities: Enumerable.Repeat(0.90f, 1024))
+        {
+            CommitCandidateSimilarity = 0.95f,
+            ReproductionDiagnosticSimilarity = 0.90f
+        };
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal((ulong)224, status.ReproductionCalls);
+        Assert.Equal((ulong)224, status.SpeciationCommitSuccesses);
+        Assert.True(client.RequestedRunCounts.Count > 100);
+        Assert.True(
+            client.RequestedRunCounts.Max() > client.RequestedRunCounts.Min(),
+            "Expected stability mode to reduce run_count after commit-similarity plateau.");
+        Assert.True(
+            client.RequestedRunCounts[^1] <= client.RequestedRunCounts[0],
+            "Expected later run_count values to be lower or equal under stability mode.");
+    }
+
+    [Fact]
+    public async Task RunAsync_ParentSelectionBias_DivergencePrefersNewerParentsThanStability()
+    {
+        var parents = CreateOrderedBrainParentPool(6);
+        var rankByBrain = parents
+            .Select((parent, index) => (parent, index))
+            .Where(entry => entry.parent.BrainId.HasValue)
+            .ToDictionary(entry => entry.parent.BrainId!.Value, entry => entry.index);
+        var similarities = Enumerable.Repeat(0.9f, 2000).ToArray();
+
+        var divergenceOptions = CreateOptions(
+            seed: 99001UL,
+            maxIterations: 400,
+            commitToSpeciation: false,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Divergence,
+            RunPressureMode = EvolutionRunPressureMode.Neutral
+        };
+
+        var stabilityOptions = divergenceOptions with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Stability
+        };
+
+        var divergenceClient = new DeterministicFakeClient(similarities: similarities);
+        var divergenceSession = new EvolutionSimulationSession(divergenceOptions, parents, divergenceClient);
+        await divergenceSession.RunAsync(CancellationToken.None);
+
+        var stabilityClient = new DeterministicFakeClient(similarities: similarities);
+        var stabilitySession = new EvolutionSimulationSession(stabilityOptions, parents, stabilityClient);
+        await stabilitySession.RunAsync(CancellationToken.None);
+
+        Assert.NotEmpty(divergenceClient.ObservedBrainSelections);
+        Assert.NotEmpty(stabilityClient.ObservedBrainSelections);
+
+        var divergenceAverageRank = divergenceClient.ObservedBrainSelections
+            .Select(brainId => rankByBrain[brainId])
+            .Average();
+        var stabilityAverageRank = stabilityClient.ObservedBrainSelections
+            .Select(brainId => rankByBrain[brainId])
+            .Average();
+
+        Assert.True(
+            divergenceAverageRank > stabilityAverageRank,
+            $"Expected divergence bias to favor newer parents. divergence={divergenceAverageRank:0.###}, stability={stabilityAverageRank:0.###}");
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]
@@ -237,6 +313,17 @@ public sealed class EvolutionSimulationSessionTests
             EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222")),
             EvolutionParentRef.FromBrainId(Guid.Parse("33333333-3333-3333-3333-333333333333"))
         };
+    }
+
+    private static IReadOnlyList<EvolutionParentRef> CreateOrderedBrainParentPool(int count)
+    {
+        var parents = new List<EvolutionParentRef>(count);
+        for (var index = 1; index <= count; index++)
+        {
+            parents.Add(EvolutionParentRef.FromBrainId(Guid.Parse($"{index:D8}-{index:D4}-{index:D4}-{index:D4}-{index:D12}")));
+        }
+
+        return parents;
     }
 
     private static EvolutionSimulationOptions CreateOptions(
@@ -299,6 +386,7 @@ public sealed class EvolutionSimulationSessionTests
         public List<string> Events { get; } = new();
         public List<SpeciationCommitCandidate> CommittedCandidates { get; } = new();
         public List<uint> RequestedRunCounts { get; } = new();
+        public List<Guid> ObservedBrainSelections { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
         public bool ObservedArtifactParents { get; private set; }
         public float ReproductionDiagnosticSimilarity { get; set; } = 0.5f;
@@ -327,6 +415,16 @@ public sealed class EvolutionSimulationSessionTests
             }
 
             ObserveParentKinds(parentA, parentB);
+            if (parentA.BrainId is Guid parentABrainId && parentABrainId != Guid.Empty)
+            {
+                ObservedBrainSelections.Add(parentABrainId);
+            }
+
+            if (parentB.BrainId is Guid parentBBrainId && parentBBrainId != Guid.Empty)
+            {
+                ObservedBrainSelections.Add(parentBBrainId);
+            }
+
             var compatible = similarity >= 0.2f;
             Events.Add($"assess:{seed}:{Short(parentA)}:{Short(parentB)}:{similarity:F3}:{compatible}");
             return new CompatibilityAssessment(

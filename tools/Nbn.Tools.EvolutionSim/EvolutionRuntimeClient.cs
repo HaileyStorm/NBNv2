@@ -272,7 +272,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                 return new SpeciationCommitOutcome(
                     Success: true,
                     FailureDetail: string.Empty,
-                    ExpectedNoOp: false);
+                    ExpectedNoOp: false,
+                    SpeciesId: decision?.SpeciesId ?? string.Empty);
             }
 
             if (decision is null)

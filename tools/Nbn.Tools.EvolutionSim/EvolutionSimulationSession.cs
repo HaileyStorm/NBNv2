@@ -9,11 +9,15 @@ public sealed class EvolutionSimulationSession
     private const float MaxRunPressureNudge = 0.35f;
     private const float RunPressureNudgeStep = 0.05f;
     private const float RunPressureRecoveryStep = 0.10f;
+    private const double ParentSelectionBiasExponent = 1.8d;
 
     private readonly EvolutionSimulationOptions _options;
     private readonly IEvolutionSimulationClient _client;
     private readonly object _gate = new();
     private readonly List<EvolutionParentRef> _parentPool;
+    private readonly List<ulong> _parentAddedOrdinals;
+    private readonly Dictionary<string, string> _parentSpeciesByParentKey;
+    private readonly Dictionary<string, ulong> _speciesFirstSeenOrdinals;
     private readonly HashSet<string> _parentPoolKeys;
     private readonly HashSet<string> _protectedParentPoolKeys;
     private readonly DeterministicRandom _random;
@@ -44,6 +48,8 @@ public sealed class EvolutionSimulationSession
     private ulong _speciationCommitAttempts;
     private ulong _speciationCommitSuccesses;
     private ulong _speciationCommitSamplesSinceImprovement;
+    private ulong _nextParentOrdinal;
+    private ulong _nextSpeciesOrdinal;
     private float _runPressureNudge;
     private string _lastFailure = string.Empty;
     private ulong _lastSeed;
@@ -63,11 +69,17 @@ public sealed class EvolutionSimulationSession
         }
 
         _parentPool = new List<EvolutionParentRef>(initialParents.Count);
+        _parentAddedOrdinals = new List<ulong>(initialParents.Count);
+        _parentSpeciesByParentKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _speciesFirstSeenOrdinals = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
         _parentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _protectedParentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _nextParentOrdinal = 1;
+        _nextSpeciesOrdinal = 1;
         foreach (var parent in initialParents)
         {
             _parentPool.Add(parent);
+            _parentAddedOrdinals.Add(_nextParentOrdinal++);
             if (TryBuildParentKey(parent, out var key))
             {
                 _parentPoolKeys.Add(key);
@@ -205,6 +217,13 @@ public sealed class EvolutionSimulationSession
                 seedPartner,
                 cancellationToken).ConfigureAwait(false);
 
+            if (commitOutcome.Success
+                && !string.IsNullOrWhiteSpace(commitOutcome.SpeciesId)
+                && TryBuildParentKey(parent, out var parentKey))
+            {
+                RecordParentSpecies(parentKey, commitOutcome.SpeciesId);
+            }
+
             if (!commitOutcome.Success
                 && !commitOutcome.ExpectedNoOp
                 && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
@@ -305,6 +324,11 @@ public sealed class EvolutionSimulationSession
             {
                 IncrementSpeciationCommitSuccesses();
                 RecordSpeciationCommitSimilarity(commitCandidate.SimilarityScore);
+                if (!string.IsNullOrWhiteSpace(commitOutcome.SpeciesId)
+                    && TryBuildParentKeyFromCandidate(commitCandidate, out var candidateKey))
+                {
+                    RecordParentSpecies(candidateKey, commitOutcome.SpeciesId);
+                }
             }
             else if (!commitOutcome.ExpectedNoOp
                      && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
@@ -338,17 +362,180 @@ public sealed class EvolutionSimulationSession
                 return false;
             }
 
-            var parentAIndex = _random.NextInt(_parentPool.Count);
-            var parentBIndex = _random.NextInt(_parentPool.Count - 1);
-            if (parentBIndex >= parentAIndex)
+            var parentAIndex = SelectParentIndex(excludedIndex: -1);
+            if (parentAIndex < 0)
             {
-                parentBIndex++;
+                parentA = default;
+                parentB = default;
+                return false;
+            }
+
+            var parentBIndex = SelectParentIndex(excludedIndex: parentAIndex);
+            if (parentBIndex < 0)
+            {
+                parentA = default;
+                parentB = default;
+                return false;
             }
 
             parentA = _parentPool[parentAIndex];
             parentB = _parentPool[parentBIndex];
             return true;
         }
+    }
+
+    // Caller must hold _gate.
+    private int SelectParentIndex(int excludedIndex)
+    {
+        if (_parentPool.Count == 0)
+        {
+            return -1;
+        }
+
+        if (_options.ParentSelectionBias == EvolutionParentSelectionBias.Neutral)
+        {
+            return SelectUniformParentIndex(excludedIndex);
+        }
+
+        var speciesCount = CountDistinctSpeciesInPool(excludedIndex);
+        var useSpeciesAgeBias = speciesCount > 1;
+
+        var nowOrdinal = _nextParentOrdinal;
+        var nowSpeciesOrdinal = _nextSpeciesOrdinal;
+        double totalWeight = 0d;
+        var weights = new double[_parentPool.Count];
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            if (i == excludedIndex)
+            {
+                continue;
+            }
+
+            var age = ResolveSelectionAgeForBias(i, useSpeciesAgeBias, nowSpeciesOrdinal, nowOrdinal);
+            var weight = ResolveParentSelectionWeight(age);
+            if (!double.IsFinite(weight) || weight <= 0d)
+            {
+                continue;
+            }
+
+            weights[i] = weight;
+            totalWeight += weight;
+        }
+
+        if (totalWeight <= 0d || !double.IsFinite(totalWeight))
+        {
+            return SelectUniformParentIndex(excludedIndex);
+        }
+
+        var sample = _random.NextUnitDouble() * totalWeight;
+        var cumulative = 0d;
+        for (var i = 0; i < weights.Length; i++)
+        {
+            var weight = weights[i];
+            if (weight <= 0d)
+            {
+                continue;
+            }
+
+            cumulative += weight;
+            if (sample <= cumulative)
+            {
+                return i;
+            }
+        }
+
+        for (var i = weights.Length - 1; i >= 0; i--)
+        {
+            if (weights[i] > 0d)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // Caller must hold _gate.
+    private int SelectUniformParentIndex(int excludedIndex)
+    {
+        var available = _parentPool.Count - (excludedIndex >= 0 ? 1 : 0);
+        if (available <= 0)
+        {
+            return -1;
+        }
+
+        var selected = _random.NextInt(available);
+        if (excludedIndex >= 0 && selected >= excludedIndex)
+        {
+            selected++;
+        }
+
+        return selected;
+    }
+
+    // Caller must hold _gate.
+    private int CountDistinctSpeciesInPool(int excludedIndex)
+    {
+        var speciesIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            if (i == excludedIndex)
+            {
+                continue;
+            }
+
+            if (!TryBuildParentKey(_parentPool[i], out var parentKey))
+            {
+                continue;
+            }
+
+            if (!_parentSpeciesByParentKey.TryGetValue(parentKey, out var speciesId)
+                || string.IsNullOrWhiteSpace(speciesId))
+            {
+                continue;
+            }
+
+            speciesIds.Add(speciesId);
+        }
+
+        return speciesIds.Count;
+    }
+
+    // Caller must hold _gate.
+    private ulong ResolveSelectionAgeForBias(
+        int parentIndex,
+        bool useSpeciesAgeBias,
+        ulong nowSpeciesOrdinal,
+        ulong nowParentOrdinal)
+    {
+        if (parentIndex < 0 || parentIndex >= _parentPool.Count)
+        {
+            return 1UL;
+        }
+
+        if (useSpeciesAgeBias
+            && TryBuildParentKey(_parentPool[parentIndex], out var parentKey)
+            && _parentSpeciesByParentKey.TryGetValue(parentKey, out var speciesId)
+            && !string.IsNullOrWhiteSpace(speciesId)
+            && _speciesFirstSeenOrdinals.TryGetValue(speciesId, out var firstSeenSpeciesOrdinal))
+        {
+            return Math.Max(1UL, nowSpeciesOrdinal - firstSeenSpeciesOrdinal);
+        }
+
+        var addedOrdinal = parentIndex < _parentAddedOrdinals.Count ? _parentAddedOrdinals[parentIndex] : 1UL;
+        return Math.Max(1UL, nowParentOrdinal - addedOrdinal);
+    }
+
+    private double ResolveParentSelectionWeight(ulong age)
+    {
+        var normalizedAge = Math.Max(1d, age);
+        var weightedAge = Math.Pow(normalizedAge, ParentSelectionBiasExponent);
+        return _options.ParentSelectionBias switch
+        {
+            EvolutionParentSelectionBias.Divergence => 1d / weightedAge,
+            EvolutionParentSelectionBias.Stability => weightedAge,
+            _ => 1d
+        };
     }
 
     private int AddChildrenToPool(ReproductionOutcome reproduction)
@@ -656,6 +843,13 @@ public sealed class EvolutionSimulationSession
 
             _speciationCommitSimilaritySamples += samples;
 
+            if (_options.RunPressureMode == EvolutionRunPressureMode.Neutral)
+            {
+                _speciationCommitSamplesSinceImprovement = 0;
+                _runPressureNudge = 0f;
+                return;
+            }
+
             if (improved)
             {
                 _speciationCommitSamplesSinceImprovement = 0;
@@ -687,7 +881,12 @@ public sealed class EvolutionSimulationSession
         var normalized = Math.Clamp(similarity, 0f, 1f);
         lock (_gate)
         {
-            return Math.Clamp(normalized - _runPressureNudge, 0f, 1f);
+            return _options.RunPressureMode switch
+            {
+                EvolutionRunPressureMode.Stability => Math.Clamp(normalized + _runPressureNudge, 0f, 1f),
+                EvolutionRunPressureMode.Neutral => normalized,
+                _ => Math.Clamp(normalized - _runPressureNudge, 0f, 1f)
+            };
         }
     }
 
@@ -768,12 +967,42 @@ public sealed class EvolutionSimulationSession
         }
     }
 
+    private void RecordParentSpecies(string parentKey, string speciesId)
+    {
+        if (string.IsNullOrWhiteSpace(parentKey) || string.IsNullOrWhiteSpace(speciesId))
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            RecordParentSpeciesLocked(parentKey, speciesId);
+        }
+    }
+
+    // Caller must hold _gate.
+    private void RecordParentSpeciesLocked(string parentKey, string speciesId)
+    {
+        var normalizedSpeciesId = speciesId.Trim();
+        if (normalizedSpeciesId.Length == 0)
+        {
+            return;
+        }
+
+        _parentSpeciesByParentKey[parentKey] = normalizedSpeciesId;
+        if (!_speciesFirstSeenOrdinals.ContainsKey(normalizedSpeciesId))
+        {
+            _speciesFirstSeenOrdinals[normalizedSpeciesId] = _nextSpeciesOrdinal++;
+        }
+    }
+
     // Caller must hold _gate.
     private bool TryAddParentToPoolAtCapacity(EvolutionParentRef candidate, string candidateKey)
     {
         if (_parentPool.Count < _options.MaxParentPoolSize)
         {
             _parentPool.Add(candidate);
+            _parentAddedOrdinals.Add(_nextParentOrdinal++);
             _parentPoolKeys.Add(candidateKey);
             return true;
         }
@@ -787,9 +1016,18 @@ public sealed class EvolutionSimulationSession
         if (TryBuildParentKey(evicted, out var evictedKey))
         {
             _parentPoolKeys.Remove(evictedKey);
+            _parentSpeciesByParentKey.Remove(evictedKey);
         }
 
         _parentPool[evictionIndex] = candidate;
+        if (evictionIndex < _parentAddedOrdinals.Count)
+        {
+            _parentAddedOrdinals[evictionIndex] = _nextParentOrdinal++;
+        }
+        else
+        {
+            _parentAddedOrdinals.Add(_nextParentOrdinal++);
+        }
         _parentPoolKeys.Add(candidateKey);
         return true;
     }
@@ -817,6 +1055,25 @@ public sealed class EvolutionSimulationSession
 
         evictionIndex = selectedIndex;
         return selectedIndex >= 0;
+    }
+
+    private static bool TryBuildParentKeyFromCandidate(SpeciationCommitCandidate candidate, out string key)
+    {
+        if (candidate.ChildBrainId is Guid childBrainId && childBrainId != Guid.Empty)
+        {
+            key = $"brain:{childBrainId:D}";
+            return true;
+        }
+
+        if (candidate.ChildDefinition is not null
+            && candidate.ChildDefinition.TryToSha256Hex(out var sha))
+        {
+            key = $"artifact:{sha}|{candidate.ChildDefinition.StoreUri}|{candidate.ChildDefinition.MediaType}|{candidate.ChildDefinition.SizeBytes}";
+            return true;
+        }
+
+        key = string.Empty;
+        return false;
     }
 
     private static bool TryBuildParentKey(EvolutionParentRef parentRef, out string key)

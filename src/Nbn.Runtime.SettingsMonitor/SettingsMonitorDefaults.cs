@@ -44,7 +44,23 @@ public static class SettingsMonitorDefaults
             { IoCoordinatorSettingsKeys.OutputVectorSourceKey, "potential" },
             { TickSettingsKeys.CadenceHzKey, string.Empty },
             { VisualizationSettingsKeys.TickMinIntervalMsKey, "250" },
-            { VisualizationSettingsKeys.StreamMinIntervalMsKey, "250" }
+            { VisualizationSettingsKeys.StreamMinIntervalMsKey, "250" },
+            { SpeciationSettingsKeys.ConfigEnabledKey, "true" },
+            { SpeciationSettingsKeys.PolicyVersionKey, "default" },
+            { SpeciationSettingsKeys.DefaultSpeciesIdKey, "species.default" },
+            { SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey, "Default species" },
+            { SpeciationSettingsKeys.StartupReconcileReasonKey, "startup_reconcile" },
+            { SpeciationSettingsKeys.LineageMatchThresholdKey, "0.90" },
+            { SpeciationSettingsKeys.LineageSplitThresholdKey, "0.86" },
+            { SpeciationSettingsKeys.ParentConsensusThresholdKey, "0.70" },
+            { SpeciationSettingsKeys.LineageHysteresisMarginKey, "0.05" },
+            { SpeciationSettingsKeys.LineageSplitGuardMarginKey, "0.04" },
+            { SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey, "1" },
+            { SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey, "3" },
+            { SpeciationSettingsKeys.LineageRealignMatchMarginKey, "0.05" },
+            { SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey, "true" },
+            { SpeciationSettingsKeys.DerivedSpeciesPrefixKey, "branch" },
+            { SpeciationSettingsKeys.HistoryLimitKey, "100" }
         };
 
         foreach (var pair in ReproductionSettings.DefaultSettingValues)

@@ -34,6 +34,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const double FlowChartPlotHeight = 220d;
     private const double FlowChartPaddingX = 8d;
     private const double FlowChartPaddingY = 8d;
+    private const int PopulationChartTopSpeciesLimit = 12;
+    private const int FlowChartTopSpeciesLimit = 8;
+    private const int SplitProximityTopSpeciesLimit = 8;
+    private const uint DefaultHistoryLimit = 100u;
+    private const uint DefaultChartHistoryLimit = 4096u;
+    private const uint DefaultCladogramHistoryLimit = 32768u;
+    private const int MaxHistoryRowsToRender = 400;
+    private const string HistorySampleScopeSuffix = " (loaded-row sample; increase history window for full epoch coverage).";
+    private const string HistorySampleMetricSuffix = " Loaded-row sample only; increase history window for full epoch coverage.";
+    private static readonly IReadOnlyList<string> SimRunPressureModeOptions = ["divergence", "neutral", "stability"];
+    private static readonly IReadOnlyList<string> SimParentSelectionBiasModeOptions = ["divergence", "neutral", "stability"];
     private static readonly string[] SpeciesChartPalette =
     [
         "#3B82F6",
@@ -75,16 +86,21 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private uint _currentMembershipCount;
     private uint _currentSpeciesCount;
     private uint _currentLineageEdgeCount;
-    private string _currentEpochMaxDivergenceLabel = "Max divergence (current epoch): (n/a)";
+    private string _currentEpochMaxDivergenceLabel = "Max lineage divergence (current epoch): (n/a)";
+    private string _currentEpochSplitProximityLabel = "Split proximity (current epoch): (n/a)";
     private bool _configEnabled = true;
     private string _policyVersion = "default";
     private string _defaultSpeciesId = "species.default";
     private string _defaultSpeciesDisplayName = "Default species";
     private string _startupReconcileReason = "startup_reconcile";
-    private string _lineageMatchThreshold = "0.70";
-    private string _lineageSplitThreshold = "0.60";
-    private string _parentConsensusThreshold = "0.50";
-    private string _hysteresisMargin = "0.10";
+    private string _lineageMatchThreshold = "0.90";
+    private string _lineageSplitThreshold = "0.86";
+    private string _parentConsensusThreshold = "0.70";
+    private string _hysteresisMargin = "0.05";
+    private string _lineageSplitGuardMargin = "0.04";
+    private string _lineageMinParentMembershipsBeforeSplit = "1";
+    private string _lineageRealignParentMembershipWindow = "3";
+    private string _lineageRealignMatchMargin = "0.05";
     private bool _createDerivedSpecies = true;
     private string _derivedSpeciesPrefix = "branch";
     private bool _startNewEpochConfirmPending;
@@ -93,30 +109,33 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private long? _deleteEpochConfirmTarget;
     private string _deleteEpochText = string.Empty;
     private string _epochFilterText = string.Empty;
-    private string _historyLimitText = "256";
+    private string _historyLimitText = DefaultHistoryLimit.ToString(CultureInfo.InvariantCulture);
     private string _historyBrainIdText = string.Empty;
     private string _simParentAOverrideFilePath = string.Empty;
     private string _simParentBOverrideFilePath = string.Empty;
     private SpeciationSimulatorBrainOption? _simSelectedParentABrain;
     private SpeciationSimulatorBrainOption? _simSelectedParentBBrain;
+    private SpeciationSimulatorBrainOption? _simExtraParentCandidateBrain;
     private string _simBindHost = "127.0.0.1";
     private string _simPortText = "12074";
     private string _simSeedText = "12345";
-    private string _simIntervalMsText = "1000";
+    private string _simIntervalMsText = "100";
     private string _simStatusSecondsText = "2";
     private string _simTimeoutSecondsText = "10";
     private string _simMaxIterationsText = "0";
     private string _simMaxParentPoolText = "512";
-    private string _simMinRunsText = "1";
-    private string _simMaxRunsText = "6";
+    private string _simMinRunsText = "2";
+    private string _simMaxRunsText = "12";
     private string _simGammaText = "1";
+    private string _simRunPressureMode = "divergence";
+    private string _simParentSelectionBias = "divergence";
     private bool _simCommitToSpeciation = true;
     private bool _simSpawnChildren;
     private bool _liveChartsEnabled;
     private string _liveChartsIntervalSecondsText = DefaultLiveChartIntervalSeconds.ToString(CultureInfo.InvariantCulture);
     private string _liveChartsStatus = "Live chart updates disabled.";
     private string _populationChartRangeLabel = "Epochs: (no data)";
-    private string _populationChartMetricLabel = "Population count by species.";
+    private string _populationChartMetricLabel = "Population count by species (log10(1+count) y-axis).";
     private string _populationChartYAxisTopLabel = "0";
     private string _populationChartYAxisMidLabel = "0";
     private string _populationChartYAxisBottomLabel = "0";
@@ -125,6 +144,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _flowChartStartEpochLabel = "(n/a)";
     private string _flowChartEndEpochLabel = "(n/a)";
     private int _flowChartLegendColumns = 2;
+    private string _splitProximityChartRangeLabel = "Epochs: (no data)";
+    private string _splitProximityChartMetricLabel = "Min lineage similarity minus effective split threshold per species (signed log10(1+|delta|) y-axis; <=0 means split-trigger zone).";
+    private string _splitProximityChartYAxisTopLabel = "0";
+    private string _splitProximityChartYAxisMidLabel = "0";
+    private string _splitProximityChartYAxisBottomLabel = "0";
+    private int _splitProximityChartLegendColumns = 2;
+    private string _cladogramRangeLabel = "Cladogram: (no data)";
+    private string _cladogramMetricLabel = "Parent -> child lineage edges inferred from divergence decisions.";
+    private string _cladogramKeyLabel = "Key: color strip = species color; each node shows species name + id with membership and direct-derived counts; root badges mark inferred root lineages. New species auto-expand their branch.";
 
     public SpeciationPanelViewModel(
         UiDispatcher dispatcher,
@@ -148,10 +176,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         HistoryRows = new ObservableCollection<SpeciationHistoryItem>();
         EpochSummaries = new ObservableCollection<SpeciationEpochSummaryItem>();
         SimActiveBrains = new ObservableCollection<SpeciationSimulatorBrainOption>();
+        SimSeedParents = new ObservableCollection<SpeciationSimulatorSeedParentItem>();
         PopulationChartSeries = new ObservableCollection<SpeciationLineChartSeriesItem>();
         PopulationChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
         FlowChartAreas = new ObservableCollection<SpeciationFlowChartAreaItem>();
         FlowChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
+        SplitProximityChartSeries = new ObservableCollection<SpeciationLineChartSeriesItem>();
+        SplitProximityChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
+        CladogramItems = new ObservableCollection<SpeciationCladogramItem>();
 
         RefreshAllCommand = new AsyncRelayCommand(RefreshAllAsync);
         RefreshStatusCommand = new AsyncRelayCommand(RefreshStatusAsync);
@@ -161,7 +193,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ClearAllHistoryCommand = new AsyncRelayCommand(ClearAllHistoryAsync);
         DeleteEpochCommand = new AsyncRelayCommand(DeleteEpochAsync);
         RefreshMembershipsCommand = new AsyncRelayCommand(RefreshMembershipsAsync);
-        RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync);
+        RefreshHistoryCommand = new AsyncRelayCommand(() => RefreshHistoryAsync(includeHistoryRows: true));
         StartServiceCommand = new AsyncRelayCommand(StartServiceAsync);
         StopServiceCommand = new AsyncRelayCommand(StopServiceAsync);
         StartSimulatorCommand = new AsyncRelayCommand(StartSimulatorAsync);
@@ -169,6 +201,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         RefreshSimulatorStatusCommand = new AsyncRelayCommand(RefreshSimulatorStatusAsync);
         BrowseSimParentAOverrideFileCommand = new AsyncRelayCommand(() => BrowseSimulatorParentFileAsync(SimulatorParentFileKind.ParentAOverride));
         BrowseSimParentBOverrideFileCommand = new AsyncRelayCommand(() => BrowseSimulatorParentFileAsync(SimulatorParentFileKind.ParentBOverride));
+        AddSimSeedParentCommand = new RelayCommand(AddSimulatorSeedParentFromCandidate);
+        AddSimSeedParentsFromFileCommand = new AsyncRelayCommand(AddSimulatorSeedParentsFromFileAsync);
+        ClearSimSeedParentsCommand = new RelayCommand(ClearSimulatorSeedParents);
 
         _liveChartsEnabled = _enableLiveChartsAutoRefresh;
         _liveChartsStatus = _liveChartsEnabled
@@ -186,10 +221,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public ObservableCollection<SpeciationHistoryItem> HistoryRows { get; }
     public ObservableCollection<SpeciationEpochSummaryItem> EpochSummaries { get; }
     public ObservableCollection<SpeciationSimulatorBrainOption> SimActiveBrains { get; }
+    public ObservableCollection<SpeciationSimulatorSeedParentItem> SimSeedParents { get; }
     public ObservableCollection<SpeciationLineChartSeriesItem> PopulationChartSeries { get; }
     public ObservableCollection<SpeciationChartLegendItem> PopulationChartLegend { get; }
     public ObservableCollection<SpeciationFlowChartAreaItem> FlowChartAreas { get; }
     public ObservableCollection<SpeciationChartLegendItem> FlowChartLegend { get; }
+    public ObservableCollection<SpeciationLineChartSeriesItem> SplitProximityChartSeries { get; }
+    public ObservableCollection<SpeciationChartLegendItem> SplitProximityChartLegend { get; }
+    public ObservableCollection<SpeciationCladogramItem> CladogramItems { get; }
 
     public AsyncRelayCommand RefreshAllCommand { get; }
     public AsyncRelayCommand RefreshStatusCommand { get; }
@@ -207,6 +246,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public AsyncRelayCommand RefreshSimulatorStatusCommand { get; }
     public AsyncRelayCommand BrowseSimParentAOverrideFileCommand { get; }
     public AsyncRelayCommand BrowseSimParentBOverrideFileCommand { get; }
+    public RelayCommand AddSimSeedParentCommand { get; }
+    public AsyncRelayCommand AddSimSeedParentsFromFileCommand { get; }
+    public RelayCommand ClearSimSeedParentsCommand { get; }
+
+    public IReadOnlyList<string> SimRunPressureModes => SimRunPressureModeOptions;
+    public IReadOnlyList<string> SimParentSelectionBiasModes => SimParentSelectionBiasModeOptions;
 
     public string Status
     {
@@ -300,6 +345,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _currentEpochMaxDivergenceLabel, value);
     }
 
+    public string CurrentEpochSplitProximityLabel
+    {
+        get => _currentEpochSplitProximityLabel;
+        set => SetProperty(ref _currentEpochSplitProximityLabel, value);
+    }
+
     public bool ConfigEnabled
     {
         get => _configEnabled;
@@ -352,6 +403,30 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _hysteresisMargin;
         set => SetProperty(ref _hysteresisMargin, value);
+    }
+
+    public string LineageSplitGuardMargin
+    {
+        get => _lineageSplitGuardMargin;
+        set => SetProperty(ref _lineageSplitGuardMargin, value);
+    }
+
+    public string LineageMinParentMembershipsBeforeSplit
+    {
+        get => _lineageMinParentMembershipsBeforeSplit;
+        set => SetProperty(ref _lineageMinParentMembershipsBeforeSplit, value);
+    }
+
+    public string LineageRealignParentMembershipWindow
+    {
+        get => _lineageRealignParentMembershipWindow;
+        set => SetProperty(ref _lineageRealignParentMembershipWindow, value);
+    }
+
+    public string LineageRealignMatchMargin
+    {
+        get => _lineageRealignMatchMargin;
+        set => SetProperty(ref _lineageRealignMatchMargin, value);
     }
 
     public bool CreateDerivedSpecies
@@ -417,6 +492,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _simSelectedParentBBrain;
         set => SetProperty(ref _simSelectedParentBBrain, value);
+    }
+
+    public SpeciationSimulatorBrainOption? SimExtraParentCandidateBrain
+    {
+        get => _simExtraParentCandidateBrain;
+        set => SetProperty(ref _simExtraParentCandidateBrain, value);
     }
 
     public string SimParentAOverrideFilePath
@@ -519,6 +600,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _simGammaText, value);
     }
 
+    public string SimRunPressureMode
+    {
+        get => _simRunPressureMode;
+        set => SetProperty(ref _simRunPressureMode, value);
+    }
+
+    public string SimParentSelectionBias
+    {
+        get => _simParentSelectionBias;
+        set => SetProperty(ref _simParentSelectionBias, value);
+    }
+
     public bool SimCommitToSpeciation
     {
         get => _simCommitToSpeciation;
@@ -530,6 +623,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         get => _simSpawnChildren;
         set => SetProperty(ref _simSpawnChildren, value);
     }
+
+    public string SimSeedParentsSummary
+        => SimSeedParents.Count == 0
+            ? "(none)"
+            : $"{SimSeedParents.Count} added";
 
     public bool SimRunnerActive => _evolutionRunner.IsRunning;
 
@@ -628,6 +726,60 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _flowChartLegendColumns, value);
     }
 
+    public string SplitProximityChartRangeLabel
+    {
+        get => _splitProximityChartRangeLabel;
+        set => SetProperty(ref _splitProximityChartRangeLabel, value);
+    }
+
+    public string SplitProximityChartMetricLabel
+    {
+        get => _splitProximityChartMetricLabel;
+        set => SetProperty(ref _splitProximityChartMetricLabel, value);
+    }
+
+    public string SplitProximityChartYAxisTopLabel
+    {
+        get => _splitProximityChartYAxisTopLabel;
+        set => SetProperty(ref _splitProximityChartYAxisTopLabel, value);
+    }
+
+    public string SplitProximityChartYAxisMidLabel
+    {
+        get => _splitProximityChartYAxisMidLabel;
+        set => SetProperty(ref _splitProximityChartYAxisMidLabel, value);
+    }
+
+    public string SplitProximityChartYAxisBottomLabel
+    {
+        get => _splitProximityChartYAxisBottomLabel;
+        set => SetProperty(ref _splitProximityChartYAxisBottomLabel, value);
+    }
+
+    public int SplitProximityChartLegendColumns
+    {
+        get => _splitProximityChartLegendColumns;
+        set => SetProperty(ref _splitProximityChartLegendColumns, value);
+    }
+
+    public string CladogramRangeLabel
+    {
+        get => _cladogramRangeLabel;
+        set => SetProperty(ref _cladogramRangeLabel, value);
+    }
+
+    public string CladogramMetricLabel
+    {
+        get => _cladogramMetricLabel;
+        set => SetProperty(ref _cladogramMetricLabel, value);
+    }
+
+    public string CladogramKeyLabel
+    {
+        get => _cladogramKeyLabel;
+        set => SetProperty(ref _cladogramKeyLabel, value);
+    }
+
     public double PopulationChartWidth => PopulationChartPlotWidth;
     public double PopulationChartHeight => PopulationChartPlotHeight;
     public double FlowChartWidth => FlowChartPlotWidth;
@@ -645,6 +797,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .ToList();
         var selectedAId = SimSelectedParentABrain?.BrainId;
         var selectedBId = SimSelectedParentBBrain?.BrainId;
+        var selectedExtraCandidateId = SimExtraParentCandidateBrain?.BrainId;
 
         _dispatcher.Post(() =>
         {
@@ -671,7 +824,141 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 SimSelectedParentBBrain = SimActiveBrains
                     .FirstOrDefault(entry => entry.BrainId != SimSelectedParentABrain?.BrainId);
             }
+
+            SimExtraParentCandidateBrain = selectedExtraCandidateId.HasValue
+                ? SimActiveBrains.FirstOrDefault(entry => entry.BrainId == selectedExtraCandidateId.Value)
+                : SimExtraParentCandidateBrain;
+            if (SimExtraParentCandidateBrain is null && SimActiveBrains.Count > 0)
+            {
+                SimExtraParentCandidateBrain = SimActiveBrains[0];
+            }
+
+            var labelsByBrainId = SimActiveBrains
+                .GroupBy(entry => entry.BrainId)
+                .ToDictionary(group => group.Key, group => group.First().Label);
+            for (var i = 0; i < SimSeedParents.Count; i++)
+            {
+                var existing = SimSeedParents[i];
+                var resolvedLabel = labelsByBrainId.TryGetValue(existing.BrainId, out var activeLabel)
+                    ? activeLabel
+                    : existing.Label;
+                if (!string.Equals(existing.Label, resolvedLabel, StringComparison.Ordinal))
+                {
+                    SimSeedParents[i] = existing with { Label = resolvedLabel };
+                }
+            }
+
+            OnPropertyChanged(nameof(SimSeedParentsSummary));
         });
+    }
+
+    public bool ApplySetting(SettingItem item)
+    {
+        if (item is null || string.IsNullOrWhiteSpace(item.Key))
+        {
+            return false;
+        }
+
+        var key = item.Key.Trim();
+        var value = item.Value?.Trim() ?? string.Empty;
+
+        if (string.Equals(key, SpeciationSettingsKeys.ConfigEnabledKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ConfigEnabled = ParseBool(value, ConfigEnabled);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.PolicyVersionKey, StringComparison.OrdinalIgnoreCase))
+        {
+            PolicyVersion = string.IsNullOrWhiteSpace(value) ? PolicyVersion : value;
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.DefaultSpeciesIdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            DefaultSpeciesId = string.IsNullOrWhiteSpace(value) ? DefaultSpeciesId : value;
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey, StringComparison.OrdinalIgnoreCase))
+        {
+            DefaultSpeciesDisplayName = string.IsNullOrWhiteSpace(value) ? DefaultSpeciesDisplayName : value;
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.StartupReconcileReasonKey, StringComparison.OrdinalIgnoreCase))
+        {
+            StartupReconcileReason = string.IsNullOrWhiteSpace(value) ? StartupReconcileReason : value;
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageMatchThresholdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageMatchThreshold = ParseDouble(value, 0.90d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageSplitThresholdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageSplitThreshold = ParseDouble(value, 0.86d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.ParentConsensusThresholdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ParentConsensusThreshold = ParseDouble(value, 0.70d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageHysteresisMarginKey, StringComparison.OrdinalIgnoreCase))
+        {
+            HysteresisMargin = ParseDouble(value, 0.05d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageSplitGuardMarginKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageSplitGuardMargin = ParseDouble(value, 0.04d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageMinParentMembershipsBeforeSplit = Math.Max(1, ParseInt(value, 1)).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageRealignParentMembershipWindow = Math.Max(0, ParseInt(value, 3)).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageRealignMatchMarginKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageRealignMatchMargin = ParseDouble(value, 0.05d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            CreateDerivedSpecies = ParseBool(value, CreateDerivedSpecies);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.DerivedSpeciesPrefixKey, StringComparison.OrdinalIgnoreCase))
+        {
+            DerivedSpeciesPrefix = string.IsNullOrWhiteSpace(value) ? DerivedSpeciesPrefix : value;
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.HistoryLimitKey, StringComparison.OrdinalIgnoreCase))
+        {
+            HistoryLimitText = Math.Max(1u, ParseUInt(value, DefaultHistoryLimit)).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        return false;
     }
 
     public async ValueTask DisposeAsync()
@@ -722,7 +1009,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 break;
             }
 
-            await RefreshHistoryAsync().ConfigureAwait(false);
+            await RefreshHistoryAsync(includeHistoryRows: false).ConfigureAwait(false);
             await RefreshMembershipsAsync().ConfigureAwait(false);
             LiveChartsStatus = $"Live updates active ({intervalSeconds}s).";
         }
@@ -765,6 +1052,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ServiceSummary = $"Epoch {CurrentEpochLabel} | memberships={CurrentMembershipCount} species={CurrentSpeciesCount} lineage={CurrentLineageEdgeCount}";
             Status = "Speciation status refreshed.";
         });
+        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
     }
 
     private async Task LoadConfigAsync()
@@ -785,6 +1073,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ConfigStatus = "Config loaded.";
             Status = "Speciation config refreshed.";
         });
+        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
     }
 
     private async Task ApplyConfigAsync()
@@ -809,6 +1098,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ConfigStatus = "Config applied.";
             Status = "Speciation config updated.";
         });
+        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
 
         if (_refreshOrchestrator is not null)
         {
@@ -848,6 +1138,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ConfigStatus = $"New epoch started ({CurrentEpochLabel}).";
             Status = "Speciation epoch advanced.";
         });
+        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
 
         await RefreshMembershipsAsync().ConfigureAwait(false);
         await RefreshHistoryAsync().ConfigureAwait(false);
@@ -888,11 +1179,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             CurrentMembershipCount = 0;
             CurrentSpeciesCount = 0;
             CurrentLineageEdgeCount = 0;
-            CurrentEpochMaxDivergenceLabel = $"Max divergence (epoch {CurrentEpochLabel}): (n/a)";
+            CurrentEpochMaxDivergenceLabel = $"Max lineage divergence (epoch {CurrentEpochLabel}): (n/a)";
+            CurrentEpochSplitProximityLabel = $"Split proximity (epoch {CurrentEpochLabel}): (n/a)";
             HistoryStatus =
                 $"History cleared: deleted epochs={response.DeletedEpochCount}, memberships={response.DeletedMembershipCount}, species={response.DeletedSpeciesCount}, decisions={response.DeletedDecisionCount}.";
             Status = HistoryStatus;
         });
+        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
 
         await RefreshStatusAsync().ConfigureAwait(false);
         await RefreshMembershipsAsync().ConfigureAwait(false);
@@ -1010,38 +1303,79 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         });
     }
 
-    private async Task RefreshHistoryAsync()
+    private async Task RefreshHistoryAsync(bool includeHistoryRows = true)
     {
-        var historyLimit = ParseUInt(HistoryLimitText, 256u);
+        var historyLimit = Math.Max(1u, ParseUInt(HistoryLimitText, DefaultHistoryLimit));
+        HistoryLimitText = historyLimit.ToString(CultureInfo.InvariantCulture);
+        await _client.SetSettingAsync(
+                SpeciationSettingsKeys.HistoryLimitKey,
+                historyLimit.ToString(CultureInfo.InvariantCulture))
+            .ConfigureAwait(false);
+        var chartHistoryLimit = Math.Max(historyLimit, DefaultChartHistoryLimit);
+        var cladogramHistoryLimit = Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit);
         var epochFilter = ResolveEpochFilter();
+        var cladogramEpochFilter = string.IsNullOrWhiteSpace(EpochFilterText)
+            ? null
+            : epochFilter;
         var brainFilter = Guid.TryParse(HistoryBrainIdText, out var parsedBrainId) && parsedBrainId != Guid.Empty
             ? parsedBrainId
             : (Guid?)null;
-        var response = await _client.ListSpeciationHistoryAsync(
+
+        SpeciationListHistoryResponse? tableResponse = null;
+        if (includeHistoryRows)
+        {
+            tableResponse = await _client.ListSpeciationHistoryAsync(
+                    epochId: epochFilter,
+                    brainId: brainFilter,
+                    limit: historyLimit)
+                .ConfigureAwait(false);
+            if (tableResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+            {
+                var reason = NormalizeFailure(tableResponse.FailureReason, tableResponse.FailureDetail);
+                HistoryStatus = $"History load failed: {reason}";
+                Status = HistoryStatus;
+                return;
+            }
+        }
+
+        var chartResponse = await _client.ListSpeciationHistoryAsync(
                 epochId: epochFilter,
                 brainId: brainFilter,
-                limit: historyLimit)
+                limit: chartHistoryLimit)
             .ConfigureAwait(false);
-        if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        if (chartResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
         {
-            var reason = NormalizeFailure(response.FailureReason, response.FailureDetail);
+            var reason = NormalizeFailure(chartResponse.FailureReason, chartResponse.FailureDetail);
             HistoryStatus = $"History load failed: {reason}";
             Status = HistoryStatus;
             return;
         }
 
-        var historyRows = response.History
-            .OrderByDescending(entry => entry.AssignedMs)
-            .Select(entry => new SpeciationHistoryItem(
-                (long)entry.EpochId,
-                entry.BrainId?.TryToGuid(out var brainId) == true ? brainId.ToString("D") : "(none)",
-                string.IsNullOrWhiteSpace(entry.SpeciesId) ? "(unknown)" : entry.SpeciesId.Trim(),
-                string.IsNullOrWhiteSpace(entry.SpeciesDisplayName) ? "(unnamed)" : entry.SpeciesDisplayName.Trim(),
-                string.IsNullOrWhiteSpace(entry.DecisionReason) ? "(none)" : entry.DecisionReason.Trim(),
-                FormatTimestamp(entry.AssignedMs)))
-            .ToList();
+        SpeciationListHistoryResponse? cladogramResponse = await _client.ListSpeciationHistoryAsync(
+                epochId: cladogramEpochFilter,
+                brainId: null,
+                limit: cladogramHistoryLimit)
+            .ConfigureAwait(false);
+        if (cladogramResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            cladogramResponse = null;
+        }
 
-        var epochRows = response.History
+        var tableHistoryRows = includeHistoryRows && tableResponse is not null
+            ? tableResponse.History
+                .OrderByDescending(entry => entry.AssignedMs)
+                .Take(MaxHistoryRowsToRender)
+                .Select(entry => new SpeciationHistoryItem(
+                    (long)entry.EpochId,
+                    entry.BrainId?.TryToGuid(out var brainId) == true ? brainId.ToString("D") : "(none)",
+                    string.IsNullOrWhiteSpace(entry.SpeciesId) ? "(unknown)" : entry.SpeciesId.Trim(),
+                    string.IsNullOrWhiteSpace(entry.SpeciesDisplayName) ? "(unnamed)" : entry.SpeciesDisplayName.Trim(),
+                    string.IsNullOrWhiteSpace(entry.DecisionReason) ? "(none)" : entry.DecisionReason.Trim(),
+                    FormatTimestamp(entry.AssignedMs)))
+                .ToList()
+            : new List<SpeciationHistoryItem>();
+
+        var epochRows = chartResponse.History
             .GroupBy(entry => (long)entry.EpochId)
             .Select(group =>
             {
@@ -1060,16 +1394,35 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             })
             .OrderByDescending(entry => entry.EpochId)
             .ToList();
-        var populationSnapshot = BuildPopulationChartSnapshot(response.History);
-        var flowSnapshot = BuildFlowChartSnapshot(response.History);
-        var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(response.History, CurrentEpochId);
+        var populationSnapshot = BuildPopulationChartSnapshot(chartResponse.History);
+        var flowSnapshot = BuildFlowChartSnapshot(chartResponse.History);
+        var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(chartResponse.History, CurrentEpochId);
+        var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
+            chartResponse.History,
+            CurrentEpochId,
+            ParseDouble(LineageSplitThreshold, 0.86d),
+            ParseDouble(LineageSplitGuardMargin, 0.04d));
+        var cladogramSourceHistory = cladogramResponse?.History ?? chartResponse.History;
+        var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory);
+        var chartHistoryTruncated = chartResponse.TotalRecords > (uint)chartResponse.History.Count;
+        var cladogramHistoryTruncated = cladogramResponse is not null
+                                        && cladogramResponse.TotalRecords > (uint)cladogramResponse.History.Count;
+        var tableHistoryTruncated = includeHistoryRows
+                                   && tableResponse is not null
+                                   && tableResponse.TotalRecords > (uint)tableResponse.History.Count;
+        var historyScopeSuffix = chartHistoryTruncated
+            ? HistorySampleScopeSuffix
+            : string.Empty;
 
         _dispatcher.Post(() =>
         {
-            HistoryRows.Clear();
-            foreach (var row in historyRows)
+            if (includeHistoryRows)
             {
-                HistoryRows.Add(row);
+                HistoryRows.Clear();
+                foreach (var row in tableHistoryRows)
+                {
+                    HistoryRows.Add(row);
+                }
             }
 
             EpochSummaries.Clear();
@@ -1080,9 +1433,39 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
             ApplyPopulationChartSnapshot(populationSnapshot);
             ApplyFlowChartSnapshot(flowSnapshot);
-            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label;
-            HistoryStatus = $"History loaded: {historyRows.Count} rows (total={response.TotalRecords}).";
-            Status = HistoryStatus;
+            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label + historyScopeSuffix;
+            CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel + historyScopeSuffix;
+            ApplySplitProximityChartSnapshot(splitProximitySnapshot);
+            ApplyCladogramSnapshot(cladogramSnapshot);
+            if (chartHistoryTruncated)
+            {
+                PopulationChartRangeLabel = AppendHistorySampleScopeLabel(PopulationChartRangeLabel);
+                PopulationChartMetricLabel = AppendHistorySampleMetricLabel(PopulationChartMetricLabel);
+                FlowChartRangeLabel = AppendHistorySampleScopeLabel(FlowChartRangeLabel);
+                SplitProximityChartRangeLabel = AppendHistorySampleScopeLabel(SplitProximityChartRangeLabel);
+                SplitProximityChartMetricLabel = AppendHistorySampleMetricLabel(SplitProximityChartMetricLabel);
+            }
+
+            if (cladogramHistoryTruncated)
+            {
+                CladogramRangeLabel = AppendHistorySampleScopeLabel(CladogramRangeLabel);
+                CladogramMetricLabel = AppendHistorySampleMetricLabel(CladogramMetricLabel);
+            }
+
+            if (includeHistoryRows && tableResponse is not null)
+            {
+                var renderedRows = tableHistoryRows.Count;
+                var fetchedRows = tableResponse.History.Count;
+                var renderSuffix = renderedRows < fetchedRows
+                    ? $" showing latest {renderedRows}."
+                    : string.Empty;
+                var tableScopeSuffix = tableHistoryTruncated
+                    ? " (query-limited sample)"
+                    : string.Empty;
+                HistoryStatus =
+                    $"History loaded: fetched={fetchedRows} total={tableResponse.TotalRecords}{tableScopeSuffix}{renderSuffix}";
+                Status = HistoryStatus;
+            }
         });
     }
 
@@ -1148,22 +1531,29 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        if (!TryResolveSimulatorParentIds(out var parentA, out var parentB, out var parentError))
+        if (!TryResolveSimulatorParentPool(out var parentPool, out var parentError))
         {
             SimulatorStatus = parentError;
             Status = SimulatorStatus;
             return;
         }
 
-        var parentDefinitions = await TryResolveSimulatorParentArtifactsAsync(parentA, parentB).ConfigureAwait(false);
-        if (!parentDefinitions.Success || parentDefinitions.ParentARef is null || parentDefinitions.ParentBRef is null)
+        var parentDefinitions = await TryResolveSimulatorParentArtifactsAsync(parentPool).ConfigureAwait(false);
+        if (!parentDefinitions.Success || parentDefinitions.ParentRefs.Count < 2)
         {
             SimulatorStatus = parentDefinitions.Error;
             Status = SimulatorStatus;
             return;
         }
 
-        var args = BuildEvolutionSimArgs(ioPort, simPort, parentDefinitions.ParentARef, parentDefinitions.ParentBRef);
+        var args = BuildEvolutionSimArgs(ioPort, simPort, parentDefinitions.ParentRefs);
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            SimulatorStatus = "Simulator requires at least two usable parent artifact references.";
+            Status = SimulatorStatus;
+            return;
+        }
+
         var startInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "dotnet",
@@ -1330,6 +1720,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             LineageSplitThreshold = snapshot.SplitThreshold.ToString("0.###", CultureInfo.InvariantCulture);
             ParentConsensusThreshold = snapshot.ParentConsensusThreshold.ToString("0.###", CultureInfo.InvariantCulture);
             HysteresisMargin = snapshot.HysteresisMargin.ToString("0.###", CultureInfo.InvariantCulture);
+            LineageSplitGuardMargin = snapshot.LineageSplitGuardMargin.ToString("0.###", CultureInfo.InvariantCulture);
+            LineageMinParentMembershipsBeforeSplit = snapshot.LineageMinParentMembershipsBeforeSplit.ToString(CultureInfo.InvariantCulture);
+            LineageRealignParentMembershipWindow = snapshot.LineageRealignParentMembershipWindow.ToString(CultureInfo.InvariantCulture);
+            LineageRealignMatchMargin = snapshot.LineageRealignMatchMargin.ToString("0.###", CultureInfo.InvariantCulture);
             CreateDerivedSpecies = snapshot.CreateDerivedSpecies;
             DerivedSpeciesPrefix = snapshot.DerivedSpeciesPrefix;
         });
@@ -1337,15 +1731,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private SpeciationRuntimeConfig BuildRuntimeConfigFromDraft()
     {
-        var matchThreshold = Clamp01(ParseDouble(LineageMatchThreshold, 0.70));
-        var splitThreshold = Clamp01(ParseDouble(LineageSplitThreshold, Math.Max(0d, matchThreshold - 0.10d)));
+        var matchThreshold = Clamp01(ParseDouble(LineageMatchThreshold, 0.90));
+        var splitThreshold = Clamp01(ParseDouble(LineageSplitThreshold, Math.Max(0d, matchThreshold - 0.04d)));
         if (splitThreshold > matchThreshold)
         {
             splitThreshold = matchThreshold;
         }
 
-        var parentConsensus = Clamp01(ParseDouble(ParentConsensusThreshold, 0.50));
+        var parentConsensus = Clamp01(ParseDouble(ParentConsensusThreshold, 0.70));
         var hysteresisMargin = Math.Max(0d, ParseDouble(HysteresisMargin, Math.Max(0d, matchThreshold - splitThreshold)));
+        var splitGuardMargin = Clamp01(ParseDouble(LineageSplitGuardMargin, 0.04d));
+        var minParentMembershipsBeforeSplit = Math.Max(1, ParseInt(LineageMinParentMembershipsBeforeSplit, 1));
+        var realignParentMembershipWindow = Math.Max(0, ParseInt(LineageRealignParentMembershipWindow, 3));
+        var realignMatchMargin = Clamp01(ParseDouble(LineageRealignMatchMargin, 0.05d));
         var derivedPrefix = string.IsNullOrWhiteSpace(DerivedSpeciesPrefix) ? "branch" : DerivedSpeciesPrefix.Trim();
         var snapshot = new JsonObject
         {
@@ -1356,6 +1754,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 ["lineage_split_threshold"] = splitThreshold,
                 ["parent_consensus_threshold"] = parentConsensus,
                 ["lineage_hysteresis_margin"] = hysteresisMargin,
+                ["lineage_split_guard_margin"] = splitGuardMargin,
+                ["lineage_min_parent_memberships_before_split"] = minParentMembershipsBeforeSplit,
+                ["lineage_realign_parent_membership_window"] = realignParentMembershipWindow,
+                ["lineage_realign_match_margin"] = realignMatchMargin,
                 ["create_derived_species_on_divergence"] = CreateDerivedSpecies,
                 ["derived_species_prefix"] = derivedPrefix
             }
@@ -1375,14 +1777,29 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         };
     }
 
-    private (bool Enabled, double MatchThreshold, double SplitThreshold, double ParentConsensusThreshold, double HysteresisMargin, bool CreateDerivedSpecies, string DerivedSpeciesPrefix) ParseSnapshot(string snapshotJson)
+    private (
+        bool Enabled,
+        double MatchThreshold,
+        double SplitThreshold,
+        double ParentConsensusThreshold,
+        double HysteresisMargin,
+        double LineageSplitGuardMargin,
+        int LineageMinParentMembershipsBeforeSplit,
+        int LineageRealignParentMembershipWindow,
+        double LineageRealignMatchMargin,
+        bool CreateDerivedSpecies,
+        string DerivedSpeciesPrefix) ParseSnapshot(string snapshotJson)
     {
         var defaults = (
             Enabled: true,
-            MatchThreshold: 0.70d,
-            SplitThreshold: 0.60d,
-            ParentConsensusThreshold: 0.50d,
-            HysteresisMargin: 0.10d,
+            MatchThreshold: 0.90d,
+            SplitThreshold: 0.86d,
+            ParentConsensusThreshold: 0.70d,
+            HysteresisMargin: 0.05d,
+            LineageSplitGuardMargin: 0.04d,
+            LineageMinParentMembershipsBeforeSplit: 1,
+            LineageRealignParentMembershipWindow: 3,
+            LineageRealignMatchMargin: 0.05d,
             CreateDerivedSpecies: true,
             DerivedSpeciesPrefix: "branch");
 
@@ -1407,11 +1824,36 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var split = Clamp01(TryReadDouble(policy, "lineage_split_threshold", "lineageSplitThreshold") ?? defaults.SplitThreshold);
             var consensus = Clamp01(TryReadDouble(policy, "parent_consensus_threshold", "parentConsensusThreshold") ?? defaults.ParentConsensusThreshold);
             var hysteresis = Math.Max(0d, TryReadDouble(policy, "lineage_hysteresis_margin", "lineageHysteresisMargin") ?? defaults.HysteresisMargin);
+            var splitGuardMargin = Clamp01(TryReadDouble(policy, "lineage_split_guard_margin", "lineageSplitGuardMargin") ?? defaults.LineageSplitGuardMargin);
+            var minParentMembershipsBeforeSplit = Math.Max(
+                1,
+                RoundToNonNegativeInt(
+                    TryReadDouble(policy, "lineage_min_parent_memberships_before_split", "lineageMinParentMembershipsBeforeSplit")
+                    ?? defaults.LineageMinParentMembershipsBeforeSplit,
+                    defaults.LineageMinParentMembershipsBeforeSplit));
+            var realignParentMembershipWindow = Math.Max(
+                0,
+                RoundToNonNegativeInt(
+                    TryReadDouble(policy, "lineage_realign_parent_membership_window", "lineageRealignParentMembershipWindow")
+                    ?? defaults.LineageRealignParentMembershipWindow,
+                    defaults.LineageRealignParentMembershipWindow));
+            var realignMatchMargin = Clamp01(TryReadDouble(policy, "lineage_realign_match_margin", "lineageRealignMatchMargin") ?? defaults.LineageRealignMatchMargin);
             var createDerived = TryReadBool(policy, "create_derived_species_on_divergence", "createDerivedSpeciesOnDivergence")
                                 ?? defaults.CreateDerivedSpecies;
             var prefix = TryReadString(policy, "derived_species_prefix", "derivedSpeciesPrefix")
                          ?? defaults.DerivedSpeciesPrefix;
-            return (enabled, match, split, consensus, hysteresis, createDerived, string.IsNullOrWhiteSpace(prefix) ? "branch" : prefix.Trim());
+            return (
+                enabled,
+                match,
+                split,
+                consensus,
+                hysteresis,
+                splitGuardMargin,
+                minParentMembershipsBeforeSplit,
+                realignParentMembershipWindow,
+                realignMatchMargin,
+                createDerived,
+                string.IsNullOrWhiteSpace(prefix) ? "branch" : prefix.Trim());
         }
         catch (JsonException)
         {
@@ -1512,6 +1954,34 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return long.TryParse(EpochFilterText.Trim(), out var parsed) && parsed > 0 ? parsed : null;
     }
 
+    private async Task PersistSpeciationSettingsAsync()
+    {
+        var updates = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [SpeciationSettingsKeys.ConfigEnabledKey] = ConfigEnabled ? "true" : "false",
+            [SpeciationSettingsKeys.PolicyVersionKey] = string.IsNullOrWhiteSpace(PolicyVersion) ? "default" : PolicyVersion.Trim(),
+            [SpeciationSettingsKeys.DefaultSpeciesIdKey] = string.IsNullOrWhiteSpace(DefaultSpeciesId) ? "species.default" : DefaultSpeciesId.Trim(),
+            [SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey] = string.IsNullOrWhiteSpace(DefaultSpeciesDisplayName) ? "Default species" : DefaultSpeciesDisplayName.Trim(),
+            [SpeciationSettingsKeys.StartupReconcileReasonKey] = string.IsNullOrWhiteSpace(StartupReconcileReason) ? "startup_reconcile" : StartupReconcileReason.Trim(),
+            [SpeciationSettingsKeys.LineageMatchThresholdKey] = Clamp01(ParseDouble(LineageMatchThreshold, 0.90d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageSplitThresholdKey] = Clamp01(ParseDouble(LineageSplitThreshold, 0.86d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.ParentConsensusThresholdKey] = Clamp01(ParseDouble(ParentConsensusThreshold, 0.70d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageHysteresisMarginKey] = Math.Max(0d, ParseDouble(HysteresisMargin, 0.05d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageSplitGuardMarginKey] = Clamp01(ParseDouble(LineageSplitGuardMargin, 0.04d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey] = Math.Max(1, ParseInt(LineageMinParentMembershipsBeforeSplit, 1)).ToString(CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey] = Math.Max(0, ParseInt(LineageRealignParentMembershipWindow, 3)).ToString(CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageRealignMatchMarginKey] = Clamp01(ParseDouble(LineageRealignMatchMargin, 0.05d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey] = CreateDerivedSpecies ? "true" : "false",
+            [SpeciationSettingsKeys.DerivedSpeciesPrefixKey] = string.IsNullOrWhiteSpace(DerivedSpeciesPrefix) ? "branch" : DerivedSpeciesPrefix.Trim(),
+            [SpeciationSettingsKeys.HistoryLimitKey] = Math.Max(1u, ParseUInt(HistoryLimitText, DefaultHistoryLimit)).ToString(CultureInfo.InvariantCulture)
+        };
+
+        foreach (var (key, value) in updates)
+        {
+            await _client.SetSettingAsync(key, value).ConfigureAwait(false);
+        }
+    }
+
     private async Task BrowseSimulatorParentFileAsync(SimulatorParentFileKind kind)
     {
         var title = kind == SimulatorParentFileKind.ParentAOverride
@@ -1537,32 +2007,154 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         });
     }
 
-    private bool TryResolveSimulatorParentIds(out Guid parentA, out Guid parentB, out string error)
+    private void AddSimulatorSeedParentFromCandidate()
     {
+        if (SimExtraParentCandidateBrain is null || SimExtraParentCandidateBrain.BrainId == Guid.Empty)
+        {
+            SimulatorStatus = "Select an active brain to add as a seed parent.";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        TryAddSimulatorSeedParent(
+            SimExtraParentCandidateBrain.BrainId,
+            SimExtraParentCandidateBrain.Label,
+            source: "dropdown");
+    }
+
+    private async Task AddSimulatorSeedParentsFromFileAsync()
+    {
+        var file = await PickOpenFileAsync("Select simulator extra-parents file").ConfigureAwait(false);
+        if (file is null)
+        {
+            return;
+        }
+
+        var path = FormatPath(file);
+        IReadOnlyList<Guid> parentIds;
+        try
+        {
+            parentIds = ParseBrainIdsFromFile(path, "--extra-parents-file");
+        }
+        catch (Exception ex)
+        {
+            SimulatorStatus = $"Extra parent file failed: {ex.GetBaseException().Message}";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        if (parentIds.Count == 0)
+        {
+            SimulatorStatus = $"Extra parent file has no usable brain GUIDs: {path}";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        var labelsByBrainId = SimActiveBrains
+            .GroupBy(entry => entry.BrainId)
+            .ToDictionary(group => group.Key, group => group.First().Label);
+        var added = 0;
+        foreach (var parentId in parentIds)
+        {
+            var label = labelsByBrainId.TryGetValue(parentId, out var activeLabel)
+                ? activeLabel
+                : parentId.ToString("D");
+            if (TryAddSimulatorSeedParent(parentId, label, source: "file", updateStatus: false))
+            {
+                added++;
+            }
+        }
+
+        SimulatorStatus = added > 0
+            ? $"Added {added} seed parent(s) from file."
+            : "No new seed parents were added from file (all duplicates).";
+        Status = SimulatorStatus;
+    }
+
+    private void ClearSimulatorSeedParents()
+    {
+        if (SimSeedParents.Count == 0)
+        {
+            return;
+        }
+
+        SimSeedParents.Clear();
+        OnPropertyChanged(nameof(SimSeedParentsSummary));
+        SimulatorStatus = "Cleared extra seed parents.";
+        Status = SimulatorStatus;
+    }
+
+    private bool TryAddSimulatorSeedParent(Guid brainId, string label, string source, bool updateStatus = true)
+    {
+        if (brainId == Guid.Empty)
+        {
+            return false;
+        }
+
+        if (SimSeedParents.Any(entry => entry.BrainId == brainId))
+        {
+            if (updateStatus)
+            {
+                SimulatorStatus = $"Seed parent already added: {brainId:D}";
+                Status = SimulatorStatus;
+            }
+
+            return false;
+        }
+
+        SimSeedParents.Add(new SpeciationSimulatorSeedParentItem(brainId, label, source));
+        OnPropertyChanged(nameof(SimSeedParentsSummary));
+        if (updateStatus)
+        {
+            SimulatorStatus = $"Added seed parent: {brainId:D}";
+            Status = SimulatorStatus;
+        }
+
+        return true;
+    }
+
+    private bool TryResolveSimulatorParentPool(out List<Guid> parents, out string error)
+    {
+        parents = new List<Guid>(2 + SimSeedParents.Count);
+        var uniqueParents = new HashSet<Guid>();
+
         if (!TryResolveParentBrainId(
                 selected: SimSelectedParentABrain,
                 overrideFilePath: SimParentAOverrideFilePath,
                 parentLabel: "A",
-                out parentA,
+                out var parentA,
                 out error))
         {
-            parentB = Guid.Empty;
             return false;
         }
+        uniqueParents.Add(parentA);
+        parents.Add(parentA);
 
         if (!TryResolveParentBrainId(
                 selected: SimSelectedParentBBrain,
                 overrideFilePath: SimParentBOverrideFilePath,
                 parentLabel: "B",
-                out parentB,
+                out var parentB,
                 out error))
         {
             return false;
         }
-
-        if (parentA == parentB)
+        if (uniqueParents.Add(parentB))
         {
-            error = "Simulator requires two distinct brain parents.";
+            parents.Add(parentB);
+        }
+
+        foreach (var extraParent in SimSeedParents)
+        {
+            if (uniqueParents.Add(extraParent.BrainId))
+            {
+                parents.Add(extraParent.BrainId);
+            }
+        }
+
+        if (parents.Count < 2)
+        {
+            error = "Simulator requires at least two distinct brain parents.";
             return false;
         }
 
@@ -1570,21 +2162,23 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return true;
     }
 
-    private async Task<(bool Success, ArtifactRef? ParentARef, ArtifactRef? ParentBRef, string Error)> TryResolveSimulatorParentArtifactsAsync(Guid parentA, Guid parentB)
+    private async Task<(bool Success, IReadOnlyList<ArtifactRef> ParentRefs, string Error)> TryResolveSimulatorParentArtifactsAsync(
+        IReadOnlyList<Guid> parentIds)
     {
-        var parentAResolution = await ResolveSimulatorParentArtifactAsync(parentA, "A").ConfigureAwait(false);
-        if (!parentAResolution.Success)
+        var parentRefs = new List<ArtifactRef>(parentIds.Count);
+        for (var index = 0; index < parentIds.Count; index++)
         {
-            return (false, null, null, parentAResolution.Error);
+            var parentLabel = $"#{index + 1}";
+            var resolution = await ResolveSimulatorParentArtifactAsync(parentIds[index], parentLabel).ConfigureAwait(false);
+            if (!resolution.Success || resolution.Artifact is null)
+            {
+                return (false, Array.Empty<ArtifactRef>(), resolution.Error);
+            }
+
+            parentRefs.Add(resolution.Artifact);
         }
 
-        var parentBResolution = await ResolveSimulatorParentArtifactAsync(parentB, "B").ConfigureAwait(false);
-        if (!parentBResolution.Success)
-        {
-            return (false, null, null, parentBResolution.Error);
-        }
-
-        return (true, parentAResolution.Artifact, parentBResolution.Artifact, string.Empty);
+        return (true, parentRefs, string.Empty);
     }
 
     private async Task<(bool Success, ArtifactRef? Artifact, string Error)> ResolveSimulatorParentArtifactAsync(Guid brainId, string parentLabel)
@@ -1667,6 +2261,33 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return true;
     }
 
+    private static IReadOnlyList<Guid> ParseBrainIdsFromFile(string path, string sourceLabel)
+    {
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException($"{sourceLabel} not found: {path}");
+        }
+
+        var parentIds = new List<Guid>();
+        foreach (var rawLine in File.ReadLines(path))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!Guid.TryParse(line, out var brainId) || brainId == Guid.Empty)
+            {
+                throw new InvalidOperationException($"Invalid brain GUID '{line}' in {path}.");
+            }
+
+            parentIds.Add(brainId);
+        }
+
+        return parentIds;
+    }
+
     private static async Task<IStorageFile?> PickOpenFileAsync(string title)
     {
         var provider = GetStorageProvider();
@@ -1698,10 +2319,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private static string FormatPath(IStorageItem item)
         => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
-    private string BuildEvolutionSimArgs(int ioPort, int simPort, ArtifactRef parentARef, ArtifactRef parentBRef)
+    private string BuildEvolutionSimArgs(int ioPort, int simPort, IReadOnlyList<ArtifactRef> parentRefs)
     {
-        var parentASpec = BuildEvolutionParentSpec(parentARef);
-        var parentBSpec = BuildEvolutionParentSpec(parentBRef);
+        var parentSpecs = parentRefs
+            .Select(BuildEvolutionParentSpec)
+            .Where(spec => !string.IsNullOrWhiteSpace(spec))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (parentSpecs.Count < 2)
+        {
+            return string.Empty;
+        }
+
         var args = new List<string>
         {
             "run",
@@ -1712,7 +2342,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             $"--bind-host {QuoteIfNeeded(SimBindHost)}",
             $"--port {simPort}",
             $"--seed {ParseULong(SimSeedText, 12345UL)}",
-            $"--interval-ms {ParseInt(SimIntervalMsText, 1000)}",
+            $"--interval-ms {Math.Max(0, ParseInt(SimIntervalMsText, 100))}",
             $"--status-seconds {Math.Max(1, ParseInt(SimStatusSecondsText, 2))}",
             $"--timeout-seconds {Math.Max(1, ParseInt(SimTimeoutSecondsText, 10))}",
             $"--max-iterations {Math.Max(0, ParseInt(SimMaxIterationsText, 0))}",
@@ -1720,12 +2350,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             $"--min-runs {Math.Max(1, ParseInt(SimMinRunsText, 1))}",
             $"--max-runs {Math.Min(64, Math.Max(1, ParseInt(SimMaxRunsText, 6)))}",
             $"--run-gamma {ParseDouble(SimGammaText, 1d).ToString("0.###", CultureInfo.InvariantCulture)}",
+            $"--run-pressure-mode {NormalizeRunPressureModeToken(SimRunPressureMode)}",
+            $"--parent-selection-bias {NormalizeParentSelectionBiasToken(SimParentSelectionBias)}",
             $"--commit-to-speciation {(SimCommitToSpeciation ? "true" : "false")}",
             $"--spawn-children {(SimSpawnChildren ? "true" : "false")}",
-            $"--parent {QuoteIfNeeded(parentASpec)}",
-            $"--parent {QuoteIfNeeded(parentBSpec)}",
             "--json"
         };
+
+        foreach (var parentSpec in parentSpecs)
+        {
+            args.Add($"--parent {QuoteIfNeeded(parentSpec)}");
+        }
 
         return string.Join(" ", args);
     }
@@ -1759,7 +2394,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
             return new PopulationChartSnapshot(
                 RangeLabel: "Epochs: (no data)",
-                MetricLabel: "Population count by species.",
+                MetricLabel: "Population count by species (log10(1+count) y-axis).",
                 YTopLabel: "0",
                 YMidLabel: "0",
                 YBottomLabel: "0",
@@ -1768,19 +2403,26 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 Legend: Array.Empty<SpeciationChartLegendItem>());
         }
 
+        var totalSpeciesCount = speciesOrder.Count;
+        var selectedSpecies = speciesOrder
+            .Take(PopulationChartTopSpeciesLimit)
+            .ToList();
         var maxCount = Math.Max(1, epochRows.SelectMany(row => row.Counts.Values).DefaultIfEmpty(0).Max());
-        var series = new List<SpeciationLineChartSeriesItem>(speciesOrder.Count);
-        var legend = new List<SpeciationChartLegendItem>(speciesOrder.Count);
-        foreach (var species in speciesOrder)
+        var logYAxisMax = Math.Max(Math.Log10(maxCount + 1d), 0.05d);
+        var series = new List<SpeciationLineChartSeriesItem>(selectedSpecies.Count);
+        var legend = new List<SpeciationChartLegendItem>(selectedSpecies.Count);
+        foreach (var species in selectedSpecies)
         {
-            var values = epochRows
+            var rawValues = epochRows
                 .Select(row => row.Counts.TryGetValue(species.SpeciesId, out var count) ? count : 0)
-                .Select(value => (double)value)
+                .ToArray();
+            var values = rawValues
+                .Select(value => Math.Log10(Math.Max(0, value) + 1d))
                 .ToArray();
             var path = BuildLinePath(
                 values,
                 yMin: 0d,
-                yMax: maxCount,
+                yMax: logYAxisMax,
                 plotWidth: PopulationChartPlotWidth,
                 plotHeight: PopulationChartPlotHeight,
                 paddingX: PopulationChartPaddingX,
@@ -1791,7 +2433,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             }
 
             var color = ResolveSpeciesColor(species.SpeciesId);
-            var latestCount = values.Length == 0 ? 0 : (int)values[^1];
+            var latestCount = rawValues.Length == 0 ? 0 : rawValues[^1];
             var latestCountLabel = latestCount.ToString(CultureInfo.InvariantCulture);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestCountLabel));
             legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, $"now {latestCountLabel}"));
@@ -1800,12 +2442,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var legendColumns = Math.Clamp(series.Count <= 1 ? 2 : series.Count, 2, 4);
         var minEpoch = epochRows[0].EpochId;
         var maxEpoch = epochRows[^1].EpochId;
-        var rangeLabel = $"Epochs {minEpoch}..{maxEpoch} ({epochRows.Count} samples)";
+        var topScopeLabel = totalSpeciesCount > selectedSpecies.Count
+            ? $" top {selectedSpecies.Count}/{totalSpeciesCount} species by population."
+            : string.Empty;
+        var rangeLabel = minEpoch == maxEpoch && epochRows.Count > 1
+            ? $"Epoch {minEpoch} row samples ({epochRows.Count} samples){topScopeLabel}"
+            : $"Epochs {minEpoch}..{maxEpoch} ({epochRows.Count} samples){topScopeLabel}";
         return new PopulationChartSnapshot(
             RangeLabel: rangeLabel,
-            MetricLabel: "Population count by species.",
+            MetricLabel: "Population count by species (log10(1+count) y-axis).",
             YTopLabel: FormatAxisValue(maxCount),
-            YMidLabel: FormatAxisValue(maxCount / 2d),
+            YMidLabel: FormatAxisValue(Math.Max(0d, Math.Pow(10d, logYAxisMax * 0.5d) - 1d)),
             YBottomLabel: "0",
             LegendColumns: legendColumns,
             Series: series,
@@ -1826,7 +2473,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 Legend: Array.Empty<SpeciationChartLegendItem>());
         }
 
-        var speciesCount = speciesOrder.Count;
+        var totalSpeciesCount = speciesOrder.Count;
+        var selectedSpecies = speciesOrder
+            .Take(FlowChartTopSpeciesLimit)
+            .ToList();
+        var includeOtherSpecies = totalSpeciesCount > selectedSpecies.Count;
+        var flowSpecies = new List<SpeciesPopulationMeta>(selectedSpecies.Count + (includeOtherSpecies ? 1 : 0));
+        flowSpecies.AddRange(selectedSpecies);
+        if (includeOtherSpecies)
+        {
+            flowSpecies.Add(new SpeciesPopulationMeta("(other)", "Other species", 0));
+        }
+
+        var speciesCount = flowSpecies.Count;
         var epochCount = epochRows.Count;
         var startsByEpoch = new List<double[]>(epochCount);
         var endsByEpoch = new List<double[]>(epochCount);
@@ -1839,7 +2498,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             for (var i = 0; i < speciesCount; i++)
             {
                 starts[i] = cumulative;
-                var count = row.Counts.TryGetValue(speciesOrder[i].SpeciesId, out var value) ? value : 0;
+                var count = 0;
+                if (includeOtherSpecies && i == speciesCount - 1)
+                {
+                    var selectedTotal = selectedSpecies.Sum(species =>
+                        row.Counts.TryGetValue(species.SpeciesId, out var value) ? value : 0);
+                    count = Math.Max(0, total - selectedTotal);
+                }
+                else
+                {
+                    count = row.Counts.TryGetValue(flowSpecies[i].SpeciesId, out var value) ? value : 0;
+                }
+
                 var ratio = total > 0 ? count / (double)total : 0d;
                 cumulative = Math.Min(1d, cumulative + ratio);
                 ends[i] = cumulative;
@@ -1873,8 +2543,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 continue;
             }
 
-            var species = speciesOrder[speciesIndex];
-            var color = ResolveSpeciesColor(species.SpeciesId);
+            var species = flowSpecies[speciesIndex];
+            var color = string.Equals(species.SpeciesId, "(other)", StringComparison.Ordinal)
+                ? "#6B7280"
+                : ResolveSpeciesColor(species.SpeciesId);
             var fill = WithAlpha(color, 0x8C);
             var lastShare = Math.Max(0d, ends[^1] - starts[^1]);
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
@@ -1885,8 +2557,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var minEpoch = epochRows[0].EpochId;
         var maxEpoch = epochRows[^1].EpochId;
         var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, 4);
+        var topScopeLabel = includeOtherSpecies
+            ? $" top {selectedSpecies.Count}/{totalSpeciesCount} species + Other."
+            : string.Empty;
+        var rangeLabel = minEpoch == maxEpoch && epochRows.Count > 1
+            ? $"Stacked share across loaded rows for epoch {minEpoch} ({epochRows.Count} samples).{topScopeLabel}"
+            : $"Stacked share of total population per epoch ({minEpoch}..{maxEpoch}).{topScopeLabel}";
         return new FlowChartSnapshot(
-            RangeLabel: $"Stacked share of total population per epoch ({minEpoch}..{maxEpoch}).",
+            RangeLabel: rangeLabel,
             StartEpochLabel: minEpoch.ToString(CultureInfo.InvariantCulture),
             EndEpochLabel: maxEpoch.ToString(CultureInfo.InvariantCulture),
             LegendColumns: legendColumns,
@@ -1916,6 +2594,61 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         FlowChartLegendColumns = snapshot.LegendColumns;
     }
 
+    private void ApplySplitProximityChartSnapshot(SplitProximityChartSnapshot snapshot)
+    {
+        ReplaceItems(SplitProximityChartSeries, snapshot.Series);
+        ReplaceItems(SplitProximityChartLegend, snapshot.Legend);
+        SplitProximityChartRangeLabel = snapshot.RangeLabel;
+        SplitProximityChartMetricLabel = snapshot.MetricLabel;
+        SplitProximityChartYAxisTopLabel = snapshot.YTopLabel;
+        SplitProximityChartYAxisMidLabel = snapshot.YMidLabel;
+        SplitProximityChartYAxisBottomLabel = snapshot.YBottomLabel;
+        SplitProximityChartLegendColumns = snapshot.LegendColumns;
+    }
+
+    private void ApplyCladogramSnapshot(CladogramSnapshot snapshot)
+    {
+        var priorExpansionBySpecies = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        CaptureCladogramExpansionState(CladogramItems, priorExpansionBySpecies);
+        foreach (var root in snapshot.Items)
+        {
+            ApplyCladogramExpansionState(root, priorExpansionBySpecies);
+        }
+
+        ReplaceItems(CladogramItems, snapshot.Items);
+        CladogramRangeLabel = snapshot.RangeLabel;
+        CladogramMetricLabel = snapshot.MetricLabel;
+    }
+
+    private static void CaptureCladogramExpansionState(
+        IEnumerable<SpeciationCladogramItem> items,
+        IDictionary<string, bool> expansionBySpecies)
+    {
+        foreach (var item in items)
+        {
+            expansionBySpecies[item.SpeciesId] = item.IsExpanded;
+            CaptureCladogramExpansionState(item.Children, expansionBySpecies);
+        }
+    }
+
+    private static bool ApplyCladogramExpansionState(
+        SpeciationCladogramItem node,
+        IReadOnlyDictionary<string, bool> priorExpansionBySpecies)
+    {
+        var wasKnown = priorExpansionBySpecies.TryGetValue(node.SpeciesId, out var priorExpanded);
+        var subtreeContainsNewSpecies = !wasKnown;
+        foreach (var child in node.Children)
+        {
+            if (ApplyCladogramExpansionState(child, priorExpansionBySpecies))
+            {
+                subtreeContainsNewSpecies = true;
+            }
+        }
+
+        node.IsExpanded = subtreeContainsNewSpecies || (wasKnown ? priorExpanded : true);
+        return subtreeContainsNewSpecies;
+    }
+
     private static (List<EpochPopulationRow> EpochRows, List<SpeciesPopulationMeta> SpeciesOrder) BuildEpochPopulationFrame(IReadOnlyList<SpeciationMembershipRecord> history)
     {
         if (history.Count == 0)
@@ -1923,6 +2656,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return (new List<EpochPopulationRow>(), new List<SpeciesPopulationMeta>());
         }
 
+        var orderedHistory = OrderHistoryForSampling(history);
+        return ShouldUseSingleEpochRowSampling(orderedHistory)
+            ? BuildSingleEpochPopulationFrame(orderedHistory)
+            : BuildAggregatedEpochPopulationFrame(orderedHistory);
+    }
+
+    private static (List<EpochPopulationRow> EpochRows, List<SpeciesPopulationMeta> SpeciesOrder) BuildAggregatedEpochPopulationFrame(
+        IReadOnlyList<SpeciationMembershipRecord> history)
+    {
         var speciesStats = new Dictionary<string, SpeciesPopulationMeta>(StringComparer.OrdinalIgnoreCase);
         var epochRows = history
             .GroupBy(entry => (long)entry.EpochId)
@@ -1960,13 +2702,558 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return (epochRows, speciesOrder);
     }
 
+    private static (List<EpochPopulationRow> EpochRows, List<SpeciesPopulationMeta> SpeciesOrder) BuildSingleEpochPopulationFrame(
+        IReadOnlyList<SpeciationMembershipRecord> orderedHistory)
+    {
+        var speciesStats = new Dictionary<string, SpeciesPopulationMeta>(StringComparer.OrdinalIgnoreCase);
+        var runningCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var epochRows = new List<EpochPopulationRow>(orderedHistory.Count);
+        var runningTotal = 0;
+        foreach (var record in orderedHistory)
+        {
+            var speciesId = NormalizeSpeciesId(record.SpeciesId);
+            var speciesName = NormalizeSpeciesName(record.SpeciesDisplayName, speciesId);
+            runningCounts.TryGetValue(speciesId, out var prior);
+            runningCounts[speciesId] = prior + 1;
+            runningTotal++;
+
+            if (speciesStats.TryGetValue(speciesId, out var existing))
+            {
+                speciesStats[speciesId] = existing with
+                {
+                    DisplayName = string.IsNullOrWhiteSpace(existing.DisplayName) ? speciesName : existing.DisplayName,
+                    TotalCount = existing.TotalCount + 1
+                };
+            }
+            else
+            {
+                speciesStats[speciesId] = new SpeciesPopulationMeta(speciesId, speciesName, 1);
+            }
+
+            epochRows.Add(
+                new EpochPopulationRow(
+                    EpochId: (long)record.EpochId,
+                    Counts: new Dictionary<string, int>(runningCounts, StringComparer.OrdinalIgnoreCase),
+                    TotalCount: runningTotal));
+        }
+
+        var speciesOrder = speciesStats.Values
+            .OrderByDescending(item => item.TotalCount)
+            .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return (epochRows, speciesOrder);
+    }
+
+    private static SplitProximityChartSnapshot BuildSplitProximityChartSnapshot(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        long currentEpochId,
+        double fallbackSplitThreshold,
+        double fallbackSplitGuardMargin)
+    {
+        if (history.Count == 0)
+        {
+            return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a)");
+        }
+
+        var boundedFallbackSplit = Clamp01(fallbackSplitThreshold);
+        var orderedHistory = OrderHistoryForSampling(history);
+        var useSingleEpochRowSampling = ShouldUseSingleEpochRowSampling(orderedHistory);
+        var speciesMeta = new Dictionary<string, SplitProximitySpeciesMeta>(StringComparer.OrdinalIgnoreCase);
+        var epochRows = useSingleEpochRowSampling
+            ? BuildSingleEpochSplitProximityRows(orderedHistory, boundedFallbackSplit, fallbackSplitGuardMargin, speciesMeta)
+            : BuildAggregatedEpochSplitProximityRows(orderedHistory, boundedFallbackSplit, fallbackSplitGuardMargin, speciesMeta);
+
+        if (epochRows.Count == 0 || speciesMeta.Count == 0)
+        {
+            return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a, no similarity scores)");
+        }
+
+        var selectedSpecies = speciesMeta.Values
+            .OrderByDescending(item => item.SampleCount)
+            .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .Take(SplitProximityTopSpeciesLimit)
+            .ToList();
+        if (selectedSpecies.Count == 0)
+        {
+            return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a, no species evidence)");
+        }
+
+        var allValues = new List<double>(selectedSpecies.Count * Math.Max(1, epochRows.Count));
+        foreach (var species in selectedSpecies)
+        {
+            foreach (var row in epochRows)
+            {
+                if (row.ValuesBySpecies.TryGetValue(species.SpeciesId, out var point))
+                {
+                    allValues.Add(point.MinProximity);
+                }
+            }
+        }
+
+        if (allValues.Count == 0)
+        {
+            return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a, no proximity samples)");
+        }
+
+        var rawAbsMax = allValues
+            .Select(value => Math.Abs(value))
+            .DefaultIfEmpty(0d)
+            .Max();
+        if (!double.IsFinite(rawAbsMax) || rawAbsMax <= 0d)
+        {
+            rawAbsMax = 0.001d;
+        }
+
+        var yAbsMax = Math.Max(0.001d, TransformSignedLog(rawAbsMax));
+        var yMin = -yAbsMax;
+        var yMax = yAbsMax;
+
+        var series = new List<SpeciationLineChartSeriesItem>(selectedSpecies.Count);
+        var legend = new List<SpeciationChartLegendItem>(selectedSpecies.Count);
+        foreach (var species in selectedSpecies)
+        {
+            var rawValues = epochRows
+                .Select(row => row.ValuesBySpecies.TryGetValue(species.SpeciesId, out var point)
+                    ? point.MinProximity
+                    : double.NaN)
+                .ToArray();
+            var values = rawValues
+                .Select(TransformSignedLogOrNan)
+                .ToArray();
+            var path = BuildLinePath(
+                values,
+                yMin: yMin,
+                yMax: yMax,
+                plotWidth: PopulationChartPlotWidth,
+                plotHeight: PopulationChartPlotHeight,
+                paddingX: PopulationChartPaddingX,
+                paddingY: PopulationChartPaddingY);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            var latestValue = TryGetLatestFiniteValue(rawValues, out var latest)
+                ? latest
+                : double.NaN;
+            var latestLabel = double.IsFinite(latestValue)
+                ? FormatSignedDelta(latestValue)
+                : "n/a";
+            var color = ResolveSpeciesColor(species.SpeciesId);
+            series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestLabel));
+            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, $"now {latestLabel}"));
+        }
+
+        if (series.Count == 0)
+        {
+            return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a, no drawable species series)");
+        }
+
+        var targetEpoch = currentEpochId > 0
+            ? currentEpochId
+            : epochRows[^1].EpochId;
+        var targetRow = epochRows.LastOrDefault(row => row.EpochId == targetEpoch);
+        if (targetRow.ValuesBySpecies is null || targetRow.ValuesBySpecies.Count == 0)
+        {
+            targetRow = epochRows[^1];
+        }
+
+        var currentEpochSummary = BuildSplitProximitySummaryLabel(
+            targetEpoch,
+            targetRow,
+            speciesMeta);
+
+        var minEpoch = epochRows[0].EpochId;
+        var maxEpoch = epochRows[^1].EpochId;
+        var legendColumns = Math.Clamp(series.Count <= 1 ? 2 : series.Count, 2, 4);
+        var rangeLabel = useSingleEpochRowSampling
+            ? $"Epoch {minEpoch} row samples ({epochRows.Count} samples; top {series.Count}/{speciesMeta.Count} species by similarity samples)."
+            : $"Epochs {minEpoch}..{maxEpoch} ({epochRows.Count} samples; top {series.Count}/{speciesMeta.Count} species by similarity samples).";
+        return new SplitProximityChartSnapshot(
+            RangeLabel: rangeLabel,
+            MetricLabel: "Min lineage similarity minus effective split threshold per species (signed log10(1+|delta|) y-axis; <=0 means split-trigger zone).",
+            YTopLabel: FormatSignedDelta(rawAbsMax),
+            YMidLabel: "0",
+            YBottomLabel: FormatSignedDelta(-rawAbsMax),
+            LegendColumns: legendColumns,
+            CurrentEpochSummaryLabel: currentEpochSummary,
+            Series: series,
+            Legend: legend);
+    }
+
+    private static CladogramSnapshot BuildCladogramSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        if (history.Count == 0)
+        {
+            return CladogramSnapshot.Empty("Cladogram: (no data)");
+        }
+
+        var orderedHistory = OrderHistoryForSampling(history);
+        var speciesMeta = new Dictionary<string, CladogramSpeciesMeta>(StringComparer.OrdinalIgnoreCase);
+        var parentByChild = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var countsBySpecies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var divergenceEdgeCount = 0;
+        foreach (var record in orderedHistory)
+        {
+            var speciesId = NormalizeSpeciesId(record.SpeciesId);
+            var speciesName = NormalizeSpeciesName(record.SpeciesDisplayName, speciesId);
+            if (speciesMeta.TryGetValue(speciesId, out var existingMeta))
+            {
+                speciesMeta[speciesId] = existingMeta with
+                {
+                    DisplayName = string.IsNullOrWhiteSpace(existingMeta.DisplayName) ? speciesName : existingMeta.DisplayName
+                };
+            }
+            else
+            {
+                speciesMeta[speciesId] = new CladogramSpeciesMeta(speciesId, speciesName);
+            }
+
+            countsBySpecies.TryGetValue(speciesId, out var priorCount);
+            countsBySpecies[speciesId] = priorCount + 1;
+
+            if (!string.Equals(record.DecisionReason, "lineage_diverged_new_species", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!TryExtractDominantSpeciesFromMetadata(record.DecisionMetadataJson, out var parentSpeciesId, out var parentSpeciesName))
+            {
+                continue;
+            }
+
+            var parentId = NormalizeSpeciesId(parentSpeciesId);
+            if (string.Equals(parentId, speciesId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!speciesMeta.ContainsKey(parentId))
+            {
+                speciesMeta[parentId] = new CladogramSpeciesMeta(parentId, NormalizeSpeciesName(parentSpeciesName, parentId));
+            }
+
+            if (!parentByChild.ContainsKey(speciesId))
+            {
+                parentByChild[speciesId] = parentId;
+                divergenceEdgeCount++;
+            }
+        }
+
+        if (speciesMeta.Count == 0)
+        {
+            return CladogramSnapshot.Empty("Cladogram: (no data)");
+        }
+
+        var childrenByParent = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (childSpeciesId, parentSpeciesId) in parentByChild)
+        {
+            if (!childrenByParent.TryGetValue(parentSpeciesId, out var children))
+            {
+                children = new List<string>();
+                childrenByParent[parentSpeciesId] = children;
+            }
+
+            children.Add(childSpeciesId);
+        }
+
+        foreach (var children in childrenByParent.Values)
+        {
+            children.Sort((left, right) =>
+            {
+                countsBySpecies.TryGetValue(left, out var leftCount);
+                countsBySpecies.TryGetValue(right, out var rightCount);
+                var countComparison = rightCount.CompareTo(leftCount);
+                return countComparison != 0
+                    ? countComparison
+                    : string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        var roots = speciesMeta.Keys
+            .Where(speciesId => !parentByChild.ContainsKey(speciesId))
+            .OrderByDescending(speciesId => countsBySpecies.TryGetValue(speciesId, out var count) ? count : 0)
+            .ThenBy(speciesId => speciesId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (roots.Count == 0)
+        {
+            roots.AddRange(speciesMeta.Keys.OrderBy(speciesId => speciesId, StringComparer.OrdinalIgnoreCase));
+        }
+
+        var items = new List<SpeciationCladogramItem>(roots.Count);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in roots)
+        {
+            var node = BuildCladogramNode(
+                speciesId: root,
+                isRoot: true,
+                speciesMeta: speciesMeta,
+                countsBySpecies: countsBySpecies,
+                childrenByParent: childrenByParent,
+                visited: visited);
+            if (node is not null)
+            {
+                items.Add(node);
+            }
+        }
+
+        foreach (var speciesId in speciesMeta.Keys.OrderBy(species => species, StringComparer.OrdinalIgnoreCase))
+        {
+            if (visited.Contains(speciesId))
+            {
+                continue;
+            }
+
+            var disconnectedRoot = BuildCladogramNode(
+                speciesId: speciesId,
+                isRoot: true,
+                speciesMeta: speciesMeta,
+                countsBySpecies: countsBySpecies,
+                childrenByParent: childrenByParent,
+                visited: visited);
+            if (disconnectedRoot is not null)
+            {
+                items.Add(disconnectedRoot);
+            }
+        }
+
+        var rangeLabel = $"Cladogram edges from divergence decisions: {divergenceEdgeCount} across {speciesMeta.Count} species.";
+        return new CladogramSnapshot(
+            RangeLabel: rangeLabel,
+            MetricLabel: "Parent -> child lineage edges inferred from lineage_diverged_new_species decisions.",
+            Items: items);
+    }
+
+    private static SpeciationCladogramItem? BuildCladogramNode(
+        string speciesId,
+        bool isRoot,
+        IReadOnlyDictionary<string, CladogramSpeciesMeta> speciesMeta,
+        IReadOnlyDictionary<string, int> countsBySpecies,
+        IReadOnlyDictionary<string, List<string>> childrenByParent,
+        ISet<string> visited)
+    {
+        if (!visited.Add(speciesId))
+        {
+            return null;
+        }
+
+        if (!speciesMeta.TryGetValue(speciesId, out var meta))
+        {
+            meta = new CladogramSpeciesMeta(speciesId, speciesId);
+        }
+
+        countsBySpecies.TryGetValue(speciesId, out var count);
+        var childNodes = new List<SpeciationCladogramItem>();
+        if (childrenByParent.TryGetValue(speciesId, out var children) && children.Count > 0)
+        {
+            for (var index = 0; index < children.Count; index++)
+            {
+                var childNode = BuildCladogramNode(
+                    speciesId: children[index],
+                    isRoot: false,
+                    speciesMeta: speciesMeta,
+                    countsBySpecies: countsBySpecies,
+                    childrenByParent: childrenByParent,
+                    visited: visited);
+                if (childNode is not null)
+                {
+                    childNodes.Add(childNode);
+                }
+            }
+        }
+
+        var detailLabel = $"{speciesId} | members {count} | direct derived {childNodes.Count}";
+        return new SpeciationCladogramItem(
+            speciesId: speciesId,
+            speciesDisplayName: meta.DisplayName,
+            detailLabel: detailLabel,
+            color: ResolveSpeciesColor(speciesId),
+            isRoot: isRoot,
+            children: childNodes);
+    }
+
+    private static bool TryExtractDominantSpeciesFromMetadata(
+        string? metadataJson,
+        out string speciesId,
+        out string speciesDisplayName)
+    {
+        speciesId = string.Empty;
+        speciesDisplayName = string.Empty;
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(metadataJson);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("lineage", out var lineage))
+            {
+                return false;
+            }
+
+            if (!TryGetJsonString(lineage, "dominant_species_id", out speciesId)
+                && !TryGetJsonString(lineage, "dominantSpeciesId", out speciesId))
+            {
+                return false;
+            }
+
+            TryGetJsonString(lineage, "dominant_species_display_name", out speciesDisplayName);
+            if (string.IsNullOrWhiteSpace(speciesDisplayName))
+            {
+                TryGetJsonString(lineage, "dominantSpeciesDisplayName", out speciesDisplayName);
+            }
+
+            return !string.IsNullOrWhiteSpace(speciesId);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static List<EpochSplitProximityRow> BuildAggregatedEpochSplitProximityRows(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        double fallbackSplitThreshold,
+        double fallbackSplitGuardMargin,
+        Dictionary<string, SplitProximitySpeciesMeta> speciesMeta)
+    {
+        return history
+            .GroupBy(entry => (long)entry.EpochId)
+            .OrderBy(group => group.Key)
+            .Select(group =>
+            {
+                var bySpecies = new Dictionary<string, SplitProximitySpeciesPoint>(StringComparer.OrdinalIgnoreCase);
+                foreach (var record in group)
+                {
+                    if (!TryExtractSplitProximity(
+                            record.DecisionMetadataJson,
+                            fallbackSplitThreshold,
+                            fallbackSplitGuardMargin,
+                            out var similarity,
+                            out var splitThreshold,
+                            out var proximity))
+                    {
+                        continue;
+                    }
+
+                    var speciesId = NormalizeSpeciesId(record.SpeciesId);
+                    var speciesName = NormalizeSpeciesName(record.SpeciesDisplayName, speciesId);
+                    if (speciesMeta.TryGetValue(speciesId, out var existingMeta))
+                    {
+                        speciesMeta[speciesId] = existingMeta with
+                        {
+                            DisplayName = string.IsNullOrWhiteSpace(existingMeta.DisplayName) ? speciesName : existingMeta.DisplayName,
+                            SampleCount = existingMeta.SampleCount + 1
+                        };
+                    }
+                    else
+                    {
+                        speciesMeta[speciesId] = new SplitProximitySpeciesMeta(speciesId, speciesName, 1);
+                    }
+
+                    if (bySpecies.TryGetValue(speciesId, out var existingPoint))
+                    {
+                        var nextCount = existingPoint.SampleCount + 1;
+                        if (proximity < existingPoint.MinProximity)
+                        {
+                            bySpecies[speciesId] = new SplitProximitySpeciesPoint(proximity, similarity, splitThreshold, nextCount);
+                        }
+                        else
+                        {
+                            bySpecies[speciesId] = existingPoint with { SampleCount = nextCount };
+                        }
+                    }
+                    else
+                    {
+                        bySpecies[speciesId] = new SplitProximitySpeciesPoint(
+                            MinProximity: proximity,
+                            MinSimilarity: similarity,
+                            SplitThreshold: splitThreshold,
+                            SampleCount: 1);
+                    }
+                }
+
+                return new EpochSplitProximityRow(group.Key, bySpecies);
+            })
+            .ToList();
+    }
+
+    private static List<EpochSplitProximityRow> BuildSingleEpochSplitProximityRows(
+        IReadOnlyList<SpeciationMembershipRecord> orderedHistory,
+        double fallbackSplitThreshold,
+        double fallbackSplitGuardMargin,
+        Dictionary<string, SplitProximitySpeciesMeta> speciesMeta)
+    {
+        var rows = new List<EpochSplitProximityRow>(orderedHistory.Count);
+        var rollingBySpecies = new Dictionary<string, SplitProximitySpeciesPoint>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in orderedHistory)
+        {
+            if (TryExtractSplitProximity(
+                    record.DecisionMetadataJson,
+                    fallbackSplitThreshold,
+                    fallbackSplitGuardMargin,
+                    out var similarity,
+                    out var splitThreshold,
+                    out var proximity))
+            {
+                var speciesId = NormalizeSpeciesId(record.SpeciesId);
+                var speciesName = NormalizeSpeciesName(record.SpeciesDisplayName, speciesId);
+                if (speciesMeta.TryGetValue(speciesId, out var existingMeta))
+                {
+                    speciesMeta[speciesId] = existingMeta with
+                    {
+                        DisplayName = string.IsNullOrWhiteSpace(existingMeta.DisplayName) ? speciesName : existingMeta.DisplayName,
+                        SampleCount = existingMeta.SampleCount + 1
+                    };
+                }
+                else
+                {
+                    speciesMeta[speciesId] = new SplitProximitySpeciesMeta(speciesId, speciesName, 1);
+                }
+
+                if (rollingBySpecies.TryGetValue(speciesId, out var existingPoint))
+                {
+                    var nextCount = existingPoint.SampleCount + 1;
+                    if (proximity < existingPoint.MinProximity)
+                    {
+                        rollingBySpecies[speciesId] = new SplitProximitySpeciesPoint(proximity, similarity, splitThreshold, nextCount);
+                    }
+                    else
+                    {
+                        rollingBySpecies[speciesId] = existingPoint with { SampleCount = nextCount };
+                    }
+                }
+                else
+                {
+                    rollingBySpecies[speciesId] = new SplitProximitySpeciesPoint(
+                        MinProximity: proximity,
+                        MinSimilarity: similarity,
+                        SplitThreshold: splitThreshold,
+                        SampleCount: 1);
+                }
+            }
+
+            if (rollingBySpecies.Count > 0)
+            {
+                rows.Add(
+                    new EpochSplitProximityRow(
+                        EpochId: (long)record.EpochId,
+                        ValuesBySpecies: new Dictionary<string, SplitProximitySpeciesPoint>(rollingBySpecies, StringComparer.OrdinalIgnoreCase)));
+            }
+        }
+
+        return rows;
+    }
+
     private static DivergenceSnapshot BuildCurrentEpochDivergenceSnapshot(
         IReadOnlyList<SpeciationMembershipRecord> history,
         long currentEpochId)
     {
         if (history.Count == 0)
         {
-            return new DivergenceSnapshot("Max divergence (current epoch): (n/a)");
+            return new DivergenceSnapshot("Max lineage divergence (current epoch): (n/a)");
         }
 
         var targetEpoch = currentEpochId > 0
@@ -2005,11 +3292,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (!maxDivergence.HasValue || !minSimilarity.HasValue)
         {
-            return new DivergenceSnapshot($"Max divergence (epoch {targetEpoch}): (n/a, no similarity scores)");
+            return new DivergenceSnapshot($"Max lineage divergence (epoch {targetEpoch}): (n/a, no similarity scores)");
         }
 
         var label =
-            $"Max divergence (epoch {targetEpoch}) = {maxDivergence.Value:0.###} (min similarity {minSimilarity.Value:0.###}, samples={sampleCount}, brain={maxBrainLabel}).";
+            $"Max lineage divergence (epoch {targetEpoch}) = {maxDivergence.Value:0.###} (min lineage similarity {minSimilarity.Value:0.###}, samples={sampleCount}, brain={maxBrainLabel}).";
         return new DivergenceSnapshot(label);
     }
 
@@ -2025,7 +3312,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
             using var document = JsonDocument.Parse(metadataJson);
             var root = document.RootElement;
-            if (TryGetSimilarityFromElement(root, out similarityScore))
+            if (root.TryGetProperty("lineage", out var lineage)
+                && TryGetSimilarityFromElement(
+                    lineage,
+                    out similarityScore,
+                    "lineage_similarity_score",
+                    "lineageSimilarityScore",
+                    "similarity_score",
+                    "similarityScore"))
+            {
+                return true;
+            }
+
+            if (TryGetSimilarityFromElement(root, out similarityScore, "lineage_similarity_score", "lineageSimilarityScore"))
             {
                 return true;
             }
@@ -2047,18 +3346,30 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return false;
     }
 
-    private static bool TryGetSimilarityFromElement(JsonElement element, out double similarityScore)
+    private static bool TryGetSimilarityFromElement(
+        JsonElement element,
+        out double similarityScore,
+        params string[] propertyNames)
     {
         similarityScore = 0d;
-        if (TryGetJsonDouble(element, "similarity_score", out similarityScore)
-            || TryGetJsonDouble(element, "similarityScore", out similarityScore))
+        if (propertyNames.Length == 0)
         {
-            return true;
+            propertyNames = new[] { "similarity_score", "similarityScore" };
+        }
+
+        foreach (var propertyName in propertyNames)
+        {
+            if (TryGetJsonDouble(element, propertyName, out similarityScore))
+            {
+                return true;
+            }
         }
 
         if (element.TryGetProperty("scores", out var scores)
-            && (TryGetJsonDouble(scores, "similarity_score", out similarityScore)
-                || TryGetJsonDouble(scores, "similarityScore", out similarityScore)))
+            && (TryGetJsonDouble(scores, propertyNames[0], out similarityScore)
+                || (propertyNames.Length > 1 && TryGetJsonDouble(scores, propertyNames[1], out similarityScore))
+                || (propertyNames.Length > 2 && TryGetJsonDouble(scores, propertyNames[2], out similarityScore))
+                || (propertyNames.Length > 3 && TryGetJsonDouble(scores, propertyNames[3], out similarityScore))))
         {
             return true;
         }
@@ -2084,6 +3395,125 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 out value) => true,
             _ => false
         };
+    }
+
+    private static bool TryGetJsonString(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        var raw = property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number => property.GetRawText(),
+            _ => null
+        };
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        value = raw.Trim();
+        return value.Length > 0;
+    }
+
+    private static bool TryExtractSplitProximity(
+        string? metadataJson,
+        double fallbackSplitThreshold,
+        double fallbackSplitGuardMargin,
+        out double similarity,
+        out double splitThreshold,
+        out double proximity)
+    {
+        similarity = 0d;
+        splitThreshold = Clamp01(fallbackSplitThreshold);
+        var splitGuardMargin = Clamp01(fallbackSplitGuardMargin);
+        proximity = 0d;
+        if (!TryExtractSimilarityScore(metadataJson, out similarity))
+        {
+            return false;
+        }
+
+        similarity = Clamp01(similarity);
+        if (!string.IsNullOrWhiteSpace(metadataJson))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(metadataJson);
+                var root = document.RootElement;
+                if (root.TryGetProperty("assignment_policy", out var policy)
+                    && (TryGetJsonDouble(policy, "lineage_split_threshold", out splitThreshold)
+                        || TryGetJsonDouble(policy, "lineageSplitThreshold", out splitThreshold)))
+                {
+                    splitThreshold = Clamp01(splitThreshold);
+                    if (TryGetJsonDouble(policy, "lineage_split_guard_margin", out var policySplitGuardMargin)
+                        || TryGetJsonDouble(policy, "lineageSplitGuardMargin", out policySplitGuardMargin))
+                    {
+                        splitGuardMargin = Clamp01(policySplitGuardMargin);
+                    }
+                }
+                else if (TryGetJsonDouble(root, "lineage_split_threshold", out var rootSplitThreshold)
+                         || TryGetJsonDouble(root, "lineageSplitThreshold", out rootSplitThreshold))
+                {
+                    splitThreshold = Clamp01(rootSplitThreshold);
+                    if (TryGetJsonDouble(root, "lineage_split_guard_margin", out var rootSplitGuardMargin)
+                        || TryGetJsonDouble(root, "lineageSplitGuardMargin", out rootSplitGuardMargin))
+                    {
+                        splitGuardMargin = Clamp01(rootSplitGuardMargin);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Fallback split threshold is used when metadata is malformed.
+            }
+        }
+
+        splitThreshold = Math.Max(0d, splitThreshold - splitGuardMargin);
+        proximity = similarity - splitThreshold;
+        return true;
+    }
+
+    private static bool TryGetLatestFiniteValue(IReadOnlyList<double> values, out double latest)
+    {
+        for (var index = values.Count - 1; index >= 0; index--)
+        {
+            if (double.IsFinite(values[index]))
+            {
+                latest = values[index];
+                return true;
+            }
+        }
+
+        latest = double.NaN;
+        return false;
+    }
+
+    private static string BuildSplitProximitySummaryLabel(
+        long targetEpoch,
+        EpochSplitProximityRow row,
+        IReadOnlyDictionary<string, SplitProximitySpeciesMeta> speciesMeta)
+    {
+        if (row.ValuesBySpecies is null || row.ValuesBySpecies.Count == 0)
+        {
+            return $"Split proximity (epoch {targetEpoch}): (n/a, no similarity scores)";
+        }
+
+        var selected = row.ValuesBySpecies
+            .OrderBy(item => item.Value.MinProximity)
+            .ThenBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .First();
+        var speciesId = selected.Key;
+        var speciesName = speciesMeta.TryGetValue(speciesId, out var meta)
+            ? meta.DisplayName
+            : speciesId;
+        var point = selected.Value;
+        return
+            $"Split proximity (epoch {targetEpoch}) min={FormatSignedDelta(point.MinProximity)} in {speciesName} ({speciesId}) " +
+            $"[lineage sim {point.MinSimilarity:0.###} vs effective split {point.SplitThreshold:0.###}, samples={point.SampleCount}].";
     }
 
     private static string FormatSimilarityRange(ulong samples, double? min, double? max)
@@ -2121,18 +3551,85 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var usableHeight = Math.Max(1d, plotHeight - (paddingY * 2d));
         var xStep = values.Count > 1 ? usableWidth / (values.Count - 1) : 0d;
         var builder = new StringBuilder(values.Count * 26);
+        var hasPoint = false;
+        var finitePointCount = 0;
+        var firstX = 0d;
+        var firstY = 0d;
+        var segmentOpen = false;
         for (var i = 0; i < values.Count; i++)
         {
+            var value = values[i];
+            if (!double.IsFinite(value))
+            {
+                segmentOpen = false;
+                continue;
+            }
+
             var x = paddingX + (i * xStep);
-            var ratio = Math.Clamp((values[i] - boundedMin) / (boundedMax - boundedMin), 0d, 1d);
+            var ratio = Math.Clamp((value - boundedMin) / (boundedMax - boundedMin), 0d, 1d);
             var y = paddingY + ((1d - ratio) * usableHeight);
-            builder.Append(i == 0 ? "M " : " L ");
+            builder.Append(segmentOpen ? " L " : "M ");
             builder.Append(x.ToString("0.###", CultureInfo.InvariantCulture));
             builder.Append(' ');
             builder.Append(y.ToString("0.###", CultureInfo.InvariantCulture));
+            if (finitePointCount == 0)
+            {
+                firstX = x;
+                firstY = y;
+            }
+
+            finitePointCount++;
+            segmentOpen = true;
+            hasPoint = true;
+        }
+
+        if (!hasPoint)
+        {
+            return string.Empty;
+        }
+
+        if (finitePointCount == 1)
+        {
+            var halfWidth = Math.Clamp(usableWidth * 0.01d, 1.5d, 6d);
+            var minX = paddingX;
+            var maxX = paddingX + usableWidth;
+            var startX = Math.Max(minX, firstX - halfWidth);
+            var endX = Math.Min(maxX, firstX + halfWidth);
+            if (endX <= startX)
+            {
+                endX = Math.Min(maxX, startX + 1d);
+            }
+
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"M {startX:0.###} {firstY:0.###} L {endX:0.###} {firstY:0.###}");
         }
 
         return builder.ToString();
+    }
+
+    private static string AppendHistorySampleScopeLabel(string label)
+    {
+        if (label.Contains("loaded-row sample", StringComparison.OrdinalIgnoreCase))
+        {
+            return label;
+        }
+
+        return string.IsNullOrWhiteSpace(label)
+            ? $"(n/a){HistorySampleScopeSuffix}"
+            : label + HistorySampleScopeSuffix;
+    }
+
+    private static string AppendHistorySampleMetricLabel(string label)
+    {
+        if (label.Contains("loaded-row sample", StringComparison.OrdinalIgnoreCase))
+        {
+            return label;
+        }
+
+        return string.IsNullOrWhiteSpace(label)
+            ? HistorySampleMetricSuffix.Trim()
+            : label + HistorySampleMetricSuffix;
     }
 
     private static string BuildFlowAreaPath(
@@ -2198,14 +3695,78 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return SpeciesChartPalette[0];
         }
 
-        var hash = 17;
-        foreach (var ch in speciesId)
+        unchecked
         {
-            hash = (hash * 31) + ch;
+            uint hash = 2166136261;
+            foreach (var ch in speciesId)
+            {
+                hash ^= ch;
+                hash *= 16777619;
+            }
+
+            var hue = (hash % 360u) / 360d;
+            var saturation = (62d + ((hash >> 9) % 24u)) / 100d;
+            var lightness = (42d + ((hash >> 17) % 18u)) / 100d;
+            return HslToHex(hue, saturation, lightness);
+        }
+    }
+
+    private static string HslToHex(double hue, double saturation, double lightness)
+    {
+        hue = hue - Math.Floor(hue);
+        saturation = Math.Clamp(saturation, 0d, 1d);
+        lightness = Math.Clamp(lightness, 0d, 1d);
+
+        if (saturation <= 1e-6d)
+        {
+            var gray = ToByte(lightness);
+            return $"#{gray:X2}{gray:X2}{gray:X2}";
         }
 
-        var index = (hash & int.MaxValue) % SpeciesChartPalette.Length;
-        return SpeciesChartPalette[index];
+        var q = lightness < 0.5d
+            ? lightness * (1d + saturation)
+            : lightness + saturation - (lightness * saturation);
+        var p = (2d * lightness) - q;
+
+        var r = HueToRgb(p, q, hue + (1d / 3d));
+        var g = HueToRgb(p, q, hue);
+        var b = HueToRgb(p, q, hue - (1d / 3d));
+        return $"#{ToByte(r):X2}{ToByte(g):X2}{ToByte(b):X2}";
+    }
+
+    private static double HueToRgb(double p, double q, double t)
+    {
+        if (t < 0d)
+        {
+            t += 1d;
+        }
+        else if (t > 1d)
+        {
+            t -= 1d;
+        }
+
+        if (t < (1d / 6d))
+        {
+            return p + ((q - p) * 6d * t);
+        }
+
+        if (t < 0.5d)
+        {
+            return q;
+        }
+
+        if (t < (2d / 3d))
+        {
+            return p + ((q - p) * ((2d / 3d) - t) * 6d);
+        }
+
+        return p;
+    }
+
+    private static byte ToByte(double value)
+    {
+        var clamped = Math.Clamp(value, 0d, 1d);
+        return (byte)Math.Round(clamped * 255d, MidpointRounding.AwayFromZero);
     }
 
     private static string WithAlpha(string colorHex, byte alpha)
@@ -2260,6 +3821,43 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return value.ToString("0.###", CultureInfo.InvariantCulture);
     }
 
+    private static string FormatSignedDelta(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return "n/a";
+        }
+
+        return value.ToString("+0.###;-0.###;0", CultureInfo.InvariantCulture);
+    }
+
+    private static double TransformSignedLogOrNan(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return double.NaN;
+        }
+
+        return TransformSignedLog(value);
+    }
+
+    private static double TransformSignedLog(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return 0d;
+        }
+
+        var magnitude = Math.Abs(value);
+        if (magnitude <= 0d)
+        {
+            return 0d;
+        }
+
+        var transformedMagnitude = Math.Log10(1d + magnitude);
+        return value < 0d ? -transformedMagnitude : transformedMagnitude;
+    }
+
     private static string NormalizeSpeciesId(string? speciesId)
         => string.IsNullOrWhiteSpace(speciesId) ? "(unknown)" : speciesId.Trim();
 
@@ -2286,11 +3884,95 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return trimmed.Contains(' ') ? $"\"{trimmed}\"" : trimmed;
     }
 
+    private static string NormalizeRunPressureModeToken(string? rawMode)
+    {
+        if (string.IsNullOrWhiteSpace(rawMode))
+        {
+            return "divergence";
+        }
+
+        return rawMode.Trim().ToLowerInvariant() switch
+        {
+            "divergence" => "divergence",
+            "diverge" => "divergence",
+            "explore" => "divergence",
+            "exploratory" => "divergence",
+            "neutral" => "neutral",
+            "none" => "neutral",
+            "off" => "neutral",
+            "stability" => "stability",
+            "stable" => "stability",
+            "stabilize" => "stability",
+            _ => "divergence"
+        };
+    }
+
+    private static string NormalizeParentSelectionBiasToken(string? rawMode)
+    {
+        if (string.IsNullOrWhiteSpace(rawMode))
+        {
+            return "neutral";
+        }
+
+        return rawMode.Trim().ToLowerInvariant() switch
+        {
+            "divergence" => "divergence",
+            "diverge" => "divergence",
+            "explore" => "divergence",
+            "exploratory" => "divergence",
+            "neutral" => "neutral",
+            "none" => "neutral",
+            "off" => "neutral",
+            "stability" => "stability",
+            "stable" => "stability",
+            "stabilize" => "stability",
+            _ => "neutral"
+        };
+    }
+
+    private static List<SpeciationMembershipRecord> OrderHistoryForSampling(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        return history
+            .OrderBy(entry => (long)entry.EpochId)
+            .ThenBy(entry => entry.AssignedMs)
+            .ThenBy(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out var brainId) ? brainId : Guid.Empty)
+            .ToList();
+    }
+
+    private static bool ShouldUseSingleEpochRowSampling(IReadOnlyList<SpeciationMembershipRecord> orderedHistory)
+    {
+        if (orderedHistory.Count <= 1)
+        {
+            return false;
+        }
+
+        var epochId = (long)orderedHistory[0].EpochId;
+        for (var i = 1; i < orderedHistory.Count; i++)
+        {
+            if ((long)orderedHistory[i].EpochId != epochId)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static int ParseInt(string raw, int fallback)
     {
         return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : fallback;
+    }
+
+    private static int RoundToNonNegativeInt(double raw, int fallback)
+    {
+        if (double.IsNaN(raw) || double.IsInfinity(raw))
+        {
+            return Math.Max(0, fallback);
+        }
+
+        return (int)Math.Max(0d, Math.Round(raw, MidpointRounding.AwayFromZero));
     }
 
     private static uint ParseUInt(string raw, uint fallback)
@@ -2312,6 +3994,21 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
             ? parsed
             : fallback;
+    }
+
+    private static bool ParseBool(string raw, bool fallback)
+    {
+        if (bool.TryParse(raw, out var parsed))
+        {
+            return parsed;
+        }
+
+        return raw.Trim() switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => fallback
+        };
     }
 
     private static bool TryParsePort(string raw, out int port)
@@ -2500,6 +4197,42 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<SpeciationFlowChartAreaItem> Areas,
         IReadOnlyList<SpeciationChartLegendItem> Legend);
 
+    private readonly record struct SplitProximityChartSnapshot(
+        string RangeLabel,
+        string MetricLabel,
+        string YTopLabel,
+        string YMidLabel,
+        string YBottomLabel,
+        int LegendColumns,
+        string CurrentEpochSummaryLabel,
+        IReadOnlyList<SpeciationLineChartSeriesItem> Series,
+        IReadOnlyList<SpeciationChartLegendItem> Legend)
+    {
+        public static SplitProximityChartSnapshot Empty(string summaryLabel)
+            => new(
+                RangeLabel: "Epochs: (no data)",
+                MetricLabel: "Min lineage similarity minus effective split threshold per species (signed log10(1+|delta|) y-axis; <=0 means split-trigger zone).",
+                YTopLabel: "0",
+                YMidLabel: "0",
+                YBottomLabel: "0",
+                LegendColumns: 2,
+                CurrentEpochSummaryLabel: summaryLabel,
+                Series: Array.Empty<SpeciationLineChartSeriesItem>(),
+                Legend: Array.Empty<SpeciationChartLegendItem>());
+    }
+
+    private readonly record struct CladogramSnapshot(
+        string RangeLabel,
+        string MetricLabel,
+        IReadOnlyList<SpeciationCladogramItem> Items)
+    {
+        public static CladogramSnapshot Empty(string rangeLabel)
+            => new(
+                RangeLabel: rangeLabel,
+                MetricLabel: "Parent -> child lineage edges inferred from divergence decisions.",
+                Items: Array.Empty<SpeciationCladogramItem>());
+    }
+
     private readonly record struct EpochPopulationRow(
         long EpochId,
         Dictionary<string, int> Counts,
@@ -2509,6 +4242,25 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         string SpeciesId,
         string DisplayName,
         int TotalCount);
+
+    private readonly record struct EpochSplitProximityRow(
+        long EpochId,
+        Dictionary<string, SplitProximitySpeciesPoint> ValuesBySpecies);
+
+    private readonly record struct SplitProximitySpeciesPoint(
+        double MinProximity,
+        double MinSimilarity,
+        double SplitThreshold,
+        int SampleCount);
+
+    private readonly record struct SplitProximitySpeciesMeta(
+        string SpeciesId,
+        string DisplayName,
+        int SampleCount);
+
+    private readonly record struct CladogramSpeciesMeta(
+        string SpeciesId,
+        string DisplayName);
 
     private readonly record struct EvolutionSimStatusSnapshot(
         string SessionId,
@@ -2590,7 +4342,61 @@ public sealed record SpeciationChartLegendItem(
     string Color,
     string ValueLabel);
 
+public sealed class SpeciationCladogramItem : ViewModelBase
+{
+    private bool _isExpanded;
+
+    public SpeciationCladogramItem(
+        string speciesId,
+        string speciesDisplayName,
+        string detailLabel,
+        string color,
+        bool isRoot,
+        IReadOnlyList<SpeciationCladogramItem>? children = null,
+        bool isExpanded = true)
+    {
+        SpeciesId = speciesId;
+        SpeciesDisplayName = speciesDisplayName;
+        DetailLabel = detailLabel;
+        Color = color;
+        IsRoot = isRoot;
+        Children = new ObservableCollection<SpeciationCladogramItem>(children ?? Array.Empty<SpeciationCladogramItem>());
+        _isExpanded = isExpanded;
+    }
+
+    public string SpeciesId { get; }
+
+    public string SpeciesDisplayName { get; }
+
+    public string DetailLabel { get; }
+
+    public string Color { get; }
+
+    public bool IsRoot { get; }
+
+    public string RoleLabel => IsRoot ? "Root lineage" : "Derived lineage";
+
+    public string LineText => $"{SpeciesDisplayName} [{SpeciesId}]";
+
+    public ObservableCollection<SpeciationCladogramItem> Children { get; }
+
+    public bool HasChildren => Children.Count > 0;
+
+    public bool IsLeaf => Children.Count == 0;
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => SetProperty(ref _isExpanded, value);
+    }
+}
+
 public sealed record SpeciationSimulatorBrainOption(Guid BrainId, string Label)
+{
+    public string BrainIdLabel => BrainId.ToString("D");
+}
+
+public sealed record SpeciationSimulatorSeedParentItem(Guid BrainId, string Label, string Source)
 {
     public string BrainIdLabel => BrainId.ToString("D");
 }

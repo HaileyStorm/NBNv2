@@ -41,7 +41,7 @@ static async Task RunAsync(string[] args)
         var advertisedHost = GetArg(args, "--advertise-host");
         var advertisedPort = GetIntArg(args, "--advertise-port");
         var seed = GetULongArg(args, "--seed") ?? 12345UL;
-        var intervalMs = Math.Max(0, GetIntArg(args, "--interval-ms") ?? 1000);
+        var intervalMs = Math.Max(0, GetIntArg(args, "--interval-ms") ?? 100);
         var statusSeconds = Math.Max(1, GetIntArg(args, "--status-seconds") ?? 5);
         var requestTimeoutSeconds = Math.Max(1, GetIntArg(args, "--timeout-seconds") ?? 10);
         var maxIterations = Math.Max(0, GetIntArg(args, "--max-iterations") ?? 0);
@@ -52,6 +52,8 @@ static async Task RunAsync(string[] args)
         var minRuns = (uint)Math.Max(1, GetIntArg(args, "--min-runs") ?? 1);
         var maxRuns = (uint)Math.Max((int)minRuns, GetIntArg(args, "--max-runs") ?? 6);
         var gamma = GetDoubleArg(args, "--run-gamma") ?? 1d;
+        var runPressureMode = ParseRunPressureMode(GetArg(args, "--run-pressure-mode"));
+        var parentSelectionBias = ParseParentSelectionBias(GetArg(args, "--parent-selection-bias"));
         var jsonOnly = HasFlag(args, "--json");
 
         if (maxRuns > 64)
@@ -85,7 +87,9 @@ static async Task RunAsync(string[] args)
             SpawnChildren = spawnChildren,
             ParentMode = parentResolution.Mode,
             StrengthSource = strengthSource,
-            RunPolicy = new InverseCompatibilityRunPolicy(minRuns, maxRuns, gamma)
+            RunPolicy = new InverseCompatibilityRunPolicy(minRuns, maxRuns, gamma),
+            RunPressureMode = runPressureMode,
+            ParentSelectionBias = parentSelectionBias
         };
 
         await using var runtimeClient = await EvolutionRuntimeClient.StartAsync(options).ConfigureAwait(false);
@@ -511,6 +515,52 @@ static Repro.StrengthSource ParseStrengthSource(string? raw)
     };
 }
 
+static EvolutionRunPressureMode ParseRunPressureMode(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        return EvolutionRunPressureMode.Stability;
+    }
+
+    return raw.Trim().ToLowerInvariant() switch
+    {
+        "divergence" => EvolutionRunPressureMode.Divergence,
+        "diverge" => EvolutionRunPressureMode.Divergence,
+        "explore" => EvolutionRunPressureMode.Divergence,
+        "exploratory" => EvolutionRunPressureMode.Divergence,
+        "neutral" => EvolutionRunPressureMode.Neutral,
+        "none" => EvolutionRunPressureMode.Neutral,
+        "off" => EvolutionRunPressureMode.Neutral,
+        "stability" => EvolutionRunPressureMode.Stability,
+        "stable" => EvolutionRunPressureMode.Stability,
+        "stabilize" => EvolutionRunPressureMode.Stability,
+        _ => EvolutionRunPressureMode.Stability
+    };
+}
+
+static EvolutionParentSelectionBias ParseParentSelectionBias(string? raw)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+    {
+        return EvolutionParentSelectionBias.Neutral;
+    }
+
+    return raw.Trim().ToLowerInvariant() switch
+    {
+        "divergence" => EvolutionParentSelectionBias.Divergence,
+        "diverge" => EvolutionParentSelectionBias.Divergence,
+        "explore" => EvolutionParentSelectionBias.Divergence,
+        "exploratory" => EvolutionParentSelectionBias.Divergence,
+        "neutral" => EvolutionParentSelectionBias.Neutral,
+        "none" => EvolutionParentSelectionBias.Neutral,
+        "off" => EvolutionParentSelectionBias.Neutral,
+        "stability" => EvolutionParentSelectionBias.Stability,
+        "stable" => EvolutionParentSelectionBias.Stability,
+        "stabilize" => EvolutionParentSelectionBias.Stability,
+        _ => EvolutionParentSelectionBias.Neutral
+    };
+}
+
 static void PrintHelp()
 {
     Console.WriteLine("NBN EvolutionSim usage:");
@@ -519,7 +569,8 @@ static void PrintHelp()
     Console.WriteLine("      [--advertise-host <host>] [--advertise-port <int>] [--seed <uint64>]");
     Console.WriteLine("      [--interval-ms <int>] [--status-seconds <int>] [--timeout-seconds <int>]");
     Console.WriteLine("      [--max-iterations <int>] [--max-parent-pool <int>]");
-    Console.WriteLine("      [--min-runs <int>] [--max-runs <int>] [--run-gamma <double>]");
+    Console.WriteLine("      [--min-runs <int>] [--max-runs <int>] [--run-gamma <double>] [--run-pressure-mode divergence|neutral|stability]");
+    Console.WriteLine("      [--parent-selection-bias divergence|neutral|stability]");
     Console.WriteLine("      [--strength-source base|live] [--commit-to-speciation <bool>] [--spawn-children <bool>]");
     Console.WriteLine("      [--store-uri <path|file://uri>] [--parent <sha256,size[,store_uri][,media_type]> ...]");
     Console.WriteLine("      store-uri fallback: --store-uri, then NBN_ARTIFACT_ROOT env var.");

@@ -1496,7 +1496,8 @@ public sealed class SpeciationManagerActor : IActor
             dominantShare,
             BuildLineageKey(orderedParentBrainIds),
             hysteresisMembership?.SpeciesId,
-            hysteresisMembership?.SpeciesDisplayName);
+            hysteresisMembership?.SpeciesDisplayName,
+            hysteresisMembership?.DecisionReason);
     }
 
     private AssignmentResolution ResolveAssignment(
@@ -1509,7 +1510,7 @@ public sealed class SpeciationManagerActor : IActor
         if (!string.IsNullOrWhiteSpace(requestedSpeciesId))
         {
             var speciesId = requestedSpeciesId.Trim();
-            var speciesDisplayName = NormalizeOrFallback(requestedSpeciesDisplayName, speciesId);
+            var speciesDisplayName = ResolveSpeciesDisplayName(requestedSpeciesDisplayName, speciesId);
             return new AssignmentResolution(
                 speciesId,
                 speciesDisplayName,
@@ -1532,9 +1533,9 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var dominantSpeciesId = lineageEvidence.DominantSpeciesId!;
-        var dominantSpeciesDisplayName = string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesDisplayName)
-            ? dominantSpeciesId
-            : lineageEvidence.DominantSpeciesDisplayName!;
+        var dominantSpeciesDisplayName = ResolveSpeciesDisplayName(
+            lineageEvidence.DominantSpeciesDisplayName,
+            dominantSpeciesId);
 
         if (lineageEvidence.DominantShare < _assignmentPolicy.ParentConsensusThreshold)
         {
@@ -1542,7 +1543,7 @@ public sealed class SpeciationManagerActor : IActor
             {
                 return new AssignmentResolution(
                     lineageEvidence.HysteresisSpeciesId!,
-                    NormalizeOrFallback(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                    ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
                     DecisionReason: "lineage_hysteresis_low_consensus",
                     Strategy: "hysteresis_hold",
                     StrategyDetail: "Parent consensus below threshold; reused prior lineage species.",
@@ -1570,6 +1571,34 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var similarity = ClampScore(similarityEvidence.SimilarityScore.Value);
+        var effectiveSplitThreshold = Math.Max(
+            0d,
+            _assignmentPolicy.LineageSplitThreshold - _assignmentPolicy.LineageSplitGuardMargin);
+        var hasSplitParentEvidence = lineageEvidence.ParentMembershipCount >= _assignmentPolicy.MinParentMembershipsBeforeSplit;
+        var withinRecentSplitRealignWindow =
+            _assignmentPolicy.RecentSplitRealignParentMembershipWindow > 0
+            && lineageEvidence.ParentMembershipCount > 0
+            && lineageEvidence.ParentMembershipCount <= _assignmentPolicy.RecentSplitRealignParentMembershipWindow
+            && !string.IsNullOrWhiteSpace(lineageEvidence.HysteresisSpeciesId)
+            && string.Equals(
+                lineageEvidence.HysteresisDecisionReason,
+                "lineage_diverged_new_species",
+                StringComparison.Ordinal);
+
+        if (withinRecentSplitRealignWindow
+            && similarity <= Math.Min(
+                1d,
+                _assignmentPolicy.LineageMatchThreshold + _assignmentPolicy.RecentSplitRealignMatchMargin))
+        {
+            return new AssignmentResolution(
+                lineageEvidence.HysteresisSpeciesId!,
+                ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                DecisionReason: "lineage_realign_recent_split",
+                Strategy: "lineage_realign",
+                StrategyDetail: "Recent derived split hint reused within bounded parent-membership realignment window.",
+                ForceDecisionReason: true);
+        }
+
         if (similarity >= _assignmentPolicy.LineageMatchThreshold)
         {
             return new AssignmentResolution(
@@ -1581,8 +1610,30 @@ public sealed class SpeciationManagerActor : IActor
                 ForceDecisionReason: true);
         }
 
-        if (similarity <= _assignmentPolicy.LineageSplitThreshold)
+        if (similarity <= effectiveSplitThreshold)
         {
+            if (!hasSplitParentEvidence)
+            {
+                if (!string.IsNullOrWhiteSpace(lineageEvidence.HysteresisSpeciesId))
+                {
+                    return new AssignmentResolution(
+                        lineageEvidence.HysteresisSpeciesId!,
+                        ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                        DecisionReason: "lineage_split_guarded_hysteresis_hold",
+                        Strategy: "hysteresis_hold",
+                        StrategyDetail: "Split threshold crossed but minimum parent-membership evidence not met; reused prior lineage species.",
+                        ForceDecisionReason: true);
+                }
+
+                return new AssignmentResolution(
+                    dominantSpeciesId,
+                    dominantSpeciesDisplayName,
+                    DecisionReason: "lineage_split_guarded_parent_evidence",
+                    Strategy: "lineage_inherit",
+                    StrategyDetail: "Split threshold crossed but minimum parent-membership evidence not met.",
+                    ForceDecisionReason: true);
+            }
+
             if (_assignmentPolicy.CreateDerivedSpeciesOnDivergence)
             {
                 var derivedSpeciesId = BuildDerivedSpeciesId(
@@ -1592,10 +1643,13 @@ public sealed class SpeciationManagerActor : IActor
                     epoch.EpochId);
                 return new AssignmentResolution(
                     derivedSpeciesId,
-                    $"Derived {dominantSpeciesDisplayName}",
+                    BuildDerivedSpeciesDisplayName(
+                        dominantSpeciesDisplayName,
+                        dominantSpeciesId,
+                        derivedSpeciesId),
                     DecisionReason: "lineage_diverged_new_species",
                     Strategy: "lineage_diverged",
-                    StrategyDetail: "Similarity below split threshold; created deterministic derived species.",
+                    StrategyDetail: "Similarity below split threshold; created deterministic derived species with lineage suffix.",
                     ForceDecisionReason: true);
             }
 
@@ -1608,11 +1662,34 @@ public sealed class SpeciationManagerActor : IActor
                 ForceDecisionReason: true);
         }
 
+        if (_assignmentPolicy.LineageSplitGuardMargin > 0d
+            && similarity <= _assignmentPolicy.LineageSplitThreshold)
+        {
+            if (!string.IsNullOrWhiteSpace(lineageEvidence.HysteresisSpeciesId))
+            {
+                return new AssignmentResolution(
+                    lineageEvidence.HysteresisSpeciesId!,
+                    ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                    DecisionReason: "lineage_split_guard_band_hysteresis_hold",
+                    Strategy: "hysteresis_hold",
+                    StrategyDetail: "Similarity in split-guard band; reused prior lineage species to reduce fragmentation.",
+                    ForceDecisionReason: true);
+            }
+
+            return new AssignmentResolution(
+                dominantSpeciesId,
+                dominantSpeciesDisplayName,
+                DecisionReason: "lineage_split_guard_band_inherit",
+                Strategy: "lineage_inherit",
+                StrategyDetail: "Similarity in split-guard band; inherited dominant lineage species.",
+                ForceDecisionReason: true);
+        }
+
         if (!string.IsNullOrWhiteSpace(lineageEvidence.HysteresisSpeciesId))
         {
             return new AssignmentResolution(
                 lineageEvidence.HysteresisSpeciesId!,
-                NormalizeOrFallback(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
                 DecisionReason: "lineage_hysteresis_hold",
                 Strategy: "hysteresis_hold",
                 StrategyDetail: "Similarity in hysteresis band; reused prior lineage species.",
@@ -1637,6 +1714,7 @@ public sealed class SpeciationManagerActor : IActor
         SimilarityEvidence similarityEvidence)
     {
         var metadata = ParseMetadataJson(sourceMetadataJson);
+        metadata.TryGetPropertyValue("lineage", out var existingLineageNode);
         metadata["assignment_strategy"] = assignmentResolution.Strategy;
         metadata["assignment_strategy_detail"] = assignmentResolution.StrategyDetail;
         metadata["policy_version"] = policyVersion;
@@ -1645,8 +1723,15 @@ public sealed class SpeciationManagerActor : IActor
         {
             ["lineage_match_threshold"] = _assignmentPolicy.LineageMatchThreshold,
             ["lineage_split_threshold"] = _assignmentPolicy.LineageSplitThreshold,
+            ["lineage_effective_split_threshold"] = Math.Max(
+                0d,
+                _assignmentPolicy.LineageSplitThreshold - _assignmentPolicy.LineageSplitGuardMargin),
+            ["lineage_split_guard_margin"] = _assignmentPolicy.LineageSplitGuardMargin,
+            ["lineage_min_parent_memberships_before_split"] = _assignmentPolicy.MinParentMembershipsBeforeSplit,
             ["parent_consensus_threshold"] = _assignmentPolicy.ParentConsensusThreshold,
             ["hysteresis_margin"] = _assignmentPolicy.HysteresisMargin,
+            ["lineage_realign_parent_membership_window"] = _assignmentPolicy.RecentSplitRealignParentMembershipWindow,
+            ["lineage_realign_match_margin"] = _assignmentPolicy.RecentSplitRealignMatchMargin,
             ["create_derived_species_on_divergence"] = _assignmentPolicy.CreateDerivedSpeciesOnDivergence,
             ["derived_species_prefix"] = _assignmentPolicy.DerivedSpeciesPrefix
         };
@@ -1663,7 +1748,7 @@ public sealed class SpeciationManagerActor : IActor
             parentArtifactRefs.Add(parentArtifactRef);
         }
 
-        metadata["lineage"] = new JsonObject
+        var lineage = new JsonObject
         {
             ["candidate_mode"] = candidateMode.ToString(),
             ["lineage_key"] = lineageEvidence.LineageKey,
@@ -1676,6 +1761,34 @@ public sealed class SpeciationManagerActor : IActor
             ["hysteresis_species_id"] = lineageEvidence.HysteresisSpeciesId ?? string.Empty,
             ["hysteresis_species_display_name"] = lineageEvidence.HysteresisSpeciesDisplayName ?? string.Empty
         };
+        AddLineageSimilarityScore(
+            lineage,
+            "lineage_similarity_score",
+            similarityEvidence.SimilarityScore,
+            existingLineageNode,
+            "lineage_similarity_score",
+            "lineageSimilarityScore",
+            "similarity_score",
+            "similarityScore");
+        AddLineageSimilarityScore(
+            lineage,
+            "parent_a_similarity_score",
+            preferredValue: null,
+            existingLineageNode,
+            "parent_a_similarity_score",
+            "parentASimilarityScore",
+            "lineage_parent_a_similarity_score",
+            "lineageParentASimilarityScore");
+        AddLineageSimilarityScore(
+            lineage,
+            "parent_b_similarity_score",
+            preferredValue: null,
+            existingLineageNode,
+            "parent_b_similarity_score",
+            "parentBSimilarityScore",
+            "lineage_parent_b_similarity_score",
+            "lineageParentBSimilarityScore");
+        metadata["lineage"] = lineage;
 
         var scores = new JsonObject();
         if (similarityEvidence.SimilarityScore.HasValue)
@@ -1700,6 +1813,20 @@ public sealed class SpeciationManagerActor : IActor
 
         metadata["scores"] = scores;
         return metadata.ToJsonString(MetadataJsonSerializerOptions);
+    }
+
+    private static void AddLineageSimilarityScore(
+        JsonObject target,
+        string key,
+        double? preferredValue,
+        JsonNode? existingLineageNode,
+        params string[] existingAliases)
+    {
+        var resolved = preferredValue ?? FindNumericValue(existingLineageNode, existingAliases);
+        if (resolved.HasValue)
+        {
+            target[key] = ClampScore(resolved.Value);
+        }
     }
 
     private static SimilarityEvidence ExtractSimilarityEvidence(string? decisionMetadataJson)
@@ -1845,29 +1972,49 @@ public sealed class SpeciationManagerActor : IActor
         var policyNode = TryResolvePolicyNode(runtimeConfig.ConfigSnapshotJson);
         var matchThreshold = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.70d,
+            defaultValue: 0.90d,
             "lineage_match_threshold",
             "lineageMatchThreshold"));
-        var splitThreshold = ReadOptionalPolicyDouble(
-            policyNode,
-            "lineage_split_threshold",
-            "lineageSplitThreshold");
         var hysteresisMargin = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.10d,
+            defaultValue: 0.05d,
             "lineage_hysteresis_margin",
             "lineageHysteresisMargin"));
-        var resolvedSplitThreshold = ClampScore(splitThreshold ?? (matchThreshold - hysteresisMargin));
+        var resolvedSplitThreshold = ClampScore(ReadPolicyDouble(
+            policyNode,
+            defaultValue: 0.86d,
+            "lineage_split_threshold",
+            "lineageSplitThreshold"));
         if (resolvedSplitThreshold > matchThreshold)
         {
-            (resolvedSplitThreshold, matchThreshold) = (matchThreshold, resolvedSplitThreshold);
+            resolvedSplitThreshold = matchThreshold;
         }
 
         var parentConsensusThreshold = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.50d,
+            defaultValue: 0.70d,
             "parent_consensus_threshold",
             "parentConsensusThreshold"));
+        var splitGuardMargin = ClampScore(ReadPolicyDouble(
+            policyNode,
+            defaultValue: 0.04d,
+            "lineage_split_guard_margin",
+            "lineageSplitGuardMargin"));
+        var minParentMembershipsBeforeSplit = ReadPolicyInt(
+            policyNode,
+            defaultValue: 1,
+            "lineage_min_parent_memberships_before_split",
+            "lineageMinParentMembershipsBeforeSplit");
+        var recentSplitRealignParentMembershipWindow = ReadPolicyInt(
+            policyNode,
+            defaultValue: 3,
+            "lineage_realign_parent_membership_window",
+            "lineageRealignParentMembershipWindow");
+        var recentSplitRealignMatchMargin = ClampScore(ReadPolicyDouble(
+            policyNode,
+            defaultValue: 0.05d,
+            "lineage_realign_match_margin",
+            "lineageRealignMatchMargin"));
         var createDerivedSpecies = ReadPolicyBool(
             policyNode,
             defaultValue: true,
@@ -1883,7 +2030,11 @@ public sealed class SpeciationManagerActor : IActor
             LineageMatchThreshold: matchThreshold,
             LineageSplitThreshold: resolvedSplitThreshold,
             ParentConsensusThreshold: parentConsensusThreshold,
-            HysteresisMargin: Math.Max(0d, matchThreshold - resolvedSplitThreshold),
+            HysteresisMargin: hysteresisMargin,
+            LineageSplitGuardMargin: splitGuardMargin,
+            MinParentMembershipsBeforeSplit: Math.Max(1, minParentMembershipsBeforeSplit),
+            RecentSplitRealignParentMembershipWindow: Math.Max(0, recentSplitRealignParentMembershipWindow),
+            RecentSplitRealignMatchMargin: recentSplitRealignMatchMargin,
             CreateDerivedSpeciesOnDivergence: createDerivedSpecies,
             DerivedSpeciesPrefix: derivedSpeciesPrefix);
     }
@@ -1931,6 +2082,21 @@ public sealed class SpeciationManagerActor : IActor
         return TryReadPolicyValue(policyNode, out double value, aliases)
             ? value
             : defaultValue;
+    }
+
+    private static int ReadPolicyInt(JsonObject? policyNode, int defaultValue, params string[] aliases)
+    {
+        if (!TryReadPolicyValue(policyNode, out double value, aliases))
+        {
+            return defaultValue;
+        }
+
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return defaultValue;
+        }
+
+        return (int)Math.Max(0d, Math.Round(value, MidpointRounding.AwayFromZero));
     }
 
     private static bool ReadPolicyBool(JsonObject? policyNode, bool defaultValue, params string[] aliases)
@@ -2077,6 +2243,110 @@ public sealed class SpeciationManagerActor : IActor
         return speciesId.Length <= 96
             ? speciesId
             : speciesId[..96];
+    }
+
+    private static string BuildDerivedSpeciesDisplayName(
+        string? dominantSpeciesDisplayName,
+        string dominantSpeciesId,
+        string derivedSpeciesId)
+    {
+        var parentDisplayName = ResolveSpeciesDisplayName(dominantSpeciesDisplayName, dominantSpeciesId);
+        var (stem, lineageCode) = ParseLineageDisplayName(parentDisplayName);
+        var nextLetter = ComputeLineageLetter(derivedSpeciesId);
+        var nextCode = lineageCode + nextLetter;
+        return $"{stem} [{nextCode}]";
+    }
+
+    private static string ResolveSpeciesDisplayName(string? preferredDisplayName, string speciesId)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredDisplayName))
+        {
+            return preferredDisplayName.Trim();
+        }
+
+        return BuildDisplayNameFromSpeciesId(speciesId);
+    }
+
+    private static (string Stem, string LineageCode) ParseLineageDisplayName(string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            return ("Species", string.Empty);
+        }
+
+        var trimmed = displayName.Trim();
+        var openIndex = trimmed.LastIndexOf('[');
+        if (openIndex >= 0 && trimmed.EndsWith(']') && openIndex < trimmed.Length - 2)
+        {
+            var candidateCode = trimmed[(openIndex + 1)..^1].Trim();
+            if (candidateCode.Length > 0 && candidateCode.All(ch => ch is >= 'A' and <= 'Z'))
+            {
+                var stem = trimmed[..openIndex].TrimEnd();
+                return (stem.Length == 0 ? "Species" : stem, candidateCode);
+            }
+        }
+
+        return (trimmed, string.Empty);
+    }
+
+    private static string ComputeLineageLetter(string seed)
+    {
+        if (string.IsNullOrWhiteSpace(seed))
+        {
+            return "A";
+        }
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed.Trim()));
+        var letter = (char)('A' + (hash[0] % 26));
+        return letter.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string BuildDisplayNameFromSpeciesId(string speciesId)
+    {
+        if (string.IsNullOrWhiteSpace(speciesId))
+        {
+            return "Species";
+        }
+
+        var tokens = speciesId
+            .Trim()
+            .Split(['.', '-', '_', '/', ':'], StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0)
+        {
+            return speciesId.Trim();
+        }
+
+        var parts = tokens
+            .Select(FormatDisplayToken)
+            .Where(part => part.Length > 0)
+            .ToArray();
+        if (parts.Length == 0)
+        {
+            return speciesId.Trim();
+        }
+
+        return string.Join(' ', parts);
+    }
+
+    private static string FormatDisplayToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = token.Trim();
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (trimmed.Length == 1)
+        {
+            return char.ToUpperInvariant(trimmed[0]).ToString(CultureInfo.InvariantCulture);
+        }
+
+        return char.ToUpperInvariant(trimmed[0]) + trimmed[1..].ToLowerInvariant();
     }
 
     private static string NormalizeToken(string? value, string fallback)
@@ -2333,6 +2603,10 @@ public sealed class SpeciationManagerActor : IActor
         double LineageSplitThreshold,
         double ParentConsensusThreshold,
         double HysteresisMargin,
+        double LineageSplitGuardMargin,
+        int MinParentMembershipsBeforeSplit,
+        int RecentSplitRealignParentMembershipWindow,
+        double RecentSplitRealignMatchMargin,
         bool CreateDerivedSpeciesOnDivergence,
         string DerivedSpeciesPrefix);
 
@@ -2351,7 +2625,8 @@ public sealed class SpeciationManagerActor : IActor
         double DominantShare,
         string LineageKey,
         string? HysteresisSpeciesId,
-        string? HysteresisSpeciesDisplayName);
+        string? HysteresisSpeciesDisplayName,
+        string? HysteresisDecisionReason);
 
     private readonly record struct AssignmentResolution(
         string SpeciesId,

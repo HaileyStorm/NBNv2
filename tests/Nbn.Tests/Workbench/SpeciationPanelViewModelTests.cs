@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using Nbn.Proto;
 using Nbn.Proto.Speciation;
@@ -25,7 +27,7 @@ public class SpeciationPanelViewModelTests
                     DefaultSpeciesId = "species.alpha",
                     DefaultSpeciesDisplayName = "Alpha",
                     StartupReconcileDecisionReason = "reconcile_on_boot",
-                    ConfigSnapshotJson = "{\"enabled\":false,\"assignment_policy\":{\"lineage_match_threshold\":0.82,\"lineage_split_threshold\":0.66,\"parent_consensus_threshold\":0.55,\"lineage_hysteresis_margin\":0.12,\"create_derived_species_on_divergence\":false,\"derived_species_prefix\":\"fork\"}}"
+                    ConfigSnapshotJson = "{\"enabled\":false,\"assignment_policy\":{\"lineage_match_threshold\":0.82,\"lineage_split_threshold\":0.66,\"parent_consensus_threshold\":0.55,\"lineage_hysteresis_margin\":0.12,\"lineage_split_guard_margin\":0.04,\"lineage_min_parent_memberships_before_split\":3,\"lineage_realign_parent_membership_window\":5,\"lineage_realign_match_margin\":0.07,\"create_derived_species_on_divergence\":false,\"derived_species_prefix\":\"fork\"}}"
                 },
                 CurrentEpoch = new SpeciationEpochInfo { EpochId = 17 }
             }
@@ -45,9 +47,29 @@ public class SpeciationPanelViewModelTests
         Assert.Equal("0.66", vm.LineageSplitThreshold);
         Assert.Equal("0.55", vm.ParentConsensusThreshold);
         Assert.Equal("0.12", vm.HysteresisMargin);
+        Assert.Equal("0.04", vm.LineageSplitGuardMargin);
+        Assert.Equal("3", vm.LineageMinParentMembershipsBeforeSplit);
+        Assert.Equal("5", vm.LineageRealignParentMembershipWindow);
+        Assert.Equal("0.07", vm.LineageRealignMatchMargin);
         Assert.False(vm.CreateDerivedSpecies);
         Assert.Equal("fork", vm.DerivedSpeciesPrefix);
         Assert.Equal(17L, vm.CurrentEpochId);
+    }
+
+    [Fact]
+    public void ApplySetting_UpdatesSpeciationDraftFromSettingsMonitorKeys()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageSplitThresholdKey, "0.87", "1")));
+        Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageHysteresisMarginKey, "0.03", "1")));
+        Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageSplitGuardMarginKey, "0.02", "1")));
+        Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.HistoryLimitKey, "100", "1")));
+
+        Assert.Equal("0.87", vm.LineageSplitThreshold);
+        Assert.Equal("0.03", vm.HysteresisMargin);
+        Assert.Equal("0.02", vm.LineageSplitGuardMargin);
+        Assert.Equal("100", vm.HistoryLimitText);
     }
 
     [Fact]
@@ -254,9 +276,9 @@ public class SpeciationPanelViewModelTests
         vm.SimSelectedParentBBrain = new SpeciationSimulatorBrainOption(sharedBrain, sharedBrain.ToString("D"));
 
         vm.StartSimulatorCommand.Execute(null);
-        await WaitForAsync(() => vm.SimulatorStatus == "Simulator requires two distinct brain parents.");
+        await WaitForAsync(() => vm.SimulatorStatus == "Simulator requires at least two distinct brain parents.");
 
-        Assert.Equal("Simulator requires two distinct brain parents.", vm.SimulatorStatus);
+        Assert.Equal("Simulator requires at least two distinct brain parents.", vm.SimulatorStatus);
     }
 
     [Fact]
@@ -296,19 +318,89 @@ public class SpeciationPanelViewModelTests
         var vm = CreateViewModel(new FakeWorkbenchClient());
         var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
         var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+        var parentRefs = new List<ArtifactRef> { parentA, parentB };
 
         var method = typeof(SpeciationPanelViewModel).GetMethod(
             "BuildEvolutionSimArgs",
             BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null,
-            types: [typeof(int), typeof(int), typeof(ArtifactRef), typeof(ArtifactRef)],
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<ArtifactRef>)],
             modifiers: null);
         Assert.NotNull(method);
 
-        var args = (string?)method!.Invoke(vm, [12050, 12074, parentA, parentB]);
+        var args = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
         Assert.NotNull(args);
         Assert.Contains("--parent ", args!, StringComparison.Ordinal);
         Assert.DoesNotContain("--parent-brain", args, StringComparison.Ordinal);
+        Assert.Contains("--min-runs 2", args, StringComparison.Ordinal);
+        Assert.Contains("--max-runs 12", args, StringComparison.Ordinal);
+        Assert.Contains("--run-pressure-mode divergence", args, StringComparison.Ordinal);
+        Assert.Contains("--parent-selection-bias divergence", args, StringComparison.Ordinal);
+        Assert.Contains("--interval-ms 100", args, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildEvolutionSimArgs_NormalizesRunPressureModeAliases()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+        var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+        var parentRefs = new List<ArtifactRef> { parentA, parentB };
+
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "BuildEvolutionSimArgs",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<ArtifactRef>)],
+            modifiers: null);
+        Assert.NotNull(method);
+
+        vm.SimRunPressureMode = "stable";
+        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        Assert.NotNull(stableArgs);
+        Assert.Contains("--run-pressure-mode stability", stableArgs!, StringComparison.Ordinal);
+
+        vm.SimRunPressureMode = "exploratory";
+        var exploratoryArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        Assert.NotNull(exploratoryArgs);
+        Assert.Contains("--run-pressure-mode divergence", exploratoryArgs!, StringComparison.Ordinal);
+
+        vm.SimRunPressureMode = "unexpected-token";
+        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        Assert.NotNull(fallbackArgs);
+        Assert.Contains("--run-pressure-mode divergence", fallbackArgs!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildEvolutionSimArgs_NormalizesParentSelectionBiasAliases()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+        var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+        var parentRefs = new List<ArtifactRef> { parentA, parentB };
+
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "BuildEvolutionSimArgs",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<ArtifactRef>)],
+            modifiers: null);
+        Assert.NotNull(method);
+
+        vm.SimParentSelectionBias = "stable";
+        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        Assert.NotNull(stableArgs);
+        Assert.Contains("--parent-selection-bias stability", stableArgs!, StringComparison.Ordinal);
+
+        vm.SimParentSelectionBias = "exploratory";
+        var divergenceArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        Assert.NotNull(divergenceArgs);
+        Assert.Contains("--parent-selection-bias divergence", divergenceArgs!, StringComparison.Ordinal);
+
+        vm.SimParentSelectionBias = "unexpected-token";
+        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        Assert.NotNull(fallbackArgs);
+        Assert.Contains("--parent-selection-bias neutral", fallbackArgs!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -340,6 +432,7 @@ public class SpeciationPanelViewModelTests
         await WaitForAsync(() => vm.PopulationChartSeries.Count == 2 && vm.FlowChartAreas.Count == 2);
 
         Assert.Equal("Epochs 10..11 (2 samples)", vm.PopulationChartRangeLabel);
+        Assert.Contains("log10", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("10", vm.FlowChartStartEpochLabel);
         Assert.Equal("11", vm.FlowChartEndEpochLabel);
         Assert.All(vm.PopulationChartSeries, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
@@ -396,6 +489,362 @@ public class SpeciationPanelViewModelTests
 
         Assert.Contains("epoch 17", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("0.8", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_BuildsSplitProximitySeriesAndSummary()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 30,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.78},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 30,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.b",
+                SpeciesDisplayName = "Beta",
+                AssignedMs = 1001,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.61},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 31,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1002,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.55},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 31;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 2);
+
+        Assert.Contains("split threshold", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("epoch 31", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("min=-0.", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("top 2/2 species", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_SingleEpochMultiRowHistory_SpansChartWidth()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 55,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.90},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 55,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1001,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.82},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 55,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1002,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.72},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 55,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1003,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.61},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 55;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.PopulationChartSeries.Count == 1 && vm.SplitProximityChartSeries.Count == 1);
+
+        Assert.Contains("Epoch 55 row samples", vm.PopulationChartRangeLabel, StringComparison.Ordinal);
+        Assert.Contains("Epoch 55 row samples", vm.SplitProximityChartRangeLabel, StringComparison.Ordinal);
+        Assert.Contains("min=", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+
+        var populationMaxX = ExtractMaxPathX(vm.PopulationChartSeries[0].PathData);
+        var splitProximityMaxX = ExtractMaxPathX(vm.SplitProximityChartSeries[0].PathData);
+        var requiredMaxX = vm.PopulationChartWidth - 20d;
+        Assert.True(
+            populationMaxX >= requiredMaxX,
+            $"Population chart did not span expected width. maxX={populationMaxX:0.###}, required={requiredMaxX:0.###}, path='{vm.PopulationChartSeries[0].PathData}'.");
+        Assert.True(
+            splitProximityMaxX >= requiredMaxX,
+            $"Split-proximity chart did not span expected width. maxX={splitProximityMaxX:0.###}, required={requiredMaxX:0.###}, path='{vm.SplitProximityChartSeries[0].PathData}'.");
+        Assert.Contains(" L ", vm.PopulationChartSeries[0].PathData, StringComparison.Ordinal);
+        Assert.Contains(" L ", vm.SplitProximityChartSeries[0].PathData, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_BuildsCladogramFromDivergenceLineageMetadata()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 9,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.root",
+                SpeciesDisplayName = "Root",
+                DecisionReason = "explicit_species",
+                AssignedMs = 1000
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 10,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.child",
+                SpeciesDisplayName = "Child A1B2C",
+                DecisionReason = "lineage_diverged_new_species",
+                AssignedMs = 1100,
+                DecisionMetadataJson = "{\"lineage\":{\"dominant_species_id\":\"species.root\",\"dominant_species_display_name\":\"Root\"}}"
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 10,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.child",
+                SpeciesDisplayName = "Child A1B2C",
+                DecisionReason = "lineage_hysteresis_hold",
+                AssignedMs = 1200,
+                DecisionMetadataJson = "{\"lineage\":{\"dominant_species_id\":\"species.root\",\"dominant_species_display_name\":\"Root\"}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.CladogramItems.Count > 0);
+
+        var cladogramNodes = FlattenCladogram(vm.CladogramItems).ToArray();
+        Assert.Contains("lineage_diverged_new_species", vm.CladogramMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("edges", vm.CladogramRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(cladogramNodes, item => item.SpeciesId == "species.root" && item.LineText.Contains("Root", StringComparison.Ordinal));
+        Assert.Contains(cladogramNodes, item => item.SpeciesId == "species.child" && item.LineText.Contains("species.child", StringComparison.Ordinal));
+        Assert.All(cladogramNodes, item => Assert.True(item.IsExpanded));
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_AutoExpandsCladogramBranchWhenNewSpeciesAppear()
+    {
+        var brainRoot = Guid.NewGuid();
+        var brainChild = Guid.NewGuid();
+        var brainGrandchild = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = 2,
+                History =
+                {
+                    new SpeciationMembershipRecord
+                    {
+                        EpochId = 9,
+                        BrainId = brainRoot.ToProtoUuid(),
+                        SpeciesId = "species.root",
+                        SpeciesDisplayName = "Root",
+                        DecisionReason = "explicit_species",
+                        AssignedMs = 1000
+                    },
+                    new SpeciationMembershipRecord
+                    {
+                        EpochId = 10,
+                        BrainId = brainChild.ToProtoUuid(),
+                        SpeciesId = "species.child",
+                        SpeciesDisplayName = "Child",
+                        DecisionReason = "lineage_diverged_new_species",
+                        AssignedMs = 1100,
+                        DecisionMetadataJson = "{\"lineage\":{\"dominant_species_id\":\"species.root\",\"dominant_species_display_name\":\"Root\"}}"
+                    }
+                }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.CladogramItems.Count == 1 && vm.CladogramItems[0].Children.Count == 1);
+
+        var initialRoot = vm.CladogramItems[0];
+        var initialChild = initialRoot.Children[0];
+        initialRoot.IsExpanded = false;
+        initialChild.IsExpanded = false;
+
+        client.HistoryResponse = new SpeciationListHistoryResponse
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            TotalRecords = 3,
+            History =
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 9,
+                    BrainId = brainRoot.ToProtoUuid(),
+                    SpeciesId = "species.root",
+                    SpeciesDisplayName = "Root",
+                    DecisionReason = "explicit_species",
+                    AssignedMs = 1000
+                },
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 10,
+                    BrainId = brainChild.ToProtoUuid(),
+                    SpeciesId = "species.child",
+                    SpeciesDisplayName = "Child",
+                    DecisionReason = "lineage_diverged_new_species",
+                    AssignedMs = 1100,
+                    DecisionMetadataJson = "{\"lineage\":{\"dominant_species_id\":\"species.root\",\"dominant_species_display_name\":\"Root\"}}"
+                },
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 11,
+                    BrainId = brainGrandchild.ToProtoUuid(),
+                    SpeciesId = "species.grandchild",
+                    SpeciesDisplayName = "Grandchild",
+                    DecisionReason = "lineage_diverged_new_species",
+                    AssignedMs = 1200,
+                    DecisionMetadataJson = "{\"lineage\":{\"dominant_species_id\":\"species.child\",\"dominant_species_display_name\":\"Child\"}}"
+                }
+            }
+        };
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => FlattenCladogram(vm.CladogramItems).Any(item => string.Equals(item.SpeciesId, "species.grandchild", StringComparison.Ordinal)));
+
+        var refreshedRoot = vm.CladogramItems[0];
+        var refreshedChild = refreshedRoot.Children[0];
+        Assert.True(refreshedRoot.IsExpanded);
+        Assert.True(refreshedChild.IsExpanded);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_NotesWhenHistoryIsTruncatedByLimit()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 41,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = 999,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 41;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryRows.Count == 1);
+
+        Assert.Contains("loaded-row sample", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.PopulationChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.CladogramRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.CladogramMetricLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_UsesIndependentChartWindow_AndCapsRenderedHistoryRows()
+    {
+        var history = Enumerable
+            .Range(0, 900)
+            .Select(index => new SpeciationMembershipRecord
+            {
+                EpochId = 99,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = index % 2 == 0 ? "species.a" : "species.b",
+                SpeciesDisplayName = index % 2 == 0 ? "Alpha" : "Beta",
+                DecisionReason = index % 2 == 0 ? "lineage_inherit_similarity_match" : "lineage_hysteresis_hold",
+                AssignedMs = (ulong)(1_000 + index),
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.88},\"assignment_policy\":{\"lineage_split_threshold\":0.86,\"lineage_split_guard_margin\":0.025}}"
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.HistoryLimitText = "900";
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryRows.Count > 0);
+
+        Assert.True(client.HistoryCallCount >= 2);
+        Assert.Contains((uint)900, client.RequestedHistoryLimits);
+        Assert.Contains(client.RequestedHistoryLimits, limit => limit > 900);
+        Assert.Equal(400, vm.HistoryRows.Count);
     }
 
     [Fact]
@@ -493,6 +942,48 @@ public class SpeciationPanelViewModelTests
         Assert.True(condition(), "Condition was not met within timeout.");
     }
 
+    private static double ExtractMaxPathX(string pathData)
+    {
+        if (string.IsNullOrWhiteSpace(pathData))
+        {
+            return double.NaN;
+        }
+
+        var tokens = pathData.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        double? maxX = null;
+        for (var i = 0; i < tokens.Length - 1; i++)
+        {
+            var token = tokens[i];
+            if (!string.Equals(token, "M", StringComparison.Ordinal) && !string.Equals(token, "L", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (double.TryParse(
+                    tokens[i + 1],
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var x))
+            {
+                maxX = maxX.HasValue ? Math.Max(maxX.Value, x) : x;
+            }
+        }
+
+        return maxX ?? double.NaN;
+    }
+
+    private static IEnumerable<SpeciationCladogramItem> FlattenCladogram(IEnumerable<SpeciationCladogramItem> roots)
+    {
+        foreach (var root in roots)
+        {
+            yield return root;
+            foreach (var child in FlattenCladogram(root.Children))
+            {
+                yield return child;
+            }
+        }
+    }
+
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
         public SpeciationStatusResponse GetStatusResponse { get; set; } = new()
@@ -575,6 +1066,7 @@ public class SpeciationPanelViewModelTests
         public long LastDeletedEpochId { get; private set; }
         public long? LastMembershipEpochFilter { get; private set; }
         public int HistoryCallCount { get; private set; }
+        public List<uint> RequestedHistoryLimits { get; } = new();
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -630,6 +1122,7 @@ public class SpeciationPanelViewModelTests
             CancellationToken cancellationToken = default)
         {
             HistoryCallCount++;
+            RequestedHistoryLimits.Add(limit);
             return Task.FromResult(HistoryResponse);
         }
     }

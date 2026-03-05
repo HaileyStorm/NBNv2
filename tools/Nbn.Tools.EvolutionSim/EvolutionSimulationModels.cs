@@ -23,12 +23,28 @@ public sealed record EvolutionSimulationOptions
     public EvolutionParentMode ParentMode { get; init; } = EvolutionParentMode.ArtifactRefs;
     public Repro.StrengthSource StrengthSource { get; init; } = Repro.StrengthSource.StrengthBaseOnly;
     public InverseCompatibilityRunPolicy RunPolicy { get; init; } = InverseCompatibilityRunPolicy.Default;
+    public EvolutionRunPressureMode RunPressureMode { get; init; } = EvolutionRunPressureMode.Stability;
+    public EvolutionParentSelectionBias ParentSelectionBias { get; init; } = EvolutionParentSelectionBias.Neutral;
 }
 
 public enum EvolutionParentMode
 {
     ArtifactRefs = 0,
     BrainIds = 1
+}
+
+public enum EvolutionRunPressureMode
+{
+    Divergence = 0,
+    Neutral = 1,
+    Stability = 2
+}
+
+public enum EvolutionParentSelectionBias
+{
+    Divergence = 0,
+    Neutral = 1,
+    Stability = 2
 }
 
 public readonly record struct EvolutionParentRef
@@ -149,7 +165,8 @@ public readonly record struct SpeciationCommitCandidate(
 public readonly record struct SpeciationCommitOutcome(
     bool Success,
     string FailureDetail,
-    bool ExpectedNoOp);
+    bool ExpectedNoOp,
+    string SpeciesId = "");
 
 public interface IEvolutionSimulationClient
 {
@@ -202,5 +219,11 @@ internal sealed class DeterministicRandom
         }
 
         return (int)(NextUInt64() % (ulong)exclusiveMax);
+    }
+
+    public double NextUnitDouble()
+    {
+        const double divisor = ulong.MaxValue + 1d;
+        return NextUInt64() / divisor;
     }
 }
