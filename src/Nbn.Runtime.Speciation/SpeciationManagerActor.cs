@@ -27,6 +27,7 @@ public sealed class SpeciationManagerActor : IActor
     private readonly TimeSpan _settingsRequestTimeout;
     private readonly Dictionary<string, SpeciesSimilarityFloorState> _speciesSimilarityFloors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<RecentDerivedSpeciesHint>> _recentDerivedSpeciesHintsBySourceSpecies = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RecentDerivedSpeciesHint> _recentDerivedSpeciesHintsByTargetSpecies = new(StringComparer.Ordinal);
 
     private bool _initializing;
     private bool _initialized;
@@ -1644,6 +1645,7 @@ public sealed class SpeciationManagerActor : IActor
     {
         _speciesSimilarityFloors.Clear();
         _recentDerivedSpeciesHintsBySourceSpecies.Clear();
+        _recentDerivedSpeciesHintsByTargetSpecies.Clear();
     }
 
     private SpeciesSimilarityFloorState? ResolveDominantSpeciesFloor(LineageEvidence lineageEvidence)
@@ -1741,6 +1743,7 @@ public sealed class SpeciationManagerActor : IActor
         hints.RemoveAll(existing =>
             string.Equals(existing.TargetSpeciesId, hint.TargetSpeciesId, StringComparison.Ordinal));
         hints.Add(hint);
+        _recentDerivedSpeciesHintsByTargetSpecies[hint.TargetSpeciesId] = hint;
 
         hints.Sort(static (left, right) =>
         {
@@ -2262,6 +2265,19 @@ public sealed class SpeciationManagerActor : IActor
         return true;
     }
 
+    private bool TryGetRecentDerivedSpeciesHintByTargetSpecies(
+        string? speciesId,
+        out RecentDerivedSpeciesHint hint)
+    {
+        hint = default;
+        if (string.IsNullOrWhiteSpace(speciesId))
+        {
+            return false;
+        }
+
+        return _recentDerivedSpeciesHintsByTargetSpecies.TryGetValue(speciesId.Trim(), out hint);
+    }
+
     private static bool IsWithinSimilarityBand(
         double centerSimilarity,
         double candidateSimilarity,
@@ -2399,6 +2415,12 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var hasSplitParentEvidence = lineageEvidence.ParentMembershipCount >= _assignmentPolicy.MinParentMembershipsBeforeSplit;
+        var hasInSpeciesEvidence = dominantSpeciesFloor.HasValue
+            && dominantSpeciesFloor.Value.SimilaritySampleCount > 0
+            && dominantSpeciesFloor.Value.MinSimilarityScore.HasValue;
+        var isRecentDerivedDominantSpecies = TryGetRecentDerivedSpeciesHintByTargetSpecies(
+            dominantSpeciesId,
+            out var recentDerivedDominantHint);
         var withinRecentSplitRealignWindow =
             _assignmentPolicy.RecentSplitRealignParentMembershipWindow > 0
             && lineageEvidence.ParentMembershipCount > 0
@@ -2450,6 +2472,18 @@ public sealed class SpeciationManagerActor : IActor
 
         if (similarity <= effectiveSplitThreshold)
         {
+            if (isRecentDerivedDominantSpecies && !hasInSpeciesEvidence)
+            {
+                return BuildSimilarityResolution(
+                    dominantSpeciesId,
+                    dominantSpeciesDisplayName,
+                    DecisionReason: "lineage_split_guarded_newborn_intraspecies_evidence",
+                    Strategy: "lineage_inherit",
+                    StrategyDetail: "Split threshold crossed but the newborn derived species has not yet recorded in-species similarity evidence.",
+                    ForceDecisionReason: true,
+                    recentDerivedHint: recentDerivedDominantHint);
+            }
+
             if (!hasSplitParentEvidence)
             {
                 if (!string.IsNullOrWhiteSpace(lineageEvidence.HysteresisSpeciesId))
