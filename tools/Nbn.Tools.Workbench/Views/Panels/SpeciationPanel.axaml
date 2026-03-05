@@ -203,6 +203,14 @@
                 <TextBlock Text="Realign margin" Classes="muted" />
                 <TextBox Text="{Binding LineageRealignMatchMargin}" Width="84" />
               </StackPanel>
+              <StackPanel Grid.Row="2" Grid.Column="2">
+                <TextBlock Text="Hindsight window" Classes="muted" />
+                <TextBox Text="{Binding LineageHindsightReassignCommitWindow}" Width="112" />
+              </StackPanel>
+              <StackPanel Grid.Row="2" Grid.Column="3">
+                <TextBlock Text="Hindsight margin" Classes="muted" />
+                <TextBox Text="{Binding LineageHindsightSimilarityMargin}" Width="84" />
+              </StackPanel>
             </Grid>
             <CheckBox Content="Create derived species on divergence" IsChecked="{Binding CreateDerivedSpecies}" />
             <StackPanel Orientation="Horizontal" Spacing="8">

@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json.Nodes;
 using Nbn.Proto;
+using Nbn.Proto.Settings;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -27,7 +29,7 @@ public class SpeciationPanelViewModelTests
                     DefaultSpeciesId = "species.alpha",
                     DefaultSpeciesDisplayName = "Alpha",
                     StartupReconcileDecisionReason = "reconcile_on_boot",
-                    ConfigSnapshotJson = "{\"enabled\":false,\"assignment_policy\":{\"lineage_match_threshold\":0.82,\"lineage_split_threshold\":0.66,\"parent_consensus_threshold\":0.55,\"lineage_hysteresis_margin\":0.12,\"lineage_split_guard_margin\":0.04,\"lineage_min_parent_memberships_before_split\":3,\"lineage_realign_parent_membership_window\":5,\"lineage_realign_match_margin\":0.07,\"create_derived_species_on_divergence\":false,\"derived_species_prefix\":\"fork\"}}"
+                    ConfigSnapshotJson = "{\"enabled\":false,\"assignment_policy\":{\"lineage_match_threshold\":0.82,\"lineage_split_threshold\":0.66,\"parent_consensus_threshold\":0.55,\"lineage_hysteresis_margin\":0.12,\"lineage_split_guard_margin\":0.04,\"lineage_min_parent_memberships_before_split\":3,\"lineage_realign_parent_membership_window\":5,\"lineage_realign_match_margin\":0.07,\"lineage_hindsight_reassign_commit_window\":9,\"lineage_hindsight_similarity_margin\":0.023,\"create_derived_species_on_divergence\":false,\"derived_species_prefix\":\"fork\"}}"
                 },
                 CurrentEpoch = new SpeciationEpochInfo { EpochId = 17 }
             }
@@ -51,6 +53,8 @@ public class SpeciationPanelViewModelTests
         Assert.Equal("3", vm.LineageMinParentMembershipsBeforeSplit);
         Assert.Equal("5", vm.LineageRealignParentMembershipWindow);
         Assert.Equal("0.07", vm.LineageRealignMatchMargin);
+        Assert.Equal("9", vm.LineageHindsightReassignCommitWindow);
+        Assert.Equal("0.023", vm.LineageHindsightSimilarityMargin);
         Assert.False(vm.CreateDerivedSpecies);
         Assert.Equal("fork", vm.DerivedSpeciesPrefix);
         Assert.Equal(17L, vm.CurrentEpochId);
@@ -64,12 +68,45 @@ public class SpeciationPanelViewModelTests
         Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageSplitThresholdKey, "0.87", "1")));
         Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageHysteresisMarginKey, "0.03", "1")));
         Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageSplitGuardMarginKey, "0.02", "1")));
+        Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey, "8", "1")));
+        Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey, "0.023", "1")));
         Assert.True(vm.ApplySetting(new SettingItem(SpeciationSettingsKeys.HistoryLimitKey, "100", "1")));
 
         Assert.Equal("0.87", vm.LineageSplitThreshold);
         Assert.Equal("0.03", vm.HysteresisMargin);
         Assert.Equal("0.02", vm.LineageSplitGuardMargin);
+        Assert.Equal("8", vm.LineageHindsightReassignCommitWindow);
+        Assert.Equal("0.023", vm.LineageHindsightSimilarityMargin);
         Assert.Equal("100", vm.HistoryLimitText);
+    }
+
+    [Fact]
+    public void BuildRuntimeConfigFromDraft_IncludesHindsightPolicyFields()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.LineageHindsightReassignCommitWindow = "9";
+        vm.LineageHindsightSimilarityMargin = "0.023";
+
+        var config = InvokeBuildRuntimeConfigFromDraft(vm);
+        var root = Assert.IsType<JsonObject>(JsonNode.Parse(config.ConfigSnapshotJson));
+        var policy = Assert.IsType<JsonObject>(root["assignment_policy"]);
+
+        Assert.Equal(9, policy["lineage_hindsight_reassign_commit_window"]!.GetValue<int>());
+        Assert.Equal(0.023d, policy["lineage_hindsight_similarity_margin"]!.GetValue<double>(), 3);
+    }
+
+    [Fact]
+    public async Task PersistSpeciationSettingsAsync_SavesHindsightSettings()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        vm.LineageHindsightReassignCommitWindow = "-4";
+        vm.LineageHindsightSimilarityMargin = "1.7";
+
+        await InvokePersistSpeciationSettingsAsync(vm);
+
+        Assert.Equal("0", client.SettingUpdates[SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey]);
+        Assert.Equal("1", client.SettingUpdates[SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey]);
     }
 
     [Fact]
@@ -961,6 +998,23 @@ public class SpeciationPanelViewModelTests
             enableLiveChartsAutoRefresh: enableAutoRefresh);
     }
 
+    private static SpeciationRuntimeConfig InvokeBuildRuntimeConfigFromDraft(SpeciationPanelViewModel vm)
+    {
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "BuildRuntimeConfigFromDraft",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        return Assert.IsType<SpeciationRuntimeConfig>(method!.Invoke(vm, null));
+    }
+
+    private static async Task InvokePersistSpeciationSettingsAsync(SpeciationPanelViewModel vm)
+    {
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "PersistSpeciationSettingsAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var task = Assert.IsAssignableFrom<Task>(method!.Invoke(vm, null));
+        await task;
+    }
+
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)
     {
         var sw = Stopwatch.StartNew();
@@ -1102,6 +1156,7 @@ public class SpeciationPanelViewModelTests
         public long? LastMembershipEpochFilter { get; private set; }
         public int HistoryCallCount { get; private set; }
         public List<uint> RequestedHistoryLimits { get; } = new();
+        public Dictionary<string, string> SettingUpdates { get; } = new(StringComparer.Ordinal);
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -1159,6 +1214,17 @@ public class SpeciationPanelViewModelTests
             HistoryCallCount++;
             RequestedHistoryLimits.Add(limit);
             return Task.FromResult(HistoryResponse);
+        }
+
+        public override Task<SettingValue?> SetSettingAsync(string key, string value)
+        {
+            SettingUpdates[key] = value;
+            return Task.FromResult<SettingValue?>(new SettingValue
+            {
+                Key = key,
+                Value = value,
+                UpdatedMs = 1UL
+            });
         }
     }
 

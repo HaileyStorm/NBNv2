@@ -101,6 +101,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _lineageMinParentMembershipsBeforeSplit = "1";
     private string _lineageRealignParentMembershipWindow = "3";
     private string _lineageRealignMatchMargin = "0.05";
+    private string _lineageHindsightReassignCommitWindow = "6";
+    private string _lineageHindsightSimilarityMargin = "0.015";
     private bool _createDerivedSpecies = true;
     private string _derivedSpeciesPrefix = "branch";
     private bool _startNewEpochConfirmPending;
@@ -427,6 +429,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _lineageRealignMatchMargin;
         set => SetProperty(ref _lineageRealignMatchMargin, value);
+    }
+
+    public string LineageHindsightReassignCommitWindow
+    {
+        get => _lineageHindsightReassignCommitWindow;
+        set => SetProperty(ref _lineageHindsightReassignCommitWindow, value);
+    }
+
+    public string LineageHindsightSimilarityMargin
+    {
+        get => _lineageHindsightSimilarityMargin;
+        set => SetProperty(ref _lineageHindsightSimilarityMargin, value);
     }
 
     public bool CreateDerivedSpecies
@@ -937,6 +951,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         if (string.Equals(key, SpeciationSettingsKeys.LineageRealignMatchMarginKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageRealignMatchMargin = ParseDouble(value, 0.05d).ToString("0.###", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageHindsightReassignCommitWindow = Math.Max(0, ParseInt(value, 6)).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (string.Equals(key, SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey, StringComparison.OrdinalIgnoreCase))
+        {
+            LineageHindsightSimilarityMargin = ParseDouble(value, 0.015d).ToString("0.###", CultureInfo.InvariantCulture);
             return true;
         }
 
@@ -1724,6 +1750,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             LineageMinParentMembershipsBeforeSplit = snapshot.LineageMinParentMembershipsBeforeSplit.ToString(CultureInfo.InvariantCulture);
             LineageRealignParentMembershipWindow = snapshot.LineageRealignParentMembershipWindow.ToString(CultureInfo.InvariantCulture);
             LineageRealignMatchMargin = snapshot.LineageRealignMatchMargin.ToString("0.###", CultureInfo.InvariantCulture);
+            LineageHindsightReassignCommitWindow = snapshot.LineageHindsightReassignCommitWindow.ToString(CultureInfo.InvariantCulture);
+            LineageHindsightSimilarityMargin = snapshot.LineageHindsightSimilarityMargin.ToString("0.###", CultureInfo.InvariantCulture);
             CreateDerivedSpecies = snapshot.CreateDerivedSpecies;
             DerivedSpeciesPrefix = snapshot.DerivedSpeciesPrefix;
         });
@@ -1744,6 +1772,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var minParentMembershipsBeforeSplit = Math.Max(1, ParseInt(LineageMinParentMembershipsBeforeSplit, 1));
         var realignParentMembershipWindow = Math.Max(0, ParseInt(LineageRealignParentMembershipWindow, 3));
         var realignMatchMargin = Clamp01(ParseDouble(LineageRealignMatchMargin, 0.05d));
+        var hindsightReassignCommitWindow = Math.Max(0, ParseInt(LineageHindsightReassignCommitWindow, 6));
+        var hindsightSimilarityMargin = Clamp01(ParseDouble(LineageHindsightSimilarityMargin, 0.015d));
         var derivedPrefix = string.IsNullOrWhiteSpace(DerivedSpeciesPrefix) ? "branch" : DerivedSpeciesPrefix.Trim();
         var snapshot = new JsonObject
         {
@@ -1758,6 +1788,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 ["lineage_min_parent_memberships_before_split"] = minParentMembershipsBeforeSplit,
                 ["lineage_realign_parent_membership_window"] = realignParentMembershipWindow,
                 ["lineage_realign_match_margin"] = realignMatchMargin,
+                ["lineage_hindsight_reassign_commit_window"] = hindsightReassignCommitWindow,
+                ["lineage_hindsight_similarity_margin"] = hindsightSimilarityMargin,
                 ["create_derived_species_on_divergence"] = CreateDerivedSpecies,
                 ["derived_species_prefix"] = derivedPrefix
             }
@@ -1787,6 +1819,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         int LineageMinParentMembershipsBeforeSplit,
         int LineageRealignParentMembershipWindow,
         double LineageRealignMatchMargin,
+        int LineageHindsightReassignCommitWindow,
+        double LineageHindsightSimilarityMargin,
         bool CreateDerivedSpecies,
         string DerivedSpeciesPrefix) ParseSnapshot(string snapshotJson)
     {
@@ -1800,6 +1834,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             LineageMinParentMembershipsBeforeSplit: 1,
             LineageRealignParentMembershipWindow: 3,
             LineageRealignMatchMargin: 0.05d,
+            LineageHindsightReassignCommitWindow: 6,
+            LineageHindsightSimilarityMargin: 0.015d,
             CreateDerivedSpecies: true,
             DerivedSpeciesPrefix: "branch");
 
@@ -1838,6 +1874,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                     ?? defaults.LineageRealignParentMembershipWindow,
                     defaults.LineageRealignParentMembershipWindow));
             var realignMatchMargin = Clamp01(TryReadDouble(policy, "lineage_realign_match_margin", "lineageRealignMatchMargin") ?? defaults.LineageRealignMatchMargin);
+            var hindsightReassignCommitWindow = Math.Max(
+                0,
+                RoundToNonNegativeInt(
+                    TryReadDouble(policy, "lineage_hindsight_reassign_commit_window", "lineageHindsightReassignCommitWindow")
+                    ?? defaults.LineageHindsightReassignCommitWindow,
+                    defaults.LineageHindsightReassignCommitWindow));
+            var hindsightSimilarityMargin = Clamp01(
+                TryReadDouble(policy, "lineage_hindsight_similarity_margin", "lineageHindsightSimilarityMargin")
+                ?? defaults.LineageHindsightSimilarityMargin);
             var createDerived = TryReadBool(policy, "create_derived_species_on_divergence", "createDerivedSpeciesOnDivergence")
                                 ?? defaults.CreateDerivedSpecies;
             var prefix = TryReadString(policy, "derived_species_prefix", "derivedSpeciesPrefix")
@@ -1852,6 +1897,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 minParentMembershipsBeforeSplit,
                 realignParentMembershipWindow,
                 realignMatchMargin,
+                hindsightReassignCommitWindow,
+                hindsightSimilarityMargin,
                 createDerived,
                 string.IsNullOrWhiteSpace(prefix) ? "branch" : prefix.Trim());
         }
@@ -1971,6 +2018,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             [SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey] = Math.Max(1, ParseInt(LineageMinParentMembershipsBeforeSplit, 1)).ToString(CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey] = Math.Max(0, ParseInt(LineageRealignParentMembershipWindow, 3)).ToString(CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.LineageRealignMatchMarginKey] = Clamp01(ParseDouble(LineageRealignMatchMargin, 0.05d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey] = Math.Max(0, ParseInt(LineageHindsightReassignCommitWindow, 6)).ToString(CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey] = Clamp01(ParseDouble(LineageHindsightSimilarityMargin, 0.015d)).ToString("0.###", CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey] = CreateDerivedSpecies ? "true" : "false",
             [SpeciationSettingsKeys.DerivedSpeciesPrefixKey] = string.IsNullOrWhiteSpace(DerivedSpeciesPrefix) ? "branch" : DerivedSpeciesPrefix.Trim(),
             [SpeciationSettingsKeys.HistoryLimitKey] = Math.Max(1u, ParseUInt(HistoryLimitText, DefaultHistoryLimit)).ToString(CultureInfo.InvariantCulture)
