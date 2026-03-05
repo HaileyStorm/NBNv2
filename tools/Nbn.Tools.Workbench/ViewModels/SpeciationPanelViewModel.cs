@@ -3431,6 +3431,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         similarity = 0d;
         splitThreshold = Clamp01(fallbackSplitThreshold);
         var splitGuardMargin = Clamp01(fallbackSplitGuardMargin);
+        var hasExplicitEffectiveSplitThreshold = false;
         proximity = 0d;
         if (!TryExtractSimilarityScore(metadataJson, out similarity))
         {
@@ -3445,15 +3446,26 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 using var document = JsonDocument.Parse(metadataJson);
                 var root = document.RootElement;
                 if (root.TryGetProperty("assignment_policy", out var policy)
-                    && (TryGetJsonDouble(policy, "lineage_split_threshold", out splitThreshold)
+                    && (TryGetJsonDouble(policy, "lineage_dynamic_split_threshold", out splitThreshold)
+                        || TryGetJsonDouble(policy, "lineageDynamicSplitThreshold", out splitThreshold)
+                        || TryGetJsonDouble(policy, "lineage_split_threshold", out splitThreshold)
                         || TryGetJsonDouble(policy, "lineageSplitThreshold", out splitThreshold)))
                 {
                     splitThreshold = Clamp01(splitThreshold);
+                    hasExplicitEffectiveSplitThreshold =
+                        TryGetJsonDouble(policy, "lineage_dynamic_split_threshold", out _)
+                        || TryGetJsonDouble(policy, "lineageDynamicSplitThreshold", out _);
                     if (TryGetJsonDouble(policy, "lineage_split_guard_margin", out var policySplitGuardMargin)
                         || TryGetJsonDouble(policy, "lineageSplitGuardMargin", out policySplitGuardMargin))
                     {
                         splitGuardMargin = Clamp01(policySplitGuardMargin);
                     }
+                }
+                else if (TryGetJsonDouble(root, "lineage_dynamic_split_threshold", out var rootDynamicSplitThreshold)
+                         || TryGetJsonDouble(root, "lineageDynamicSplitThreshold", out rootDynamicSplitThreshold))
+                {
+                    splitThreshold = Clamp01(rootDynamicSplitThreshold);
+                    hasExplicitEffectiveSplitThreshold = true;
                 }
                 else if (TryGetJsonDouble(root, "lineage_split_threshold", out var rootSplitThreshold)
                          || TryGetJsonDouble(root, "lineageSplitThreshold", out rootSplitThreshold))
@@ -3472,7 +3484,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             }
         }
 
-        splitThreshold = Math.Max(0d, splitThreshold - splitGuardMargin);
+        if (!hasExplicitEffectiveSplitThreshold)
+        {
+            splitThreshold = Math.Max(0d, splitThreshold - splitGuardMargin);
+        }
         proximity = similarity - splitThreshold;
         return true;
     }

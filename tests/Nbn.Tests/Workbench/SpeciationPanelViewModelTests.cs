@@ -546,6 +546,41 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_UsesDynamicSplitThresholdFromMetadataWhenAvailable()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 42,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson =
+                    "{\"scores\":{\"similarity_score\":0.83},\"assignment_policy\":{\"lineage_split_threshold\":0.60,\"lineage_split_guard_margin\":0.00,\"lineage_dynamic_split_threshold\":0.86,\"lineage_split_threshold_source\":\"species_floor\"}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 42;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 1);
+
+        Assert.Contains("effective split 0.86", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("min=-0.03", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_SingleEpochMultiRowHistory_SpansChartWidth()
     {
         var history = new[]
