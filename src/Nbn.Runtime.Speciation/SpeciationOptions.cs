@@ -10,20 +10,21 @@ public sealed record SpeciationOptions(
     string ServiceName,
     string? SettingsHost,
     int SettingsPort,
-    string SettingsName,
-    string PolicyVersion,
-    string DefaultSpeciesId,
-    string DefaultSpeciesDisplayName,
-    string StartupReconcileDecisionReason,
-    string ConfigSnapshotJson)
+    string SettingsName)
 {
+    public const string DefaultPolicyVersion = "default";
+    public const string DefaultSpeciesId = "species.default";
+    public const string DefaultSpeciesDisplayName = "Default species";
+    public const string DefaultStartupReconcileDecisionReason = "startup_reconcile";
+    public const string DefaultConfigSnapshotJson = "{}";
+
     public SpeciationRuntimeConfig ToRuntimeConfig()
         => new(
-            PolicyVersion,
-            ConfigSnapshotJson,
+            DefaultPolicyVersion,
+            DefaultConfigSnapshotJson,
             DefaultSpeciesId,
             DefaultSpeciesDisplayName,
-            StartupReconcileDecisionReason);
+            DefaultStartupReconcileDecisionReason);
 
     public static SpeciationOptions FromArgs(string[] args)
     {
@@ -37,11 +38,6 @@ public sealed record SpeciationOptions(
         var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
-        var policyVersion = GetEnv("NBN_SPECIATION_POLICY_VERSION") ?? "v1";
-        var defaultSpeciesId = GetEnv("NBN_SPECIATION_DEFAULT_SPECIES_ID") ?? "unclassified";
-        var defaultSpeciesName = GetEnv("NBN_SPECIATION_DEFAULT_SPECIES_NAME") ?? "Unclassified";
-        var startupReconcileReason = GetEnv("NBN_SPECIATION_RECONCILE_REASON") ?? "startup_reconcile";
-        var configSnapshotJson = GetEnv("NBN_SPECIATION_CONFIG_JSON") ?? "{}";
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -114,36 +110,6 @@ public sealed record SpeciationOptions(
                     if (i + 1 < args.Length)
                     {
                         settingsName = args[++i];
-                    }
-                    continue;
-                case "--policy-version":
-                    if (i + 1 < args.Length)
-                    {
-                        policyVersion = args[++i];
-                    }
-                    continue;
-                case "--default-species-id":
-                    if (i + 1 < args.Length)
-                    {
-                        defaultSpeciesId = args[++i];
-                    }
-                    continue;
-                case "--default-species-name":
-                    if (i + 1 < args.Length)
-                    {
-                        defaultSpeciesName = args[++i];
-                    }
-                    continue;
-                case "--reconcile-reason":
-                    if (i + 1 < args.Length)
-                    {
-                        startupReconcileReason = args[++i];
-                    }
-                    continue;
-                case "--config-json":
-                    if (i + 1 < args.Length)
-                    {
-                        configSnapshotJson = args[++i];
                     }
                     continue;
             }
@@ -222,35 +188,6 @@ public sealed record SpeciationOptions(
                 settingsName = arg.Substring("--settings-name=".Length);
                 continue;
             }
-
-            if (arg.StartsWith("--policy-version=", StringComparison.OrdinalIgnoreCase))
-            {
-                policyVersion = arg.Substring("--policy-version=".Length);
-                continue;
-            }
-
-            if (arg.StartsWith("--default-species-id=", StringComparison.OrdinalIgnoreCase))
-            {
-                defaultSpeciesId = arg.Substring("--default-species-id=".Length);
-                continue;
-            }
-
-            if (arg.StartsWith("--default-species-name=", StringComparison.OrdinalIgnoreCase))
-            {
-                defaultSpeciesName = arg.Substring("--default-species-name=".Length);
-                continue;
-            }
-
-            if (arg.StartsWith("--reconcile-reason=", StringComparison.OrdinalIgnoreCase))
-            {
-                startupReconcileReason = arg.Substring("--reconcile-reason=".Length);
-                continue;
-            }
-
-            if (arg.StartsWith("--config-json=", StringComparison.OrdinalIgnoreCase))
-            {
-                configSnapshotJson = arg.Substring("--config-json=".Length);
-            }
         }
 
         return new SpeciationOptions(
@@ -263,12 +200,7 @@ public sealed record SpeciationOptions(
             serviceName,
             string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
             settingsPort,
-            settingsName,
-            policyVersion,
-            defaultSpeciesId,
-            defaultSpeciesName,
-            startupReconcileReason,
-            configSnapshotJson);
+            settingsName);
     }
 
     public static string GetDefaultDatabasePath()
@@ -306,10 +238,6 @@ public sealed record SpeciationOptions(
         Console.WriteLine("  --settings-host <host>               SettingsMonitor host (default 127.0.0.1)");
         Console.WriteLine("  --settings-port <port>               SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
-        Console.WriteLine("  --policy-version <version>           Policy version for epoch decisions (default v1)");
-        Console.WriteLine("  --default-species-id <id>            Default species id (default unclassified)");
-        Console.WriteLine("  --default-species-name <name>        Default species name (default Unclassified)");
-        Console.WriteLine("  --reconcile-reason <reason>          Decision reason for startup reconcile");
-        Console.WriteLine("  --config-json <json>                 Epoch config snapshot JSON");
+        Console.WriteLine("  Speciation policy defaults/config are loaded from SettingsMonitor keys (workbench.speciation.*).");
     }
 }

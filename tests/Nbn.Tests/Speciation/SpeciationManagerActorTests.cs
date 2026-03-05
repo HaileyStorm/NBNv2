@@ -72,9 +72,153 @@ public sealed class SpeciationManagerActorTests
             foreach (var brainId in knownBrains)
             {
                 Assert.True(membershipByBrain.ContainsKey(brainId));
-                Assert.Equal(runtimeConfig.DefaultSpeciesId, membershipByBrain[brainId].SpeciesId);
+                Assert.Equal(SpeciationOptions.DefaultSpeciesId, membershipByBrain[brainId].SpeciesId);
                 Assert.Equal("startup_reconcile", membershipByBrain[brainId].DecisionReason);
             }
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Started_LoadsRuntimeConfigFromSettingsMonitorKeys()
+    {
+        using var settingsDb = new TempDatabaseScope("settings-monitor.db");
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+
+        var settingsStore = new SettingsMonitorStore(settingsDb.DatabasePath);
+        await settingsStore.InitializeAsync();
+
+        var system = new ActorSystem();
+        try
+        {
+            var settingsPid = system.Root.Spawn(Props.FromProducer(() => new SettingsMonitorActor(settingsStore)));
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.PolicyVersionKey,
+                Value = "settings-policy-v2"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.DefaultSpeciesIdKey,
+                Value = "species.settings"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey,
+                Value = "Settings Species"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.StartupReconcileReasonKey,
+                Value = "settings_reconcile"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.ConfigEnabledKey,
+                Value = "false"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageMatchThresholdKey,
+                Value = "0.91"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageSplitThresholdKey,
+                Value = "0.87"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.ParentConsensusThresholdKey,
+                Value = "0.66"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageHysteresisMarginKey,
+                Value = "0.03"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageSplitGuardMarginKey,
+                Value = "0.01"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey,
+                Value = "2"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey,
+                Value = "4"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.LineageRealignMatchMarginKey,
+                Value = "0.06"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey,
+                Value = "false"
+            });
+            await system.Root.RequestAsync<ProtoSettings.SettingValue>(settingsPid, new ProtoSettings.SettingSet
+            {
+                Key = SpeciationSettingsKeys.DerivedSpeciesPrefixKey,
+                Value = "twig"
+            });
+
+            var fallbackRuntimeConfig = new SpeciationRuntimeConfig(
+                PolicyVersion: "cli-policy",
+                ConfigSnapshotJson: "{\"assignment_policy\":{\"lineage_match_threshold\":0.33}}",
+                DefaultSpeciesId: "cli-species",
+                DefaultSpeciesDisplayName: "CLI Species",
+                StartupReconcileDecisionReason: "cli_reconcile");
+
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    fallbackRuntimeConfig,
+                    settingsPid: settingsPid,
+                    settingsRequestTimeout: TimeSpan.FromSeconds(2))));
+
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var config = await system.Root.RequestAsync<ProtoSpec.SpeciationGetConfigResponse>(
+                        managerPid,
+                        new ProtoSpec.SpeciationGetConfigRequest());
+                    return config.FailureReason == ProtoSpec.SpeciationFailureReason.SpeciationFailureNone
+                           && string.Equals(config.Config.PolicyVersion, "settings-policy-v2", StringComparison.Ordinal)
+                           && string.Equals(config.Config.DefaultSpeciesId, "species.settings", StringComparison.Ordinal);
+                },
+                TimeSpan.FromSeconds(8));
+
+            var response = await system.Root.RequestAsync<ProtoSpec.SpeciationGetConfigResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationGetConfigRequest());
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, response.FailureReason);
+            Assert.Equal("settings-policy-v2", response.Config.PolicyVersion);
+            Assert.Equal("species.settings", response.Config.DefaultSpeciesId);
+            Assert.Equal("Settings Species", response.Config.DefaultSpeciesDisplayName);
+            Assert.Equal("settings_reconcile", response.Config.StartupReconcileDecisionReason);
+
+            using var snapshot = JsonDocument.Parse(response.Config.ConfigSnapshotJson);
+            Assert.False(snapshot.RootElement.GetProperty("enabled").GetBoolean());
+            var policy = snapshot.RootElement.GetProperty("assignment_policy");
+            Assert.Equal(0.91d, policy.GetProperty("lineage_match_threshold").GetDouble(), 3);
+            Assert.Equal(0.87d, policy.GetProperty("lineage_split_threshold").GetDouble(), 3);
+            Assert.Equal(0.66d, policy.GetProperty("parent_consensus_threshold").GetDouble(), 3);
+            Assert.Equal(0.03d, policy.GetProperty("lineage_hysteresis_margin").GetDouble(), 3);
+            Assert.Equal(0.01d, policy.GetProperty("lineage_split_guard_margin").GetDouble(), 3);
+            Assert.Equal(2, policy.GetProperty("lineage_min_parent_memberships_before_split").GetInt32());
+            Assert.Equal(4, policy.GetProperty("lineage_realign_parent_membership_window").GetInt32());
+            Assert.Equal(0.06d, policy.GetProperty("lineage_realign_match_margin").GetDouble(), 3);
+            Assert.False(policy.GetProperty("create_derived_species_on_divergence").GetBoolean());
+            Assert.Equal("twig", policy.GetProperty("derived_species_prefix").GetString());
         }
         finally
         {
@@ -1143,10 +1287,10 @@ public sealed class SpeciationManagerActorTests
 
             using var metadata = JsonDocument.Parse(childDecision.Decision.DecisionMetadataJson);
             var policy = metadata.RootElement.GetProperty("assignment_policy");
-            Assert.Equal(0.90d, policy.GetProperty("lineage_match_threshold").GetDouble(), 3);
-            Assert.Equal(0.86d, policy.GetProperty("lineage_split_threshold").GetDouble(), 3);
-            Assert.Equal(0.82d, policy.GetProperty("lineage_effective_split_threshold").GetDouble(), 3);
-            Assert.Equal(0.04d, policy.GetProperty("lineage_split_guard_margin").GetDouble(), 3);
+            Assert.Equal(0.92d, policy.GetProperty("lineage_match_threshold").GetDouble(), 3);
+            Assert.Equal(0.88d, policy.GetProperty("lineage_split_threshold").GetDouble(), 3);
+            Assert.Equal(0.86d, policy.GetProperty("lineage_effective_split_threshold").GetDouble(), 3);
+            Assert.Equal(0.02d, policy.GetProperty("lineage_split_guard_margin").GetDouble(), 3);
             Assert.Equal(1, policy.GetProperty("lineage_min_parent_memberships_before_split").GetInt32());
             Assert.Equal(0.70d, policy.GetProperty("parent_consensus_threshold").GetDouble(), 3);
         }

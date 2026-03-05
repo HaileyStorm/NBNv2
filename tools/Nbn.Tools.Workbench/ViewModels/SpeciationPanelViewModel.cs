@@ -93,11 +93,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _defaultSpeciesId = "species.default";
     private string _defaultSpeciesDisplayName = "Default species";
     private string _startupReconcileReason = "startup_reconcile";
-    private string _lineageMatchThreshold = "0.90";
-    private string _lineageSplitThreshold = "0.86";
+    private string _lineageMatchThreshold = "0.92";
+    private string _lineageSplitThreshold = "0.88";
     private string _parentConsensusThreshold = "0.70";
-    private string _hysteresisMargin = "0.05";
-    private string _lineageSplitGuardMargin = "0.04";
+    private string _hysteresisMargin = "0.04";
+    private string _lineageSplitGuardMargin = "0.02";
     private string _lineageMinParentMembershipsBeforeSplit = "1";
     private string _lineageRealignParentMembershipWindow = "3";
     private string _lineageRealignMatchMargin = "0.05";
@@ -894,13 +894,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageMatchThresholdKey, StringComparison.OrdinalIgnoreCase))
         {
-            LineageMatchThreshold = ParseDouble(value, 0.90d).ToString("0.###", CultureInfo.InvariantCulture);
+            LineageMatchThreshold = ParseDouble(value, 0.92d).ToString("0.###", CultureInfo.InvariantCulture);
             return true;
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageSplitThresholdKey, StringComparison.OrdinalIgnoreCase))
         {
-            LineageSplitThreshold = ParseDouble(value, 0.86d).ToString("0.###", CultureInfo.InvariantCulture);
+            LineageSplitThreshold = ParseDouble(value, 0.88d).ToString("0.###", CultureInfo.InvariantCulture);
             return true;
         }
 
@@ -912,13 +912,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageHysteresisMarginKey, StringComparison.OrdinalIgnoreCase))
         {
-            HysteresisMargin = ParseDouble(value, 0.05d).ToString("0.###", CultureInfo.InvariantCulture);
+            HysteresisMargin = ParseDouble(value, 0.04d).ToString("0.###", CultureInfo.InvariantCulture);
             return true;
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageSplitGuardMarginKey, StringComparison.OrdinalIgnoreCase))
         {
-            LineageSplitGuardMargin = ParseDouble(value, 0.04d).ToString("0.###", CultureInfo.InvariantCulture);
+            LineageSplitGuardMargin = ParseDouble(value, 0.02d).ToString("0.###", CultureInfo.InvariantCulture);
             return true;
         }
 
@@ -1400,8 +1400,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
             chartResponse.History,
             CurrentEpochId,
-            ParseDouble(LineageSplitThreshold, 0.86d),
-            ParseDouble(LineageSplitGuardMargin, 0.04d));
+            ParseDouble(LineageSplitThreshold, 0.88d),
+            ParseDouble(LineageSplitGuardMargin, 0.02d));
         var cladogramSourceHistory = cladogramResponse?.History ?? chartResponse.History;
         var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory);
         var chartHistoryTruncated = chartResponse.TotalRecords > (uint)chartResponse.History.Count;
@@ -1731,7 +1731,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private SpeciationRuntimeConfig BuildRuntimeConfigFromDraft()
     {
-        var matchThreshold = Clamp01(ParseDouble(LineageMatchThreshold, 0.90));
+        var matchThreshold = Clamp01(ParseDouble(LineageMatchThreshold, 0.92));
         var splitThreshold = Clamp01(ParseDouble(LineageSplitThreshold, Math.Max(0d, matchThreshold - 0.04d)));
         if (splitThreshold > matchThreshold)
         {
@@ -1740,7 +1740,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var parentConsensus = Clamp01(ParseDouble(ParentConsensusThreshold, 0.70));
         var hysteresisMargin = Math.Max(0d, ParseDouble(HysteresisMargin, Math.Max(0d, matchThreshold - splitThreshold)));
-        var splitGuardMargin = Clamp01(ParseDouble(LineageSplitGuardMargin, 0.04d));
+        var splitGuardMargin = Clamp01(ParseDouble(LineageSplitGuardMargin, 0.02d));
         var minParentMembershipsBeforeSplit = Math.Max(1, ParseInt(LineageMinParentMembershipsBeforeSplit, 1));
         var realignParentMembershipWindow = Math.Max(0, ParseInt(LineageRealignParentMembershipWindow, 3));
         var realignMatchMargin = Clamp01(ParseDouble(LineageRealignMatchMargin, 0.05d));
@@ -1792,11 +1792,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         var defaults = (
             Enabled: true,
-            MatchThreshold: 0.90d,
-            SplitThreshold: 0.86d,
+            MatchThreshold: 0.92d,
+            SplitThreshold: 0.88d,
             ParentConsensusThreshold: 0.70d,
-            HysteresisMargin: 0.05d,
-            LineageSplitGuardMargin: 0.04d,
+            HysteresisMargin: 0.04d,
+            LineageSplitGuardMargin: 0.02d,
             LineageMinParentMembershipsBeforeSplit: 1,
             LineageRealignParentMembershipWindow: 3,
             LineageRealignMatchMargin: 0.05d,
@@ -1963,11 +1963,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             [SpeciationSettingsKeys.DefaultSpeciesIdKey] = string.IsNullOrWhiteSpace(DefaultSpeciesId) ? "species.default" : DefaultSpeciesId.Trim(),
             [SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey] = string.IsNullOrWhiteSpace(DefaultSpeciesDisplayName) ? "Default species" : DefaultSpeciesDisplayName.Trim(),
             [SpeciationSettingsKeys.StartupReconcileReasonKey] = string.IsNullOrWhiteSpace(StartupReconcileReason) ? "startup_reconcile" : StartupReconcileReason.Trim(),
-            [SpeciationSettingsKeys.LineageMatchThresholdKey] = Clamp01(ParseDouble(LineageMatchThreshold, 0.90d)).ToString("0.###", CultureInfo.InvariantCulture),
-            [SpeciationSettingsKeys.LineageSplitThresholdKey] = Clamp01(ParseDouble(LineageSplitThreshold, 0.86d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageMatchThresholdKey] = Clamp01(ParseDouble(LineageMatchThreshold, 0.92d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageSplitThresholdKey] = Clamp01(ParseDouble(LineageSplitThreshold, 0.88d)).ToString("0.###", CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.ParentConsensusThresholdKey] = Clamp01(ParseDouble(ParentConsensusThreshold, 0.70d)).ToString("0.###", CultureInfo.InvariantCulture),
-            [SpeciationSettingsKeys.LineageHysteresisMarginKey] = Math.Max(0d, ParseDouble(HysteresisMargin, 0.05d)).ToString("0.###", CultureInfo.InvariantCulture),
-            [SpeciationSettingsKeys.LineageSplitGuardMarginKey] = Clamp01(ParseDouble(LineageSplitGuardMargin, 0.04d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageHysteresisMarginKey] = Math.Max(0d, ParseDouble(HysteresisMargin, 0.04d)).ToString("0.###", CultureInfo.InvariantCulture),
+            [SpeciationSettingsKeys.LineageSplitGuardMarginKey] = Clamp01(ParseDouble(LineageSplitGuardMargin, 0.02d)).ToString("0.###", CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey] = Math.Max(1, ParseInt(LineageMinParentMembershipsBeforeSplit, 1)).ToString(CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey] = Math.Max(0, ParseInt(LineageRealignParentMembershipWindow, 3)).ToString(CultureInfo.InvariantCulture),
             [SpeciationSettingsKeys.LineageRealignMatchMarginKey] = Clamp01(ParseDouble(LineageRealignMatchMargin, 0.05d)).ToString("0.###", CultureInfo.InvariantCulture),

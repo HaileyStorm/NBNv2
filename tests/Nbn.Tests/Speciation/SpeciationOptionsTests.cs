@@ -21,4 +21,17 @@ public sealed class SpeciationOptionsTests
 
         Assert.Equal(explicitPath, options.DatabasePath);
     }
+
+    [Fact]
+    public void ToRuntimeConfig_UsesSettingsBackedFallbackDefaults()
+    {
+        var options = SpeciationOptions.FromArgs(Array.Empty<string>());
+
+        var runtimeConfig = options.ToRuntimeConfig();
+        Assert.Equal(SpeciationOptions.DefaultPolicyVersion, runtimeConfig.PolicyVersion);
+        Assert.Equal(SpeciationOptions.DefaultSpeciesId, runtimeConfig.DefaultSpeciesId);
+        Assert.Equal(SpeciationOptions.DefaultSpeciesDisplayName, runtimeConfig.DefaultSpeciesDisplayName);
+        Assert.Equal(SpeciationOptions.DefaultStartupReconcileDecisionReason, runtimeConfig.StartupReconcileDecisionReason);
+        Assert.Equal(SpeciationOptions.DefaultConfigSnapshotJson, runtimeConfig.ConfigSnapshotJson);
+    }
 }

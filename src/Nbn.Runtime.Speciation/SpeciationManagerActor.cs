@@ -117,7 +117,7 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         _initializing = true;
-        var initializeTask = InitializeStoreAsync();
+        var initializeTask = InitializeStoreAsync(context);
         context.ReenterAfter(initializeTask, completed =>
         {
             _initializing = false;
@@ -134,10 +134,49 @@ public sealed class SpeciationManagerActor : IActor
         });
     }
 
-    private async Task<SpeciationEpochInfo> InitializeStoreAsync()
+    private async Task<SpeciationEpochInfo> InitializeStoreAsync(IContext context)
     {
         await _store.InitializeAsync().ConfigureAwait(false);
+        _runtimeConfig = await ResolveRuntimeConfigFromSettingsAsync(context, _runtimeConfig).ConfigureAwait(false);
+        _assignmentPolicy = BuildAssignmentPolicy(_runtimeConfig);
         return await _store.EnsureCurrentEpochAsync(_runtimeConfig).ConfigureAwait(false);
+    }
+
+    private async Task<SpeciationRuntimeConfig> ResolveRuntimeConfigFromSettingsAsync(
+        IContext context,
+        SpeciationRuntimeConfig fallback)
+    {
+        if (_settingsPid is null)
+        {
+            return fallback;
+        }
+
+        var settingValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in SpeciationSettingsKeys.AllKeys)
+        {
+            try
+            {
+                var setting = await context.RequestAsync<ProtoSettings.SettingValue>(
+                    _settingsPid,
+                    new ProtoSettings.SettingGet
+                    {
+                        Key = key
+                    },
+                    _settingsRequestTimeout).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(setting?.Value))
+                {
+                    settingValues[key] = setting.Value.Trim();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Speciation startup settings read failed for '{key}': {ex.GetBaseException().Message}");
+            }
+        }
+
+        return settingValues.Count == 0
+            ? fallback
+            : BuildRuntimeConfigFromSettings(settingValues, fallback);
     }
 
     private void StartStartupReconciliation(IContext context)
@@ -1972,17 +2011,17 @@ public sealed class SpeciationManagerActor : IActor
         var policyNode = TryResolvePolicyNode(runtimeConfig.ConfigSnapshotJson);
         var matchThreshold = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.90d,
+            defaultValue: 0.92d,
             "lineage_match_threshold",
             "lineageMatchThreshold"));
         var hysteresisMargin = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.05d,
+            defaultValue: 0.04d,
             "lineage_hysteresis_margin",
             "lineageHysteresisMargin"));
         var resolvedSplitThreshold = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.86d,
+            defaultValue: 0.88d,
             "lineage_split_threshold",
             "lineageSplitThreshold"));
         if (resolvedSplitThreshold > matchThreshold)
@@ -1997,7 +2036,7 @@ public sealed class SpeciationManagerActor : IActor
             "parentConsensusThreshold"));
         var splitGuardMargin = ClampScore(ReadPolicyDouble(
             policyNode,
-            defaultValue: 0.04d,
+            defaultValue: 0.02d,
             "lineage_split_guard_margin",
             "lineageSplitGuardMargin"));
         var minParentMembershipsBeforeSplit = ReadPolicyInt(
@@ -2037,6 +2076,195 @@ public sealed class SpeciationManagerActor : IActor
             RecentSplitRealignMatchMargin: recentSplitRealignMatchMargin,
             CreateDerivedSpeciesOnDivergence: createDerivedSpecies,
             DerivedSpeciesPrefix: derivedSpeciesPrefix);
+    }
+
+    private static SpeciationRuntimeConfig BuildRuntimeConfigFromSettings(
+        IReadOnlyDictionary<string, string> settings,
+        SpeciationRuntimeConfig fallback)
+    {
+        var policyVersion = ReadSettingValue(
+            settings,
+            SpeciationSettingsKeys.PolicyVersionKey,
+            fallback.PolicyVersion,
+            SpeciationOptions.DefaultPolicyVersion);
+        var defaultSpeciesId = ReadSettingValue(
+            settings,
+            SpeciationSettingsKeys.DefaultSpeciesIdKey,
+            fallback.DefaultSpeciesId,
+            SpeciationOptions.DefaultSpeciesId);
+        var defaultSpeciesDisplayName = ReadSettingValue(
+            settings,
+            SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey,
+            fallback.DefaultSpeciesDisplayName,
+            SpeciationOptions.DefaultSpeciesDisplayName);
+        var startupReconcileReason = ReadSettingValue(
+            settings,
+            SpeciationSettingsKeys.StartupReconcileReasonKey,
+            fallback.StartupReconcileDecisionReason,
+            SpeciationOptions.DefaultStartupReconcileDecisionReason);
+
+        var enabled = ParseBoolSetting(
+            ReadSettingValue(settings, SpeciationSettingsKeys.ConfigEnabledKey, fallbackValue: "true", defaultValue: "true"),
+            defaultValue: true);
+        var matchThreshold = ClampScore(ParseDoubleSetting(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.LineageMatchThresholdKey,
+                fallbackValue: null,
+                defaultValue: "0.92"),
+            defaultValue: 0.92d));
+        var splitThreshold = ClampScore(ParseDoubleSetting(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.LineageSplitThresholdKey,
+                fallbackValue: null,
+                defaultValue: "0.88"),
+            defaultValue: 0.88d));
+        if (splitThreshold > matchThreshold)
+        {
+            splitThreshold = matchThreshold;
+        }
+
+        var parentConsensusThreshold = ClampScore(ParseDoubleSetting(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.ParentConsensusThresholdKey,
+                fallbackValue: null,
+                defaultValue: "0.70"),
+            defaultValue: 0.70d));
+        var hysteresisMargin = Math.Max(
+            0d,
+            ParseDoubleSetting(
+                ReadSettingValue(
+                    settings,
+                    SpeciationSettingsKeys.LineageHysteresisMarginKey,
+                    fallbackValue: null,
+                    defaultValue: "0.04"),
+                defaultValue: 0.04d));
+        var splitGuardMargin = ClampScore(ParseDoubleSetting(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.LineageSplitGuardMarginKey,
+                fallbackValue: null,
+                defaultValue: "0.02"),
+            defaultValue: 0.02d));
+        var minParentMembershipsBeforeSplit = Math.Max(
+            1,
+            ParseIntSetting(
+                ReadSettingValue(
+                    settings,
+                    SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey,
+                    fallbackValue: null,
+                    defaultValue: "1"),
+                defaultValue: 1));
+        var realignParentMembershipWindow = Math.Max(
+            0,
+            ParseIntSetting(
+                ReadSettingValue(
+                    settings,
+                    SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey,
+                    fallbackValue: null,
+                    defaultValue: "3"),
+                defaultValue: 3));
+        var realignMatchMargin = ClampScore(ParseDoubleSetting(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.LineageRealignMatchMarginKey,
+                fallbackValue: null,
+                defaultValue: "0.05"),
+            defaultValue: 0.05d));
+        var createDerivedSpecies = ParseBoolSetting(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey,
+                fallbackValue: null,
+                defaultValue: "true"),
+            defaultValue: true);
+        var derivedSpeciesPrefix = NormalizeToken(
+            ReadSettingValue(
+                settings,
+                SpeciationSettingsKeys.DerivedSpeciesPrefixKey,
+                fallbackValue: null,
+                defaultValue: "branch"),
+            "branch");
+
+        var snapshot = new JsonObject
+        {
+            ["enabled"] = enabled,
+            ["assignment_policy"] = new JsonObject
+            {
+                ["lineage_match_threshold"] = matchThreshold,
+                ["lineage_split_threshold"] = splitThreshold,
+                ["parent_consensus_threshold"] = parentConsensusThreshold,
+                ["lineage_hysteresis_margin"] = hysteresisMargin,
+                ["lineage_split_guard_margin"] = splitGuardMargin,
+                ["lineage_min_parent_memberships_before_split"] = minParentMembershipsBeforeSplit,
+                ["lineage_realign_parent_membership_window"] = realignParentMembershipWindow,
+                ["lineage_realign_match_margin"] = realignMatchMargin,
+                ["create_derived_species_on_divergence"] = createDerivedSpecies,
+                ["derived_species_prefix"] = derivedSpeciesPrefix
+            }
+        };
+
+        return new SpeciationRuntimeConfig(
+            PolicyVersion: policyVersion,
+            ConfigSnapshotJson: snapshot.ToJsonString(),
+            DefaultSpeciesId: defaultSpeciesId,
+            DefaultSpeciesDisplayName: defaultSpeciesDisplayName,
+            StartupReconcileDecisionReason: startupReconcileReason);
+    }
+
+    private static string ReadSettingValue(
+        IReadOnlyDictionary<string, string> settings,
+        string key,
+        string? fallbackValue,
+        string defaultValue)
+    {
+        if (settings.TryGetValue(key, out var configured) && !string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(fallbackValue))
+        {
+            return fallbackValue.Trim();
+        }
+
+        return defaultValue;
+    }
+
+    private static bool ParseBoolSetting(string? rawValue, bool defaultValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return defaultValue;
+        }
+
+        return bool.TryParse(rawValue.Trim(), out var parsed) ? parsed : defaultValue;
+    }
+
+    private static double ParseDoubleSetting(string? rawValue, double defaultValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return defaultValue;
+        }
+
+        return double.TryParse(rawValue.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : defaultValue;
+    }
+
+    private static int ParseIntSetting(string? rawValue, int defaultValue)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return defaultValue;
+        }
+
+        return int.TryParse(rawValue.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : defaultValue;
     }
 
     private static JsonObject? TryResolvePolicyNode(string configSnapshotJson)

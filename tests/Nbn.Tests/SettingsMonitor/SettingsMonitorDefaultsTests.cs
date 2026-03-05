@@ -113,17 +113,17 @@ public sealed class SettingsMonitorDefaultsTests
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             SpeciationSettingsKeys.LineageSplitThresholdKey,
             out var splitThreshold));
-        Assert.Equal("0.86", splitThreshold);
+        Assert.Equal("0.88", splitThreshold);
 
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             SpeciationSettingsKeys.LineageHysteresisMarginKey,
             out var hysteresis));
-        Assert.Equal("0.05", hysteresis);
+        Assert.Equal("0.04", hysteresis);
 
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             SpeciationSettingsKeys.LineageSplitGuardMarginKey,
             out var splitGuard));
-        Assert.Equal("0.04", splitGuard);
+        Assert.Equal("0.02", splitGuard);
 
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             SpeciationSettingsKeys.HistoryLimitKey,
