@@ -58,6 +58,7 @@ public class SpeciationPanelViewModelTests
         Assert.False(vm.CreateDerivedSpecies);
         Assert.Equal("fork", vm.DerivedSpeciesPrefix);
         Assert.Equal(17L, vm.CurrentEpochId);
+        Assert.Empty(client.SettingUpdateEvents);
     }
 
     [Fact]
@@ -107,6 +108,18 @@ public class SpeciationPanelViewModelTests
 
         Assert.Equal("0", client.SettingUpdates[SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey]);
         Assert.Equal("1", client.SettingUpdates[SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey]);
+    }
+
+    [Fact]
+    public async Task RefreshStatusCommand_DoesNotPersistSettings()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+
+        vm.RefreshStatusCommand.Execute(null);
+        await WaitForAsync(() => vm.ServiceSummary.StartsWith("Epoch", StringComparison.Ordinal));
+
+        Assert.Empty(client.SettingUpdateEvents);
     }
 
     [Fact]
@@ -302,6 +315,84 @@ public class SpeciationPanelViewModelTests
         Assert.NotNull(vm.SimSelectedParentABrain);
         Assert.NotNull(vm.SimSelectedParentBBrain);
         Assert.NotEqual(vm.SimSelectedParentABrain!.BrainId, vm.SimSelectedParentBBrain!.BrainId);
+    }
+
+    [Fact]
+    public void UpdateActiveBrains_AutoPopulatesEffectiveSeedParents()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Alpha", true),
+            new BrainListItem(brainB, "Beta", true)
+        ]);
+
+        Assert.Equal(2, vm.SimSeedParents.Count);
+        Assert.Contains(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentABrain!.BrainId && item.Source == "Parent A");
+        Assert.Contains(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentBBrain!.BrainId && item.Source == "Parent B");
+    }
+
+    [Fact]
+    public async Task OverrideFiles_ReplaceSelectedSeedParentSlots()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var overrideBrain = Guid.NewGuid();
+        var overridePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        await File.WriteAllTextAsync(overridePath, overrideBrain.ToString("D"));
+
+        try
+        {
+            var vm = CreateViewModel(new FakeWorkbenchClient());
+            vm.UpdateActiveBrains(
+            [
+                new BrainListItem(brainA, "Alpha", true),
+                new BrainListItem(brainB, "Beta", true)
+            ]);
+
+            vm.SimParentBOverrideFilePath = overridePath;
+
+            Assert.Equal(2, vm.SimSeedParents.Count);
+            Assert.Contains(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentABrain!.BrainId && item.Source == "Parent A");
+            Assert.Contains(vm.SimSeedParents, item => item.BrainId == overrideBrain && item.Source == "Parent B override");
+            Assert.DoesNotContain(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentBBrain!.BrainId);
+        }
+        finally
+        {
+            if (File.Exists(overridePath))
+            {
+                File.Delete(overridePath);
+            }
+        }
+    }
+
+    [Fact]
+    public void AddSimSeedParentCommand_AppendsExtrasToEffectiveSeedParents()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Alpha", true),
+            new BrainListItem(brainB, "Beta", true),
+            new BrainListItem(brainC, "Gamma", true)
+        ]);
+        var seededParentIds = new HashSet<Guid>
+        {
+            vm.SimSelectedParentABrain!.BrainId,
+            vm.SimSelectedParentBBrain!.BrainId
+        };
+        vm.SimExtraParentCandidateBrain = vm.SimActiveBrains.Single(entry => !seededParentIds.Contains(entry.BrainId));
+
+        vm.AddSimSeedParentCommand.Execute(null);
+
+        Assert.Equal(3, vm.SimSeedParents.Count);
+        Assert.Contains(vm.SimSeedParents, item => item.BrainId == vm.SimExtraParentCandidateBrain!.BrainId && item.Source == "dropdown");
     }
 
     [Fact]
@@ -514,7 +605,7 @@ public class SpeciationPanelViewModelTests
             HistoryResponse = new SpeciationListHistoryResponse
             {
                 FailureReason = SpeciationFailureReason.SpeciationFailureNone,
-                TotalRecords = (uint)history.Length,
+                TotalRecords = 5000,
                 History = { history }
             }
         };
@@ -522,7 +613,7 @@ public class SpeciationPanelViewModelTests
         vm.CurrentEpochId = 17;
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.HistoryRows.Count == history.Length);
+        await WaitForAsync(() => vm.EpochSummaries.Count == 2);
 
         Assert.Contains("epoch 17", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("0.8", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
@@ -557,7 +648,7 @@ public class SpeciationPanelViewModelTests
         vm.CurrentEpochId = 17;
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.HistoryRows.Count == history.Length);
+        await WaitForAsync(() => vm.EpochSummaries.Count == 1);
 
         Assert.Contains("within-species divergence", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("0.07", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
@@ -940,7 +1031,7 @@ public class SpeciationPanelViewModelTests
         vm.CurrentEpochId = 41;
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.HistoryRows.Count == 1);
+        await WaitForAsync(() => vm.EpochSummaries.Count == 1);
 
         Assert.Contains("loaded-row sample", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("loaded-row sample", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
@@ -954,7 +1045,7 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_UsesIndependentChartWindow_AndCapsRenderedHistoryRows()
+    public async Task RefreshHistoryCommand_UsesIndependentChartWindow_WithoutRetainingRawHistoryRows()
     {
         var history = Enumerable
             .Range(0, 900)
@@ -982,12 +1073,36 @@ public class SpeciationPanelViewModelTests
         vm.HistoryLimitText = "900";
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.HistoryRows.Count > 0);
+        await WaitForAsync(() => vm.EpochSummaries.Count == 1 && vm.PopulationChartSeries.Count == 2);
 
-        Assert.True(client.HistoryCallCount >= 2);
-        Assert.Contains((uint)900, client.RequestedHistoryLimits);
+        Assert.True(client.HistoryCallCount >= 1);
         Assert.Contains(client.RequestedHistoryLimits, limit => limit > 900);
-        Assert.Equal(400, vm.HistoryRows.Count);
+        Assert.Single(vm.EpochSummaries);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_PersistsHistoryLimitOnlyWhenChanged()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.HistoryLimitText = "128";
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => client.HistoryCallCount == 1);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => client.HistoryCallCount == 2);
+
+        Assert.Equal(
+            1,
+            client.SettingUpdateEvents.Count(entry =>
+                string.Equals(entry.Key, SpeciationSettingsKeys.HistoryLimitKey, StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -1057,7 +1172,9 @@ public class SpeciationPanelViewModelTests
         {
             IoHost = "127.0.0.1",
             IoPortText = "12050",
-            IoGateway = "io-gateway"
+            IoGateway = "io-gateway",
+            SettingsConnected = true,
+            SpeciationDiscoverable = true
         };
         return new SpeciationPanelViewModel(
             new UiDispatcher(),
@@ -1228,6 +1345,7 @@ public class SpeciationPanelViewModelTests
         public int HistoryCallCount { get; private set; }
         public List<uint> RequestedHistoryLimits { get; } = new();
         public Dictionary<string, string> SettingUpdates { get; } = new(StringComparer.Ordinal);
+        public List<(string Key, string Value)> SettingUpdateEvents { get; } = new();
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -1290,6 +1408,7 @@ public class SpeciationPanelViewModelTests
         public override Task<SettingValue?> SetSettingAsync(string key, string value)
         {
             SettingUpdates[key] = value;
+            SettingUpdateEvents.Add((key, value));
             return Task.FromResult<SettingValue?>(new SettingValue
             {
                 Key = key,

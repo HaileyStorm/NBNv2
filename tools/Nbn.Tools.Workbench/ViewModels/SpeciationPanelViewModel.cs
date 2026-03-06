@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -38,13 +39,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const int FlowChartTopSpeciesLimit = 8;
     private const int SplitProximityTopSpeciesLimit = 8;
     private const uint DefaultHistoryLimit = 100u;
-    private const uint DefaultChartHistoryLimit = 4096u;
-    private const uint DefaultCladogramHistoryLimit = 32768u;
-    private const int MaxHistoryRowsToRender = 400;
+    private const uint DefaultChartHistoryLimit = 2048u;
+    private const uint DefaultCladogramHistoryLimit = 8192u;
+    private static readonly TimeSpan MembershipRefreshCadence = TimeSpan.FromSeconds(6);
     private const string HistorySampleScopeSuffix = " (loaded-row sample; increase history window for full epoch coverage).";
     private const string HistorySampleMetricSuffix = " Loaded-row sample only; increase history window for full epoch coverage.";
     private static readonly IReadOnlyList<string> SimRunPressureModeOptions = ["divergence", "neutral", "stability"];
     private static readonly IReadOnlyList<string> SimParentSelectionBiasModeOptions = ["divergence", "neutral", "stability"];
+    private static readonly HashSet<string> SpeciationAutoRefreshTriggerProperties =
+    [
+        nameof(ConnectionViewModel.SettingsConnected),
+        nameof(ConnectionViewModel.SpeciationDiscoverable)
+    ];
     private static readonly string[] SpeciesChartPalette =
     [
         "#3B82F6",
@@ -69,9 +75,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly Func<Task>? _refreshOrchestrator;
     private readonly LocalServiceRunner _evolutionRunner = new();
     private readonly bool _enableLiveChartsAutoRefresh;
+    private readonly List<SpeciationSimulatorSeedParentItem> _simAdditionalSeedParents = [];
     private CancellationTokenSource? _simPollCts;
     private CancellationTokenSource? _liveChartsPollCts;
     private string? _simStdoutLogPath;
+    private long _simStdoutLogPosition;
+    private string? _simLastStatusLine;
+    private int _autoRefreshInFlight;
+    private DateTimeOffset _lastMembershipRefreshAt = DateTimeOffset.MinValue;
+    private uint? _lastPersistedHistoryLimit;
 
     private string _status = "Idle";
     private string _serviceSummary = "Service status not loaded.";
@@ -112,7 +124,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _deleteEpochText = string.Empty;
     private string _epochFilterText = string.Empty;
     private string _historyLimitText = DefaultHistoryLimit.ToString(CultureInfo.InvariantCulture);
-    private string _historyBrainIdText = string.Empty;
     private string _simParentAOverrideFilePath = string.Empty;
     private string _simParentBOverrideFilePath = string.Empty;
     private SpeciationSimulatorBrainOption? _simSelectedParentABrain;
@@ -135,7 +146,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private bool _simSpawnChildren;
     private bool _liveChartsEnabled;
     private string _liveChartsIntervalSecondsText = DefaultLiveChartIntervalSeconds.ToString(CultureInfo.InvariantCulture);
-    private string _liveChartsStatus = "Live chart updates disabled.";
+    private string _liveChartsStatus = "Auto updates pending.";
     private string _populationChartRangeLabel = "Epochs: (no data)";
     private string _populationChartMetricLabel = "Population count by species (log10(1+count) y-axis).";
     private string _populationChartYAxisTopLabel = "0";
@@ -173,9 +184,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         _refreshOrchestrator = refreshOrchestrator;
         _enableLiveChartsAutoRefresh = enableLiveChartsAutoRefresh;
         _simBindHost = _connections.LocalBindHost;
+        _connections.PropertyChanged += OnConnectionsPropertyChanged;
 
         SpeciesCounts = new ObservableCollection<SpeciationSpeciesCountItem>();
-        HistoryRows = new ObservableCollection<SpeciationHistoryItem>();
         EpochSummaries = new ObservableCollection<SpeciationEpochSummaryItem>();
         SimActiveBrains = new ObservableCollection<SpeciationSimulatorBrainOption>();
         SimSeedParents = new ObservableCollection<SpeciationSimulatorSeedParentItem>();
@@ -195,7 +206,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ClearAllHistoryCommand = new AsyncRelayCommand(ClearAllHistoryAsync);
         DeleteEpochCommand = new AsyncRelayCommand(DeleteEpochAsync);
         RefreshMembershipsCommand = new AsyncRelayCommand(RefreshMembershipsAsync);
-        RefreshHistoryCommand = new AsyncRelayCommand(() => RefreshHistoryAsync(includeHistoryRows: true));
+        RefreshHistoryCommand = new AsyncRelayCommand(RefreshHistoryAsync);
         StartServiceCommand = new AsyncRelayCommand(StartServiceAsync);
         StopServiceCommand = new AsyncRelayCommand(StopServiceAsync);
         StartSimulatorCommand = new AsyncRelayCommand(StartSimulatorAsync);
@@ -209,8 +220,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         _liveChartsEnabled = _enableLiveChartsAutoRefresh;
         _liveChartsStatus = _liveChartsEnabled
-            ? $"Live updates active ({DefaultLiveChartIntervalSeconds}s)."
-            : "Live chart updates disabled.";
+            ? $"Auto updates active ({DefaultLiveChartIntervalSeconds}s)."
+            : "Auto updates disabled for this session.";
         if (_liveChartsEnabled)
         {
             StartLiveChartsPolling();
@@ -220,7 +231,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public ConnectionViewModel Connections => _connections;
 
     public ObservableCollection<SpeciationSpeciesCountItem> SpeciesCounts { get; }
-    public ObservableCollection<SpeciationHistoryItem> HistoryRows { get; }
     public ObservableCollection<SpeciationEpochSummaryItem> EpochSummaries { get; }
     public ObservableCollection<SpeciationSimulatorBrainOption> SimActiveBrains { get; }
     public ObservableCollection<SpeciationSimulatorSeedParentItem> SimSeedParents { get; }
@@ -486,26 +496,32 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _historyLimitText, value);
     }
 
-    public string HistoryBrainIdText
-    {
-        get => _historyBrainIdText;
-        set => SetProperty(ref _historyBrainIdText, value);
-    }
-
     public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
-    public string ClearAllHistoryLabel => _clearAllHistoryConfirmPending ? "Confirm Clear All" : "Clear All History";
+    public string ClearAllHistoryLabel => _clearAllHistoryConfirmPending ? "Confirm Delete All Epochs" : "Delete All Epochs";
     public string DeleteEpochLabel => _deleteEpochConfirmPending ? "Confirm Delete Epoch" : "Delete Epoch";
 
     public SpeciationSimulatorBrainOption? SimSelectedParentABrain
     {
         get => _simSelectedParentABrain;
-        set => SetProperty(ref _simSelectedParentABrain, value);
+        set
+        {
+            if (SetProperty(ref _simSelectedParentABrain, value))
+            {
+                RefreshEffectiveSimulatorSeedParents();
+            }
+        }
     }
 
     public SpeciationSimulatorBrainOption? SimSelectedParentBBrain
     {
         get => _simSelectedParentBBrain;
-        set => SetProperty(ref _simSelectedParentBBrain, value);
+        set
+        {
+            if (SetProperty(ref _simSelectedParentBBrain, value))
+            {
+                RefreshEffectiveSimulatorSeedParents();
+            }
+        }
     }
 
     public SpeciationSimulatorBrainOption? SimExtraParentCandidateBrain
@@ -522,6 +538,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             if (SetProperty(ref _simParentAOverrideFilePath, value))
             {
                 OnPropertyChanged(nameof(SimParentAOverrideFilePathDisplay));
+                RefreshEffectiveSimulatorSeedParents();
             }
         }
     }
@@ -534,6 +551,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             if (SetProperty(ref _simParentBOverrideFilePath, value))
             {
                 OnPropertyChanged(nameof(SimParentBOverrideFilePathDisplay));
+                RefreshEffectiveSimulatorSeedParents();
             }
         }
     }
@@ -641,7 +659,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public string SimSeedParentsSummary
         => SimSeedParents.Count == 0
             ? "(none)"
-            : $"{SimSeedParents.Count} added";
+            : $"{SimSeedParents.Count} total";
 
     public bool SimRunnerActive => _evolutionRunner.IsRunning;
 
@@ -657,13 +675,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
             if (value)
             {
-                LiveChartsStatus = $"Live updates active ({ParseLiveChartIntervalSecondsOrDefault()}s).";
+                LiveChartsStatus = $"Auto updates active ({ParseLiveChartIntervalSecondsOrDefault()}s).";
                 StartLiveChartsPolling();
             }
             else
             {
                 StopLiveChartsPolling();
-                LiveChartsStatus = "Live chart updates paused.";
+                LiveChartsStatus = "Auto updates paused.";
             }
         }
     }
@@ -846,23 +864,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             {
                 SimExtraParentCandidateBrain = SimActiveBrains[0];
             }
-
-            var labelsByBrainId = SimActiveBrains
-                .GroupBy(entry => entry.BrainId)
-                .ToDictionary(group => group.Key, group => group.First().Label);
-            for (var i = 0; i < SimSeedParents.Count; i++)
-            {
-                var existing = SimSeedParents[i];
-                var resolvedLabel = labelsByBrainId.TryGetValue(existing.BrainId, out var activeLabel)
-                    ? activeLabel
-                    : existing.Label;
-                if (!string.Equals(existing.Label, resolvedLabel, StringComparison.Ordinal))
-                {
-                    SimSeedParents[i] = existing with { Label = resolvedLabel };
-                }
-            }
-
-            OnPropertyChanged(nameof(SimSeedParentsSummary));
+            RefreshEffectiveSimulatorSeedParents();
         });
     }
 
@@ -980,7 +982,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (string.Equals(key, SpeciationSettingsKeys.HistoryLimitKey, StringComparison.OrdinalIgnoreCase))
         {
-            HistoryLimitText = Math.Max(1u, ParseUInt(value, DefaultHistoryLimit)).ToString(CultureInfo.InvariantCulture);
+            var parsed = Math.Max(1u, ParseUInt(value, DefaultHistoryLimit));
+            HistoryLimitText = parsed.ToString(CultureInfo.InvariantCulture);
+            _lastPersistedHistoryLimit = parsed;
             return true;
         }
 
@@ -989,6 +993,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _connections.PropertyChanged -= OnConnectionsPropertyChanged;
         StopLiveChartsPolling();
         _simPollCts?.Cancel();
         await StopSimulatorAsync().ConfigureAwait(false);
@@ -996,11 +1001,45 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task RefreshAllAsync()
     {
-        await RefreshStatusAsync().ConfigureAwait(false);
-        await LoadConfigAsync().ConfigureAwait(false);
-        await RefreshMembershipsAsync().ConfigureAwait(false);
-        await RefreshHistoryAsync().ConfigureAwait(false);
+        await RefreshPaneDataAsync(includeMemberships: true).ConfigureAwait(false);
         await RefreshSimulatorStatusAsync().ConfigureAwait(false);
+    }
+
+    private void OnConnectionsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (string.IsNullOrWhiteSpace(args.PropertyName)
+            || !SpeciationAutoRefreshTriggerProperties.Contains(args.PropertyName))
+        {
+            return;
+        }
+
+        if (!Connections.SettingsConnected || !Connections.SpeciationDiscoverable)
+        {
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _autoRefreshInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        _ = RefreshPaneStateFromConnectionsAsync();
+    }
+
+    private async Task RefreshPaneStateFromConnectionsAsync()
+    {
+        try
+        {
+            await RefreshPaneDataAsync(includeMemberships: true).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Speciation refresh failed: {ex.GetBaseException().Message}";
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _autoRefreshInFlight, 0);
+        }
     }
 
     private void StartLiveChartsPolling()
@@ -1014,6 +1053,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         _liveChartsPollCts?.Cancel();
         _liveChartsPollCts = null;
+    }
+
+    private async Task RefreshPaneDataAsync(bool includeMemberships)
+    {
+        await RefreshStatusAsync().ConfigureAwait(false);
+        if (includeMemberships)
+        {
+            await RefreshMembershipsAsync().ConfigureAwait(false);
+        }
+
+        await RefreshHistoryAsync().ConfigureAwait(false);
     }
 
     private async Task PollLiveChartsAsync(CancellationToken cancellationToken)
@@ -1035,9 +1085,22 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 break;
             }
 
-            await RefreshHistoryAsync(includeHistoryRows: false).ConfigureAwait(false);
-            await RefreshMembershipsAsync().ConfigureAwait(false);
-            LiveChartsStatus = $"Live updates active ({intervalSeconds}s).";
+            if (!Connections.SettingsConnected || !Connections.SpeciationDiscoverable)
+            {
+                LiveChartsStatus = "Waiting for Settings/speciation discovery.";
+                continue;
+            }
+
+            var includeMemberships = DateTimeOffset.UtcNow - _lastMembershipRefreshAt >= MembershipRefreshCadence;
+            await RefreshPaneDataAsync(includeMemberships).ConfigureAwait(false);
+            if (_evolutionRunner.IsRunning || !string.IsNullOrWhiteSpace(_simStdoutLogPath))
+            {
+                await RefreshSimulatorStatusAsync().ConfigureAwait(false);
+            }
+
+            LiveChartsStatus = includeMemberships
+                ? $"Auto updates active ({intervalSeconds}s, counts every ~{MembershipRefreshCadence.TotalSeconds:0}s)."
+                : $"Auto updates active ({intervalSeconds}s).";
         }
     }
 
@@ -1068,7 +1131,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        ApplyConfig(response.Config);
         _dispatcher.Post(() =>
         {
             CurrentEpochId = (long)response.CurrentEpoch.EpochId;
@@ -1078,7 +1140,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ServiceSummary = $"Epoch {CurrentEpochLabel} | memberships={CurrentMembershipCount} species={CurrentSpeciesCount} lineage={CurrentLineageEdgeCount}";
             Status = "Speciation status refreshed.";
         });
-        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
     }
 
     private async Task LoadConfigAsync()
@@ -1099,7 +1160,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ConfigStatus = "Config loaded.";
             Status = "Speciation config refreshed.";
         });
-        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
     }
 
     private async Task ApplyConfigAsync()
@@ -1182,7 +1242,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             _deleteEpochConfirmTarget = null;
             OnPropertyChanged(nameof(ClearAllHistoryLabel));
             OnPropertyChanged(nameof(DeleteEpochLabel));
-            HistoryStatus = "Click Clear All History again to confirm. This removes all epoch history and starts a new epoch.";
+            HistoryStatus = "Click Delete All Epochs again to confirm. This removes all epoch history and starts a new epoch.";
             Status = HistoryStatus;
             return;
         }
@@ -1211,7 +1271,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 $"History cleared: deleted epochs={response.DeletedEpochCount}, memberships={response.DeletedMembershipCount}, species={response.DeletedSpeciesCount}, decisions={response.DeletedDecisionCount}.";
             Status = HistoryStatus;
         });
-        await PersistSpeciationSettingsAsync().ConfigureAwait(false);
 
         await RefreshStatusAsync().ConfigureAwait(false);
         await RefreshMembershipsAsync().ConfigureAwait(false);
@@ -1326,47 +1385,32 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
             HistoryStatus = $"Loaded {total} memberships across {rows.Count} species.";
             Status = HistoryStatus;
+            _lastMembershipRefreshAt = DateTimeOffset.UtcNow;
         });
     }
 
-    private async Task RefreshHistoryAsync(bool includeHistoryRows = true)
+    private async Task RefreshHistoryAsync()
     {
         var historyLimit = Math.Max(1u, ParseUInt(HistoryLimitText, DefaultHistoryLimit));
         HistoryLimitText = historyLimit.ToString(CultureInfo.InvariantCulture);
-        await _client.SetSettingAsync(
-                SpeciationSettingsKeys.HistoryLimitKey,
-                historyLimit.ToString(CultureInfo.InvariantCulture))
-            .ConfigureAwait(false);
+        if (_lastPersistedHistoryLimit != historyLimit)
+        {
+            await _client.SetSettingAsync(
+                    SpeciationSettingsKeys.HistoryLimitKey,
+                    historyLimit.ToString(CultureInfo.InvariantCulture))
+                .ConfigureAwait(false);
+            _lastPersistedHistoryLimit = historyLimit;
+        }
         var chartHistoryLimit = Math.Max(historyLimit, DefaultChartHistoryLimit);
         var cladogramHistoryLimit = Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit);
         var epochFilter = ResolveEpochFilter();
         var cladogramEpochFilter = string.IsNullOrWhiteSpace(EpochFilterText)
             ? null
             : epochFilter;
-        var brainFilter = Guid.TryParse(HistoryBrainIdText, out var parsedBrainId) && parsedBrainId != Guid.Empty
-            ? parsedBrainId
-            : (Guid?)null;
-
-        SpeciationListHistoryResponse? tableResponse = null;
-        if (includeHistoryRows)
-        {
-            tableResponse = await _client.ListSpeciationHistoryAsync(
-                    epochId: epochFilter,
-                    brainId: brainFilter,
-                    limit: historyLimit)
-                .ConfigureAwait(false);
-            if (tableResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
-            {
-                var reason = NormalizeFailure(tableResponse.FailureReason, tableResponse.FailureDetail);
-                HistoryStatus = $"History load failed: {reason}";
-                Status = HistoryStatus;
-                return;
-            }
-        }
 
         var chartResponse = await _client.ListSpeciationHistoryAsync(
                 epochId: epochFilter,
-                brainId: brainFilter,
+                brainId: null,
                 limit: chartHistoryLimit)
             .ConfigureAwait(false);
         if (chartResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
@@ -1377,51 +1421,26 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        SpeciationListHistoryResponse? cladogramResponse = await _client.ListSpeciationHistoryAsync(
-                epochId: cladogramEpochFilter,
-                brainId: null,
-                limit: cladogramHistoryLimit)
-            .ConfigureAwait(false);
-        if (cladogramResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        SpeciationListHistoryResponse? cladogramResponse = null;
+        if (cladogramHistoryLimit > chartHistoryLimit
+            && chartResponse.TotalRecords > (uint)chartResponse.History.Count)
         {
-            cladogramResponse = null;
+            cladogramResponse = await _client.ListSpeciationHistoryAsync(
+                    epochId: cladogramEpochFilter,
+                    brainId: null,
+                    limit: cladogramHistoryLimit)
+                .ConfigureAwait(false);
+            if (cladogramResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+            {
+                cladogramResponse = null;
+            }
         }
 
-        var tableHistoryRows = includeHistoryRows && tableResponse is not null
-            ? tableResponse.History
-                .OrderByDescending(entry => entry.AssignedMs)
-                .Take(MaxHistoryRowsToRender)
-                .Select(entry => new SpeciationHistoryItem(
-                    (long)entry.EpochId,
-                    entry.BrainId?.TryToGuid(out var brainId) == true ? brainId.ToString("D") : "(none)",
-                    string.IsNullOrWhiteSpace(entry.SpeciesId) ? "(unknown)" : entry.SpeciesId.Trim(),
-                    string.IsNullOrWhiteSpace(entry.SpeciesDisplayName) ? "(unnamed)" : entry.SpeciesDisplayName.Trim(),
-                    string.IsNullOrWhiteSpace(entry.DecisionReason) ? "(none)" : entry.DecisionReason.Trim(),
-                    FormatTimestamp(entry.AssignedMs)))
-                .ToList()
-            : new List<SpeciationHistoryItem>();
-
-        var epochRows = chartResponse.History
-            .GroupBy(entry => (long)entry.EpochId)
-            .Select(group =>
-            {
-                var firstAssigned = group.Min(entry => entry.AssignedMs);
-                var lastAssigned = group.Max(entry => entry.AssignedMs);
-                var speciesCount = group
-                    .Select(entry => string.IsNullOrWhiteSpace(entry.SpeciesId) ? "(unknown)" : entry.SpeciesId.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Count();
-                return new SpeciationEpochSummaryItem(
-                    EpochId: group.Key,
-                    MembershipCount: group.Count(),
-                    SpeciesCount: speciesCount,
-                    FirstAssigned: FormatTimestamp(firstAssigned),
-                    LastAssigned: FormatTimestamp(lastAssigned));
-            })
-            .OrderByDescending(entry => entry.EpochId)
-            .ToList();
-        var populationSnapshot = BuildPopulationChartSnapshot(chartResponse.History);
-        var flowSnapshot = BuildFlowChartSnapshot(chartResponse.History);
+        var chartHistory = chartResponse.History;
+        var populationFrame = BuildEpochPopulationFrame(chartHistory);
+        var epochSummaries = BuildEpochSummaries(chartHistory);
+        var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder);
+        var flowSnapshot = BuildFlowChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder);
         var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(chartResponse.History, CurrentEpochId);
         var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
             chartResponse.History,
@@ -1433,26 +1452,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var chartHistoryTruncated = chartResponse.TotalRecords > (uint)chartResponse.History.Count;
         var cladogramHistoryTruncated = cladogramResponse is not null
                                         && cladogramResponse.TotalRecords > (uint)cladogramResponse.History.Count;
-        var tableHistoryTruncated = includeHistoryRows
-                                   && tableResponse is not null
-                                   && tableResponse.TotalRecords > (uint)tableResponse.History.Count;
         var historyScopeSuffix = chartHistoryTruncated
             ? HistorySampleScopeSuffix
             : string.Empty;
 
         _dispatcher.Post(() =>
         {
-            if (includeHistoryRows)
-            {
-                HistoryRows.Clear();
-                foreach (var row in tableHistoryRows)
-                {
-                    HistoryRows.Add(row);
-                }
-            }
-
             EpochSummaries.Clear();
-            foreach (var row in epochRows)
+            foreach (var row in epochSummaries)
             {
                 EpochSummaries.Add(row);
             }
@@ -1478,20 +1485,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 CladogramMetricLabel = AppendHistorySampleMetricLabel(CladogramMetricLabel);
             }
 
-            if (includeHistoryRows && tableResponse is not null)
-            {
-                var renderedRows = tableHistoryRows.Count;
-                var fetchedRows = tableResponse.History.Count;
-                var renderSuffix = renderedRows < fetchedRows
-                    ? $" showing latest {renderedRows}."
-                    : string.Empty;
-                var tableScopeSuffix = tableHistoryTruncated
-                    ? " (query-limited sample)"
-                    : string.Empty;
-                HistoryStatus =
-                    $"History loaded: fetched={fetchedRows} total={tableResponse.TotalRecords}{tableScopeSuffix}{renderSuffix}";
-                Status = HistoryStatus;
-            }
+            var scopeSuffix = chartHistoryTruncated ? " (sampled window)" : string.Empty;
+            HistoryStatus =
+                $"Speciation data loaded: fetched={chartResponse.History.Count} total={chartResponse.TotalRecords}{scopeSuffix}";
+            Status = HistoryStatus;
         });
     }
 
@@ -1596,6 +1593,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         OnPropertyChanged(nameof(SimRunnerActive));
 
         _simStdoutLogPath = ExtractLogPath(startResult.Message);
+        _simStdoutLogPosition = 0;
+        _simLastStatusLine = null;
         _simPollCts?.Cancel();
         if (startResult.Success)
         {
@@ -1608,6 +1607,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         _simPollCts?.Cancel();
         _simPollCts = null;
+        _simStdoutLogPosition = 0;
+        _simLastStatusLine = null;
+        _simStdoutLogPath = null;
 
         var stopMessage = await _evolutionRunner.StopAsync().ConfigureAwait(false);
         SimulatorStatus = stopMessage;
@@ -1644,7 +1646,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return Task.CompletedTask;
         }
 
-        var lastLine = ReadLastNonEmptyLine(_simStdoutLogPath);
+        var lastLine = ReadLatestNonEmptyLine(_simStdoutLogPath, ref _simStdoutLogPosition, ref _simLastStatusLine);
         if (string.IsNullOrWhiteSpace(lastLine))
         {
             SimulatorProgress = _evolutionRunner.IsRunning
@@ -1719,6 +1721,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             }
 
             await RefreshSimulatorStatusAsync().ConfigureAwait(false);
+            if (!_evolutionRunner.IsRunning)
+            {
+                break;
+            }
         }
     }
 
@@ -2122,13 +2128,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private void ClearSimulatorSeedParents()
     {
-        if (SimSeedParents.Count == 0)
+        if (_simAdditionalSeedParents.Count == 0)
         {
             return;
         }
 
-        SimSeedParents.Clear();
-        OnPropertyChanged(nameof(SimSeedParentsSummary));
+        _simAdditionalSeedParents.Clear();
+        RefreshEffectiveSimulatorSeedParents();
         SimulatorStatus = "Cleared extra seed parents.";
         Status = SimulatorStatus;
     }
@@ -2140,7 +2146,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return false;
         }
 
-        if (SimSeedParents.Any(entry => entry.BrainId == brainId))
+        if (SimSeedParents.Any(entry => entry.BrainId == brainId)
+            || _simAdditionalSeedParents.Any(entry => entry.BrainId == brainId))
         {
             if (updateStatus)
             {
@@ -2151,8 +2158,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return false;
         }
 
-        SimSeedParents.Add(new SpeciationSimulatorSeedParentItem(brainId, label, source));
-        OnPropertyChanged(nameof(SimSeedParentsSummary));
+        _simAdditionalSeedParents.Add(new SpeciationSimulatorSeedParentItem(brainId, label, source));
+        RefreshEffectiveSimulatorSeedParents();
         if (updateStatus)
         {
             SimulatorStatus = $"Added seed parent: {brainId:D}";
@@ -2164,7 +2171,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private bool TryResolveSimulatorParentPool(out List<Guid> parents, out string error)
     {
-        parents = new List<Guid>(2 + SimSeedParents.Count);
+        parents = new List<Guid>(2 + _simAdditionalSeedParents.Count);
         var uniqueParents = new HashSet<Guid>();
 
         if (!TryResolveParentBrainId(
@@ -2193,7 +2200,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             parents.Add(parentB);
         }
 
-        foreach (var extraParent in SimSeedParents)
+        foreach (var extraParent in _simAdditionalSeedParents)
         {
             if (uniqueParents.Add(extraParent.BrainId))
             {
@@ -2265,36 +2272,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         out Guid brainId,
         out string error)
     {
+        if (TryReadParentOverrideGuid(overrideFilePath, parentLabel, out brainId, out error))
+        {
+            return true;
+        }
+
         if (!string.IsNullOrWhiteSpace(overrideFilePath))
         {
-            if (!File.Exists(overrideFilePath))
-            {
-                brainId = Guid.Empty;
-                error = $"Parent {parentLabel} override file not found: {overrideFilePath}";
-                return false;
-            }
-
-            foreach (var rawLine in File.ReadLines(overrideFilePath))
-            {
-                var line = rawLine.Trim();
-                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (Guid.TryParse(line, out brainId) && brainId != Guid.Empty)
-                {
-                    error = string.Empty;
-                    return true;
-                }
-
-                brainId = Guid.Empty;
-                error = $"Parent {parentLabel} override file must contain a brain GUID: {overrideFilePath}";
-                return false;
-            }
-
             brainId = Guid.Empty;
-            error = $"Parent {parentLabel} override file has no usable brain GUID: {overrideFilePath}";
+            error = string.IsNullOrWhiteSpace(error)
+                ? $"Parent {parentLabel} override file has no usable brain GUID: {overrideFilePath}"
+                : error;
             return false;
         }
 
@@ -2308,6 +2296,133 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         brainId = selected.BrainId;
         error = string.Empty;
         return true;
+    }
+
+    private void RefreshEffectiveSimulatorSeedParents()
+    {
+        var items = new List<SpeciationSimulatorSeedParentItem>(2 + _simAdditionalSeedParents.Count);
+        var seen = new HashSet<Guid>();
+
+        AddEffectiveSimulatorSeedParent(
+            items,
+            seen,
+            BuildSimulatorParentSlotItem(SimSelectedParentABrain, SimParentAOverrideFilePath, "A"));
+        AddEffectiveSimulatorSeedParent(
+            items,
+            seen,
+            BuildSimulatorParentSlotItem(SimSelectedParentBBrain, SimParentBOverrideFilePath, "B"));
+
+        foreach (var extraParent in _simAdditionalSeedParents)
+        {
+            AddEffectiveSimulatorSeedParent(
+                items,
+                seen,
+                extraParent with { Label = ResolveSimulatorSeedParentLabel(extraParent.BrainId, extraParent.Label) });
+        }
+
+        SimSeedParents.Clear();
+        foreach (var item in items)
+        {
+            SimSeedParents.Add(item);
+        }
+
+        OnPropertyChanged(nameof(SimSeedParentsSummary));
+    }
+
+    private SpeciationSimulatorSeedParentItem? BuildSimulatorParentSlotItem(
+        SpeciationSimulatorBrainOption? selected,
+        string? overrideFilePath,
+        string parentLabel)
+    {
+        if (TryReadParentOverrideGuid(overrideFilePath, parentLabel, out var overrideBrainId, out _))
+        {
+            return new SpeciationSimulatorSeedParentItem(
+                overrideBrainId,
+                ResolveSimulatorSeedParentLabel(overrideBrainId),
+                $"Parent {parentLabel} override");
+        }
+
+        if (!string.IsNullOrWhiteSpace(overrideFilePath))
+        {
+            return null;
+        }
+
+        if (selected is null || selected.BrainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        return new SpeciationSimulatorSeedParentItem(
+            selected.BrainId,
+            ResolveSimulatorSeedParentLabel(selected.BrainId, selected.Label),
+            $"Parent {parentLabel}");
+    }
+
+    private void AddEffectiveSimulatorSeedParent(
+        List<SpeciationSimulatorSeedParentItem> items,
+        HashSet<Guid> seen,
+        SpeciationSimulatorSeedParentItem? item)
+    {
+        if (item is null || item.BrainId == Guid.Empty || !seen.Add(item.BrainId))
+        {
+            return;
+        }
+
+        items.Add(item);
+    }
+
+    private string ResolveSimulatorSeedParentLabel(Guid brainId, string? fallbackLabel = null)
+    {
+        var active = SimActiveBrains.FirstOrDefault(entry => entry.BrainId == brainId);
+        if (active is not null && !string.IsNullOrWhiteSpace(active.Label))
+        {
+            return active.Label;
+        }
+
+        return string.IsNullOrWhiteSpace(fallbackLabel)
+            ? brainId.ToString("D")
+            : fallbackLabel;
+    }
+
+    private static bool TryReadParentOverrideGuid(
+        string? overrideFilePath,
+        string parentLabel,
+        out Guid brainId,
+        out string error)
+    {
+        brainId = Guid.Empty;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(overrideFilePath))
+        {
+            return false;
+        }
+
+        if (!File.Exists(overrideFilePath))
+        {
+            error = $"Parent {parentLabel} override file not found: {overrideFilePath}";
+            return false;
+        }
+
+        foreach (var rawLine in File.ReadLines(overrideFilePath))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (Guid.TryParse(line, out brainId) && brainId != Guid.Empty)
+            {
+                return true;
+            }
+
+            brainId = Guid.Empty;
+            error = $"Parent {parentLabel} override file must contain a brain GUID: {overrideFilePath}";
+            return false;
+        }
+
+        error = $"Parent {parentLabel} override file has no usable brain GUID: {overrideFilePath}";
+        return false;
     }
 
     private static IReadOnlyList<Guid> ParseBrainIdsFromFile(string path, string sourceLabel)
@@ -2436,9 +2551,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return Math.Clamp(parsed, MinLiveChartIntervalSeconds, MaxLiveChartIntervalSeconds);
     }
 
-    private static PopulationChartSnapshot BuildPopulationChartSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
+    private static PopulationChartSnapshot BuildPopulationChartSnapshot(
+        IReadOnlyList<EpochPopulationRow> epochRows,
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
     {
-        var (epochRows, speciesOrder) = BuildEpochPopulationFrame(history);
         if (epochRows.Count == 0 || speciesOrder.Count == 0)
         {
             return new PopulationChartSnapshot(
@@ -2508,9 +2624,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             Legend: legend);
     }
 
-    private static FlowChartSnapshot BuildFlowChartSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
+    private static FlowChartSnapshot BuildFlowChartSnapshot(
+        IReadOnlyList<EpochPopulationRow> epochRows,
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
     {
-        var (epochRows, speciesOrder) = BuildEpochPopulationFrame(history);
         if (epochRows.Count == 0 || speciesOrder.Count == 0)
         {
             return new FlowChartSnapshot(
@@ -2928,6 +3045,35 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             CurrentEpochSummaryLabel: currentEpochSummary,
             Series: series,
             Legend: legend);
+    }
+
+    private static IReadOnlyList<SpeciationEpochSummaryItem> BuildEpochSummaries(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        return history
+            .GroupBy(entry => entry.EpochId)
+            .OrderBy(group => group.Key)
+            .Select(group =>
+            {
+                var ordered = group
+                    .OrderBy(entry => entry.AssignedMs)
+                    .ThenBy(entry => entry.SpeciesId, StringComparer.Ordinal)
+                    .ToList();
+                var firstAssigned = ordered.Count == 0 ? "(n/a)" : FormatTimestamp(ordered[0].AssignedMs);
+                var lastAssigned = ordered.Count == 0 ? "(n/a)" : FormatTimestamp(ordered[^1].AssignedMs);
+                var speciesCount = ordered
+                    .Select(entry => entry.SpeciesId)
+                    .Where(speciesId => !string.IsNullOrWhiteSpace(speciesId))
+                    .Distinct(StringComparer.Ordinal)
+                    .Count();
+
+                return new SpeciationEpochSummaryItem(
+                    EpochId: (long)group.Key,
+                    MembershipCount: ordered.Count,
+                    SpeciesCount: speciesCount,
+                    FirstAssigned: $"first {firstAssigned}",
+                    LastAssigned: $"last {lastAssigned}");
+            })
+            .ToList();
     }
 
     private static CladogramSnapshot BuildCladogramSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
@@ -4249,16 +4395,34 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return string.IsNullOrWhiteSpace(path) ? null : path;
     }
 
-    private static string? ReadLastNonEmptyLine(string path)
+    private static string? ReadLatestNonEmptyLine(string path, ref long position, ref string? lastNonEmptyLine)
     {
         try
         {
-            var lines = File.ReadAllLines(path);
-            for (var i = lines.Length - 1; i >= 0; i--)
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (position < 0 || position > stream.Length)
             {
-                if (!string.IsNullOrWhiteSpace(lines[i]))
+                position = 0;
+            }
+
+            if (stream.Length <= position)
+            {
+                return lastNonEmptyLine;
+            }
+
+            stream.Seek(position, SeekOrigin.Begin);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+            var chunk = reader.ReadToEnd();
+            position = stream.Position;
+            if (!string.IsNullOrWhiteSpace(chunk))
+            {
+                foreach (var line in chunk.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
                 {
-                    return lines[i].Trim();
+                    var trimmed = line.Trim();
+                    if (!string.IsNullOrWhiteSpace(trimmed))
+                    {
+                        lastNonEmptyLine = trimmed;
+                    }
                 }
             }
         }
@@ -4266,7 +4430,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
         }
 
-        return null;
+        return lastNonEmptyLine;
     }
 
     private static bool TryParseSimulatorStatus(string rawLine, out EvolutionSimStatusSnapshot snapshot)
@@ -4478,14 +4642,6 @@ public sealed record SpeciationSpeciesCountItem(
     int Count,
     string PercentLabel,
     string BarLabel);
-
-public sealed record SpeciationHistoryItem(
-    long EpochId,
-    string BrainId,
-    string SpeciesId,
-    string SpeciesDisplayName,
-    string DecisionReason,
-    string AssignedAt);
 
 public sealed record SpeciationEpochSummaryItem(
     long EpochId,

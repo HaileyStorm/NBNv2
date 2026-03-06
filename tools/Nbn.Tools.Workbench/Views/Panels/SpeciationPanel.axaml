@@ -98,11 +98,8 @@
       <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-              <TextBlock Text="Speciation Service" Classes="card-title" />
-              <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshStatusCommand}" />
-            </Grid>
-            <TextBlock Text="Service lifecycle and health from Settings discovery + runtime status APIs." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Speciation Service" Classes="card-title" />
+            <TextBlock Text="Status and epoch management for the discovered speciation service. Service lifecycle controls remain in Orchestrator." Classes="muted" TextWrapping="Wrap" />
             <Border Classes="row">
               <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
                 <Border Classes="pill"
@@ -117,10 +114,6 @@
                 </StackPanel>
               </Grid>
             </Border>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="Start Service" Classes="accent" Command="{Binding StartServiceCommand}" />
-              <Button Content="Stop Service" Command="{Binding StopServiceCommand}" />
-            </StackPanel>
             <TextBlock Text="{Binding ServiceSummary}" Classes="muted" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
               <Border Classes="row">
@@ -142,16 +135,27 @@
                 </StackPanel>
               </Border>
             </Grid>
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+              <TextBlock Text="Delete epoch" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="1" Width="110" Watermark="Epoch id" Text="{Binding DeleteEpochText}" />
+              <TextBlock Grid.Column="2"
+                         Text="Removes one historical epoch. Current epoch cannot be deleted."
+                         Classes="muted"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
+              <Button Grid.Column="3" Content="{Binding DeleteEpochLabel}" Command="{Binding DeleteEpochCommand}" />
+            </Grid>
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBlock Text="Delete all epochs when you want to clear speciation history and restart from the current policy state." Classes="muted" TextWrapping="Wrap" />
+              <Button Grid.Column="1" Content="{Binding ClearAllHistoryLabel}" Command="{Binding ClearAllHistoryCommand}" />
+            </Grid>
           </StackPanel>
         </Border>
 
         <Border Classes="card" Grid.Column="1">
           <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-              <TextBlock Text="Policy Config" Classes="card-title" />
-              <Button Grid.Column="1" Content="Load" Command="{Binding LoadConfigCommand}" />
-            </Grid>
-            <TextBlock Text="Edit policy and apply through SpeciationSetConfig (with explicit new-epoch confirmation)." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Policy Config" Classes="card-title" />
+            <TextBlock Text="Settings-backed policy draft. SettingsMonitor changes flow in automatically; applying still uses SpeciationSetConfig with explicit new-epoch confirmation." Classes="muted" TextWrapping="Wrap" />
             <CheckBox Content="Enabled" IsChecked="{Binding ConfigEnabled}" />
             <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="6">
               <TextBlock Text="Policy version" Classes="muted" />
@@ -225,11 +229,11 @@
       <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
               <TextBlock Text="Species Counts" Classes="card-title" />
               <TextBox Grid.Column="1" Width="110" Watermark="Epoch (blank=current)" Text="{Binding EpochFilterText}" />
-              <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshMembershipsCommand}" />
             </Grid>
+            <TextBlock Text="Membership counts refresh automatically for the selected epoch window." Classes="muted" TextWrapping="Wrap" />
             <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">
               <ItemsControl ItemsSource="{Binding SpeciesCounts}">
                 <ItemsControl.ItemTemplate>
@@ -252,7 +256,11 @@
 
         <Border Classes="card" Grid.Column="1">
           <StackPanel Spacing="8">
-            <TextBlock Text="Epoch Trend" Classes="card-title" />
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+              <TextBlock Text="Epoch Trend" Classes="card-title" />
+              <TextBlock Grid.Column="1" Text="History window" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="2" Width="90" Watermark="rows" Text="{Binding HistoryLimitText}" />
+            </Grid>
             <TextBlock Text="Epoch-aware summary of recent membership history." Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding CurrentEpochMaxDivergenceLabel}" Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding CurrentEpochSplitProximityLabel}" Classes="muted" TextWrapping="Wrap" />
@@ -280,11 +288,13 @@
       <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
               <TextBlock Text="Population Over Time" Classes="card-title" />
-              <CheckBox Grid.Column="1" Content="Live update" IsChecked="{Binding LiveChartsEnabled}" VerticalAlignment="Center" />
-              <TextBox Grid.Column="2" Width="48" Text="{Binding LiveChartsIntervalSecondsText}" HorizontalContentAlignment="Center" />
-              <TextBlock Grid.Column="3" Text="sec" Classes="muted" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="Auto update" Classes="muted" VerticalAlignment="Center" />
+              <Grid Grid.Column="2" ColumnDefinitions="Auto,Auto" ColumnSpacing="4">
+                <TextBox Width="48" Text="{Binding LiveChartsIntervalSecondsText}" HorizontalContentAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="sec" Classes="muted" VerticalAlignment="Center" />
+              </Grid>
             </Grid>
             <TextBlock Text="{Binding LiveChartsStatus}" Classes="muted" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="44,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
@@ -472,48 +482,8 @@
 
       <Border Classes="card">
         <StackPanel Spacing="8">
-          <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
-            <TextBlock Text="Speciation History" Classes="card-title" />
-            <TextBox Grid.Column="1" Width="110" Watermark="Limit" Text="{Binding HistoryLimitText}" />
-            <TextBox Grid.Column="2" Width="220" Watermark="Filter brain id (optional)" Text="{Binding HistoryBrainIdText}" />
-            <Button Grid.Column="3" Content="Refresh" Command="{Binding RefreshHistoryCommand}" />
-          </Grid>
-          <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
-            <TextBlock Text="Delete epoch" Classes="muted" VerticalAlignment="Center" />
-            <TextBox Grid.Column="1" Width="110" Watermark="Epoch id" Text="{Binding DeleteEpochText}" />
-            <Button Grid.Column="2" Content="{Binding DeleteEpochLabel}" Command="{Binding DeleteEpochCommand}" />
-            <TextBlock Grid.Column="3"
-                       Text="Removes one historical epoch. Current epoch cannot be deleted."
-                       Classes="muted"
-                       VerticalAlignment="Center"
-                       TextWrapping="Wrap" />
-            <Button Grid.Column="4" Content="{Binding ClearAllHistoryLabel}" Command="{Binding ClearAllHistoryCommand}" />
-          </Grid>
-          <ScrollViewer MaxHeight="300" HorizontalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding HistoryRows}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Classes="row">
-                    <Grid ColumnDefinitions="Auto,*,Auto,*,*,*" ColumnSpacing="8">
-                      <TextBlock Text="{Binding EpochId}" Classes="row-title" />
-                      <TextBlock Grid.Column="1" Text="{Binding BrainId}" Classes="muted" />
-                      <TextBlock Grid.Column="2" Text="{Binding SpeciesId}" />
-                      <TextBlock Grid.Column="3" Text="{Binding SpeciesDisplayName}" Classes="muted" />
-                      <TextBlock Grid.Column="4" Text="{Binding DecisionReason}" Classes="muted" />
-                      <TextBlock Grid.Column="5" Text="{Binding AssignedAt}" Classes="muted" />
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </ScrollViewer>
-        </StackPanel>
-      </Border>
-
-      <Border Classes="card">
-        <StackPanel Spacing="8">
           <TextBlock Text="Reproduction Simulator" Classes="card-title" />
-          <TextBlock Text="Standalone EvolutionSim controls for stress runs using two primary live parent brains plus optional extra seed parents. Parent definitions are resolved at launch for artifact-first simulation runs." Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="Standalone EvolutionSim controls for stress runs using two primary live parent brains plus optional extra seed parents. Parent A/B auto-seed from the selected live brains, override files replace those slots, and extras append to the effective pool." Classes="muted" TextWrapping="Wrap" />
 
           <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
             <StackPanel>
@@ -587,7 +557,7 @@
                      Classes="muted"
                      TextWrapping="Wrap" />
 
-          <TextBlock Text="Parent selection defaults to active brains; optional override files can replace Parent A or Parent B."
+          <TextBlock Text="Parent A/B auto-populate from the selected active brains. Optional override files replace those slots, and extra parents append to the same effective pool."
                      Classes="muted"
                      TextWrapping="Wrap" />
 
@@ -635,7 +605,7 @@
             <Border Grid.Row="1" Grid.Column="1" Classes="row">
               <TextBlock Text="{Binding SimSeedParentsSummary}" Classes="muted" />
             </Border>
-            <Button Grid.Row="1" Grid.Column="2" Content="Clear" Command="{Binding ClearSimSeedParentsCommand}" />
+            <Button Grid.Row="1" Grid.Column="2" Content="Clear Extras" Command="{Binding ClearSimSeedParentsCommand}" />
             <TextBlock Grid.Row="1" Grid.Column="3"
                        Text="Requires 2+ distinct total parents to start."
                        Classes="muted"
@@ -682,7 +652,7 @@
                        Classes="muted"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1"
-                       Text="Simulator resolves selected brains to artifacts and sends one --parent value per distinct parent (Parent A/B + any extras). Override file(s) take precedence for Parent A/Parent B."
+                       Text="Simulator resolves the effective parent pool to artifacts and sends one --parent value per distinct parent. Parent A/B are seeded automatically, override file(s) take precedence for those slots, and extras append."
                        Classes="muted"
                        TextWrapping="Wrap" />
           </Grid>
@@ -690,7 +660,6 @@
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="Start Simulator" Classes="accent" Command="{Binding StartSimulatorCommand}" />
             <Button Content="Stop Simulator" Command="{Binding StopSimulatorCommand}" />
-            <Button Content="Refresh Session" Command="{Binding RefreshSimulatorStatusCommand}" />
           </StackPanel>
 
           <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="4">
