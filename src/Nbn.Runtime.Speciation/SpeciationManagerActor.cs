@@ -1,4 +1,4 @@
-﻿using Nbn.Proto;
+using Nbn.Proto;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Proto;
@@ -1122,39 +1122,49 @@ public sealed class SpeciationManagerActor : IActor
             orderedParentArtifactRefs,
             parentMemberships,
             hysteresisMembership);
-        var dominantSpeciesSimilarityScore = ResolveDominantSpeciesSimilarityScore(
-            lineageEvidence,
+        var bestParentSpeciesFit = TryResolveBestParentSpeciesPairwiseFit(
             parentMemberships,
             similarityEvidence,
-            inputOrderedParentBrainIds);
-        var dominantSpeciesFloor = ResolveDominantSpeciesFloor(lineageEvidence);
+            inputOrderedParentBrainIds,
+            out var resolvedBestParentSpeciesFit)
+            ? (ParentSpeciesPairwiseFit?)resolvedBestParentSpeciesFit
+            : null;
+        var preliminarySourceSpeciesId = bestParentSpeciesFit?.SpeciesId
+            ?? (lineageEvidence.DominantShare >= 0.999999d
+                ? lineageEvidence.DominantSpeciesId
+                : null);
+        var sourceSpeciesSimilarityScore = bestParentSpeciesFit.HasValue
+            ? bestParentSpeciesFit.Value.PairwiseSimilarity
+            : ResolveSourceSpeciesSimilarityScore(
+                preliminarySourceSpeciesId,
+                parentMemberships,
+                similarityEvidence,
+                inputOrderedParentBrainIds);
+        var sourceSpeciesFloor = ResolveSpeciesSimilarityFloor(
+            preliminarySourceSpeciesId);
         var assignmentResolution = ResolveAssignment(
             epoch,
             speciesId,
             speciesDisplayName,
             lineageEvidence,
-            dominantSpeciesFloor,
-            dominantSpeciesSimilarityScore,
-            parentMemberships,
-            similarityEvidence,
-            inputOrderedParentBrainIds);
+            sourceSpeciesFloor,
+            sourceSpeciesSimilarityScore,
+            bestParentSpeciesFit);
         var intraSpeciesSimilaritySample = TryResolveIntraSpeciesSimilaritySample(
             assignmentResolution,
-            lineageEvidence,
             parentMemberships,
             similarityEvidence,
-            dominantSpeciesSimilarityScore,
+            sourceSpeciesSimilarityScore,
             inputOrderedParentBrainIds,
             out var resolvedIntraSpeciesSample)
             ? (double?)resolvedIntraSpeciesSample
             : null;
         var assignedSpeciesSimilarityScore = ResolveAssignedSpeciesSimilarityScore(
             assignmentResolution,
-            lineageEvidence,
             parentMemberships,
             similarityEvidence,
             inputOrderedParentBrainIds,
-            dominantSpeciesSimilarityScore,
+            sourceSpeciesSimilarityScore,
             intraSpeciesSimilaritySample);
 
         var resolvedPolicyVersion = NormalizeOrFallback(policyVersion, _runtimeConfig.PolicyVersion);
@@ -1168,8 +1178,8 @@ public sealed class SpeciationManagerActor : IActor
             assignmentResolution,
             lineageEvidence,
             similarityEvidence,
-            dominantSpeciesFloor,
-            dominantSpeciesSimilarityScore,
+            sourceSpeciesFloor,
+            sourceSpeciesSimilarityScore,
             assignedSpeciesSimilarityScore,
             intraSpeciesSimilaritySample);
         Guid? parentBrainId = orderedParentBrainIds.Count == 0
@@ -1237,8 +1247,8 @@ public sealed class SpeciationManagerActor : IActor
                     assignmentResolution.DecisionReason,
                     "lineage_diverged_new_species",
                     StringComparison.Ordinal)
-                && !string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId)
-                && dominantSpeciesSimilarityScore.HasValue)
+                && !string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
+                && sourceSpeciesSimilarityScore.HasValue)
             {
                 try
                 {
@@ -1246,8 +1256,7 @@ public sealed class SpeciationManagerActor : IActor
                         epoch,
                         outcome.Membership,
                         assignmentResolution,
-                        lineageEvidence,
-                        dominantSpeciesSimilarityScore,
+                        sourceSpeciesSimilarityScore,
                         resolvedPolicyVersion,
                         decisionTimeMs).ConfigureAwait(false);
                     if (hindsightReassignments > 0)
@@ -1660,14 +1669,15 @@ public sealed class SpeciationManagerActor : IActor
         _recentDerivedSpeciesHintsByTargetSpecies.Clear();
     }
 
-    private SpeciesSimilarityFloorState? ResolveDominantSpeciesFloor(LineageEvidence lineageEvidence)
+    private SpeciesSimilarityFloorState? ResolveSpeciesSimilarityFloor(string? speciesId)
     {
-        if (string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId))
+        if (string.IsNullOrWhiteSpace(speciesId))
         {
             return null;
         }
 
-        return _speciesSimilarityFloors.TryGetValue(lineageEvidence.DominantSpeciesId, out var state)
+        var normalizedSpeciesId = speciesId.Trim();
+        return _speciesSimilarityFloors.TryGetValue(normalizedSpeciesId, out var state)
             ? state
             : null;
     }
@@ -1687,21 +1697,21 @@ public sealed class SpeciationManagerActor : IActor
         };
     }
 
-    private static double? ResolveDominantSpeciesSimilarityScore(
-        LineageEvidence lineageEvidence,
+    private static double? ResolveSourceSpeciesSimilarityScore(
+        string? sourceSpeciesId,
         IReadOnlyList<SpeciationMembershipRecord> parentMemberships,
         SimilarityEvidence similarityEvidence,
         IReadOnlyList<Guid> inputOrderedParentBrainIds)
     {
-        if (!string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId)
+        if (!string.IsNullOrWhiteSpace(sourceSpeciesId)
             && TryResolveSpeciesPairwiseSimilarityEstimate(
-                lineageEvidence.DominantSpeciesId!,
+                sourceSpeciesId.Trim(),
                 parentMemberships,
                 similarityEvidence,
                 inputOrderedParentBrainIds,
-                out var dominantPairwiseSimilarity))
+                out var sourcePairwiseSimilarity))
         {
-            return dominantPairwiseSimilarity;
+            return sourcePairwiseSimilarity;
         }
 
         if (similarityEvidence.DominantSpeciesSimilarityScore.HasValue)
@@ -1716,11 +1726,10 @@ public sealed class SpeciationManagerActor : IActor
 
     private static double? ResolveAssignedSpeciesSimilarityScore(
         AssignmentResolution assignmentResolution,
-        LineageEvidence lineageEvidence,
         IReadOnlyList<SpeciationMembershipRecord> parentMemberships,
         SimilarityEvidence similarityEvidence,
         IReadOnlyList<Guid> inputOrderedParentBrainIds,
-        double? dominantSpeciesSimilarityScore,
+        double? sourceSpeciesSimilarityScore,
         double? intraSpeciesSimilaritySample)
     {
         if (string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId)
@@ -1744,13 +1753,13 @@ public sealed class SpeciationManagerActor : IActor
             return pairwiseSimilarity;
         }
 
-        return dominantSpeciesSimilarityScore.HasValue
-            && !string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId)
+        return sourceSpeciesSimilarityScore.HasValue
+            && !string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
             && string.Equals(
                 assignmentResolution.SpeciesId,
-                lineageEvidence.DominantSpeciesId,
+                assignmentResolution.SourceSpeciesId,
                 StringComparison.Ordinal)
-            ? ClampScore(dominantSpeciesSimilarityScore.Value)
+            ? ClampScore(sourceSpeciesSimilarityScore.Value)
             : null;
     }
 
@@ -1847,10 +1856,9 @@ public sealed class SpeciationManagerActor : IActor
 
     private static bool TryResolveIntraSpeciesSimilaritySample(
         AssignmentResolution assignmentResolution,
-        LineageEvidence lineageEvidence,
         IReadOnlyList<SpeciationMembershipRecord> parentMemberships,
         SimilarityEvidence similarityEvidence,
-        double? dominantSpeciesSimilarityScore,
+        double? sourceSpeciesSimilarityScore,
         IReadOnlyList<Guid> inputOrderedParentBrainIds,
         out double similaritySample)
     {
@@ -1881,15 +1889,15 @@ public sealed class SpeciationManagerActor : IActor
             return true;
         }
 
-        if (dominantSpeciesSimilarityScore.HasValue
-            && !string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId)
-            && lineageEvidence.DominantShare >= 0.999999d
+        if (sourceSpeciesSimilarityScore.HasValue
+            && !string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
+            && assignmentResolution.SourceConsensusShare >= 0.999999d
             && string.Equals(
                 assignmentResolution.SpeciesId,
-                lineageEvidence.DominantSpeciesId,
+                assignmentResolution.SourceSpeciesId,
                 StringComparison.Ordinal))
         {
-            similaritySample = ClampScore(dominantSpeciesSimilarityScore.Value);
+            similaritySample = ClampScore(sourceSpeciesSimilarityScore.Value);
             return true;
         }
 
@@ -2070,26 +2078,43 @@ public sealed class SpeciationManagerActor : IActor
             return 1d;
         }
 
-        var dominantSpeciesId = FindStringValue(
+        var sourceSpeciesId = FindStringValue(
+            lineageNode,
+            "source_species_id",
+            "sourceSpeciesId")
+            ?? FindStringValue(
             lineageNode,
             "dominant_species_id",
             "dominantSpeciesId");
-        var dominantShare = FindNumericValue(
+        var sourceShare = FindNumericValue(
+            lineageNode,
+            "source_species_share",
+            "sourceSpeciesShare")
+            ?? FindNumericValue(
             lineageNode,
             "dominant_species_share",
             "dominantSpeciesShare");
-        var normalizedDominantSpeciesId = string.IsNullOrWhiteSpace(dominantSpeciesId)
+        var normalizedSourceSpeciesId = string.IsNullOrWhiteSpace(sourceSpeciesId)
             ? string.Empty
-            : dominantSpeciesId.Trim();
-        if (string.IsNullOrWhiteSpace(dominantSpeciesId)
-            || !dominantShare.HasValue
-            || dominantShare.Value < 0.999999d
+            : sourceSpeciesId.Trim();
+        if (string.IsNullOrWhiteSpace(sourceSpeciesId)
+            || !sourceShare.HasValue
+            || sourceShare.Value < 0.999999d
             || !string.Equals(
                 membership.SpeciesId.Trim(),
-                normalizedDominantSpeciesId,
+                normalizedSourceSpeciesId,
                 StringComparison.Ordinal))
         {
             return null;
+        }
+
+        var sourceSimilarityScore = FindNumericValue(
+            lineageNode,
+            "source_species_similarity_score",
+            "sourceSpeciesSimilarityScore");
+        if (sourceSimilarityScore.HasValue)
+        {
+            return ClampScore(sourceSimilarityScore.Value);
         }
 
         var similarityEvidence = ExtractSimilarityEvidence(membership.DecisionMetadataJson);
@@ -2107,20 +2132,19 @@ public sealed class SpeciationManagerActor : IActor
         SpeciationEpochInfo epoch,
         SpeciationMembershipRecord splitMembership,
         AssignmentResolution assignmentResolution,
-        LineageEvidence lineageEvidence,
         double? assignmentSimilarityScore,
         string policyVersion,
         long? decisionTimeMs)
     {
         if (_assignmentPolicy.HindsightReassignCommitWindow <= 0
             || !assignmentSimilarityScore.HasValue
-            || string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId)
+            || string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
             || splitMembership.BrainId == Guid.Empty)
         {
             return 0;
         }
 
-        var sourceSpeciesId = lineageEvidence.DominantSpeciesId.Trim();
+        var sourceSpeciesId = assignmentResolution.SourceSpeciesId.Trim();
         if (sourceSpeciesId.Length == 0
             || string.Equals(sourceSpeciesId, assignmentResolution.SpeciesId, StringComparison.Ordinal))
         {
@@ -2148,11 +2172,11 @@ public sealed class SpeciationManagerActor : IActor
         for (var index = 0; index < orderedCandidates.Length; index++)
         {
             var candidate = orderedCandidates[index];
-            if (!TryExtractDominantSpeciesSimilarity(
+            if (!TryExtractSourceSpeciesSimilarity(
                     candidate.DecisionMetadataJson,
-                    out var candidateDominantSpeciesId,
+                    out var candidateSourceSpeciesId,
                     out var candidateSimilarity)
-                || !string.Equals(candidateDominantSpeciesId, sourceSpeciesId, StringComparison.Ordinal))
+                || !string.Equals(candidateSourceSpeciesId, sourceSpeciesId, StringComparison.Ordinal))
             {
                 continue;
             }
@@ -2174,7 +2198,7 @@ public sealed class SpeciationManagerActor : IActor
                 candidate,
                 splitMembership,
                 sourceSpeciesId,
-                lineageEvidence.DominantSpeciesDisplayName,
+                assignmentResolution.SourceSpeciesDisplayName,
                 assignmentResolution,
                 policyVersion,
                 founderSimilarity,
@@ -2231,6 +2255,8 @@ public sealed class SpeciationManagerActor : IActor
         metadata["assignment_policy"] = assignmentPolicy;
 
         var lineage = metadata["lineage"] as JsonObject ?? new JsonObject();
+        lineage["source_species_id"] = sourceSpeciesId;
+        lineage["source_species_display_name"] = sourceSpeciesDisplayName ?? string.Empty;
         lineage["dominant_species_id"] = sourceSpeciesId;
         lineage["dominant_species_display_name"] = sourceSpeciesDisplayName ?? string.Empty;
         lineage["hindsight_source_species_id"] = sourceSpeciesId;
@@ -2254,12 +2280,12 @@ public sealed class SpeciationManagerActor : IActor
         return metadata.ToJsonString(MetadataJsonSerializerOptions);
     }
 
-    private static bool TryExtractDominantSpeciesSimilarity(
+    private static bool TryExtractSourceSpeciesSimilarity(
         string? decisionMetadataJson,
-        out string dominantSpeciesId,
+        out string sourceSpeciesId,
         out double similarityScore)
     {
-        dominantSpeciesId = string.Empty;
+        sourceSpeciesId = string.Empty;
         similarityScore = 0d;
         if (string.IsNullOrWhiteSpace(decisionMetadataJson))
         {
@@ -2290,22 +2316,38 @@ public sealed class SpeciationManagerActor : IActor
             root.TryGetPropertyValue("lineage", out lineageNode);
         }
 
-        dominantSpeciesId = FindStringValue(
+        sourceSpeciesId = FindStringValue(
+            lineageNode,
+            "source_species_id",
+            "sourceSpeciesId")
+            ?? FindStringValue(
             lineageNode,
             "dominant_species_id",
             "dominantSpeciesId")
             ?? FindStringValue(
                 node,
+                "source_species_id",
+                "sourceSpeciesId")
+            ?? FindStringValue(
+                node,
                 "dominant_species_id",
                 "dominantSpeciesId")
             ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(dominantSpeciesId))
+        if (string.IsNullOrWhiteSpace(sourceSpeciesId))
         {
             return false;
         }
 
-        dominantSpeciesId = dominantSpeciesId.Trim();
-        similarityScore = ClampScore(resolvedSimilarity.Value);
+        sourceSpeciesId = sourceSpeciesId.Trim();
+        var sourceSimilarity = FindNumericValue(
+            lineageNode,
+            "source_species_similarity_score",
+            "sourceSpeciesSimilarityScore")
+            ?? FindNumericValue(
+                node,
+                "source_species_similarity_score",
+                "sourceSpeciesSimilarityScore");
+        similarityScore = ClampScore((sourceSimilarity ?? resolvedSimilarity).Value);
         return true;
     }
 
@@ -2321,7 +2363,7 @@ public sealed class SpeciationManagerActor : IActor
                 "lineage_diverged_new_species",
                 StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(membership.SpeciesId)
-            || !TryExtractDominantSpeciesSimilarity(
+            || !TryExtractSourceSpeciesSimilarity(
                 membership.DecisionMetadataJson,
                 out var sourceSpeciesId,
                 out var founderSimilarity))
@@ -2332,6 +2374,10 @@ public sealed class SpeciationManagerActor : IActor
         var metadata = ParseMetadataJson(membership.DecisionMetadataJson);
         metadata.TryGetPropertyValue("lineage", out var lineageNode);
         var sourceSpeciesDisplayName = FindStringValue(
+            lineageNode,
+            "source_species_display_name",
+            "sourceSpeciesDisplayName")
+            ?? FindStringValue(
             lineageNode,
             "dominant_species_display_name",
             "dominantSpeciesDisplayName")
@@ -2355,15 +2401,15 @@ public sealed class SpeciationManagerActor : IActor
     }
 
     private bool TryResolveRecentDerivedSpeciesReuse(
-        LineageEvidence lineageEvidence,
+        string? sourceSpeciesId,
         double similarity,
         out RecentDerivedSpeciesHint hint)
     {
         hint = default;
         if (_assignmentPolicy.HindsightReassignCommitWindow <= 0
-            || string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId)
+            || string.IsNullOrWhiteSpace(sourceSpeciesId)
             || !_recentDerivedSpeciesHintsBySourceSpecies.TryGetValue(
-                lineageEvidence.DominantSpeciesId.Trim(),
+                sourceSpeciesId.Trim(),
                 out var hints)
             || hints.Count == 0)
         {
@@ -2416,11 +2462,9 @@ public sealed class SpeciationManagerActor : IActor
         string? requestedSpeciesId,
         string? requestedSpeciesDisplayName,
         LineageEvidence lineageEvidence,
-        SpeciesSimilarityFloorState? dominantSpeciesFloor,
-        double? dominantSpeciesSimilarityScore,
-        IReadOnlyList<SpeciationMembershipRecord> parentMemberships,
-        SimilarityEvidence similarityEvidence,
-        IReadOnlyList<Guid> inputOrderedParentBrainIds)
+        SpeciesSimilarityFloorState? sourceSpeciesFloor,
+        double? sourceSpeciesSimilarityScore,
+        ParentSpeciesPairwiseFit? bestParentSpeciesFit)
     {
         if (!string.IsNullOrWhiteSpace(requestedSpeciesId))
         {
@@ -2436,7 +2480,7 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         if (lineageEvidence.ParentMembershipCount == 0
-            || string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId))
+            || (string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId) && !bestParentSpeciesFit.HasValue))
         {
             return new AssignmentResolution(
                 _runtimeConfig.DefaultSpeciesId,
@@ -2447,30 +2491,13 @@ public sealed class SpeciationManagerActor : IActor
                 ForceDecisionReason: true);
         }
 
-        var dominantSpeciesId = lineageEvidence.DominantSpeciesId!;
-        var dominantSpeciesDisplayName = ResolveSpeciesDisplayName(
-            lineageEvidence.DominantSpeciesDisplayName,
-            dominantSpeciesId);
-        var hasBestParentSpeciesFit = TryResolveBestParentSpeciesPairwiseFit(
-            parentMemberships,
-            similarityEvidence,
-            inputOrderedParentBrainIds,
-            out var bestParentSpeciesFit);
-
-        if (lineageEvidence.DominantShare < _assignmentPolicy.ParentConsensusThreshold)
+        var sourceSpeciesId = bestParentSpeciesFit.HasValue
+            ? bestParentSpeciesFit.Value.SpeciesId
+            : (lineageEvidence.DominantShare >= 0.999999d
+                ? lineageEvidence.DominantSpeciesId
+                : null);
+        if (string.IsNullOrWhiteSpace(sourceSpeciesId))
         {
-            if (hasBestParentSpeciesFit
-                && bestParentSpeciesFit.PairwiseSimilarity >= _assignmentPolicy.LineageMatchThreshold)
-            {
-                return new AssignmentResolution(
-                    bestParentSpeciesFit.SpeciesId,
-                    bestParentSpeciesFit.SpeciesDisplayName,
-                    DecisionReason: "lineage_low_consensus_pairwise_match",
-                    Strategy: "lineage_pairwise_match",
-                    StrategyDetail: "Parent consensus was low, but pairwise similarity strongly matched an existing parent species.",
-                    ForceDecisionReason: true);
-            }
-
             if (!string.IsNullOrWhiteSpace(lineageEvidence.HysteresisSpeciesId))
             {
                 return new AssignmentResolution(
@@ -2478,31 +2505,44 @@ public sealed class SpeciationManagerActor : IActor
                     ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
                     DecisionReason: "lineage_hysteresis_low_consensus",
                     Strategy: "hysteresis_hold",
-                    StrategyDetail: "Parent consensus below threshold; reused prior lineage species.",
+                    StrategyDetail: "Parent memberships did not resolve to a reusable source species; reused prior lineage species.",
                     ForceDecisionReason: true);
             }
 
             return new AssignmentResolution(
                 _runtimeConfig.DefaultSpeciesId,
                 _runtimeConfig.DefaultSpeciesDisplayName,
-                DecisionReason: "lineage_low_consensus_default",
+                DecisionReason: "lineage_source_unavailable_default",
                 Strategy: "default",
-                StrategyDetail: "Parent consensus below configured threshold.",
+                StrategyDetail: "Parent memberships did not resolve to a reusable source species.",
                 ForceDecisionReason: true);
         }
 
-        if (!dominantSpeciesSimilarityScore.HasValue)
+        sourceSpeciesId = sourceSpeciesId.Trim();
+        var sourceSpeciesDisplayName = ResolveSpeciesDisplayName(
+            bestParentSpeciesFit.HasValue
+                ? bestParentSpeciesFit.Value.SpeciesDisplayName
+                : lineageEvidence.DominantSpeciesDisplayName,
+            sourceSpeciesId);
+        var sourceConsensusShare = bestParentSpeciesFit.HasValue && lineageEvidence.ParentMembershipCount > 0
+            ? (double)bestParentSpeciesFit.Value.SupportingParentCount / lineageEvidence.ParentMembershipCount
+            : 1d;
+
+        if (!sourceSpeciesSimilarityScore.HasValue)
         {
             return new AssignmentResolution(
-                dominantSpeciesId,
-                dominantSpeciesDisplayName,
+                sourceSpeciesId,
+                sourceSpeciesDisplayName,
                 DecisionReason: "lineage_inherit_no_similarity",
                 Strategy: "lineage_inherit",
-                StrategyDetail: "No similarity score supplied; inherited dominant parent species.",
-                ForceDecisionReason: true);
+                StrategyDetail: "No source-species similarity score supplied; inherited the resolved source species.",
+                ForceDecisionReason: true,
+                SourceSpeciesId: sourceSpeciesId,
+                SourceSpeciesDisplayName: sourceSpeciesDisplayName,
+                SourceConsensusShare: sourceConsensusShare);
         }
 
-        var similarity = ClampScore(dominantSpeciesSimilarityScore.Value);
+        var similarity = ClampScore(sourceSpeciesSimilarityScore.Value);
         var policyEffectiveSplitThreshold = Math.Max(
             0d,
             _assignmentPolicy.LineageSplitThreshold - _assignmentPolicy.LineageSplitGuardMargin);
@@ -2510,13 +2550,13 @@ public sealed class SpeciationManagerActor : IActor
         double? speciesFloorSimilarityScore = null;
         var speciesFloorSampleCount = 0;
         var speciesFloorMembershipCount = 0;
-        if (dominantSpeciesFloor.HasValue
-            && dominantSpeciesFloor.Value.SimilaritySampleCount > 0
-            && dominantSpeciesFloor.Value.MinSimilarityScore.HasValue)
+        if (sourceSpeciesFloor.HasValue
+            && sourceSpeciesFloor.Value.SimilaritySampleCount > 0
+            && sourceSpeciesFloor.Value.MinSimilarityScore.HasValue)
         {
-            speciesFloorSimilarityScore = ClampScore(dominantSpeciesFloor.Value.MinSimilarityScore.Value);
-            speciesFloorSampleCount = Math.Max(0, dominantSpeciesFloor.Value.SimilaritySampleCount);
-            speciesFloorMembershipCount = Math.Max(0, dominantSpeciesFloor.Value.MembershipCount);
+            speciesFloorSimilarityScore = ClampScore(sourceSpeciesFloor.Value.MinSimilarityScore.Value);
+            speciesFloorSampleCount = Math.Max(0, sourceSpeciesFloor.Value.SimilaritySampleCount);
+            speciesFloorMembershipCount = Math.Max(0, sourceSpeciesFloor.Value.MembershipCount);
             var relaxedSpeciesFloorThreshold = Math.Max(
                 0d,
                 speciesFloorSimilarityScore.Value - _assignmentPolicy.HysteresisMargin);
@@ -2547,6 +2587,10 @@ public sealed class SpeciationManagerActor : IActor
                 PolicyEffectiveSplitThreshold: policyEffectiveSplitThreshold,
                 EffectiveSplitThreshold: effectiveSplitThreshold,
                 SplitTriggeredBySpeciesFloor: splitTriggeredBySpeciesFloor,
+                SourceSpeciesId: sourceSpeciesId,
+                SourceSpeciesDisplayName: sourceSpeciesDisplayName,
+                SourceSpeciesSimilarityScore: similarity,
+                SourceConsensusShare: sourceConsensusShare,
                 SpeciesFloorSimilarityScore: speciesFloorSimilarityScore,
                 SpeciesFloorSampleCount: speciesFloorSampleCount,
                 SpeciesFloorMembershipCount: speciesFloorMembershipCount,
@@ -2556,12 +2600,12 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var hasSplitParentEvidence = lineageEvidence.ParentMembershipCount >= _assignmentPolicy.MinParentMembershipsBeforeSplit;
-        var hasInSpeciesEvidence = dominantSpeciesFloor.HasValue
-            && dominantSpeciesFloor.Value.SimilaritySampleCount > 0
-            && dominantSpeciesFloor.Value.MinSimilarityScore.HasValue;
-        var isRecentDerivedDominantSpecies = TryGetRecentDerivedSpeciesHintByTargetSpecies(
-            dominantSpeciesId,
-            out var recentDerivedDominantHint);
+        var hasInSpeciesEvidence = sourceSpeciesFloor.HasValue
+            && sourceSpeciesFloor.Value.SimilaritySampleCount > 0
+            && sourceSpeciesFloor.Value.MinSimilarityScore.HasValue;
+        var isRecentDerivedSourceSpecies = TryGetRecentDerivedSpeciesHintByTargetSpecies(
+            sourceSpeciesId,
+            out var recentDerivedSourceHint);
         var withinRecentSplitRealignWindow =
             _assignmentPolicy.RecentSplitRealignParentMembershipWindow > 0
             && lineageEvidence.ParentMembershipCount > 0
@@ -2589,15 +2633,15 @@ public sealed class SpeciationManagerActor : IActor
         if (similarity >= _assignmentPolicy.LineageMatchThreshold)
         {
             return BuildSimilarityResolution(
-                dominantSpeciesId,
-                dominantSpeciesDisplayName,
+                sourceSpeciesId,
+                sourceSpeciesDisplayName,
                 DecisionReason: "lineage_inherit_similarity_match",
                 Strategy: "lineage_inherit",
                 StrategyDetail: "Similarity met lineage match threshold.",
                 ForceDecisionReason: true);
         }
 
-        if (TryResolveRecentDerivedSpeciesReuse(lineageEvidence, similarity, out var recentDerivedHint))
+        if (TryResolveRecentDerivedSpeciesReuse(sourceSpeciesId, similarity, out var recentDerivedHint))
         {
             return BuildSimilarityResolution(
                 recentDerivedHint.TargetSpeciesId,
@@ -2613,16 +2657,16 @@ public sealed class SpeciationManagerActor : IActor
 
         if (similarity <= effectiveSplitThreshold)
         {
-            if (isRecentDerivedDominantSpecies && !hasInSpeciesEvidence)
+            if (isRecentDerivedSourceSpecies && !hasInSpeciesEvidence)
             {
                 return BuildSimilarityResolution(
-                    dominantSpeciesId,
-                    dominantSpeciesDisplayName,
+                    sourceSpeciesId,
+                    sourceSpeciesDisplayName,
                     DecisionReason: "lineage_split_guarded_newborn_intraspecies_evidence",
                     Strategy: "lineage_inherit",
                     StrategyDetail: "Split threshold crossed but the newborn derived species has not yet recorded in-species similarity evidence.",
                     ForceDecisionReason: true,
-                    recentDerivedHint: recentDerivedDominantHint);
+                    recentDerivedHint: recentDerivedSourceHint);
             }
 
             if (!hasSplitParentEvidence)
@@ -2639,8 +2683,8 @@ public sealed class SpeciationManagerActor : IActor
                 }
 
                 return BuildSimilarityResolution(
-                    dominantSpeciesId,
-                    dominantSpeciesDisplayName,
+                    sourceSpeciesId,
+                    sourceSpeciesDisplayName,
                     DecisionReason: "lineage_split_guarded_parent_evidence",
                     Strategy: "lineage_inherit",
                     StrategyDetail: "Split threshold crossed but minimum parent-membership evidence not met.",
@@ -2650,15 +2694,15 @@ public sealed class SpeciationManagerActor : IActor
             if (_assignmentPolicy.CreateDerivedSpeciesOnDivergence)
             {
                 var derivedSpeciesId = BuildDerivedSpeciesId(
-                    dominantSpeciesId,
+                    sourceSpeciesId,
                     _assignmentPolicy.DerivedSpeciesPrefix,
                     lineageEvidence.LineageKey,
                     epoch.EpochId);
                 return BuildSimilarityResolution(
                     derivedSpeciesId,
                     BuildDerivedSpeciesDisplayName(
-                        dominantSpeciesDisplayName,
-                        dominantSpeciesId,
+                        sourceSpeciesDisplayName,
+                        sourceSpeciesId,
                         derivedSpeciesId),
                     DecisionReason: "lineage_diverged_new_species",
                     Strategy: "lineage_diverged",
@@ -2694,11 +2738,11 @@ public sealed class SpeciationManagerActor : IActor
             }
 
             return BuildSimilarityResolution(
-                dominantSpeciesId,
-                dominantSpeciesDisplayName,
+                sourceSpeciesId,
+                sourceSpeciesDisplayName,
                 DecisionReason: "lineage_split_guard_band_inherit",
                 Strategy: "lineage_inherit",
-                StrategyDetail: "Similarity in split-guard band; inherited dominant lineage species.",
+                StrategyDetail: "Similarity in split-guard band; inherited the resolved source lineage species.",
                 ForceDecisionReason: true);
         }
 
@@ -2714,14 +2758,13 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         return BuildSimilarityResolution(
-            dominantSpeciesId,
-            dominantSpeciesDisplayName,
+            sourceSpeciesId,
+            sourceSpeciesDisplayName,
             DecisionReason: "lineage_hysteresis_seed",
             Strategy: "lineage_inherit",
-            StrategyDetail: "Similarity in hysteresis band without prior lineage hint; seeded with dominant species.",
+            StrategyDetail: "Similarity in hysteresis band without prior lineage hint; seeded with the resolved source species.",
             ForceDecisionReason: true);
     }
-
     private string BuildDecisionMetadataJson(
         string? sourceMetadataJson,
         string policyVersion,
@@ -2729,8 +2772,8 @@ public sealed class SpeciationManagerActor : IActor
         AssignmentResolution assignmentResolution,
         LineageEvidence lineageEvidence,
         SimilarityEvidence similarityEvidence,
-        SpeciesSimilarityFloorState? dominantSpeciesFloor,
-        double? dominantSpeciesSimilarityScore,
+        SpeciesSimilarityFloorState? sourceSpeciesFloor,
+        double? sourceSpeciesSimilarityScore,
         double? assignedSpeciesSimilarityScore,
         double? intraSpeciesSimilaritySample)
     {
@@ -2749,13 +2792,24 @@ public sealed class SpeciationManagerActor : IActor
             ? assignmentResolution.EffectiveSplitThreshold
             : policyEffectiveSplitThreshold;
         var speciesFloorSimilarityScore = assignmentResolution.SpeciesFloorSimilarityScore
-            ?? dominantSpeciesFloor?.MinSimilarityScore;
+            ?? sourceSpeciesFloor?.MinSimilarityScore;
         var speciesFloorSampleCount = assignmentResolution.SpeciesFloorSampleCount > 0
             ? assignmentResolution.SpeciesFloorSampleCount
-            : Math.Max(0, dominantSpeciesFloor?.SimilaritySampleCount ?? 0);
+            : Math.Max(0, sourceSpeciesFloor?.SimilaritySampleCount ?? 0);
         var speciesFloorMembershipCount = assignmentResolution.SpeciesFloorMembershipCount > 0
             ? assignmentResolution.SpeciesFloorMembershipCount
-            : Math.Max(0, dominantSpeciesFloor?.MembershipCount ?? 0);
+            : Math.Max(0, sourceSpeciesFloor?.MembershipCount ?? 0);
+        var resolvedSourceSpeciesId = string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
+            ? string.Empty
+            : assignmentResolution.SourceSpeciesId;
+        var resolvedSourceSpeciesDisplayName = string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesDisplayName)
+            ? (string.IsNullOrWhiteSpace(resolvedSourceSpeciesId)
+                ? string.Empty
+                : ResolveSpeciesDisplayName(null, resolvedSourceSpeciesId))
+            : assignmentResolution.SourceSpeciesDisplayName;
+        var resolvedSourceConsensusShare = string.IsNullOrWhiteSpace(resolvedSourceSpeciesId)
+            ? 0d
+            : assignmentResolution.SourceConsensusShare;
 
         var assignmentPolicy = new JsonObject
         {
@@ -2781,10 +2835,10 @@ public sealed class SpeciationManagerActor : IActor
                 : "policy",
             ["lineage_species_floor_relaxation_margin"] = _assignmentPolicy.HysteresisMargin
         };
-        if (dominantSpeciesSimilarityScore.HasValue)
+        if (sourceSpeciesSimilarityScore.HasValue)
         {
             assignmentPolicy["lineage_source_species_similarity_score"] =
-                ClampScore(dominantSpeciesSimilarityScore.Value);
+                ClampScore(sourceSpeciesSimilarityScore.Value);
         }
         if (assignedSpeciesSimilarityScore.HasValue)
         {
@@ -2821,9 +2875,12 @@ public sealed class SpeciationManagerActor : IActor
             ["parent_membership_count"] = lineageEvidence.ParentMembershipCount,
             ["parent_brain_ids"] = parentBrainIds,
             ["parent_artifact_refs"] = parentArtifactRefs,
-            ["dominant_species_id"] = lineageEvidence.DominantSpeciesId ?? string.Empty,
-            ["dominant_species_display_name"] = lineageEvidence.DominantSpeciesDisplayName ?? string.Empty,
-            ["dominant_species_share"] = lineageEvidence.DominantShare,
+            ["source_species_id"] = resolvedSourceSpeciesId,
+            ["source_species_display_name"] = resolvedSourceSpeciesDisplayName,
+            ["source_species_share"] = resolvedSourceConsensusShare,
+            ["dominant_species_id"] = resolvedSourceSpeciesId,
+            ["dominant_species_display_name"] = resolvedSourceSpeciesDisplayName,
+            ["dominant_species_share"] = resolvedSourceConsensusShare,
             ["hysteresis_species_id"] = lineageEvidence.HysteresisSpeciesId ?? string.Empty,
             ["hysteresis_species_display_name"] = lineageEvidence.HysteresisSpeciesDisplayName ?? string.Empty,
             ["lineage_policy_effective_split_threshold"] = policyEffectiveSplitThreshold,
@@ -2838,9 +2895,9 @@ public sealed class SpeciationManagerActor : IActor
             lineage["species_floor_similarity_samples"] = speciesFloorSampleCount;
             lineage["species_floor_membership_count"] = speciesFloorMembershipCount;
         }
-        if (dominantSpeciesSimilarityScore.HasValue)
+        if (sourceSpeciesSimilarityScore.HasValue)
         {
-            lineage["source_species_similarity_score"] = ClampScore(dominantSpeciesSimilarityScore.Value);
+            lineage["source_species_similarity_score"] = ClampScore(sourceSpeciesSimilarityScore.Value);
         }
         if (assignedSpeciesSimilarityScore.HasValue)
         {
@@ -2893,18 +2950,18 @@ public sealed class SpeciationManagerActor : IActor
         AddLineageSimilarityScore(
             lineage,
             "dominant_species_similarity_score",
-            dominantSpeciesSimilarityScore ?? similarityEvidence.DominantSpeciesSimilarityScore,
+            sourceSpeciesSimilarityScore ?? similarityEvidence.DominantSpeciesSimilarityScore,
             existingLineageNode,
             "dominant_species_similarity_score",
             "dominantSpeciesSimilarityScore");
         AddLineageSimilarityScore(
             lineage,
             "source_species_similarity_score",
-            dominantSpeciesSimilarityScore,
+            sourceSpeciesSimilarityScore,
             existingLineageNode,
             "source_species_similarity_score",
             "sourceSpeciesSimilarityScore");
-        var splitSimilarity = dominantSpeciesSimilarityScore ?? similarityEvidence.SimilarityScore;
+        var splitSimilarity = sourceSpeciesSimilarityScore ?? similarityEvidence.SimilarityScore;
         if (splitSimilarity.HasValue)
         {
             var normalizedSimilarity = ClampScore(splitSimilarity.Value);
@@ -4100,6 +4157,10 @@ public sealed class SpeciationManagerActor : IActor
         double PolicyEffectiveSplitThreshold = 0d,
         double EffectiveSplitThreshold = 0d,
         bool SplitTriggeredBySpeciesFloor = false,
+        string? SourceSpeciesId = null,
+        string? SourceSpeciesDisplayName = null,
+        double? SourceSpeciesSimilarityScore = null,
+        double SourceConsensusShare = 0d,
         double? SpeciesFloorSimilarityScore = null,
         int SpeciesFloorSampleCount = 0,
         int SpeciesFloorMembershipCount = 0,
