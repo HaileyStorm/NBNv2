@@ -87,7 +87,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private string _status = "Idle";
     private string _serviceSummary = "Service status not loaded.";
-    private string _configStatus = "Config not loaded.";
+    private string _configStatus = "Settings-backed draft pending.";
     private string _historyStatus = "History not loaded.";
     private string _simStatus = "Simulator idle.";
     private string _simSessionId = "(none)";
@@ -155,6 +155,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private int _populationChartLegendColumns = 2;
     private string _flowChartRangeLabel = "Epochs: (no data)";
     private string _flowChartStartEpochLabel = "(n/a)";
+    private string _flowChartMidEpochLabel = "(n/a)";
     private string _flowChartEndEpochLabel = "(n/a)";
     private int _flowChartLegendColumns = 2;
     private string _splitProximityChartRangeLabel = "Epochs: (no data)";
@@ -746,6 +747,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _flowChartStartEpochLabel, value);
     }
 
+    public string FlowChartMidEpochLabel
+    {
+        get => _flowChartMidEpochLabel;
+        set => SetProperty(ref _flowChartMidEpochLabel, value);
+    }
+
     public string FlowChartEndEpochLabel
     {
         get => _flowChartEndEpochLabel;
@@ -877,107 +884,112 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var key = item.Key.Trim();
         var value = item.Value?.Trim() ?? string.Empty;
+        bool Applied()
+        {
+            UpdateSettingsBackedConfigStatus();
+            return true;
+        }
 
         if (string.Equals(key, SpeciationSettingsKeys.ConfigEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             ConfigEnabled = ParseBool(value, ConfigEnabled);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.PolicyVersionKey, StringComparison.OrdinalIgnoreCase))
         {
             PolicyVersion = string.IsNullOrWhiteSpace(value) ? PolicyVersion : value;
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.DefaultSpeciesIdKey, StringComparison.OrdinalIgnoreCase))
         {
             DefaultSpeciesId = string.IsNullOrWhiteSpace(value) ? DefaultSpeciesId : value;
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.DefaultSpeciesDisplayNameKey, StringComparison.OrdinalIgnoreCase))
         {
             DefaultSpeciesDisplayName = string.IsNullOrWhiteSpace(value) ? DefaultSpeciesDisplayName : value;
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.StartupReconcileReasonKey, StringComparison.OrdinalIgnoreCase))
         {
             StartupReconcileReason = string.IsNullOrWhiteSpace(value) ? StartupReconcileReason : value;
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageMatchThresholdKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageMatchThreshold = ParseDouble(value, 0.92d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageSplitThresholdKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageSplitThreshold = ParseDouble(value, 0.88d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.ParentConsensusThresholdKey, StringComparison.OrdinalIgnoreCase))
         {
             ParentConsensusThreshold = ParseDouble(value, 0.70d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageHysteresisMarginKey, StringComparison.OrdinalIgnoreCase))
         {
             HysteresisMargin = ParseDouble(value, 0.04d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageSplitGuardMarginKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageSplitGuardMargin = ParseDouble(value, 0.02d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageMinParentMembershipsBeforeSplitKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageMinParentMembershipsBeforeSplit = Math.Max(1, ParseInt(value, 1)).ToString(CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageRealignParentMembershipWindowKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageRealignParentMembershipWindow = Math.Max(0, ParseInt(value, 3)).ToString(CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageRealignMatchMarginKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageRealignMatchMargin = ParseDouble(value, 0.05d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageHindsightReassignCommitWindowKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageHindsightReassignCommitWindow = Math.Max(0, ParseInt(value, 6)).ToString(CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey, StringComparison.OrdinalIgnoreCase))
         {
             LineageHindsightSimilarityMargin = ParseDouble(value, 0.015d).ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey, StringComparison.OrdinalIgnoreCase))
         {
             CreateDerivedSpecies = ParseBool(value, CreateDerivedSpecies);
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.DerivedSpeciesPrefixKey, StringComparison.OrdinalIgnoreCase))
         {
             DerivedSpeciesPrefix = string.IsNullOrWhiteSpace(value) ? DerivedSpeciesPrefix : value;
-            return true;
+            return Applied();
         }
 
         if (string.Equals(key, SpeciationSettingsKeys.HistoryLimitKey, StringComparison.OrdinalIgnoreCase))
@@ -985,10 +997,23 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var parsed = Math.Max(1u, ParseUInt(value, DefaultHistoryLimit));
             HistoryLimitText = parsed.ToString(CultureInfo.InvariantCulture);
             _lastPersistedHistoryLimit = parsed;
-            return true;
+            return Applied();
         }
 
         return false;
+    }
+
+    private void UpdateSettingsBackedConfigStatus()
+    {
+        if (!string.Equals(ConfigStatus, "Settings-backed draft pending.", StringComparison.Ordinal)
+            && !string.Equals(ConfigStatus, "Config not loaded.", StringComparison.Ordinal)
+            && !string.Equals(ConfigStatus, "Settings-backed draft active.", StringComparison.Ordinal)
+            && !string.Equals(ConfigStatus, "Config loaded.", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ConfigStatus = "Settings-backed draft active.";
     }
 
     public async ValueTask DisposeAsync()
@@ -1353,7 +1378,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .GroupBy(m => new
             {
                 SpeciesId = string.IsNullOrWhiteSpace(m.SpeciesId) ? "(unknown)" : m.SpeciesId.Trim(),
-                SpeciesName = string.IsNullOrWhiteSpace(m.SpeciesDisplayName) ? "(unnamed)" : m.SpeciesDisplayName.Trim()
+                SpeciesName = BuildCompactSpeciesName(m.SpeciesDisplayName, m.SpeciesId)
             })
             .Select(group => new
             {
@@ -2633,6 +2658,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return new FlowChartSnapshot(
                 RangeLabel: "Epochs: (no data)",
                 StartEpochLabel: "(n/a)",
+                MidEpochLabel: "(n/a)",
                 EndEpochLabel: "(n/a)",
                 LegendColumns: 2,
                 Areas: Array.Empty<SpeciationFlowChartAreaItem>(),
@@ -2722,6 +2748,16 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var minEpoch = epochRows[0].EpochId;
         var maxEpoch = epochRows[^1].EpochId;
+        var isSingleEpochRowSampling = minEpoch == maxEpoch && epochRows.Count > 1;
+        var topAxisLabel = isSingleEpochRowSampling
+            ? "1"
+            : minEpoch.ToString(CultureInfo.InvariantCulture);
+        var midAxisLabel = isSingleEpochRowSampling
+            ? FormatAxisNumber((epochRows.Count + 1d) * 0.5d)
+            : FormatAxisNumber((minEpoch + maxEpoch) * 0.5d);
+        var bottomAxisLabel = isSingleEpochRowSampling
+            ? epochRows.Count.ToString(CultureInfo.InvariantCulture)
+            : maxEpoch.ToString(CultureInfo.InvariantCulture);
         var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, 4);
         var topScopeLabel = includeOtherSpecies
             ? $" top {selectedSpecies.Count}/{totalSpeciesCount} species + Other."
@@ -2731,8 +2767,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             : $"Stacked share of total population per epoch ({minEpoch}..{maxEpoch}).{topScopeLabel}";
         return new FlowChartSnapshot(
             RangeLabel: rangeLabel,
-            StartEpochLabel: minEpoch.ToString(CultureInfo.InvariantCulture),
-            EndEpochLabel: maxEpoch.ToString(CultureInfo.InvariantCulture),
+            StartEpochLabel: topAxisLabel,
+            MidEpochLabel: midAxisLabel,
+            EndEpochLabel: bottomAxisLabel,
             LegendColumns: legendColumns,
             Areas: areas,
             Legend: legend);
@@ -2756,6 +2793,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ReplaceItems(FlowChartLegend, snapshot.Legend);
         FlowChartRangeLabel = snapshot.RangeLabel;
         FlowChartStartEpochLabel = snapshot.StartEpochLabel;
+        FlowChartMidEpochLabel = snapshot.MidEpochLabel;
         FlowChartEndEpochLabel = snapshot.EndEpochLabel;
         FlowChartLegendColumns = snapshot.LegendColumns;
     }
@@ -4182,6 +4220,81 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private static string NormalizeSpeciesName(string? speciesName, string speciesId)
         => string.IsNullOrWhiteSpace(speciesName) ? speciesId : speciesName.Trim();
 
+    private static string BuildCompactSpeciesName(string? speciesName, string? speciesId)
+    {
+        var normalizedId = NormalizeSpeciesId(speciesId);
+        if (!string.IsNullOrWhiteSpace(speciesName))
+        {
+            return speciesName.Trim();
+        }
+
+        var tokens = normalizedId
+            .Split(['.', '-', '_', '/', ':'], StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+        if (tokens.Count > 1 && string.Equals(tokens[0], "species", StringComparison.OrdinalIgnoreCase))
+        {
+            tokens.RemoveAt(0);
+        }
+
+        if (tokens.Count > 1 && IsOpaqueSpeciesToken(tokens[^1]))
+        {
+            tokens.RemoveAt(tokens.Count - 1);
+        }
+
+        var parts = tokens
+            .Select(FormatCompactSpeciesToken)
+            .Where(part => part.Length > 0)
+            .ToArray();
+        if (parts.Length > 0)
+        {
+            return string.Join(' ', parts);
+        }
+
+        return normalizedId.Length <= 24
+            ? normalizedId
+            : normalizedId[..24] + "...";
+    }
+
+    private static bool IsOpaqueSpeciesToken(string token)
+    {
+        var trimmed = token?.Trim() ?? string.Empty;
+        if (trimmed.Length < 8)
+        {
+            return false;
+        }
+
+        var opaqueChars = trimmed.Count(ch => char.IsLetterOrDigit(ch));
+        return opaqueChars == trimmed.Length && trimmed.Any(char.IsDigit);
+    }
+
+    private static string FormatCompactSpeciesToken(string token)
+    {
+        var trimmed = token?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (trimmed.Length == 1)
+        {
+            return char.ToUpperInvariant(trimmed[0]).ToString(CultureInfo.InvariantCulture);
+        }
+
+        return char.ToUpperInvariant(trimmed[0]) + trimmed[1..];
+    }
+
+    private static string FormatAxisNumber(double value)
+    {
+        if (!double.IsFinite(value))
+        {
+            return "(n/a)";
+        }
+
+        return Math.Abs(value - Math.Round(value)) < 0.0001d
+            ? Math.Round(value).ToString("0", CultureInfo.InvariantCulture)
+            : value.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
     private static void ReplaceItems<T>(ObservableCollection<T> target, IReadOnlyList<T> source)
     {
         target.Clear();
@@ -4528,6 +4641,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly record struct FlowChartSnapshot(
         string RangeLabel,
         string StartEpochLabel,
+        string MidEpochLabel,
         string EndEpochLabel,
         int LegendColumns,
         IReadOnlyList<SpeciationFlowChartAreaItem> Areas,

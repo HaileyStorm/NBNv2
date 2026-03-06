@@ -239,11 +239,10 @@
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <Border Classes="row">
-                      <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
-                        <TextBlock Text="{Binding SpeciesId}" Classes="row-title" />
-                        <TextBlock Grid.Column="1" Text="{Binding SpeciesDisplayName}" Classes="muted" TextWrapping="Wrap" />
-                        <TextBlock Grid.Column="2" Text="{Binding Count}" />
-                        <TextBlock Grid.Column="3" Text="{Binding PercentLabel}" Classes="muted" />
+                      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock Text="{Binding SpeciesDisplayName}" Classes="row-title" TextWrapping="Wrap" />
+                        <TextBlock Grid.Column="1" Text="{Binding Count}" />
+                        <TextBlock Grid.Column="2" Text="{Binding PercentLabel}" Classes="muted" />
                       </Grid>
                     </Border>
                   </DataTemplate>
@@ -354,11 +353,11 @@
         <Border Classes="card" Grid.Column="1">
           <StackPanel Spacing="8">
             <TextBlock Text="Species Flow (Epoch Top to Bottom)" Classes="card-title" />
-            <TextBlock Text="Stacked widths show per-species population share each epoch (full width = 100%)." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Stacked widths show per-species population share over the loaded history window (full width = 100%). Left-axis ticks show epoch numbers, or row-sample positions when the window is a single sampled epoch." Classes="muted" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="44,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
               <Grid RowDefinitions="Auto,*,Auto">
                 <TextBlock Text="{Binding FlowChartStartEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
-                <TextBlock Grid.Row="1" Text="time" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="1" Text="{Binding FlowChartMidEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
                 <TextBlock Grid.Row="2" Text="{Binding FlowChartEndEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
               </Grid>
               <Grid Grid.Column="1"

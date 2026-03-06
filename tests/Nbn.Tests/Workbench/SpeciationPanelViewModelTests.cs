@@ -79,6 +79,7 @@ public class SpeciationPanelViewModelTests
         Assert.Equal("8", vm.LineageHindsightReassignCommitWindow);
         Assert.Equal("0.023", vm.LineageHindsightSimilarityMargin);
         Assert.Equal("100", vm.HistoryLimitText);
+        Assert.Equal("Settings-backed draft active.", vm.ConfigStatus);
     }
 
     [Fact]
@@ -272,9 +273,38 @@ public class SpeciationPanelViewModelTests
         Assert.Equal(3L, client.LastMembershipEpochFilter);
         var top = vm.SpeciesCounts[0];
         Assert.Equal("species.a", top.SpeciesId);
+        Assert.Equal("A", top.SpeciesDisplayName);
         Assert.Equal(2, top.Count);
         Assert.Equal("66.7 %".Replace(" ", string.Empty), top.PercentLabel.Replace(" ", string.Empty));
         Assert.Equal("Loaded 3 memberships across 2 species.", vm.HistoryStatus);
+    }
+
+    [Fact]
+    public async Task RefreshMembershipsCommand_UsesCompactSpeciesNameWhenDisplayNameIsMissing()
+    {
+        var brain = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            MembershipsResponse = new SpeciationListMembershipsResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Memberships =
+                {
+                    new SpeciationMembershipRecord
+                    {
+                        BrainId = brain.ToProtoUuid(),
+                        SpeciesId = "species.branch.a1b2c3d4e5f6"
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(client);
+
+        vm.RefreshMembershipsCommand.Execute(null);
+        await WaitForAsync(() => vm.SpeciesCounts.Count == 1);
+
+        Assert.Equal("Branch", vm.SpeciesCounts[0].SpeciesDisplayName);
     }
 
     [Fact]
@@ -562,6 +592,7 @@ public class SpeciationPanelViewModelTests
         Assert.Equal("Epochs 10..11 (2 samples)", vm.PopulationChartRangeLabel);
         Assert.Contains("log10", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("10", vm.FlowChartStartEpochLabel);
+        Assert.Equal("10.5", vm.FlowChartMidEpochLabel);
         Assert.Equal("11", vm.FlowChartEndEpochLabel);
         Assert.All(vm.PopulationChartSeries, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
         Assert.All(vm.FlowChartAreas, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
@@ -838,6 +869,9 @@ public class SpeciationPanelViewModelTests
 
         Assert.Contains("Epoch 55 row samples", vm.PopulationChartRangeLabel, StringComparison.Ordinal);
         Assert.Contains("Epoch 55 row samples", vm.SplitProximityChartRangeLabel, StringComparison.Ordinal);
+        Assert.Equal("1", vm.FlowChartStartEpochLabel);
+        Assert.Equal("2.5", vm.FlowChartMidEpochLabel);
+        Assert.Equal("4", vm.FlowChartEndEpochLabel);
         Assert.Contains("min=", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
 
         var populationMaxX = ExtractMaxPathX(vm.PopulationChartSeries[0].PathData);
