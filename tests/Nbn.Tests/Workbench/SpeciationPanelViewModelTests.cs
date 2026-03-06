@@ -788,7 +788,7 @@ public class SpeciationPanelViewModelTests
                 SpeciesDisplayName = "Alpha",
                 AssignedMs = 1000,
                 DecisionMetadataJson =
-                    "{\"lineage\":{\"lineage_assignment_similarity_score\":1.00,\"dominant_species_similarity_score\":0.50,\"source_species_similarity_score\":0.50,\"split_proximity_to_dynamic_threshold\":-0.34},\"assignment_policy\":{\"lineage_split_threshold\":0.60,\"lineage_split_guard_margin\":0.00,\"lineage_dynamic_split_threshold\":0.84}}"
+                    "{\"lineage\":{\"lineage_assignment_similarity_score\":1.00,\"dominant_species_similarity_score\":0.50,\"source_species_similarity_score\":0.50,\"split_proximity_to_dynamic_threshold\":0.16,\"source_split_proximity_to_dynamic_threshold\":-0.34},\"assignment_policy\":{\"lineage_split_threshold\":0.60,\"lineage_split_guard_margin\":0.00,\"lineage_dynamic_split_threshold\":0.70,\"lineage_source_dynamic_split_threshold\":0.84}}"
             }
         };
         var client = new FakeWorkbenchClient

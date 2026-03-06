@@ -3749,38 +3749,51 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 var root = document.RootElement;
                 if (root.TryGetProperty("lineage", out var lineage))
                 {
-                    if (TryGetJsonDouble(lineage, "split_proximity_to_dynamic_threshold", out proximity)
+                    if (TryGetJsonDouble(lineage, "source_split_proximity_to_dynamic_threshold", out proximity)
+                        || TryGetJsonDouble(lineage, "sourceSplitProximityToDynamicThreshold", out proximity)
+                        || TryGetJsonDouble(lineage, "split_proximity_to_dynamic_threshold", out proximity)
                         || TryGetJsonDouble(lineage, "splitProximityToDynamicThreshold", out proximity))
                     {
                         hasExplicitProximity = true;
                         hasExplicitEffectiveSplitThreshold = true;
                     }
-                    else if (TryGetJsonDouble(lineage, "split_proximity_to_policy_threshold", out proximity)
+                    else if (TryGetJsonDouble(lineage, "source_split_proximity_to_policy_threshold", out proximity)
+                             || TryGetJsonDouble(lineage, "sourceSplitProximityToPolicyThreshold", out proximity)
+                             || TryGetJsonDouble(lineage, "split_proximity_to_policy_threshold", out proximity)
                              || TryGetJsonDouble(lineage, "splitProximityToPolicyThreshold", out proximity))
                     {
                         hasExplicitProximity = true;
                     }
                 }
-                else if (TryGetJsonDouble(root, "split_proximity_to_dynamic_threshold", out proximity)
+                else if (TryGetJsonDouble(root, "source_split_proximity_to_dynamic_threshold", out proximity)
+                         || TryGetJsonDouble(root, "sourceSplitProximityToDynamicThreshold", out proximity)
+                         || TryGetJsonDouble(root, "split_proximity_to_dynamic_threshold", out proximity)
                          || TryGetJsonDouble(root, "splitProximityToDynamicThreshold", out proximity))
                 {
                     hasExplicitProximity = true;
                     hasExplicitEffectiveSplitThreshold = true;
                 }
-                else if (TryGetJsonDouble(root, "split_proximity_to_policy_threshold", out proximity)
+                else if (TryGetJsonDouble(root, "source_split_proximity_to_policy_threshold", out proximity)
+                         || TryGetJsonDouble(root, "sourceSplitProximityToPolicyThreshold", out proximity)
+                         || TryGetJsonDouble(root, "split_proximity_to_policy_threshold", out proximity)
                          || TryGetJsonDouble(root, "splitProximityToPolicyThreshold", out proximity))
                 {
                     hasExplicitProximity = true;
                 }
 
                 if (root.TryGetProperty("assignment_policy", out var policy)
-                    && (TryGetJsonDouble(policy, "lineage_dynamic_split_threshold", out splitThreshold)
+                    && (TryGetJsonDouble(policy, "lineage_source_dynamic_split_threshold", out splitThreshold)
+                        || TryGetJsonDouble(policy, "lineageSourceDynamicSplitThreshold", out splitThreshold)
+                        || TryGetJsonDouble(policy, "lineage_dynamic_split_threshold", out splitThreshold)
                         || TryGetJsonDouble(policy, "lineageDynamicSplitThreshold", out splitThreshold)
                         || TryGetJsonDouble(policy, "lineage_split_threshold", out splitThreshold)
                         || TryGetJsonDouble(policy, "lineageSplitThreshold", out splitThreshold)))
                 {
                     splitThreshold = Clamp01(splitThreshold);
                     hasExplicitEffectiveSplitThreshold =
+                        TryGetJsonDouble(policy, "lineage_source_dynamic_split_threshold", out _)
+                        || TryGetJsonDouble(policy, "lineageSourceDynamicSplitThreshold", out _)
+                        || 
                         TryGetJsonDouble(policy, "lineage_dynamic_split_threshold", out _)
                         || TryGetJsonDouble(policy, "lineageDynamicSplitThreshold", out _);
                     if (TryGetJsonDouble(policy, "lineage_split_guard_margin", out var policySplitGuardMargin)
