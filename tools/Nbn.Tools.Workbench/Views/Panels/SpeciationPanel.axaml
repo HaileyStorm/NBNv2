@@ -354,11 +354,16 @@
           <StackPanel Spacing="8">
             <TextBlock Text="Species Flow (Epoch Top to Bottom)" Classes="card-title" />
             <TextBlock Text="Stacked widths show per-species population share over the loaded history window (full width = 100%). Left-axis ticks show epoch numbers, or row-sample positions when the window is a single sampled epoch." Classes="muted" TextWrapping="Wrap" />
-            <Grid ColumnDefinitions="44,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
-              <Grid RowDefinitions="Auto,*,Auto">
-                <TextBlock Text="{Binding FlowChartStartEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
-                <TextBlock Grid.Row="1" Text="{Binding FlowChartMidEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                <TextBlock Grid.Row="2" Text="{Binding FlowChartEndEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+            <Grid ColumnDefinitions="64,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                <TextBlock Grid.RowSpan="3"
+                           Text="time"
+                           Classes="muted"
+                           FontSize="9"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding FlowChartStartEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding FlowChartMidEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding FlowChartEndEpochLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
               </Grid>
               <Grid Grid.Column="1"
                     Width="{Binding FlowChartWidth}"
