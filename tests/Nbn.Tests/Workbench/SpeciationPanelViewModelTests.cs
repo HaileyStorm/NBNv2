@@ -529,6 +529,42 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_UsesAssignedSpeciesSimilarityForCurrentEpochDivergence()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 17,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson =
+                    "{\"lineage\":{\"lineage_assignment_similarity_score\":0.93,\"dominant_species_similarity_score\":0.41,\"source_species_similarity_score\":0.41}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 17;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryRows.Count == history.Length);
+
+        Assert.Contains("within-species divergence", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("0.07", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("0.93", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_BuildsSplitProximitySeriesAndSummary()
     {
         var history = new[]
@@ -615,6 +651,41 @@ public class SpeciationPanelViewModelTests
 
         Assert.Contains("effective split 0.86", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("min=-0.03", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_UsesExplicitSplitProximityBeforeAssignedSpeciesSimilarity()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 43,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1000,
+                DecisionMetadataJson =
+                    "{\"lineage\":{\"lineage_assignment_similarity_score\":1.00,\"dominant_species_similarity_score\":0.50,\"source_species_similarity_score\":0.50,\"split_proximity_to_dynamic_threshold\":-0.34},\"assignment_policy\":{\"lineage_split_threshold\":0.60,\"lineage_split_guard_margin\":0.00,\"lineage_dynamic_split_threshold\":0.84}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 43;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 1);
+
+        Assert.Contains("effective split 0.84", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("min=-0.34", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

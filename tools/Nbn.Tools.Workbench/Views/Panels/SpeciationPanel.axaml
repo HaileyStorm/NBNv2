@@ -401,7 +401,7 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Split Proximity Trend" Classes="card-title" />
-          <TextBlock Text="Top species by similarity evidence. Values track min lineage similarity minus effective split threshold (0 = split cutoff, below 0 = crossed)." Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="Top species by split pressure. Values track min source-species similarity minus effective split threshold (0 = split cutoff, below 0 = crossed)." Classes="muted" TextWrapping="Wrap" />
           <Grid ColumnDefinitions="44,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
             <Grid RowDefinitions="Auto,*,Auto">
               <TextBlock Text="{Binding SplitProximityChartYAxisTopLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />

@@ -86,7 +86,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private uint _currentMembershipCount;
     private uint _currentSpeciesCount;
     private uint _currentLineageEdgeCount;
-    private string _currentEpochMaxDivergenceLabel = "Max lineage divergence (current epoch): (n/a)";
+    private string _currentEpochMaxDivergenceLabel = "Max within-species divergence (current epoch): (n/a)";
     private string _currentEpochSplitProximityLabel = "Split proximity (current epoch): (n/a)";
     private bool _configEnabled = true;
     private string _policyVersion = "default";
@@ -1205,7 +1205,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             CurrentMembershipCount = 0;
             CurrentSpeciesCount = 0;
             CurrentLineageEdgeCount = 0;
-            CurrentEpochMaxDivergenceLabel = $"Max lineage divergence (epoch {CurrentEpochLabel}): (n/a)";
+            CurrentEpochMaxDivergenceLabel = $"Max within-species divergence (epoch {CurrentEpochLabel}): (n/a)";
             CurrentEpochSplitProximityLabel = $"Split proximity (epoch {CurrentEpochLabel}): (n/a)";
             HistoryStatus =
                 $"History cleared: deleted epochs={response.DeletedEpochCount}, memberships={response.DeletedMembershipCount}, species={response.DeletedSpeciesCount}, decisions={response.DeletedDecisionCount}.";
@@ -3302,7 +3302,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         if (history.Count == 0)
         {
-            return new DivergenceSnapshot("Max lineage divergence (current epoch): (n/a)");
+            return new DivergenceSnapshot("Max within-species divergence (current epoch): (n/a)");
         }
 
         var targetEpoch = currentEpochId > 0
@@ -3315,7 +3315,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         foreach (var record in history.Where(entry => (long)entry.EpochId == targetEpoch))
         {
-            if (!TryExtractSimilarityScore(record.DecisionMetadataJson, out var similarity))
+            if (!TryExtractAssignedSpeciesSimilarityScore(record.DecisionMetadataJson, out var similarity))
             {
                 continue;
             }
@@ -3341,15 +3341,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (!maxDivergence.HasValue || !minSimilarity.HasValue)
         {
-            return new DivergenceSnapshot($"Max lineage divergence (epoch {targetEpoch}): (n/a, no similarity scores)");
+            return new DivergenceSnapshot($"Max within-species divergence (epoch {targetEpoch}): (n/a, no similarity scores)");
         }
 
         var label =
-            $"Max lineage divergence (epoch {targetEpoch}) = {maxDivergence.Value:0.###} (min lineage similarity {minSimilarity.Value:0.###}, samples={sampleCount}, brain={maxBrainLabel}).";
+            $"Max within-species divergence (epoch {targetEpoch}) = {maxDivergence.Value:0.###} (min assigned-species similarity {minSimilarity.Value:0.###}, samples={sampleCount}, brain={maxBrainLabel}).";
         return new DivergenceSnapshot(label);
     }
 
-    private static bool TryExtractSimilarityScore(string? metadataJson, out double similarityScore)
+    private static bool TryExtractAssignedSpeciesSimilarityScore(string? metadataJson, out double similarityScore)
     {
         similarityScore = 0d;
         if (string.IsNullOrWhiteSpace(metadataJson))
@@ -3365,6 +3365,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 && TryGetSimilarityFromElement(
                     lineage,
                     out similarityScore,
+                    "intra_species_similarity_sample",
+                    "intraSpeciesSimilaritySample",
                     "lineage_assignment_similarity_score",
                     "lineageAssignmentSimilarityScore",
                     "dominant_species_similarity_score",
@@ -3380,8 +3382,68 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             if (TryGetSimilarityFromElement(
                     root,
                     out similarityScore,
+                    "intra_species_similarity_sample",
+                    "intraSpeciesSimilaritySample",
                     "lineage_assignment_similarity_score",
                     "lineageAssignmentSimilarityScore",
+                    "dominant_species_similarity_score",
+                    "dominantSpeciesSimilarityScore",
+                    "lineage_similarity_score",
+                    "lineageSimilarityScore"))
+            {
+                return true;
+            }
+
+            if (root.TryGetProperty("report", out var report) && TryGetSimilarityFromElement(report, out similarityScore))
+            {
+                return true;
+            }
+
+            if (root.TryGetProperty("scores", out var scores) && TryGetSimilarityFromElement(scores, out similarityScore))
+            {
+                return true;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractSourceSpeciesSimilarityScore(string? metadataJson, out double similarityScore)
+    {
+        similarityScore = 0d;
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(metadataJson);
+            var root = document.RootElement;
+            if (root.TryGetProperty("lineage", out var lineage)
+                && TryGetSimilarityFromElement(
+                    lineage,
+                    out similarityScore,
+                    "source_species_similarity_score",
+                    "sourceSpeciesSimilarityScore",
+                    "dominant_species_similarity_score",
+                    "dominantSpeciesSimilarityScore",
+                    "lineage_similarity_score",
+                    "lineageSimilarityScore",
+                    "similarity_score",
+                    "similarityScore"))
+            {
+                return true;
+            }
+
+            if (TryGetSimilarityFromElement(
+                    root,
+                    out similarityScore,
+                    "source_species_similarity_score",
+                    "sourceSpeciesSimilarityScore",
                     "dominant_species_similarity_score",
                     "dominantSpeciesSimilarityScore",
                     "lineage_similarity_score",
@@ -3493,19 +3555,40 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         splitThreshold = Clamp01(fallbackSplitThreshold);
         var splitGuardMargin = Clamp01(fallbackSplitGuardMargin);
         var hasExplicitEffectiveSplitThreshold = false;
+        var hasExplicitProximity = false;
         proximity = 0d;
-        if (!TryExtractSimilarityScore(metadataJson, out similarity))
-        {
-            return false;
-        }
-
-        similarity = Clamp01(similarity);
         if (!string.IsNullOrWhiteSpace(metadataJson))
         {
             try
             {
                 using var document = JsonDocument.Parse(metadataJson);
                 var root = document.RootElement;
+                if (root.TryGetProperty("lineage", out var lineage))
+                {
+                    if (TryGetJsonDouble(lineage, "split_proximity_to_dynamic_threshold", out proximity)
+                        || TryGetJsonDouble(lineage, "splitProximityToDynamicThreshold", out proximity))
+                    {
+                        hasExplicitProximity = true;
+                        hasExplicitEffectiveSplitThreshold = true;
+                    }
+                    else if (TryGetJsonDouble(lineage, "split_proximity_to_policy_threshold", out proximity)
+                             || TryGetJsonDouble(lineage, "splitProximityToPolicyThreshold", out proximity))
+                    {
+                        hasExplicitProximity = true;
+                    }
+                }
+                else if (TryGetJsonDouble(root, "split_proximity_to_dynamic_threshold", out proximity)
+                         || TryGetJsonDouble(root, "splitProximityToDynamicThreshold", out proximity))
+                {
+                    hasExplicitProximity = true;
+                    hasExplicitEffectiveSplitThreshold = true;
+                }
+                else if (TryGetJsonDouble(root, "split_proximity_to_policy_threshold", out proximity)
+                         || TryGetJsonDouble(root, "splitProximityToPolicyThreshold", out proximity))
+                {
+                    hasExplicitProximity = true;
+                }
+
                 if (root.TryGetProperty("assignment_policy", out var policy)
                     && (TryGetJsonDouble(policy, "lineage_dynamic_split_threshold", out splitThreshold)
                         || TryGetJsonDouble(policy, "lineageDynamicSplitThreshold", out splitThreshold)
@@ -3549,6 +3632,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
             splitThreshold = Math.Max(0d, splitThreshold - splitGuardMargin);
         }
+
+        if (hasExplicitProximity)
+        {
+            similarity = Clamp01(splitThreshold + proximity);
+            return true;
+        }
+
+        if (!TryExtractSourceSpeciesSimilarityScore(metadataJson, out similarity))
+        {
+            return false;
+        }
+
+        similarity = Clamp01(similarity);
         proximity = similarity - splitThreshold;
         return true;
     }

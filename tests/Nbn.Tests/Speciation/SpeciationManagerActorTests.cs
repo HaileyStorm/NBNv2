@@ -2273,7 +2273,7 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
-    public async Task ProtoAssign_Commit_NewbornDerivedSpecies_DoesNotResplitBeforeFirstInSpeciesSample()
+    public async Task ProtoAssign_Commit_NewbornDerivedSpecies_SeedsSingletonIntraSpeciesSimilarity()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");
         var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
@@ -2335,26 +2335,16 @@ public sealed class SpeciationManagerActorTests
                 });
             Assert.True(splitDecision.Decision.Success);
             Assert.Equal("lineage_diverged_new_species", splitDecision.Decision.DecisionReason);
-
-            var guardedDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
-                managerPid,
-                new ProtoSpec.SpeciationAssignRequest
-                {
-                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
-                    Candidate = new ProtoSpec.SpeciationCandidateRef
-                    {
-                        BrainId = secondChild.ToProtoUuid()
-                    },
-                    Parents =
-                    {
-                        new ProtoSpec.SpeciationParentRef { BrainId = firstChild.ToProtoUuid() }
-                    },
-                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.65,\"parent_a_similarity_score\":0.65}}"
-                });
-
-            Assert.True(guardedDecision.Decision.Success);
-            Assert.Equal(splitDecision.Decision.SpeciesId, guardedDecision.Decision.SpeciesId);
-            Assert.Equal("lineage_split_guarded_newborn_intraspecies_evidence", guardedDecision.Decision.DecisionReason);
+            using var metadata = JsonDocument.Parse(splitDecision.Decision.DecisionMetadataJson);
+            var lineage = metadata.RootElement.GetProperty("lineage");
+            var policy = metadata.RootElement.GetProperty("assignment_policy");
+            Assert.Equal(0.50d, lineage.GetProperty("dominant_species_similarity_score").GetDouble(), 3);
+            Assert.Equal(0.50d, lineage.GetProperty("source_species_similarity_score").GetDouble(), 3);
+            Assert.Equal(1.00d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
+            Assert.Equal(1.00d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
+            Assert.Equal(splitDecision.Decision.SpeciesId, lineage.GetProperty("intra_species_similarity_species_id").GetString());
+            Assert.Equal(0.50d, policy.GetProperty("lineage_source_species_similarity_score").GetDouble(), 3);
+            Assert.Equal(1.00d, policy.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
         }
         finally
         {
@@ -2363,7 +2353,7 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
-    public async Task ProtoAssign_Commit_NewbornDerivedSpecies_CanSplitAfterFirstInSpeciesSample()
+    public async Task ProtoAssign_Commit_NewbornDerivedSpecies_SplitsAgainWhenNextMemberIsNotSimilarEnough()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");
         var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
@@ -2427,7 +2417,7 @@ public sealed class SpeciationManagerActorTests
             Assert.True(splitDecision.Decision.Success);
             Assert.Equal("lineage_diverged_new_species", splitDecision.Decision.DecisionReason);
 
-            var guardedDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+            var secondSplitDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
                 managerPid,
                 new ProtoSpec.SpeciationAssignRequest
                 {
@@ -2442,30 +2432,107 @@ public sealed class SpeciationManagerActorTests
                     },
                     DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.65,\"parent_a_similarity_score\":0.65}}"
                 });
-            Assert.True(guardedDecision.Decision.Success);
-            Assert.Equal(splitDecision.Decision.SpeciesId, guardedDecision.Decision.SpeciesId);
-            Assert.Equal("lineage_split_guarded_newborn_intraspecies_evidence", guardedDecision.Decision.DecisionReason);
+            Assert.True(secondSplitDecision.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", secondSplitDecision.Decision.DecisionReason);
+            Assert.StartsWith(splitDecision.Decision.SpeciesId + "-branch-", secondSplitDecision.Decision.SpeciesId, StringComparison.Ordinal);
+            Assert.NotEqual(splitDecision.Decision.SpeciesId, secondSplitDecision.Decision.SpeciesId);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
 
-            var nestedSplitDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+    [Fact]
+    public async Task ProtoAssign_Commit_LowConsensusPairwiseMatch_RescuesRecentDerivedSpecies()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.90d,
+            lineageSplitThreshold: 0.70d,
+            parentConsensusThreshold: 0.70d,
+            derivedSpeciesPrefix: "branch",
+            lineageHysteresisMargin: 0d,
+            lineageSplitGuardMargin: 0d,
+            lineageMinParentMembershipsBeforeSplit: 1,
+            lineageRealignParentMembershipWindow: 0,
+            lineageRealignMatchMargin: 0d,
+            lineageHindsightReassignCommitWindow: 0,
+            lineageHindsightSimilarityMargin: 0.02d));
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            await WaitForEpochAsync(system, managerPid);
+            var sourceParent = Guid.NewGuid();
+            var splitFounder = Guid.NewGuid();
+            var mixedChild = Guid.NewGuid();
+
+            var seedParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
                 managerPid,
                 new ProtoSpec.SpeciationAssignRequest
                 {
                     ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
                     Candidate = new ProtoSpec.SpeciationCandidateRef
                     {
-                        BrainId = thirdChild.ToProtoUuid()
+                        BrainId = sourceParent.ToProtoUuid()
+                    },
+                    SpeciesId = "species-alpha",
+                    SpeciesDisplayName = "Species Alpha",
+                    DecisionReason = "seed_parent_species",
+                    DecisionMetadataJson = "{\"source\":\"seed\"}"
+                });
+            Assert.True(seedParent.Decision.Success);
+
+            var splitDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = splitFounder.ToProtoUuid()
                     },
                     Parents =
                     {
-                        new ProtoSpec.SpeciationParentRef { BrainId = secondChild.ToProtoUuid() }
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
                     },
-                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.60,\"parent_a_similarity_score\":0.60}}"
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.50,\"parent_a_similarity_score\":0.50}}"
+                });
+            Assert.True(splitDecision.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", splitDecision.Decision.DecisionReason);
+
+            var rescuedDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = mixedChild.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() },
+                        new ProtoSpec.SpeciationParentRef { BrainId = splitFounder.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.82,\"parent_a_similarity_score\":0.82,\"parent_b_similarity_score\":0.96}}"
                 });
 
-            Assert.True(nestedSplitDecision.Decision.Success);
-            Assert.Equal("lineage_diverged_new_species", nestedSplitDecision.Decision.DecisionReason);
-            Assert.StartsWith(splitDecision.Decision.SpeciesId + "-branch-", nestedSplitDecision.Decision.SpeciesId, StringComparison.Ordinal);
-            Assert.NotEqual(splitDecision.Decision.SpeciesId, nestedSplitDecision.Decision.SpeciesId);
+            Assert.True(rescuedDecision.Decision.Success);
+            Assert.Equal(splitDecision.Decision.SpeciesId, rescuedDecision.Decision.SpeciesId);
+            Assert.Equal("lineage_low_consensus_pairwise_match", rescuedDecision.Decision.DecisionReason);
+
+            using var metadata = JsonDocument.Parse(rescuedDecision.Decision.DecisionMetadataJson);
+            var lineage = metadata.RootElement.GetProperty("lineage");
+            Assert.Equal(0.96d, lineage.GetProperty("dominant_species_similarity_score").GetDouble(), 3);
+            Assert.Equal(0.96d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
+            Assert.Equal(0.96d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
         }
         finally
         {
