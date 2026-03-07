@@ -1995,6 +1995,108 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task AssessCompatibilityByArtifacts_CompletesWhileBrainIdResolutionIsBlocked()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-concurrent-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var parentABrainId = Guid.NewGuid();
+            var parentBBrainId = Guid.NewGuid();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainInfo = new Dictionary<Guid, ProtoIo.BrainInfo>
+            {
+                [parentABrainId] = new ProtoIo.BrainInfo
+                {
+                    BrainId = parentABrainId.ToProtoUuid(),
+                    InputWidth = 1,
+                    OutputWidth = 1,
+                    BaseDefinition = parentARef,
+                    LastSnapshot = new ArtifactRef()
+                },
+                [parentBBrainId] = new ProtoIo.BrainInfo
+                {
+                    BrainId = parentBBrainId.ToProtoUuid(),
+                    InputWidth = 1,
+                    OutputWidth = 1,
+                    BaseDefinition = parentBRef,
+                    LastSnapshot = new ArtifactRef()
+                }
+            };
+
+            var releaseBrainInfo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var system = new ActorSystem();
+            var root = system.Root;
+            var ioProbeActor = new BlockingBrainInfoProbe(brainInfo, releaseBrainInfo.Task);
+            var ioProbe = root.Spawn(Props.FromProducer(() => ioProbeActor));
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor(ioProbe)));
+
+            var blockedAssessment = root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.AssessCompatibilityByBrainIdsRequest
+                {
+                    ParentA = parentABrainId.ToProtoUuid(),
+                    ParentB = parentBBrainId.ToProtoUuid(),
+                    Seed = 9001,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                },
+                TimeSpan.FromSeconds(10));
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            while (ioProbeActor.BrainInfoRequestCount == 0 && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(10);
+            }
+
+            Assert.True(ioProbeActor.BrainInfoRequestCount > 0);
+
+            var artifactAssessment = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 777,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                },
+                TimeSpan.FromSeconds(1));
+
+            Assert.NotNull(artifactAssessment.Report);
+            Assert.True(artifactAssessment.Report.Compatible);
+
+            releaseBrainInfo.TrySetResult();
+            var blockedResponse = await blockedAssessment;
+
+            Assert.NotNull(blockedResponse.Report);
+            Assert.True(blockedResponse.Report.Compatible);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_RunCountZero_DefaultsToSingleRun()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-zero-{Guid.NewGuid():N}");
@@ -3176,6 +3278,52 @@ public class ReproductionManagerActorTests
                     break;
             }
 
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BlockingBrainInfoProbe : IActor
+    {
+        private readonly IReadOnlyDictionary<Guid, ProtoIo.BrainInfo> _brainInfo;
+        private readonly Task _releaseTask;
+        private int _brainInfoRequestCount;
+
+        public BlockingBrainInfoProbe(
+            IReadOnlyDictionary<Guid, ProtoIo.BrainInfo> brainInfo,
+            Task releaseTask)
+        {
+            _brainInfo = brainInfo;
+            _releaseTask = releaseTask;
+        }
+
+        public int BrainInfoRequestCount => Volatile.Read(ref _brainInfoRequestCount);
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not ProtoIo.BrainInfoRequest request)
+            {
+                return Task.CompletedTask;
+            }
+
+            Interlocked.Increment(ref _brainInfoRequestCount);
+            var response = request.BrainId is not null
+                && request.BrainId.TryToGuid(out var brainId)
+                && _brainInfo.TryGetValue(brainId, out var info)
+                    ? info
+                    : new ProtoIo.BrainInfo
+                    {
+                        BrainId = request.BrainId ?? new Uuid(),
+                        InputWidth = 0,
+                        OutputWidth = 0,
+                        BaseDefinition = new ArtifactRef(),
+                        LastSnapshot = new ArtifactRef()
+                    };
+
+            context.ReenterAfter(_releaseTask, _ =>
+            {
+                context.Respond(response);
+                return Task.CompletedTask;
+            });
             return Task.CompletedTask;
         }
     }

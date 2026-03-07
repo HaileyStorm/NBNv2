@@ -42,21 +42,21 @@ public sealed class ReproductionManagerActor : IActor
 
     public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
 
-    public async Task ReceiveAsync(IContext context)
+    public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
             case ReproduceByBrainIdsRequest message:
-                context.Respond(await HandleReproduceByBrainIdsAsync(context, message).ConfigureAwait(false));
+                RespondAfter(context, HandleReproduceByBrainIdsAsync(context, message));
                 break;
             case ReproduceByArtifactsRequest message:
-                context.Respond(await HandleReproduceByArtifactsAsync(context, message).ConfigureAwait(false));
+                RespondAfter(context, HandleReproduceByArtifactsAsync(context, message));
                 break;
             case AssessCompatibilityByBrainIdsRequest message:
-                context.Respond(await HandleAssessCompatibilityByBrainIdsAsync(context, message).ConfigureAwait(false));
+                RespondAfter(context, HandleAssessCompatibilityByBrainIdsAsync(context, message));
                 break;
             case AssessCompatibilityByArtifactsRequest message:
-                context.Respond(await HandleAssessCompatibilityByArtifactsAsync(context, message).ConfigureAwait(false));
+                RespondAfter(context, HandleAssessCompatibilityByArtifactsAsync(context, message));
                 break;
             case DiscoverySnapshotApplied snapshot:
                 ApplyDiscoverySnapshot(snapshot);
@@ -65,6 +65,23 @@ public sealed class ReproductionManagerActor : IActor
                 ApplyObservedEndpoint(observed.Observation);
                 break;
         }
+
+        return Task.CompletedTask;
+    }
+
+    private static void RespondAfter(IContext context, Task<ReproduceResult> responseTask)
+    {
+        context.ReenterAfter(responseTask, completed =>
+        {
+            if (completed.IsCompletedSuccessfully)
+            {
+                context.Respond(completed.Result ?? CreateAbortResult("repro_internal_error"));
+                return Task.CompletedTask;
+            }
+
+            context.Respond(CreateAbortResult("repro_internal_error"));
+            return Task.CompletedTask;
+        });
     }
 
     private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
