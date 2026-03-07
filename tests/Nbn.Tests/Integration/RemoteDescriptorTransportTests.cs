@@ -1,15 +1,21 @@
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Data.Sqlite;
 using Nbn.Proto;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
 using Nbn.Proto.Viz;
+using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.HiveMind;
+using Nbn.Runtime.Reproduction;
+using Nbn.Runtime.Speciation;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
+using Nbn.Tests.Format;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
+using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Integration;
 
@@ -130,6 +136,88 @@ public class RemoteDescriptorTransportTests
         Assert.Equal(expected.Context, response.Context);
         Assert.Equal(expected.Summary, response.Summary);
         Assert.Equal(expected.Message, response.Message);
+    }
+
+    [Fact]
+    public async Task SpeciationRemote_Transports_Reproduction_AssessCompatibilityByArtifacts_Messages()
+    {
+        var receiverPort = GetFreePort();
+        var senderPort = GetFreePort();
+        var artifactRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"nbn-remote-spec-repro-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)manifestA.ByteLength,
+                "application/x-nbn",
+                artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)manifestB.ByteLength,
+                "application/x-nbn",
+                artifactRoot);
+
+            var receiverOptions = ReproductionOptions.FromArgs(new[]
+            {
+                "--bind-host", "127.0.0.1",
+                "--port", receiverPort.ToString(),
+                "--settings-host", "127.0.0.1",
+                "--settings-port", "12010",
+                "--settings-name", "SettingsMonitor"
+            });
+            await using var receiver = await RemoteTestNode.StartAsync(
+                ReproductionRemote.BuildConfig(receiverOptions));
+            receiver.Root.SpawnNamed(
+                Props.FromProducer(() => new ReproductionManagerActor()),
+                receiverOptions.ManagerName);
+
+            var senderOptions = SpeciationOptions.FromArgs(new[]
+            {
+                "--bind-host", "127.0.0.1",
+                "--port", senderPort.ToString(),
+                "--settings-host", "127.0.0.1",
+                "--settings-port", "12010",
+                "--settings-name", "SettingsMonitor"
+            });
+            await using var sender = await RemoteTestNode.StartAsync(
+                SpeciationRemote.BuildConfig(senderOptions));
+
+            var target = new PID(receiver.Address, receiverOptions.ManagerName);
+            var response = await sender.Root.RequestAsync<Repro.ReproduceResult>(
+                target,
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 1234,
+                    RunCount = 1,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                },
+                TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(response);
+            Assert.NotNull(response.Report);
+            Assert.True(response.Report.Compatible);
+            Assert.True(response.Report.SimilarityScore > 0f);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
     }
 
     private static int GetFreePort()
