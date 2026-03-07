@@ -20,7 +20,7 @@ Reproduction requests may specify parents by:
 
 * BrainId (preferred): NBN resolves to the latest base `.nbn` plus latest `.nbs` overlay if configured
 * ArtifactRef: `.nbn` (and optionally `.nbs`)
-* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn; speciation uses these assessment-only calls when deciding whether a candidate may join an already-created derived species and when bootstrapping the first three non-founder members of a newborn derived species. Runtime handles reproduction and assessment requests re-entrantly so these speciation checks do not starve behind unrelated reproduction work.
+* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn; speciation uses these assessment-only calls when deciding whether a candidate may join an already-created derived species and when bootstrapping the first three non-founder members of a newborn derived species. Runtime handles reproduction and assessment requests re-entrantly so these speciation checks do not starve behind unrelated reproduction work, and repeated artifact-based assessments reuse a bounded parsed-parent cache keyed by artifact SHA.
 
 Strength source options:
 
@@ -152,7 +152,7 @@ Implementation notes (runtime behavior):
 
 * `SimilarityReport.compatible=false` with `SimilarityReport.abort_reason=<code>` indicates a gate/runtime abort.
 * Successful child synthesis populates `child_def` and `summary` even when subsequent spawn fails.
-* Speciation bootstrap admissions use these assessment-only calls with a short bounded timeout and require the assigned-species score to clear the lineage match threshold, not merely the split threshold, before a newborn derived species may seed its in-species floor. Founder hindsight batches reuse one fixed earliest-exemplar snapshot per newborn species so bounded reassignment does not recursively amplify compatibility workload inside the same split commit, and reproduction handles these requests re-entrantly so they are not forced to wait behind unrelated reproduction runs in the same mailbox.
+* Speciation bootstrap admissions use these assessment-only calls with a short bounded timeout and require the assigned-species score to clear the lineage match threshold, not merely the split threshold, before a newborn derived species may seed its in-species floor. Speciation owns the final admit/reject decision from those checks: if reproduction returns a finite manual similarity score, speciation may use that score even when `SimilarityReport.compatible=false` so long as the abort reason reflects a real similarity mismatch rather than lookup/load/runtime failure. Founder hindsight batches reuse one fixed earliest-exemplar snapshot per newborn species so bounded reassignment does not recursively amplify compatibility workload inside the same split commit, and founder commits enqueue that hindsight work after the founder assignment instead of blocking the originating commit response.
 * Spawn-policy behavior:
   * `SPAWN_CHILD_DEFAULT_ON`: attempt spawn after synthesis
   * `SPAWN_CHILD_NEVER`: do not spawn; return child artifact only

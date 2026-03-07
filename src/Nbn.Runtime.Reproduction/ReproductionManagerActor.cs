@@ -23,6 +23,7 @@ public sealed class ReproductionManagerActor : IActor
     private const ulong DefaultSpotCheckSeed = 0x9E3779B97F4A7C15UL;
     private const uint DefaultRunCount = 1;
     private const uint MaxRunCount = 64;
+    private const int ParsedParentCacheCapacity = 128;
     private const float PreferredActivationMutationBias = 0.80f;
     private const float PreferredResetMutationBias = 0.75f;
     private const float PreferredAccumulationMutationBias = 0.85f;
@@ -31,6 +32,9 @@ public sealed class ReproductionManagerActor : IActor
     private static readonly byte[] PreferredAccumulationFunctionIds = { 0, 0, 2, 2, 1 };
     private readonly PID? _configuredIoGatewayPid;
     private PID? _ioGatewayPid;
+    private readonly object _parsedParentCacheGate = new();
+    private readonly Dictionary<string, ParsedParent> _parsedParentCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Queue<string> _parsedParentCacheOrder = new();
 
     public ReproductionManagerActor(PID? ioGatewayPid = null)
     {
@@ -2809,7 +2813,7 @@ public sealed class ReproductionManagerActor : IActor
         return count;
     }
 
-    private static async Task<LoadParentResult> TryLoadParentAsync(ArtifactRef reference, string label)
+    private async Task<LoadParentResult> TryLoadParentAsync(ArtifactRef reference, string label)
     {
         var prefix = label == "a" ? "repro_parent_a" : "repro_parent_b";
         if (!string.IsNullOrWhiteSpace(reference.MediaType) && !IsNbnMediaType(reference.MediaType))
@@ -2820,6 +2824,11 @@ public sealed class ReproductionManagerActor : IActor
         if (!reference.TryToSha256Bytes(out var hashBytes) || hashBytes.Length != Sha256Hash.Length)
         {
             return new LoadParentResult(null, $"{prefix}_sha256_invalid");
+        }
+
+        if (TryGetCachedParsedParent(reference, out var cachedParent))
+        {
+            return new LoadParentResult(cachedParent, null);
         }
 
         var hash = new Sha256Hash(hashBytes);
@@ -2860,7 +2869,59 @@ public sealed class ReproductionManagerActor : IActor
             return new LoadParentResult(null, MapValidationAbortReason(validation, prefix));
         }
 
-        return new LoadParentResult(new ParsedParent(header, sections), null);
+        var parsedParent = new ParsedParent(header, sections);
+        CacheParsedParent(reference, parsedParent);
+        return new LoadParentResult(parsedParent, null);
+    }
+
+    private bool TryGetCachedParsedParent(ArtifactRef reference, out ParsedParent parsedParent)
+    {
+        parsedParent = default!;
+        if (!TryBuildParsedParentCacheKey(reference, out var cacheKey))
+        {
+            return false;
+        }
+
+        lock (_parsedParentCacheGate)
+        {
+            return _parsedParentCache.TryGetValue(cacheKey, out parsedParent!);
+        }
+    }
+
+    private void CacheParsedParent(ArtifactRef reference, ParsedParent parsedParent)
+    {
+        if (!TryBuildParsedParentCacheKey(reference, out var cacheKey))
+        {
+            return;
+        }
+
+        lock (_parsedParentCacheGate)
+        {
+            if (_parsedParentCache.ContainsKey(cacheKey))
+            {
+                return;
+            }
+
+            _parsedParentCache[cacheKey] = parsedParent;
+            _parsedParentCacheOrder.Enqueue(cacheKey);
+            while (_parsedParentCacheOrder.Count > ParsedParentCacheCapacity)
+            {
+                var evictedKey = _parsedParentCacheOrder.Dequeue();
+                _parsedParentCache.Remove(evictedKey);
+            }
+        }
+    }
+
+    private static bool TryBuildParsedParentCacheKey(ArtifactRef reference, out string cacheKey)
+    {
+        cacheKey = string.Empty;
+        if (!reference.TryToSha256Hex(out var sha) || string.IsNullOrWhiteSpace(sha))
+        {
+            return false;
+        }
+
+        cacheKey = sha;
+        return true;
     }
 
     private static async Task<TransformParentResult> ResolveTransformParentAsync(

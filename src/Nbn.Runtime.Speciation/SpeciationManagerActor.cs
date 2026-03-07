@@ -63,6 +63,14 @@ public sealed class SpeciationManagerActor : IActor
 
     public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
 
+    private sealed record ApplySplitHindsightReassignmentsRequest(
+        SpeciationEpochInfo Epoch,
+        SpeciationMembershipRecord SplitMembership,
+        AssignmentResolution AssignmentResolution,
+        double AssignmentSimilarityScore,
+        string PolicyVersion,
+        long? DecisionTimeMs);
+
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
@@ -123,6 +131,9 @@ public sealed class SpeciationManagerActor : IActor
                 break;
             case ProtoSpec.SpeciationListHistoryRequest message:
                 HandleProtoListHistory(context, message);
+                break;
+            case ApplySplitHindsightReassignmentsRequest message:
+                HandleApplySplitHindsightReassignments(context, message);
                 break;
             case DiscoverySnapshotApplied snapshot:
                 ApplyDiscoverySnapshot(snapshot);
@@ -904,6 +915,48 @@ public sealed class SpeciationManagerActor : IActor
         });
     }
 
+    private void HandleApplySplitHindsightReassignments(
+        IContext context,
+        ApplySplitHindsightReassignmentsRequest message)
+    {
+        var hindsightTask = ApplySplitHindsightReassignmentsAsync(
+            context,
+            message.Epoch,
+            message.SplitMembership,
+            message.AssignmentResolution,
+            message.AssignmentSimilarityScore,
+            message.PolicyVersion,
+            message.DecisionTimeMs);
+        context.ReenterAfter(hindsightTask, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError(
+                    $"Speciation hindsight reassign failed for epoch={message.Epoch.EpochId} brain={message.SplitMembership.BrainId:D}: {completed.Exception?.GetBaseException().Message}");
+                return Task.CompletedTask;
+            }
+
+            if (completed.Result <= 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            context.ReenterAfter(
+                PrimeSpeciesSimilarityFloorsAsync(message.Epoch.EpochId),
+                primed =>
+                {
+                    if (primed.IsFaulted)
+                    {
+                        LogError(
+                            $"Speciation hindsight floor prime failed for epoch={message.Epoch.EpochId}: {primed.Exception?.GetBaseException().Message}");
+                    }
+
+                    return Task.CompletedTask;
+                });
+            return Task.CompletedTask;
+        });
+    }
+
     private void HandleProtoBatchEvaluateApply(IContext context, ProtoSpec.SpeciationBatchEvaluateApplyRequest message)
     {
         var applyMode = NormalizeApplyMode(message.ApplyMode);
@@ -1378,26 +1431,15 @@ public sealed class SpeciationManagerActor : IActor
                 && !string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
                 && sourceSpeciesSimilarityScore.HasValue)
             {
-                try
-                {
-                    var hindsightReassignments = await ApplySplitHindsightReassignmentsAsync(
-                        context,
+                context.Send(
+                    context.Self,
+                    new ApplySplitHindsightReassignmentsRequest(
                         epoch,
                         outcome.Membership,
                         assignmentResolution,
-                        sourceSpeciesSimilarityScore,
+                        sourceSpeciesSimilarityScore.Value,
                         resolvedPolicyVersion,
-                        decisionTimeMs).ConfigureAwait(false);
-                    if (hindsightReassignments > 0)
-                    {
-                        await PrimeSpeciesSimilarityFloorsAsync(epoch.EpochId).ConfigureAwait(false);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogError(
-                        $"Speciation hindsight reassign failed for epoch={epoch.EpochId} brain={outcome.Membership.BrainId:D}: {ex.GetBaseException().Message}");
-                }
+                        decisionTimeMs));
             }
         }
 
@@ -2474,6 +2516,8 @@ public sealed class SpeciationManagerActor : IActor
 
         var exemplarBrainIds = new List<string>(exemplars.Count);
         var exemplarSimilarities = new List<double>(exemplars.Count);
+        var allAssessmentsCompatible = true;
+        string? firstAssessmentAbortReason = null;
         foreach (var exemplar in exemplars)
         {
             if (candidateSubject.Kind == CompatibilitySubjectKind.BrainId
@@ -2488,17 +2532,23 @@ public sealed class SpeciationManagerActor : IActor
                 return null;
             }
 
-            var similarity = await TryAssessCompatibilitySimilarityAsync(
+            var assessment = await TryAssessCompatibilitySimilarityAsync(
                 context,
                 candidateSubject,
                 exemplarSubject).ConfigureAwait(false);
-            if (!similarity.HasValue)
+            if (!assessment.HasValue || !assessment.Value.SimilarityScore.HasValue)
             {
                 return null;
             }
 
             exemplarBrainIds.Add(exemplar.BrainId.ToString("D"));
-            exemplarSimilarities.Add(similarity.Value);
+            exemplarSimilarities.Add(assessment.Value.SimilarityScore.Value);
+            allAssessmentsCompatible &= assessment.Value.Compatible;
+            if (string.IsNullOrWhiteSpace(firstAssessmentAbortReason)
+                && !string.IsNullOrWhiteSpace(assessment.Value.AbortReason))
+            {
+                firstAssessmentAbortReason = assessment.Value.AbortReason;
+            }
         }
 
         if (exemplarSimilarities.Count == 0)
@@ -2532,10 +2582,12 @@ public sealed class SpeciationManagerActor : IActor
         return new ActualAssignedSpeciesAdmission(
             assignedSimilarity,
             candidateSubject.Kind == CompatibilitySubjectKind.BrainId ? "brain_ids" : "artifacts",
-            exemplarBrainIds.ToArray());
+            exemplarBrainIds.ToArray(),
+            allAssessmentsCompatible,
+            firstAssessmentAbortReason ?? string.Empty);
     }
 
-    private async Task<double?> TryAssessCompatibilitySimilarityAsync(
+    private async Task<CompatibilitySimilarityAssessment?> TryAssessCompatibilitySimilarityAsync(
         IContext context,
         CompatibilitySubject candidateSubject,
         CompatibilitySubject exemplarSubject)
@@ -2577,19 +2629,80 @@ public sealed class SpeciationManagerActor : IActor
             }
 
             if (response?.Report is null
-                || !response.Report.Compatible
                 || float.IsNaN(response.Report.SimilarityScore)
                 || float.IsInfinity(response.Report.SimilarityScore))
             {
                 return null;
             }
 
-            return ClampScore(response.Report.SimilarityScore);
+            var abortReason = NormalizeCompatibilityAbortReason(response.Report.AbortReason);
+            var similarityScore = ClampScore(response.Report.SimilarityScore);
+            if (!response.Report.Compatible
+                && !ShouldUseCompatibilitySimilarityScore(abortReason))
+            {
+                return new CompatibilitySimilarityAssessment(
+                    SimilarityScore: null,
+                    Compatible: false,
+                    AbortReason: abortReason);
+            }
+
+            return new CompatibilitySimilarityAssessment(
+                SimilarityScore: similarityScore,
+                Compatible: response.Report.Compatible,
+                AbortReason: abortReason);
         }
         catch
         {
             return null;
         }
+    }
+
+    private static string NormalizeCompatibilityAbortReason(string? abortReason)
+        => string.IsNullOrWhiteSpace(abortReason)
+            ? string.Empty
+            : abortReason.Trim();
+
+    private static bool ShouldUseCompatibilitySimilarityScore(string abortReason)
+    {
+        if (string.IsNullOrWhiteSpace(abortReason))
+        {
+            return true;
+        }
+
+        return !IsCompatibilityInfrastructureFailure(abortReason);
+    }
+
+    private static bool IsCompatibilityInfrastructureFailure(string abortReason)
+    {
+        return abortReason switch
+        {
+            "repro_internal_error" => true,
+            "repro_parent_resolution_unavailable" => true,
+            "repro_run_count_out_of_range" => true,
+            "repro_missing_parent_brain_ids" => true,
+            "repro_parent_a_brain_id_invalid" => true,
+            "repro_parent_b_brain_id_invalid" => true,
+            "repro_missing_parent_a_def" => true,
+            "repro_missing_parent_b_def" => true,
+            _ when abortReason.EndsWith("_lookup_failed", StringComparison.Ordinal)
+                || abortReason.EndsWith("_brain_not_found", StringComparison.Ordinal)
+                || abortReason.EndsWith("_base_def_missing", StringComparison.Ordinal)
+                || abortReason.EndsWith("_media_type_invalid", StringComparison.Ordinal)
+                || abortReason.EndsWith("_sha256_invalid", StringComparison.Ordinal)
+                || abortReason.EndsWith("_artifact_not_found", StringComparison.Ordinal)
+                || abortReason.EndsWith("_parse_failed", StringComparison.Ordinal)
+                || abortReason.EndsWith("_validation_failed", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_ref_missing", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_media_type_invalid", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_sha256_invalid", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_artifact_not_found", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_parse_failed", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_incompatible_with_base", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_overlay_missing", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_overlay_empty", StringComparison.Ordinal)
+                || abortReason.EndsWith("_state_overlay_no_matching_routes", StringComparison.Ordinal) => true,
+            _ => false
+        };
     }
 
     private static ProtoRepro.ReproduceConfig CreateCompatibilityAssessmentConfig()
@@ -3217,6 +3330,8 @@ public sealed class SpeciationManagerActor : IActor
         lineage["assigned_species_similarity_source"] = "compatibility_assessment";
         lineage["assigned_species_compatibility_mode"] = actualAssignedSpeciesAdmission.AssessmentMode;
         lineage["assigned_species_compatibility_similarity_score"] = actualAssignedSimilarity;
+        lineage["assigned_species_compatibility_report_compatible"] = actualAssignedSpeciesAdmission.Compatible;
+        lineage["assigned_species_compatibility_abort_reason"] = actualAssignedSpeciesAdmission.AbortReason;
         lineage["assigned_species_compatibility_exemplar_count"] = actualAssignedSpeciesAdmission.ExemplarBrainIds.Length;
         var exemplarBrainIds = new JsonArray();
         foreach (var exemplarBrainId in actualAssignedSpeciesAdmission.ExemplarBrainIds)
@@ -3997,6 +4112,10 @@ public sealed class SpeciationManagerActor : IActor
             lineage["assigned_species_compatibility_mode"] = actualAssignedSpeciesAdmission.Value.AssessmentMode;
             lineage["assigned_species_compatibility_similarity_score"] =
                 ClampScore(actualAssignedSpeciesAdmission.Value.SimilarityScore);
+            lineage["assigned_species_compatibility_report_compatible"] =
+                actualAssignedSpeciesAdmission.Value.Compatible;
+            lineage["assigned_species_compatibility_abort_reason"] =
+                actualAssignedSpeciesAdmission.Value.AbortReason;
             lineage["assigned_species_compatibility_exemplar_count"] =
                 actualAssignedSpeciesAdmission.Value.ExemplarBrainIds.Length;
             var exemplarBrainIds = new JsonArray();
@@ -5332,7 +5451,14 @@ public sealed class SpeciationManagerActor : IActor
     private readonly record struct ActualAssignedSpeciesAdmission(
         double SimilarityScore,
         string AssessmentMode,
-        string[] ExemplarBrainIds);
+        string[] ExemplarBrainIds,
+        bool Compatible,
+        string AbortReason);
+
+    private readonly record struct CompatibilitySimilarityAssessment(
+        double? SimilarityScore,
+        bool Compatible,
+        string AbortReason);
 
     private enum CompatibilitySubjectKind
     {

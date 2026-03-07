@@ -2097,6 +2097,73 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task AssessCompatibilityByArtifacts_ReusesCachedParsedParentsAcrossRepeatedRequests()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+            var firstResponse = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 777,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                });
+
+            Assert.NotNull(firstResponse.Report);
+            Assert.True(firstResponse.Report.Compatible);
+
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(artifactRoot, recursive: true);
+
+            var secondResponse = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 777,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f
+                    }
+                });
+
+            Assert.NotNull(secondResponse.Report);
+            Assert.True(secondResponse.Report.Compatible);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_RunCountZero_DefaultsToSingleRun()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-zero-{Guid.NewGuid():N}");
