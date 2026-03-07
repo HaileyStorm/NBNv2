@@ -5,6 +5,7 @@ using Proto;
 using ProtoRepro = Nbn.Proto.Repro;
 using ProtoSettings = Nbn.Proto.Settings;
 using ProtoSpec = Nbn.Proto.Speciation;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -1272,7 +1273,7 @@ public sealed class SpeciationManagerActor : IActor
         var bootstrapRequirement = await TryResolveBootstrapAssignedSpeciesAdmissionRequirementAsync(
             epoch.EpochId,
             assignmentResolution).ConfigureAwait(false);
-        ActualAssignedSpeciesAdmission? actualAssignedSpeciesAdmission = null;
+        AssignedSpeciesAdmissionAssessment? assignedSpeciesAdmissionAssessment = null;
         if (RequiresActualAssignedSpeciesAdmission(
                 assignmentResolution,
                 bootstrapRequirement.HasValue))
@@ -1292,9 +1293,9 @@ public sealed class SpeciationManagerActor : IActor
                 assignmentResolution,
                 bootstrapRequirement,
                 admissionSourceSimilarityScore).ConfigureAwait(false);
-            if (evaluatedAdmission.HasValue)
+            assignedSpeciesAdmissionAssessment = evaluatedAdmission;
+            if (evaluatedAdmission.Admitted)
             {
-                actualAssignedSpeciesAdmission = evaluatedAdmission;
             }
             else if (bootstrapRequirement.HasValue)
             {
@@ -1328,7 +1329,10 @@ public sealed class SpeciationManagerActor : IActor
             parentMemberships,
             similarityEvidence,
             sourceSpeciesSimilarityScore,
-            actualAssignedSpeciesAdmission?.SimilarityScore,
+            assignedSpeciesAdmissionAssessment.HasValue
+            && assignedSpeciesAdmissionAssessment.Value.Admitted
+                ? assignedSpeciesAdmissionAssessment.Value.SimilarityScore
+                : null,
             inputOrderedParentBrainIds,
             allowSourceSimilarityCarryover,
             out var resolvedIntraSpeciesSample)
@@ -1340,7 +1344,10 @@ public sealed class SpeciationManagerActor : IActor
             similarityEvidence,
             inputOrderedParentBrainIds,
             sourceSpeciesSimilarityScore,
-            actualAssignedSpeciesAdmission?.SimilarityScore,
+            assignedSpeciesAdmissionAssessment.HasValue
+            && assignedSpeciesAdmissionAssessment.Value.Admitted
+                ? assignedSpeciesAdmissionAssessment.Value.SimilarityScore
+                : null,
             intraSpeciesSimilaritySample,
             allowSourceSimilarityCarryover);
 
@@ -1359,7 +1366,7 @@ public sealed class SpeciationManagerActor : IActor
             sourceSpeciesSimilarityScore,
             assignedSpeciesSimilarityScore,
             intraSpeciesSimilaritySample,
-            actualAssignedSpeciesAdmission);
+            assignedSpeciesAdmissionAssessment);
         Guid? parentBrainId = orderedParentBrainIds.Count == 0
             ? null
             : orderedParentBrainIds[0];
@@ -1422,7 +1429,8 @@ public sealed class SpeciationManagerActor : IActor
             RecordCommittedMembership(
                 outcome.Membership,
                 intraSpeciesSimilaritySample,
-                actualAssignedSpeciesAdmission.HasValue);
+                assignedSpeciesAdmissionAssessment.HasValue
+                && assignedSpeciesAdmissionAssessment.Value.Admitted);
 
             if (string.Equals(
                     assignmentResolution.DecisionReason,
@@ -2458,7 +2466,7 @@ public sealed class SpeciationManagerActor : IActor
             SpeciesFloorMembershipCount: fallbackThresholdState.SpeciesFloorMembershipCount);
     }
 
-    private async Task<ActualAssignedSpeciesAdmission?> TryAssessActualAssignedSpeciesAdmissionAsync(
+    private async Task<AssignedSpeciesAdmissionAssessment> TryAssessActualAssignedSpeciesAdmissionAsync(
         IContext context,
         SpeciationEpochInfo epoch,
         ResolvedCandidate resolvedCandidate,
@@ -2467,9 +2475,19 @@ public sealed class SpeciationManagerActor : IActor
         double? sourceSpeciesSimilarityScore,
         IReadOnlyList<SpeciationMembershipRecord>? exemplarMemberships = null)
     {
+        var assessmentMode = ResolveCompatibilityAssessmentMode(resolvedCandidate.CandidateMode);
         if (!TryBuildCompatibilitySubject(resolvedCandidate, out var candidateSubject))
         {
-            return null;
+            return CreateAssignedSpeciesAdmissionAssessment(
+                assessmentAttempted: false,
+                admitted: false,
+                similarityScore: null,
+                assessmentMode: assessmentMode,
+                exemplarBrainIds: Array.Empty<string>(),
+                compatible: false,
+                abortReason: string.Empty,
+                failureReason: "candidate_subject_unavailable",
+                elapsedMs: 0L);
         }
 
         return await TryAssessActualAssignedSpeciesAdmissionAsync(
@@ -2483,7 +2501,7 @@ public sealed class SpeciationManagerActor : IActor
             exemplarMemberships).ConfigureAwait(false);
     }
 
-    private async Task<ActualAssignedSpeciesAdmission?> TryAssessActualAssignedSpeciesAdmissionAsync(
+    private async Task<AssignedSpeciesAdmissionAssessment> TryAssessActualAssignedSpeciesAdmissionAsync(
         IContext context,
         SpeciationEpochInfo epoch,
         CompatibilitySubject candidateSubject,
@@ -2493,11 +2511,44 @@ public sealed class SpeciationManagerActor : IActor
         double? sourceSpeciesSimilarityScore,
         IReadOnlyList<SpeciationMembershipRecord>? exemplarMemberships = null)
     {
+        var stopwatch = Stopwatch.StartNew();
+        var assessmentMode = ResolveCompatibilityAssessmentMode(candidateSubject.Kind);
+        AssignedSpeciesAdmissionAssessment BuildAssessment(
+            bool assessmentAttempted,
+            bool admitted,
+            double? similarityScore,
+            IReadOnlyList<string> exemplarBrainIds,
+            bool compatible,
+            string abortReason,
+            string failureReason)
+            => CreateAssignedSpeciesAdmissionAssessment(
+                assessmentAttempted,
+                admitted,
+                similarityScore,
+                assessmentMode,
+                exemplarBrainIds,
+                compatible,
+                abortReason,
+                failureReason,
+                stopwatch.ElapsedMilliseconds);
+
         if (_reproductionManagerPid is null
             || epoch.EpochId <= 0
             || string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId))
         {
-            return null;
+            var failureReason = _reproductionManagerPid is null
+                ? "reproduction_unavailable"
+                : epoch.EpochId <= 0
+                    ? "epoch_unavailable"
+                    : "assigned_species_unavailable";
+            return BuildAssessment(
+                assessmentAttempted: false,
+                admitted: false,
+                similarityScore: null,
+                exemplarBrainIds: Array.Empty<string>(),
+                compatible: false,
+                abortReason: string.Empty,
+                failureReason: failureReason);
         }
 
         var exemplars = exemplarMemberships;
@@ -2511,11 +2562,19 @@ public sealed class SpeciationManagerActor : IActor
 
         if (exemplars.Count == 0)
         {
-            return null;
+            return BuildAssessment(
+                assessmentAttempted: false,
+                admitted: false,
+                similarityScore: null,
+                exemplarBrainIds: Array.Empty<string>(),
+                compatible: false,
+                abortReason: string.Empty,
+                failureReason: "assigned_species_exemplars_unavailable");
         }
 
-        var exemplarBrainIds = new List<string>(exemplars.Count);
+        var attemptedExemplarBrainIds = new List<string>(exemplars.Count);
         var exemplarSimilarities = new List<double>(exemplars.Count);
+        var assessmentAttempted = false;
         var allAssessmentsCompatible = true;
         string? firstAssessmentAbortReason = null;
         foreach (var exemplar in exemplars)
@@ -2526,34 +2585,59 @@ public sealed class SpeciationManagerActor : IActor
                 continue;
             }
 
+            attemptedExemplarBrainIds.Add(exemplar.BrainId.ToString("D"));
             if (!TryBuildCompatibilitySubject(exemplar, out var exemplarSubject)
                 || exemplarSubject.Kind != candidateSubject.Kind)
             {
-                return null;
+                return BuildAssessment(
+                    assessmentAttempted: assessmentAttempted,
+                    admitted: false,
+                    similarityScore: null,
+                    exemplarBrainIds: attemptedExemplarBrainIds,
+                    compatible: assessmentAttempted && allAssessmentsCompatible,
+                    abortReason: firstAssessmentAbortReason ?? string.Empty,
+                    failureReason: "assigned_species_exemplar_subject_unavailable");
             }
 
             var assessment = await TryAssessCompatibilitySimilarityAsync(
                 context,
                 candidateSubject,
                 exemplarSubject).ConfigureAwait(false);
-            if (!assessment.HasValue || !assessment.Value.SimilarityScore.HasValue)
+            assessmentAttempted |= assessment.RequestAttempted;
+            allAssessmentsCompatible &= assessment.Compatible;
+            if (string.IsNullOrWhiteSpace(firstAssessmentAbortReason)
+                && !string.IsNullOrWhiteSpace(assessment.AbortReason))
             {
-                return null;
+                firstAssessmentAbortReason = assessment.AbortReason;
             }
 
-            exemplarBrainIds.Add(exemplar.BrainId.ToString("D"));
-            exemplarSimilarities.Add(assessment.Value.SimilarityScore.Value);
-            allAssessmentsCompatible &= assessment.Value.Compatible;
-            if (string.IsNullOrWhiteSpace(firstAssessmentAbortReason)
-                && !string.IsNullOrWhiteSpace(assessment.Value.AbortReason))
+            if (!assessment.SimilarityScore.HasValue)
             {
-                firstAssessmentAbortReason = assessment.Value.AbortReason;
+                return BuildAssessment(
+                    assessmentAttempted: assessmentAttempted,
+                    admitted: false,
+                    similarityScore: null,
+                    exemplarBrainIds: attemptedExemplarBrainIds,
+                    compatible: assessmentAttempted && allAssessmentsCompatible,
+                    abortReason: firstAssessmentAbortReason ?? string.Empty,
+                    failureReason: string.IsNullOrWhiteSpace(assessment.FailureReason)
+                        ? "compatibility_similarity_unavailable"
+                        : assessment.FailureReason);
             }
+
+            exemplarSimilarities.Add(assessment.SimilarityScore.Value);
         }
 
         if (exemplarSimilarities.Count == 0)
         {
-            return null;
+            return BuildAssessment(
+                assessmentAttempted: assessmentAttempted,
+                admitted: false,
+                similarityScore: null,
+                exemplarBrainIds: attemptedExemplarBrainIds,
+                compatible: assessmentAttempted && allAssessmentsCompatible,
+                abortReason: firstAssessmentAbortReason ?? string.Empty,
+                failureReason: "assigned_species_exemplars_unavailable");
         }
 
         var assignedSimilarity = ClampScore(exemplarSimilarities.Min());
@@ -2570,24 +2654,40 @@ public sealed class SpeciationManagerActor : IActor
         if (assignedSimilarity <= 0d
             || assignedSimilarity < minimumAssignedSimilarity)
         {
-            return null;
+            return BuildAssessment(
+                assessmentAttempted: assessmentAttempted,
+                admitted: false,
+                similarityScore: assignedSimilarity,
+                exemplarBrainIds: attemptedExemplarBrainIds,
+                compatible: allAssessmentsCompatible,
+                abortReason: firstAssessmentAbortReason ?? string.Empty,
+                failureReason: "compatibility_similarity_below_threshold");
         }
 
         if (sourceSpeciesSimilarityScore.HasValue
             && assignedSimilarity <= ClampScore(sourceSpeciesSimilarityScore.Value))
         {
-            return null;
+            return BuildAssessment(
+                assessmentAttempted: assessmentAttempted,
+                admitted: false,
+                similarityScore: assignedSimilarity,
+                exemplarBrainIds: attemptedExemplarBrainIds,
+                compatible: allAssessmentsCompatible,
+                abortReason: firstAssessmentAbortReason ?? string.Empty,
+                failureReason: "compatibility_similarity_not_better_than_source");
         }
 
-        return new ActualAssignedSpeciesAdmission(
-            assignedSimilarity,
-            candidateSubject.Kind == CompatibilitySubjectKind.BrainId ? "brain_ids" : "artifacts",
-            exemplarBrainIds.ToArray(),
-            allAssessmentsCompatible,
-            firstAssessmentAbortReason ?? string.Empty);
+        return BuildAssessment(
+            assessmentAttempted: assessmentAttempted,
+            admitted: true,
+            similarityScore: assignedSimilarity,
+            exemplarBrainIds: attemptedExemplarBrainIds,
+            compatible: allAssessmentsCompatible,
+            abortReason: firstAssessmentAbortReason ?? string.Empty,
+            failureReason: string.Empty);
     }
 
-    private async Task<CompatibilitySimilarityAssessment?> TryAssessCompatibilitySimilarityAsync(
+    private async Task<CompatibilitySimilarityAssessment> TryAssessCompatibilitySimilarityAsync(
         IContext context,
         CompatibilitySubject candidateSubject,
         CompatibilitySubject exemplarSubject)
@@ -2595,7 +2695,14 @@ public sealed class SpeciationManagerActor : IActor
         if (_reproductionManagerPid is null
             || candidateSubject.Kind != exemplarSubject.Kind)
         {
-            return null;
+            return new CompatibilitySimilarityAssessment(
+                RequestAttempted: false,
+                SimilarityScore: null,
+                Compatible: false,
+                AbortReason: string.Empty,
+                FailureReason: _reproductionManagerPid is null
+                    ? "reproduction_unavailable"
+                    : "compatibility_subject_kind_mismatch");
         }
 
         try
@@ -2632,7 +2739,12 @@ public sealed class SpeciationManagerActor : IActor
                 || float.IsNaN(response.Report.SimilarityScore)
                 || float.IsInfinity(response.Report.SimilarityScore))
             {
-                return null;
+                return new CompatibilitySimilarityAssessment(
+                    RequestAttempted: true,
+                    SimilarityScore: null,
+                    Compatible: false,
+                    AbortReason: string.Empty,
+                    FailureReason: "compatibility_response_invalid");
             }
 
             var abortReason = NormalizeCompatibilityAbortReason(response.Report.AbortReason);
@@ -2641,21 +2753,75 @@ public sealed class SpeciationManagerActor : IActor
                 && !ShouldUseCompatibilitySimilarityScore(abortReason))
             {
                 return new CompatibilitySimilarityAssessment(
+                    RequestAttempted: true,
                     SimilarityScore: null,
                     Compatible: false,
-                    AbortReason: abortReason);
+                    AbortReason: abortReason,
+                    FailureReason: "compatibility_infrastructure_failure");
             }
 
             return new CompatibilitySimilarityAssessment(
+                RequestAttempted: true,
                 SimilarityScore: similarityScore,
                 Compatible: response.Report.Compatible,
-                AbortReason: abortReason);
+                AbortReason: abortReason,
+                FailureReason: string.Empty);
+        }
+        catch (Exception ex) when (ex is TimeoutException or TaskCanceledException or OperationCanceledException)
+        {
+            return new CompatibilitySimilarityAssessment(
+                RequestAttempted: true,
+                SimilarityScore: null,
+                Compatible: false,
+                AbortReason: "repro_request_timeout",
+                FailureReason: "compatibility_request_timeout");
         }
         catch
         {
-            return null;
+            return new CompatibilitySimilarityAssessment(
+                RequestAttempted: true,
+                SimilarityScore: null,
+                Compatible: false,
+                AbortReason: "repro_request_failed",
+                FailureReason: "compatibility_request_failed");
         }
     }
+
+    private static string ResolveCompatibilityAssessmentMode(ProtoSpec.SpeciationCandidateMode candidateMode)
+        => candidateMode switch
+        {
+            ProtoSpec.SpeciationCandidateMode.BrainId => "brain_ids",
+            ProtoSpec.SpeciationCandidateMode.ArtifactRef => "artifacts",
+            _ => string.Empty
+        };
+
+    private static string ResolveCompatibilityAssessmentMode(CompatibilitySubjectKind kind)
+        => kind == CompatibilitySubjectKind.BrainId
+            ? "brain_ids"
+            : kind == CompatibilitySubjectKind.ArtifactRef
+                ? "artifacts"
+                : string.Empty;
+
+    private static AssignedSpeciesAdmissionAssessment CreateAssignedSpeciesAdmissionAssessment(
+        bool assessmentAttempted,
+        bool admitted,
+        double? similarityScore,
+        string assessmentMode,
+        IReadOnlyList<string> exemplarBrainIds,
+        bool compatible,
+        string abortReason,
+        string failureReason,
+        long elapsedMs)
+        => new(
+            AssessmentAttempted: assessmentAttempted,
+            Admitted: admitted,
+            SimilarityScore: similarityScore,
+            AssessmentMode: assessmentMode,
+            ExemplarBrainIds: exemplarBrainIds.Count == 0 ? Array.Empty<string>() : exemplarBrainIds.ToArray(),
+            Compatible: compatible,
+            AbortReason: abortReason,
+            FailureReason: failureReason,
+            ElapsedMs: elapsedMs);
 
     private static string NormalizeCompatibilityAbortReason(string? abortReason)
         => string.IsNullOrWhiteSpace(abortReason)
@@ -3196,7 +3362,7 @@ public sealed class SpeciationManagerActor : IActor
                 continue;
             }
 
-            var actualAssignedSpeciesAdmission = await TryAssessActualAssignedSpeciesAdmissionAsync(
+            var assignedSpeciesAdmissionAssessment = await TryAssessActualAssignedSpeciesAdmissionAsync(
                 context,
                 epoch,
                 candidateSubject,
@@ -3205,7 +3371,7 @@ public sealed class SpeciationManagerActor : IActor
                 bootstrapRequirement,
                 candidateSimilarity,
                 bootstrapExemplars).ConfigureAwait(false);
-            if (!actualAssignedSpeciesAdmission.HasValue)
+            if (!assignedSpeciesAdmissionAssessment.Admitted)
             {
                 continue;
             }
@@ -3219,7 +3385,7 @@ public sealed class SpeciationManagerActor : IActor
                 policyVersion,
                 founderSimilarity,
                 candidateSimilarity,
-                actualAssignedSpeciesAdmission.Value);
+                assignedSpeciesAdmissionAssessment);
             var reassignmentTimeMs = Math.Max(
                 splitMembership.AssignedMs + 1L + index,
                 decisionTimeMs.HasValue
@@ -3259,7 +3425,7 @@ public sealed class SpeciationManagerActor : IActor
         string policyVersion,
         double founderSimilarity,
         double candidateSimilarity,
-        ActualAssignedSpeciesAdmission actualAssignedSpeciesAdmission)
+        AssignedSpeciesAdmissionAssessment assignedSpeciesAdmissionAssessment)
     {
         var metadata = ParseMetadataJson(existingMembership.DecisionMetadataJson);
         metadata["assignment_strategy"] = "lineage_hindsight_reassign";
@@ -3283,7 +3449,8 @@ public sealed class SpeciationManagerActor : IActor
         var assignedSplitThresholdSource = assignedThresholdState.UsesSpeciesFloor
             ? "species_floor"
             : "policy";
-        var actualAssignedSimilarity = ClampScore(actualAssignedSpeciesAdmission.SimilarityScore);
+        var actualAssignedSimilarity = ClampScore(
+            assignedSpeciesAdmissionAssessment.SimilarityScore ?? 0d);
         var normalizedCandidateSimilarity = ClampScore(candidateSimilarity);
 
         var assignmentPolicy = metadata["assignment_policy"] as JsonObject ?? new JsonObject();
@@ -3327,19 +3494,7 @@ public sealed class SpeciationManagerActor : IActor
         lineage["lineage_assignment_similarity_score"] = actualAssignedSimilarity;
         lineage["intra_species_similarity_sample"] = actualAssignedSimilarity;
         lineage["intra_species_similarity_species_id"] = assignmentResolution.SpeciesId;
-        lineage["assigned_species_similarity_source"] = "compatibility_assessment";
-        lineage["assigned_species_compatibility_mode"] = actualAssignedSpeciesAdmission.AssessmentMode;
-        lineage["assigned_species_compatibility_similarity_score"] = actualAssignedSimilarity;
-        lineage["assigned_species_compatibility_report_compatible"] = actualAssignedSpeciesAdmission.Compatible;
-        lineage["assigned_species_compatibility_abort_reason"] = actualAssignedSpeciesAdmission.AbortReason;
-        lineage["assigned_species_compatibility_exemplar_count"] = actualAssignedSpeciesAdmission.ExemplarBrainIds.Length;
-        var exemplarBrainIds = new JsonArray();
-        foreach (var exemplarBrainId in actualAssignedSpeciesAdmission.ExemplarBrainIds)
-        {
-            exemplarBrainIds.Add(exemplarBrainId);
-        }
-
-        lineage["assigned_species_compatibility_exemplar_brain_ids"] = exemplarBrainIds;
+        ApplyAssignedSpeciesCompatibilityMetadata(lineage, assignedSpeciesAdmissionAssessment);
         lineage["lineage_policy_effective_split_threshold"] = assignedThresholdState.PolicyEffectiveSplitThreshold;
         lineage["lineage_dynamic_split_threshold"] = assignedThresholdState.DynamicSplitThreshold;
         lineage["lineage_split_threshold_source"] = assignedSplitThresholdSource;
@@ -3867,6 +4022,50 @@ public sealed class SpeciationManagerActor : IActor
             StrategyDetail: "Similarity in hysteresis band without prior lineage hint; seeded with the resolved source species.",
             ForceDecisionReason: true);
     }
+    private static void ApplyAssignedSpeciesCompatibilityMetadata(
+        JsonObject lineage,
+        AssignedSpeciesAdmissionAssessment assignedSpeciesAdmissionAssessment)
+    {
+        if (assignedSpeciesAdmissionAssessment.Admitted)
+        {
+            lineage["assigned_species_similarity_source"] = "compatibility_assessment";
+        }
+
+        lineage["assigned_species_compatibility_attempted"] =
+            assignedSpeciesAdmissionAssessment.AssessmentAttempted;
+        lineage["assigned_species_compatibility_admitted"] =
+            assignedSpeciesAdmissionAssessment.Admitted;
+        if (!string.IsNullOrWhiteSpace(assignedSpeciesAdmissionAssessment.AssessmentMode))
+        {
+            lineage["assigned_species_compatibility_mode"] =
+                assignedSpeciesAdmissionAssessment.AssessmentMode;
+        }
+
+        if (assignedSpeciesAdmissionAssessment.SimilarityScore.HasValue)
+        {
+            lineage["assigned_species_compatibility_similarity_score"] = ClampScore(
+                assignedSpeciesAdmissionAssessment.SimilarityScore.Value);
+        }
+
+        lineage["assigned_species_compatibility_report_compatible"] =
+            assignedSpeciesAdmissionAssessment.Compatible;
+        lineage["assigned_species_compatibility_abort_reason"] =
+            assignedSpeciesAdmissionAssessment.AbortReason;
+        lineage["assigned_species_compatibility_failure_reason"] =
+            assignedSpeciesAdmissionAssessment.FailureReason;
+        lineage["assigned_species_compatibility_elapsed_ms"] =
+            assignedSpeciesAdmissionAssessment.ElapsedMs;
+        lineage["assigned_species_compatibility_exemplar_count"] =
+            assignedSpeciesAdmissionAssessment.ExemplarBrainIds.Length;
+        var exemplarBrainIds = new JsonArray();
+        foreach (var exemplarBrainId in assignedSpeciesAdmissionAssessment.ExemplarBrainIds)
+        {
+            exemplarBrainIds.Add(exemplarBrainId);
+        }
+
+        lineage["assigned_species_compatibility_exemplar_brain_ids"] = exemplarBrainIds;
+    }
+
     private string BuildDecisionMetadataJson(
         string? sourceMetadataJson,
         string policyVersion,
@@ -3878,7 +4077,7 @@ public sealed class SpeciationManagerActor : IActor
         double? sourceSpeciesSimilarityScore,
         double? assignedSpeciesSimilarityScore,
         double? intraSpeciesSimilaritySample,
-        ActualAssignedSpeciesAdmission? actualAssignedSpeciesAdmission)
+        AssignedSpeciesAdmissionAssessment? assignedSpeciesAdmissionAssessment)
     {
         var metadata = ParseMetadataJson(sourceMetadataJson);
         metadata.TryGetPropertyValue("lineage", out var existingLineageNode);
@@ -4106,25 +4305,11 @@ public sealed class SpeciationManagerActor : IActor
             lineage["intra_species_similarity_sample"] = ClampScore(intraSpeciesSimilaritySample.Value);
             lineage["intra_species_similarity_species_id"] = assignmentResolution.SpeciesId;
         }
-        if (actualAssignedSpeciesAdmission.HasValue)
+        if (assignedSpeciesAdmissionAssessment.HasValue)
         {
-            lineage["assigned_species_similarity_source"] = "compatibility_assessment";
-            lineage["assigned_species_compatibility_mode"] = actualAssignedSpeciesAdmission.Value.AssessmentMode;
-            lineage["assigned_species_compatibility_similarity_score"] =
-                ClampScore(actualAssignedSpeciesAdmission.Value.SimilarityScore);
-            lineage["assigned_species_compatibility_report_compatible"] =
-                actualAssignedSpeciesAdmission.Value.Compatible;
-            lineage["assigned_species_compatibility_abort_reason"] =
-                actualAssignedSpeciesAdmission.Value.AbortReason;
-            lineage["assigned_species_compatibility_exemplar_count"] =
-                actualAssignedSpeciesAdmission.Value.ExemplarBrainIds.Length;
-            var exemplarBrainIds = new JsonArray();
-            foreach (var exemplarBrainId in actualAssignedSpeciesAdmission.Value.ExemplarBrainIds)
-            {
-                exemplarBrainIds.Add(exemplarBrainId);
-            }
-
-            lineage["assigned_species_compatibility_exemplar_brain_ids"] = exemplarBrainIds;
+            ApplyAssignedSpeciesCompatibilityMetadata(
+                lineage,
+                assignedSpeciesAdmissionAssessment.Value);
         }
         AddLineageSimilarityScore(
             lineage,
@@ -5448,17 +5633,23 @@ public sealed class SpeciationManagerActor : IActor
         int MembershipCount,
         int ActualSimilaritySampleCount);
 
-    private readonly record struct ActualAssignedSpeciesAdmission(
-        double SimilarityScore,
+    private readonly record struct AssignedSpeciesAdmissionAssessment(
+        bool AssessmentAttempted,
+        bool Admitted,
+        double? SimilarityScore,
         string AssessmentMode,
         string[] ExemplarBrainIds,
         bool Compatible,
-        string AbortReason);
+        string AbortReason,
+        string FailureReason,
+        long ElapsedMs);
 
     private readonly record struct CompatibilitySimilarityAssessment(
+        bool RequestAttempted,
         double? SimilarityScore,
         bool Compatible,
-        string AbortReason);
+        string AbortReason,
+        string FailureReason);
 
     private enum CompatibilitySubjectKind
     {
