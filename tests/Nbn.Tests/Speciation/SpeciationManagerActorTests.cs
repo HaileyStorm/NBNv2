@@ -5,6 +5,7 @@ using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.Speciation;
 using Nbn.Shared;
 using Proto;
+using Repro = Nbn.Proto.Repro;
 using ProtoSettings = Nbn.Proto.Settings;
 using ProtoSpec = Nbn.Proto.Speciation;
 
@@ -341,11 +342,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             var firstEpoch = await WaitForEpochAsync(system, managerPid);
             var brainId = Guid.NewGuid();
@@ -409,11 +413,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             var firstEpoch = await WaitForEpochAsync(system, managerPid);
             var setConfig = await system.Root.RequestAsync<ProtoSpec.SpeciationSetConfigResponse>(
@@ -478,11 +485,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             var firstEpoch = await WaitForEpochAsync(system, managerPid);
             var brainId = Guid.NewGuid();
@@ -541,11 +551,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             var epoch = await WaitForEpochAsync(system, managerPid);
 
@@ -595,11 +608,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var brainId = Guid.NewGuid();
@@ -684,11 +700,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.97f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var brainId = Guid.NewGuid();
@@ -786,11 +805,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var artifactRef = new string('b', 64).ToArtifactRef(321, "application/x-nbn", "artifact-store");
@@ -814,6 +836,16 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal(ProtoSpec.SpeciationCandidateMode.ArtifactRef, firstAssign.Decision.CandidateMode);
             Assert.NotNull(firstAssign.Decision.Membership);
             Assert.False(string.IsNullOrWhiteSpace(firstAssign.Decision.Membership.SourceArtifactRef));
+            using (var metadata = JsonDocument.Parse(firstAssign.Decision.DecisionMetadataJson))
+            {
+                var candidateArtifact = metadata.RootElement
+                    .GetProperty("lineage")
+                    .GetProperty("candidate_artifact_ref");
+                Assert.Equal(new string('b', 64), candidateArtifact.GetProperty("sha256_hex").GetString());
+                Assert.Equal((ulong)321, candidateArtifact.GetProperty("size_bytes").GetUInt64());
+                Assert.Equal("application/x-nbn", candidateArtifact.GetProperty("media_type").GetString());
+                Assert.Equal("artifact-store", candidateArtifact.GetProperty("store_uri").GetString());
+            }
 
             var secondAssign = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
                 managerPid,
@@ -853,11 +885,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var parentA = Guid.NewGuid();
@@ -945,11 +980,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
 
@@ -1400,11 +1438,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var parent = Guid.NewGuid();
@@ -1657,11 +1698,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var parent = Guid.NewGuid();
@@ -1742,10 +1786,103 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal("lineage_realign_recent_split", realignDecision.Decision.DecisionReason);
             using var metadata = JsonDocument.Parse(realignDecision.Decision.DecisionMetadataJson);
             var lineage = metadata.RootElement.GetProperty("lineage");
-            Assert.Equal(0.84d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
-            Assert.Equal(0.84d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
+            Assert.Equal("compatibility_assessment", lineage.GetProperty("assigned_species_similarity_source").GetString());
+            Assert.Equal("brain_ids", lineage.GetProperty("assigned_species_compatibility_mode").GetString());
+            Assert.Equal(0.96d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
+            Assert.Equal(0.96d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
             Assert.True(lineage.GetProperty("split_proximity_to_dynamic_threshold").GetDouble() > 0d);
             Assert.True(lineage.GetProperty("source_split_proximity_to_dynamic_threshold").GetDouble() < 0d);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoAssign_Commit_RecentSplitRealign_FallsBackWhenCompatibilityDoesNotBeatSourceSpecies()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.80d,
+            lineageSplitThreshold: 0.30d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch",
+            lineageSplitGuardMargin: 0d,
+            lineageMinParentMembershipsBeforeSplit: 1,
+            lineageRealignParentMembershipWindow: 3,
+            lineageRealignMatchMargin: 0.08d));
+        var system = new ActorSystem();
+        try
+        {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.70f))));
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
+
+            await WaitForEpochAsync(system, managerPid);
+            var parent = Guid.NewGuid();
+            var splitChild = Guid.NewGuid();
+            var realignChild = Guid.NewGuid();
+
+            var seedParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = parent.ToProtoUuid()
+                    },
+                    SpeciesId = "species-gamma",
+                    SpeciesDisplayName = "Species Gamma",
+                    DecisionReason = "seed_parent_species",
+                    DecisionMetadataJson = "{\"source\":\"seed\"}"
+                });
+            Assert.True(seedParent.Decision.Success);
+
+            var splitDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = splitChild.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = parent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"report\":{\"similarity_score\":0.10}}"
+                });
+            Assert.True(splitDecision.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", splitDecision.Decision.DecisionReason);
+
+            var realignDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = realignChild.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = parent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"report\":{\"similarity_score\":0.84}}"
+                });
+
+            Assert.True(realignDecision.Decision.Success);
+            Assert.Equal("species-gamma", realignDecision.Decision.SpeciesId);
+            Assert.Equal("lineage_inherit_similarity_match", realignDecision.Decision.DecisionReason);
+            Assert.NotEqual(splitDecision.Decision.SpeciesId, realignDecision.Decision.SpeciesId);
         }
         finally
         {
@@ -1873,11 +2010,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var parentBeta = Guid.NewGuid();
@@ -2098,11 +2238,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.96f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var sourceParent = Guid.NewGuid();
@@ -2228,7 +2371,114 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal(splitDecision.Decision.SpeciesId, lineage.GetProperty("hindsight_target_species_id").GetString());
             Assert.Equal(0.70d, lineage.GetProperty("hindsight_similarity_lower_bound").GetDouble(), 3);
             Assert.Equal(0.86d, lineage.GetProperty("hindsight_similarity_upper_bound").GetDouble(), 3);
-            Assert.False(lineage.TryGetProperty("intra_species_similarity_sample", out _));
+            Assert.Equal("compatibility_assessment", lineage.GetProperty("assigned_species_similarity_source").GetString());
+            Assert.Equal(0.96d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
+            Assert.True(lineage.GetProperty("split_proximity_to_dynamic_threshold").GetDouble() > 0d);
+            Assert.True(
+                lineage.GetProperty("split_proximity_to_dynamic_threshold").GetDouble()
+                > lineage.GetProperty("source_split_proximity_to_dynamic_threshold").GetDouble());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoAssign_Commit_HindsightReassign_SkipsCandidateWhenCompatibilityDoesNotBeatSourceSpecies()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.90d,
+            lineageSplitThreshold: 0.80d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch",
+            lineageHysteresisMargin: 0.04d,
+            lineageSplitGuardMargin: 0d,
+            lineageMinParentMembershipsBeforeSplit: 1,
+            lineageHindsightReassignCommitWindow: 6,
+            lineageHindsightSimilarityMargin: 0.08d));
+        var system = new ActorSystem();
+        try
+        {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.70f))));
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
+
+            await WaitForEpochAsync(system, managerPid);
+            var sourceParent = Guid.NewGuid();
+            var recentWithinWindow = Guid.NewGuid();
+            var splitFounder = Guid.NewGuid();
+
+            var seedParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = sourceParent.ToProtoUuid()
+                    },
+                    SpeciesId = "species-alpha",
+                    SpeciesDisplayName = "Species Alpha",
+                    DecisionReason = "seed_parent_species",
+                    DecisionMetadataJson = "{\"source\":\"seed\"}",
+                    HasDecisionTimeMs = true,
+                    DecisionTimeMs = 10
+                });
+            Assert.True(seedParent.Decision.Success);
+
+            var withinWindow = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = recentWithinWindow.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.83,\"parent_a_similarity_score\":0.83}}",
+                    HasDecisionTimeMs = true,
+                    DecisionTimeMs = 20
+                });
+            Assert.True(withinWindow.Decision.Success);
+            Assert.Equal("species-alpha", withinWindow.Decision.SpeciesId);
+
+            var splitDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = splitFounder.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.78,\"parent_a_similarity_score\":0.78}}",
+                    HasDecisionTimeMs = true,
+                    DecisionTimeMs = 40
+                });
+            Assert.True(splitDecision.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", splitDecision.Decision.DecisionReason);
+
+            var memberships = await system.Root.RequestAsync<SpeciationListMembershipsResponse>(
+                managerPid,
+                new SpeciationListMembershipsRequest());
+            var byBrain = memberships.Memberships.ToDictionary(item => item.BrainId);
+            Assert.Equal("species-alpha", byBrain[recentWithinWindow].SpeciesId);
+            Assert.NotEqual("lineage_hindsight_recent_reassign", byBrain[recentWithinWindow].DecisionReason);
         }
         finally
         {
@@ -2253,11 +2503,14 @@ public sealed class SpeciationManagerActorTests
         var system = new ActorSystem();
         try
         {
+            var reproPid = system.Root.Spawn(Props.FromProducer(
+                () => new ReproFixedResponseProbe(CreateCompatibilityAssessmentResult(0.97f))));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
-                    settingsPid: null)));
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
 
             await WaitForEpochAsync(system, managerPid);
             var sourceParent = Guid.NewGuid();
@@ -2373,9 +2626,10 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal("species-alpha", lineage.GetProperty("recent_derived_source_species_id").GetString());
             Assert.Equal(0.78d, lineage.GetProperty("recent_derived_founder_similarity_score").GetDouble(), 3);
             Assert.Equal(0.03d, lineage.GetProperty("recent_derived_similarity_margin").GetDouble(), 3);
-            Assert.Equal(0.79d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
-            Assert.Equal(0.79d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
-            Assert.True(lineage.GetProperty("split_proximity_to_dynamic_threshold").GetDouble() < 0d);
+            Assert.Equal("compatibility_assessment", lineage.GetProperty("assigned_species_similarity_source").GetString());
+            Assert.Equal(0.97d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
+            Assert.Equal(0.97d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
+            Assert.True(lineage.GetProperty("split_proximity_to_dynamic_threshold").GetDouble() > 0d);
             Assert.True(lineage.GetProperty("source_split_proximity_to_dynamic_threshold").GetDouble() < 0d);
         }
         finally
@@ -3028,6 +3282,45 @@ public sealed class SpeciationManagerActorTests
         }
 
         throw new TimeoutException($"Condition was not satisfied within {timeout}.");
+    }
+
+    private static Repro.ReproduceResult CreateCompatibilityAssessmentResult(float similarityScore)
+    {
+        return new Repro.ReproduceResult
+        {
+            Report = new Repro.SimilarityReport
+            {
+                Compatible = true,
+                AbortReason = string.Empty,
+                SimilarityScore = similarityScore
+            },
+            Spawned = false
+        };
+    }
+
+    private sealed class ReproFixedResponseProbe : IActor
+    {
+        private readonly Repro.ReproduceResult _response;
+
+        public ReproFixedResponseProbe(Repro.ReproduceResult response)
+        {
+            _response = response;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Repro.ReproduceByBrainIdsRequest:
+                case Repro.ReproduceByArtifactsRequest:
+                case Repro.AssessCompatibilityByBrainIdsRequest:
+                case Repro.AssessCompatibilityByArtifactsRequest:
+                    context.Respond(_response.Clone());
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TempDatabaseScope : IDisposable

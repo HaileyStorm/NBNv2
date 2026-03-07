@@ -2,6 +2,7 @@ using Nbn.Proto;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Proto;
+using ProtoRepro = Nbn.Proto.Repro;
 using ProtoSettings = Nbn.Proto.Settings;
 using ProtoSpec = Nbn.Proto.Speciation;
 using System.Globalization;
@@ -15,16 +16,21 @@ namespace Nbn.Runtime.Speciation;
 public sealed class SpeciationManagerActor : IActor
 {
     private static readonly TimeSpan DefaultSettingsRequestTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultCompatibilityRequestTimeout = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions MetadataJsonSerializerOptions = new()
     {
         WriteIndented = false
     };
+    private const int ExternalAdmissionExemplarLimit = 3;
 
     private readonly SpeciationStore _store;
     private SpeciationRuntimeConfig _runtimeConfig;
     private SpeciationAssignmentPolicy _assignmentPolicy;
     private readonly PID? _settingsPid;
     private readonly TimeSpan _settingsRequestTimeout;
+    private readonly PID? _configuredReproductionManagerPid;
+    private PID? _reproductionManagerPid;
+    private readonly TimeSpan _compatibilityRequestTimeout;
     private readonly Dictionary<string, SpeciesSimilarityFloorState> _speciesSimilarityFloors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<RecentDerivedSpeciesHint>> _recentDerivedSpeciesHintsBySourceSpecies = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RecentDerivedSpeciesHint> _recentDerivedSpeciesHintsByTargetSpecies = new(StringComparer.Ordinal);
@@ -37,14 +43,23 @@ public sealed class SpeciationManagerActor : IActor
         SpeciationStore store,
         SpeciationRuntimeConfig runtimeConfig,
         PID? settingsPid,
-        TimeSpan? settingsRequestTimeout = null)
+        TimeSpan? settingsRequestTimeout = null,
+        PID? reproductionManagerPid = null,
+        TimeSpan? compatibilityRequestTimeout = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _runtimeConfig = runtimeConfig ?? throw new ArgumentNullException(nameof(runtimeConfig));
         _assignmentPolicy = BuildAssignmentPolicy(runtimeConfig);
         _settingsPid = settingsPid;
         _settingsRequestTimeout = settingsRequestTimeout ?? DefaultSettingsRequestTimeout;
+        _configuredReproductionManagerPid = reproductionManagerPid;
+        _reproductionManagerPid = reproductionManagerPid;
+        _compatibilityRequestTimeout = compatibilityRequestTimeout ?? DefaultCompatibilityRequestTimeout;
     }
+
+    public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
+
+    public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
 
     public Task ReceiveAsync(IContext context)
     {
@@ -107,9 +122,53 @@ public sealed class SpeciationManagerActor : IActor
             case ProtoSpec.SpeciationListHistoryRequest message:
                 HandleProtoListHistory(context, message);
                 break;
+            case DiscoverySnapshotApplied snapshot:
+                ApplyDiscoverySnapshot(snapshot);
+                break;
+            case EndpointStateObserved observed:
+                ApplyObservedEndpoint(observed.Observation);
+                break;
         }
 
         return Task.CompletedTask;
+    }
+
+    private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
+    {
+        if (snapshot.Registrations is null)
+        {
+            return;
+        }
+
+        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.ReproductionManagerKey, out var registration))
+        {
+            _reproductionManagerPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        _reproductionManagerPid = _configuredReproductionManagerPid;
+    }
+
+    private void ApplyObservedEndpoint(ServiceEndpointObservation observation)
+    {
+        if (!string.Equals(observation.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (observation.Kind == ServiceEndpointObservationKind.Upserted
+            && observation.Registration is ServiceEndpointRegistration registration)
+        {
+            _reproductionManagerPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        if (observation.Kind == ServiceEndpointObservationKind.Removed
+            || observation.Kind == ServiceEndpointObservationKind.Invalid
+            || observation.Kind == ServiceEndpointObservationKind.Upserted)
+        {
+            _reproductionManagerPid = _configuredReproductionManagerPid;
+        }
     }
 
     private void HandleStarted(IContext context)
@@ -757,6 +816,7 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var evaluateTask = ProcessProtoDecisionAsync(
+            context,
             epoch,
             ProtoSpec.SpeciationApplyMode.DryRun,
             message.Candidate,
@@ -807,6 +867,7 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var assignTask = ProcessProtoDecisionAsync(
+            context,
             epoch,
             applyMode,
             message.Candidate,
@@ -858,7 +919,7 @@ public sealed class SpeciationManagerActor : IActor
             return;
         }
 
-        var batchTask = ProcessProtoBatchAsync(epoch, applyMode, message.Items);
+        var batchTask = ProcessProtoBatchAsync(context, epoch, applyMode, message.Items);
         context.ReenterAfter(batchTask, completed =>
         {
             if (completed.IsFaulted)
@@ -1035,6 +1096,7 @@ public sealed class SpeciationManagerActor : IActor
     }
 
     private async Task<ProtoSpec.SpeciationBatchEvaluateApplyResponse> ProcessProtoBatchAsync(
+        IContext context,
         SpeciationEpochInfo epoch,
         ProtoSpec.SpeciationApplyMode requestApplyMode,
         IEnumerable<ProtoSpec.SpeciationBatchItem> items)
@@ -1059,6 +1121,7 @@ public sealed class SpeciationManagerActor : IActor
             }
 
             var decision = await ProcessProtoDecisionAsync(
+                context,
                 epoch,
                 itemMode,
                 item.Candidate,
@@ -1089,6 +1152,7 @@ public sealed class SpeciationManagerActor : IActor
     }
 
     private async Task<ProtoSpec.SpeciationDecision> ProcessProtoDecisionAsync(
+        IContext context,
         SpeciationEpochInfo epoch,
         ProtoSpec.SpeciationApplyMode applyMode,
         ProtoSpec.SpeciationCandidateRef? candidate,
@@ -1150,11 +1214,39 @@ public sealed class SpeciationManagerActor : IActor
             sourceSpeciesFloor,
             sourceSpeciesSimilarityScore,
             bestParentSpeciesFit);
+        ActualAssignedSpeciesAdmission? actualAssignedSpeciesAdmission = null;
+        if (RequiresActualAssignedSpeciesAdmission(assignmentResolution))
+        {
+            var evaluatedAdmission = await TryAssessActualAssignedSpeciesAdmissionAsync(
+                context,
+                epoch,
+                resolved,
+                assignmentResolution,
+                sourceSpeciesSimilarityScore).ConfigureAwait(false);
+            if (evaluatedAdmission.HasValue)
+            {
+                actualAssignedSpeciesAdmission = evaluatedAdmission;
+            }
+            else
+            {
+                assignmentResolution = ResolveAssignment(
+                    epoch,
+                    speciesId,
+                    speciesDisplayName,
+                    lineageEvidence,
+                    sourceSpeciesFloor,
+                    sourceSpeciesSimilarityScore,
+                    bestParentSpeciesFit,
+                    allowRecentSplitRealign: false,
+                    allowRecentDerivedSpeciesReuse: false);
+            }
+        }
         var intraSpeciesSimilaritySample = TryResolveIntraSpeciesSimilaritySample(
             assignmentResolution,
             parentMemberships,
             similarityEvidence,
             sourceSpeciesSimilarityScore,
+            actualAssignedSpeciesAdmission?.SimilarityScore,
             inputOrderedParentBrainIds,
             out var resolvedIntraSpeciesSample)
             ? (double?)resolvedIntraSpeciesSample
@@ -1165,6 +1257,7 @@ public sealed class SpeciationManagerActor : IActor
             similarityEvidence,
             inputOrderedParentBrainIds,
             sourceSpeciesSimilarityScore,
+            actualAssignedSpeciesAdmission?.SimilarityScore,
             intraSpeciesSimilaritySample);
 
         var resolvedPolicyVersion = NormalizeOrFallback(policyVersion, _runtimeConfig.PolicyVersion);
@@ -1174,14 +1267,15 @@ public sealed class SpeciationManagerActor : IActor
         var resolvedDecisionMetadata = BuildDecisionMetadataJson(
             decisionMetadataJson,
             resolvedPolicyVersion,
-            resolved.CandidateMode,
+            resolved,
             assignmentResolution,
             lineageEvidence,
             similarityEvidence,
             sourceSpeciesFloor,
             sourceSpeciesSimilarityScore,
             assignedSpeciesSimilarityScore,
-            intraSpeciesSimilaritySample);
+            intraSpeciesSimilaritySample,
+            actualAssignedSpeciesAdmission);
         Guid? parentBrainId = orderedParentBrainIds.Count == 0
             ? null
             : orderedParentBrainIds[0];
@@ -1253,6 +1347,7 @@ public sealed class SpeciationManagerActor : IActor
                 try
                 {
                     var hindsightReassignments = await ApplySplitHindsightReassignmentsAsync(
+                        context,
                         epoch,
                         outcome.Membership,
                         assignmentResolution,
@@ -1309,7 +1404,9 @@ public sealed class SpeciationManagerActor : IActor
                     resolvedCandidate = new ResolvedCandidate(
                         ProtoSpec.SpeciationCandidateMode.BrainId,
                         brainId,
-                        SourceArtifactRef: null);
+                        SourceArtifactRef: null,
+                        CandidateArtifactRef: null,
+                        CandidateArtifactUri: null);
                     return true;
                 }
                 return false;
@@ -1322,7 +1419,9 @@ public sealed class SpeciationManagerActor : IActor
                     resolvedCandidate = new ResolvedCandidate(
                         ProtoSpec.SpeciationCandidateMode.ArtifactRef,
                         derivedBrainId,
-                        sourceArtifactRef);
+                        sourceArtifactRef,
+                        candidate.ArtifactRef!.Clone(),
+                        CandidateArtifactUri: null);
                     return true;
                 }
                 return false;
@@ -1334,7 +1433,9 @@ public sealed class SpeciationManagerActor : IActor
                     resolvedCandidate = new ResolvedCandidate(
                         ProtoSpec.SpeciationCandidateMode.ArtifactUri,
                         derivedBrainId,
-                        normalizedUri);
+                        normalizedUri,
+                        CandidateArtifactRef: null,
+                        CandidateArtifactUri: normalizedUri);
                     return true;
                 }
                 return false;
@@ -1762,12 +1863,18 @@ public sealed class SpeciationManagerActor : IActor
         SimilarityEvidence similarityEvidence,
         IReadOnlyList<Guid> inputOrderedParentBrainIds,
         double? sourceSpeciesSimilarityScore,
+        double? actualAssignedSpeciesSimilarityScore,
         double? intraSpeciesSimilaritySample)
     {
         if (string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId)
             || string.Equals(assignmentResolution.Strategy, "explicit_species", StringComparison.Ordinal))
         {
             return null;
+        }
+
+        if (actualAssignedSpeciesSimilarityScore.HasValue)
+        {
+            return ClampScore(actualAssignedSpeciesSimilarityScore.Value);
         }
 
         if (intraSpeciesSimilaritySample.HasValue)
@@ -1940,6 +2047,7 @@ public sealed class SpeciationManagerActor : IActor
         IReadOnlyList<SpeciationMembershipRecord> parentMemberships,
         SimilarityEvidence similarityEvidence,
         double? sourceSpeciesSimilarityScore,
+        double? actualAssignedSpeciesSimilarityScore,
         IReadOnlyList<Guid> inputOrderedParentBrainIds,
         out double similaritySample)
     {
@@ -1948,6 +2056,12 @@ public sealed class SpeciationManagerActor : IActor
             || string.Equals(assignmentResolution.Strategy, "explicit_species", StringComparison.Ordinal))
         {
             return false;
+        }
+
+        if (actualAssignedSpeciesSimilarityScore.HasValue)
+        {
+            similaritySample = ClampScore(actualAssignedSpeciesSimilarityScore.Value);
+            return true;
         }
 
         if (string.Equals(
@@ -2091,6 +2205,395 @@ public sealed class SpeciationManagerActor : IActor
         return true;
     }
 
+    private static bool RequiresActualAssignedSpeciesAdmission(AssignmentResolution assignmentResolution)
+    {
+        return !string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId)
+            && !string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
+            && !string.Equals(
+                assignmentResolution.SpeciesId,
+                assignmentResolution.SourceSpeciesId,
+                StringComparison.Ordinal)
+            && (string.Equals(
+                    assignmentResolution.DecisionReason,
+                    "lineage_realign_recent_split",
+                    StringComparison.Ordinal)
+                || string.Equals(
+                    assignmentResolution.DecisionReason,
+                    "lineage_reuse_recent_derived_species",
+                    StringComparison.Ordinal));
+    }
+
+    private async Task<ActualAssignedSpeciesAdmission?> TryAssessActualAssignedSpeciesAdmissionAsync(
+        IContext context,
+        SpeciationEpochInfo epoch,
+        ResolvedCandidate resolvedCandidate,
+        AssignmentResolution assignmentResolution,
+        double? sourceSpeciesSimilarityScore)
+    {
+        if (!TryBuildCompatibilitySubject(resolvedCandidate, out var candidateSubject))
+        {
+            return null;
+        }
+
+        return await TryAssessActualAssignedSpeciesAdmissionAsync(
+            context,
+            epoch,
+            candidateSubject,
+            resolvedCandidate.BrainId,
+            assignmentResolution,
+            sourceSpeciesSimilarityScore).ConfigureAwait(false);
+    }
+
+    private async Task<ActualAssignedSpeciesAdmission?> TryAssessActualAssignedSpeciesAdmissionAsync(
+        IContext context,
+        SpeciationEpochInfo epoch,
+        CompatibilitySubject candidateSubject,
+        Guid candidateBrainId,
+        AssignmentResolution assignmentResolution,
+        double? sourceSpeciesSimilarityScore)
+    {
+        if (_reproductionManagerPid is null
+            || epoch.EpochId <= 0
+            || string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId))
+        {
+            return null;
+        }
+
+        var exemplars = await _store.ListEarliestMembershipsForSpeciesAsync(
+            epoch.EpochId,
+            assignmentResolution.SpeciesId,
+            ExternalAdmissionExemplarLimit).ConfigureAwait(false);
+        if (exemplars.Count == 0)
+        {
+            return null;
+        }
+
+        var exemplarBrainIds = new List<string>(exemplars.Count);
+        var exemplarSimilarities = new List<double>(exemplars.Count);
+        foreach (var exemplar in exemplars)
+        {
+            if (candidateSubject.Kind == CompatibilitySubjectKind.BrainId
+                && exemplar.BrainId == candidateBrainId)
+            {
+                continue;
+            }
+
+            if (!TryBuildCompatibilitySubject(exemplar, out var exemplarSubject)
+                || exemplarSubject.Kind != candidateSubject.Kind)
+            {
+                return null;
+            }
+
+            var similarity = await TryAssessCompatibilitySimilarityAsync(
+                context,
+                candidateSubject,
+                exemplarSubject).ConfigureAwait(false);
+            if (!similarity.HasValue)
+            {
+                return null;
+            }
+
+            exemplarBrainIds.Add(exemplar.BrainId.ToString("D"));
+            exemplarSimilarities.Add(similarity.Value);
+        }
+
+        if (exemplarSimilarities.Count == 0)
+        {
+            return null;
+        }
+
+        var assignedSimilarity = ClampScore(exemplarSimilarities.Min());
+        var targetThresholdState = ResolveSplitThresholdState(
+            ResolveSpeciesSimilarityFloor(assignmentResolution.SpeciesId));
+        if (assignedSimilarity <= 0d
+            || assignedSimilarity <= targetThresholdState.DynamicSplitThreshold)
+        {
+            return null;
+        }
+
+        if (sourceSpeciesSimilarityScore.HasValue
+            && assignedSimilarity <= ClampScore(sourceSpeciesSimilarityScore.Value))
+        {
+            return null;
+        }
+
+        return new ActualAssignedSpeciesAdmission(
+            assignedSimilarity,
+            candidateSubject.Kind == CompatibilitySubjectKind.BrainId ? "brain_ids" : "artifacts",
+            exemplarBrainIds.ToArray());
+    }
+
+    private async Task<double?> TryAssessCompatibilitySimilarityAsync(
+        IContext context,
+        CompatibilitySubject candidateSubject,
+        CompatibilitySubject exemplarSubject)
+    {
+        if (_reproductionManagerPid is null
+            || candidateSubject.Kind != exemplarSubject.Kind)
+        {
+            return null;
+        }
+
+        try
+        {
+            ProtoRepro.ReproduceResult response;
+            if (candidateSubject.Kind == CompatibilitySubjectKind.BrainId)
+            {
+                response = await context.RequestAsync<ProtoRepro.ReproduceResult>(
+                    _reproductionManagerPid,
+                    new ProtoRepro.AssessCompatibilityByBrainIdsRequest
+                    {
+                        ParentA = candidateSubject.BrainId.ToProtoUuid(),
+                        ParentB = exemplarSubject.BrainId.ToProtoUuid(),
+                        Config = CreateCompatibilityAssessmentConfig(),
+                        RunCount = 1
+                    },
+                    _compatibilityRequestTimeout).ConfigureAwait(false);
+            }
+            else
+            {
+                response = await context.RequestAsync<ProtoRepro.ReproduceResult>(
+                    _reproductionManagerPid,
+                    new ProtoRepro.AssessCompatibilityByArtifactsRequest
+                    {
+                        ParentADef = candidateSubject.ArtifactRef!.Clone(),
+                        ParentBDef = exemplarSubject.ArtifactRef!.Clone(),
+                        Config = CreateCompatibilityAssessmentConfig(),
+                        RunCount = 1
+                    },
+                    _compatibilityRequestTimeout).ConfigureAwait(false);
+            }
+
+            if (response?.Report is null
+                || !response.Report.Compatible
+                || float.IsNaN(response.Report.SimilarityScore)
+                || float.IsInfinity(response.Report.SimilarityScore))
+            {
+                return null;
+            }
+
+            return ClampScore(response.Report.SimilarityScore);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ProtoRepro.ReproduceConfig CreateCompatibilityAssessmentConfig()
+        => new()
+        {
+            SpawnChild = ProtoRepro.SpawnChildPolicy.SpawnChildNever
+        };
+
+    private static bool TryBuildCompatibilitySubject(
+        ResolvedCandidate resolvedCandidate,
+        out CompatibilitySubject subject)
+    {
+        subject = default;
+        switch (resolvedCandidate.CandidateMode)
+        {
+            case ProtoSpec.SpeciationCandidateMode.BrainId when resolvedCandidate.BrainId != Guid.Empty:
+                subject = new CompatibilitySubject(
+                    CompatibilitySubjectKind.BrainId,
+                    resolvedCandidate.BrainId,
+                    ArtifactRef: null);
+                return true;
+            case ProtoSpec.SpeciationCandidateMode.ArtifactRef
+                when CanAssessArtifactReference(resolvedCandidate.CandidateArtifactRef):
+                subject = new CompatibilitySubject(
+                    CompatibilitySubjectKind.ArtifactRef,
+                    Guid.Empty,
+                    resolvedCandidate.CandidateArtifactRef!.Clone());
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryBuildCompatibilitySubject(
+        SpeciationMembershipRecord membership,
+        out CompatibilitySubject subject)
+    {
+        subject = default;
+        if (membership.BrainId == Guid.Empty)
+        {
+            return false;
+        }
+
+        if (!TryExtractCandidateMode(membership.DecisionMetadataJson, out var candidateMode))
+        {
+            subject = new CompatibilitySubject(
+                CompatibilitySubjectKind.BrainId,
+                membership.BrainId,
+                ArtifactRef: null);
+            return true;
+        }
+
+        switch (candidateMode)
+        {
+            case ProtoSpec.SpeciationCandidateMode.BrainId:
+                subject = new CompatibilitySubject(
+                    CompatibilitySubjectKind.BrainId,
+                    membership.BrainId,
+                    ArtifactRef: null);
+                return true;
+            case ProtoSpec.SpeciationCandidateMode.ArtifactRef when TryExtractStoredCandidateArtifactRef(
+                membership.DecisionMetadataJson,
+                out var artifactRef)
+                && CanAssessArtifactReference(artifactRef):
+                subject = new CompatibilitySubject(
+                    CompatibilitySubjectKind.ArtifactRef,
+                    Guid.Empty,
+                    artifactRef);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool CanAssessArtifactReference(ArtifactRef? artifactRef)
+    {
+        return artifactRef is not null
+            && artifactRef.TryToSha256Hex(out _);
+    }
+
+    private static JsonObject BuildStoredArtifactRefNode(ArtifactRef artifactRef)
+    {
+        var node = new JsonObject
+        {
+            ["size_bytes"] = artifactRef.SizeBytes
+        };
+        if (artifactRef.TryToSha256Hex(out var sha))
+        {
+            node["sha256_hex"] = sha;
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifactRef.MediaType))
+        {
+            node["media_type"] = artifactRef.MediaType.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifactRef.StoreUri))
+        {
+            node["store_uri"] = artifactRef.StoreUri.Trim();
+        }
+
+        return node;
+    }
+
+    private static bool TryExtractCandidateMode(
+        string? decisionMetadataJson,
+        out ProtoSpec.SpeciationCandidateMode candidateMode)
+    {
+        candidateMode = ProtoSpec.SpeciationCandidateMode.Unknown;
+        if (string.IsNullOrWhiteSpace(decisionMetadataJson))
+        {
+            return false;
+        }
+
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(decisionMetadataJson);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        JsonNode? lineageNode = null;
+        if (node is JsonObject root)
+        {
+            root.TryGetPropertyValue("lineage", out lineageNode);
+        }
+
+        var candidateModeText = FindStringValue(
+            lineageNode,
+            "candidate_mode",
+            "candidateMode")
+            ?? FindStringValue(
+                node,
+                "candidate_mode",
+                "candidateMode");
+        return !string.IsNullOrWhiteSpace(candidateModeText)
+            && Enum.TryParse(candidateModeText.Trim(), ignoreCase: true, out candidateMode)
+            && candidateMode != ProtoSpec.SpeciationCandidateMode.Unknown;
+    }
+
+    private static bool TryExtractStoredCandidateArtifactRef(
+        string? decisionMetadataJson,
+        out ArtifactRef artifactRef)
+    {
+        artifactRef = new ArtifactRef();
+        if (string.IsNullOrWhiteSpace(decisionMetadataJson))
+        {
+            return false;
+        }
+
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(decisionMetadataJson);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        JsonNode? lineageNode = null;
+        if (node is JsonObject root)
+        {
+            root.TryGetPropertyValue("lineage", out lineageNode);
+        }
+
+        if (lineageNode is not JsonObject lineage
+            || !lineage.TryGetPropertyValue("candidate_artifact_ref", out var artifactNode)
+            || artifactNode is not JsonObject artifactObject)
+        {
+            return false;
+        }
+
+        var sha256Hex = FindStringValue(
+            artifactObject,
+            "sha256_hex",
+            "sha256Hex");
+        var mediaType = FindStringValue(
+            artifactObject,
+            "media_type",
+            "mediaType");
+        var storeUri = FindStringValue(
+            artifactObject,
+            "store_uri",
+            "storeUri");
+        var sizeBytes = FindNumericValue(
+            artifactObject,
+            "size_bytes",
+            "sizeBytes");
+
+        if (!string.IsNullOrWhiteSpace(sha256Hex))
+        {
+            artifactRef = sha256Hex.Trim().ToArtifactRef(
+                sizeBytes.HasValue ? (ulong)Math.Max(0d, sizeBytes.Value) : 0UL,
+                mediaType,
+                storeUri);
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(storeUri))
+        {
+            return false;
+        }
+
+        artifactRef = new ArtifactRef
+        {
+            SizeBytes = sizeBytes.HasValue ? (ulong)Math.Max(0d, sizeBytes.Value) : 0UL,
+            MediaType = mediaType ?? string.Empty,
+            StoreUri = storeUri.Trim()
+        };
+        return HasUsableArtifactReference(artifactRef);
+    }
+
     private static bool TryResolveParentSimilarityAtIndex(
         int parentIndex,
         SimilarityEvidence similarityEvidence,
@@ -2218,6 +2721,7 @@ public sealed class SpeciationManagerActor : IActor
     }
 
     private async Task<int> ApplySplitHindsightReassignmentsAsync(
+        IContext context,
         SpeciationEpochInfo epoch,
         SpeciationMembershipRecord splitMembership,
         AssignmentResolution assignmentResolution,
@@ -2283,6 +2787,23 @@ public sealed class SpeciationManagerActor : IActor
                 continue;
             }
 
+            if (!TryBuildCompatibilitySubject(candidate, out var candidateSubject))
+            {
+                continue;
+            }
+
+            var actualAssignedSpeciesAdmission = await TryAssessActualAssignedSpeciesAdmissionAsync(
+                context,
+                epoch,
+                candidateSubject,
+                candidate.BrainId,
+                assignmentResolution,
+                candidateSimilarity).ConfigureAwait(false);
+            if (!actualAssignedSpeciesAdmission.HasValue)
+            {
+                continue;
+            }
+
             var reassignmentMetadataJson = BuildHindsightReassignDecisionMetadataJson(
                 candidate,
                 splitMembership,
@@ -2291,7 +2812,8 @@ public sealed class SpeciationManagerActor : IActor
                 assignmentResolution,
                 policyVersion,
                 founderSimilarity,
-                candidateSimilarity);
+                candidateSimilarity,
+                actualAssignedSpeciesAdmission.Value);
             var reassignmentTimeMs = Math.Max(
                 splitMembership.AssignedMs + 1L + index,
                 decisionTimeMs.HasValue
@@ -2330,7 +2852,8 @@ public sealed class SpeciationManagerActor : IActor
         AssignmentResolution assignmentResolution,
         string policyVersion,
         double founderSimilarity,
-        double candidateSimilarity)
+        double candidateSimilarity,
+        ActualAssignedSpeciesAdmission actualAssignedSpeciesAdmission)
     {
         var metadata = ParseMetadataJson(existingMembership.DecisionMetadataJson);
         metadata["assignment_strategy"] = "lineage_hindsight_reassign";
@@ -2338,9 +2861,54 @@ public sealed class SpeciationManagerActor : IActor
             "Recent source-species member reassigned to the new derived species within bounded hindsight window.";
         metadata["policy_version"] = policyVersion;
 
+        var sourcePolicyEffectiveSplitThreshold = assignmentResolution.PolicyEffectiveSplitThreshold > 0d
+            ? assignmentResolution.PolicyEffectiveSplitThreshold
+            : Math.Max(
+                0d,
+                _assignmentPolicy.LineageSplitThreshold - _assignmentPolicy.LineageSplitGuardMargin);
+        var sourceDynamicSplitThreshold = assignmentResolution.EffectiveSplitThreshold > 0d
+            ? assignmentResolution.EffectiveSplitThreshold
+            : sourcePolicyEffectiveSplitThreshold;
+        var sourceSplitThresholdSource = sourceDynamicSplitThreshold > sourcePolicyEffectiveSplitThreshold
+            ? "species_floor"
+            : "policy";
+        var assignedThresholdState = ResolveSplitThresholdState(
+            ResolveSpeciesSimilarityFloor(assignmentResolution.SpeciesId));
+        var assignedSplitThresholdSource = assignedThresholdState.UsesSpeciesFloor
+            ? "species_floor"
+            : "policy";
+        var actualAssignedSimilarity = ClampScore(actualAssignedSpeciesAdmission.SimilarityScore);
+        var normalizedCandidateSimilarity = ClampScore(candidateSimilarity);
+
         var assignmentPolicy = metadata["assignment_policy"] as JsonObject ?? new JsonObject();
         assignmentPolicy["lineage_hindsight_reassign_commit_window"] = _assignmentPolicy.HindsightReassignCommitWindow;
         assignmentPolicy["lineage_hindsight_similarity_margin"] = _assignmentPolicy.HindsightReassignSimilarityMargin;
+        assignmentPolicy["lineage_policy_effective_split_threshold"] = assignedThresholdState.PolicyEffectiveSplitThreshold;
+        assignmentPolicy["lineage_dynamic_split_threshold"] = assignedThresholdState.DynamicSplitThreshold;
+        assignmentPolicy["lineage_split_threshold_source"] = assignedSplitThresholdSource;
+        assignmentPolicy["lineage_source_policy_effective_split_threshold"] = sourcePolicyEffectiveSplitThreshold;
+        assignmentPolicy["lineage_source_dynamic_split_threshold"] = sourceDynamicSplitThreshold;
+        assignmentPolicy["lineage_source_split_threshold_source"] = sourceSplitThresholdSource;
+        assignmentPolicy["lineage_assigned_policy_effective_split_threshold"] = assignedThresholdState.PolicyEffectiveSplitThreshold;
+        assignmentPolicy["lineage_assigned_dynamic_split_threshold"] = assignedThresholdState.DynamicSplitThreshold;
+        assignmentPolicy["lineage_assigned_split_threshold_source"] = assignedSplitThresholdSource;
+        assignmentPolicy["lineage_source_species_similarity_score"] = normalizedCandidateSimilarity;
+        assignmentPolicy["lineage_assignment_similarity_score"] = actualAssignedSimilarity;
+        if (assignedThresholdState.SpeciesFloorSimilarityScore.HasValue)
+        {
+            assignmentPolicy["lineage_species_floor_similarity_score"] =
+                ClampScore(assignedThresholdState.SpeciesFloorSimilarityScore.Value);
+            assignmentPolicy["lineage_species_floor_similarity_samples"] =
+                assignedThresholdState.SpeciesFloorSampleCount;
+            assignmentPolicy["lineage_species_floor_membership_count"] =
+                assignedThresholdState.SpeciesFloorMembershipCount;
+            assignmentPolicy["lineage_assigned_species_floor_similarity_score"] =
+                ClampScore(assignedThresholdState.SpeciesFloorSimilarityScore.Value);
+            assignmentPolicy["lineage_assigned_species_floor_similarity_samples"] =
+                assignedThresholdState.SpeciesFloorSampleCount;
+            assignmentPolicy["lineage_assigned_species_floor_membership_count"] =
+                assignedThresholdState.SpeciesFloorMembershipCount;
+        }
         metadata["assignment_policy"] = assignmentPolicy;
 
         var lineage = metadata["lineage"] as JsonObject ?? new JsonObject();
@@ -2348,6 +2916,54 @@ public sealed class SpeciationManagerActor : IActor
         lineage["source_species_display_name"] = sourceSpeciesDisplayName ?? string.Empty;
         lineage["dominant_species_id"] = sourceSpeciesId;
         lineage["dominant_species_display_name"] = sourceSpeciesDisplayName ?? string.Empty;
+        lineage["source_species_similarity_score"] = normalizedCandidateSimilarity;
+        lineage["dominant_species_similarity_score"] = normalizedCandidateSimilarity;
+        lineage["lineage_assignment_similarity_score"] = actualAssignedSimilarity;
+        lineage["intra_species_similarity_sample"] = actualAssignedSimilarity;
+        lineage["intra_species_similarity_species_id"] = assignmentResolution.SpeciesId;
+        lineage["assigned_species_similarity_source"] = "compatibility_assessment";
+        lineage["assigned_species_compatibility_mode"] = actualAssignedSpeciesAdmission.AssessmentMode;
+        lineage["assigned_species_compatibility_similarity_score"] = actualAssignedSimilarity;
+        lineage["assigned_species_compatibility_exemplar_count"] = actualAssignedSpeciesAdmission.ExemplarBrainIds.Length;
+        var exemplarBrainIds = new JsonArray();
+        foreach (var exemplarBrainId in actualAssignedSpeciesAdmission.ExemplarBrainIds)
+        {
+            exemplarBrainIds.Add(exemplarBrainId);
+        }
+
+        lineage["assigned_species_compatibility_exemplar_brain_ids"] = exemplarBrainIds;
+        lineage["lineage_policy_effective_split_threshold"] = assignedThresholdState.PolicyEffectiveSplitThreshold;
+        lineage["lineage_dynamic_split_threshold"] = assignedThresholdState.DynamicSplitThreshold;
+        lineage["lineage_split_threshold_source"] = assignedSplitThresholdSource;
+        lineage["source_policy_effective_split_threshold"] = sourcePolicyEffectiveSplitThreshold;
+        lineage["source_dynamic_split_threshold"] = sourceDynamicSplitThreshold;
+        lineage["source_split_threshold_source"] = sourceSplitThresholdSource;
+        lineage["assigned_policy_effective_split_threshold"] = assignedThresholdState.PolicyEffectiveSplitThreshold;
+        lineage["assigned_dynamic_split_threshold"] = assignedThresholdState.DynamicSplitThreshold;
+        lineage["assigned_split_threshold_source"] = assignedSplitThresholdSource;
+        lineage["split_proximity_to_policy_threshold"] =
+            actualAssignedSimilarity - assignedThresholdState.PolicyEffectiveSplitThreshold;
+        lineage["split_proximity_to_dynamic_threshold"] =
+            actualAssignedSimilarity - assignedThresholdState.DynamicSplitThreshold;
+        lineage["assigned_split_proximity_to_policy_threshold"] =
+            actualAssignedSimilarity - assignedThresholdState.PolicyEffectiveSplitThreshold;
+        lineage["assigned_split_proximity_to_dynamic_threshold"] =
+            actualAssignedSimilarity - assignedThresholdState.DynamicSplitThreshold;
+        lineage["source_split_proximity_to_policy_threshold"] =
+            normalizedCandidateSimilarity - sourcePolicyEffectiveSplitThreshold;
+        lineage["source_split_proximity_to_dynamic_threshold"] =
+            normalizedCandidateSimilarity - sourceDynamicSplitThreshold;
+        if (assignedThresholdState.SpeciesFloorSimilarityScore.HasValue)
+        {
+            lineage["species_floor_similarity_score"] =
+                ClampScore(assignedThresholdState.SpeciesFloorSimilarityScore.Value);
+            lineage["species_floor_similarity_samples"] = assignedThresholdState.SpeciesFloorSampleCount;
+            lineage["species_floor_membership_count"] = assignedThresholdState.SpeciesFloorMembershipCount;
+            lineage["assigned_species_floor_similarity_score"] =
+                ClampScore(assignedThresholdState.SpeciesFloorSimilarityScore.Value);
+            lineage["assigned_species_floor_similarity_samples"] = assignedThresholdState.SpeciesFloorSampleCount;
+            lineage["assigned_species_floor_membership_count"] = assignedThresholdState.SpeciesFloorMembershipCount;
+        }
         lineage["hindsight_source_species_id"] = sourceSpeciesId;
         lineage["hindsight_target_species_id"] = assignmentResolution.SpeciesId;
         lineage["hindsight_target_species_display_name"] = assignmentResolution.SpeciesDisplayName;
@@ -2362,8 +2978,6 @@ public sealed class SpeciationManagerActor : IActor
             1d,
             ClampScore(founderSimilarity) + _assignmentPolicy.HindsightReassignSimilarityMargin);
         lineage["hindsight_window_commits"] = _assignmentPolicy.HindsightReassignCommitWindow;
-        lineage.Remove("intra_species_similarity_sample");
-        lineage.Remove("intra_species_similarity_species_id");
         metadata["lineage"] = lineage;
 
         return metadata.ToJsonString(MetadataJsonSerializerOptions);
@@ -2553,7 +3167,9 @@ public sealed class SpeciationManagerActor : IActor
         LineageEvidence lineageEvidence,
         SpeciesSimilarityFloorState? sourceSpeciesFloor,
         double? sourceSpeciesSimilarityScore,
-        ParentSpeciesPairwiseFit? bestParentSpeciesFit)
+        ParentSpeciesPairwiseFit? bestParentSpeciesFit,
+        bool allowRecentSplitRealign = true,
+        bool allowRecentDerivedSpeciesReuse = true)
     {
         if (!string.IsNullOrWhiteSpace(requestedSpeciesId))
         {
@@ -2692,7 +3308,8 @@ public sealed class SpeciationManagerActor : IActor
                 "lineage_diverged_new_species",
                 StringComparison.Ordinal);
 
-        if (withinRecentSplitRealignWindow
+        if (allowRecentSplitRealign
+            && withinRecentSplitRealignWindow
             && similarity <= Math.Min(
                 1d,
                 _assignmentPolicy.LineageMatchThreshold + _assignmentPolicy.RecentSplitRealignMatchMargin))
@@ -2717,7 +3334,8 @@ public sealed class SpeciationManagerActor : IActor
                 ForceDecisionReason: true);
         }
 
-        if (TryResolveRecentDerivedSpeciesReuse(sourceSpeciesId, similarity, out var recentDerivedHint))
+        if (allowRecentDerivedSpeciesReuse
+            && TryResolveRecentDerivedSpeciesReuse(sourceSpeciesId, similarity, out var recentDerivedHint))
         {
             return BuildSimilarityResolution(
                 recentDerivedHint.TargetSpeciesId,
@@ -2844,14 +3462,15 @@ public sealed class SpeciationManagerActor : IActor
     private string BuildDecisionMetadataJson(
         string? sourceMetadataJson,
         string policyVersion,
-        ProtoSpec.SpeciationCandidateMode candidateMode,
+        ResolvedCandidate resolvedCandidate,
         AssignmentResolution assignmentResolution,
         LineageEvidence lineageEvidence,
         SimilarityEvidence similarityEvidence,
         SpeciesSimilarityFloorState? sourceSpeciesFloor,
         double? sourceSpeciesSimilarityScore,
         double? assignedSpeciesSimilarityScore,
-        double? intraSpeciesSimilaritySample)
+        double? intraSpeciesSimilaritySample,
+        ActualAssignedSpeciesAdmission? actualAssignedSpeciesAdmission)
     {
         var metadata = ParseMetadataJson(sourceMetadataJson);
         metadata.TryGetPropertyValue("lineage", out var existingLineageNode);
@@ -2995,7 +3614,7 @@ public sealed class SpeciationManagerActor : IActor
 
         var lineage = new JsonObject
         {
-            ["candidate_mode"] = candidateMode.ToString(),
+            ["candidate_mode"] = resolvedCandidate.CandidateMode.ToString(),
             ["lineage_key"] = lineageEvidence.LineageKey,
             ["parent_membership_count"] = lineageEvidence.ParentMembershipCount,
             ["parent_brain_ids"] = parentBrainIds,
@@ -3018,6 +3637,15 @@ public sealed class SpeciationManagerActor : IActor
             ["assigned_dynamic_split_threshold"] = assignedThresholdState.DynamicSplitThreshold,
             ["assigned_split_threshold_source"] = assignedThresholdSource
         };
+        if (resolvedCandidate.CandidateArtifactRef is not null
+            && HasUsableArtifactReference(resolvedCandidate.CandidateArtifactRef))
+        {
+            lineage["candidate_artifact_ref"] = BuildStoredArtifactRefNode(resolvedCandidate.CandidateArtifactRef);
+        }
+        if (!string.IsNullOrWhiteSpace(resolvedCandidate.CandidateArtifactUri))
+        {
+            lineage["candidate_artifact_uri"] = resolvedCandidate.CandidateArtifactUri;
+        }
         if (genericThresholdState.SpeciesFloorSimilarityScore.HasValue)
         {
             lineage["species_floor_similarity_score"] =
@@ -3069,6 +3697,22 @@ public sealed class SpeciationManagerActor : IActor
         {
             lineage["intra_species_similarity_sample"] = ClampScore(intraSpeciesSimilaritySample.Value);
             lineage["intra_species_similarity_species_id"] = assignmentResolution.SpeciesId;
+        }
+        if (actualAssignedSpeciesAdmission.HasValue)
+        {
+            lineage["assigned_species_similarity_source"] = "compatibility_assessment";
+            lineage["assigned_species_compatibility_mode"] = actualAssignedSpeciesAdmission.Value.AssessmentMode;
+            lineage["assigned_species_compatibility_similarity_score"] =
+                ClampScore(actualAssignedSpeciesAdmission.Value.SimilarityScore);
+            lineage["assigned_species_compatibility_exemplar_count"] =
+                actualAssignedSpeciesAdmission.Value.ExemplarBrainIds.Length;
+            var exemplarBrainIds = new JsonArray();
+            foreach (var exemplarBrainId in actualAssignedSpeciesAdmission.Value.ExemplarBrainIds)
+            {
+                exemplarBrainIds.Add(exemplarBrainId);
+            }
+
+            lineage["assigned_species_compatibility_exemplar_brain_ids"] = exemplarBrainIds;
         }
         AddLineageSimilarityScore(
             lineage,
@@ -4383,10 +5027,29 @@ public sealed class SpeciationManagerActor : IActor
         double FounderSimilarityScore,
         long AssignedMs);
 
+    private readonly record struct ActualAssignedSpeciesAdmission(
+        double SimilarityScore,
+        string AssessmentMode,
+        string[] ExemplarBrainIds);
+
+    private enum CompatibilitySubjectKind
+    {
+        None = 0,
+        BrainId = 1,
+        ArtifactRef = 2
+    }
+
+    private readonly record struct CompatibilitySubject(
+        CompatibilitySubjectKind Kind,
+        Guid BrainId,
+        ArtifactRef? ArtifactRef);
+
     private readonly record struct ResolvedCandidate(
         ProtoSpec.SpeciationCandidateMode CandidateMode,
         Guid BrainId,
-        string? SourceArtifactRef);
+        string? SourceArtifactRef,
+        ArtifactRef? CandidateArtifactRef,
+        string? CandidateArtifactUri);
 
     private bool TryGetCurrentEpoch(out SpeciationEpochInfo epoch)
     {

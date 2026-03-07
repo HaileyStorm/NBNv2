@@ -227,7 +227,7 @@ WHERE (@epoch_id IS NULL OR m.epoch_id = @epoch_id)
 ORDER BY m.epoch_id, m.brain_id;
 """;
 
-    private const string ListRecentMembershipsForSpeciesSql = """
+private const string ListRecentMembershipsForSpeciesSql = """
 SELECT
     m.epoch_id AS EpochId,
     m.brain_id AS BrainId,
@@ -250,6 +250,31 @@ WHERE m.epoch_id = @epoch_id
   AND m.species_id = @species_id
   AND m.assigned_ms <= @max_assigned_ms
 ORDER BY m.assigned_ms DESC, m.brain_id DESC
+LIMIT @limit;
+""";
+
+    private const string ListEarliestMembershipsForSpeciesSql = """
+SELECT
+    m.epoch_id AS EpochId,
+    m.brain_id AS BrainId,
+    m.species_id AS SpeciesId,
+    s.display_name AS SpeciesDisplayName,
+    m.assigned_ms AS AssignedMs,
+    d.policy_version AS PolicyVersion,
+    d.decision_reason AS DecisionReason,
+    d.decision_metadata_json AS DecisionMetadataJson,
+    d.source_brain_id AS SourceBrainId,
+    d.source_artifact_ref AS SourceArtifactRef,
+    d.decision_id AS DecisionId
+FROM species_membership AS m
+JOIN species AS s
+    ON s.epoch_id = m.epoch_id
+   AND s.species_id = m.species_id
+JOIN speciation_decisions AS d
+    ON d.decision_id = m.decision_id
+WHERE m.epoch_id = @epoch_id
+  AND m.species_id = @species_id
+ORDER BY m.assigned_ms ASC, m.brain_id ASC
 LIMIT @limit;
 """;
 
@@ -913,6 +938,33 @@ WHERE name IN (
                     epoch_id = epochId,
                     species_id = speciesId.Trim(),
                     max_assigned_ms = maxAssignedMs,
+                    limit = limit
+                },
+                cancellationToken: cancellationToken));
+        return rows.Select(ToMembershipRecord).ToArray();
+    }
+
+    public async Task<IReadOnlyList<SpeciationMembershipRecord>> ListEarliestMembershipsForSpeciesAsync(
+        long epochId,
+        string speciesId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (epochId <= 0
+            || string.IsNullOrWhiteSpace(speciesId)
+            || limit <= 0)
+        {
+            return Array.Empty<SpeciationMembershipRecord>();
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<MembershipRow>(
+            new CommandDefinition(
+                ListEarliestMembershipsForSpeciesSql,
+                new
+                {
+                    epoch_id = epochId,
+                    species_id = speciesId.Trim(),
                     limit = limit
                 },
                 cancellationToken: cancellationToken));

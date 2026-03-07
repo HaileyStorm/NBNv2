@@ -20,7 +20,7 @@ Reproduction requests may specify parents by:
 
 * BrainId (preferred): NBN resolves to the latest base `.nbn` plus latest `.nbs` overlay if configured
 * ArtifactRef: `.nbn` (and optionally `.nbs`)
-* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn
+* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn; speciation uses these assessment-only calls when deciding whether a candidate may join an already-created derived species
 
 Strength source options:
 
