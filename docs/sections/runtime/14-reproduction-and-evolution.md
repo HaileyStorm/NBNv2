@@ -20,7 +20,7 @@ Reproduction requests may specify parents by:
 
 * BrainId (preferred): NBN resolves to the latest base `.nbn` plus latest `.nbs` overlay if configured
 * ArtifactRef: `.nbn` (and optionally `.nbs`)
-* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn; speciation uses these assessment-only calls when deciding whether a candidate may join an already-created derived species and when bootstrapping the first non-founder members of a newborn derived species
+* Dedicated compatibility assessment requests support both addressing modes and return similarity metrics without child synthesis/spawn; speciation uses these assessment-only calls when deciding whether a candidate may join an already-created derived species and when bootstrapping the first three non-founder members of a newborn derived species
 
 Strength source options:
 
@@ -152,6 +152,7 @@ Implementation notes (runtime behavior):
 
 * `SimilarityReport.compatible=false` with `SimilarityReport.abort_reason=<code>` indicates a gate/runtime abort.
 * Successful child synthesis populates `child_def` and `summary` even when subsequent spawn fails.
+* Speciation bootstrap admissions use these assessment-only calls with a short bounded timeout and require the assigned-species score to clear the lineage match threshold, not merely the split threshold, before a newborn derived species may seed its in-species floor.
 * Spawn-policy behavior:
   * `SPAWN_CHILD_DEFAULT_ON`: attempt spawn after synthesis
   * `SPAWN_CHILD_NEVER`: do not spawn; return child artifact only

@@ -16,13 +16,14 @@ namespace Nbn.Runtime.Speciation;
 public sealed class SpeciationManagerActor : IActor
 {
     private static readonly TimeSpan DefaultSettingsRequestTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan DefaultCompatibilityRequestTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan DefaultCompatibilityRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly JsonSerializerOptions MetadataJsonSerializerOptions = new()
     {
         WriteIndented = false
     };
     private const int ExternalAdmissionExemplarLimit = 3;
-    private const int DerivedSpeciesBootstrapActualSampleRequirement = 1;
+    private const int DerivedSpeciesBootstrapActualSampleRequirement = 3;
+    private const int DerivedSpeciesBootstrapMembershipLimit = DerivedSpeciesBootstrapActualSampleRequirement;
 
     private readonly SpeciationStore _store;
     private SpeciationRuntimeConfig _runtimeConfig;
@@ -1238,6 +1239,7 @@ public sealed class SpeciationManagerActor : IActor
                 epoch,
                 resolved,
                 assignmentResolution,
+                bootstrapRequirement,
                 admissionSourceSimilarityScore).ConfigureAwait(false);
             if (evaluatedAdmission.HasValue)
             {
@@ -2275,27 +2277,56 @@ public sealed class SpeciationManagerActor : IActor
     {
         requirement = default;
         if (string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId)
-            || string.Equals(assignmentResolution.Strategy, "explicit_species", StringComparison.Ordinal)
-            || !TryGetRecentDerivedSpeciesHintByTargetSpecies(
-                assignmentResolution.SpeciesId,
-                out var targetHint))
+            || string.Equals(assignmentResolution.Strategy, "explicit_species", StringComparison.Ordinal))
         {
             return false;
         }
 
-        var targetFloor = ResolveSpeciesSimilarityFloor(assignmentResolution.SpeciesId);
+        var targetSpeciesId = assignmentResolution.SpeciesId.Trim();
+        if (targetSpeciesId.Length == 0)
+        {
+            return false;
+        }
+
+        var targetFloor = ResolveSpeciesSimilarityFloor(targetSpeciesId);
         if (!targetFloor.HasValue
             || targetFloor.Value.MembershipCount <= 0
+            || targetFloor.Value.MembershipCount > DerivedSpeciesBootstrapMembershipLimit
             || targetFloor.Value.ActualSimilaritySampleCount >= DerivedSpeciesBootstrapActualSampleRequirement)
         {
             return false;
         }
 
+        string? bootstrapSourceSpeciesId = null;
+        string? bootstrapSourceSpeciesDisplayName = null;
+        if (TryGetRecentDerivedSpeciesHintByTargetSpecies(targetSpeciesId, out var targetHint))
+        {
+            bootstrapSourceSpeciesId = targetHint.SourceSpeciesId;
+            bootstrapSourceSpeciesDisplayName = targetHint.SourceSpeciesDisplayName;
+        }
+        else if (!string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
+            && !string.Equals(
+                targetSpeciesId,
+                assignmentResolution.SourceSpeciesId.Trim(),
+                StringComparison.Ordinal))
+        {
+            bootstrapSourceSpeciesId = assignmentResolution.SourceSpeciesId.Trim();
+            bootstrapSourceSpeciesDisplayName = assignmentResolution.SourceSpeciesDisplayName;
+        }
+
+        if (string.IsNullOrWhiteSpace(bootstrapSourceSpeciesId)
+            || string.Equals(targetSpeciesId, bootstrapSourceSpeciesId.Trim(), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
         requirement = new BootstrapAssignedSpeciesAdmissionRequirement(
-            targetHint.TargetSpeciesId,
-            ResolveSpeciesDisplayName(targetHint.TargetSpeciesDisplayName, targetHint.TargetSpeciesId),
-            targetHint.SourceSpeciesId,
-            ResolveSpeciesDisplayName(targetHint.SourceSpeciesDisplayName, targetHint.SourceSpeciesId),
+            targetSpeciesId,
+            ResolveSpeciesDisplayName(assignmentResolution.SpeciesDisplayName, targetSpeciesId),
+            bootstrapSourceSpeciesId.Trim(),
+            ResolveSpeciesDisplayName(
+                bootstrapSourceSpeciesDisplayName,
+                bootstrapSourceSpeciesId.Trim()),
             targetFloor.Value.MembershipCount,
             targetFloor.Value.ActualSimilaritySampleCount);
         return true;
@@ -2358,6 +2389,7 @@ public sealed class SpeciationManagerActor : IActor
         SpeciationEpochInfo epoch,
         ResolvedCandidate resolvedCandidate,
         AssignmentResolution assignmentResolution,
+        BootstrapAssignedSpeciesAdmissionRequirement? bootstrapRequirement,
         double? sourceSpeciesSimilarityScore)
     {
         if (!TryBuildCompatibilitySubject(resolvedCandidate, out var candidateSubject))
@@ -2371,6 +2403,7 @@ public sealed class SpeciationManagerActor : IActor
             candidateSubject,
             resolvedCandidate.BrainId,
             assignmentResolution,
+            bootstrapRequirement,
             sourceSpeciesSimilarityScore).ConfigureAwait(false);
     }
 
@@ -2380,6 +2413,7 @@ public sealed class SpeciationManagerActor : IActor
         CompatibilitySubject candidateSubject,
         Guid candidateBrainId,
         AssignmentResolution assignmentResolution,
+        BootstrapAssignedSpeciesAdmissionRequirement? bootstrapRequirement,
         double? sourceSpeciesSimilarityScore)
     {
         if (_reproductionManagerPid is null
@@ -2435,8 +2469,16 @@ public sealed class SpeciationManagerActor : IActor
         var assignedSimilarity = ClampScore(exemplarSimilarities.Min());
         var targetThresholdState = ResolveSplitThresholdState(
             ResolveSpeciesSimilarityFloor(assignmentResolution.SpeciesId));
+        var minimumAssignedSimilarity = targetThresholdState.DynamicSplitThreshold;
+        if (bootstrapRequirement.HasValue)
+        {
+            minimumAssignedSimilarity = Math.Max(
+                minimumAssignedSimilarity,
+                _assignmentPolicy.LineageMatchThreshold);
+        }
+
         if (assignedSimilarity <= 0d
-            || assignedSimilarity <= targetThresholdState.DynamicSplitThreshold)
+            || assignedSimilarity < minimumAssignedSimilarity)
         {
             return null;
         }
@@ -2970,12 +3012,18 @@ public sealed class SpeciationManagerActor : IActor
                 continue;
             }
 
+            var bootstrapRequirement = TryResolveBootstrapAssignedSpeciesAdmissionRequirement(
+                assignmentResolution,
+                out var resolvedBootstrapRequirement)
+                ? (BootstrapAssignedSpeciesAdmissionRequirement?)resolvedBootstrapRequirement
+                : null;
             var actualAssignedSpeciesAdmission = await TryAssessActualAssignedSpeciesAdmissionAsync(
                 context,
                 epoch,
                 candidateSubject,
                 candidate.BrainId,
                 assignmentResolution,
+                bootstrapRequirement,
                 candidateSimilarity).ConfigureAwait(false);
             if (!actualAssignedSpeciesAdmission.HasValue)
             {
