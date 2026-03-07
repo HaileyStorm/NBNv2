@@ -34,6 +34,7 @@ public sealed class SpeciationManagerActor : IActor
     private readonly PID? _configuredReproductionManagerPid;
     private PID? _reproductionManagerPid;
     private readonly TimeSpan _compatibilityRequestTimeout;
+    private ProtoRepro.ReproduceConfig _compatibilityAssessmentConfig;
     private readonly Dictionary<string, SpeciesSimilarityFloorState> _speciesSimilarityFloors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<RecentDerivedSpeciesHint>> _recentDerivedSpeciesHintsBySourceSpecies = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RecentDerivedSpeciesHint> _recentDerivedSpeciesHintsByTargetSpecies = new(StringComparer.Ordinal);
@@ -58,6 +59,8 @@ public sealed class SpeciationManagerActor : IActor
         _configuredReproductionManagerPid = reproductionManagerPid;
         _reproductionManagerPid = reproductionManagerPid;
         _compatibilityRequestTimeout = compatibilityRequestTimeout ?? DefaultCompatibilityRequestTimeout;
+        _compatibilityAssessmentConfig = ReproductionSettings.CreateDefaultConfig(
+            ProtoRepro.SpawnChildPolicy.SpawnChildNever);
     }
 
     public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
@@ -215,6 +218,9 @@ public sealed class SpeciationManagerActor : IActor
         await _store.InitializeAsync().ConfigureAwait(false);
         _runtimeConfig = await ResolveRuntimeConfigFromSettingsAsync(context, _runtimeConfig).ConfigureAwait(false);
         _assignmentPolicy = BuildAssignmentPolicy(_runtimeConfig);
+        _compatibilityAssessmentConfig = await ResolveCompatibilityAssessmentConfigFromSettingsAsync(
+            context,
+            _compatibilityAssessmentConfig).ConfigureAwait(false);
         var epoch = await _store.EnsureCurrentEpochAsync(_runtimeConfig).ConfigureAwait(false);
         await PrimeSpeciesSimilarityFloorsAsync(epoch.EpochId).ConfigureAwait(false);
         return epoch;
@@ -229,8 +235,51 @@ public sealed class SpeciationManagerActor : IActor
             return fallback;
         }
 
+        var settingValues = await ReadSettingValuesAsync(
+            context,
+            SpeciationSettingsKeys.AllKeys,
+            "Speciation startup").ConfigureAwait(false);
+
+        return settingValues.Count == 0
+            ? fallback
+            : BuildRuntimeConfigFromSettings(settingValues, fallback);
+    }
+
+    private async Task<ProtoRepro.ReproduceConfig> ResolveCompatibilityAssessmentConfigFromSettingsAsync(
+        IContext context,
+        ProtoRepro.ReproduceConfig fallback)
+    {
+        if (_settingsPid is null)
+        {
+            return fallback.Clone();
+        }
+
+        var settingValues = await ReadSettingValuesAsync(
+            context,
+            ReproductionSettingsKeys.AllKeys,
+            "Speciation compatibility config").ConfigureAwait(false);
+        return settingValues.Count == 0
+            ? fallback.Clone()
+            : ReproductionSettings.CreateConfigFromSettings(
+                settingValues.ToDictionary(
+                    static pair => pair.Key,
+                    static pair => (string?)pair.Value,
+                    StringComparer.OrdinalIgnoreCase),
+                ProtoRepro.SpawnChildPolicy.SpawnChildNever);
+    }
+
+    private async Task<Dictionary<string, string>> ReadSettingValuesAsync(
+        IContext context,
+        IReadOnlyList<string> keys,
+        string logContext)
+    {
         var settingValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var key in SpeciationSettingsKeys.AllKeys)
+        if (_settingsPid is null)
+        {
+            return settingValues;
+        }
+
+        foreach (var key in keys)
         {
             try
             {
@@ -248,13 +297,11 @@ public sealed class SpeciationManagerActor : IActor
             }
             catch (Exception ex)
             {
-                LogError($"Speciation startup settings read failed for '{key}': {ex.GetBaseException().Message}");
+                LogError($"{logContext} settings read failed for '{key}': {ex.GetBaseException().Message}");
             }
         }
 
-        return settingValues.Count == 0
-            ? fallback
-            : BuildRuntimeConfigFromSettings(settingValues, fallback);
+        return settingValues;
     }
 
     private void StartStartupReconciliation(IContext context)
@@ -2871,11 +2918,8 @@ public sealed class SpeciationManagerActor : IActor
         };
     }
 
-    private static ProtoRepro.ReproduceConfig CreateCompatibilityAssessmentConfig()
-        => new()
-        {
-            SpawnChild = ProtoRepro.SpawnChildPolicy.SpawnChildNever
-        };
+    private ProtoRepro.ReproduceConfig CreateCompatibilityAssessmentConfig()
+        => _compatibilityAssessmentConfig.Clone();
 
     private static bool TryBuildCompatibilitySubject(
         ResolvedCandidate resolvedCandidate,
