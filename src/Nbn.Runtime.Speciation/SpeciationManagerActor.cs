@@ -1216,11 +1216,9 @@ public sealed class SpeciationManagerActor : IActor
             sourceSpeciesFloor,
             sourceSpeciesSimilarityScore,
             bestParentSpeciesFit);
-        var bootstrapRequirement = TryResolveBootstrapAssignedSpeciesAdmissionRequirement(
-            assignmentResolution,
-            out var resolvedBootstrapRequirement)
-            ? (BootstrapAssignedSpeciesAdmissionRequirement?)resolvedBootstrapRequirement
-            : null;
+        var bootstrapRequirement = await TryResolveBootstrapAssignedSpeciesAdmissionRequirementAsync(
+            epoch.EpochId,
+            assignmentResolution).ConfigureAwait(false);
         ActualAssignedSpeciesAdmission? actualAssignedSpeciesAdmission = null;
         if (RequiresActualAssignedSpeciesAdmission(
                 assignmentResolution,
@@ -1253,11 +1251,9 @@ public sealed class SpeciationManagerActor : IActor
                 assignmentResolution = BuildBootstrapFallbackAssignmentResolution(
                     bootstrapRequirement.Value,
                     admissionSourceSimilarityScore);
-                bootstrapRequirement = TryResolveBootstrapAssignedSpeciesAdmissionRequirement(
-                    assignmentResolution,
-                    out resolvedBootstrapRequirement)
-                    ? (BootstrapAssignedSpeciesAdmissionRequirement?)resolvedBootstrapRequirement
-                    : null;
+                bootstrapRequirement = await TryResolveBootstrapAssignedSpeciesAdmissionRequirementAsync(
+                    epoch.EpochId,
+                    assignmentResolution).ConfigureAwait(false);
             }
             else
             {
@@ -1273,9 +1269,7 @@ public sealed class SpeciationManagerActor : IActor
                     allowRecentDerivedSpeciesReuse: false);
             }
         }
-        var allowSourceSimilarityCarryover = !TryResolveBootstrapAssignedSpeciesAdmissionRequirement(
-            assignmentResolution,
-            out _);
+        var allowSourceSimilarityCarryover = !bootstrapRequirement.HasValue;
         var intraSpeciesSimilaritySample = TryResolveIntraSpeciesSimilaritySample(
             assignmentResolution,
             parentMemberships,
@@ -2037,6 +2031,11 @@ public sealed class SpeciationManagerActor : IActor
             return;
         }
 
+        StoreRecentDerivedSpeciesHint(hint);
+    }
+
+    private void StoreRecentDerivedSpeciesHint(RecentDerivedSpeciesHint hint)
+    {
         if (!_recentDerivedSpeciesHintsBySourceSpecies.TryGetValue(hint.SourceSpeciesId, out var hints))
         {
             hints = new List<RecentDerivedSpeciesHint>();
@@ -2065,6 +2064,36 @@ public sealed class SpeciationManagerActor : IActor
         {
             hints.RemoveRange(hintLimit, hints.Count - hintLimit);
         }
+    }
+
+    private async Task<RecentDerivedSpeciesHint?> TryResolveDerivedSpeciesHintByTargetSpeciesAsync(
+        long epochId,
+        string? speciesId,
+        CancellationToken cancellationToken = default)
+    {
+        if (TryGetRecentDerivedSpeciesHintByTargetSpecies(speciesId, out var hint))
+        {
+            return hint;
+        }
+
+        if (epochId <= 0 || string.IsNullOrWhiteSpace(speciesId))
+        {
+            return null;
+        }
+
+        var earliestMemberships = await _store.ListEarliestMembershipsForSpeciesAsync(
+            epochId,
+            speciesId.Trim(),
+            limit: 1,
+            cancellationToken).ConfigureAwait(false);
+        if (earliestMemberships.Count == 0
+            || !TryExtractRecentDerivedSpeciesHint(earliestMemberships[0], out hint))
+        {
+            return null;
+        }
+
+        StoreRecentDerivedSpeciesHint(hint);
+        return hint;
     }
 
     private void UpdateSpeciesSimilarityFloor(
@@ -2271,21 +2300,21 @@ public sealed class SpeciationManagerActor : IActor
         return true;
     }
 
-    private bool TryResolveBootstrapAssignedSpeciesAdmissionRequirement(
+    private async Task<BootstrapAssignedSpeciesAdmissionRequirement?> TryResolveBootstrapAssignedSpeciesAdmissionRequirementAsync(
+        long epochId,
         AssignmentResolution assignmentResolution,
-        out BootstrapAssignedSpeciesAdmissionRequirement requirement)
+        CancellationToken cancellationToken = default)
     {
-        requirement = default;
         if (string.IsNullOrWhiteSpace(assignmentResolution.SpeciesId)
             || string.Equals(assignmentResolution.Strategy, "explicit_species", StringComparison.Ordinal))
         {
-            return false;
+            return null;
         }
 
         var targetSpeciesId = assignmentResolution.SpeciesId.Trim();
         if (targetSpeciesId.Length == 0)
         {
-            return false;
+            return null;
         }
 
         var targetFloor = ResolveSpeciesSimilarityFloor(targetSpeciesId);
@@ -2294,15 +2323,19 @@ public sealed class SpeciationManagerActor : IActor
             || targetFloor.Value.MembershipCount > DerivedSpeciesBootstrapMembershipLimit
             || targetFloor.Value.ActualSimilaritySampleCount >= DerivedSpeciesBootstrapActualSampleRequirement)
         {
-            return false;
+            return null;
         }
 
         string? bootstrapSourceSpeciesId = null;
         string? bootstrapSourceSpeciesDisplayName = null;
-        if (TryGetRecentDerivedSpeciesHintByTargetSpecies(targetSpeciesId, out var targetHint))
+        var targetHint = await TryResolveDerivedSpeciesHintByTargetSpeciesAsync(
+            epochId,
+            targetSpeciesId,
+            cancellationToken).ConfigureAwait(false);
+        if (targetHint.HasValue)
         {
-            bootstrapSourceSpeciesId = targetHint.SourceSpeciesId;
-            bootstrapSourceSpeciesDisplayName = targetHint.SourceSpeciesDisplayName;
+            bootstrapSourceSpeciesId = targetHint.Value.SourceSpeciesId;
+            bootstrapSourceSpeciesDisplayName = targetHint.Value.SourceSpeciesDisplayName;
         }
         else if (!string.IsNullOrWhiteSpace(assignmentResolution.SourceSpeciesId)
             && !string.Equals(
@@ -2317,10 +2350,10 @@ public sealed class SpeciationManagerActor : IActor
         if (string.IsNullOrWhiteSpace(bootstrapSourceSpeciesId)
             || string.Equals(targetSpeciesId, bootstrapSourceSpeciesId.Trim(), StringComparison.Ordinal))
         {
-            return false;
+            return null;
         }
 
-        requirement = new BootstrapAssignedSpeciesAdmissionRequirement(
+        return new BootstrapAssignedSpeciesAdmissionRequirement(
             targetSpeciesId,
             ResolveSpeciesDisplayName(assignmentResolution.SpeciesDisplayName, targetSpeciesId),
             bootstrapSourceSpeciesId.Trim(),
@@ -2329,7 +2362,6 @@ public sealed class SpeciationManagerActor : IActor
                 bootstrapSourceSpeciesId.Trim()),
             targetFloor.Value.MembershipCount,
             targetFloor.Value.ActualSimilaritySampleCount);
-        return true;
     }
 
     private static bool RequiresActualAssignedSpeciesAdmission(
@@ -2390,7 +2422,8 @@ public sealed class SpeciationManagerActor : IActor
         ResolvedCandidate resolvedCandidate,
         AssignmentResolution assignmentResolution,
         BootstrapAssignedSpeciesAdmissionRequirement? bootstrapRequirement,
-        double? sourceSpeciesSimilarityScore)
+        double? sourceSpeciesSimilarityScore,
+        IReadOnlyList<SpeciationMembershipRecord>? exemplarMemberships = null)
     {
         if (!TryBuildCompatibilitySubject(resolvedCandidate, out var candidateSubject))
         {
@@ -2404,7 +2437,8 @@ public sealed class SpeciationManagerActor : IActor
             resolvedCandidate.BrainId,
             assignmentResolution,
             bootstrapRequirement,
-            sourceSpeciesSimilarityScore).ConfigureAwait(false);
+            sourceSpeciesSimilarityScore,
+            exemplarMemberships).ConfigureAwait(false);
     }
 
     private async Task<ActualAssignedSpeciesAdmission?> TryAssessActualAssignedSpeciesAdmissionAsync(
@@ -2414,7 +2448,8 @@ public sealed class SpeciationManagerActor : IActor
         Guid candidateBrainId,
         AssignmentResolution assignmentResolution,
         BootstrapAssignedSpeciesAdmissionRequirement? bootstrapRequirement,
-        double? sourceSpeciesSimilarityScore)
+        double? sourceSpeciesSimilarityScore,
+        IReadOnlyList<SpeciationMembershipRecord>? exemplarMemberships = null)
     {
         if (_reproductionManagerPid is null
             || epoch.EpochId <= 0
@@ -2423,10 +2458,15 @@ public sealed class SpeciationManagerActor : IActor
             return null;
         }
 
-        var exemplars = await _store.ListEarliestMembershipsForSpeciesAsync(
-            epoch.EpochId,
-            assignmentResolution.SpeciesId,
-            ExternalAdmissionExemplarLimit).ConfigureAwait(false);
+        var exemplars = exemplarMemberships;
+        if (exemplars is null)
+        {
+            exemplars = await _store.ListEarliestMembershipsForSpeciesAsync(
+                epoch.EpochId,
+                assignmentResolution.SpeciesId,
+                ExternalAdmissionExemplarLimit).ConfigureAwait(false);
+        }
+
         if (exemplars.Count == 0)
         {
             return null;
@@ -2957,6 +2997,12 @@ public sealed class SpeciationManagerActor : IActor
             return 0;
         }
 
+        var targetSpeciesFloor = ResolveSpeciesSimilarityFloor(assignmentResolution.SpeciesId);
+        if (!targetSpeciesFloor.HasValue || targetSpeciesFloor.Value.MembershipCount != 1)
+        {
+            return 0;
+        }
+
         var sourceSpeciesId = assignmentResolution.SourceSpeciesId.Trim();
         if (sourceSpeciesId.Length == 0
             || string.Equals(sourceSpeciesId, assignmentResolution.SpeciesId, StringComparison.Ordinal))
@@ -2977,11 +3023,14 @@ public sealed class SpeciationManagerActor : IActor
 
         var reassigned = 0;
         var similarityMargin = Math.Max(0d, _assignmentPolicy.HindsightReassignSimilarityMargin);
+        var maxHindsightCandidates = Math.Max(1, DerivedSpeciesBootstrapActualSampleRequirement);
         var orderedCandidates = recent
             .Where(candidate => candidate.BrainId != splitMembership.BrainId)
             .OrderBy(candidate => candidate.AssignedMs)
             .ThenBy(candidate => candidate.BrainId)
             .ToArray();
+        var eligibleCandidates = new List<(SpeciationMembershipRecord Candidate, double Similarity)>(
+            Math.Min(maxHindsightCandidates, orderedCandidates.Length));
         for (var index = 0; index < orderedCandidates.Length; index++)
         {
             var candidate = orderedCandidates[index];
@@ -3007,16 +3056,33 @@ public sealed class SpeciationManagerActor : IActor
                 continue;
             }
 
+            eligibleCandidates.Add((candidate, candidateSimilarity));
+            if (eligibleCandidates.Count >= maxHindsightCandidates)
+            {
+                break;
+            }
+        }
+
+        var bootstrapRequirement = await TryResolveBootstrapAssignedSpeciesAdmissionRequirementAsync(
+            epoch.EpochId,
+            assignmentResolution).ConfigureAwait(false);
+        var bootstrapExemplars = await _store.ListEarliestMembershipsForSpeciesAsync(
+            epoch.EpochId,
+            assignmentResolution.SpeciesId,
+            ExternalAdmissionExemplarLimit).ConfigureAwait(false);
+        if (bootstrapExemplars.Count == 0)
+        {
+            return 0;
+        }
+
+        for (var index = 0; index < eligibleCandidates.Count; index++)
+        {
+            var (candidate, candidateSimilarity) = eligibleCandidates[index];
             if (!TryBuildCompatibilitySubject(candidate, out var candidateSubject))
             {
                 continue;
             }
 
-            var bootstrapRequirement = TryResolveBootstrapAssignedSpeciesAdmissionRequirement(
-                assignmentResolution,
-                out var resolvedBootstrapRequirement)
-                ? (BootstrapAssignedSpeciesAdmissionRequirement?)resolvedBootstrapRequirement
-                : null;
             var actualAssignedSpeciesAdmission = await TryAssessActualAssignedSpeciesAdmissionAsync(
                 context,
                 epoch,
@@ -3024,7 +3090,8 @@ public sealed class SpeciationManagerActor : IActor
                 candidate.BrainId,
                 assignmentResolution,
                 bootstrapRequirement,
-                candidateSimilarity).ConfigureAwait(false);
+                candidateSimilarity,
+                bootstrapExemplars).ConfigureAwait(false);
             if (!actualAssignedSpeciesAdmission.HasValue)
             {
                 continue;
