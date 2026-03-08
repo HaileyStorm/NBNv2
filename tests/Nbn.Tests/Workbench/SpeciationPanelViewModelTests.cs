@@ -776,7 +776,7 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_UsesExplicitSplitProximityBeforeAssignedSpeciesSimilarity()
+    public async Task RefreshHistoryCommand_PrefersAssignedSplitProximityPerspectiveOverSourcePerspective()
     {
         var history = new[]
         {
@@ -806,8 +806,8 @@ public class SpeciationPanelViewModelTests
         vm.RefreshHistoryCommand.Execute(null);
         await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 1);
 
-        Assert.Contains("effective split 0.84", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("min=-0.34", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("effective split 0.7", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("min=+0.16", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

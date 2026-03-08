@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Reflection;
 using Nbn.Proto;
 using Nbn.Shared;
 using Nbn.Tools.EvolutionSim;
@@ -198,6 +199,47 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenDominantSpeciesAlreadyFillsPool_DoesNotEvictRarerCommittedSpecies()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 42002UL, maxIterations: 8, commitToSpeciation: true) with
+        {
+            MaxParentPoolSize = 6
+        };
+        var client = new DeterministicFakeClient(similarities: Enumerable.Repeat(0.90f, 64));
+        foreach (var speciesId in new[]
+                 {
+                     "species-alpha",
+                     "species-alpha",
+                     "species-alpha",
+                     "species-beta",
+                     "species-gamma",
+                     "species-delta",
+                     "species-alpha",
+                     "species-alpha",
+                     "species-alpha",
+                     "species-alpha",
+                     "species-alpha"
+                 })
+        {
+            client.CommitOutcomeSpeciesIds.Enqueue(speciesId);
+        }
+
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        var speciesCounts = SnapshotParentPoolSpeciesCounts(session);
+        Assert.Equal(6, status.ParentPoolSize);
+        Assert.Equal((ulong)8, status.SpeciationCommitSuccesses);
+        Assert.Equal((ulong)3, status.ChildrenAddedToPool);
+        Assert.Equal(3, speciesCounts["species-alpha"]);
+        Assert.Equal(1, speciesCounts["species-beta"]);
+        Assert.Equal(1, speciesCounts["species-gamma"]);
+        Assert.Equal(1, speciesCounts["species-delta"]);
+    }
+
+    [Fact]
     public async Task RunAsync_WhenCommitSimilarityPlateaus_IncreasesMutationPressureDeterministically()
     {
         var parents = CreateParentPool();
@@ -295,6 +337,41 @@ public sealed class EvolutionSimulationSessionTests
             $"Expected divergence bias to favor newer parents. divergence={divergenceAverageRank:0.###}, stability={stabilityAverageRank:0.###}");
     }
 
+    private static IReadOnlyDictionary<string, int> SnapshotParentPoolSpeciesCounts(EvolutionSimulationSession session)
+    {
+        var parentPoolField = typeof(EvolutionSimulationSession).GetField(
+            "_parentPool",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var parentSpeciesField = typeof(EvolutionSimulationSession).GetField(
+            "_parentSpeciesByParentKey",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(parentPoolField);
+        Assert.NotNull(parentSpeciesField);
+
+        var parentPool = Assert.IsType<List<EvolutionParentRef>>(parentPoolField.GetValue(session));
+        var parentSpeciesByKey =
+            Assert.IsType<Dictionary<string, string>>(parentSpeciesField.GetValue(session));
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parent in parentPool)
+        {
+            if (!TryBuildParentKey(parent, out var key))
+            {
+                continue;
+            }
+
+            var speciesId = parentSpeciesByKey.TryGetValue(key, out var trackedSpeciesId)
+                && !string.IsNullOrWhiteSpace(trackedSpeciesId)
+                    ? trackedSpeciesId.Trim()
+                    : "(unknown)";
+            counts[speciesId] = counts.TryGetValue(speciesId, out var count)
+                ? count + 1
+                : 1;
+        }
+
+        return counts;
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]
@@ -303,6 +380,24 @@ public sealed class EvolutionSimulationSessionTests
             EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-b", "file:///tmp/b")),
             EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-c", "file:///tmp/c"))
         };
+    }
+
+    private static bool TryBuildParentKey(EvolutionParentRef parentRef, out string key)
+    {
+        key = string.Empty;
+        if (parentRef.BrainId is Guid brainId && brainId != Guid.Empty)
+        {
+            key = $"brain:{brainId:D}";
+            return true;
+        }
+
+        if (parentRef.ArtifactRef is not null && parentRef.ArtifactRef.TryToSha256Hex(out var sha))
+        {
+            key = $"artifact:{sha}|{parentRef.ArtifactRef.StoreUri}|{parentRef.ArtifactRef.MediaType}|{parentRef.ArtifactRef.SizeBytes}";
+            return true;
+        }
+
+        return false;
     }
 
     private static IReadOnlyList<EvolutionParentRef> CreateBrainParentPool()
@@ -387,6 +482,7 @@ public sealed class EvolutionSimulationSessionTests
         public List<SpeciationCommitCandidate> CommittedCandidates { get; } = new();
         public List<uint> RequestedRunCounts { get; } = new();
         public List<Guid> ObservedBrainSelections { get; } = new();
+        public Queue<string?> CommitOutcomeSpeciesIds { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
         public bool ObservedArtifactParents { get; private set; }
         public float ReproductionDiagnosticSimilarity { get; set; } = 0.5f;
@@ -485,10 +581,14 @@ public sealed class EvolutionSimulationSessionTests
                     ? $"artifact:{ShortArtifact(definition)}"
                     : "missing";
             Events.Add($"speciation:{candidateLabel}");
+            var speciesId = CommitOutcomeSpeciesIds.Count > 0
+                ? CommitOutcomeSpeciesIds.Dequeue() ?? string.Empty
+                : string.Empty;
             return Task.FromResult(new SpeciationCommitOutcome(
                 Success: true,
                 FailureDetail: string.Empty,
-                ExpectedNoOp: false));
+                ExpectedNoOp: false,
+                SpeciesId: speciesId));
         }
 
         private void ObserveParentKinds(EvolutionParentRef parentA, EvolutionParentRef parentB)

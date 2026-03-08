@@ -293,10 +293,9 @@ public sealed class EvolutionSimulationSession
             return;
         }
 
-        AddChildrenToPool(reproduction);
-
         if (!_options.CommitToSpeciation || reproduction.CommitCandidates.Count == 0)
         {
+            AddChildrenToPool(reproduction);
             return;
         }
 
@@ -324,11 +323,7 @@ public sealed class EvolutionSimulationSession
             {
                 IncrementSpeciationCommitSuccesses();
                 RecordSpeciationCommitSimilarity(commitCandidate.SimilarityScore);
-                if (!string.IsNullOrWhiteSpace(commitOutcome.SpeciesId)
-                    && TryBuildParentKeyFromCandidate(commitCandidate, out var candidateKey))
-                {
-                    RecordParentSpecies(candidateKey, commitOutcome.SpeciesId);
-                }
+                TryAddCommittedCandidateToPool(commitCandidate, commitOutcome.SpeciesId);
             }
             else if (!commitOutcome.ExpectedNoOp
                      && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
@@ -546,6 +541,44 @@ public sealed class EvolutionSimulationSession
         }
 
         return AddChildrenToArtifactPool(reproduction.ChildDefinitions);
+    }
+
+    private bool TryAddCommittedCandidateToPool(
+        SpeciationCommitCandidate candidate,
+        string? candidateSpeciesId)
+    {
+        if (!TryBuildParentRefFromCandidate(candidate, _options.ParentMode, out var parentRef)
+            || !TryBuildParentKey(parentRef, out var candidateKey))
+        {
+            return false;
+        }
+
+        var normalizedCandidateSpeciesId = NormalizeSpeciesId(candidateSpeciesId);
+        lock (_gate)
+        {
+            if (_parentPoolKeys.Contains(candidateKey))
+            {
+                if (normalizedCandidateSpeciesId.Length > 0)
+                {
+                    RecordParentSpeciesLocked(candidateKey, normalizedCandidateSpeciesId);
+                }
+
+                return false;
+            }
+
+            if (!TryAddParentToPoolAtCapacity(parentRef, candidateKey, normalizedCandidateSpeciesId))
+            {
+                return false;
+            }
+
+            if (normalizedCandidateSpeciesId.Length > 0)
+            {
+                RecordParentSpeciesLocked(candidateKey, normalizedCandidateSpeciesId);
+            }
+
+            _childrenAddedToPool++;
+            return true;
+        }
     }
 
     private int AddChildrenToArtifactPool(IReadOnlyList<ArtifactRef> children)
@@ -997,7 +1030,10 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private bool TryAddParentToPoolAtCapacity(EvolutionParentRef candidate, string candidateKey)
+    private bool TryAddParentToPoolAtCapacity(
+        EvolutionParentRef candidate,
+        string candidateKey,
+        string? candidateSpeciesId = null)
     {
         if (_parentPool.Count < _options.MaxParentPoolSize)
         {
@@ -1007,7 +1043,7 @@ public sealed class EvolutionSimulationSession
             return true;
         }
 
-        if (!TrySelectEvictionIndex(out var evictionIndex))
+        if (!TrySelectEvictionIndex(candidateSpeciesId, out var evictionIndex))
         {
             return false;
         }
@@ -1033,10 +1069,24 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private bool TrySelectEvictionIndex(out int evictionIndex)
+    private bool TrySelectEvictionIndex(string? candidateSpeciesId, out int evictionIndex)
     {
-        var selectedIndex = -1;
-        var eligibleCount = 0;
+        var totalSpeciesCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            var current = _parentPool[i];
+            var speciesKey = ResolveTrackedSpeciesKey(current);
+            if (totalSpeciesCounts.TryGetValue(speciesKey, out var currentCount))
+            {
+                totalSpeciesCounts[speciesKey] = currentCount + 1;
+            }
+            else
+            {
+                totalSpeciesCounts[speciesKey] = 1;
+            }
+        }
+
+        var eligibleEntries = new List<(int Index, string SpeciesKey, int TotalSpeciesCount)>();
         for (var i = 0; i < _parentPool.Count; i++)
         {
             var current = _parentPool[i];
@@ -1046,10 +1096,55 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
+            var speciesKey = ResolveTrackedSpeciesKey(current);
+            var totalSpeciesCount = totalSpeciesCounts.TryGetValue(speciesKey, out var count)
+                ? count
+                : 1;
+            eligibleEntries.Add((i, speciesKey, totalSpeciesCount));
+        }
+
+        if (eligibleEntries.Count == 0)
+        {
+            evictionIndex = -1;
+            return false;
+        }
+
+        var normalizedCandidateSpeciesId = NormalizeSpeciesId(candidateSpeciesId);
+        if (normalizedCandidateSpeciesId.Length > 0)
+        {
+            var candidateSpeciesKey = ResolveTrackedSpeciesKey(normalizedCandidateSpeciesId);
+            var candidateSpeciesCount = totalSpeciesCounts.TryGetValue(candidateSpeciesKey, out var count)
+                ? count
+                : 0;
+            if (candidateSpeciesCount > 0)
+            {
+                var moreRepresentedEntries = eligibleEntries
+                    .Where(entry => entry.TotalSpeciesCount > candidateSpeciesCount)
+                    .ToList();
+                if (moreRepresentedEntries.Count == 0)
+                {
+                    evictionIndex = -1;
+                    return false;
+                }
+
+                eligibleEntries = moreRepresentedEntries;
+            }
+        }
+
+        var maxSpeciesCount = eligibleEntries.Max(entry => entry.TotalSpeciesCount);
+        var selectedIndex = -1;
+        var eligibleCount = 0;
+        foreach (var entry in eligibleEntries)
+        {
+            if (entry.TotalSpeciesCount != maxSpeciesCount)
+            {
+                continue;
+            }
+
             eligibleCount++;
             if (eligibleCount == 1 || _random.NextInt(eligibleCount) == 0)
             {
-                selectedIndex = i;
+                selectedIndex = entry.Index;
             }
         }
 
@@ -1057,22 +1152,65 @@ public sealed class EvolutionSimulationSession
         return selectedIndex >= 0;
     }
 
-    private static bool TryBuildParentKeyFromCandidate(SpeciationCommitCandidate candidate, out string key)
+    private string ResolveTrackedSpeciesKey(EvolutionParentRef parentRef)
     {
-        if (candidate.ChildBrainId is Guid childBrainId && childBrainId != Guid.Empty)
+        if (TryBuildParentKey(parentRef, out var parentKey))
         {
-            key = $"brain:{childBrainId:D}";
+            return ResolveTrackedSpeciesKey(parentKey);
+        }
+
+        return "(unknown)";
+    }
+
+    private string ResolveTrackedSpeciesKey(string? speciesOrParentKey)
+    {
+        var normalized = NormalizeSpeciesId(speciesOrParentKey);
+        if (normalized.Length == 0)
+        {
+            return "(unknown)";
+        }
+
+        return _parentSpeciesByParentKey.TryGetValue(normalized, out var speciesId)
+            ? NormalizeSpeciesId(speciesId).Length > 0
+                ? NormalizeSpeciesId(speciesId)
+                : "(unknown)"
+            : normalized.StartsWith("artifact:", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith("brain:", StringComparison.OrdinalIgnoreCase)
+                ? "(unknown)"
+                : normalized;
+    }
+
+    private static string NormalizeSpeciesId(string? speciesId)
+    {
+        return string.IsNullOrWhiteSpace(speciesId)
+            ? string.Empty
+            : speciesId.Trim();
+    }
+
+    private static bool TryBuildParentRefFromCandidate(
+        SpeciationCommitCandidate candidate,
+        EvolutionParentMode parentMode,
+        out EvolutionParentRef parentRef)
+    {
+        if (parentMode == EvolutionParentMode.BrainIds)
+        {
+            if (candidate.ChildBrainId is Guid childBrainId && childBrainId != Guid.Empty)
+            {
+                parentRef = EvolutionParentRef.FromBrainId(childBrainId);
+                return true;
+            }
+
+            parentRef = default;
+            return false;
+        }
+
+        if (candidate.ChildDefinition is not null)
+        {
+            parentRef = EvolutionParentRef.FromArtifactRef(candidate.ChildDefinition);
             return true;
         }
 
-        if (candidate.ChildDefinition is not null
-            && candidate.ChildDefinition.TryToSha256Hex(out var sha))
-        {
-            key = $"artifact:{sha}|{candidate.ChildDefinition.StoreUri}|{candidate.ChildDefinition.MediaType}|{candidate.ChildDefinition.SizeBytes}";
-            return true;
-        }
-
-        key = string.Empty;
+        parentRef = default;
         return false;
     }
 

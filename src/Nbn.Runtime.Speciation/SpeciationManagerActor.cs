@@ -2691,12 +2691,9 @@ public sealed class SpeciationManagerActor : IActor
         var targetThresholdState = ResolveSplitThresholdState(
             ResolveSpeciesSimilarityFloor(assignmentResolution.SpeciesId));
         var minimumAssignedSimilarity = targetThresholdState.DynamicSplitThreshold;
-        if (bootstrapRequirement.HasValue)
-        {
-            minimumAssignedSimilarity = Math.Max(
-                minimumAssignedSimilarity,
-                _assignmentPolicy.LineageMatchThreshold);
-        }
+        var sourceComparisonMargin = bootstrapRequirement.HasValue
+            ? Math.Max(0d, _assignmentPolicy.LineageSplitGuardMargin)
+            : 0d;
 
         if (assignedSimilarity <= 0d
             || assignedSimilarity < minimumAssignedSimilarity)
@@ -2712,7 +2709,7 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         if (sourceSpeciesSimilarityScore.HasValue
-            && assignedSimilarity <= ClampScore(sourceSpeciesSimilarityScore.Value))
+            && assignedSimilarity + sourceComparisonMargin <= ClampScore(sourceSpeciesSimilarityScore.Value))
         {
             return BuildAssessment(
                 assessmentAttempted: assessmentAttempted,
