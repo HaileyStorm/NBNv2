@@ -377,6 +377,63 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public void SelectParentIndex_Divergence_WithSingleLineageFamily_DoesNotPreferNewestDerivedSpecies()
+    {
+        var parents = CreateOrderedBrainParentPool(4);
+        var options = CreateOptions(
+            seed: 99123UL,
+            maxIterations: 1,
+            commitToSpeciation: false,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Divergence
+        };
+        var session = new EvolutionSimulationSession(options, parents, new DeterministicFakeClient());
+
+        SeedParentSpeciesMetadata(
+            session,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(parents[0])] = "species-alpha",
+                [BuildBrainParentKey(parents[1])] = "species-alpha-branch-a",
+                [BuildBrainParentKey(parents[2])] = "species-alpha-branch-b",
+                [BuildBrainParentKey(parents[3])] = "species-alpha-branch-c"
+            },
+            new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = 1UL,
+                ["species-alpha-branch-a"] = 2UL,
+                ["species-alpha-branch-b"] = 3UL,
+                ["species-alpha-branch-c"] = 4UL
+            },
+            lineageFamilyByParentKey: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(parents[0])] = "family-alpha",
+                [BuildBrainParentKey(parents[1])] = "family-alpha",
+                [BuildBrainParentKey(parents[2])] = "family-alpha",
+                [BuildBrainParentKey(parents[3])] = "family-alpha"
+            },
+            lineageFamilyBySpeciesId: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = "family-alpha",
+                ["species-alpha-branch-a"] = "family-alpha",
+                ["species-alpha-branch-b"] = "family-alpha",
+                ["species-alpha-branch-c"] = "family-alpha"
+            },
+            lineageFamilyOrdinals: new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["family-alpha"] = 1UL
+            });
+
+        var selections = SampleSelectedSpeciesCounts(session, sampleCount: 6_000, excludedIndex: -1);
+
+        Assert.True(selections.TryGetValue("species-alpha", out var rootCount));
+        Assert.True(selections.TryGetValue("species-alpha-branch-c", out var newestCount));
+        var ratio = newestCount / (double)rootCount;
+        Assert.InRange(ratio, 0.85d, 1.15d);
+    }
+
+    [Fact]
     public void SelectParentIndex_WithMultipleLineageFamilies_UsesFamilyAgeBiasInsteadOfDerivedSpeciesAge()
     {
         var parents = CreateOrderedBrainParentPool(6);

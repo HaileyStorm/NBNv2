@@ -406,6 +406,10 @@ public sealed class EvolutionSimulationSession
         var speciesPopulationByKey = BuildSelectionSpeciesPopulationCounts(excludedIndex);
         var lineageFamilyPopulationByKey = BuildSelectionLineageFamilyPopulationCounts(excludedIndex);
         var useLineageFamilyAgeBias = lineageFamilyPopulationByKey.Count > 1;
+        var flattenSingleFamilyDivergence =
+            _options.ParentSelectionBias == EvolutionParentSelectionBias.Divergence
+            && lineageFamilyPopulationByKey.Count == 1
+            && speciesPopulationByKey.Count > 1;
         var useSpeciesAgeBias = !useLineageFamilyAgeBias && speciesPopulationByKey.Count > 1;
 
         var nowOrdinal = _nextParentOrdinal;
@@ -420,13 +424,15 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            var age = ResolveSelectionAgeForBias(
-                i,
-                useLineageFamilyAgeBias,
-                useSpeciesAgeBias,
-                nowLineageFamilyOrdinal,
-                nowSpeciesOrdinal,
-                nowOrdinal);
+            var age = flattenSingleFamilyDivergence
+                ? 1UL
+                : ResolveSelectionAgeForBias(
+                    i,
+                    useLineageFamilyAgeBias,
+                    useSpeciesAgeBias,
+                    nowLineageFamilyOrdinal,
+                    nowSpeciesOrdinal,
+                    nowOrdinal);
             var representationPopulation = useLineageFamilyAgeBias
                 ? ResolveSelectionLineageFamilyPopulation(i, lineageFamilyPopulationByKey)
                 : ResolveSelectionSpeciesPopulation(i, speciesPopulationByKey);
