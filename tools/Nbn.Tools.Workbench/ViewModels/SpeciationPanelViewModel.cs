@@ -36,8 +36,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const double FlowChartPaddingX = 8d;
     private const double FlowChartPaddingY = 8d;
     private const int PopulationChartTopSpeciesLimit = 12;
-    private const int FlowChartTopSpeciesLimit = 8;
-    private const int SplitProximityTopSpeciesLimit = 8;
+    private const int FlowChartTopSpeciesLimit = 11;
+    private const int SplitProximityTopSpeciesLimit = 12;
+    private const double AdjacentSpeciesColorMinDistance = 72d;
+    private const double SpeciesColorHueRetryStep = 0.3819660112501051d;
     private const uint DefaultHistoryLimit = 100u;
     private const uint DefaultChartHistoryLimit = 2048u;
     private const uint DefaultCladogramHistoryLimit = 8192u;
@@ -1454,16 +1456,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var chartHistory = TrimHistoryToChartWindow(chartResponse.History, chartWindow);
         var populationFrame = BuildEpochPopulationFrame(chartHistory);
         var epochSummaries = BuildEpochSummaries(chartHistory);
-        var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder);
-        var flowSnapshot = BuildFlowChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder);
+        var speciesColors = BuildSpeciesColorMap(chartResponse.History);
+        var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
+        var flowSnapshot = BuildFlowChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(chartHistory, CurrentEpochId);
         var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
             chartHistory,
             CurrentEpochId,
             ParseDouble(LineageSplitThreshold, 0.88d),
-            ParseDouble(LineageSplitGuardMargin, 0.02d));
+            ParseDouble(LineageSplitGuardMargin, 0.02d),
+            speciesColors);
         var cladogramSourceHistory = chartResponse.History;
-        var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory);
+        var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory, speciesColors);
 
         _dispatcher.Post(() =>
         {
@@ -2613,7 +2617,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private static PopulationChartSnapshot BuildPopulationChartSnapshot(
         IReadOnlyList<EpochPopulationRow> epochRows,
-        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder,
+        IReadOnlyDictionary<string, string> speciesColors)
     {
         if (epochRows.Count == 0 || speciesOrder.Count == 0)
         {
@@ -2657,7 +2662,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 continue;
             }
 
-            var color = ResolveSpeciesColor(species.SpeciesId);
+            var color = ResolveSpeciesColor(species.SpeciesId, speciesColors);
             var latestCount = rawValues.Length == 0 ? 0 : rawValues[^1];
             var latestCountLabel = latestCount.ToString(CultureInfo.InvariantCulture);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestCountLabel));
@@ -2686,7 +2691,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private static FlowChartSnapshot BuildFlowChartSnapshot(
         IReadOnlyList<EpochPopulationRow> epochRows,
-        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder,
+        IReadOnlyDictionary<string, string> speciesColors)
     {
         if (epochRows.Count == 0 || speciesOrder.Count == 0)
         {
@@ -2773,7 +2779,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var species = flowSpecies[speciesIndex];
             var color = string.Equals(species.SpeciesId, "(other)", StringComparison.Ordinal)
                 ? "#6B7280"
-                : ResolveSpeciesColor(species.SpeciesId);
+                : ResolveSpeciesColor(species.SpeciesId, speciesColors);
             var fill = WithAlpha(color, 0x8C);
             var lastShare = Math.Max(0d, ends[^1] - starts[^1]);
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
@@ -2987,7 +2993,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<SpeciationMembershipRecord> history,
         long currentEpochId,
         double fallbackSplitThreshold,
-        double fallbackSplitGuardMargin)
+        double fallbackSplitGuardMargin,
+        IReadOnlyDictionary<string, string> speciesColors)
     {
         if (history.Count == 0)
         {
@@ -3008,7 +3015,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         var selectedSpecies = speciesMeta.Values
-            .OrderByDescending(item => item.SampleCount)
+            .OrderByDescending(item => item.LatestAssignedMs)
+            .ThenByDescending(item => item.SampleCount)
             .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
             .Take(SplitProximityTopSpeciesLimit)
             .ToList();
@@ -3034,18 +3042,30 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a, no proximity samples)");
         }
 
-        var rawAbsMax = allValues
-            .Select(value => Math.Abs(value))
-            .DefaultIfEmpty(0d)
-            .Max();
-        if (!double.IsFinite(rawAbsMax) || rawAbsMax <= 0d)
+        var rawMin = allValues.Min();
+        var rawMax = allValues.Max();
+        if (!double.IsFinite(rawMin) || !double.IsFinite(rawMax))
         {
-            rawAbsMax = 0.001d;
+            return SplitProximityChartSnapshot.Empty("Split proximity (current epoch): (n/a, invalid proximity values)");
         }
 
-        var yAbsMax = Math.Max(0.001d, TransformSignedLog(rawAbsMax));
-        var yMin = -yAbsMax;
-        var yMax = yAbsMax;
+        if (!(rawMax > rawMin))
+        {
+            var padding = Math.Max(Math.Abs(rawMax), 0.001d) * 0.05d;
+            rawMin -= padding;
+            rawMax += padding;
+        }
+
+        var yMin = TransformSignedLog(rawMin);
+        var yMax = TransformSignedLog(rawMax);
+        if (!(yMax > yMin))
+        {
+            yMax = yMin + 0.001d;
+        }
+
+        var midRawValue = rawMin <= 0d && rawMax >= 0d
+            ? 0d
+            : (rawMin + rawMax) * 0.5d;
 
         var series = new List<SpeciationLineChartSeriesItem>(selectedSpecies.Count);
         var legend = new List<SpeciationChartLegendItem>(selectedSpecies.Count);
@@ -3078,7 +3098,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var latestLabel = double.IsFinite(latestValue)
                 ? FormatSignedDelta(latestValue)
                 : "n/a";
-            var color = ResolveSpeciesColor(species.SpeciesId);
+            var color = ResolveSpeciesColor(species.SpeciesId, speciesColors);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestLabel));
             legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, string.Empty));
         }
@@ -3106,14 +3126,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var maxEpoch = epochRows[^1].EpochId;
         var legendColumns = Math.Clamp(series.Count <= 1 ? 2 : series.Count, 2, 4);
         var rangeLabel = useSingleEpochRowSampling
-            ? $"Epoch {minEpoch} row samples ({epochRows.Count} samples; top {series.Count}/{speciesMeta.Count} species by similarity samples)."
-            : $"Epochs {minEpoch}..{maxEpoch} ({epochRows.Count} samples; top {series.Count}/{speciesMeta.Count} species by similarity samples).";
+            ? $"Epoch {minEpoch} row samples ({epochRows.Count} samples; most recent {series.Count}/{speciesMeta.Count} species with split-proximity samples)."
+            : $"Epochs {minEpoch}..{maxEpoch} ({epochRows.Count} samples; most recent {series.Count}/{speciesMeta.Count} species with split-proximity samples).";
         return new SplitProximityChartSnapshot(
             RangeLabel: rangeLabel,
             MetricLabel: "Min lineage similarity minus effective split threshold per species (signed log10(1+|delta|) y-axis; <=0 means split-trigger zone).",
-            YTopLabel: FormatSignedDelta(rawAbsMax),
-            YMidLabel: "0",
-            YBottomLabel: FormatSignedDelta(-rawAbsMax),
+            YTopLabel: FormatSignedDelta(rawMax),
+            YMidLabel: FormatSignedDelta(midRawValue),
+            YBottomLabel: FormatSignedDelta(rawMin),
             LegendColumns: legendColumns,
             CurrentEpochSummaryLabel: currentEpochSummary,
             Series: series,
@@ -3149,7 +3169,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .ToList();
     }
 
-    private static CladogramSnapshot BuildCladogramSnapshot(IReadOnlyList<SpeciationMembershipRecord> history)
+    private static CladogramSnapshot BuildCladogramSnapshot(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        IReadOnlyDictionary<string, string> speciesColors)
     {
         if (history.Count == 0)
         {
@@ -3258,7 +3280,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 speciesMeta: speciesMeta,
                 countsBySpecies: countsBySpecies,
                 childrenByParent: childrenByParent,
-                visited: visited);
+                visited: visited,
+                speciesColors: speciesColors);
             if (node is not null)
             {
                 items.Add(node);
@@ -3278,7 +3301,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 speciesMeta: speciesMeta,
                 countsBySpecies: countsBySpecies,
                 childrenByParent: childrenByParent,
-                visited: visited);
+                visited: visited,
+                speciesColors: speciesColors);
             if (disconnectedRoot is not null)
             {
                 items.Add(disconnectedRoot);
@@ -3298,7 +3322,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyDictionary<string, CladogramSpeciesMeta> speciesMeta,
         IReadOnlyDictionary<string, int> countsBySpecies,
         IReadOnlyDictionary<string, List<string>> childrenByParent,
-        ISet<string> visited)
+        ISet<string> visited,
+        IReadOnlyDictionary<string, string> speciesColors)
     {
         if (!visited.Add(speciesId))
         {
@@ -3317,12 +3342,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             for (var index = 0; index < children.Count; index++)
             {
                 var childNode = BuildCladogramNode(
-                    speciesId: children[index],
-                    isRoot: false,
-                    speciesMeta: speciesMeta,
-                    countsBySpecies: countsBySpecies,
-                    childrenByParent: childrenByParent,
-                    visited: visited);
+                speciesId: children[index],
+                isRoot: false,
+                speciesMeta: speciesMeta,
+                countsBySpecies: countsBySpecies,
+                childrenByParent: childrenByParent,
+                visited: visited,
+                speciesColors: speciesColors);
                 if (childNode is not null)
                 {
                     childNodes.Add(childNode);
@@ -3335,9 +3361,35 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             speciesId: speciesId,
             speciesDisplayName: meta.DisplayName,
             detailLabel: detailLabel,
-            color: ResolveSpeciesColor(speciesId),
+            color: ResolveSpeciesColor(speciesId, speciesColors),
             isRoot: isRoot,
             children: childNodes);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildSpeciesColorMap(IReadOnlyList<SpeciationMembershipRecord> history)
+    {
+        if (history.Count == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var orderedHistory = OrderHistoryForSampling(history);
+        var speciesColors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string? previousColor = null;
+        foreach (var record in orderedHistory)
+        {
+            var speciesId = NormalizeSpeciesId(record.SpeciesId);
+            if (speciesColors.ContainsKey(speciesId))
+            {
+                continue;
+            }
+
+            var color = ResolveSpeciesColor(speciesId, previousColor);
+            speciesColors[speciesId] = color;
+            previousColor = color;
+        }
+
+        return speciesColors;
     }
 
     private static bool TryExtractDominantSpeciesFromMetadata(
@@ -3413,12 +3465,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                         speciesMeta[speciesId] = existingMeta with
                         {
                             DisplayName = string.IsNullOrWhiteSpace(existingMeta.DisplayName) ? speciesName : existingMeta.DisplayName,
-                            SampleCount = existingMeta.SampleCount + 1
+                            SampleCount = existingMeta.SampleCount + 1,
+                            LatestAssignedMs = Math.Max(existingMeta.LatestAssignedMs, record.AssignedMs)
                         };
                     }
                     else
                     {
-                        speciesMeta[speciesId] = new SplitProximitySpeciesMeta(speciesId, speciesName, 1);
+                        speciesMeta[speciesId] = new SplitProximitySpeciesMeta(speciesId, speciesName, 1, record.AssignedMs);
                     }
 
                     if (bySpecies.TryGetValue(speciesId, out var existingPoint))
@@ -3473,12 +3526,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                     speciesMeta[speciesId] = existingMeta with
                     {
                         DisplayName = string.IsNullOrWhiteSpace(existingMeta.DisplayName) ? speciesName : existingMeta.DisplayName,
-                        SampleCount = existingMeta.SampleCount + 1
+                        SampleCount = existingMeta.SampleCount + 1,
+                        LatestAssignedMs = Math.Max(existingMeta.LatestAssignedMs, record.AssignedMs)
                     };
                 }
                 else
                 {
-                    speciesMeta[speciesId] = new SplitProximitySpeciesMeta(speciesId, speciesName, 1);
+                    speciesMeta[speciesId] = new SplitProximitySpeciesMeta(speciesId, speciesName, 1, record.AssignedMs);
                 }
 
                 if (rollingBySpecies.TryGetValue(speciesId, out var existingPoint))
@@ -4081,13 +4135,46 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return builder.ToString();
     }
 
+    private static string ResolveSpeciesColor(string speciesId, IReadOnlyDictionary<string, string> speciesColors)
+    {
+        var normalizedSpeciesId = NormalizeSpeciesId(speciesId);
+        return speciesColors.TryGetValue(normalizedSpeciesId, out var mappedColor) && !string.IsNullOrWhiteSpace(mappedColor)
+            ? mappedColor
+            : ResolveSpeciesColor(normalizedSpeciesId);
+    }
+
     private static string ResolveSpeciesColor(string speciesId)
+        => ResolveSpeciesColor(speciesId, previousColor: null);
+
+    private static string ResolveSpeciesColor(string speciesId, string? previousColor)
     {
         if (string.IsNullOrWhiteSpace(speciesId))
         {
             return SpeciesChartPalette[0];
         }
 
+        var hash = ComputeSpeciesColorHash(speciesId);
+        var hue = (hash % 360u) / 360d;
+        var saturation = (62d + ((hash >> 9) % 24u)) / 100d;
+        var lightness = (42d + ((hash >> 17) % 18u)) / 100d;
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var candidate = HslToHex(hue, saturation, lightness);
+            if (string.IsNullOrWhiteSpace(previousColor) || !AreColorsTooSimilar(candidate, previousColor))
+            {
+                return candidate;
+            }
+
+            hue = (hue + SpeciesColorHueRetryStep) % 1d;
+            saturation = Math.Clamp(saturation + (attempt % 2 == 0 ? 0.07d : -0.05d), 0.52d, 0.86d);
+            lightness = Math.Clamp(lightness + (attempt % 3 == 0 ? 0.08d : -0.06d), 0.34d, 0.68d);
+        }
+
+        return HslToHex(hue, saturation, lightness);
+    }
+
+    private static uint ComputeSpeciesColorHash(string speciesId)
+    {
         unchecked
         {
             uint hash = 2166136261;
@@ -4097,11 +4184,47 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 hash *= 16777619;
             }
 
-            var hue = (hash % 360u) / 360d;
-            var saturation = (62d + ((hash >> 9) % 24u)) / 100d;
-            var lightness = (42d + ((hash >> 17) % 18u)) / 100d;
-            return HslToHex(hue, saturation, lightness);
+            return hash;
         }
+    }
+
+    private static bool AreColorsTooSimilar(string leftHex, string rightHex)
+    {
+        if (!TryParseHexColor(leftHex, out var left) || !TryParseHexColor(rightHex, out var right))
+        {
+            return string.Equals(leftHex, rightHex, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var redDelta = left.Red - right.Red;
+        var greenDelta = left.Green - right.Green;
+        var blueDelta = left.Blue - right.Blue;
+        var distance = Math.Sqrt((redDelta * redDelta) + (greenDelta * greenDelta) + (blueDelta * blueDelta));
+        return distance < AdjacentSpeciesColorMinDistance;
+    }
+
+    private static bool TryParseHexColor(string value, out (int Red, int Green, int Blue) color)
+    {
+        color = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Length != 7 || normalized[0] != '#')
+        {
+            return false;
+        }
+
+        if (!int.TryParse(normalized.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var red)
+            || !int.TryParse(normalized.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var green)
+            || !int.TryParse(normalized.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var blue))
+        {
+            return false;
+        }
+
+        color = (red, green, blue);
+        return true;
     }
 
     private static string HslToHex(double hue, double saturation, double lightness)
@@ -4774,7 +4897,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly record struct SplitProximitySpeciesMeta(
         string SpeciesId,
         string DisplayName,
-        int SampleCount);
+        int SampleCount,
+        ulong LatestAssignedMs);
 
     private readonly record struct CladogramSpeciesMeta(
         string SpeciesId,

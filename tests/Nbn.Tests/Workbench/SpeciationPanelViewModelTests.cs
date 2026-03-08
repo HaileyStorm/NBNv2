@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
@@ -630,6 +631,50 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_IncludesTopElevenSpeciesPlusOtherBucket()
+    {
+        var history = Enumerable
+            .Range(0, 12)
+            .SelectMany(index => new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 20,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(1_000 + index)
+                },
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 21,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(2_000 + index)
+                }
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
+
+        Assert.Contains("top 11/12 species + Other", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartLegend, item => string.Equals(item.Label, "Other species", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_ComputesMaxDivergenceForCurrentEpoch()
     {
         var history = new[]
@@ -768,7 +813,125 @@ public class SpeciationPanelViewModelTests
         Assert.Contains("split threshold", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("epoch 31", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("min=-0.", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("top 2/2 species", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("most recent 2/2 species", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_SplitProximityChart_UsesMostRecentTwelveSpecies()
+    {
+        var history = new List<SpeciationMembershipRecord>
+        {
+            new()
+            {
+                EpochId = 70,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.old",
+                SpeciesDisplayName = "Old",
+                AssignedMs = 1_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.84d, 0.66d)
+            },
+            new()
+            {
+                EpochId = 70,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.old",
+                SpeciesDisplayName = "Old",
+                AssignedMs = 1_001,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.83d, 0.66d)
+            },
+            new()
+            {
+                EpochId = 70,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.old",
+                SpeciesDisplayName = "Old",
+                AssignedMs = 1_002,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.82d, 0.66d)
+            }
+        };
+
+        history.AddRange(
+            Enumerable.Range(1, 12).Select(index => new SpeciationMembershipRecord
+            {
+                EpochId = 70,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = $"species.new.{index:00}",
+                SpeciesDisplayName = $"New {index:00}",
+                AssignedMs = (ulong)(2_000 + index),
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.72d + (index * 0.01d), 0.66d)
+            }));
+
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Count,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 70;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 12);
+
+        Assert.Contains("most recent 12/13 species", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(vm.SplitProximityChartSeries, item => string.Equals(item.SpeciesId, "species.old", StringComparison.Ordinal));
+        Assert.Contains(vm.SplitProximityChartSeries, item => string.Equals(item.SpeciesId, "species.new.12", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_SplitProximityChart_UsesObservedAxisExtents()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 80,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 1_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.92d, 0.80d)
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 80,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.b",
+                SpeciesDisplayName = "Beta",
+                AssignedMs = 1_001,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.84d, 0.80d)
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 81,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.a",
+                SpeciesDisplayName = "Alpha",
+                AssignedMs = 2_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.97d, 0.80d)
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 81;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 2);
+
+        Assert.Equal("+0.17", vm.SplitProximityChartYAxisTopLabel);
+        Assert.Equal("+0.105", vm.SplitProximityChartYAxisMidLabel);
+        Assert.Equal("+0.04", vm.SplitProximityChartYAxisBottomLabel);
     }
 
     [Fact]
@@ -916,6 +1079,77 @@ public class SpeciationPanelViewModelTests
             $"Split-proximity chart did not span expected width. maxX={splitProximityMaxX:0.###}, required={requiredMaxX:0.###}, path='{vm.SplitProximityChartSeries[0].PathData}'.");
         Assert.Contains(" L ", vm.PopulationChartSeries[0].PathData, StringComparison.Ordinal);
         Assert.Contains(" L ", vm.SplitProximityChartSeries[0].PathData, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_SpeciesColors_AvoidAdjacentCollisionsAndStayConsistentAcrossCharts()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 90,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.169",
+                SpeciesDisplayName = "Root",
+                DecisionReason = "explicit_species",
+                AssignedMs = 1_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.91d, 0.80d)
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 90,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.257",
+                SpeciesDisplayName = "Root [A]",
+                DecisionReason = "lineage_diverged_new_species",
+                AssignedMs = 1_001,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(
+                    0.89d,
+                    0.80d,
+                    dominantSpeciesId: "species.169",
+                    dominantSpeciesDisplayName: "Root")
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 91,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.169",
+                SpeciesDisplayName = "Root",
+                DecisionReason = "lineage_hysteresis_hold",
+                AssignedMs = 2_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.93d, 0.80d)
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 2 && vm.CladogramItems.Count == 1);
+
+        var rootPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.169").Stroke;
+        var childPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.257").Stroke;
+
+        Assert.NotEqual(rootPopulationColor, childPopulationColor);
+        Assert.True(
+            CalculateColorDistance(rootPopulationColor, childPopulationColor) >= 60d,
+            $"Expected adjacent first-seen species colors to stay visually distinct, but saw {rootPopulationColor} vs {childPopulationColor}.");
+
+        Assert.Equal(rootPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.169").Stroke);
+        Assert.Equal(rootPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.169").Stroke);
+        Assert.Equal(rootPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.169").Color);
+
+        Assert.Equal(childPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.257").Stroke);
+        Assert.Equal(childPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.257").Stroke);
+        Assert.Equal(childPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.257").Color);
     }
 
     [Fact]
@@ -1344,6 +1578,66 @@ public class SpeciationPanelViewModelTests
         }
 
         Assert.True(condition(), "Condition was not met within timeout.");
+    }
+
+    private static string BuildSplitDecisionMetadata(
+        double similarity,
+        double splitThreshold,
+        double splitGuardMargin = 0d,
+        string? dominantSpeciesId = null,
+        string? dominantSpeciesDisplayName = null)
+    {
+        var root = new JsonObject
+        {
+            ["scores"] = new JsonObject
+            {
+                ["similarity_score"] = similarity
+            },
+            ["assignment_policy"] = new JsonObject
+            {
+                ["lineage_split_threshold"] = splitThreshold,
+                ["lineage_split_guard_margin"] = splitGuardMargin
+            }
+        };
+
+        if (!string.IsNullOrWhiteSpace(dominantSpeciesId) || !string.IsNullOrWhiteSpace(dominantSpeciesDisplayName))
+        {
+            var lineage = new JsonObject();
+            if (!string.IsNullOrWhiteSpace(dominantSpeciesId))
+            {
+                lineage["dominant_species_id"] = dominantSpeciesId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dominantSpeciesDisplayName))
+            {
+                lineage["dominant_species_display_name"] = dominantSpeciesDisplayName;
+            }
+
+            root["lineage"] = lineage;
+        }
+
+        return root.ToJsonString();
+    }
+
+    private static double CalculateColorDistance(string leftHex, string rightHex)
+    {
+        var left = ParseHexColor(leftHex);
+        var right = ParseHexColor(rightHex);
+        var redDelta = left.Red - right.Red;
+        var greenDelta = left.Green - right.Green;
+        var blueDelta = left.Blue - right.Blue;
+        return Math.Sqrt((redDelta * redDelta) + (greenDelta * greenDelta) + (blueDelta * blueDelta));
+    }
+
+    private static (int Red, int Green, int Blue) ParseHexColor(string value)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(value));
+        Assert.StartsWith("#", value, StringComparison.Ordinal);
+        Assert.Equal(7, value.Length);
+        return (
+            int.Parse(value.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+            int.Parse(value.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture),
+            int.Parse(value.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
     }
 
     private static double ExtractMaxPathX(string pathData)
