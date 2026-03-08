@@ -1090,7 +1090,7 @@ public class SpeciationPanelViewModelTests
             {
                 EpochId = 90,
                 BrainId = Guid.NewGuid().ToProtoUuid(),
-                SpeciesId = "species.169",
+                SpeciesId = "species.0",
                 SpeciesDisplayName = "Root",
                 DecisionReason = "explicit_species",
                 AssignedMs = 1_000,
@@ -1100,21 +1100,35 @@ public class SpeciationPanelViewModelTests
             {
                 EpochId = 90,
                 BrainId = Guid.NewGuid().ToProtoUuid(),
-                SpeciesId = "species.257",
+                SpeciesId = "species.1",
                 SpeciesDisplayName = "Root [A]",
                 DecisionReason = "lineage_diverged_new_species",
                 AssignedMs = 1_001,
                 DecisionMetadataJson = BuildSplitDecisionMetadata(
                     0.89d,
                     0.80d,
-                    dominantSpeciesId: "species.169",
+                    dominantSpeciesId: "species.0",
                     dominantSpeciesDisplayName: "Root")
             },
             new SpeciationMembershipRecord
             {
                 EpochId = 91,
                 BrainId = Guid.NewGuid().ToProtoUuid(),
-                SpeciesId = "species.169",
+                SpeciesId = "species.6",
+                SpeciesDisplayName = "Root [B]",
+                DecisionReason = "lineage_diverged_new_species",
+                AssignedMs = 1_002,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(
+                    0.88d,
+                    0.80d,
+                    dominantSpeciesId: "species.0",
+                    dominantSpeciesDisplayName: "Root")
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 91,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.0",
                 SpeciesDisplayName = "Root",
                 DecisionReason = "lineage_hysteresis_hold",
                 AssignedMs = 2_000,
@@ -1133,23 +1147,36 @@ public class SpeciationPanelViewModelTests
         var vm = CreateViewModel(client);
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 2 && vm.CladogramItems.Count == 1);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 3 && FlattenCladogram(vm.CladogramItems).Count() == 3);
 
-        var rootPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.169").Stroke;
-        var childPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.257").Stroke;
+        var rootPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.0").Stroke;
+        var firstChildPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.1").Stroke;
+        var secondChildPopulationColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.6").Stroke;
 
-        Assert.NotEqual(rootPopulationColor, childPopulationColor);
+        Assert.NotEqual(rootPopulationColor, firstChildPopulationColor);
+        Assert.NotEqual(firstChildPopulationColor, secondChildPopulationColor);
+        Assert.NotEqual(rootPopulationColor, secondChildPopulationColor);
         Assert.True(
-            CalculateColorDistance(rootPopulationColor, childPopulationColor) >= 60d,
-            $"Expected adjacent first-seen species colors to stay visually distinct, but saw {rootPopulationColor} vs {childPopulationColor}.");
+            CalculateColorDistance(rootPopulationColor, firstChildPopulationColor) >= 60d,
+            $"Expected adjacent first-seen species colors to stay visually distinct, but saw {rootPopulationColor} vs {firstChildPopulationColor}.");
+        Assert.True(
+            CalculateColorDistance(firstChildPopulationColor, secondChildPopulationColor) >= 60d,
+            $"Expected adjacent first-seen species colors to stay visually distinct, but saw {firstChildPopulationColor} vs {secondChildPopulationColor}.");
+        Assert.True(
+            CalculateColorDistance(rootPopulationColor, secondChildPopulationColor) >= 60d,
+            $"Expected the shared species color map to avoid short-window color clustering, but saw {rootPopulationColor} vs {secondChildPopulationColor}.");
 
-        Assert.Equal(rootPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.169").Stroke);
-        Assert.Equal(rootPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.169").Stroke);
-        Assert.Equal(rootPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.169").Color);
+        Assert.Equal(rootPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(rootPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(rootPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.0").Color);
 
-        Assert.Equal(childPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.257").Stroke);
-        Assert.Equal(childPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.257").Stroke);
-        Assert.Equal(childPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.257").Color);
+        Assert.Equal(firstChildPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.1").Stroke);
+        Assert.Equal(firstChildPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.1").Stroke);
+        Assert.Equal(firstChildPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.1").Color);
+
+        Assert.Equal(secondChildPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.6").Stroke);
+        Assert.Equal(secondChildPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.6").Stroke);
+        Assert.Equal(secondChildPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.6").Color);
     }
 
     [Fact]

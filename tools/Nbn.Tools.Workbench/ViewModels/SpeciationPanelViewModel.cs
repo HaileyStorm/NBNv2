@@ -39,6 +39,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const int FlowChartTopSpeciesLimit = 11;
     private const int SplitProximityTopSpeciesLimit = 12;
     private const double AdjacentSpeciesColorMinDistance = 72d;
+    private const int SpeciesColorRecentWindow = 3;
     private const double SpeciesColorHueRetryStep = 0.3819660112501051d;
     private const uint DefaultHistoryLimit = 100u;
     private const uint DefaultChartHistoryLimit = 2048u;
@@ -3375,7 +3376,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var orderedHistory = OrderHistoryForSampling(history);
         var speciesColors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string? previousColor = null;
+        var recentColors = new Queue<string>(SpeciesColorRecentWindow);
         foreach (var record in orderedHistory)
         {
             var speciesId = NormalizeSpeciesId(record.SpeciesId);
@@ -3384,9 +3385,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 continue;
             }
 
-            var color = ResolveSpeciesColor(speciesId, previousColor);
+            var color = ResolveSpeciesColor(speciesId, recentColors);
             speciesColors[speciesId] = color;
-            previousColor = color;
+            recentColors.Enqueue(color);
+            if (recentColors.Count > SpeciesColorRecentWindow)
+            {
+                recentColors.Dequeue();
+            }
         }
 
         return speciesColors;
@@ -4144,15 +4149,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private static string ResolveSpeciesColor(string speciesId)
-        => ResolveSpeciesColor(speciesId, previousColor: null);
+        => ResolveSpeciesColor(speciesId, Array.Empty<string>());
 
-    private static string ResolveSpeciesColor(string speciesId, string? previousColor)
+    private static string ResolveSpeciesColor(string speciesId, IEnumerable<string> recentColors)
     {
         if (string.IsNullOrWhiteSpace(speciesId))
         {
             return SpeciesChartPalette[0];
         }
 
+        var guardedColors = recentColors
+            .Where(color => !string.IsNullOrWhiteSpace(color))
+            .Take(SpeciesColorRecentWindow)
+            .ToArray();
         var hash = ComputeSpeciesColorHash(speciesId);
         var hue = (hash % 360u) / 360d;
         var saturation = (62d + ((hash >> 9) % 24u)) / 100d;
@@ -4160,7 +4169,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         for (var attempt = 0; attempt < 8; attempt++)
         {
             var candidate = HslToHex(hue, saturation, lightness);
-            if (string.IsNullOrWhiteSpace(previousColor) || !AreColorsTooSimilar(candidate, previousColor))
+            if (guardedColors.All(guardedColor => !AreColorsTooSimilar(candidate, guardedColor)))
             {
                 return candidate;
             }
