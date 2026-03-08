@@ -522,7 +522,7 @@ public class SpeciationPanelViewModelTests
         Assert.Contains("--min-runs 2", args, StringComparison.Ordinal);
         Assert.Contains("--max-runs 12", args, StringComparison.Ordinal);
         Assert.Contains("--run-pressure-mode divergence", args, StringComparison.Ordinal);
-        Assert.Contains("--parent-selection-bias divergence", args, StringComparison.Ordinal);
+        Assert.Contains("--parent-selection-bias stability", args, StringComparison.Ordinal);
         Assert.Contains("--interval-ms 100", args, StringComparison.Ordinal);
     }
 

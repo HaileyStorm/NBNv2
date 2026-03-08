@@ -141,7 +141,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _simMaxRunsText = "12";
     private string _simGammaText = "1";
     private string _simRunPressureMode = "divergence";
-    private string _simParentSelectionBias = "divergence";
+    private string _simParentSelectionBias = "stability";
     private bool _simCommitToSpeciation = true;
     private bool _simSpawnChildren;
     private bool _liveChartsEnabled;
