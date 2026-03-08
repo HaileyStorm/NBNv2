@@ -227,6 +227,38 @@ WHERE (@epoch_id IS NULL OR m.epoch_id = @epoch_id)
 ORDER BY m.epoch_id, m.brain_id;
 """;
 
+private const string CountHistorySql = """
+SELECT COUNT(*)
+FROM species_membership AS m
+WHERE (@epoch_id IS NULL OR m.epoch_id = @epoch_id)
+  AND (@brain_id IS NULL OR m.brain_id = @brain_id);
+""";
+
+private const string ListHistoryPageSql = """
+SELECT
+    m.epoch_id AS EpochId,
+    m.brain_id AS BrainId,
+    m.species_id AS SpeciesId,
+    s.display_name AS SpeciesDisplayName,
+    m.assigned_ms AS AssignedMs,
+    d.policy_version AS PolicyVersion,
+    d.decision_reason AS DecisionReason,
+    d.decision_metadata_json AS DecisionMetadataJson,
+    d.source_brain_id AS SourceBrainId,
+    d.source_artifact_ref AS SourceArtifactRef,
+    d.decision_id AS DecisionId
+FROM species_membership AS m
+JOIN species AS s
+    ON s.epoch_id = m.epoch_id
+   AND s.species_id = m.species_id
+JOIN speciation_decisions AS d
+    ON d.decision_id = m.decision_id
+WHERE (@epoch_id IS NULL OR m.epoch_id = @epoch_id)
+  AND (@brain_id IS NULL OR m.brain_id = @brain_id)
+ORDER BY m.epoch_id, m.assigned_ms, m.brain_id
+LIMIT @limit OFFSET @offset;
+""";
+
 private const string ListRecentMembershipsForSpeciesSql = """
 SELECT
     m.epoch_id AS EpochId,
@@ -1164,6 +1196,39 @@ WHERE name IN (
         return rows.Select(ToMembershipRecord).ToArray();
     }
 
+    public async Task<SpeciationHistoryPage> ListHistoryPageAsync(
+        long? epochId = null,
+        Guid? brainId = null,
+        int limit = 256,
+        int offset = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedLimit = Math.Max(1, limit);
+        var normalizedOffset = Math.Max(0, offset);
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var parameters = new
+        {
+            epoch_id = epochId,
+            brain_id = brainId.HasValue && brainId.Value != Guid.Empty ? brainId : null,
+            limit = normalizedLimit,
+            offset = normalizedOffset
+        };
+        var totalRecords = await connection.ExecuteScalarAsync<int>(
+            new CommandDefinition(
+                CountHistorySql,
+                parameters,
+                cancellationToken: cancellationToken));
+        var rows = await connection.QueryAsync<MembershipRow>(
+            new CommandDefinition(
+                ListHistoryPageSql,
+                parameters,
+                cancellationToken: cancellationToken));
+        return new SpeciationHistoryPage(
+            rows.Select(ToMembershipRecord).ToArray(),
+            totalRecords);
+    }
+
     public async Task<SpeciationReconcileResult> ReconcileMissingMembershipsAsync(
         long epochId,
         IReadOnlyList<Guid> brainIds,
@@ -1553,6 +1618,10 @@ WHERE name IN (
 
         public long DecisionId { get; set; }
     }
+
+    public readonly record struct SpeciationHistoryPage(
+        IReadOnlyList<SpeciationMembershipRecord> Records,
+        int TotalRecords);
 
     private sealed class GuidTextHandler : SqlMapper.TypeHandler<Guid>
     {

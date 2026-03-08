@@ -1264,11 +1264,13 @@ public class WorkbenchClient : IAsyncDisposable
         long? epochId = null,
         Guid? brainId = null,
         uint limit = 256,
+        uint offset = 0,
         CancellationToken cancellationToken = default)
     {
         var request = new SpeciationListHistoryRequest
         {
-            Limit = Math.Max(1u, limit)
+            Limit = Math.Max(1u, limit),
+            Offset = offset
         };
         if (epochId.HasValue && epochId.Value > 0)
         {

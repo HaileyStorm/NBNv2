@@ -265,6 +265,7 @@ message SpeciationListHistoryRequest {
   bool has_brain_id = 3;
   nbn.Uuid brain_id = 4;
   uint32 limit = 5;
+  uint32 offset = 6;
 }
 
 message SpeciationListHistoryResponse {

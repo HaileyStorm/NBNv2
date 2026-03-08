@@ -1154,7 +1154,19 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         var epochId = message.HasEpochId ? (long?)message.EpochId : null;
-        var listTask = _store.ListMembershipsAsync(epochId);
+        var filterBrainId = message.HasBrainId
+                            && message.BrainId is not null
+                            && message.BrainId.TryToGuid(out var parsedBrainId)
+                            && parsedBrainId != Guid.Empty
+            ? parsedBrainId
+            : (Guid?)null;
+        var limit = (int)Math.Min(int.MaxValue, Math.Max(1u, message.Limit));
+        var offset = (int)Math.Min(int.MaxValue, message.Offset);
+        var listTask = _store.ListHistoryPageAsync(
+            epochId,
+            filterBrainId,
+            limit,
+            offset);
         context.ReenterAfter(listTask, completed =>
         {
             if (completed.IsFaulted)
@@ -1169,30 +1181,15 @@ public sealed class SpeciationManagerActor : IActor
                 return Task.CompletedTask;
             }
 
-            IEnumerable<SpeciationMembershipRecord> history = completed.Result;
-            if (message.HasBrainId && message.BrainId is not null && message.BrainId.TryToGuid(out var filterBrainId) && filterBrainId != Guid.Empty)
-            {
-                history = history.Where(record => record.BrainId == filterBrainId);
-            }
-
-            var ordered = history
-                .OrderBy(record => record.EpochId)
-                .ThenBy(record => record.AssignedMs)
-                .ThenBy(record => record.BrainId)
-                .ToList();
-            var total = ordered.Count;
-            if (message.Limit > 0 && ordered.Count > message.Limit)
-            {
-                ordered = ordered.Take((int)message.Limit).ToList();
-            }
+            var page = completed.Result;
 
             var response = new ProtoSpec.SpeciationListHistoryResponse
             {
                 FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
                 FailureDetail = string.Empty,
-                TotalRecords = (uint)total
+                TotalRecords = (uint)Math.Max(0, page.TotalRecords)
             };
-            response.History.AddRange(ordered.Select(ToProtoMembershipRecord));
+            response.History.AddRange(page.Records.Select(ToProtoMembershipRecord));
             context.Respond(response);
             return Task.CompletedTask;
         });
@@ -2617,6 +2614,15 @@ public sealed class SpeciationManagerActor : IActor
                 compatible: false,
                 abortReason: string.Empty,
                 failureReason: "assigned_species_exemplars_unavailable");
+        }
+
+        if (bootstrapRequirement.HasValue && exemplars.Count > 1)
+        {
+            exemplars = exemplars
+                .OrderBy(record => record.AssignedMs)
+                .ThenBy(record => record.BrainId)
+                .Take(1)
+                .ToArray();
         }
 
         var attemptedExemplarBrainIds = new List<string>(exemplars.Count);

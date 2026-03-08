@@ -1038,44 +1038,72 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_NotesWhenHistoryIsTruncatedByLimit()
+    public async Task RefreshHistoryCommand_PagesHistoryBeyondDefaultChartWindow()
     {
-        var history = new[]
-        {
-            new SpeciationMembershipRecord
+        const int totalHistoryCount = 8_200;
+        var page0 = Enumerable
+            .Range(0, 8_192)
+            .Select(index => new SpeciationMembershipRecord
             {
                 EpochId = 41,
                 BrainId = Guid.NewGuid().ToProtoUuid(),
-                SpeciesId = "species.a",
-                SpeciesDisplayName = "Alpha",
-                AssignedMs = 1000,
+                SpeciesId = index % 2 == 0 ? "species.a" : "species.b",
+                SpeciesDisplayName = index % 2 == 0 ? "Alpha" : "Beta",
+                AssignedMs = (ulong)(1_000 + index),
                 DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
-            }
-        };
+            })
+            .ToArray();
+        var page1 = Enumerable
+            .Range(page0.Length, totalHistoryCount - page0.Length)
+            .Select(index => new SpeciationMembershipRecord
+            {
+                EpochId = 41,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = index % 2 == 0 ? "species.a" : "species.b",
+                SpeciesDisplayName = index % 2 == 0 ? "Alpha" : "Beta",
+                AssignedMs = (ulong)(1_000 + index),
+                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+            })
+            .ToArray();
         var client = new FakeWorkbenchClient
         {
             HistoryResponse = new SpeciationListHistoryResponse
             {
                 FailureReason = SpeciationFailureReason.SpeciationFailureNone,
-                TotalRecords = 999,
-                History = { history }
+                TotalRecords = (uint)totalHistoryCount
             }
+        };
+        client.HistoryResponsesByOffset[0] = new SpeciationListHistoryResponse
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            TotalRecords = (uint)totalHistoryCount,
+            History = { page0 }
+        };
+        client.HistoryResponsesByOffset[8192] = new SpeciationListHistoryResponse
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            TotalRecords = (uint)totalHistoryCount,
+            History = { page1 }
         };
         var vm = CreateViewModel(client);
         vm.CurrentEpochId = 41;
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.EpochSummaries.Count == 1);
+        await WaitForAsync(() => client.HistoryCallCount == 2 && vm.HistoryStatus.Contains("fetched=8200", StringComparison.Ordinal));
 
-        Assert.Contains("loaded-row sample", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.PopulationChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.CladogramRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("loaded-row sample", vm.CladogramMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, client.HistoryCallCount);
+        Assert.Equal([8192u, 8192u], client.RequestedHistoryLimits);
+        Assert.Equal([0u, 8192u], client.RequestedHistoryOffsets);
+        Assert.Equal($"Speciation data loaded: fetched={totalHistoryCount} total={totalHistoryCount}", vm.HistoryStatus);
+        Assert.DoesNotContain("loaded-row sample", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.PopulationChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.CladogramRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("loaded-row sample", vm.CladogramMetricLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1378,6 +1406,8 @@ public class SpeciationPanelViewModelTests
         public long? LastMembershipEpochFilter { get; private set; }
         public int HistoryCallCount { get; private set; }
         public List<uint> RequestedHistoryLimits { get; } = new();
+        public List<uint> RequestedHistoryOffsets { get; } = new();
+        public Dictionary<uint, SpeciationListHistoryResponse> HistoryResponsesByOffset { get; } = new();
         public Dictionary<string, string> SettingUpdates { get; } = new(StringComparer.Ordinal);
         public List<(string Key, string Value)> SettingUpdateEvents { get; } = new();
 
@@ -1432,10 +1462,17 @@ public class SpeciationPanelViewModelTests
             long? epochId = null,
             Guid? brainId = null,
             uint limit = 256,
+            uint offset = 0,
             CancellationToken cancellationToken = default)
         {
             HistoryCallCount++;
             RequestedHistoryLimits.Add(limit);
+            RequestedHistoryOffsets.Add(offset);
+            if (HistoryResponsesByOffset.TryGetValue(offset, out var response))
+            {
+                return Task.FromResult(response);
+            }
+
             return Task.FromResult(HistoryResponse);
         }
 

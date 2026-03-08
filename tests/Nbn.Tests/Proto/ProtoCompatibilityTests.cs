@@ -812,6 +812,14 @@ public class ProtoCompatibilityTests
         AssertField(batch, "apply_mode", 1, FieldType.Enum, "nbn.speciation.SpeciationApplyMode");
         AssertRepeatedField(batch, "items", 2, FieldType.Message, "nbn.speciation.SpeciationBatchItem");
 
+        var listHistoryRequest = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListHistoryRequest");
+        AssertField(listHistoryRequest, "has_epoch_id", 1, FieldType.Bool);
+        AssertField(listHistoryRequest, "epoch_id", 2, FieldType.Fixed64);
+        AssertField(listHistoryRequest, "has_brain_id", 3, FieldType.Bool);
+        AssertField(listHistoryRequest, "brain_id", 4, FieldType.Message, "nbn.Uuid");
+        AssertField(listHistoryRequest, "limit", 5, FieldType.UInt32);
+        AssertField(listHistoryRequest, "offset", 6, FieldType.UInt32);
+
         var listHistory = descriptor.MessageTypes.Single(message => message.Name == "SpeciationListHistoryResponse");
         AssertField(listHistory, "failure_reason", 1, FieldType.Enum, "nbn.speciation.SpeciationFailureReason");
         AssertRepeatedField(listHistory, "history", 3, FieldType.Message, "nbn.speciation.SpeciationMembershipRecord");

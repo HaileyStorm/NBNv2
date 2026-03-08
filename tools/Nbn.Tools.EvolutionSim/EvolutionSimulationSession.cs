@@ -392,8 +392,8 @@ public sealed class EvolutionSimulationSession
             return SelectUniformParentIndex(excludedIndex);
         }
 
-        var speciesCount = CountDistinctSpeciesInPool(excludedIndex);
-        var useSpeciesAgeBias = speciesCount > 1;
+        var speciesPopulationByKey = BuildSelectionSpeciesPopulationCounts(excludedIndex);
+        var useSpeciesAgeBias = speciesPopulationByKey.Count > 1;
 
         var nowOrdinal = _nextParentOrdinal;
         var nowSpeciesOrdinal = _nextSpeciesOrdinal;
@@ -407,7 +407,8 @@ public sealed class EvolutionSimulationSession
             }
 
             var age = ResolveSelectionAgeForBias(i, useSpeciesAgeBias, nowSpeciesOrdinal, nowOrdinal);
-            var weight = ResolveParentSelectionWeight(age);
+            var speciesPopulation = ResolveSelectionSpeciesPopulation(i, speciesPopulationByKey);
+            var weight = ResolveParentSelectionWeight(age, speciesPopulation);
             if (!double.IsFinite(weight) || weight <= 0d)
             {
                 continue;
@@ -469,9 +470,9 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private int CountDistinctSpeciesInPool(int excludedIndex)
+    private Dictionary<string, int> BuildSelectionSpeciesPopulationCounts(int excludedIndex)
     {
-        var speciesIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var speciesCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < _parentPool.Count; i++)
         {
             if (i == excludedIndex)
@@ -479,21 +480,13 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            if (!TryBuildParentKey(_parentPool[i], out var parentKey))
-            {
-                continue;
-            }
-
-            if (!_parentSpeciesByParentKey.TryGetValue(parentKey, out var speciesId)
-                || string.IsNullOrWhiteSpace(speciesId))
-            {
-                continue;
-            }
-
-            speciesIds.Add(speciesId);
+            var speciesKey = ResolveTrackedSpeciesKey(_parentPool[i]);
+            speciesCounts[speciesKey] = speciesCounts.TryGetValue(speciesKey, out var count)
+                ? count + 1
+                : 1;
         }
 
-        return speciesIds.Count;
+        return speciesCounts;
     }
 
     // Caller must hold _gate.
@@ -521,16 +514,34 @@ public sealed class EvolutionSimulationSession
         return Math.Max(1UL, nowParentOrdinal - addedOrdinal);
     }
 
-    private double ResolveParentSelectionWeight(ulong age)
+    // Caller must hold _gate.
+    private int ResolveSelectionSpeciesPopulation(
+        int parentIndex,
+        IReadOnlyDictionary<string, int> speciesPopulationByKey)
+    {
+        if (parentIndex < 0 || parentIndex >= _parentPool.Count)
+        {
+            return 1;
+        }
+
+        var speciesKey = ResolveTrackedSpeciesKey(_parentPool[parentIndex]);
+        return speciesPopulationByKey.TryGetValue(speciesKey, out var speciesPopulation)
+            ? Math.Max(1, speciesPopulation)
+            : 1;
+    }
+
+    private double ResolveParentSelectionWeight(ulong age, int speciesPopulation)
     {
         var normalizedAge = Math.Max(1d, age);
         var weightedAge = Math.Pow(normalizedAge, ParentSelectionBiasExponent);
-        return _options.ParentSelectionBias switch
+        var ageWeight = _options.ParentSelectionBias switch
         {
             EvolutionParentSelectionBias.Divergence => 1d / weightedAge,
             EvolutionParentSelectionBias.Stability => weightedAge,
             _ => 1d
         };
+        var representationWeight = 1d / Math.Max(1d, speciesPopulation);
+        return ageWeight * representationWeight;
     }
 
     private int AddChildrenToPool(ReproductionOutcome reproduction)

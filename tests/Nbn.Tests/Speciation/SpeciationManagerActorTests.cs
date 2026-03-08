@@ -681,6 +681,68 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public async Task ProtoListHistory_ReturnsPagedRowsWithOffsetInAssignmentOrder()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig();
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            var epoch = await WaitForEpochAsync(system, managerPid);
+            var brainIds = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+            foreach (var brainId in brainIds)
+            {
+                var assign = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                    managerPid,
+                    new ProtoSpec.SpeciationAssignRequest
+                    {
+                        ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                        Candidate = new ProtoSpec.SpeciationCandidateRef
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        },
+                        SpeciesId = "species-page",
+                        SpeciesDisplayName = "Species Page",
+                        DecisionReason = "proto_page_seed",
+                        DecisionMetadataJson = "{\"source\":\"proto-page\"}",
+                        PolicyVersion = runtimeConfig.PolicyVersion
+                    });
+
+                Assert.True(assign.Decision.Success);
+                await Task.Delay(2);
+            }
+
+            var history = await system.Root.RequestAsync<ProtoSpec.SpeciationListHistoryResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationListHistoryRequest
+                {
+                    HasEpochId = true,
+                    EpochId = (ulong)epoch.EpochId,
+                    Limit = 2,
+                    Offset = 1
+                });
+
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, history.FailureReason);
+            Assert.Equal((uint)4, history.TotalRecords);
+            Assert.Equal(2, history.History.Count);
+            Assert.True(history.History[0].BrainId.TryToGuid(out var secondBrainId));
+            Assert.True(history.History[1].BrainId.TryToGuid(out var thirdBrainId));
+            Assert.Equal(brainIds[1], secondBrainId);
+            Assert.Equal(brainIds[2], thirdBrainId);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task ProtoBatch_Commit_RespectsPerItemApplyMode_And_CandidateValidation()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");
@@ -3954,6 +4016,128 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal(0.88d, lineage.GetProperty("lineage_assignment_similarity_score").GetDouble(), 3);
             Assert.Equal(0.88d, lineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
             Assert.True(lineage.GetProperty("split_proximity_to_dynamic_threshold").GetDouble() > 0d);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoAssign_Commit_NewbornDerivedSpecies_ThirdBootstrapMemberUsesSingleEarliestExemplar()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.90d,
+            lineageSplitThreshold: 0.86d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch",
+            lineageHysteresisMargin: 0d,
+            lineageSplitGuardMargin: 0d,
+            lineageMinParentMembershipsBeforeSplit: 1,
+            lineageRealignParentMembershipWindow: 0,
+            lineageRealignMatchMargin: 0d,
+            lineageHindsightReassignCommitWindow: 0,
+            lineageHindsightSimilarityMargin: 0.02d));
+        var system = new ActorSystem();
+        try
+        {
+            var reproProbe = new ReproCountingResponseProbe(CreateCompatibilityAssessmentResult(0.88f));
+            var reproPid = system.Root.Spawn(Props.FromProducer(() => reproProbe));
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
+
+            await WaitForEpochAsync(system, managerPid);
+            var sourceParent = Guid.NewGuid();
+            var founder = Guid.NewGuid();
+            var secondMember = Guid.NewGuid();
+            var thirdMember = Guid.NewGuid();
+
+            var seedParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = sourceParent.ToProtoUuid()
+                    },
+                    SpeciesId = "species-alpha",
+                    SpeciesDisplayName = "Species Alpha",
+                    DecisionReason = "seed_parent_species",
+                    DecisionMetadataJson = "{\"source\":\"seed\"}"
+                });
+            Assert.True(seedParent.Decision.Success);
+
+            var founderDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = founder.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.50,\"parent_a_similarity_score\":0.50}}"
+                });
+            Assert.True(founderDecision.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", founderDecision.Decision.DecisionReason);
+
+            var secondDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = secondMember.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.50,\"parent_a_similarity_score\":0.50}}"
+                });
+
+            Assert.True(secondDecision.Decision.Success);
+            Assert.Equal(founderDecision.Decision.SpeciesId, secondDecision.Decision.SpeciesId);
+            Assert.Equal(1, reproProbe.CompatibilityRequestCount);
+
+            var thirdDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = thirdMember.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = "{\"lineage\":{\"lineage_similarity_score\":0.50,\"parent_a_similarity_score\":0.50}}"
+                });
+
+            Assert.True(thirdDecision.Decision.Success);
+            Assert.Equal(founderDecision.Decision.SpeciesId, thirdDecision.Decision.SpeciesId);
+            Assert.Equal(2, reproProbe.CompatibilityRequestCount);
+
+            using var metadata = JsonDocument.Parse(thirdDecision.Decision.DecisionMetadataJson);
+            var lineage = metadata.RootElement.GetProperty("lineage");
+            Assert.Equal("compatibility_assessment", lineage.GetProperty("assigned_species_similarity_source").GetString());
+            Assert.True(lineage.GetProperty("assigned_species_compatibility_admitted").GetBoolean());
+            Assert.Equal(1, lineage.GetProperty("assigned_species_compatibility_exemplar_count").GetInt32());
+            Assert.Equal(1, lineage.GetProperty("assigned_species_compatibility_exemplar_brain_ids").GetArrayLength());
+            Assert.Equal(0.88d, lineage.GetProperty("assigned_species_compatibility_similarity_score").GetDouble(), 3);
         }
         finally
         {

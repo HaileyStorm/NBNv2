@@ -1427,16 +1427,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             _lastPersistedHistoryLimit = historyLimit;
         }
         var chartHistoryLimit = Math.Max(historyLimit, DefaultChartHistoryLimit);
-        var cladogramHistoryLimit = Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit);
+        var historyPageSize = Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit);
         var epochFilter = ResolveEpochFilter();
-        var cladogramEpochFilter = string.IsNullOrWhiteSpace(EpochFilterText)
-            ? null
-            : epochFilter;
 
-        var chartResponse = await _client.ListSpeciationHistoryAsync(
-                epochId: epochFilter,
+        var chartResponse = await LoadCompleteSpeciationHistoryAsync(
+                epochFilter,
                 brainId: null,
-                limit: chartHistoryLimit)
+                historyPageSize)
             .ConfigureAwait(false);
         if (chartResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
         {
@@ -1444,21 +1441,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             HistoryStatus = $"History load failed: {reason}";
             Status = HistoryStatus;
             return;
-        }
-
-        SpeciationListHistoryResponse? cladogramResponse = null;
-        if (cladogramHistoryLimit > chartHistoryLimit
-            && chartResponse.TotalRecords > (uint)chartResponse.History.Count)
-        {
-            cladogramResponse = await _client.ListSpeciationHistoryAsync(
-                    epochId: cladogramEpochFilter,
-                    brainId: null,
-                    limit: cladogramHistoryLimit)
-                .ConfigureAwait(false);
-            if (cladogramResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
-            {
-                cladogramResponse = null;
-            }
         }
 
         var chartHistory = chartResponse.History;
@@ -1472,14 +1454,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             CurrentEpochId,
             ParseDouble(LineageSplitThreshold, 0.88d),
             ParseDouble(LineageSplitGuardMargin, 0.02d));
-        var cladogramSourceHistory = cladogramResponse?.History ?? chartResponse.History;
+        var cladogramSourceHistory = chartResponse.History;
         var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory);
-        var chartHistoryTruncated = chartResponse.TotalRecords > (uint)chartResponse.History.Count;
-        var cladogramHistoryTruncated = cladogramResponse is not null
-                                        && cladogramResponse.TotalRecords > (uint)cladogramResponse.History.Count;
-        var historyScopeSuffix = chartHistoryTruncated
-            ? HistorySampleScopeSuffix
-            : string.Empty;
 
         _dispatcher.Post(() =>
         {
@@ -1491,30 +1467,68 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
             ApplyPopulationChartSnapshot(populationSnapshot);
             ApplyFlowChartSnapshot(flowSnapshot);
-            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label + historyScopeSuffix;
-            CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel + historyScopeSuffix;
+            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label;
+            CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel;
             ApplySplitProximityChartSnapshot(splitProximitySnapshot);
             ApplyCladogramSnapshot(cladogramSnapshot);
-            if (chartHistoryTruncated)
-            {
-                PopulationChartRangeLabel = AppendHistorySampleScopeLabel(PopulationChartRangeLabel);
-                PopulationChartMetricLabel = AppendHistorySampleMetricLabel(PopulationChartMetricLabel);
-                FlowChartRangeLabel = AppendHistorySampleScopeLabel(FlowChartRangeLabel);
-                SplitProximityChartRangeLabel = AppendHistorySampleScopeLabel(SplitProximityChartRangeLabel);
-                SplitProximityChartMetricLabel = AppendHistorySampleMetricLabel(SplitProximityChartMetricLabel);
-            }
-
-            if (cladogramHistoryTruncated)
-            {
-                CladogramRangeLabel = AppendHistorySampleScopeLabel(CladogramRangeLabel);
-                CladogramMetricLabel = AppendHistorySampleMetricLabel(CladogramMetricLabel);
-            }
-
-            var scopeSuffix = chartHistoryTruncated ? " (sampled window)" : string.Empty;
             HistoryStatus =
-                $"Speciation data loaded: fetched={chartResponse.History.Count} total={chartResponse.TotalRecords}{scopeSuffix}";
+                $"Speciation data loaded: fetched={chartResponse.History.Count} total={chartResponse.TotalRecords}";
             Status = HistoryStatus;
         });
+    }
+
+    private async Task<SpeciationListHistoryResponse> LoadCompleteSpeciationHistoryAsync(
+        long? epochId,
+        Guid? brainId,
+        uint pageSize)
+    {
+        var normalizedPageSize = Math.Max(1u, pageSize);
+        var combined = new List<SpeciationMembershipRecord>();
+        uint offset = 0;
+        uint totalRecords = 0;
+
+        while (true)
+        {
+            var response = await _client.ListSpeciationHistoryAsync(
+                    epochId: epochId,
+                    brainId: brainId,
+                    limit: normalizedPageSize,
+                    offset: offset)
+                .ConfigureAwait(false);
+            if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+            {
+                return response;
+            }
+
+            totalRecords = response.TotalRecords;
+            if (response.History.Count == 0)
+            {
+                break;
+            }
+
+            combined.AddRange(response.History);
+            if ((uint)combined.Count >= totalRecords)
+            {
+                break;
+            }
+
+            var nextOffset = (uint)combined.Count;
+            if (nextOffset <= offset)
+            {
+                break;
+            }
+
+            offset = nextOffset;
+        }
+
+        var combinedResponse = new SpeciationListHistoryResponse
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            FailureDetail = string.Empty,
+            TotalRecords = totalRecords
+        };
+        combinedResponse.History.AddRange(combined);
+        return combinedResponse;
     }
 
     private async Task StartServiceAsync()
