@@ -17,7 +17,10 @@ public sealed class EvolutionSimulationSession
     private readonly List<EvolutionParentRef> _parentPool;
     private readonly List<ulong> _parentAddedOrdinals;
     private readonly Dictionary<string, string> _parentSpeciesByParentKey;
+    private readonly Dictionary<string, string> _parentLineageFamilyByParentKey;
+    private readonly Dictionary<string, string> _lineageFamilyBySpeciesId;
     private readonly Dictionary<string, ulong> _speciesFirstSeenOrdinals;
+    private readonly Dictionary<string, ulong> _lineageFamilyFirstSeenOrdinals;
     private readonly HashSet<string> _parentPoolKeys;
     private readonly HashSet<string> _protectedParentPoolKeys;
     private readonly DeterministicRandom _random;
@@ -50,6 +53,7 @@ public sealed class EvolutionSimulationSession
     private ulong _speciationCommitSamplesSinceImprovement;
     private ulong _nextParentOrdinal;
     private ulong _nextSpeciesOrdinal;
+    private ulong _nextLineageFamilyOrdinal;
     private float _runPressureNudge;
     private string _lastFailure = string.Empty;
     private ulong _lastSeed;
@@ -71,11 +75,15 @@ public sealed class EvolutionSimulationSession
         _parentPool = new List<EvolutionParentRef>(initialParents.Count);
         _parentAddedOrdinals = new List<ulong>(initialParents.Count);
         _parentSpeciesByParentKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _parentLineageFamilyByParentKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _lineageFamilyBySpeciesId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         _speciesFirstSeenOrdinals = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+        _lineageFamilyFirstSeenOrdinals = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
         _parentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _protectedParentPoolKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _nextParentOrdinal = 1;
         _nextSpeciesOrdinal = 1;
+        _nextLineageFamilyOrdinal = 1;
         foreach (var parent in initialParents)
         {
             _parentPool.Add(parent);
@@ -221,7 +229,7 @@ public sealed class EvolutionSimulationSession
                 && !string.IsNullOrWhiteSpace(commitOutcome.SpeciesId)
                 && TryBuildParentKey(parent, out var parentKey))
             {
-                RecordParentSpecies(parentKey, commitOutcome.SpeciesId);
+                RecordParentSpecies(parentKey, commitOutcome.SpeciesId, commitOutcome.SourceSpeciesId);
             }
 
             if (!commitOutcome.Success
@@ -323,7 +331,10 @@ public sealed class EvolutionSimulationSession
             {
                 IncrementSpeciationCommitSuccesses();
                 RecordSpeciationCommitSimilarity(commitCandidate.SimilarityScore);
-                TryAddCommittedCandidateToPool(commitCandidate, commitOutcome.SpeciesId);
+                TryAddCommittedCandidateToPool(
+                    commitCandidate,
+                    commitOutcome.SpeciesId,
+                    commitOutcome.SourceSpeciesId);
             }
             else if (!commitOutcome.ExpectedNoOp
                      && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
@@ -393,10 +404,13 @@ public sealed class EvolutionSimulationSession
         }
 
         var speciesPopulationByKey = BuildSelectionSpeciesPopulationCounts(excludedIndex);
-        var useSpeciesAgeBias = speciesPopulationByKey.Count > 1;
+        var lineageFamilyPopulationByKey = BuildSelectionLineageFamilyPopulationCounts(excludedIndex);
+        var useLineageFamilyAgeBias = lineageFamilyPopulationByKey.Count > 1;
+        var useSpeciesAgeBias = !useLineageFamilyAgeBias && speciesPopulationByKey.Count > 1;
 
         var nowOrdinal = _nextParentOrdinal;
         var nowSpeciesOrdinal = _nextSpeciesOrdinal;
+        var nowLineageFamilyOrdinal = _nextLineageFamilyOrdinal;
         double totalWeight = 0d;
         var weights = new double[_parentPool.Count];
         for (var i = 0; i < _parentPool.Count; i++)
@@ -406,9 +420,17 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            var age = ResolveSelectionAgeForBias(i, useSpeciesAgeBias, nowSpeciesOrdinal, nowOrdinal);
-            var speciesPopulation = ResolveSelectionSpeciesPopulation(i, speciesPopulationByKey);
-            var weight = ResolveParentSelectionWeight(age, speciesPopulation);
+            var age = ResolveSelectionAgeForBias(
+                i,
+                useLineageFamilyAgeBias,
+                useSpeciesAgeBias,
+                nowLineageFamilyOrdinal,
+                nowSpeciesOrdinal,
+                nowOrdinal);
+            var representationPopulation = useLineageFamilyAgeBias
+                ? ResolveSelectionLineageFamilyPopulation(i, lineageFamilyPopulationByKey)
+                : ResolveSelectionSpeciesPopulation(i, speciesPopulationByKey);
+            var weight = ResolveParentSelectionWeight(age, representationPopulation);
             if (!double.IsFinite(weight) || weight <= 0d)
             {
                 continue;
@@ -490,9 +512,31 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
+    private Dictionary<string, int> BuildSelectionLineageFamilyPopulationCounts(int excludedIndex)
+    {
+        var lineageFamilyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            if (i == excludedIndex)
+            {
+                continue;
+            }
+
+            var lineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[i]);
+            lineageFamilyCounts[lineageFamilyKey] = lineageFamilyCounts.TryGetValue(lineageFamilyKey, out var count)
+                ? count + 1
+                : 1;
+        }
+
+        return lineageFamilyCounts;
+    }
+
+    // Caller must hold _gate.
     private ulong ResolveSelectionAgeForBias(
         int parentIndex,
+        bool useLineageFamilyAgeBias,
         bool useSpeciesAgeBias,
+        ulong nowLineageFamilyOrdinal,
         ulong nowSpeciesOrdinal,
         ulong nowParentOrdinal)
     {
@@ -501,9 +545,18 @@ public sealed class EvolutionSimulationSession
             return 1UL;
         }
 
-        if (useSpeciesAgeBias
+        if (useLineageFamilyAgeBias
             && TryBuildParentKey(_parentPool[parentIndex], out var parentKey)
-            && _parentSpeciesByParentKey.TryGetValue(parentKey, out var speciesId)
+            && _parentLineageFamilyByParentKey.TryGetValue(parentKey, out var lineageFamilyId)
+            && !string.IsNullOrWhiteSpace(lineageFamilyId)
+            && _lineageFamilyFirstSeenOrdinals.TryGetValue(lineageFamilyId, out var firstSeenLineageFamilyOrdinal))
+        {
+            return Math.Max(1UL, nowLineageFamilyOrdinal - firstSeenLineageFamilyOrdinal);
+        }
+
+        if (useSpeciesAgeBias
+            && TryBuildParentKey(_parentPool[parentIndex], out var speciesParentKey)
+            && _parentSpeciesByParentKey.TryGetValue(speciesParentKey, out var speciesId)
             && !string.IsNullOrWhiteSpace(speciesId)
             && _speciesFirstSeenOrdinals.TryGetValue(speciesId, out var firstSeenSpeciesOrdinal))
         {
@@ -527,6 +580,22 @@ public sealed class EvolutionSimulationSession
         var speciesKey = ResolveTrackedSpeciesKey(_parentPool[parentIndex]);
         return speciesPopulationByKey.TryGetValue(speciesKey, out var speciesPopulation)
             ? Math.Max(1, speciesPopulation)
+            : 1;
+    }
+
+    // Caller must hold _gate.
+    private int ResolveSelectionLineageFamilyPopulation(
+        int parentIndex,
+        IReadOnlyDictionary<string, int> lineageFamilyPopulationByKey)
+    {
+        if (parentIndex < 0 || parentIndex >= _parentPool.Count)
+        {
+            return 1;
+        }
+
+        var lineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[parentIndex]);
+        return lineageFamilyPopulationByKey.TryGetValue(lineageFamilyKey, out var lineageFamilyPopulation)
+            ? Math.Max(1, lineageFamilyPopulation)
             : 1;
     }
 
@@ -556,7 +625,8 @@ public sealed class EvolutionSimulationSession
 
     private bool TryAddCommittedCandidateToPool(
         SpeciationCommitCandidate candidate,
-        string? candidateSpeciesId)
+        string? candidateSpeciesId,
+        string? candidateSourceSpeciesId)
     {
         if (!TryBuildParentRefFromCandidate(candidate, _options.ParentMode, out var parentRef)
             || !TryBuildParentKey(parentRef, out var candidateKey))
@@ -571,20 +641,30 @@ public sealed class EvolutionSimulationSession
             {
                 if (normalizedCandidateSpeciesId.Length > 0)
                 {
-                    RecordParentSpeciesLocked(candidateKey, normalizedCandidateSpeciesId);
+                    RecordParentSpeciesLocked(
+                        candidateKey,
+                        normalizedCandidateSpeciesId,
+                        candidateSourceSpeciesId);
                 }
 
                 return false;
             }
 
-            if (!TryAddParentToPoolAtCapacity(parentRef, candidateKey, normalizedCandidateSpeciesId))
+            if (!TryAddParentToPoolAtCapacity(
+                    parentRef,
+                    candidateKey,
+                    normalizedCandidateSpeciesId,
+                    candidateSourceSpeciesId))
             {
                 return false;
             }
 
             if (normalizedCandidateSpeciesId.Length > 0)
             {
-                RecordParentSpeciesLocked(candidateKey, normalizedCandidateSpeciesId);
+                RecordParentSpeciesLocked(
+                    candidateKey,
+                    normalizedCandidateSpeciesId,
+                    candidateSourceSpeciesId);
             }
 
             _childrenAddedToPool++;
@@ -1011,7 +1091,10 @@ public sealed class EvolutionSimulationSession
         }
     }
 
-    private void RecordParentSpecies(string parentKey, string speciesId)
+    private void RecordParentSpecies(
+        string parentKey,
+        string speciesId,
+        string? sourceSpeciesId)
     {
         if (string.IsNullOrWhiteSpace(parentKey) || string.IsNullOrWhiteSpace(speciesId))
         {
@@ -1020,12 +1103,15 @@ public sealed class EvolutionSimulationSession
 
         lock (_gate)
         {
-            RecordParentSpeciesLocked(parentKey, speciesId);
+            RecordParentSpeciesLocked(parentKey, speciesId, sourceSpeciesId);
         }
     }
 
     // Caller must hold _gate.
-    private void RecordParentSpeciesLocked(string parentKey, string speciesId)
+    private void RecordParentSpeciesLocked(
+        string parentKey,
+        string speciesId,
+        string? sourceSpeciesId)
     {
         var normalizedSpeciesId = speciesId.Trim();
         if (normalizedSpeciesId.Length == 0)
@@ -1038,13 +1124,83 @@ public sealed class EvolutionSimulationSession
         {
             _speciesFirstSeenOrdinals[normalizedSpeciesId] = _nextSpeciesOrdinal++;
         }
+
+        var lineageFamilyId = ResolveLineageFamilyKeyLocked(
+            normalizedSpeciesId,
+            sourceSpeciesId,
+            registerIfMissing: true);
+        if (lineageFamilyId.Length > 0)
+        {
+            _parentLineageFamilyByParentKey[parentKey] = lineageFamilyId;
+        }
+    }
+
+    // Caller must hold _gate.
+    private string ResolveLineageFamilyKeyLocked(
+        string? speciesId,
+        string? sourceSpeciesId,
+        bool registerIfMissing)
+    {
+        var normalizedSpeciesId = NormalizeSpeciesId(speciesId);
+        if (normalizedSpeciesId.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (_lineageFamilyBySpeciesId.TryGetValue(normalizedSpeciesId, out var existingLineageFamilyId)
+            && NormalizeSpeciesId(existingLineageFamilyId).Length > 0)
+        {
+            return NormalizeSpeciesId(existingLineageFamilyId);
+        }
+
+        var normalizedSourceSpeciesId = NormalizeSpeciesId(sourceSpeciesId);
+        var lineageFamilyId = normalizedSpeciesId;
+        if (normalizedSourceSpeciesId.Length > 0
+            && !string.Equals(normalizedSourceSpeciesId, normalizedSpeciesId, StringComparison.OrdinalIgnoreCase))
+        {
+            lineageFamilyId = _lineageFamilyBySpeciesId.TryGetValue(normalizedSourceSpeciesId, out var sourceLineageFamilyId)
+                && NormalizeSpeciesId(sourceLineageFamilyId).Length > 0
+                ? NormalizeSpeciesId(sourceLineageFamilyId)
+                : normalizedSourceSpeciesId;
+        }
+
+        if (!registerIfMissing)
+        {
+            return lineageFamilyId;
+        }
+
+        if (normalizedSourceSpeciesId.Length > 0
+            && !_lineageFamilyBySpeciesId.ContainsKey(normalizedSourceSpeciesId))
+        {
+            _lineageFamilyBySpeciesId[normalizedSourceSpeciesId] = lineageFamilyId;
+        }
+
+        _lineageFamilyBySpeciesId[normalizedSpeciesId] = lineageFamilyId;
+        EnsureLineageFamilyOrdinalLocked(lineageFamilyId);
+        return lineageFamilyId;
+    }
+
+    // Caller must hold _gate.
+    private void EnsureLineageFamilyOrdinalLocked(string lineageFamilyId)
+    {
+        var normalizedLineageFamilyId = NormalizeSpeciesId(lineageFamilyId);
+        if (normalizedLineageFamilyId.Length == 0)
+        {
+            return;
+        }
+
+        if (!_lineageFamilyFirstSeenOrdinals.ContainsKey(normalizedLineageFamilyId))
+        {
+            _lineageFamilyFirstSeenOrdinals[normalizedLineageFamilyId] = _nextLineageFamilyOrdinal++;
+        }
     }
 
     // Caller must hold _gate.
     private bool TryAddParentToPoolAtCapacity(
         EvolutionParentRef candidate,
         string candidateKey,
-        string? candidateSpeciesId = null)
+        string? candidateSpeciesId = null,
+        string? candidateSourceSpeciesId = null)
     {
         if (_parentPool.Count < _options.MaxParentPoolSize)
         {
@@ -1054,7 +1210,14 @@ public sealed class EvolutionSimulationSession
             return true;
         }
 
-        if (!TrySelectEvictionIndex(candidateSpeciesId, out var evictionIndex))
+        var candidateLineageFamilyId = ResolveLineageFamilyKeyLocked(
+            candidateSpeciesId,
+            candidateSourceSpeciesId,
+            registerIfMissing: false);
+        if (!TrySelectEvictionIndex(
+                candidateSpeciesId,
+                candidateLineageFamilyId,
+                out var evictionIndex))
         {
             return false;
         }
@@ -1064,6 +1227,7 @@ public sealed class EvolutionSimulationSession
         {
             _parentPoolKeys.Remove(evictedKey);
             _parentSpeciesByParentKey.Remove(evictedKey);
+            _parentLineageFamilyByParentKey.Remove(evictedKey);
         }
 
         _parentPool[evictionIndex] = candidate;
@@ -1080,9 +1244,13 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private bool TrySelectEvictionIndex(string? candidateSpeciesId, out int evictionIndex)
+    private bool TrySelectEvictionIndex(
+        string? candidateSpeciesId,
+        string? candidateLineageFamilyId,
+        out int evictionIndex)
     {
         var totalSpeciesCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var totalLineageFamilyCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < _parentPool.Count; i++)
         {
             var current = _parentPool[i];
@@ -1095,9 +1263,19 @@ public sealed class EvolutionSimulationSession
             {
                 totalSpeciesCounts[speciesKey] = 1;
             }
+
+            var lineageFamilyKey = ResolveTrackedLineageFamilyKey(current);
+            if (totalLineageFamilyCounts.TryGetValue(lineageFamilyKey, out var currentLineageFamilyCount))
+            {
+                totalLineageFamilyCounts[lineageFamilyKey] = currentLineageFamilyCount + 1;
+            }
+            else
+            {
+                totalLineageFamilyCounts[lineageFamilyKey] = 1;
+            }
         }
 
-        var eligibleEntries = new List<(int Index, string SpeciesKey, int TotalSpeciesCount)>();
+        var eligibleEntries = new List<(int Index, string SpeciesKey, int TotalSpeciesCount, string LineageFamilyKey, int TotalLineageFamilyCount)>();
         for (var i = 0; i < _parentPool.Count; i++)
         {
             var current = _parentPool[i];
@@ -1111,13 +1289,50 @@ public sealed class EvolutionSimulationSession
             var totalSpeciesCount = totalSpeciesCounts.TryGetValue(speciesKey, out var count)
                 ? count
                 : 1;
-            eligibleEntries.Add((i, speciesKey, totalSpeciesCount));
+            var lineageFamilyKey = ResolveTrackedLineageFamilyKey(current);
+            var totalLineageFamilyCount = totalLineageFamilyCounts.TryGetValue(lineageFamilyKey, out var lineageCount)
+                ? lineageCount
+                : 1;
+            eligibleEntries.Add((i, speciesKey, totalSpeciesCount, lineageFamilyKey, totalLineageFamilyCount));
         }
 
         if (eligibleEntries.Count == 0)
         {
             evictionIndex = -1;
             return false;
+        }
+
+        var normalizedCandidateLineageFamilyId = ResolveTrackedLineageFamilyKey(candidateLineageFamilyId);
+        if (!string.Equals(normalizedCandidateLineageFamilyId, "(unknown)", StringComparison.Ordinal))
+        {
+            var candidateLineageFamilyCount = totalLineageFamilyCounts.TryGetValue(
+                normalizedCandidateLineageFamilyId,
+                out var lineageCount)
+                ? lineageCount
+                : 0;
+            var moreRepresentedLineageFamilyEntries = eligibleEntries
+                .Where(entry => entry.TotalLineageFamilyCount > candidateLineageFamilyCount)
+                .ToList();
+            if (moreRepresentedLineageFamilyEntries.Count > 0)
+            {
+                eligibleEntries = moreRepresentedLineageFamilyEntries;
+            }
+            else if (candidateLineageFamilyCount > 0)
+            {
+                var sameLineageFamilyEntries = eligibleEntries
+                    .Where(entry => string.Equals(
+                        entry.LineageFamilyKey,
+                        normalizedCandidateLineageFamilyId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (sameLineageFamilyEntries.Count == 0)
+                {
+                    evictionIndex = -1;
+                    return false;
+                }
+
+                eligibleEntries = sameLineageFamilyEntries;
+            }
         }
 
         var normalizedCandidateSpeciesId = NormalizeSpeciesId(candidateSpeciesId);
@@ -1134,18 +1349,35 @@ public sealed class EvolutionSimulationSession
                     .ToList();
                 if (moreRepresentedEntries.Count == 0)
                 {
-                    evictionIndex = -1;
-                    return false;
-                }
+                    var sameSpeciesEntries = eligibleEntries
+                        .Where(entry => string.Equals(
+                            entry.SpeciesKey,
+                            candidateSpeciesKey,
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (sameSpeciesEntries.Count == 0)
+                    {
+                        evictionIndex = -1;
+                        return false;
+                    }
 
-                eligibleEntries = moreRepresentedEntries;
+                    eligibleEntries = sameSpeciesEntries;
+                }
+                else
+                {
+                    eligibleEntries = moreRepresentedEntries;
+                }
             }
         }
 
-        var maxSpeciesCount = eligibleEntries.Max(entry => entry.TotalSpeciesCount);
+        var maxLineageFamilyCount = eligibleEntries.Max(entry => entry.TotalLineageFamilyCount);
+        var narrowedEntries = eligibleEntries
+            .Where(entry => entry.TotalLineageFamilyCount == maxLineageFamilyCount)
+            .ToList();
+        var maxSpeciesCount = narrowedEntries.Max(entry => entry.TotalSpeciesCount);
         var selectedIndex = -1;
         var eligibleCount = 0;
-        foreach (var entry in eligibleEntries)
+        foreach (var entry in narrowedEntries)
         {
             if (entry.TotalSpeciesCount != maxSpeciesCount)
             {
@@ -1161,6 +1393,38 @@ public sealed class EvolutionSimulationSession
 
         evictionIndex = selectedIndex;
         return selectedIndex >= 0;
+    }
+
+    private string ResolveTrackedLineageFamilyKey(EvolutionParentRef parentRef)
+    {
+        if (TryBuildParentKey(parentRef, out var parentKey))
+        {
+            return ResolveTrackedLineageFamilyKey(parentKey);
+        }
+
+        return "(unknown)";
+    }
+
+    private string ResolveTrackedLineageFamilyKey(string? lineageFamilyOrParentKey)
+    {
+        var normalized = NormalizeSpeciesId(lineageFamilyOrParentKey);
+        if (normalized.Length == 0)
+        {
+            return "(unknown)";
+        }
+
+        return _parentLineageFamilyByParentKey.TryGetValue(normalized, out var lineageFamilyId)
+            ? NormalizeSpeciesId(lineageFamilyId).Length > 0
+                ? NormalizeSpeciesId(lineageFamilyId)
+                : "(unknown)"
+            : _lineageFamilyBySpeciesId.TryGetValue(normalized, out var speciesLineageFamilyId)
+                ? NormalizeSpeciesId(speciesLineageFamilyId).Length > 0
+                    ? NormalizeSpeciesId(speciesLineageFamilyId)
+                    : "(unknown)"
+                : normalized.StartsWith("artifact:", StringComparison.OrdinalIgnoreCase)
+                  || normalized.StartsWith("brain:", StringComparison.OrdinalIgnoreCase)
+                    ? "(unknown)"
+                    : normalized;
     }
 
     private string ResolveTrackedSpeciesKey(EvolutionParentRef parentRef)

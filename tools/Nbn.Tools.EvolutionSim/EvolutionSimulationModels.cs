@@ -166,7 +166,8 @@ public readonly record struct SpeciationCommitOutcome(
     bool Success,
     string FailureDetail,
     bool ExpectedNoOp,
-    string SpeciesId = "");
+    string SpeciesId = "",
+    string SourceSpeciesId = "");
 
 public interface IEvolutionSimulationClient
 {

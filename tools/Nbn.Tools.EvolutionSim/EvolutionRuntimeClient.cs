@@ -273,7 +273,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     Success: true,
                     FailureDetail: string.Empty,
                     ExpectedNoOp: false,
-                    SpeciesId: decision?.SpeciesId ?? string.Empty);
+                    SpeciesId: decision?.SpeciesId ?? string.Empty,
+                    SourceSpeciesId: ExtractSourceSpeciesId(decision?.DecisionMetadataJson));
             }
 
             if (decision is null)
@@ -584,6 +585,29 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
 
         return metadata.ToJsonString();
+    }
+
+    private static string ExtractSourceSpeciesId(string? decisionMetadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(decisionMetadataJson))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var root = JsonNode.Parse(decisionMetadataJson);
+            var lineage = root?["lineage"];
+            return NormalizeReason(
+                lineage?["source_species_id"]?.GetValue<string?>()
+                ?? lineage?["sourceSpeciesId"]?.GetValue<string?>()
+                ?? lineage?["dominant_species_id"]?.GetValue<string?>()
+                ?? lineage?["dominantSpeciesId"]?.GetValue<string?>());
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static float? TryNormalizeScore(float? value)

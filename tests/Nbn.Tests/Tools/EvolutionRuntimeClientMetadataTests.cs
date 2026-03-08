@@ -102,6 +102,30 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.Equal(0.81f, diagnostics.MaxSimilarity, 3);
     }
 
+    [Fact]
+    public void ExtractSourceSpeciesId_PrefersCanonicalSourceSpeciesField()
+    {
+        const string metadataJson = """
+            {"lineage":{"source_species_id":"species-alpha","dominant_species_id":"species-beta"}}
+            """;
+
+        var sourceSpeciesId = InvokeExtractSourceSpeciesId(metadataJson);
+
+        Assert.Equal("species-alpha", sourceSpeciesId);
+    }
+
+    [Fact]
+    public void ExtractSourceSpeciesId_FallsBackToDominantSpeciesField()
+    {
+        const string metadataJson = """
+            {"lineage":{"dominant_species_id":"species-beta"}}
+            """;
+
+        var sourceSpeciesId = InvokeExtractSourceSpeciesId(metadataJson);
+
+        Assert.Equal("species-beta", sourceSpeciesId);
+    }
+
     private static object InvokeExtractReproductionData(Repro.ReproduceResult result)
     {
         var method = typeof(EvolutionRuntimeClient).GetMethod(
@@ -121,6 +145,16 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.NotNull(method);
         var json = method!.Invoke(null, new object[] { candidate });
         return Assert.IsType<string>(json);
+    }
+
+    private static string InvokeExtractSourceSpeciesId(string? decisionMetadataJson)
+    {
+        var method = typeof(EvolutionRuntimeClient).GetMethod(
+            "ExtractSourceSpeciesId",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        var value = method!.Invoke(null, [decisionMetadataJson]);
+        return Assert.IsType<string>(value);
     }
 
     private static T GetTupleItem<T>(object tuple, string propertyName)

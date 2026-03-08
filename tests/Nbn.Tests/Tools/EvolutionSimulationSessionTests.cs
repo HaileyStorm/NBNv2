@@ -376,6 +376,156 @@ public sealed class EvolutionSimulationSessionTests
         Assert.InRange(ratio, 0.85d, 1.15d);
     }
 
+    [Fact]
+    public void SelectParentIndex_WithMultipleLineageFamilies_UsesFamilyAgeBiasInsteadOfDerivedSpeciesAge()
+    {
+        var parents = CreateOrderedBrainParentPool(6);
+        var options = CreateOptions(
+            seed: 99124UL,
+            maxIterations: 1,
+            commitToSpeciation: false,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Divergence
+        };
+        var session = new EvolutionSimulationSession(options, parents, new DeterministicFakeClient());
+
+        SeedParentSpeciesMetadata(
+            session,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(parents[0])] = "species-alpha",
+                [BuildBrainParentKey(parents[1])] = "species-alpha-branch-a",
+                [BuildBrainParentKey(parents[2])] = "species-alpha-branch-b",
+                [BuildBrainParentKey(parents[3])] = "species-beta",
+                [BuildBrainParentKey(parents[4])] = "species-gamma",
+                [BuildBrainParentKey(parents[5])] = "species-delta"
+            },
+            new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = 1UL,
+                ["species-beta"] = 2UL,
+                ["species-gamma"] = 3UL,
+                ["species-delta"] = 4UL,
+                ["species-alpha-branch-a"] = 5UL,
+                ["species-alpha-branch-b"] = 6UL
+            },
+            lineageFamilyByParentKey: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(parents[0])] = "family-alpha",
+                [BuildBrainParentKey(parents[1])] = "family-alpha",
+                [BuildBrainParentKey(parents[2])] = "family-alpha",
+                [BuildBrainParentKey(parents[3])] = "family-beta",
+                [BuildBrainParentKey(parents[4])] = "family-gamma",
+                [BuildBrainParentKey(parents[5])] = "family-delta"
+            },
+            lineageFamilyBySpeciesId: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = "family-alpha",
+                ["species-alpha-branch-a"] = "family-alpha",
+                ["species-alpha-branch-b"] = "family-alpha",
+                ["species-beta"] = "family-beta",
+                ["species-gamma"] = "family-gamma",
+                ["species-delta"] = "family-delta"
+            },
+            lineageFamilyOrdinals: new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["family-alpha"] = 1UL,
+                ["family-beta"] = 2UL,
+                ["family-gamma"] = 3UL,
+                ["family-delta"] = 4UL
+            });
+
+        var selections = SampleSelectedLineageFamilyCounts(session, sampleCount: 6_000, excludedIndex: -1);
+
+        Assert.True(selections.TryGetValue("family-alpha", out var alphaCount));
+        Assert.True(selections.TryGetValue("family-beta", out var betaCount));
+        Assert.True(selections.TryGetValue("family-gamma", out var gammaCount));
+        Assert.True(selections.TryGetValue("family-delta", out var deltaCount));
+        Assert.True(betaCount > alphaCount);
+        Assert.True(gammaCount > alphaCount);
+        Assert.True(deltaCount > alphaCount);
+    }
+
+    [Fact]
+    public void TryAddParentToPoolAtCapacity_WhenCandidateStaysWithinDominantFamily_PreservesRarerFamilies()
+    {
+        var parents = CreateOrderedBrainParentPool(6);
+        var options = CreateOptions(
+            seed: 99125UL,
+            maxIterations: 1,
+            commitToSpeciation: false,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            MaxParentPoolSize = 6
+        };
+        var session = new EvolutionSimulationSession(options, parents, new DeterministicFakeClient());
+
+        SeedParentSpeciesMetadata(
+            session,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(parents[0])] = "species-alpha",
+                [BuildBrainParentKey(parents[1])] = "species-alpha-branch-a",
+                [BuildBrainParentKey(parents[2])] = "species-alpha-branch-b",
+                [BuildBrainParentKey(parents[3])] = "species-beta",
+                [BuildBrainParentKey(parents[4])] = "species-gamma",
+                [BuildBrainParentKey(parents[5])] = "species-delta"
+            },
+            new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = 1UL,
+                ["species-beta"] = 2UL,
+                ["species-gamma"] = 3UL,
+                ["species-delta"] = 4UL,
+                ["species-alpha-branch-a"] = 5UL,
+                ["species-alpha-branch-b"] = 6UL
+            },
+            lineageFamilyByParentKey: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(parents[0])] = "family-alpha",
+                [BuildBrainParentKey(parents[1])] = "family-alpha",
+                [BuildBrainParentKey(parents[2])] = "family-alpha",
+                [BuildBrainParentKey(parents[3])] = "family-beta",
+                [BuildBrainParentKey(parents[4])] = "family-gamma",
+                [BuildBrainParentKey(parents[5])] = "family-delta"
+            },
+            lineageFamilyBySpeciesId: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = "family-alpha",
+                ["species-alpha-branch-a"] = "family-alpha",
+                ["species-alpha-branch-b"] = "family-alpha",
+                ["species-beta"] = "family-beta",
+                ["species-gamma"] = "family-gamma",
+                ["species-delta"] = "family-delta"
+            },
+            lineageFamilyOrdinals: new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["family-alpha"] = 1UL,
+                ["family-beta"] = 2UL,
+                ["family-gamma"] = 3UL,
+                ["family-delta"] = 4UL
+            });
+        ClearProtectedParentPoolKeys(session);
+
+        var tryAddParentMethod = typeof(EvolutionSimulationSession).GetMethod(
+            "TryAddCommittedCandidateToPool",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(tryAddParentMethod);
+
+        var candidateBrainId = Guid.Parse("00000007-0007-0007-0007-000000000007");
+        var added = Assert.IsType<bool>(tryAddParentMethod!.Invoke(
+            session,
+            [new SpeciationCommitCandidate(candidateBrainId, null), "species-alpha-branch-c", "species-alpha-branch-b"]));
+        Assert.True(added);
+
+        var familyCounts = SnapshotParentPoolLineageFamilyCounts(session);
+        Assert.Equal(3, familyCounts["family-alpha"]);
+        Assert.Equal(1, familyCounts["family-beta"]);
+        Assert.Equal(1, familyCounts["family-gamma"]);
+        Assert.Equal(1, familyCounts["family-delta"]);
+    }
+
     private static IReadOnlyDictionary<string, int> SnapshotParentPoolSpeciesCounts(EvolutionSimulationSession session)
     {
         var parentPoolField = typeof(EvolutionSimulationSession).GetField(
@@ -404,6 +554,41 @@ public sealed class EvolutionSimulationSessionTests
                     ? trackedSpeciesId.Trim()
                     : "(unknown)";
             counts[speciesId] = counts.TryGetValue(speciesId, out var count)
+                ? count + 1
+                : 1;
+        }
+
+        return counts;
+    }
+
+    private static IReadOnlyDictionary<string, int> SnapshotParentPoolLineageFamilyCounts(EvolutionSimulationSession session)
+    {
+        var parentPoolField = typeof(EvolutionSimulationSession).GetField(
+            "_parentPool",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var parentLineageFamilyField = typeof(EvolutionSimulationSession).GetField(
+            "_parentLineageFamilyByParentKey",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(parentPoolField);
+        Assert.NotNull(parentLineageFamilyField);
+
+        var parentPool = Assert.IsType<List<EvolutionParentRef>>(parentPoolField.GetValue(session));
+        var parentLineageFamilyByKey =
+            Assert.IsType<Dictionary<string, string>>(parentLineageFamilyField.GetValue(session));
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parent in parentPool)
+        {
+            if (!TryBuildParentKey(parent, out var key))
+            {
+                continue;
+            }
+
+            var lineageFamilyId = parentLineageFamilyByKey.TryGetValue(key, out var trackedLineageFamilyId)
+                                  && !string.IsNullOrWhiteSpace(trackedLineageFamilyId)
+                ? trackedLineageFamilyId.Trim()
+                : "(unknown)";
+            counts[lineageFamilyId] = counts.TryGetValue(lineageFamilyId, out var count)
                 ? count + 1
                 : 1;
         }
@@ -451,33 +636,125 @@ public sealed class EvolutionSimulationSessionTests
         return counts;
     }
 
+    private static IReadOnlyDictionary<string, int> SampleSelectedLineageFamilyCounts(
+        EvolutionSimulationSession session,
+        int sampleCount,
+        int excludedIndex)
+    {
+        var selectParentIndexMethod = typeof(EvolutionSimulationSession).GetMethod(
+            "SelectParentIndex",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var parentPoolField = typeof(EvolutionSimulationSession).GetField(
+            "_parentPool",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var parentLineageFamilyField = typeof(EvolutionSimulationSession).GetField(
+            "_parentLineageFamilyByParentKey",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(selectParentIndexMethod);
+        Assert.NotNull(parentPoolField);
+        Assert.NotNull(parentLineageFamilyField);
+
+        var parentPool = Assert.IsType<List<EvolutionParentRef>>(parentPoolField.GetValue(session));
+        var parentLineageFamilyByKey =
+            Assert.IsType<Dictionary<string, string>>(parentLineageFamilyField.GetValue(session));
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < sampleCount; i++)
+        {
+            var selectedIndex = Assert.IsType<int>(selectParentIndexMethod.Invoke(session, [excludedIndex]));
+            Assert.InRange(selectedIndex, 0, parentPool.Count - 1);
+            Assert.True(TryBuildParentKey(parentPool[selectedIndex], out var parentKey));
+            var lineageFamilyId = parentLineageFamilyByKey.TryGetValue(parentKey, out var trackedLineageFamilyId)
+                                  && !string.IsNullOrWhiteSpace(trackedLineageFamilyId)
+                ? trackedLineageFamilyId.Trim()
+                : "(unknown)";
+            counts[lineageFamilyId] = counts.TryGetValue(lineageFamilyId, out var count)
+                ? count + 1
+                : 1;
+        }
+
+        return counts;
+    }
+
+    private static void ClearProtectedParentPoolKeys(EvolutionSimulationSession session)
+    {
+        var protectedParentPoolKeysField = typeof(EvolutionSimulationSession).GetField(
+            "_protectedParentPoolKeys",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        Assert.NotNull(protectedParentPoolKeysField);
+        var protectedParentPoolKeys =
+            Assert.IsType<HashSet<string>>(protectedParentPoolKeysField.GetValue(session));
+        protectedParentPoolKeys.Clear();
+    }
+
     private static void SeedParentSpeciesMetadata(
         EvolutionSimulationSession session,
         IReadOnlyDictionary<string, string> speciesByParentKey,
-        IReadOnlyDictionary<string, ulong> speciesOrdinals)
+        IReadOnlyDictionary<string, ulong> speciesOrdinals,
+        IReadOnlyDictionary<string, string>? lineageFamilyByParentKey = null,
+        IReadOnlyDictionary<string, string>? lineageFamilyBySpeciesId = null,
+        IReadOnlyDictionary<string, ulong>? lineageFamilyOrdinals = null)
     {
         var parentSpeciesField = typeof(EvolutionSimulationSession).GetField(
             "_parentSpeciesByParentKey",
             BindingFlags.Instance | BindingFlags.NonPublic);
+        var parentLineageFamilyField = typeof(EvolutionSimulationSession).GetField(
+            "_parentLineageFamilyByParentKey",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var lineageFamilyBySpeciesField = typeof(EvolutionSimulationSession).GetField(
+            "_lineageFamilyBySpeciesId",
+            BindingFlags.Instance | BindingFlags.NonPublic);
         var speciesFirstSeenField = typeof(EvolutionSimulationSession).GetField(
             "_speciesFirstSeenOrdinals",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var lineageFamilyFirstSeenField = typeof(EvolutionSimulationSession).GetField(
+            "_lineageFamilyFirstSeenOrdinals",
             BindingFlags.Instance | BindingFlags.NonPublic);
         var nextSpeciesOrdinalField = typeof(EvolutionSimulationSession).GetField(
             "_nextSpeciesOrdinal",
             BindingFlags.Instance | BindingFlags.NonPublic);
+        var nextLineageFamilyOrdinalField = typeof(EvolutionSimulationSession).GetField(
+            "_nextLineageFamilyOrdinal",
+            BindingFlags.Instance | BindingFlags.NonPublic);
 
         Assert.NotNull(parentSpeciesField);
+        Assert.NotNull(parentLineageFamilyField);
+        Assert.NotNull(lineageFamilyBySpeciesField);
         Assert.NotNull(speciesFirstSeenField);
+        Assert.NotNull(lineageFamilyFirstSeenField);
         Assert.NotNull(nextSpeciesOrdinalField);
+        Assert.NotNull(nextLineageFamilyOrdinalField);
 
         var parentSpeciesByKey =
             Assert.IsType<Dictionary<string, string>>(parentSpeciesField.GetValue(session));
+        var parentLineageFamilyByKey =
+            Assert.IsType<Dictionary<string, string>>(parentLineageFamilyField.GetValue(session));
+        var lineageFamilyBySpecies =
+            Assert.IsType<Dictionary<string, string>>(lineageFamilyBySpeciesField.GetValue(session));
         var speciesFirstSeenOrdinals =
             Assert.IsType<Dictionary<string, ulong>>(speciesFirstSeenField.GetValue(session));
+        var lineageFamilyFirstSeenOrdinals =
+            Assert.IsType<Dictionary<string, ulong>>(lineageFamilyFirstSeenField.GetValue(session));
         parentSpeciesByKey.Clear();
         foreach (var entry in speciesByParentKey)
         {
             parentSpeciesByKey[entry.Key] = entry.Value;
+        }
+
+        parentLineageFamilyByKey.Clear();
+        foreach (var entry in lineageFamilyByParentKey ?? speciesByParentKey)
+        {
+            parentLineageFamilyByKey[entry.Key] = entry.Value;
+        }
+
+        lineageFamilyBySpecies.Clear();
+        foreach (var entry in lineageFamilyBySpeciesId ?? speciesOrdinals.Keys.ToDictionary(
+                     static key => key,
+                     static key => key,
+                     StringComparer.OrdinalIgnoreCase))
+        {
+            lineageFamilyBySpecies[entry.Key] = entry.Value;
         }
 
         speciesFirstSeenOrdinals.Clear();
@@ -486,7 +763,16 @@ public sealed class EvolutionSimulationSessionTests
             speciesFirstSeenOrdinals[entry.Key] = entry.Value;
         }
 
+        lineageFamilyFirstSeenOrdinals.Clear();
+        foreach (var entry in lineageFamilyOrdinals ?? speciesOrdinals)
+        {
+            lineageFamilyFirstSeenOrdinals[entry.Key] = entry.Value;
+        }
+
         nextSpeciesOrdinalField.SetValue(session, speciesOrdinals.Values.DefaultIfEmpty(0UL).Max() + 1UL);
+        nextLineageFamilyOrdinalField.SetValue(
+            session,
+            (lineageFamilyOrdinals ?? speciesOrdinals).Values.DefaultIfEmpty(0UL).Max() + 1UL);
     }
 
     private static string BuildBrainParentKey(EvolutionParentRef parentRef)
