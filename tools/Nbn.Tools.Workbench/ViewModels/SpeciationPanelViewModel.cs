@@ -38,10 +38,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const int PopulationChartTopSpeciesLimit = 12;
     private const int FlowChartTopSpeciesLimit = 8;
     private const int SplitProximityTopSpeciesLimit = 8;
-    private const uint DefaultHistoryLimit = 2048u;
+    private const uint DefaultHistoryLimit = 100u;
+    private const uint DefaultChartHistoryLimit = 2048u;
+    private const uint DefaultCladogramHistoryLimit = 8192u;
+    private const uint DefaultVisibleChartWindow = 0u;
     private static readonly TimeSpan MembershipRefreshCadence = TimeSpan.FromSeconds(6);
-    private const string HistorySampleScopeSuffix = " (loaded-row sample; increase history window for full epoch coverage).";
-    private const string HistorySampleMetricSuffix = " Loaded-row sample only; increase history window for full epoch coverage.";
     private static readonly IReadOnlyList<string> SimRunPressureModeOptions = ["divergence", "neutral", "stability"];
     private static readonly IReadOnlyList<string> SimParentSelectionBiasModeOptions = ["divergence", "neutral", "stability"];
     private static readonly HashSet<string> SpeciationAutoRefreshTriggerProperties =
@@ -122,6 +123,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _deleteEpochText = string.Empty;
     private string _epochFilterText = string.Empty;
     private string _historyLimitText = DefaultHistoryLimit.ToString(CultureInfo.InvariantCulture);
+    private string _chartWindowText = DefaultVisibleChartWindow.ToString(CultureInfo.InvariantCulture);
     private string _simParentAOverrideFilePath = string.Empty;
     private string _simParentBOverrideFilePath = string.Empty;
     private SpeciationSimulatorBrainOption? _simSelectedParentABrain;
@@ -493,6 +495,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _historyLimitText;
         set => SetProperty(ref _historyLimitText, value);
+    }
+
+    public string ChartWindowText
+    {
+        get => _chartWindowText;
+        set => SetProperty(ref _chartWindowText, value);
     }
 
     public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
@@ -1414,22 +1422,26 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task RefreshHistoryAsync()
     {
-        var historyWindow = Math.Max(1u, ParseUInt(HistoryLimitText, DefaultHistoryLimit));
-        HistoryLimitText = historyWindow.ToString(CultureInfo.InvariantCulture);
-        if (_lastPersistedHistoryLimit != historyWindow)
+        var historyLimit = Math.Max(1u, ParseUInt(HistoryLimitText, DefaultHistoryLimit));
+        HistoryLimitText = historyLimit.ToString(CultureInfo.InvariantCulture);
+        if (_lastPersistedHistoryLimit != historyLimit)
         {
             await _client.SetSettingAsync(
                     SpeciationSettingsKeys.HistoryLimitKey,
-                    historyWindow.ToString(CultureInfo.InvariantCulture))
+                    historyLimit.ToString(CultureInfo.InvariantCulture))
                 .ConfigureAwait(false);
-            _lastPersistedHistoryLimit = historyWindow;
+            _lastPersistedHistoryLimit = historyLimit;
         }
+        var chartWindow = ParseUInt(ChartWindowText, DefaultVisibleChartWindow);
+        ChartWindowText = chartWindow.ToString(CultureInfo.InvariantCulture);
+        var chartHistoryLimit = chartWindow == 0u ? DefaultChartHistoryLimit : chartWindow;
+        var historyPageSize = Math.Max(historyLimit, Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit));
         var epochFilter = ResolveEpochFilter();
 
-        var chartResponse = await LoadHistoryWindowAsync(
+        var chartResponse = await LoadCompleteSpeciationHistoryAsync(
                 epochFilter,
                 brainId: null,
-                historyWindow)
+                historyPageSize)
             .ConfigureAwait(false);
         if (chartResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
         {
@@ -1439,23 +1451,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        var chartHistory = chartResponse.History;
+        var chartHistory = TrimHistoryToChartWindow(chartResponse.History, chartWindow);
         var populationFrame = BuildEpochPopulationFrame(chartHistory);
         var epochSummaries = BuildEpochSummaries(chartHistory);
         var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder);
         var flowSnapshot = BuildFlowChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder);
-        var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(chartResponse.History, CurrentEpochId);
+        var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(chartHistory, CurrentEpochId);
         var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
-            chartResponse.History,
+            chartHistory,
             CurrentEpochId,
             ParseDouble(LineageSplitThreshold, 0.88d),
             ParseDouble(LineageSplitGuardMargin, 0.02d));
         var cladogramSourceHistory = chartResponse.History;
         var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory);
-        var chartHistoryTruncated = chartResponse.TotalRecords > (uint)chartResponse.History.Count;
-        var historyScopeSuffix = chartHistoryTruncated
-            ? HistorySampleScopeSuffix
-            : string.Empty;
 
         _dispatcher.Post(() =>
         {
@@ -1467,71 +1475,81 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
             ApplyPopulationChartSnapshot(populationSnapshot);
             ApplyFlowChartSnapshot(flowSnapshot);
-            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label + historyScopeSuffix;
-            CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel + historyScopeSuffix;
+            CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label;
+            CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel;
             ApplySplitProximityChartSnapshot(splitProximitySnapshot);
             ApplyCladogramSnapshot(cladogramSnapshot);
-            if (chartHistoryTruncated)
-            {
-                PopulationChartRangeLabel = AppendHistorySampleScopeLabel(PopulationChartRangeLabel);
-                PopulationChartMetricLabel = AppendHistorySampleMetricLabel(PopulationChartMetricLabel);
-                FlowChartRangeLabel = AppendHistorySampleScopeLabel(FlowChartRangeLabel);
-                SplitProximityChartRangeLabel = AppendHistorySampleScopeLabel(SplitProximityChartRangeLabel);
-                SplitProximityChartMetricLabel = AppendHistorySampleMetricLabel(SplitProximityChartMetricLabel);
-                CladogramRangeLabel = AppendHistorySampleScopeLabel(CladogramRangeLabel);
-                CladogramMetricLabel = AppendHistorySampleMetricLabel(CladogramMetricLabel);
-            }
-
-            var scopeSuffix = chartHistoryTruncated ? " (sampled window)" : string.Empty;
             HistoryStatus =
-                $"Speciation data loaded: fetched={chartResponse.History.Count} total={chartResponse.TotalRecords}{scopeSuffix}";
+                $"Speciation data loaded: fetched={chartResponse.History.Count} total={chartResponse.TotalRecords}";
             Status = HistoryStatus;
         });
     }
 
-    private async Task<SpeciationListHistoryResponse> LoadHistoryWindowAsync(
+    private async Task<SpeciationListHistoryResponse> LoadCompleteSpeciationHistoryAsync(
         long? epochId,
         Guid? brainId,
-        uint historyWindow)
+        uint pageSize)
     {
-        var normalizedWindow = Math.Max(1u, historyWindow);
-        var probe = await _client.ListSpeciationHistoryAsync(
-                epochId: epochId,
-                brainId: brainId,
-                limit: 1,
-                offset: 0)
-            .ConfigureAwait(false);
-        if (probe.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
-        {
-            return probe;
-        }
+        var normalizedPageSize = Math.Max(1u, pageSize);
+        var combined = new List<SpeciationMembershipRecord>();
+        uint offset = 0;
+        uint totalRecords = 0;
 
-        if (probe.TotalRecords == 0 || probe.History.Count == 0)
+        while (true)
         {
-            return new SpeciationListHistoryResponse
+            var response = await _client.ListSpeciationHistoryAsync(
+                    epochId: epochId,
+                    brainId: brainId,
+                    limit: normalizedPageSize,
+                    offset: offset)
+                .ConfigureAwait(false);
+            if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
             {
-                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
-                FailureDetail = string.Empty,
-                TotalRecords = probe.TotalRecords
-            };
+                return response;
+            }
+
+            totalRecords = response.TotalRecords;
+            if (response.History.Count == 0)
+            {
+                break;
+            }
+
+            combined.AddRange(response.History);
+            if ((uint)combined.Count >= totalRecords)
+            {
+                break;
+            }
+
+            var nextOffset = (uint)combined.Count;
+            if (nextOffset <= offset)
+            {
+                break;
+            }
+
+            offset = nextOffset;
         }
 
-        var windowSize = Math.Min(normalizedWindow, probe.TotalRecords);
-        var windowOffset = probe.TotalRecords > windowSize
-            ? probe.TotalRecords - windowSize
-            : 0u;
-        var response = await _client.ListSpeciationHistoryAsync(
-                epochId: epochId,
-                brainId: brainId,
-                limit: windowSize,
-                offset: windowOffset)
-            .ConfigureAwait(false);
-        if (response.FailureReason == SpeciationFailureReason.SpeciationFailureNone)
+        var combinedResponse = new SpeciationListHistoryResponse
         {
-            response.TotalRecords = probe.TotalRecords;
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            FailureDetail = string.Empty,
+            TotalRecords = totalRecords
+        };
+        combinedResponse.History.AddRange(combined);
+        return combinedResponse;
+    }
+
+    private static IReadOnlyList<SpeciationMembershipRecord> TrimHistoryToChartWindow(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        uint chartWindow)
+    {
+        if (chartWindow == 0u || history.Count == 0 || history.Count <= chartWindow)
+        {
+            return history;
         }
 
-        return response;
+        var skip = history.Count - (int)chartWindow;
+        return history.Skip(skip).ToArray();
     }
 
     private async Task StartServiceAsync()
@@ -4007,30 +4025,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return builder.ToString();
     }
 
-    private static string AppendHistorySampleScopeLabel(string label)
-    {
-        if (label.Contains("loaded-row sample", StringComparison.OrdinalIgnoreCase))
-        {
-            return label;
-        }
-
-        return string.IsNullOrWhiteSpace(label)
-            ? $"(n/a){HistorySampleScopeSuffix}"
-            : label + HistorySampleScopeSuffix;
-    }
-
-    private static string AppendHistorySampleMetricLabel(string label)
-    {
-        if (label.Contains("loaded-row sample", StringComparison.OrdinalIgnoreCase))
-        {
-            return label;
-        }
-
-        return string.IsNullOrWhiteSpace(label)
-            ? HistorySampleMetricSuffix.Trim()
-            : label + HistorySampleMetricSuffix;
-    }
-
     private static string BuildFlowAreaPath(
         IReadOnlyList<double> starts,
         IReadOnlyList<double> ends,
@@ -4266,10 +4260,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private static string BuildCompactSpeciesName(string? speciesName, string? speciesId)
     {
         var normalizedId = NormalizeSpeciesId(speciesId);
-        var derivedTrailLabel = TryBuildCompactDerivedSpeciesLabel(normalizedId);
-        if (derivedTrailLabel.Length > 0)
+        var lineageCodeLabel = TryExtractLineageCodeLabel(speciesName);
+        if (lineageCodeLabel.Length > 0)
         {
-            return derivedTrailLabel;
+            return lineageCodeLabel;
         }
 
         if (!string.IsNullOrWhiteSpace(speciesName))
@@ -4304,56 +4298,29 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             : normalizedId[..24] + "...";
     }
 
-    private static string TryBuildCompactDerivedSpeciesLabel(string normalizedSpeciesId)
+    private static string TryExtractLineageCodeLabel(string? speciesName)
     {
-        if (string.IsNullOrWhiteSpace(normalizedSpeciesId))
+        if (string.IsNullOrWhiteSpace(speciesName))
         {
             return string.Empty;
         }
 
-        var tokens = normalizedSpeciesId
-            .Split(['.', '-', '_', '/', ':'], StringSplitOptions.RemoveEmptyEntries)
-            .ToArray();
-        var hasDerivedMarker = tokens.Any(token =>
-            string.Equals(token, "branch", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(token, "bra", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(token, "fork", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(token, "derived", StringComparison.OrdinalIgnoreCase));
-        if (!hasDerivedMarker)
+        var trimmed = speciesName.Trim();
+        var openIndex = trimmed.LastIndexOf('[');
+        if (openIndex < 0 || !trimmed.EndsWith("]", StringComparison.Ordinal) || openIndex >= trimmed.Length - 2)
         {
             return string.Empty;
         }
 
-        var opaqueTrail = tokens
-            .Where(IsOpaqueSpeciesToken)
-            .Select(AbbreviateOpaqueSpeciesToken)
-            .Where(token => token.Length > 0)
-            .ToArray();
-        if (opaqueTrail.Length == 0)
+        var code = trimmed[(openIndex + 1)..^1].Trim();
+        if (code.Length == 0)
         {
             return string.Empty;
         }
 
-        var tail = opaqueTrail.Length > 3
-            ? opaqueTrail[^3..]
-            : opaqueTrail;
-        var label = string.Join(" > ", tail);
-        return opaqueTrail.Length > tail.Length
-            ? $"... > {label}"
-            : label;
-    }
-
-    private static string AbbreviateOpaqueSpeciesToken(string token)
-    {
-        var trimmed = token?.Trim() ?? string.Empty;
-        if (trimmed.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        return trimmed.Length <= 8
-            ? trimmed
-            : trimmed[..8];
+        return code.All(ch => char.IsDigit(ch) || (char.IsLetter(ch) && char.IsUpper(ch)))
+            ? $"[{code}]"
+            : string.Empty;
     }
 
     private static bool IsOpaqueSpeciesToken(string token)

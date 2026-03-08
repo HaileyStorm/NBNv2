@@ -258,9 +258,9 @@
             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
               <TextBlock Text="Epoch Trend" Classes="card-title" />
               <TextBlock Grid.Column="1" Text="Chart window" Classes="muted" VerticalAlignment="Center" />
-              <TextBox Grid.Column="2" Width="90" Watermark="rows" Text="{Binding HistoryLimitText}" />
+              <TextBox Grid.Column="2" Width="90" Watermark="0=all" Text="{Binding ChartWindowText}" />
             </Grid>
-            <TextBlock Text="Recent-row window used for charts and the cladogram; larger values cost more UI work." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Recent-row trend window only; 0 uses all loaded history. The cladogram always uses the full loaded history." Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding CurrentEpochMaxDivergenceLabel}" Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding CurrentEpochSplitProximityLabel}" Classes="muted" TextWrapping="Wrap" />
             <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">

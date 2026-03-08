@@ -138,6 +138,6 @@ public sealed class SettingsMonitorDefaultsTests
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
             SpeciationSettingsKeys.HistoryLimitKey,
             out var historyLimit));
-        Assert.Equal("2048", historyLimit);
+        Assert.Equal("100", historyLimit);
     }
 }
