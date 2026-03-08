@@ -304,7 +304,36 @@ public class SpeciationPanelViewModelTests
         vm.RefreshMembershipsCommand.Execute(null);
         await WaitForAsync(() => vm.SpeciesCounts.Count == 1);
 
-        Assert.Equal("Branch", vm.SpeciesCounts[0].SpeciesDisplayName);
+        Assert.Equal("a1b2c3d4", vm.SpeciesCounts[0].SpeciesDisplayName);
+    }
+
+    [Fact]
+    public async Task RefreshMembershipsCommand_UsesCompactDerivedSpeciesTrailWhenDisplayNameIsVerbose()
+    {
+        var brain = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            MembershipsResponse = new SpeciationListMembershipsResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Memberships =
+                {
+                    new SpeciationMembershipRecord
+                    {
+                        BrainId = brain.ToProtoUuid(),
+                        SpeciesId = "unclassified-branch-a1b2c3d4e5f6-branch-0f1e2d3c4b5a",
+                        SpeciesDisplayName = "Unclassified [A1B2C3D4E5F6 -> 0F1E2D3C4B5A]"
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(client);
+
+        vm.RefreshMembershipsCommand.Execute(null);
+        await WaitForAsync(() => vm.SpeciesCounts.Count == 1);
+
+        Assert.Equal("a1b2c3d4 > 0f1e2d3c", vm.SpeciesCounts[0].SpeciesDisplayName);
     }
 
     [Fact]
@@ -526,7 +555,7 @@ public class SpeciationPanelViewModelTests
         vm.SimRunPressureMode = "unexpected-token";
         var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
         Assert.NotNull(fallbackArgs);
-        Assert.Contains("--run-pressure-mode divergence", fallbackArgs!, StringComparison.Ordinal);
+        Assert.Contains("--run-pressure-mode neutral", fallbackArgs!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -596,6 +625,8 @@ public class SpeciationPanelViewModelTests
         Assert.Equal("11", vm.FlowChartEndEpochLabel);
         Assert.All(vm.PopulationChartSeries, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
         Assert.All(vm.FlowChartAreas, item => Assert.False(string.IsNullOrWhiteSpace(item.PathData)));
+        Assert.All(vm.PopulationChartLegend, item => Assert.True(string.IsNullOrEmpty(item.ValueLabel)));
+        Assert.All(vm.FlowChartLegend, item => Assert.True(string.IsNullOrEmpty(item.ValueLabel)));
     }
 
     [Fact]
@@ -1041,27 +1072,24 @@ public class SpeciationPanelViewModelTests
     public async Task RefreshHistoryCommand_PagesHistoryBeyondDefaultChartWindow()
     {
         const int totalHistoryCount = 8_200;
-        var page0 = Enumerable
-            .Range(0, 8_192)
+        var probeRow = new SpeciationMembershipRecord
+        {
+            EpochId = 41,
+            BrainId = Guid.NewGuid().ToProtoUuid(),
+            SpeciesId = "species.a",
+            SpeciesDisplayName = "Alpha",
+            AssignedMs = 1_000,
+            DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+        };
+        var windowPage = Enumerable
+            .Range(0, 2_048)
             .Select(index => new SpeciationMembershipRecord
             {
                 EpochId = 41,
                 BrainId = Guid.NewGuid().ToProtoUuid(),
                 SpeciesId = index % 2 == 0 ? "species.a" : "species.b",
                 SpeciesDisplayName = index % 2 == 0 ? "Alpha" : "Beta",
-                AssignedMs = (ulong)(1_000 + index),
-                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
-            })
-            .ToArray();
-        var page1 = Enumerable
-            .Range(page0.Length, totalHistoryCount - page0.Length)
-            .Select(index => new SpeciationMembershipRecord
-            {
-                EpochId = 41,
-                BrainId = Guid.NewGuid().ToProtoUuid(),
-                SpeciesId = index % 2 == 0 ? "species.a" : "species.b",
-                SpeciesDisplayName = index % 2 == 0 ? "Alpha" : "Beta",
-                AssignedMs = (ulong)(1_000 + index),
+                AssignedMs = (ulong)(7_152 + index),
                 DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
             })
             .ToArray();
@@ -1077,33 +1105,33 @@ public class SpeciationPanelViewModelTests
         {
             FailureReason = SpeciationFailureReason.SpeciationFailureNone,
             TotalRecords = (uint)totalHistoryCount,
-            History = { page0 }
+            History = { probeRow }
         };
-        client.HistoryResponsesByOffset[8192] = new SpeciationListHistoryResponse
+        client.HistoryResponsesByOffset[6152] = new SpeciationListHistoryResponse
         {
             FailureReason = SpeciationFailureReason.SpeciationFailureNone,
             TotalRecords = (uint)totalHistoryCount,
-            History = { page1 }
+            History = { windowPage }
         };
         var vm = CreateViewModel(client);
         vm.CurrentEpochId = 41;
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => client.HistoryCallCount == 2 && vm.HistoryStatus.Contains("fetched=8200", StringComparison.Ordinal));
+        await WaitForAsync(() => client.HistoryCallCount == 2 && vm.HistoryStatus.Contains("fetched=2048", StringComparison.Ordinal));
 
         Assert.Equal(2, client.HistoryCallCount);
-        Assert.Equal([8192u, 8192u], client.RequestedHistoryLimits);
-        Assert.Equal([0u, 8192u], client.RequestedHistoryOffsets);
-        Assert.Equal($"Speciation data loaded: fetched={totalHistoryCount} total={totalHistoryCount}", vm.HistoryStatus);
-        Assert.DoesNotContain("loaded-row sample", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.PopulationChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.CladogramRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("loaded-row sample", vm.CladogramMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal([1u, 2048u], client.RequestedHistoryLimits);
+        Assert.Equal([0u, 6152u], client.RequestedHistoryOffsets);
+        Assert.Equal("Speciation data loaded: fetched=2048 total=8200 (sampled window)", vm.HistoryStatus);
+        Assert.Contains("loaded-row sample", vm.CurrentEpochMaxDivergenceLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.CurrentEpochSplitProximityLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.PopulationChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.PopulationChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.SplitProximityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.SplitProximityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.CladogramRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("loaded-row sample", vm.CladogramMetricLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1135,10 +1163,10 @@ public class SpeciationPanelViewModelTests
         vm.HistoryLimitText = "900";
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => vm.EpochSummaries.Count == 1 && vm.PopulationChartSeries.Count == 2);
+        await WaitForAsync(() => client.HistoryCallCount == 2 && vm.EpochSummaries.Count == 1 && vm.PopulationChartSeries.Count == 2);
 
-        Assert.True(client.HistoryCallCount >= 1);
-        Assert.Contains(client.RequestedHistoryLimits, limit => limit > 900);
+        Assert.Equal([1u, 900u], client.RequestedHistoryLimits);
+        Assert.Equal([0u, 0u], client.RequestedHistoryOffsets);
         Assert.Single(vm.EpochSummaries);
     }
 
@@ -1149,17 +1177,29 @@ public class SpeciationPanelViewModelTests
         {
             HistoryResponse = new SpeciationListHistoryResponse
             {
-                FailureReason = SpeciationFailureReason.SpeciationFailureNone
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = 1,
+                History =
+                {
+                    new SpeciationMembershipRecord
+                    {
+                        EpochId = 7,
+                        BrainId = Guid.NewGuid().ToProtoUuid(),
+                        SpeciesId = "species.a",
+                        SpeciesDisplayName = "Alpha",
+                        AssignedMs = 1_000
+                    }
+                }
             }
         };
         var vm = CreateViewModel(client);
         vm.HistoryLimitText = "128";
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => client.HistoryCallCount == 1);
+        await WaitForAsync(() => client.HistoryCallCount == 2);
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => client.HistoryCallCount == 2);
+        await WaitForAsync(() => client.HistoryCallCount == 4);
 
         Assert.Equal(
             1,

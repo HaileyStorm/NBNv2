@@ -62,7 +62,7 @@ public static class SettingsMonitorDefaults
             { SpeciationSettingsKeys.LineageHindsightSimilarityMarginKey, "0.015" },
             { SpeciationSettingsKeys.CreateDerivedSpeciesOnDivergenceKey, "true" },
             { SpeciationSettingsKeys.DerivedSpeciesPrefixKey, "branch" },
-            { SpeciationSettingsKeys.HistoryLimitKey, "100" }
+            { SpeciationSettingsKeys.HistoryLimitKey, "2048" }
         };
 
         foreach (var pair in ReproductionSettings.DefaultSettingValues)

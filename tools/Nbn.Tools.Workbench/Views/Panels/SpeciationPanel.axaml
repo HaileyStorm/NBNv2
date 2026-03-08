@@ -257,10 +257,10 @@
           <StackPanel Spacing="8">
             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
               <TextBlock Text="Epoch Trend" Classes="card-title" />
-              <TextBlock Grid.Column="1" Text="History window" Classes="muted" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="Chart window" Classes="muted" VerticalAlignment="Center" />
               <TextBox Grid.Column="2" Width="90" Watermark="rows" Text="{Binding HistoryLimitText}" />
             </Grid>
-            <TextBlock Text="Epoch-aware summary of recent membership history." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Recent-row window used for charts and the cladogram; larger values cost more UI work." Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding CurrentEpochMaxDivergenceLabel}" Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="{Binding CurrentEpochSplitProximityLabel}" Classes="muted" TextWrapping="Wrap" />
             <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">
@@ -342,7 +342,6 @@
                   <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
                     <Border Width="12" Height="2" VerticalAlignment="Center" Background="{Binding Color}" />
                     <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-                    <TextBlock Text="{Binding ValueLabel}" Classes="muted" FontSize="10" />
                   </StackPanel>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
@@ -403,7 +402,6 @@
                   <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
                     <Border Width="12" Height="10" VerticalAlignment="Center" Background="{Binding Color}" />
                     <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-                    <TextBlock Text="{Binding ValueLabel}" Classes="muted" FontSize="10" />
                   </StackPanel>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
@@ -462,7 +460,6 @@
                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
                   <Border Width="12" Height="2" VerticalAlignment="Center" Background="{Binding Color}" />
                   <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-                  <TextBlock Text="{Binding ValueLabel}" Classes="muted" FontSize="10" />
                 </StackPanel>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
