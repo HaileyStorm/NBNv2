@@ -2655,66 +2655,38 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var speciesCount = flowSpecies.Count;
         var epochCount = epochRows.Count;
+        var visibleParentBySpeciesIndex = BuildFlowVisibleParentIndices(flowSpecies, speciesOrder);
+        var childIndicesByParent = BuildFlowChildIndices(flowSpecies, visibleParentBySpeciesIndex);
+        var rootIndices = Enumerable.Range(0, speciesCount)
+            .Where(index => visibleParentBySpeciesIndex[index] < 0)
+            .ToArray();
         var startsByEpoch = new List<double[]>(epochCount);
         var endsByEpoch = new List<double[]>(epochCount);
-        var firstVisibleIndexBySpecies = Enumerable.Repeat(-1, speciesCount).ToArray();
         for (var epochIndex = 0; epochIndex < epochCount; epochIndex++)
         {
             var row = epochRows[epochIndex];
-            var starts = new double[speciesCount];
-            var ends = new double[speciesCount];
-            var cumulative = 0d;
-            var total = Math.Max(0, row.TotalCount);
-            for (var i = 0; i < speciesCount; i++)
-            {
-                starts[i] = cumulative;
-                var count = 0;
-                if (includeOtherSpecies && i == speciesCount - 1)
-                {
-                    var selectedTotal = selectedSpecies.Sum(species =>
-                        row.Counts.TryGetValue(species.SpeciesId, out var value) ? value : 0);
-                    count = Math.Max(0, total - selectedTotal);
-                }
-                else
-                {
-                    count = row.Counts.TryGetValue(flowSpecies[i].SpeciesId, out var value) ? value : 0;
-                }
-
-                var ratio = total > 0 ? count / (double)total : 0d;
-                if (firstVisibleIndexBySpecies[i] < 0 && ratio > 1e-6d)
-                {
-                    firstVisibleIndexBySpecies[i] = epochIndex;
-                }
-
-                cumulative = Math.Min(1d, cumulative + ratio);
-                ends[i] = cumulative;
-            }
+            var starts = Enumerable.Repeat(double.NaN, speciesCount).ToArray();
+            var ends = Enumerable.Repeat(double.NaN, speciesCount).ToArray();
+            ResolveFlowLineageRowSpans(
+                row,
+                flowSpecies,
+                includeOtherSpecies,
+                rootIndices,
+                childIndicesByParent,
+                starts,
+                ends);
 
             startsByEpoch.Add(starts);
             endsByEpoch.Add(ends);
         }
 
-        var lineageAnchorBySpeciesIndex = BuildFlowLineageAnchorSpans(flowSpecies, startsByEpoch, endsByEpoch, firstVisibleIndexBySpecies);
         var areas = new List<SpeciationFlowChartAreaItem>(speciesCount);
         var legend = new List<SpeciationChartLegendItem>(speciesCount);
         for (var speciesIndex = 0; speciesIndex < speciesCount; speciesIndex++)
         {
-            var firstVisibleIndex = firstVisibleIndexBySpecies[speciesIndex];
-            if (firstVisibleIndex < 0)
-            {
-                continue;
-            }
-
-            var starts = Enumerable.Repeat(double.NaN, epochCount).ToArray();
-            var ends = Enumerable.Repeat(double.NaN, epochCount).ToArray();
-            if (firstVisibleIndex > 0
-                && lineageAnchorBySpeciesIndex.TryGetValue(speciesIndex, out var anchorSpan))
-            {
-                starts[firstVisibleIndex - 1] = anchorSpan.Start;
-                ends[firstVisibleIndex - 1] = anchorSpan.End;
-            }
-
-            for (var epochIndex = firstVisibleIndex; epochIndex < epochCount; epochIndex++)
+            var starts = new double[epochCount];
+            var ends = new double[epochCount];
+            for (var epochIndex = 0; epochIndex < epochCount; epochIndex++)
             {
                 starts[epochIndex] = startsByEpoch[epochIndex][speciesIndex];
                 ends[epochIndex] = endsByEpoch[epochIndex][speciesIndex];
@@ -2737,7 +2709,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 ? "#6B7280"
                 : ResolveSpeciesColor(species.SpeciesId, speciesColors);
             var fill = WithAlpha(color, 0x8C);
-            var lastShare = Math.Max(0d, endsByEpoch[^1][speciesIndex] - startsByEpoch[^1][speciesIndex]);
+            var latestStart = startsByEpoch[^1][speciesIndex];
+            var latestEnd = endsByEpoch[^1][speciesIndex];
+            var lastShare = double.IsFinite(latestStart) && double.IsFinite(latestEnd)
+                ? Math.Max(0d, latestEnd - latestStart)
+                : 0d;
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
             areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel));
             legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, string.Empty));
@@ -4123,19 +4099,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return builder.ToString();
     }
 
-    private static Dictionary<int, FlowAnchorSpan> BuildFlowLineageAnchorSpans(
+    private static int[] BuildFlowVisibleParentIndices(
         IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
-        IReadOnlyList<double[]> startsByEpoch,
-        IReadOnlyList<double[]> endsByEpoch,
-        IReadOnlyList<int> firstVisibleIndexBySpecies)
+        IReadOnlyList<SpeciesPopulationMeta> allSpecies)
     {
-        var anchors = new Dictionary<int, FlowAnchorSpan>();
-        if (flowSpecies.Count == 0
-            || startsByEpoch.Count == 0
-            || startsByEpoch.Count != endsByEpoch.Count
-            || firstVisibleIndexBySpecies.Count != flowSpecies.Count)
+        var visibleParents = Enumerable.Repeat(-1, flowSpecies.Count).ToArray();
+        if (flowSpecies.Count == 0)
         {
-            return anchors;
+            return visibleParents;
         }
 
         var indexBySpeciesId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -4148,92 +4119,198 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             }
         }
 
-        for (var epochIndex = 1; epochIndex < startsByEpoch.Count; epochIndex++)
+        var metaBySpeciesId = new Dictionary<string, SpeciesPopulationMeta>(StringComparer.OrdinalIgnoreCase);
+        foreach (var species in allSpecies)
         {
-            var newChildrenByParentIndex = new Dictionary<int, List<int>>();
-            for (var speciesIndex = 0; speciesIndex < flowSpecies.Count; speciesIndex++)
+            var speciesId = NormalizeSpeciesId(species.SpeciesId);
+            if (!metaBySpeciesId.ContainsKey(speciesId))
             {
-                if (firstVisibleIndexBySpecies[speciesIndex] != epochIndex)
-                {
-                    continue;
-                }
-
-                var parentSpeciesId = flowSpecies[speciesIndex].ParentSpeciesId;
-                if (string.IsNullOrWhiteSpace(parentSpeciesId)
-                    || !indexBySpeciesId.TryGetValue(parentSpeciesId, out var parentIndex)
-                    || parentIndex == speciesIndex)
-                {
-                    continue;
-                }
-
-                var parentStart = startsByEpoch[epochIndex - 1][parentIndex];
-                var parentEnd = endsByEpoch[epochIndex - 1][parentIndex];
-                if (!double.IsFinite(parentStart)
-                    || !double.IsFinite(parentEnd)
-                    || (parentEnd - parentStart) <= 1e-6d)
-                {
-                    continue;
-                }
-
-                if (!newChildrenByParentIndex.TryGetValue(parentIndex, out var siblings))
-                {
-                    siblings = new List<int>();
-                    newChildrenByParentIndex[parentIndex] = siblings;
-                }
-
-                siblings.Add(speciesIndex);
-            }
-
-            foreach (var (parentIndex, childIndices) in newChildrenByParentIndex)
-            {
-                if (childIndices.Count == 0)
-                {
-                    continue;
-                }
-
-                childIndices.Sort((left, right) =>
-                {
-                    var leftCenter = (startsByEpoch[epochIndex][left] + endsByEpoch[epochIndex][left]) * 0.5d;
-                    var rightCenter = (startsByEpoch[epochIndex][right] + endsByEpoch[epochIndex][right]) * 0.5d;
-                    var centerComparison = leftCenter.CompareTo(rightCenter);
-                    if (centerComparison != 0)
-                    {
-                        return centerComparison;
-                    }
-
-                    return string.Compare(
-                        flowSpecies[left].SpeciesId,
-                        flowSpecies[right].SpeciesId,
-                        StringComparison.OrdinalIgnoreCase);
-                });
-
-                var parentStart = startsByEpoch[epochIndex - 1][parentIndex];
-                var parentEnd = endsByEpoch[epochIndex - 1][parentIndex];
-                var parentWidth = Math.Max(0d, parentEnd - parentStart);
-                if (parentWidth <= 1e-6d)
-                {
-                    continue;
-                }
-
-                var totalChildWidth = childIndices.Sum(index => Math.Max(0d, endsByEpoch[epochIndex][index] - startsByEpoch[epochIndex][index]));
-                var cursor = parentStart;
-                for (var childOrdinal = 0; childOrdinal < childIndices.Count; childOrdinal++)
-                {
-                    var childIndex = childIndices[childOrdinal];
-                    var anchorEnd = parentEnd;
-                    if (childOrdinal < childIndices.Count - 1 && totalChildWidth > 1e-6d)
-                    {
-                        var childWidth = Math.Max(0d, endsByEpoch[epochIndex][childIndex] - startsByEpoch[epochIndex][childIndex]);
-                        anchorEnd = Math.Min(parentEnd, cursor + (parentWidth * (childWidth / totalChildWidth)));
-                    }
-
-                    anchors[childIndex] = new FlowAnchorSpan(cursor, anchorEnd);
-                    cursor = anchorEnd;
-                }
+                metaBySpeciesId[speciesId] = species;
             }
         }
 
-        return anchors;
+        for (var speciesIndex = 0; speciesIndex < flowSpecies.Count; speciesIndex++)
+        {
+            var species = flowSpecies[speciesIndex];
+            var parentSpeciesId = species.ParentSpeciesId;
+            if (string.IsNullOrWhiteSpace(parentSpeciesId))
+            {
+                continue;
+            }
+
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var currentParentId = parentSpeciesId;
+            while (!string.IsNullOrWhiteSpace(currentParentId))
+            {
+                var normalizedParentId = NormalizeSpeciesId(currentParentId);
+                if (!visited.Add(normalizedParentId))
+                {
+                    break;
+                }
+
+                if (indexBySpeciesId.TryGetValue(normalizedParentId, out var visibleParentIndex)
+                    && visibleParentIndex != speciesIndex)
+                {
+                    visibleParents[speciesIndex] = visibleParentIndex;
+                    break;
+                }
+
+                if (!metaBySpeciesId.TryGetValue(normalizedParentId, out var parentMeta))
+                {
+                    break;
+                }
+
+                currentParentId = parentMeta.ParentSpeciesId;
+            }
+        }
+
+        return visibleParents;
+    }
+
+    private static List<int>[] BuildFlowChildIndices(
+        IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
+        IReadOnlyList<int> visibleParentBySpeciesIndex)
+    {
+        var childrenByParent = Enumerable.Range(0, flowSpecies.Count)
+            .Select(_ => new List<int>())
+            .ToArray();
+        for (var speciesIndex = 0; speciesIndex < flowSpecies.Count; speciesIndex++)
+        {
+            var parentIndex = visibleParentBySpeciesIndex[speciesIndex];
+            if (parentIndex >= 0)
+            {
+                childrenByParent[parentIndex].Add(speciesIndex);
+            }
+        }
+
+        foreach (var children in childrenByParent)
+        {
+            children.Sort((left, right) =>
+            {
+                var firstSeenComparison = flowSpecies[left].FirstAssignedMs.CompareTo(flowSpecies[right].FirstAssignedMs);
+                if (firstSeenComparison != 0)
+                {
+                    return firstSeenComparison;
+                }
+
+                return string.Compare(
+                    flowSpecies[left].SpeciesId,
+                    flowSpecies[right].SpeciesId,
+                    StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        return childrenByParent;
+    }
+
+    private static void ResolveFlowLineageRowSpans(
+        EpochPopulationRow row,
+        IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
+        bool includeOtherSpecies,
+        IReadOnlyList<int> rootIndices,
+        IReadOnlyList<List<int>> childIndicesByParent,
+        double[] starts,
+        double[] ends)
+    {
+        var speciesCount = flowSpecies.Count;
+        var countsBySpecies = new double[speciesCount];
+        var selectedTotal = 0;
+        for (var speciesIndex = 0; speciesIndex < speciesCount; speciesIndex++)
+        {
+            int count;
+            if (includeOtherSpecies && speciesIndex == speciesCount - 1)
+            {
+                count = Math.Max(0, row.TotalCount - selectedTotal);
+            }
+            else
+            {
+                count = row.Counts.TryGetValue(flowSpecies[speciesIndex].SpeciesId, out var value)
+                    ? Math.Max(0, value)
+                    : 0;
+                selectedTotal += count;
+            }
+
+            countsBySpecies[speciesIndex] = count;
+        }
+
+        var subtreeTotals = new double[speciesCount];
+        double ComputeSubtreeTotal(int speciesIndex)
+        {
+            if (subtreeTotals[speciesIndex] > 0d)
+            {
+                return subtreeTotals[speciesIndex];
+            }
+
+            var total = countsBySpecies[speciesIndex];
+            foreach (var childIndex in childIndicesByParent[speciesIndex])
+            {
+                total += ComputeSubtreeTotal(childIndex);
+            }
+
+            subtreeTotals[speciesIndex] = total;
+            return total;
+        }
+
+        var visibleTotal = 0d;
+        foreach (var rootIndex in rootIndices)
+        {
+            visibleTotal += ComputeSubtreeTotal(rootIndex);
+        }
+
+        if (visibleTotal <= 1e-6d)
+        {
+            return;
+        }
+
+        void AllocateSpecies(int speciesIndex, double start, double end)
+        {
+            var nodeTotal = subtreeTotals[speciesIndex];
+            if (nodeTotal <= 1e-6d || end <= start)
+            {
+                return;
+            }
+
+            var ownCount = countsBySpecies[speciesIndex];
+            var spanWidth = end - start;
+            var cursor = start;
+            if (ownCount > 1e-6d)
+            {
+                var ownWidth = childIndicesByParent[speciesIndex].Count == 0
+                    ? spanWidth
+                    : spanWidth * (ownCount / nodeTotal);
+                var ownEnd = Math.Min(end, start + ownWidth);
+                starts[speciesIndex] = cursor;
+                ends[speciesIndex] = ownEnd;
+                cursor = ownEnd;
+            }
+
+            var activeChildren = childIndicesByParent[speciesIndex]
+                .Where(childIndex => subtreeTotals[childIndex] > 1e-6d)
+                .ToList();
+            for (var childOrdinal = 0; childOrdinal < activeChildren.Count; childOrdinal++)
+            {
+                var childIndex = activeChildren[childOrdinal];
+                var childEnd = childOrdinal == activeChildren.Count - 1
+                    ? end
+                    : Math.Min(end, cursor + (spanWidth * (subtreeTotals[childIndex] / nodeTotal)));
+                AllocateSpecies(childIndex, cursor, childEnd);
+                cursor = childEnd;
+            }
+        }
+
+        var rootCursor = 0d;
+        var activeRoots = rootIndices
+            .Where(rootIndex => subtreeTotals[rootIndex] > 1e-6d)
+            .ToList();
+        for (var rootOrdinal = 0; rootOrdinal < activeRoots.Count; rootOrdinal++)
+        {
+            var rootIndex = activeRoots[rootOrdinal];
+            var rootEnd = rootOrdinal == activeRoots.Count - 1
+                ? 1d
+                : Math.Min(1d, rootCursor + (subtreeTotals[rootIndex] / visibleTotal));
+            AllocateSpecies(rootIndex, rootCursor, rootEnd);
+            rootCursor = rootEnd;
+        }
     }
 
     private static string ResolveSpeciesColor(string speciesId, IReadOnlyDictionary<string, string> speciesColors)
@@ -5010,10 +5087,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly record struct CladogramSpeciesMeta(
         string SpeciesId,
         string DisplayName);
-
-    private readonly record struct FlowAnchorSpan(
-        double Start,
-        double End);
 
     private readonly record struct EvolutionSimStatusSnapshot(
         string SessionId,

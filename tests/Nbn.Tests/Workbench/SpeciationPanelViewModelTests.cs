@@ -734,14 +734,14 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_FlowChart_DerivedSpecies_AnchorsToSourceParentSpan()
+    public async Task RefreshHistoryCommand_FlowChart_DerivedSpecies_StaysWithinSourceLineageBand()
     {
-        var history = CreateMemberships(epochId: 40, speciesId: "species.source", speciesDisplayName: "Source", count: 2, assignedMsStart: 1_000)
-            .Concat(CreateMemberships(epochId: 40, speciesId: "species.beta", speciesDisplayName: "Beta", count: 4, assignedMsStart: 2_000))
-            .Concat(CreateMemberships(epochId: 40, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 4, assignedMsStart: 3_000))
-            .Concat(CreateMemberships(epochId: 41, speciesId: "species.source", speciesDisplayName: "Source", count: 6, assignedMsStart: 4_000))
-            .Concat(CreateMemberships(epochId: 41, speciesId: "species.beta", speciesDisplayName: "Beta", count: 2, assignedMsStart: 5_000))
-            .Concat(CreateMemberships(epochId: 41, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 1, assignedMsStart: 6_000))
+        var history = CreateMemberships(epochId: 40, speciesId: "species.beta", speciesDisplayName: "Beta", count: 5, assignedMsStart: 1_000)
+            .Concat(CreateMemberships(epochId: 40, speciesId: "species.source", speciesDisplayName: "Source", count: 4, assignedMsStart: 2_000))
+            .Concat(CreateMemberships(epochId: 40, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 1, assignedMsStart: 3_000))
+            .Concat(CreateMemberships(epochId: 41, speciesId: "species.beta", speciesDisplayName: "Beta", count: 4, assignedMsStart: 4_000))
+            .Concat(CreateMemberships(epochId: 41, speciesId: "species.source", speciesDisplayName: "Source", count: 2, assignedMsStart: 5_000))
+            .Concat(CreateMemberships(epochId: 41, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 3, assignedMsStart: 6_000))
             .Concat(new[]
             {
                 new SpeciationMembershipRecord
@@ -777,14 +777,12 @@ public class SpeciationPanelViewModelTests
         await WaitForAsync(() => vm.FlowChartAreas.Count == 4);
 
         var childSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.child").PathData);
-        var sourceSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.source").PathData);
+        var betaSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.beta").PathData);
         var dominantSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.dominant").PathData);
 
-        Assert.Equal(2, childSpans.Count);
-        Assert.Equal(sourceSpans[0].StartX, childSpans[0].StartX, 3);
-        Assert.Equal(sourceSpans[0].EndX, childSpans[0].EndX, 3);
-        Assert.True(Math.Abs(dominantSpans[0].StartX - childSpans[0].StartX) > 1d);
-        Assert.True(Math.Abs(dominantSpans[0].EndX - childSpans[0].EndX) > 1d);
+        Assert.Single(childSpans);
+        Assert.True(childSpans[0].StartX >= betaSpans[^1].EndX - 0.01d);
+        Assert.True(childSpans[0].EndX <= dominantSpans[^1].StartX + 0.01d);
         Assert.True(childSpans[0].EndX > childSpans[0].StartX);
     }
 
