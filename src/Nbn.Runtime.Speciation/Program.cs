@@ -8,6 +8,8 @@ var options = SpeciationOptions.FromArgs(args);
 var runtimeConfig = options.ToRuntimeConfig();
 var store = new SpeciationStore(options.DatabasePath);
 
+using var telemetry = SpeciationTelemetrySession.Start(options);
+
 var system = new ActorSystem();
 var remoteConfig = SpeciationRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);

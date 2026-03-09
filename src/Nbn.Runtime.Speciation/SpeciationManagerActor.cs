@@ -235,9 +235,21 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         _initializing = true;
+        var activity = SpeciationTelemetry.StartEpochTransitionActivity("initialize", previousEpochId: 0);
         var initializeTask = InitializeStoreAsync(context);
         context.ReenterAfter(initializeTask, completed =>
         {
+            using (activity)
+            {
+                RecordEpochTransitionTelemetry(
+                    activity,
+                    "initialize",
+                    completed.IsFaulted ? "failed" : "completed",
+                    completed.IsFaulted ? "store_error" : "none",
+                    previousEpochId: 0,
+                    currentEpochId: completed.IsFaulted ? 0 : completed.Result.EpochId);
+            }
+
             _initializing = false;
             if (completed.IsFaulted)
             {
@@ -350,6 +362,8 @@ public sealed class SpeciationManagerActor : IActor
             return;
         }
 
+        var epochId = _currentEpoch.EpochId;
+        var activity = SpeciationTelemetry.StartStartupReconcileActivity(epochId);
         var brainListTask = context.RequestAsync<ProtoSettings.BrainListResponse>(
             _settingsPid,
             new ProtoSettings.BrainListRequest(),
@@ -359,6 +373,17 @@ public sealed class SpeciationManagerActor : IActor
         {
             if (completed.IsFaulted)
             {
+                using (activity)
+                {
+                    RecordStartupReconcileTelemetry(
+                        activity,
+                        epochId,
+                        knownBrains: 0,
+                        result: null,
+                        outcome: "failed",
+                        failureReason: "settings_request_failed");
+                }
+
                 LogError($"Speciation startup reconcile skipped: failed to fetch BrainList from SettingsMonitor: {completed.Exception?.GetBaseException().Message}");
                 return Task.CompletedTask;
             }
@@ -366,6 +391,17 @@ public sealed class SpeciationManagerActor : IActor
             var knownBrains = ParseKnownBrainIds(completed.Result);
             if (knownBrains.Count == 0 || _currentEpoch is null)
             {
+                using (activity)
+                {
+                    RecordStartupReconcileTelemetry(
+                        activity,
+                        epochId,
+                        knownBrains.Count,
+                        new SpeciationReconcileResult(epochId, 0, 0, Array.Empty<Guid>()),
+                        outcome: "completed",
+                        failureReason: "none");
+                }
+
                 return Task.CompletedTask;
             }
 
@@ -377,6 +413,30 @@ public sealed class SpeciationManagerActor : IActor
 
             context.ReenterAfter(reconcileTask, reconcileCompleted =>
             {
+                using (activity)
+                {
+                    if (reconcileCompleted.IsFaulted)
+                    {
+                        RecordStartupReconcileTelemetry(
+                            activity,
+                            epochId,
+                            knownBrains.Count,
+                            result: null,
+                            outcome: "failed",
+                            failureReason: "store_error");
+                    }
+                    else
+                    {
+                        RecordStartupReconcileTelemetry(
+                            activity,
+                            epochId,
+                            knownBrains.Count,
+                            reconcileCompleted.Result,
+                            outcome: "completed",
+                            failureReason: "none");
+                    }
+                }
+
                 if (reconcileCompleted.IsFaulted)
                 {
                     LogError($"Speciation startup reconcile failed: {reconcileCompleted.Exception?.GetBaseException().Message}");
@@ -658,6 +718,7 @@ public sealed class SpeciationManagerActor : IActor
                 CurrentEpoch = ToProtoEpochInfo(epoch),
                 Config = config
             });
+            SpeciationTelemetry.RecordStatusSnapshot("status", completed.Result);
             return Task.CompletedTask;
         });
     }
@@ -695,13 +756,32 @@ public sealed class SpeciationManagerActor : IActor
                     previousEpoch,
                     previousEpoch,
                     _runtimeConfig));
+                RecordEpochTransitionTelemetry(
+                    activity: null,
+                    transition: "start_new_epoch",
+                    outcome: "rejected",
+                    failureReason: "service_initializing",
+                    previousEpochId: previousEpoch.EpochId,
+                    currentEpochId: previousEpoch.EpochId);
                 return;
             }
 
+            var activity = SpeciationTelemetry.StartEpochTransitionActivity("start_new_epoch", previousEpoch.EpochId);
             var applyTime = message.HasApplyTimeMs ? (long?)message.ApplyTimeMs : null;
             var resetTask = _store.ResetEpochAsync(nextConfig, applyTime);
             context.ReenterAfter(resetTask, completed =>
             {
+                using (activity)
+                {
+                    RecordEpochTransitionTelemetry(
+                        activity,
+                        "start_new_epoch",
+                        completed.IsFaulted ? "failed" : "completed",
+                        completed.IsFaulted ? "store_error" : "none",
+                        previousEpoch.EpochId,
+                        completed.IsFaulted ? previousEpoch.EpochId : completed.Result.EpochId);
+                }
+
                 if (completed.IsFaulted)
                 {
                     LogError($"Speciation proto set config reset failed: {completed.Exception?.GetBaseException().Message}");
@@ -718,6 +798,9 @@ public sealed class SpeciationManagerActor : IActor
                 _assignmentPolicy = BuildAssignmentPolicy(nextConfig);
                 _currentEpoch = completed.Result;
                 ResetSpeciesSimilarityFloors();
+                SpeciationTelemetry.RecordStatusSnapshot(
+                    "start_new_epoch",
+                    new SpeciationStatusSnapshot(completed.Result.EpochId, 0, 0, 0));
                 context.Respond(CreateProtoSetConfigResponse(
                     ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
                     string.Empty,
@@ -748,8 +831,20 @@ public sealed class SpeciationManagerActor : IActor
     private void HandleProtoResetAll(IContext context, ProtoSpec.SpeciationResetAllRequest message)
     {
         var previousEpoch = _currentEpoch ?? CreateFallbackEpoch();
+        var activity = SpeciationTelemetry.StartEpochTransitionActivity("reset_all", previousEpoch.EpochId);
         if (!_initialized || _currentEpoch is null)
         {
+            using (activity)
+            {
+                RecordEpochTransitionTelemetry(
+                    activity,
+                    "reset_all",
+                    "rejected",
+                    "service_initializing",
+                    previousEpoch.EpochId,
+                    previousEpoch.EpochId);
+            }
+
             context.Respond(CreateProtoResetAllResponse(
                 ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
                 "Speciation service is still initializing.",
@@ -768,6 +863,35 @@ public sealed class SpeciationManagerActor : IActor
         var resetTask = _store.ResetAllAsync(_runtimeConfig, applyTime);
         context.ReenterAfter(resetTask, completed =>
         {
+            using (activity)
+            {
+                if (completed.IsFaulted)
+                {
+                    RecordEpochTransitionTelemetry(
+                        activity,
+                        "reset_all",
+                        "failed",
+                        "store_error",
+                        previousEpoch.EpochId,
+                        previousEpoch.EpochId);
+                }
+                else
+                {
+                    RecordEpochTransitionTelemetry(
+                        activity,
+                        "reset_all",
+                        "completed",
+                        "none",
+                        previousEpoch.EpochId,
+                        completed.Result.CurrentEpoch.EpochId,
+                        completed.Result.DeletedMembershipCount,
+                        completed.Result.DeletedSpeciesCount,
+                        completed.Result.DeletedDecisionCount,
+                        completed.Result.DeletedLineageEdgeCount,
+                        completed.Result.DeletedEpochCount);
+                }
+            }
+
             if (completed.IsFaulted)
             {
                 LogError($"Speciation proto reset-all failed: {completed.Exception?.GetBaseException().Message}");
@@ -788,6 +912,9 @@ public sealed class SpeciationManagerActor : IActor
             var outcome = completed.Result;
             _currentEpoch = outcome.CurrentEpoch;
             ResetSpeciesSimilarityFloors();
+            SpeciationTelemetry.RecordStatusSnapshot(
+                "reset_all",
+                new SpeciationStatusSnapshot(outcome.CurrentEpoch.EpochId, 0, 0, 0));
             context.Respond(CreateProtoResetAllResponse(
                 ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
                 string.Empty,
@@ -806,8 +933,20 @@ public sealed class SpeciationManagerActor : IActor
     private void HandleProtoDeleteEpoch(IContext context, ProtoSpec.SpeciationDeleteEpochRequest message)
     {
         var currentEpoch = _currentEpoch ?? CreateFallbackEpoch();
+        var activity = SpeciationTelemetry.StartEpochTransitionActivity("delete_epoch", currentEpoch.EpochId);
         if (!_initialized || _currentEpoch is null)
         {
+            using (activity)
+            {
+                RecordEpochTransitionTelemetry(
+                    activity,
+                    "delete_epoch",
+                    "rejected",
+                    "service_initializing",
+                    currentEpoch.EpochId,
+                    currentEpoch.EpochId);
+            }
+
             context.Respond(CreateProtoDeleteEpochResponse(
                 ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
                 "Speciation service is still initializing.",
@@ -824,6 +963,17 @@ public sealed class SpeciationManagerActor : IActor
         var epochId = (long)message.EpochId;
         if (epochId <= 0)
         {
+            using (activity)
+            {
+                RecordEpochTransitionTelemetry(
+                    activity,
+                    "delete_epoch",
+                    "rejected",
+                    "invalid_request",
+                    currentEpoch.EpochId,
+                    currentEpoch.EpochId);
+            }
+
             context.Respond(CreateProtoDeleteEpochResponse(
                 ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest,
                 "Delete epoch requires a positive epoch_id.",
@@ -839,6 +989,17 @@ public sealed class SpeciationManagerActor : IActor
 
         if (epochId == _currentEpoch.EpochId)
         {
+            using (activity)
+            {
+                RecordEpochTransitionTelemetry(
+                    activity,
+                    "delete_epoch",
+                    "rejected",
+                    "invalid_request",
+                    currentEpoch.EpochId,
+                    currentEpoch.EpochId);
+            }
+
             context.Respond(CreateProtoDeleteEpochResponse(
                 ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest,
                 "Current epoch cannot be deleted.",
@@ -857,6 +1018,17 @@ public sealed class SpeciationManagerActor : IActor
         {
             if (completed.IsFaulted)
             {
+                using (activity)
+                {
+                    RecordEpochTransitionTelemetry(
+                        activity,
+                        "delete_epoch",
+                        "failed",
+                        "store_error",
+                        currentEpoch.EpochId,
+                        (_currentEpoch ?? currentEpoch).EpochId);
+                }
+
                 LogError($"Speciation proto delete epoch failed: {completed.Exception?.GetBaseException().Message}");
                 context.Respond(CreateProtoDeleteEpochResponse(
                     ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
@@ -874,6 +1046,17 @@ public sealed class SpeciationManagerActor : IActor
             var result = completed.Result;
             if (!result.Deleted)
             {
+                using (activity)
+                {
+                    RecordEpochTransitionTelemetry(
+                        activity,
+                        "delete_epoch",
+                        "not_found",
+                        "invalid_request",
+                        currentEpoch.EpochId,
+                        (_currentEpoch ?? currentEpoch).EpochId);
+                }
+
                 context.Respond(CreateProtoDeleteEpochResponse(
                     ProtoSpec.SpeciationFailureReason.SpeciationFailureInvalidRequest,
                     $"Epoch {epochId} does not exist.",
@@ -885,6 +1068,21 @@ public sealed class SpeciationManagerActor : IActor
                     deletedLineageEdgeCount: 0,
                     _currentEpoch ?? currentEpoch));
                 return Task.CompletedTask;
+            }
+
+            using (activity)
+            {
+                RecordEpochTransitionTelemetry(
+                    activity,
+                    "delete_epoch",
+                    "completed",
+                    "none",
+                    currentEpoch.EpochId,
+                    (_currentEpoch ?? currentEpoch).EpochId,
+                    result.DeletedMembershipCount,
+                    result.DeletedSpeciesCount,
+                    result.DeletedDecisionCount,
+                    result.DeletedLineageEdgeCount);
             }
 
             context.Respond(CreateProtoDeleteEpochResponse(
@@ -905,16 +1103,32 @@ public sealed class SpeciationManagerActor : IActor
     {
         if (!TryGetCurrentEpoch(out var epoch))
         {
+            using var initializingActivity = SpeciationTelemetry.StartAssignmentActivity(
+                "evaluate",
+                epochId: 0,
+                ProtoSpec.SpeciationApplyMode.DryRun);
+            var decision = CreateDecisionFailure(
+                ProtoSpec.SpeciationApplyMode.DryRun,
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
+                "Speciation service is still initializing.");
+            RecordDecisionTelemetry(
+                "evaluate",
+                epochId: 0,
+                durationMs: 0d,
+                initializingActivity,
+                decision);
             context.Respond(new ProtoSpec.SpeciationEvaluateResponse
             {
-                Decision = CreateDecisionFailure(
-                    ProtoSpec.SpeciationApplyMode.DryRun,
-                    ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
-                    "Speciation service is still initializing.")
+                Decision = decision
             });
             return;
         }
 
+        var decisionActivity = SpeciationTelemetry.StartAssignmentActivity(
+            "evaluate",
+            epoch.EpochId,
+            ProtoSpec.SpeciationApplyMode.DryRun);
+        var stopwatch = Stopwatch.StartNew();
         var evaluateTask = ProcessProtoDecisionAsync(
             context,
             epoch,
@@ -930,22 +1144,45 @@ public sealed class SpeciationManagerActor : IActor
             commit: false);
         context.ReenterAfter(evaluateTask, completed =>
         {
+            ProtoSpec.SpeciationDecision decision;
             if (completed.IsFaulted)
             {
                 LogError($"Speciation proto evaluate failed: {completed.Exception?.GetBaseException().Message}");
+                decision = CreateDecisionFailure(
+                    ProtoSpec.SpeciationApplyMode.DryRun,
+                    ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
+                    "Failed to evaluate speciation decision.");
+                using (decisionActivity)
+                {
+                    RecordDecisionTelemetry(
+                        "evaluate",
+                        epoch.EpochId,
+                        stopwatch.Elapsed.TotalMilliseconds,
+                        decisionActivity,
+                        decision);
+                }
+
                 context.Respond(new ProtoSpec.SpeciationEvaluateResponse
                 {
-                    Decision = CreateDecisionFailure(
-                        ProtoSpec.SpeciationApplyMode.DryRun,
-                        ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
-                        "Failed to evaluate speciation decision.")
+                    Decision = decision
                 });
                 return Task.CompletedTask;
             }
 
+            decision = completed.Result;
+            using (decisionActivity)
+            {
+                RecordDecisionTelemetry(
+                    "evaluate",
+                    epoch.EpochId,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    decisionActivity,
+                    decision);
+            }
+
             context.Respond(new ProtoSpec.SpeciationEvaluateResponse
             {
-                Decision = completed.Result
+                Decision = decision
             });
             return Task.CompletedTask;
         });
@@ -956,16 +1193,26 @@ public sealed class SpeciationManagerActor : IActor
         var applyMode = NormalizeApplyMode(message.ApplyMode);
         if (!TryGetCurrentEpoch(out var epoch))
         {
+            using var initializingActivity = SpeciationTelemetry.StartAssignmentActivity("assign", epochId: 0, applyMode);
+            var decision = CreateDecisionFailure(
+                applyMode,
+                ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
+                "Speciation service is still initializing.");
+            RecordDecisionTelemetry(
+                "assign",
+                epochId: 0,
+                durationMs: 0d,
+                initializingActivity,
+                decision);
             context.Respond(new ProtoSpec.SpeciationAssignResponse
             {
-                Decision = CreateDecisionFailure(
-                    applyMode,
-                    ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
-                    "Speciation service is still initializing.")
+                Decision = decision
             });
             return;
         }
 
+        var decisionActivity = SpeciationTelemetry.StartAssignmentActivity("assign", epoch.EpochId, applyMode);
+        var stopwatch = Stopwatch.StartNew();
         var assignTask = ProcessProtoDecisionAsync(
             context,
             epoch,
@@ -981,22 +1228,45 @@ public sealed class SpeciationManagerActor : IActor
             commit: applyMode == ProtoSpec.SpeciationApplyMode.Commit);
         context.ReenterAfter(assignTask, completed =>
         {
+            ProtoSpec.SpeciationDecision decision;
             if (completed.IsFaulted)
             {
                 LogError($"Speciation proto assign failed: {completed.Exception?.GetBaseException().Message}");
+                decision = CreateDecisionFailure(
+                    applyMode,
+                    ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
+                    "Failed to process speciation assignment.");
+                using (decisionActivity)
+                {
+                    RecordDecisionTelemetry(
+                        "assign",
+                        epoch.EpochId,
+                        stopwatch.Elapsed.TotalMilliseconds,
+                        decisionActivity,
+                        decision);
+                }
+
                 context.Respond(new ProtoSpec.SpeciationAssignResponse
                 {
-                    Decision = CreateDecisionFailure(
-                        applyMode,
-                        ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
-                        "Failed to process speciation assignment.")
+                    Decision = decision
                 });
                 return Task.CompletedTask;
             }
 
+            decision = completed.Result;
+            using (decisionActivity)
+            {
+                RecordDecisionTelemetry(
+                    "assign",
+                    epoch.EpochId,
+                    stopwatch.Elapsed.TotalMilliseconds,
+                    decisionActivity,
+                    decision);
+            }
+
             context.Respond(new ProtoSpec.SpeciationAssignResponse
             {
-                Decision = completed.Result
+                Decision = decision
             });
             return Task.CompletedTask;
         });
@@ -1049,6 +1319,13 @@ public sealed class SpeciationManagerActor : IActor
         var applyMode = NormalizeApplyMode(message.ApplyMode);
         if (!TryGetCurrentEpoch(out var epoch))
         {
+            SpeciationTelemetry.RecordAssignmentDecision(
+                "batch",
+                CreateDecisionFailure(
+                    applyMode,
+                    ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
+                    "Speciation service is still initializing."),
+                durationMs: 0d);
             context.Respond(new ProtoSpec.SpeciationBatchEvaluateApplyResponse
             {
                 FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceInitializing,
@@ -1067,6 +1344,13 @@ public sealed class SpeciationManagerActor : IActor
             if (completed.IsFaulted)
             {
                 LogError($"Speciation proto batch evaluate/apply failed: {completed.Exception?.GetBaseException().Message}");
+                SpeciationTelemetry.RecordAssignmentDecision(
+                    "batch",
+                    CreateDecisionFailure(
+                        applyMode,
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
+                        "Failed to process speciation batch request."),
+                    durationMs: 0d);
                 context.Respond(new ProtoSpec.SpeciationBatchEvaluateApplyResponse
                 {
                     FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureStoreError,
@@ -1259,6 +1543,7 @@ public sealed class SpeciationManagerActor : IActor
                 itemMode = NormalizeApplyMode(item.ApplyModeOverride);
             }
 
+            var stopwatch = Stopwatch.StartNew();
             var decision = await ProcessProtoDecisionAsync(
                 context,
                 epoch,
@@ -1272,6 +1557,10 @@ public sealed class SpeciationManagerActor : IActor
                 item.DecisionMetadataJson,
                 item.HasDecisionTimeMs ? (long?)item.DecisionTimeMs : null,
                 commit: itemMode == ProtoSpec.SpeciationApplyMode.Commit).ConfigureAwait(false);
+            SpeciationTelemetry.RecordAssignmentDecision(
+                "batch",
+                decision,
+                stopwatch.Elapsed.TotalMilliseconds);
 
             if (decision.Committed)
             {
@@ -6111,6 +6400,63 @@ public sealed class SpeciationManagerActor : IActor
             DecisionMetadataJson = "{}",
             Committed = false
         };
+    }
+
+    private static void RecordDecisionTelemetry(
+        string operation,
+        long epochId,
+        double durationMs,
+        Activity? activity,
+        ProtoSpec.SpeciationDecision decision)
+    {
+        SpeciationTelemetry.RecordAssignmentDecision(operation, decision, durationMs);
+        SpeciationTelemetry.CompleteAssignmentActivity(activity, epochId, decision, durationMs);
+    }
+
+    private static void RecordStartupReconcileTelemetry(
+        Activity? activity,
+        long epochId,
+        int knownBrains,
+        SpeciationReconcileResult? result,
+        string outcome,
+        string failureReason)
+    {
+        SpeciationTelemetry.RecordStartupReconcile(knownBrains, result, outcome, failureReason);
+        SpeciationTelemetry.CompleteStartupReconcileActivity(
+            activity,
+            epochId,
+            knownBrains,
+            result,
+            outcome,
+            failureReason);
+    }
+
+    private static void RecordEpochTransitionTelemetry(
+        Activity? activity,
+        string transition,
+        string outcome,
+        string failureReason,
+        long previousEpochId,
+        long currentEpochId,
+        int deletedMembershipCount = 0,
+        int deletedSpeciesCount = 0,
+        int deletedDecisionCount = 0,
+        int deletedLineageEdgeCount = 0,
+        int deletedEpochCount = 0)
+    {
+        SpeciationTelemetry.RecordEpochTransition(transition, outcome, failureReason);
+        SpeciationTelemetry.CompleteEpochTransitionActivity(
+            activity,
+            transition,
+            outcome,
+            failureReason,
+            previousEpochId,
+            currentEpochId,
+            deletedMembershipCount,
+            deletedSpeciesCount,
+            deletedDecisionCount,
+            deletedLineageEdgeCount,
+            deletedEpochCount);
     }
 
     private static ProtoSpec.SpeciationDecision CreateDecisionFromMembership(

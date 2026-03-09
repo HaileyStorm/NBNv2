@@ -44,6 +44,10 @@ Metrics include:
 * plasticity strength-code mutation counts
 * snapshot/rebase overlay record counts
 * signal batch sizes and counts
+* speciation startup-reconcile runs plus added/existing membership counts
+* speciation assignment decision counts and latencies by apply mode / candidate mode / decision reason / failure reason
+* speciation epoch-transition counts (initialize, start-new-epoch, delete-epoch, reset-all)
+* speciation status snapshot membership/species/lineage-edge counts
 
 Traces include:
 
@@ -52,6 +56,9 @@ Traces include:
 * artifact fetch spans
 * energy depletion milestones
 * plasticity mutation milestones
+* speciation assignment spans
+* speciation startup-reconcile spans
+* speciation epoch-transition spans
 
 ### 15.3 Lateness accounting
 

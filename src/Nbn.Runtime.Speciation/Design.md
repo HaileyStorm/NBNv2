@@ -9,6 +9,7 @@ Owns the runtime speciation control plane: taxonomy epochs, species membership p
 - Startup loads persisted epoch state, then reconciles missing memberships for currently registered brains from SettingsMonitor.
 - Runtime startup policy/default species config is sourced from SettingsMonitor `workbench.speciation.*` keys; speciation-policy CLI/env overrides are not used.
 - Handles canonical `nbn.speciation` proto contracts for status/config/evaluate/assign/list/query/history and batch evaluate/apply.
+- Emits `SpeciationTelemetry` metrics/traces for startup reconciliation, assignment decisions, epoch transitions, and operator status snapshots; service OTEL bootstrap follows the shared `--enable-otel` / `--otel-metrics` / `--otel-traces` / `--otel-console` / `--otel-endpoint` pattern.
 - Supports explicit epoch-history hygiene controls via proto: clear-all reset (wipe all persisted epochs/history, reset epoch/decision autoincrement counters, then seed a new epoch) and delete-specific-historical-epoch (current epoch deletion rejected).
 - Enforces contract-level dry-run versus commit semantics: dry-run never mutates state; commit accepts `brain_id`, artifact-ref, and artifact-URI candidates while preserving per-epoch membership immutability.
 - For auto-assigned lineage-less commits, request `species_display_name` is treated as an optional display-name hint for the default-species assignment only; lineage-driven decisions ignore that hint unless the caller supplied an explicit `species_id`.

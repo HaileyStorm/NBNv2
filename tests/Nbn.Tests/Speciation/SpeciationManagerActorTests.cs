@@ -6,6 +6,7 @@ using Nbn.Proto.Settings;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.Speciation;
 using Nbn.Shared;
+using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoIo = Nbn.Proto.Io;
 using Repro = Nbn.Proto.Repro;
@@ -5237,6 +5238,273 @@ public sealed class SpeciationManagerActorTests
                     BrainId = child.ToProtoUuid()
                 });
             Assert.Equal((uint)1, history.TotalRecords);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Started_ReconcileKnownBrains_RecordsStartupReconcileTelemetry()
+    {
+        using var metrics = new MeterCollector(SpeciationTelemetry.MeterNameValue);
+        using var activities = new ActivityCollector(SpeciationTelemetry.ActivitySource.Name);
+        using var settingsDb = new TempDatabaseScope("settings-monitor.db");
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+
+        var settingsStore = new SettingsMonitorStore(settingsDb.DatabasePath);
+        await settingsStore.InitializeAsync();
+
+        var system = new ActorSystem();
+        try
+        {
+            var settingsPid = system.Root.Spawn(Props.FromProducer(() => new SettingsMonitorActor(settingsStore)));
+
+            var knownBrains = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+            foreach (var brainId in knownBrains)
+            {
+                system.Root.Send(settingsPid, new BrainRegistered
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    SpawnedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    State = "Active"
+                });
+            }
+
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var list = await system.Root.RequestAsync<BrainListResponse>(settingsPid, new BrainListRequest());
+                    return list.Brains.Count >= knownBrains.Length;
+                },
+                TimeSpan.FromSeconds(5));
+
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    CreateRuntimeConfig(),
+                    settingsPid,
+                    TimeSpan.FromSeconds(2))));
+
+            await WaitForConditionAsync(
+                async () =>
+                {
+                    var status = await system.Root.RequestAsync<SpeciationStatusResponse>(
+                        managerPid,
+                        new SpeciationStatusRequest());
+                    return status.Status.MembershipCount == knownBrains.Length;
+                },
+                TimeSpan.FromSeconds(5));
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.startup.reconcile.total",
+                    ("outcome", "completed"),
+                    ("failure_reason", "none")));
+            Assert.Equal(
+                knownBrains.Length,
+                metrics.SumLong(
+                    "nbn.speciation.startup.reconcile.memberships.added",
+                    ("outcome", "completed"),
+                    ("failure_reason", "none")));
+
+            var activity = Assert.Single(
+                activities.CompletedActivities,
+                candidate => candidate.OperationName == "speciation.startup.reconcile");
+            Assert.Equal("completed", activity.GetTagItem("speciation.outcome")?.ToString());
+            Assert.Equal(knownBrains.Length.ToString(), activity.GetTagItem("speciation.added_memberships")?.ToString());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoAssign_Commit_RecordsDecisionTelemetry_And_StatusSnapshotMetrics()
+    {
+        using var metrics = new MeterCollector(SpeciationTelemetry.MeterNameValue);
+        using var activities = new ActivityCollector(SpeciationTelemetry.ActivitySource.Name);
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    CreateRuntimeConfig(),
+                    settingsPid: null)));
+
+            await WaitForEpochAsync(system, managerPid);
+
+            var response = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = Guid.NewGuid().ToProtoUuid()
+                    },
+                    SpeciesId = "species-ops",
+                    SpeciesDisplayName = "Species Ops",
+                    DecisionReason = "operator_assign",
+                    DecisionMetadataJson = "{\"source\":\"telemetry_test\"}"
+                });
+
+            Assert.True(response.Decision.Success);
+            Assert.True(response.Decision.Created);
+            Assert.True(response.Decision.Committed);
+
+            var status = await system.Root.RequestAsync<ProtoSpec.SpeciationStatusResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationStatusRequest());
+
+            Assert.Equal((uint)1, status.Status.MembershipCount);
+            Assert.Equal((uint)1, status.Status.SpeciesCount);
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.assignment.decisions",
+                    ("operation", "assign"),
+                    ("apply_mode", "commit"),
+                    ("candidate_mode", "brain_id"),
+                    ("decision_reason", "operator_assign"),
+                    ("failure_reason", "none"),
+                    ("success", "true"),
+                    ("committed", "true")));
+            Assert.True(
+                metrics.CountDouble(
+                    "nbn.speciation.assignment.duration.ms",
+                    ("operation", "assign"),
+                    ("apply_mode", "commit"),
+                    ("failure_reason", "none")) >= 1);
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.status.membership_count",
+                    ("source", "status"),
+                    ("failure_reason", "none")));
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.status.species_count",
+                    ("source", "status"),
+                    ("failure_reason", "none")));
+
+            var assignActivity = Assert.Single(
+                activities.CompletedActivities,
+                candidate => candidate.OperationName == "speciation.assign");
+            Assert.Equal("commit", assignActivity.GetTagItem("speciation.apply_mode")?.ToString());
+            Assert.Equal("operator_assign", assignActivity.GetTagItem("speciation.decision_reason")?.ToString());
+            Assert.Equal("species-ops", assignActivity.GetTagItem("speciation.species_id")?.ToString());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ProtoEpochLifecycle_RecordsTransitionTelemetry()
+    {
+        using var metrics = new MeterCollector(SpeciationTelemetry.MeterNameValue);
+        using var activities = new ActivityCollector(SpeciationTelemetry.ActivitySource.Name);
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    CreateRuntimeConfig(),
+                    settingsPid: null)));
+
+            var firstEpoch = await WaitForEpochAsync(system, managerPid);
+
+            var startNewEpoch = await system.Root.RequestAsync<ProtoSpec.SpeciationSetConfigResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationSetConfigRequest
+                {
+                    StartNewEpoch = true,
+                    Config = new ProtoSpec.SpeciationRuntimeConfig
+                    {
+                        PolicyVersion = "policy-v2",
+                        ConfigSnapshotJson = "{\"mode\":\"epoch-two\"}",
+                        DefaultSpeciesId = "default-species",
+                        DefaultSpeciesDisplayName = "Default Species",
+                        StartupReconcileDecisionReason = "startup_reconcile"
+                    }
+                });
+
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, startNewEpoch.FailureReason);
+            Assert.True(startNewEpoch.CurrentEpoch.EpochId > (ulong)firstEpoch.EpochId);
+
+            var deleteEpoch = await system.Root.RequestAsync<ProtoSpec.SpeciationDeleteEpochResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationDeleteEpochRequest
+                {
+                    EpochId = (ulong)firstEpoch.EpochId
+                });
+
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, deleteEpoch.FailureReason);
+            Assert.True(deleteEpoch.Deleted);
+
+            var resetAll = await system.Root.RequestAsync<ProtoSpec.SpeciationResetAllResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationResetAllRequest());
+
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, resetAll.FailureReason);
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.epoch.transition.total",
+                    ("transition", "initialize"),
+                    ("outcome", "completed"),
+                    ("failure_reason", "none")));
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.epoch.transition.total",
+                    ("transition", "start_new_epoch"),
+                    ("outcome", "completed"),
+                    ("failure_reason", "none")));
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.epoch.transition.total",
+                    ("transition", "delete_epoch"),
+                    ("outcome", "completed"),
+                    ("failure_reason", "none")));
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.speciation.epoch.transition.total",
+                    ("transition", "reset_all"),
+                    ("outcome", "completed"),
+                    ("failure_reason", "none")));
+            Assert.True(
+                metrics.CountLong(
+                    "nbn.speciation.status.membership_count",
+                    ("source", "start_new_epoch"),
+                    ("failure_reason", "none")) >= 1);
+            Assert.True(
+                metrics.CountLong(
+                    "nbn.speciation.status.membership_count",
+                    ("source", "reset_all"),
+                    ("failure_reason", "none")) >= 1);
+
+            Assert.Contains(
+                activities.CompletedActivities,
+                candidate => candidate.OperationName == "speciation.epoch.transition"
+                    && string.Equals(candidate.GetTagItem("speciation.transition")?.ToString(), "reset_all", StringComparison.Ordinal)
+                    && string.Equals(candidate.GetTagItem("speciation.outcome")?.ToString(), "completed", StringComparison.Ordinal));
         }
         finally
         {

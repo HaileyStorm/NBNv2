@@ -1996,6 +1996,57 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SpeciationStatus_Forwards_Response_And_PreservesSnapshot()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var expected = new ProtoSpec.SpeciationStatusResponse
+        {
+            FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+            FailureDetail = string.Empty,
+            Status = new ProtoSpec.SpeciationStatusSnapshot
+            {
+                EpochId = 7,
+                MembershipCount = 11,
+                SpeciesCount = 3,
+                LineageEdgeCount = 5
+            },
+            CurrentEpoch = new ProtoSpec.SpeciationEpochInfo
+            {
+                EpochId = 7,
+                PolicyVersion = "policy-v1",
+                ConfigSnapshotJson = "{\"mode\":\"status\"}"
+            },
+            Config = new ProtoSpec.SpeciationRuntimeConfig
+            {
+                PolicyVersion = "policy-v1",
+                ConfigSnapshotJson = "{\"mode\":\"status\"}",
+                DefaultSpeciesId = "species.default",
+                DefaultSpeciesDisplayName = "Default Species",
+                StartupReconcileDecisionReason = "startup_reconcile"
+            }
+        };
+        var speciationProbe = root.Spawn(Props.FromProducer(() => new SpeciationStatusResponseProbe(expected)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), speciationPid: speciationProbe)));
+
+        var response = await root.RequestAsync<SpeciationStatusResult>(
+            gateway,
+            new SpeciationStatus
+            {
+                Request = new ProtoSpec.SpeciationStatusRequest()
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, response.Response.FailureReason);
+        Assert.Equal((ulong)11, response.Response.Status.MembershipCount);
+        Assert.Equal((ulong)3, response.Response.Status.SpeciesCount);
+        Assert.Equal((ulong)5, response.Response.Status.LineageEdgeCount);
+        Assert.Equal("species.default", response.Response.Config.DefaultSpeciesId);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpeciationAssign_Returns_RequestFailed_When_Speciation_Response_Type_Is_Invalid()
     {
         var system = new ActorSystem();
@@ -2678,6 +2729,26 @@ public class IoGatewayArtifactReferenceTests
         public Task ReceiveAsync(IContext context)
         {
             if (context.Message is ProtoSpec.SpeciationBatchEvaluateApplyRequest)
+            {
+                context.Respond(_response.Clone());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SpeciationStatusResponseProbe : IActor
+    {
+        private readonly ProtoSpec.SpeciationStatusResponse _response;
+
+        public SpeciationStatusResponseProbe(ProtoSpec.SpeciationStatusResponse response)
+        {
+            _response = response;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoSpec.SpeciationStatusRequest)
             {
                 context.Respond(_response.Clone());
             }

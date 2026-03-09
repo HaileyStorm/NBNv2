@@ -8,6 +8,12 @@ public sealed record SpeciationOptions(
     int? AdvertisedPort,
     string ManagerName,
     string ServiceName,
+    bool EnableOpenTelemetry,
+    bool EnableOtelMetrics,
+    bool EnableOtelTraces,
+    bool EnableOtelConsoleExporter,
+    string? OtlpEndpoint,
+    string OtelServiceName,
     string? SettingsHost,
     int SettingsPort,
     string SettingsName)
@@ -35,6 +41,12 @@ public sealed record SpeciationOptions(
         var advertisedPort = GetEnvInt("NBN_SPECIATION_ADVERTISE_PORT");
         var managerName = GetEnv("NBN_SPECIATION_NAME") ?? SpeciationNames.Manager;
         var serviceName = GetEnv("NBN_SPECIATION_SERVER_NAME") ?? "nbn.speciation";
+        var enableOtel = GetEnvBool("NBN_SPECIATION_OTEL_ENABLED") ?? false;
+        var enableOtelMetrics = GetEnvBool("NBN_SPECIATION_OTEL_METRICS_ENABLED");
+        var enableOtelTraces = GetEnvBool("NBN_SPECIATION_OTEL_TRACES_ENABLED");
+        var enableOtelConsole = GetEnvBool("NBN_SPECIATION_OTEL_CONSOLE") ?? false;
+        var otlpEndpoint = GetEnv("NBN_SPECIATION_OTEL_ENDPOINT") ?? GetEnv("OTEL_EXPORTER_OTLP_ENDPOINT");
+        var otelServiceName = GetEnv("NBN_SPECIATION_OTEL_SERVICE_NAME") ?? GetEnv("OTEL_SERVICE_NAME") ?? serviceName;
         var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
@@ -92,6 +104,35 @@ public sealed record SpeciationOptions(
                     if (i + 1 < args.Length)
                     {
                         serviceName = args[++i];
+                    }
+                    continue;
+                case "--enable-otel":
+                case "--otel":
+                    enableOtel = true;
+                    continue;
+                case "--disable-otel":
+                case "--no-otel":
+                    enableOtel = false;
+                    continue;
+                case "--otel-metrics":
+                    enableOtelMetrics = true;
+                    continue;
+                case "--otel-traces":
+                    enableOtelTraces = true;
+                    continue;
+                case "--otel-console":
+                    enableOtelConsole = true;
+                    continue;
+                case "--otel-endpoint":
+                    if (i + 1 < args.Length)
+                    {
+                        otlpEndpoint = args[++i];
+                    }
+                    continue;
+                case "--otel-service-name":
+                    if (i + 1 < args.Length)
+                    {
+                        otelServiceName = args[++i];
                     }
                     continue;
                 case "--settings-host":
@@ -170,6 +211,18 @@ public sealed record SpeciationOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--otel-endpoint=", StringComparison.OrdinalIgnoreCase))
+            {
+                otlpEndpoint = arg.Substring("--otel-endpoint=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--otel-service-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                otelServiceName = arg.Substring("--otel-service-name=".Length);
+                continue;
+            }
+
             if (arg.StartsWith("--settings-host=", StringComparison.OrdinalIgnoreCase))
             {
                 settingsHost = arg.Substring("--settings-host=".Length);
@@ -190,6 +243,14 @@ public sealed record SpeciationOptions(
             }
         }
 
+        if (enableOtelMetrics == true || enableOtelTraces == true)
+        {
+            enableOtel = true;
+        }
+
+        enableOtelMetrics ??= enableOtel;
+        enableOtelTraces ??= enableOtel;
+
         return new SpeciationOptions(
             dbPath,
             bindHost,
@@ -198,6 +259,12 @@ public sealed record SpeciationOptions(
             advertisedPort,
             managerName,
             serviceName,
+            enableOtel,
+            enableOtelMetrics.Value,
+            enableOtelTraces.Value,
+            enableOtelConsole,
+            string.IsNullOrWhiteSpace(otlpEndpoint) ? null : otlpEndpoint.Trim(),
+            string.IsNullOrWhiteSpace(otelServiceName) ? serviceName : otelServiceName.Trim(),
             string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
             settingsPort,
             settingsName);
@@ -224,6 +291,12 @@ public sealed record SpeciationOptions(
         return int.TryParse(value, out var parsed) ? parsed : null;
     }
 
+    private static bool? GetEnvBool(string key)
+    {
+        var value = GetEnv(key);
+        return bool.TryParse(value, out var parsed) ? parsed : null;
+    }
+
     private static void PrintHelp()
     {
         var defaultPath = GetDefaultDatabasePath();
@@ -235,6 +308,12 @@ public sealed record SpeciationOptions(
         Console.WriteLine("  --advertise-port <port>              Advertised port for remoting");
         Console.WriteLine("  --manager-name <name>                Speciation actor name (default SpeciationManager)");
         Console.WriteLine("  --server-name <name>                 Service name for SettingsMonitor registration");
+        Console.WriteLine("  --enable-otel | --disable-otel       Toggle OpenTelemetry (default off)");
+        Console.WriteLine("  --otel-metrics                       Enable OTel metrics");
+        Console.WriteLine("  --otel-traces                        Enable OTel traces");
+        Console.WriteLine("  --otel-console                       Enable OTel console exporter");
+        Console.WriteLine("  --otel-endpoint <uri>                OTLP endpoint (env OTEL_EXPORTER_OTLP_ENDPOINT)");
+        Console.WriteLine("  --otel-service-name <name>           OTel service name (default nbn.speciation)");
         Console.WriteLine("  --settings-host <host>               SettingsMonitor host (default 127.0.0.1)");
         Console.WriteLine("  --settings-port <port>               SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
