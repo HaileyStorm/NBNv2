@@ -286,6 +286,36 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_SeedParents_TreatInitialFounderSpeciesAsCoevalForSelectionBias()
+    {
+        var parents = CreateDuplicatedBrainParentPool();
+        var options = CreateOptions(
+            seed: 7814UL,
+            maxIterations: 1,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Stability,
+            RunPressureMode = EvolutionRunPressureMode.Neutral
+        };
+        var client = new DeterministicFakeClient(similarities: new[] { 0.24f, 0.1f });
+        client.CommitOutcomeSpeciesIds.Enqueue("species-alpha");
+        client.CommitOutcomeSourceSpeciesIds.Enqueue(string.Empty);
+        client.CommitOutcomeSpeciesIds.Enqueue("species-beta");
+        client.CommitOutcomeSourceSpeciesIds.Enqueue(string.Empty);
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        await session.RunAsync(CancellationToken.None);
+
+        var selections = SampleSelectedSpeciesCounts(session, sampleCount: 6_000, excludedIndex: -1);
+
+        Assert.True(selections.TryGetValue("species-alpha", out var alphaCount));
+        Assert.True(selections.TryGetValue("species-beta", out var betaCount));
+        var ratio = alphaCount / (double)betaCount;
+        Assert.InRange(ratio, 0.85d, 1.15d);
+    }
+
+    [Fact]
     public async Task RunAsync_WhenParentPoolReachesCapacity_ContinuesTurnoverWithNewChildren()
     {
         var parents = CreateParentPool();
@@ -1097,6 +1127,7 @@ public sealed class EvolutionSimulationSessionTests
         public List<uint> RequestedRunCounts { get; } = new();
         public List<Guid> ObservedBrainSelections { get; } = new();
         public Queue<string?> CommitOutcomeSpeciesIds { get; } = new();
+        public Queue<string?> CommitOutcomeSourceSpeciesIds { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
         public bool ObservedArtifactParents { get; private set; }
         public float ReproductionDiagnosticSimilarity { get; set; } = 0.5f;
@@ -1199,11 +1230,15 @@ public sealed class EvolutionSimulationSessionTests
             var speciesId = CommitOutcomeSpeciesIds.Count > 0
                 ? CommitOutcomeSpeciesIds.Dequeue() ?? string.Empty
                 : string.Empty;
+            var sourceSpeciesId = CommitOutcomeSourceSpeciesIds.Count > 0
+                ? CommitOutcomeSourceSpeciesIds.Dequeue() ?? string.Empty
+                : string.Empty;
             return Task.FromResult(new SpeciationCommitOutcome(
                 Success: true,
                 FailureDetail: string.Empty,
                 ExpectedNoOp: false,
                 SpeciesId: speciesId,
+                SourceSpeciesId: sourceSpeciesId,
                 SourceSpeciesSimilarityScore: CommitOutcomeSourceSpeciesSimilarity));
         }
 

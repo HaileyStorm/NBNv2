@@ -256,6 +256,8 @@ public sealed class EvolutionSimulationSession
                 SetLastFailure($"seed_parent_commit_failed:{commitOutcome.FailureDetail}");
             }
         }
+
+        NormalizeInitialSeedSelectionOrdinals(seededKeys);
     }
 
     private async Task ExecuteIterationAsync(EvolutionParentRef parentA, EvolutionParentRef parentB, CancellationToken cancellationToken)
@@ -1156,6 +1158,66 @@ public sealed class EvolutionSimulationSession
         if (lineageFamilyId.Length > 0)
         {
             _parentLineageFamilyByParentKey[parentKey] = lineageFamilyId;
+        }
+    }
+
+    private void NormalizeInitialSeedSelectionOrdinals(IReadOnlyCollection<string> seededParentKeys)
+    {
+        if (seededParentKeys is null || seededParentKeys.Count < 2)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            var seededSpeciesIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seededLineageFamilyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var seededParentKey in seededParentKeys)
+            {
+                if (_parentSpeciesByParentKey.TryGetValue(seededParentKey, out var speciesId)
+                    && NormalizeSpeciesId(speciesId).Length > 0)
+                {
+                    seededSpeciesIds.Add(NormalizeSpeciesId(speciesId));
+                }
+
+                if (_parentLineageFamilyByParentKey.TryGetValue(seededParentKey, out var lineageFamilyId)
+                    && NormalizeSpeciesId(lineageFamilyId).Length > 0)
+                {
+                    seededLineageFamilyIds.Add(NormalizeSpeciesId(lineageFamilyId));
+                }
+            }
+
+            if (seededSpeciesIds.Count > 1)
+            {
+                var sharedSpeciesOrdinal = seededSpeciesIds
+                    .Select(speciesId => _speciesFirstSeenOrdinals.TryGetValue(speciesId, out var ordinal) ? ordinal : 0UL)
+                    .Where(static ordinal => ordinal > 0)
+                    .DefaultIfEmpty(0UL)
+                    .Min();
+                if (sharedSpeciesOrdinal > 0)
+                {
+                    foreach (var speciesId in seededSpeciesIds)
+                    {
+                        _speciesFirstSeenOrdinals[speciesId] = sharedSpeciesOrdinal;
+                    }
+                }
+            }
+
+            if (seededLineageFamilyIds.Count > 1)
+            {
+                var sharedLineageFamilyOrdinal = seededLineageFamilyIds
+                    .Select(lineageFamilyId => _lineageFamilyFirstSeenOrdinals.TryGetValue(lineageFamilyId, out var ordinal) ? ordinal : 0UL)
+                    .Where(static ordinal => ordinal > 0)
+                    .DefaultIfEmpty(0UL)
+                    .Min();
+                if (sharedLineageFamilyOrdinal > 0)
+                {
+                    foreach (var lineageFamilyId in seededLineageFamilyIds)
+                    {
+                        _lineageFamilyFirstSeenOrdinals[lineageFamilyId] = sharedLineageFamilyOrdinal;
+                    }
+                }
+            }
         }
     }
 

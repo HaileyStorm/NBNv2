@@ -1331,6 +1331,9 @@ public sealed class SpeciationManagerActor : IActor
             out var resolvedBestParentSpeciesFit)
             ? (ParentSpeciesPairwiseFit?)resolvedBestParentSpeciesFit
             : null;
+        var isSeedFounderCandidate = IsSeedFounderCandidate(
+            resolved.BrainId,
+            inputOrderedParentBrainIds);
         var preliminarySourceSpeciesId = bestParentSpeciesFit?.SpeciesId
             ?? (lineageEvidence.DominantShare >= 0.999999d
                 ? lineageEvidence.DominantSpeciesId
@@ -1351,7 +1354,8 @@ public sealed class SpeciationManagerActor : IActor
             lineageEvidence,
             sourceSpeciesFloor,
             sourceSpeciesSimilarityScore,
-            bestParentSpeciesFit);
+            bestParentSpeciesFit,
+            isSeedFounderCandidate: isSeedFounderCandidate);
         var bootstrapRequirement = await TryResolveBootstrapAssignedSpeciesAdmissionRequirementAsync(
             epoch.EpochId,
             assignmentResolution).ConfigureAwait(false);
@@ -1401,6 +1405,7 @@ public sealed class SpeciationManagerActor : IActor
                     sourceSpeciesFloor,
                     sourceSpeciesSimilarityScore,
                     bestParentSpeciesFit,
+                    isSeedFounderCandidate,
                     allowRecentSplitRealign: false,
                     allowRecentDerivedSpeciesReuse: false);
             }
@@ -2212,13 +2217,22 @@ public sealed class SpeciationManagerActor : IActor
             return null;
         }
 
-        return string.Equals(
-                membership.DecisionReason,
-                "lineage_diverged_new_species",
-                StringComparison.Ordinal)
+        return IsSyntheticFounderSpeciesCreationDecision(membership.DecisionReason)
             && !actualSimilaritySample
             ? null
             : ClampScore(similaritySample.Value);
+    }
+
+    private static bool IsSyntheticFounderSpeciesCreationDecision(string? decisionReason)
+    {
+        return string.Equals(
+                   decisionReason,
+                   "lineage_diverged_new_species",
+                   StringComparison.Ordinal)
+               || string.Equals(
+                   decisionReason,
+                   "lineage_diverged_founder_root_species",
+                   StringComparison.Ordinal);
     }
 
     private void UpdateRecentDerivedSpeciesHints(SpeciationMembershipRecord membership)
@@ -4091,6 +4105,7 @@ public sealed class SpeciationManagerActor : IActor
         SpeciesSimilarityFloorState? sourceSpeciesFloor,
         double? sourceSpeciesSimilarityScore,
         ParentSpeciesPairwiseFit? bestParentSpeciesFit,
+        bool isSeedFounderCandidate,
         bool allowRecentSplitRealign = true,
         bool allowRecentDerivedSpeciesReuse = true)
     {
@@ -4284,6 +4299,34 @@ public sealed class SpeciationManagerActor : IActor
 
         if (similarity <= effectiveSplitThreshold)
         {
+            if (isSeedFounderCandidate
+                && lineageEvidence.ParentMembershipCount == 1)
+            {
+                var founderRootSpeciesId = BuildFounderRootSpeciesId(
+                    sourceSpeciesId,
+                    lineageEvidence.LineageKey,
+                    epoch.EpochId);
+                return new AssignmentResolution(
+                    founderRootSpeciesId,
+                    BuildFounderRootSpeciesDisplayName(
+                        sourceSpeciesDisplayName,
+                        sourceSpeciesId,
+                        founderRootSpeciesId),
+                    DecisionReason: "lineage_diverged_founder_root_species",
+                    Strategy: "lineage_founder_root",
+                    StrategyDetail:
+                        "Seed founder diverged before any reusable parent lineage existed; created an independent root species.",
+                    ForceDecisionReason: true,
+                    PolicyEffectiveSplitThreshold: policyEffectiveSplitThreshold,
+                    EffectiveSplitThreshold: effectiveSplitThreshold,
+                    SplitTriggeredBySpeciesFloor: splitTriggeredBySpeciesFloor,
+                    SourceSpeciesSimilarityScore: similarity,
+                    SourceConsensusShare: sourceConsensusShare,
+                    SpeciesFloorSimilarityScore: speciesFloorSimilarityScore,
+                    SpeciesFloorSampleCount: speciesFloorSampleCount,
+                    SpeciesFloorMembershipCount: speciesFloorMembershipCount);
+            }
+
             if (isRecentDerivedSourceSpecies && !hasInSpeciesEvidence)
             {
                 return BuildSimilarityResolution(
@@ -5569,6 +5612,28 @@ public sealed class SpeciationManagerActor : IActor
         return $"{truncatedDominant}-{truncatedPrefix}-{suffix}";
     }
 
+    private static string BuildFounderRootSpeciesId(
+        string baselineSpeciesId,
+        string lineageKey,
+        long epochId)
+    {
+        var normalizedBaseline = NormalizeToken(baselineSpeciesId, "species");
+        const string founderPrefix = "founder";
+        var hashInput = $"{epochId}:{lineageKey}:{normalizedBaseline}:{founderPrefix}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(hashInput));
+        var suffix = Convert.ToHexString(hash.AsSpan(0, 6)).ToLowerInvariant();
+        var maxSpeciesIdLength = 96;
+        var prefixBudget = Math.Max(1, maxSpeciesIdLength - suffix.Length - 2);
+        var truncatedPrefix = founderPrefix.Length <= prefixBudget
+            ? founderPrefix
+            : founderPrefix[..prefixBudget];
+        var baselineBudget = Math.Max(1, maxSpeciesIdLength - truncatedPrefix.Length - suffix.Length - 2);
+        var truncatedBaseline = normalizedBaseline.Length <= baselineBudget
+            ? normalizedBaseline
+            : normalizedBaseline[..baselineBudget];
+        return $"{truncatedBaseline}-{truncatedPrefix}-{suffix}";
+    }
+
     private static string BuildDerivedSpeciesDisplayName(
         string? dominantSpeciesDisplayName,
         string dominantSpeciesId,
@@ -5579,6 +5644,16 @@ public sealed class SpeciationManagerActor : IActor
         var nextLetter = ComputeLineageLetter(derivedSpeciesId);
         var nextCode = lineageCode + nextLetter;
         return $"{stem} [{nextCode}]";
+    }
+
+    private static string BuildFounderRootSpeciesDisplayName(
+        string? baselineSpeciesDisplayName,
+        string baselineSpeciesId,
+        string founderSpeciesId)
+    {
+        var baselineDisplayName = ResolveSpeciesDisplayName(baselineSpeciesDisplayName, baselineSpeciesId);
+        var (stem, _) = ParseLineageDisplayName(baselineDisplayName);
+        return $"{stem} ({ComputeLineageLetter(founderSpeciesId)})";
     }
 
     private static string ResolveSpeciesDisplayName(string? preferredDisplayName, string speciesId)
@@ -5623,6 +5698,36 @@ public sealed class SpeciationManagerActor : IActor
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed.Trim()));
         var letter = (char)('A' + (hash[0] % 26));
         return letter.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static bool IsSeedFounderCandidate(
+        Guid candidateBrainId,
+        IReadOnlyList<Guid> inputOrderedParentBrainIds)
+    {
+        if (candidateBrainId == Guid.Empty || inputOrderedParentBrainIds.Count == 0)
+        {
+            return false;
+        }
+
+        var containsSelf = false;
+        var containsDistinctPeer = false;
+        foreach (var parentBrainId in inputOrderedParentBrainIds)
+        {
+            if (parentBrainId == Guid.Empty)
+            {
+                continue;
+            }
+
+            if (parentBrainId == candidateBrainId)
+            {
+                containsSelf = true;
+                continue;
+            }
+
+            containsDistinctPeer = true;
+        }
+
+        return containsSelf && containsDistinctPeer;
     }
 
     private static string BuildDisplayNameFromSpeciesId(string speciesId)
