@@ -43,6 +43,26 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartSpeciationServiceAsync_WhenLaunchPreparationFails_ReportsFailure()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsPortText = "12030",
+            SpeciationPortText = "12080"
+        };
+
+        var vm = CreateViewModel(
+            connections,
+            new FakeWorkbenchClient(),
+            new FakeLocalProjectLaunchPreparer("Build failed (code 1). CS1000"));
+
+        await vm.StartSpeciationServiceAsync();
+
+        Assert.Equal("Build failed (code 1). CS1000", vm.SpeciationLaunchStatus);
+        Assert.Equal("Speciation launch: Build failed (code 1). CS1000", vm.StatusMessage);
+    }
+
+    [Fact]
     public async Task StopAllCommand_StopsWorkerRunner()
     {
         var connections = new ConnectionViewModel();
@@ -1649,14 +1669,18 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("designer_managed_spawn_registration_timeout", client.LastKillReason);
     }
 
-    private static OrchestratorPanelViewModel CreateViewModel(ConnectionViewModel connections, WorkbenchClient client)
+    private static OrchestratorPanelViewModel CreateViewModel(
+        ConnectionViewModel connections,
+        WorkbenchClient client,
+        ILocalProjectLaunchPreparer? launchPreparer = null)
     {
         return new OrchestratorPanelViewModel(
             new UiDispatcher(),
             connections,
             client,
             connectAll: () => Task.CompletedTask,
-            disconnectAll: () => { });
+            disconnectAll: () => { },
+            launchPreparer: launchPreparer);
     }
 
     private static async Task WaitForAsync(Func<bool> predicate, int timeoutMs = 2000)
@@ -1840,5 +1864,13 @@ public class OrchestratorPanelViewModelTests
         public void OnSettingsStatus(string status, bool connected) { }
         public void OnHiveMindStatus(string status, bool connected) { }
         public void OnSettingChanged(SettingItem item) { }
+    }
+
+    private sealed class FakeLocalProjectLaunchPreparer(string failureMessage) : ILocalProjectLaunchPreparer
+    {
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
+        {
+            return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
+        }
     }
 }

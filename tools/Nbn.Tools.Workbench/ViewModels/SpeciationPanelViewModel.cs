@@ -72,6 +72,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
+    private readonly ILocalProjectLaunchPreparer _launchPreparer;
     private readonly Func<Task>? _startSpeciationService;
     private readonly Func<Task>? _stopSpeciationService;
     private readonly Func<Task>? _refreshOrchestrator;
@@ -178,11 +179,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         Func<Task>? startSpeciationService = null,
         Func<Task>? stopSpeciationService = null,
         Func<Task>? refreshOrchestrator = null,
-        bool enableLiveChartsAutoRefresh = true)
+        bool enableLiveChartsAutoRefresh = true,
+        ILocalProjectLaunchPreparer? launchPreparer = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _client = client;
+        _launchPreparer = launchPreparer ?? new LocalProjectLaunchPreparer();
         _startSpeciationService = startSpeciationService;
         _stopSpeciationService = stopSpeciationService;
         _refreshOrchestrator = refreshOrchestrator;
@@ -1634,13 +1637,16 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        var startInfo = new System.Diagnostics.ProcessStartInfo
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Tools.EvolutionSim", args, "EvolutionSim").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
         {
-            FileName = "dotnet",
-            Arguments = $"run --project \"{projectPath}\" -c Release --no-build -- {args}",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+            SimulatorStatus = launch.Message;
+            Status = $"Evolution simulator: {launch.Message}";
+            SimulatorDetailedStats = "No simulator statistics yet.";
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         var startResult = await _evolutionRunner.StartAsync(startInfo, waitForExit: false, label: "EvolutionSim").ConfigureAwait(false);
         SimulatorStatus = startResult.Message;
         Status = $"Evolution simulator: {startResult.Message}";

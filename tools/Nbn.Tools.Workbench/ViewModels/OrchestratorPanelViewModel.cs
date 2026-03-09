@@ -34,6 +34,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
+    private readonly ILocalProjectLaunchPreparer _launchPreparer;
     private readonly LocalServiceRunner _settingsRunner = new();
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
@@ -96,11 +97,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Action<Guid>? brainDiscovered = null,
         Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null,
         Func<Task>? connectAll = null,
-        Action? disconnectAll = null)
+        Action? disconnectAll = null,
+        ILocalProjectLaunchPreparer? launchPreparer = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _client = client;
+        _launchPreparer = launchPreparer ?? new LocalProjectLaunchPreparer();
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
@@ -312,7 +315,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = includeDbArg
             ? $"--db \"{resolvedDbPath}\" --bind-host {Connections.SettingsHost} --port {port}"
             : $"--bind-host {Connections.SettingsHost} --port {port}";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.SettingsMonitor", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.SettingsMonitor", args, "SettingsMonitor").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            SettingsLaunchStatus = launch.Message;
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false, label: "SettingsMonitor");
         SettingsLaunchStatus = result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
@@ -337,7 +347,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.HiveMind", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.HiveMind", args, "HiveMind").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            HiveMindLaunchStatus = launch.Message;
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
         HiveMindLaunchStatus = result.Message;
@@ -361,7 +378,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var args = $"--bind-host {Connections.IoHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.IO", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.IO", args, "IoGateway").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            IoLaunchStatus = launch.Message;
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
         IoLaunchStatus = result.Message;
@@ -386,7 +410,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.ReproHost} --port {reproPort}"
                  + $" --manager-name {Connections.ReproManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Reproduction", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Reproduction", args, "Reproduction").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            ReproLaunchStatus = launch.Message;
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
         ReproLaunchStatus = result.Message;
@@ -417,7 +448,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.SpeciationHost} --port {speciationPort}"
                  + $" --manager-name {Connections.SpeciationManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Speciation", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Speciation", args, "Speciation").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            SpeciationLaunchStatus = launch.Message;
+            StatusMessage = $"Speciation launch: {launch.Message}";
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _speciationRunner.StartAsync(startInfo, waitForExit: false, label: "Speciation");
         SpeciationLaunchStatus = result.Message;
@@ -450,7 +489,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.WorkerNode", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.WorkerNode", args, "WorkerNode").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            WorkerLaunchStatus = launch.Message;
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         ApplyObservabilityEnvironment(startInfo);
         var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
@@ -476,7 +522,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.ObsHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
-        var startInfo = BuildServiceStartInfo(projectPath, "Nbn.Runtime.Observability", args);
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Observability", args, "Observability").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            ObsLaunchStatus = launch.Message;
+            return;
+        }
+
+        var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _obsRunner.StartAsync(startInfo, waitForExit: false, label: "Observability");
         ObsLaunchStatus = result.Message;
@@ -1695,51 +1748,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 0));
             _lastBrains.Remove(brainId);
         }
-    }
-
-    private static ProcessStartInfo BuildDotnetStartInfo(string args)
-    {
-        return new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-    }
-
-    private static ProcessStartInfo BuildServiceStartInfo(string projectPath, string exeName, string serviceArgs)
-    {
-        var exePath = ResolveExecutable(projectPath, exeName);
-        if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
-        {
-            return new ProcessStartInfo
-            {
-                FileName = exePath,
-                Arguments = serviceArgs,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-        }
-
-        var dotnetArgs = $"run --project \"{projectPath}\" -c Release --no-build -- {serviceArgs}";
-        return BuildDotnetStartInfo(dotnetArgs);
-    }
-
-    private static string? ResolveExecutable(string projectPath, string exeName)
-    {
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            return null;
-        }
-
-        var output = Path.Combine(projectPath, "bin", "Release", "net8.0");
-        if (OperatingSystem.IsWindows())
-        {
-            return Path.Combine(output, exeName + ".exe");
-        }
-
-        return Path.Combine(output, exeName);
     }
 
     private async Task TriggerReconnectAsync()

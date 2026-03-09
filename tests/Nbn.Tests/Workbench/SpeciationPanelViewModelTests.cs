@@ -386,6 +386,28 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartSimulatorCommand_WhenLaunchPreparationFails_ReportsFailure()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var vm = CreateViewModel(
+            new FakeWorkbenchClient(),
+            launchPreparer: new FakeLocalProjectLaunchPreparer("Build failed (code 1). CS1000"));
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Active", true),
+            new BrainListItem(brainB, "Active", true)
+        ]);
+
+        vm.StartSimulatorCommand.Execute(null);
+        await WaitForAsync(() => vm.SimulatorStatus == "Build failed (code 1). CS1000");
+
+        Assert.Equal("Build failed (code 1). CS1000", vm.SimulatorStatus);
+        Assert.Equal("Evolution simulator: Build failed (code 1). CS1000", vm.Status);
+        Assert.Equal("No simulator statistics yet.", vm.SimulatorDetailedStats);
+    }
+
+    [Fact]
     public void UpdateActiveBrains_PopulatesSimulatorBrainDropdownDefaults()
     {
         var brainA = Guid.NewGuid();
@@ -1590,7 +1612,10 @@ public class SpeciationPanelViewModelTests
         await vm.DisposeAsync();
     }
 
-    private static SpeciationPanelViewModel CreateViewModel(FakeWorkbenchClient client, bool enableAutoRefresh = false)
+    private static SpeciationPanelViewModel CreateViewModel(
+        FakeWorkbenchClient client,
+        bool enableAutoRefresh = false,
+        ILocalProjectLaunchPreparer? launchPreparer = null)
     {
         var connections = new ConnectionViewModel
         {
@@ -1607,7 +1632,8 @@ public class SpeciationPanelViewModelTests
             startSpeciationService: null,
             stopSpeciationService: null,
             refreshOrchestrator: null,
-            enableLiveChartsAutoRefresh: enableAutoRefresh);
+            enableLiveChartsAutoRefresh: enableAutoRefresh,
+            launchPreparer: launchPreparer);
     }
 
     private static SpeciationRuntimeConfig InvokeBuildRuntimeConfigFromDraft(SpeciationPanelViewModel vm)
@@ -1908,6 +1934,14 @@ public class SpeciationPanelViewModelTests
                 Value = value,
                 UpdatedMs = 1UL
             });
+        }
+    }
+
+    private sealed class FakeLocalProjectLaunchPreparer(string failureMessage) : ILocalProjectLaunchPreparer
+    {
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
+        {
+            return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }
     }
 
