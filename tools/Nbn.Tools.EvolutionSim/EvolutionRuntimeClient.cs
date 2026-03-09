@@ -18,6 +18,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
     private readonly PID _ioPid;
     private readonly TimeSpan _requestTimeout;
     private readonly Repro.ReproduceConfig _reproduceConfigTemplate;
+    private readonly object _artifactResolutionGate = new();
+    private readonly Dictionary<Guid, ArtifactRef> _brainArtifactCache;
     private bool _disposed;
 
     private EvolutionRuntimeClient(
@@ -30,6 +32,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         _ioPid = ioPid;
         _requestTimeout = requestTimeout;
         _reproduceConfigTemplate = reproduceConfigTemplate ?? throw new ArgumentNullException(nameof(reproduceConfigTemplate));
+        _brainArtifactCache = new Dictionary<Guid, ArtifactRef>();
     }
 
     public static async Task<EvolutionRuntimeClient> StartAsync(EvolutionSimulationOptions options)
@@ -67,21 +70,12 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             AssessCompatibilityResult? response;
             if (parentA.IsArtifactRef && parentB.IsArtifactRef)
             {
-                var request = new Repro.AssessCompatibilityByArtifactsRequest
-                {
-                    ParentADef = parentA.ArtifactRef!,
-                    ParentBDef = parentB.ArtifactRef!,
-                    StrengthSource = strengthSource,
-                    Seed = seed,
-                    RunCount = 1,
-                    Config = BuildRequestConfig(Repro.SpawnChildPolicy.SpawnChildNever)
-                };
-                response = await _system.Root.RequestAsync<AssessCompatibilityResult>(
-                        _ioPid,
-                        new AssessCompatibilityByArtifacts { Request = request },
-                        _requestTimeout)
-                    .WaitAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                response = await AssessCompatibilityByArtifactsAsync(
+                    parentA.ArtifactRef!,
+                    parentB.ArtifactRef!,
+                    seed,
+                    strengthSource,
+                    cancellationToken).ConfigureAwait(false);
             }
             else if (parentA.IsBrainId && parentB.IsBrainId)
             {
@@ -103,11 +97,25 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             }
             else
             {
-                return new CompatibilityAssessment(
-                    Success: false,
-                    Compatible: false,
-                    SimilarityScore: 0f,
-                    AbortReason: "assess_parent_mode_mismatch");
+                var resolution = await ResolveArtifactParentsAsync(
+                    parentA,
+                    parentB,
+                    cancellationToken).ConfigureAwait(false);
+                if (!resolution.Success)
+                {
+                    return new CompatibilityAssessment(
+                        Success: false,
+                        Compatible: false,
+                        SimilarityScore: 0f,
+                        AbortReason: "assess_parent_artifact_unavailable");
+                }
+
+                response = await AssessCompatibilityByArtifactsAsync(
+                    resolution.ParentA!,
+                    resolution.ParentB!,
+                    seed,
+                    strengthSource,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             var result = response?.Result;
@@ -146,24 +154,14 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             ReproduceResult? response;
             if (parentA.IsArtifactRef && parentB.IsArtifactRef)
             {
-                var request = new Repro.ReproduceByArtifactsRequest
-                {
-                    ParentADef = parentA.ArtifactRef!,
-                    ParentBDef = parentB.ArtifactRef!,
-                    StrengthSource = strengthSource,
-                    Seed = seed,
-                    RunCount = runCount,
-                    Config = BuildRequestConfig(
-                        spawnChildren
-                            ? Repro.SpawnChildPolicy.SpawnChildDefaultOn
-                            : Repro.SpawnChildPolicy.SpawnChildNever)
-                };
-                response = await _system.Root.RequestAsync<ReproduceResult>(
-                        _ioPid,
-                        new ReproduceByArtifacts { Request = request },
-                        _requestTimeout)
-                    .WaitAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                response = await ReproduceByArtifactsAsync(
+                    parentA.ArtifactRef!,
+                    parentB.ArtifactRef!,
+                    seed,
+                    runCount,
+                    spawnChildren,
+                    strengthSource,
+                    cancellationToken).ConfigureAwait(false);
             }
             else if (parentA.IsBrainId && parentB.IsBrainId)
             {
@@ -188,13 +186,29 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             }
             else
             {
-                return new ReproductionOutcome(
-                    Success: false,
-                    Compatible: false,
-                    AbortReason: "repro_parent_mode_mismatch",
-                    ChildDefinitions: Array.Empty<ArtifactRef>(),
-                    CommitCandidates: Array.Empty<SpeciationCommitCandidate>(),
-                    Diagnostics: default);
+                var resolution = await ResolveArtifactParentsAsync(
+                    parentA,
+                    parentB,
+                    cancellationToken).ConfigureAwait(false);
+                if (!resolution.Success)
+                {
+                    return new ReproductionOutcome(
+                        Success: false,
+                        Compatible: false,
+                        AbortReason: "repro_parent_artifact_unavailable",
+                        ChildDefinitions: Array.Empty<ArtifactRef>(),
+                        CommitCandidates: Array.Empty<SpeciationCommitCandidate>(),
+                        Diagnostics: default);
+                }
+
+                response = await ReproduceByArtifactsAsync(
+                    resolution.ParentA!,
+                    resolution.ParentB!,
+                    seed,
+                    runCount,
+                    spawnChildren,
+                    strengthSource,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             var result = response?.Result;
@@ -317,6 +331,159 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         _disposed = true;
         await _system.Remote().ShutdownAsync(graceful: true).ConfigureAwait(false);
         await _system.ShutdownAsync().ConfigureAwait(false);
+    }
+
+    private async Task<AssessCompatibilityResult?> AssessCompatibilityByArtifactsAsync(
+        ArtifactRef parentA,
+        ArtifactRef parentB,
+        ulong seed,
+        Repro.StrengthSource strengthSource,
+        CancellationToken cancellationToken)
+    {
+        var request = new Repro.AssessCompatibilityByArtifactsRequest
+        {
+            ParentADef = parentA,
+            ParentBDef = parentB,
+            StrengthSource = strengthSource,
+            Seed = seed,
+            RunCount = 1,
+            Config = BuildRequestConfig(Repro.SpawnChildPolicy.SpawnChildNever)
+        };
+        return await _system.Root.RequestAsync<AssessCompatibilityResult>(
+                _ioPid,
+                new AssessCompatibilityByArtifacts { Request = request },
+                _requestTimeout)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<ReproduceResult?> ReproduceByArtifactsAsync(
+        ArtifactRef parentA,
+        ArtifactRef parentB,
+        ulong seed,
+        uint runCount,
+        bool spawnChildren,
+        Repro.StrengthSource strengthSource,
+        CancellationToken cancellationToken)
+    {
+        var request = new Repro.ReproduceByArtifactsRequest
+        {
+            ParentADef = parentA,
+            ParentBDef = parentB,
+            StrengthSource = strengthSource,
+            Seed = seed,
+            RunCount = runCount,
+            Config = BuildRequestConfig(
+                spawnChildren
+                    ? Repro.SpawnChildPolicy.SpawnChildDefaultOn
+                    : Repro.SpawnChildPolicy.SpawnChildNever)
+        };
+        return await _system.Root.RequestAsync<ReproduceResult>(
+                _ioPid,
+                new ReproduceByArtifacts { Request = request },
+                _requestTimeout)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<(bool Success, ArtifactRef? ParentA, ArtifactRef? ParentB)> ResolveArtifactParentsAsync(
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
+        CancellationToken cancellationToken)
+    {
+        var resolvedParentA = await ResolveArtifactParentAsync(parentA, cancellationToken).ConfigureAwait(false);
+        var resolvedParentB = await ResolveArtifactParentAsync(parentB, cancellationToken).ConfigureAwait(false);
+        return HasUsableArtifactRef(resolvedParentA) && HasUsableArtifactRef(resolvedParentB)
+            ? (true, resolvedParentA, resolvedParentB)
+            : (false, null, null);
+    }
+
+    private async Task<ArtifactRef?> ResolveArtifactParentAsync(
+        EvolutionParentRef parent,
+        CancellationToken cancellationToken)
+    {
+        if (HasUsableArtifactRef(parent.ArtifactRef))
+        {
+            return parent.ArtifactRef;
+        }
+
+        if (parent.BrainId is not Guid brainId || brainId == Guid.Empty)
+        {
+            return null;
+        }
+
+        lock (_artifactResolutionGate)
+        {
+            if (_brainArtifactCache.TryGetValue(brainId, out var cachedArtifact)
+                && HasUsableArtifactRef(cachedArtifact))
+            {
+                return cachedArtifact;
+            }
+        }
+
+        ArtifactRef? resolvedArtifact = null;
+        try
+        {
+            var info = await _system.Root.RequestAsync<BrainInfo>(
+                    _ioPid,
+                    new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+                    _requestTimeout)
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (HasUsableArtifactRef(info?.BaseDefinition))
+            {
+                resolvedArtifact = info!.BaseDefinition;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // fall through to export fallback
+        }
+
+        if (!HasUsableArtifactRef(resolvedArtifact))
+        {
+            try
+            {
+                var ready = await _system.Root.RequestAsync<BrainDefinitionReady>(
+                        _ioPid,
+                        new ExportBrainDefinition
+                        {
+                            BrainId = brainId.ToProtoUuid(),
+                            RebaseOverlays = false
+                        },
+                        _requestTimeout)
+                    .WaitAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                if (HasUsableArtifactRef(ready?.BrainDef))
+                {
+                    resolvedArtifact = ready!.BrainDef;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        if (!HasUsableArtifactRef(resolvedArtifact))
+        {
+            return null;
+        }
+
+        lock (_artifactResolutionGate)
+        {
+            _brainArtifactCache[brainId] = resolvedArtifact!;
+        }
+
+        return resolvedArtifact;
     }
 
     private Repro.ReproduceConfig BuildRequestConfig(Repro.SpawnChildPolicy spawnPolicy)
@@ -491,18 +658,24 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
 
     private static void AddArtifactIfValid(ArtifactRef? reference, ICollection<ArtifactRef> children, ISet<string> seenKeys)
     {
-        if (reference is null || !reference.TryToSha256Hex(out var sha))
+        if (!HasUsableArtifactRef(reference))
         {
             return;
         }
 
-        var key = $"{sha}|{reference.SizeBytes}|{reference.MediaType}|{reference.StoreUri}";
+        var artifact = reference!;
+        if (!artifact.TryToSha256Hex(out var sha))
+        {
+            return;
+        }
+
+        var key = $"{sha}|{artifact.SizeBytes}|{artifact.MediaType}|{artifact.StoreUri}";
         if (!seenKeys.Add(key))
         {
             return;
         }
 
-        children.Add(reference);
+        children.Add(artifact);
     }
 
     private static void AddCommitCandidateIfValid(
@@ -519,7 +692,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
 
         ArtifactRef? definition = null;
-        if (childDefinition is not null && childDefinition.TryToSha256Hex(out _))
+        if (HasUsableArtifactRef(childDefinition))
         {
             definition = childDefinition;
         }
@@ -760,7 +933,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             return true;
         }
 
-        if (candidate.ChildDefinition is not null && candidate.ChildDefinition.TryToSha256Hex(out _))
+        if (HasUsableArtifactRef(candidate.ChildDefinition))
         {
             candidateRef.ArtifactRef = candidate.ChildDefinition;
             return true;
@@ -780,14 +953,20 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             return true;
         }
 
-        if (parent.ArtifactRef is { } artifactRef
-            && (artifactRef.TryToSha256Hex(out _) || !string.IsNullOrWhiteSpace(artifactRef.StoreUri)))
+        if (HasUsableArtifactRef(parent.ArtifactRef))
         {
-            parentRef.ArtifactRef = artifactRef;
+            parentRef.ArtifactRef = parent.ArtifactRef;
             return true;
         }
 
         return false;
+    }
+
+    private static bool HasUsableArtifactRef(ArtifactRef? artifactRef)
+    {
+        return artifactRef is not null
+               && artifactRef.TryToSha256Hex(out _)
+               && !string.IsNullOrWhiteSpace(artifactRef.StoreUri);
     }
 
     private static string NormalizeReason(string? reason)

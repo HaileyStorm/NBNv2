@@ -3,8 +3,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Nbn.Proto;
+using Nbn.Proto.Io;
 using Nbn.Shared;
 using Nbn.Tools.EvolutionSim;
+using Proto;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Tools;
@@ -165,6 +167,88 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.Equal(0.83f, similarity.Value, 3);
     }
 
+    [Fact]
+    public async Task AssessCompatibilityAsync_MixedParentKinds_UsesArtifactFallbackFromBrainInfo()
+    {
+        var brainId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var brainArtifact = BuildArtifact("brain-parent", "store://artifact-root");
+        var artifactParent = BuildArtifact("artifact-parent", "store://artifact-root");
+        var system = new ActorSystem();
+        try
+        {
+            var probe = new MixedParentProbeActor(
+                brainId,
+                brainArtifact,
+                BuildArtifact("child", "store://artifact-root"));
+            var ioPid = system.Root.Spawn(Props.FromProducer(() => probe));
+            var client = CreateClient(system, ioPid);
+
+            var result = await client.AssessCompatibilityAsync(
+                EvolutionParentRef.FromBrainId(brainId),
+                EvolutionParentRef.FromArtifactRef(artifactParent),
+                seed: 91UL,
+                Repro.StrengthSource.StrengthBaseOnly,
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.True(result.Compatible);
+            Assert.Equal(0.91f, result.SimilarityScore, 3);
+            Assert.Equal(1, probe.BrainInfoRequests);
+            Assert.Equal(0, probe.ExportRequests);
+            Assert.Equal(1, probe.ArtifactAssessmentRequests);
+            Assert.Equal(brainArtifact.ToSha256Hex(), probe.LastAssessParentASha);
+            Assert.Equal(artifactParent.ToSha256Hex(), probe.LastAssessParentBSha);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ReproduceAsync_MixedParentKinds_UsesExportFallbackWhenBrainInfoDefinitionMissing()
+    {
+        var brainId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var brainArtifact = BuildArtifact("brain-parent-export", "store://artifact-root");
+        var artifactParent = BuildArtifact("artifact-parent-export", "store://artifact-root");
+        var childArtifact = BuildArtifact("child-export", "store://artifact-root");
+        var system = new ActorSystem();
+        try
+        {
+            var probe = new MixedParentProbeActor(
+                brainId,
+                brainArtifact,
+                childArtifact,
+                returnBaseDefinitionInBrainInfo: false);
+            var ioPid = system.Root.Spawn(Props.FromProducer(() => probe));
+            var client = CreateClient(system, ioPid);
+
+            var result = await client.ReproduceAsync(
+                EvolutionParentRef.FromArtifactRef(artifactParent),
+                EvolutionParentRef.FromBrainId(brainId),
+                seed: 92UL,
+                runCount: 3,
+                spawnChildren: false,
+                Repro.StrengthSource.StrengthBaseOnly,
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.True(result.Compatible);
+            Assert.Equal(1, probe.BrainInfoRequests);
+            Assert.Equal(1, probe.ExportRequests);
+            Assert.Equal(1, probe.ArtifactReproductionRequests);
+            Assert.Equal(artifactParent.ToSha256Hex(), probe.LastReproParentASha);
+            Assert.Equal(brainArtifact.ToSha256Hex(), probe.LastReproParentBSha);
+            var candidate = Assert.Single(result.CommitCandidates);
+            Assert.NotNull(candidate.ChildDefinition);
+            Assert.Equal(childArtifact.ToSha256Hex(), candidate.ChildDefinition!.ToSha256Hex());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
     private static object InvokeExtractReproductionData(Repro.ReproduceResult result)
     {
         var method = typeof(EvolutionRuntimeClient).GetMethod(
@@ -206,6 +290,18 @@ public sealed class EvolutionRuntimeClientMetadataTests
         return value is null ? null : Assert.IsType<float>(value);
     }
 
+    private static EvolutionRuntimeClient CreateClient(ActorSystem system, PID ioPid)
+    {
+        var constructor = typeof(EvolutionRuntimeClient).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(ActorSystem), typeof(PID), typeof(TimeSpan), typeof(Repro.ReproduceConfig)],
+            modifiers: null);
+        Assert.NotNull(constructor);
+        return Assert.IsType<EvolutionRuntimeClient>(constructor!.Invoke(
+            [system, ioPid, TimeSpan.FromSeconds(2), new Repro.ReproduceConfig()]));
+    }
+
     private static T GetTupleItem<T>(object tuple, string propertyName)
     {
         var property = tuple.GetType().GetProperty(propertyName);
@@ -229,5 +325,103 @@ public sealed class EvolutionRuntimeClientMetadataTests
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         var sha = Convert.ToHexString(bytes).ToLowerInvariant();
         return sha.ToArtifactRef(sizeBytes: 512, mediaType: "application/x-nbn", storeUri: storeUri);
+    }
+
+    private sealed class MixedParentProbeActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ArtifactRef _brainArtifact;
+        private readonly ArtifactRef _childArtifact;
+        private readonly bool _returnBaseDefinitionInBrainInfo;
+
+        public MixedParentProbeActor(
+            Guid brainId,
+            ArtifactRef brainArtifact,
+            ArtifactRef childArtifact,
+            bool returnBaseDefinitionInBrainInfo = true)
+        {
+            _brainId = brainId;
+            _brainArtifact = brainArtifact.Clone();
+            _childArtifact = childArtifact.Clone();
+            _returnBaseDefinitionInBrainInfo = returnBaseDefinitionInBrainInfo;
+        }
+
+        public int BrainInfoRequests { get; private set; }
+        public int ExportRequests { get; private set; }
+        public int ArtifactAssessmentRequests { get; private set; }
+        public int ArtifactReproductionRequests { get; private set; }
+        public string LastAssessParentASha { get; private set; } = string.Empty;
+        public string LastAssessParentBSha { get; private set; } = string.Empty;
+        public string LastReproParentASha { get; private set; } = string.Empty;
+        public string LastReproParentBSha { get; private set; } = string.Empty;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case BrainInfoRequest request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var infoBrainId)
+                         && infoBrainId == _brainId:
+                    BrainInfoRequests++;
+                    context.Respond(new BrainInfo
+                    {
+                        BrainId = request.BrainId,
+                        BaseDefinition = _returnBaseDefinitionInBrainInfo ? _brainArtifact.Clone() : new ArtifactRef(),
+                        LastSnapshot = new ArtifactRef()
+                    });
+                    break;
+
+                case ExportBrainDefinition request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var exportBrainId)
+                         && exportBrainId == _brainId:
+                    ExportRequests++;
+                    context.Respond(new BrainDefinitionReady
+                    {
+                        BrainId = request.BrainId,
+                        BrainDef = _brainArtifact.Clone()
+                    });
+                    break;
+
+                case AssessCompatibilityByArtifacts request:
+                    ArtifactAssessmentRequests++;
+                    LastAssessParentASha = request.Request.ParentADef.ToSha256Hex();
+                    LastAssessParentBSha = request.Request.ParentBDef.ToSha256Hex();
+                    context.Respond(new AssessCompatibilityResult
+                    {
+                        Result = new Repro.ReproduceResult
+                        {
+                            Report = new Repro.SimilarityReport
+                            {
+                                Compatible = true,
+                                SimilarityScore = 0.91f
+                            }
+                        }
+                    });
+                    break;
+
+                case ReproduceByArtifacts request:
+                    ArtifactReproductionRequests++;
+                    LastReproParentASha = request.Request.ParentADef.ToSha256Hex();
+                    LastReproParentBSha = request.Request.ParentBDef.ToSha256Hex();
+                    context.Respond(new ReproduceResult
+                    {
+                        Result = new Repro.ReproduceResult
+                        {
+                            ChildDef = _childArtifact.Clone(),
+                            Report = new Repro.SimilarityReport
+                            {
+                                Compatible = true,
+                                SimilarityScore = 0.93f,
+                                LineageSimilarityScore = 0.88f
+                            }
+                        }
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
     }
 }

@@ -1838,11 +1838,13 @@ public sealed class EvolutionSimulationSession
                 return true;
             }
 
-            parentRef = default;
-            return false;
+            if (candidate.ChildDefinition is not null)
+            {
+                parentRef = EvolutionParentRef.FromArtifactRef(candidate.ChildDefinition);
+                return true;
+            }
         }
-
-        if (candidate.ChildDefinition is not null)
+        else if (candidate.ChildDefinition is not null)
         {
             parentRef = EvolutionParentRef.FromArtifactRef(candidate.ChildDefinition);
             return true;

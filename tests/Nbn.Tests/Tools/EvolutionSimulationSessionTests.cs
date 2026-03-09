@@ -100,10 +100,36 @@ public sealed class EvolutionSimulationSessionTests
         var status = await session.RunAsync(CancellationToken.None);
 
         Assert.True(client.ObservedBrainIdParents);
-        Assert.False(client.ObservedArtifactParents);
+        Assert.Equal(
+            parents.Count,
+            client.CommittedCandidates.Take(parents.Count).Count(candidate => candidate.ChildBrainId.HasValue));
         Assert.True(status.ReproductionCalls > 0);
         Assert.True(status.SpeciationCommitAttempts > 0);
         Assert.Equal(status.SpeciationCommitAttempts, status.SpeciationCommitSuccesses);
+    }
+
+    [Fact]
+    public async Task RunAsync_BrainIdParentMode_WithoutSpawn_AddsCommittedArtifactChildrenToPool()
+    {
+        var parents = CreateBrainParentPool();
+        var options = CreateOptions(
+            seed: 7002UL,
+            maxIterations: 24,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds);
+        var client = new DeterministicFakeClient(similarities: Enumerable.Repeat(0.90f, 128))
+        {
+            CommitCandidateSimilarity = 0.90f,
+            ReproductionDiagnosticSimilarity = 0.90f
+        };
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.True(client.ObservedBrainIdParents);
+        Assert.True(client.ObservedArtifactParents);
+        Assert.True(status.ChildrenAddedToPool > 0);
+        Assert.True(status.ParentPoolSize > parents.Count);
     }
 
     [Fact]
