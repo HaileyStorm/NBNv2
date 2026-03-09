@@ -530,25 +530,28 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public void BuildEvolutionSimArgs_UsesArtifactParentSpecs()
+    public void BuildEvolutionSimArgs_UsesBrainParentIds()
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
-        var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
-        var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
-        var parentRefs = new List<ArtifactRef> { parentA, parentB };
+        var parentIds = new List<Guid>
+        {
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222")
+        };
 
         var method = typeof(SpeciationPanelViewModel).GetMethod(
             "BuildEvolutionSimArgs",
             BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<ArtifactRef>)],
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
             modifiers: null);
         Assert.NotNull(method);
 
-        var args = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var args = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(args);
-        Assert.Contains("--parent ", args!, StringComparison.Ordinal);
-        Assert.DoesNotContain("--parent-brain", args, StringComparison.Ordinal);
+        Assert.Contains("--parent-brain 11111111-1111-1111-1111-111111111111", args!, StringComparison.Ordinal);
+        Assert.Contains("--parent-brain 22222222-2222-2222-2222-222222222222", args, StringComparison.Ordinal);
+        Assert.DoesNotContain("--parent ", args, StringComparison.Ordinal);
         Assert.Contains("--min-runs 2", args, StringComparison.Ordinal);
         Assert.Contains("--max-runs 12", args, StringComparison.Ordinal);
         Assert.Contains("--run-pressure-mode divergence", args, StringComparison.Ordinal);
@@ -560,30 +563,32 @@ public class SpeciationPanelViewModelTests
     public void BuildEvolutionSimArgs_NormalizesRunPressureModeAliases()
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
-        var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
-        var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
-        var parentRefs = new List<ArtifactRef> { parentA, parentB };
+        var parentIds = new List<Guid>
+        {
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222")
+        };
 
         var method = typeof(SpeciationPanelViewModel).GetMethod(
             "BuildEvolutionSimArgs",
             BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<ArtifactRef>)],
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
             modifiers: null);
         Assert.NotNull(method);
 
         vm.SimRunPressureMode = "stable";
-        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(stableArgs);
         Assert.Contains("--run-pressure-mode stability", stableArgs!, StringComparison.Ordinal);
 
         vm.SimRunPressureMode = "exploratory";
-        var exploratoryArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var exploratoryArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(exploratoryArgs);
         Assert.Contains("--run-pressure-mode divergence", exploratoryArgs!, StringComparison.Ordinal);
 
         vm.SimRunPressureMode = "unexpected-token";
-        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(fallbackArgs);
         Assert.Contains("--run-pressure-mode neutral", fallbackArgs!, StringComparison.Ordinal);
     }
@@ -592,30 +597,32 @@ public class SpeciationPanelViewModelTests
     public void BuildEvolutionSimArgs_NormalizesParentSelectionBiasAliases()
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
-        var parentA = new string('a', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
-        var parentB = new string('b', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
-        var parentRefs = new List<ArtifactRef> { parentA, parentB };
+        var parentIds = new List<Guid>
+        {
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222")
+        };
 
         var method = typeof(SpeciationPanelViewModel).GetMethod(
             "BuildEvolutionSimArgs",
             BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<ArtifactRef>)],
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
             modifiers: null);
         Assert.NotNull(method);
 
         vm.SimParentSelectionBias = "stable";
-        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(stableArgs);
         Assert.Contains("--parent-selection-bias stability", stableArgs!, StringComparison.Ordinal);
 
         vm.SimParentSelectionBias = "exploratory";
-        var divergenceArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var divergenceArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(divergenceArgs);
         Assert.Contains("--parent-selection-bias divergence", divergenceArgs!, StringComparison.Ordinal);
 
         vm.SimParentSelectionBias = "unexpected-token";
-        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentRefs]);
+        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
         Assert.NotNull(fallbackArgs);
         Assert.Contains("--parent-selection-bias neutral", fallbackArgs!, StringComparison.Ordinal);
     }

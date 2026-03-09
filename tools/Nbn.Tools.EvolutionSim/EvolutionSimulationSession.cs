@@ -201,6 +201,7 @@ public sealed class EvolutionSimulationSession
         }
 
         var seededKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seededParents = new List<EvolutionParentRef>(snapshot.Count);
         foreach (var parent in snapshot)
         {
             if (TryBuildParentKey(parent, out var seedKey)
@@ -209,20 +210,14 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            if (!TrySelectSeedPartner(snapshot, parent, out var seedPartner))
+            var (hasSeedPartner, seedPartner, seedAssessment) = await ResolveSeedPartnerAsync(
+                snapshot,
+                seededParents,
+                parent,
+                cancellationToken).ConfigureAwait(false);
+            if (!hasSeedPartner)
             {
                 continue;
-            }
-
-            CompatibilityAssessment seedAssessment = default;
-            if (seededKeys.Count > 1)
-            {
-                seedAssessment = await _client.AssessCompatibilityAsync(
-                    parent,
-                    seedPartner,
-                    NextSeed(),
-                    _options.StrengthSource,
-                    cancellationToken).ConfigureAwait(false);
             }
 
             if (!TryBuildSeedCandidate(parent, seedAssessment, out var candidate))
@@ -249,6 +244,11 @@ public sealed class EvolutionSimulationSession
                 RecordParentSpecies(parentKey, commitOutcome.SpeciesId, commitOutcome.SourceSpeciesId);
             }
 
+            if (commitOutcome.Success)
+            {
+                seededParents.Add(parent);
+            }
+
             if (!commitOutcome.Success
                 && !commitOutcome.ExpectedNoOp
                 && !string.IsNullOrWhiteSpace(commitOutcome.FailureDetail))
@@ -258,6 +258,57 @@ public sealed class EvolutionSimulationSession
         }
 
         NormalizeInitialSeedSelectionOrdinals(seededKeys);
+    }
+
+    private async Task<(bool HasPartner, EvolutionParentRef Partner, CompatibilityAssessment Assessment)> ResolveSeedPartnerAsync(
+        IReadOnlyList<EvolutionParentRef> parentPoolSnapshot,
+        IReadOnlyList<EvolutionParentRef> seededParents,
+        EvolutionParentRef parentRef,
+        CancellationToken cancellationToken)
+    {
+        if (seededParents.Count > 0)
+        {
+            var hasAssessment = false;
+            var bestAssessment = default(CompatibilityAssessment);
+            var bestPartner = default(EvolutionParentRef);
+            foreach (var seededParent in seededParents)
+            {
+                if (TryBuildParentKey(parentRef, out var parentKey)
+                    && TryBuildParentKey(seededParent, out var seededParentKey)
+                    && string.Equals(parentKey, seededParentKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var assessment = await _client.AssessCompatibilityAsync(
+                    parentRef,
+                    seededParent,
+                    NextSeed(),
+                    _options.StrengthSource,
+                    cancellationToken).ConfigureAwait(false);
+                if (!assessment.Success)
+                {
+                    continue;
+                }
+
+                if (!hasAssessment
+                    || assessment.SimilarityScore > bestAssessment.SimilarityScore)
+                {
+                    hasAssessment = true;
+                    bestAssessment = assessment;
+                    bestPartner = seededParent;
+                }
+            }
+
+            if (hasAssessment)
+            {
+                return (true, bestPartner, bestAssessment);
+            }
+        }
+
+        return TrySelectSeedPartner(parentPoolSnapshot, parentRef, out var fallbackPartner)
+            ? (true, fallbackPartner, default)
+            : (false, default, default);
     }
 
     private async Task ExecuteIterationAsync(EvolutionParentRef parentA, EvolutionParentRef parentB, CancellationToken cancellationToken)

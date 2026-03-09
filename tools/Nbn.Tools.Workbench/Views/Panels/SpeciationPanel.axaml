@@ -653,7 +653,7 @@
                        Classes="muted"
                        VerticalAlignment="Center" />
             <TextBlock Grid.Column="1"
-                       Text="Simulator resolves the effective parent pool to artifacts and sends one --parent value per distinct parent. Parent A/B are seeded automatically, override file(s) take precedence for those slots, and extras append."
+                       Text="Simulator sends one --parent-brain value per distinct live parent brain. Parent A/B are seeded automatically, override file(s) take precedence for those slots, and extras append."
                        Classes="muted"
                        TextWrapping="Wrap" />
           </Grid>

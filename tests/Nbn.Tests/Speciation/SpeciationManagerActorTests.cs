@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
@@ -1886,6 +1887,31 @@ public sealed class SpeciationManagerActorTests
         finally
         {
             await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public void BuildRootSpeciesLineagePrefix_RemainsUniqueBeyondTwentySixRoots()
+    {
+        var method = typeof(SpeciationManagerActor).GetMethod(
+            "BuildRootSpeciesLineagePrefix",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        var prefixes = new[]
+        {
+            (Ordinal: 1, Expected: "A"),
+            (Ordinal: 26, Expected: "Z"),
+            (Ordinal: 27, Expected: "AA"),
+            (Ordinal: 28, Expected: "AB"),
+            (Ordinal: 52, Expected: "AZ"),
+            (Ordinal: 53, Expected: "BA")
+        };
+
+        foreach (var (ordinal, expected) in prefixes)
+        {
+            var actual = Assert.IsType<string>(method!.Invoke(null, [ordinal]));
+            Assert.Equal(expected, actual);
         }
     }
 

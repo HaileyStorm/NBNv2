@@ -138,7 +138,11 @@ public sealed class EvolutionSimulationSessionTests
     {
         var parents = CreateParentPool();
         var options = CreateOptions(seed: 9123UL, maxIterations: 2, commitToSpeciation: true);
-        var client = new DeterministicFakeClient(similarities: new[] { 0.81f, 0.82f, 0.34f, 0.93f })
+        var client = new DeterministicFakeClient(similarities: new[]
+        {
+            0.81f, 0.82f, 0.83f, // founder seeding assessments
+            0.34f, 0.93f         // iteration assessments
+        })
         {
             ReproductionDiagnosticSimilarity = 0.82f,
             CommitCandidateSimilarity = 0.82f,
@@ -164,7 +168,11 @@ public sealed class EvolutionSimulationSessionTests
     {
         var parents = CreateParentPool();
         var options = CreateOptions(seed: 9124UL, maxIterations: 2, commitToSpeciation: true);
-        var client = new DeterministicFakeClient(similarities: new[] { 0.81f, 0.82f, 0.34f, 0.93f })
+        var client = new DeterministicFakeClient(similarities: new[]
+        {
+            0.81f, 0.82f, 0.83f, // founder seeding assessments
+            0.34f, 0.93f         // iteration assessments
+        })
         {
             ReproductionDiagnosticSimilarity = 0.82f,
             CommitCandidateSimilarity = 0.82f
@@ -206,6 +214,41 @@ public sealed class EvolutionSimulationSessionTests
             static entry => entry.StartsWith("repro:", StringComparison.Ordinal));
         Assert.True(firstSpeciationIndex >= 0);
         Assert.True(firstReproIndex < 0 || firstSpeciationIndex < firstReproIndex);
+    }
+
+    [Fact]
+    public async Task SeedInitialParentsAsync_BrainMode_PrefersBestSeededPartnerForDuplicateFounderInstances()
+    {
+        var parents = CreateOrderedBrainParentPool(4);
+        var options = CreateOptions(
+            seed: 78115UL,
+            maxIterations: 1,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds);
+        var client = new DeterministicFakeClient(similarities: new[]
+        {
+            1.0f,        // parent 2 -> parent 1
+            0.0f, 0.0f,  // parent 3 -> parents 1/2
+            0.0f, 0.0f, 1.0f // parent 4 -> parents 1/2/3
+        });
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var seedInitialParentsMethod = typeof(EvolutionSimulationSession).GetMethod(
+            "SeedInitialParentsAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(seedInitialParentsMethod);
+
+        var seedTask = Assert.IsAssignableFrom<Task>(
+            seedInitialParentsMethod!.Invoke(session, [CancellationToken.None]));
+        await seedTask;
+
+        Assert.Equal(4, client.CommittedParentPairs.Count);
+        Assert.Equal(
+            BuildBrainParentKey(parents[0]),
+            client.CommittedParentPairs[1].ParentBKey);
+        Assert.Equal(
+            BuildBrainParentKey(parents[2]),
+            client.CommittedParentPairs[3].ParentBKey);
     }
 
     [Fact]
@@ -1258,6 +1301,7 @@ public sealed class EvolutionSimulationSessionTests
         public List<uint> RequestedRunCounts { get; } = new();
         public List<Guid> ObservedBrainSelections { get; } = new();
         public List<(string ParentAKey, string ParentBKey)> AssessedParentPairs { get; } = new();
+        public List<(string ParentAKey, string ParentBKey)> CommittedParentPairs { get; } = new();
         public Queue<string?> CommitOutcomeSpeciesIds { get; } = new();
         public Queue<string?> CommitOutcomeSourceSpeciesIds { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
@@ -1354,12 +1398,13 @@ public sealed class EvolutionSimulationSessionTests
         {
             ObserveParentKinds(parentA, parentB);
             CommittedCandidates.Add(candidate);
+            CommittedParentPairs.Add((BuildParentSelectionKey(parentA), BuildParentSelectionKey(parentB)));
             var candidateLabel = candidate.ChildBrainId is Guid brainId && brainId != Guid.Empty
                 ? $"brain:{brainId:D}"
                 : candidate.ChildDefinition is { } definition
                     ? $"artifact:{ShortArtifact(definition)}"
                     : "missing";
-            Events.Add($"speciation:{candidateLabel}");
+            Events.Add($"speciation:{candidateLabel}:{Short(parentA)}:{Short(parentB)}");
             var speciesId = CommitOutcomeSpeciesIds.Count > 0
                 ? CommitOutcomeSpeciesIds.Dequeue() ?? string.Empty
                 : string.Empty;

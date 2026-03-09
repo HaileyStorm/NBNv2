@@ -1626,18 +1626,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        var parentDefinitions = await TryResolveSimulatorParentArtifactsAsync(parentPool).ConfigureAwait(false);
-        if (!parentDefinitions.Success || parentDefinitions.ParentRefs.Count < 2)
-        {
-            SimulatorStatus = parentDefinitions.Error;
-            Status = SimulatorStatus;
-            return;
-        }
-
-        var args = BuildEvolutionSimArgs(ioPort, simPort, parentDefinitions.ParentRefs);
+        var args = BuildEvolutionSimArgs(ioPort, simPort, parentPool);
         if (string.IsNullOrWhiteSpace(args))
         {
-            SimulatorStatus = "Simulator requires at least two usable parent artifact references.";
+            SimulatorStatus = "Simulator requires at least two usable parent brain IDs.";
             Status = SimulatorStatus;
             return;
         }
@@ -2283,53 +2275,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return true;
     }
 
-    private async Task<(bool Success, IReadOnlyList<ArtifactRef> ParentRefs, string Error)> TryResolveSimulatorParentArtifactsAsync(
-        IReadOnlyList<Guid> parentIds)
-    {
-        var parentRefs = new List<ArtifactRef>(parentIds.Count);
-        for (var index = 0; index < parentIds.Count; index++)
-        {
-            var parentLabel = $"#{index + 1}";
-            var resolution = await ResolveSimulatorParentArtifactAsync(parentIds[index], parentLabel).ConfigureAwait(false);
-            if (!resolution.Success || resolution.Artifact is null)
-            {
-                return (false, Array.Empty<ArtifactRef>(), resolution.Error);
-            }
-
-            parentRefs.Add(resolution.Artifact);
-        }
-
-        return (true, parentRefs, string.Empty);
-    }
-
-    private async Task<(bool Success, ArtifactRef? Artifact, string Error)> ResolveSimulatorParentArtifactAsync(Guid brainId, string parentLabel)
-    {
-        ArtifactRef? parentArtifact = await _client.ExportBrainDefinitionAsync(brainId, rebaseOverlays: false).ConfigureAwait(false);
-        if (!HasUsableSimulatorParentArtifact(parentArtifact))
-        {
-            var info = await _client.RequestBrainInfoAsync(brainId).ConfigureAwait(false);
-            if (HasUsableSimulatorParentArtifact(info?.BaseDefinition))
-            {
-                parentArtifact = info!.BaseDefinition;
-            }
-        }
-
-        if (!HasUsableSimulatorParentArtifact(parentArtifact))
-        {
-            return (false, null, $"Parent {parentLabel} definition unavailable for brain {brainId:D}. Ensure IO/Hive are connected and the brain is active.");
-        }
-
-        if (string.IsNullOrWhiteSpace(parentArtifact!.StoreUri))
-        {
-            return (false, null, $"Parent {parentLabel} definition missing store_uri for brain {brainId:D}. Configure artifact storage before running simulator.");
-        }
-
-        return (true, parentArtifact, string.Empty);
-    }
-
-    private static bool HasUsableSimulatorParentArtifact(ArtifactRef? artifactRef)
-        => artifactRef is not null && artifactRef.TryToSha256Hex(out _);
-
     private static bool TryResolveParentBrainId(
         SpeciationSimulatorBrainOption? selected,
         string? overrideFilePath,
@@ -2548,15 +2493,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private static string FormatPath(IStorageItem item)
         => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
-    private string BuildEvolutionSimArgs(int ioPort, int simPort, IReadOnlyList<ArtifactRef> parentRefs)
+    private string BuildEvolutionSimArgs(int ioPort, int simPort, IReadOnlyList<Guid> parentBrainIds)
     {
-        var parentSpecs = parentRefs
-            .Select(BuildEvolutionParentSpec)
-            .Where(spec => !string.IsNullOrWhiteSpace(spec))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        var normalizedParentIds = parentBrainIds
+            .Where(static brainId => brainId != Guid.Empty)
+            .Distinct()
             .ToList();
 
-        if (parentSpecs.Count < 2)
+        if (normalizedParentIds.Count < 2)
         {
             return string.Empty;
         }
@@ -2586,28 +2530,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             "--json"
         };
 
-        foreach (var parentSpec in parentSpecs)
+        foreach (var parentBrainId in normalizedParentIds)
         {
-            args.Add($"--parent {QuoteIfNeeded(parentSpec)}");
+            args.Add($"--parent-brain {parentBrainId:D}");
         }
 
         return string.Join(" ", args);
-    }
-
-    private static string BuildEvolutionParentSpec(ArtifactRef artifactRef)
-    {
-        if (!artifactRef.TryToSha256Hex(out var sha))
-        {
-            return string.Empty;
-        }
-
-        var storeUri = string.IsNullOrWhiteSpace(artifactRef.StoreUri)
-            ? string.Empty
-            : artifactRef.StoreUri.Trim();
-        var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
-            ? "application/x-nbn"
-            : artifactRef.MediaType.Trim();
-        return $"{sha},{artifactRef.SizeBytes},{storeUri},{mediaType}";
     }
 
     private int ParseLiveChartIntervalSecondsOrDefault()
