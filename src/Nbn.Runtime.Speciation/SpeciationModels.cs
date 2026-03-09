@@ -23,6 +23,10 @@ public sealed record SpeciationAssignment(
     Guid? SourceBrainId = null,
     string? SourceArtifactRef = null);
 
+public sealed record SpeciationSpeciesDisplayNameUpdate(
+    string SpeciesId,
+    string SpeciesDisplayName);
+
 public sealed record SpeciationMembershipRecord(
     long EpochId,
     Guid BrainId,

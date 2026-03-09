@@ -316,6 +316,31 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_WithDuplicatedLogicalParents_SelectsDistinctParentKeysWhenAvailable()
+    {
+        var parents = CreateDuplicatedBrainParentPool();
+        var options = CreateOptions(
+            seed: 7815UL,
+            maxIterations: 64,
+            commitToSpeciation: false,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Neutral,
+            RunPressureMode = EvolutionRunPressureMode.Neutral
+        };
+        var client = new DeterministicFakeClient(similarities: Enumerable.Repeat(0.90f, 256));
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal((ulong)64, status.CompatibilityChecks);
+        Assert.NotEmpty(client.AssessedParentPairs);
+        Assert.DoesNotContain(
+            client.AssessedParentPairs,
+            static pair => string.Equals(pair.ParentAKey, pair.ParentBKey, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task RunAsync_WhenParentPoolReachesCapacity_ContinuesTurnoverWithNewChildren()
     {
         var parents = CreateParentPool();
@@ -569,7 +594,7 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
-    public void SelectParentIndex_WithMultipleLineageFamilies_UsesFamilyAgeBiasInsteadOfDerivedSpeciesAge()
+    public void SelectParentIndex_WithMultipleLineageFamilies_PreservesFamilyAgeBiasAcrossFamilies()
     {
         var parents = CreateOrderedBrainParentPool(6);
         var options = CreateOptions(
@@ -637,6 +662,112 @@ public sealed class EvolutionSimulationSessionTests
         Assert.True(betaCount > alphaCount);
         Assert.True(gammaCount > alphaCount);
         Assert.True(deltaCount > alphaCount);
+    }
+
+    [Fact]
+    public void SelectParentIndex_WithMultipleLineageFamilies_PreservesSingleFamilySpeciesBiasWithinEachFamily()
+    {
+        var singleFamilyParents = CreateOrderedBrainParentPool(4);
+        var options = CreateOptions(
+            seed: 99126UL,
+            maxIterations: 1,
+            commitToSpeciation: false,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Stability
+        };
+
+        var singleFamilySession = new EvolutionSimulationSession(options, singleFamilyParents, new DeterministicFakeClient());
+        SeedParentSpeciesMetadata(
+            singleFamilySession,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(singleFamilyParents[0])] = "species-alpha",
+                [BuildBrainParentKey(singleFamilyParents[1])] = "species-alpha",
+                [BuildBrainParentKey(singleFamilyParents[2])] = "species-alpha",
+                [BuildBrainParentKey(singleFamilyParents[3])] = "species-alpha-branch-a"
+            },
+            new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = 1UL,
+                ["species-alpha-branch-a"] = 2UL
+            },
+            lineageFamilyByParentKey: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(singleFamilyParents[0])] = "family-alpha",
+                [BuildBrainParentKey(singleFamilyParents[1])] = "family-alpha",
+                [BuildBrainParentKey(singleFamilyParents[2])] = "family-alpha",
+                [BuildBrainParentKey(singleFamilyParents[3])] = "family-alpha"
+            },
+            lineageFamilyBySpeciesId: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = "family-alpha",
+                ["species-alpha-branch-a"] = "family-alpha"
+            },
+            lineageFamilyOrdinals: new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["family-alpha"] = 1UL
+            });
+
+        var singleFamilySelections = SampleSelectedSpeciesCounts(
+            singleFamilySession,
+            sampleCount: 6_000,
+            excludedIndex: -1);
+
+        Assert.True(singleFamilySelections.TryGetValue("species-alpha", out var singleFamilyAlphaCount));
+        Assert.True(singleFamilySelections.TryGetValue("species-alpha-branch-a", out var singleFamilyBranchCount));
+        var singleFamilyRatio = singleFamilyAlphaCount / (double)singleFamilyBranchCount;
+
+        var multiFamilyParents = CreateOrderedBrainParentPool(6);
+        var multiFamilySession = new EvolutionSimulationSession(options, multiFamilyParents, new DeterministicFakeClient());
+        SeedParentSpeciesMetadata(
+            multiFamilySession,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(multiFamilyParents[0])] = "species-alpha",
+                [BuildBrainParentKey(multiFamilyParents[1])] = "species-alpha",
+                [BuildBrainParentKey(multiFamilyParents[2])] = "species-alpha",
+                [BuildBrainParentKey(multiFamilyParents[3])] = "species-alpha-branch-a",
+                [BuildBrainParentKey(multiFamilyParents[4])] = "species-beta",
+                [BuildBrainParentKey(multiFamilyParents[5])] = "species-beta"
+            },
+            new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = 1UL,
+                ["species-alpha-branch-a"] = 2UL,
+                ["species-beta"] = 3UL
+            },
+            lineageFamilyByParentKey: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [BuildBrainParentKey(multiFamilyParents[0])] = "family-alpha",
+                [BuildBrainParentKey(multiFamilyParents[1])] = "family-alpha",
+                [BuildBrainParentKey(multiFamilyParents[2])] = "family-alpha",
+                [BuildBrainParentKey(multiFamilyParents[3])] = "family-alpha",
+                [BuildBrainParentKey(multiFamilyParents[4])] = "family-beta",
+                [BuildBrainParentKey(multiFamilyParents[5])] = "family-beta"
+            },
+            lineageFamilyBySpeciesId: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["species-alpha"] = "family-alpha",
+                ["species-alpha-branch-a"] = "family-alpha",
+                ["species-beta"] = "family-beta"
+            },
+            lineageFamilyOrdinals: new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["family-alpha"] = 1UL,
+                ["family-beta"] = 2UL
+            });
+
+        var multiFamilySelections = SampleSelectedSpeciesCounts(
+            multiFamilySession,
+            sampleCount: 6_000,
+            excludedIndex: -1);
+
+        Assert.True(multiFamilySelections.TryGetValue("species-alpha", out var multiFamilyAlphaCount));
+        Assert.True(multiFamilySelections.TryGetValue("species-alpha-branch-a", out var multiFamilyBranchCount));
+        var multiFamilyRatio = multiFamilyAlphaCount / (double)multiFamilyBranchCount;
+        var ratioOfRatios = multiFamilyRatio / singleFamilyRatio;
+        Assert.InRange(ratioOfRatios, 0.85d, 1.15d);
     }
 
     [Fact]
@@ -1126,6 +1257,7 @@ public sealed class EvolutionSimulationSessionTests
         public List<SpeciationCommitCandidate> CommittedCandidates { get; } = new();
         public List<uint> RequestedRunCounts { get; } = new();
         public List<Guid> ObservedBrainSelections { get; } = new();
+        public List<(string ParentAKey, string ParentBKey)> AssessedParentPairs { get; } = new();
         public Queue<string?> CommitOutcomeSpeciesIds { get; } = new();
         public Queue<string?> CommitOutcomeSourceSpeciesIds { get; } = new();
         public bool ObservedBrainIdParents { get; private set; }
@@ -1157,6 +1289,7 @@ public sealed class EvolutionSimulationSessionTests
             }
 
             ObserveParentKinds(parentA, parentB);
+            AssessedParentPairs.Add((BuildParentSelectionKey(parentA), BuildParentSelectionKey(parentB)));
             if (parentA.BrainId is Guid parentABrainId && parentABrainId != Guid.Empty)
             {
                 ObservedBrainSelections.Add(parentABrainId);
@@ -1253,6 +1386,13 @@ public sealed class EvolutionSimulationSessionTests
             {
                 ObservedArtifactParents = true;
             }
+        }
+
+        private static string BuildParentSelectionKey(EvolutionParentRef parent)
+        {
+            return TryBuildParentKey(parent, out var key)
+                ? key
+                : "missing";
         }
 
         private static string Short(EvolutionParentRef reference)

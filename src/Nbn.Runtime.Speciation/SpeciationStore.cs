@@ -134,10 +134,12 @@ INSERT INTO taxonomy_config_snapshots (
 );
 """;
 
-    private const string InsertSpeciesIfMissingSql = """
+    private const string UpsertSpeciesSql = """
 INSERT INTO species (epoch_id, species_id, display_name, created_ms)
 VALUES (@epoch_id, @species_id, @display_name, @created_ms)
-ON CONFLICT(epoch_id, species_id) DO NOTHING;
+ON CONFLICT(epoch_id, species_id) DO UPDATE SET
+    display_name = excluded.display_name
+WHERE species.display_name <> excluded.display_name;
 """;
 
     private const string InsertDecisionSql = """
@@ -798,7 +800,8 @@ WHERE name IN (
         long? decisionTimeMs = null,
         CancellationToken cancellationToken = default,
         IReadOnlyList<Guid>? lineageParentBrainIds = null,
-        string? lineageMetadataJson = null)
+        string? lineageMetadataJson = null,
+        IReadOnlyList<SpeciationSpeciesDisplayNameUpdate>? speciesDisplayNameUpdates = null)
     {
         if (epochId <= 0)
         {
@@ -813,6 +816,7 @@ WHERE name IN (
             : NormalizeJson(
                 lineageMetadataJson ?? "{\"source\":\"assignment_lineage_ingest\"}",
                 nameof(lineageMetadataJson));
+        var normalizedSpeciesDisplayNameUpdates = NormalizeSpeciesDisplayNameUpdates(speciesDisplayNameUpdates);
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -835,9 +839,25 @@ WHERE name IN (
                 return new SpeciationAssignOutcome(false, immutableConflict, existing);
             }
 
+            foreach (var displayNameUpdate in normalizedSpeciesDisplayNameUpdates)
+            {
+                await connection.ExecuteAsync(
+                    new CommandDefinition(
+                        UpsertSpeciesSql,
+                        new
+                        {
+                            epoch_id = epochId,
+                            species_id = displayNameUpdate.SpeciesId,
+                            display_name = displayNameUpdate.SpeciesDisplayName,
+                            created_ms = decidedMs
+                        },
+                        transaction,
+                        cancellationToken: cancellationToken));
+            }
+
             await connection.ExecuteAsync(
                 new CommandDefinition(
-                    InsertSpeciesIfMissingSql,
+                    UpsertSpeciesSql,
                     new
                     {
                         epoch_id = epochId,
@@ -1081,7 +1101,7 @@ WHERE name IN (
 
             await connection.ExecuteAsync(
                 new CommandDefinition(
-                    InsertSpeciesIfMissingSql,
+                    UpsertSpeciesSql,
                     new
                     {
                         epoch_id = epochId,
@@ -1433,6 +1453,24 @@ WHERE name IN (
                 ? null
                 : assignment.SourceBrainId
         };
+    }
+
+    private static IReadOnlyList<SpeciationSpeciesDisplayNameUpdate> NormalizeSpeciesDisplayNameUpdates(
+        IReadOnlyList<SpeciationSpeciesDisplayNameUpdate>? speciesDisplayNameUpdates)
+    {
+        if (speciesDisplayNameUpdates is null || speciesDisplayNameUpdates.Count == 0)
+        {
+            return Array.Empty<SpeciationSpeciesDisplayNameUpdate>();
+        }
+
+        return speciesDisplayNameUpdates
+            .Where(static update => update is not null)
+            .Select(static update => new SpeciationSpeciesDisplayNameUpdate(
+                NormalizeRequired(update.SpeciesId, nameof(update.SpeciesId)),
+                NormalizeRequired(update.SpeciesDisplayName, nameof(update.SpeciesDisplayName))))
+            .GroupBy(static update => update.SpeciesId, StringComparer.Ordinal)
+            .Select(static group => group.Last())
+            .ToArray();
     }
 
     private static IReadOnlyList<Guid> NormalizeLineageParentIds(

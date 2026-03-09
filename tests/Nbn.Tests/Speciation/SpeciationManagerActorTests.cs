@@ -1785,7 +1785,21 @@ public sealed class SpeciationManagerActorTests
             Assert.True(secondFounder.Decision.Success);
             Assert.Equal("lineage_diverged_founder_root_species", secondFounder.Decision.DecisionReason);
             Assert.NotEqual(firstFounder.Decision.SpeciesId, secondFounder.Decision.SpeciesId);
-            Assert.StartsWith(firstFounder.Decision.SpeciesDisplayName + " (", secondFounder.Decision.SpeciesDisplayName, StringComparison.Ordinal);
+            var rootDisplayStem = firstFounder.Decision.SpeciesDisplayName;
+            Assert.Equal(rootDisplayStem + "-2", secondFounder.Decision.SpeciesDisplayName);
+
+            var memberships = await system.Root.RequestAsync<ProtoSpec.SpeciationListMembershipsResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationListMembershipsRequest());
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, memberships.FailureReason);
+            var firstFounderMembership = Assert.Single(
+                memberships.Memberships,
+                record => record.BrainId.ToGuid() == founderA);
+            var secondFounderMembership = Assert.Single(
+                memberships.Memberships,
+                record => record.BrainId.ToGuid() == founderB);
+            Assert.Equal(rootDisplayStem + "-1", firstFounderMembership.SpeciesDisplayName);
+            Assert.Equal(rootDisplayStem + "-2", secondFounderMembership.SpeciesDisplayName);
 
             using var metadata = JsonDocument.Parse(secondFounder.Decision.DecisionMetadataJson);
             var lineage = metadata.RootElement.GetProperty("lineage");
@@ -1814,6 +1828,60 @@ public sealed class SpeciationManagerActorTests
             Assert.True(founderChildDecision.Decision.Success);
             Assert.Equal(secondFounder.Decision.SpeciesId, founderChildDecision.Decision.SpeciesId);
             Assert.Equal("lineage_inherit_similarity_match", founderChildDecision.Decision.DecisionReason);
+
+            static string ExtractLineageCode(string displayName)
+            {
+                var closeIndex = displayName.LastIndexOf(']');
+                var openIndex = displayName.LastIndexOf('[');
+                Assert.True(openIndex >= 0 && closeIndex > openIndex);
+                return displayName[(openIndex + 1)..closeIndex];
+            }
+
+            var firstRootDerivedBrain = Guid.NewGuid();
+            var firstRootDerivedDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = firstRootDerivedBrain.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = founderA.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson =
+                        "{\"lineage\":{\"lineage_similarity_score\":0.24,\"parent_a_similarity_score\":0.24}}"
+                });
+            var secondRootDerivedBrain = Guid.NewGuid();
+            var secondRootDerivedDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = secondRootDerivedBrain.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = founderB.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson =
+                        "{\"lineage\":{\"lineage_similarity_score\":0.24,\"parent_a_similarity_score\":0.24}}"
+                });
+
+            Assert.Equal("lineage_diverged_new_species", firstRootDerivedDecision.Decision.DecisionReason);
+            Assert.Equal("lineage_diverged_new_species", secondRootDerivedDecision.Decision.DecisionReason);
+            Assert.StartsWith(rootDisplayStem + "-1 [", firstRootDerivedDecision.Decision.SpeciesDisplayName, StringComparison.Ordinal);
+            Assert.StartsWith(rootDisplayStem + "-2 [", secondRootDerivedDecision.Decision.SpeciesDisplayName, StringComparison.Ordinal);
+            var firstRootLineageCode = ExtractLineageCode(firstRootDerivedDecision.Decision.SpeciesDisplayName);
+            var secondRootLineageCode = ExtractLineageCode(secondRootDerivedDecision.Decision.SpeciesDisplayName);
+            Assert.True(firstRootLineageCode.Length >= 2);
+            Assert.True(secondRootLineageCode.Length >= 2);
+            Assert.StartsWith("A", firstRootLineageCode, StringComparison.Ordinal);
+            Assert.StartsWith("B", secondRootLineageCode, StringComparison.Ordinal);
         }
         finally
         {
@@ -1894,6 +1962,21 @@ public sealed class SpeciationManagerActorTests
             Assert.True(secondFounder.Decision.Success);
             Assert.Equal("lineage_diverged_founder_root_species", secondFounder.Decision.DecisionReason);
             Assert.NotEqual(firstFounder.Decision.SpeciesId, secondFounder.Decision.SpeciesId);
+            var rootDisplayStem = firstFounder.Decision.SpeciesDisplayName;
+            Assert.Equal(rootDisplayStem + "-2", secondFounder.Decision.SpeciesDisplayName);
+
+            var memberships = await system.Root.RequestAsync<ProtoSpec.SpeciationListMembershipsResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationListMembershipsRequest());
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, memberships.FailureReason);
+            var firstFounderMembership = Assert.Single(
+                memberships.Memberships,
+                record => string.Equals(record.SpeciesId, firstFounder.Decision.SpeciesId, StringComparison.Ordinal));
+            var secondFounderMembership = Assert.Single(
+                memberships.Memberships,
+                record => string.Equals(record.SpeciesId, secondFounder.Decision.SpeciesId, StringComparison.Ordinal));
+            Assert.Equal(rootDisplayStem + "-1", firstFounderMembership.SpeciesDisplayName);
+            Assert.Equal(rootDisplayStem + "-2", secondFounderMembership.SpeciesDisplayName);
 
             using (var founderMetadata = JsonDocument.Parse(secondFounder.Decision.DecisionMetadataJson))
             {

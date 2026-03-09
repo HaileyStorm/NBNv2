@@ -396,7 +396,12 @@ public sealed class EvolutionSimulationSession
                 return false;
             }
 
-            var parentBIndex = SelectParentIndex(excludedIndex: parentAIndex);
+            var excludedParentKey = TryBuildParentKey(_parentPool[parentAIndex], out var parentAKey)
+                ? parentAKey
+                : string.Empty;
+            var parentBIndex = SelectParentIndexForPair(
+                excludedIndex: parentAIndex,
+                excludedParentKey: excludedParentKey);
             if (parentBIndex < 0)
             {
                 parentA = default;
@@ -413,14 +418,27 @@ public sealed class EvolutionSimulationSession
     // Caller must hold _gate.
     private int SelectParentIndex(int excludedIndex)
     {
+        return SelectParentIndexCore(excludedIndex, excludedParentKey: null);
+    }
+
+    // Caller must hold _gate.
+    private int SelectParentIndexForPair(int excludedIndex, string? excludedParentKey)
+    {
+        return SelectParentIndexCore(excludedIndex, excludedParentKey);
+    }
+
+    // Caller must hold _gate.
+    private int SelectParentIndexCore(int excludedIndex, string? excludedParentKey)
+    {
         if (_parentPool.Count == 0)
         {
             return -1;
         }
 
+        var excludeParentKey = ShouldExcludeParentKey(excludedIndex, excludedParentKey);
         if (_options.ParentSelectionBias == EvolutionParentSelectionBias.Neutral)
         {
-            return SelectUniformParentIndex(excludedIndex);
+            return SelectUniformParentIndexCore(excludedIndex, excludedParentKey, excludeParentKey);
         }
 
         var speciesPopulationByKey = BuildSelectionSpeciesPopulationCounts(excludedIndex);
@@ -430,11 +448,24 @@ public sealed class EvolutionSimulationSession
             _options.ParentSelectionBias == EvolutionParentSelectionBias.Divergence
             && lineageFamilyPopulationByKey.Count == 1
             && speciesPopulationByKey.Count > 1;
+        var flattenSpeciesAgeWithinFamily =
+            _options.ParentSelectionBias == EvolutionParentSelectionBias.Divergence
+            && speciesPopulationByKey.Count > 1;
         var useSpeciesAgeBias = !useLineageFamilyAgeBias && speciesPopulationByKey.Count > 1;
 
         var nowOrdinal = _nextParentOrdinal;
         var nowSpeciesOrdinal = _nextSpeciesOrdinal;
         var nowLineageFamilyOrdinal = _nextLineageFamilyOrdinal;
+        var speciesAgeWeightByKey = useLineageFamilyAgeBias
+            ? BuildSelectionSpeciesAgeWeights(
+                speciesPopulationByKey.Keys,
+                flattenSpeciesAgeWithinFamily,
+                useFamilyRelativeSpeciesAge: true,
+                nowSpeciesOrdinal)
+            : null;
+        var lineageFamilySpeciesWeightTotals = useLineageFamilyAgeBias
+            ? BuildSelectionLineageFamilySpeciesWeightTotals(speciesAgeWeightByKey!)
+            : null;
         double totalWeight = 0d;
         var weights = new double[_parentPool.Count];
         for (var i = 0; i < _parentPool.Count; i++)
@@ -444,19 +475,50 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            var age = flattenSingleFamilyDivergence
-                ? 1UL
-                : ResolveSelectionAgeForBias(
-                    i,
-                    useLineageFamilyAgeBias,
-                    useSpeciesAgeBias,
-                    nowLineageFamilyOrdinal,
-                    nowSpeciesOrdinal,
-                    nowOrdinal);
-            var representationPopulation = useLineageFamilyAgeBias
-                ? ResolveSelectionLineageFamilyPopulation(i, lineageFamilyPopulationByKey)
-                : ResolveSelectionSpeciesPopulation(i, speciesPopulationByKey);
-            var weight = ResolveParentSelectionWeight(age, representationPopulation);
+            if (excludeParentKey && IsExcludedParentKey(i, excludedParentKey))
+            {
+                continue;
+            }
+
+            var speciesKey = ResolveTrackedSpeciesKey(_parentPool[i]);
+            var speciesPopulation = ResolveSelectionSpeciesPopulation(i, speciesPopulationByKey);
+            double weight;
+            if (useLineageFamilyAgeBias)
+            {
+                var lineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[i]);
+                var lineageFamilyAge = ResolveSelectionLineageFamilyAge(
+                    lineageFamilyKey,
+                    nowLineageFamilyOrdinal);
+                var lineageFamilyAgeWeight = ResolveParentSelectionAgeWeight(lineageFamilyAge);
+                var speciesAgeWeight = speciesAgeWeightByKey!.TryGetValue(speciesKey, out var trackedSpeciesAgeWeight)
+                    && trackedSpeciesAgeWeight > 0d
+                    ? trackedSpeciesAgeWeight
+                    : 1d;
+                var lineageFamilySpeciesWeightTotal =
+                    lineageFamilySpeciesWeightTotals!.TryGetValue(
+                        lineageFamilyKey,
+                        out var trackedLineageFamilySpeciesWeightTotal)
+                    && trackedLineageFamilySpeciesWeightTotal > 0d
+                        ? trackedLineageFamilySpeciesWeightTotal
+                        : speciesAgeWeight;
+                weight = lineageFamilyAgeWeight
+                    * (speciesAgeWeight / lineageFamilySpeciesWeightTotal)
+                    / Math.Max(1d, speciesPopulation);
+            }
+            else
+            {
+                var age = flattenSingleFamilyDivergence
+                    ? 1UL
+                    : ResolveSelectionAgeForBias(
+                        i,
+                        useLineageFamilyAgeBias,
+                        useSpeciesAgeBias,
+                        nowLineageFamilyOrdinal,
+                        nowSpeciesOrdinal,
+                        nowOrdinal);
+                weight = ResolveParentSelectionWeight(age, speciesPopulation);
+            }
+
             if (!double.IsFinite(weight) || weight <= 0d)
             {
                 continue;
@@ -468,7 +530,7 @@ public sealed class EvolutionSimulationSession
 
         if (totalWeight <= 0d || !double.IsFinite(totalWeight))
         {
-            return SelectUniformParentIndex(excludedIndex);
+            return SelectUniformParentIndexCore(excludedIndex, excludedParentKey, excludeParentKey);
         }
 
         var sample = _random.NextUnitDouble() * totalWeight;
@@ -502,19 +564,78 @@ public sealed class EvolutionSimulationSession
     // Caller must hold _gate.
     private int SelectUniformParentIndex(int excludedIndex)
     {
-        var available = _parentPool.Count - (excludedIndex >= 0 ? 1 : 0);
-        if (available <= 0)
+        return SelectUniformParentIndexCore(
+            excludedIndex,
+            excludedParentKey: null,
+            excludeParentKey: false);
+    }
+
+    // Caller must hold _gate.
+    private int SelectUniformParentIndexCore(
+        int excludedIndex,
+        string? excludedParentKey,
+        bool excludeParentKey)
+    {
+        var selectedIndex = -1;
+        var eligibleCount = 0;
+        for (var i = 0; i < _parentPool.Count; i++)
         {
-            return -1;
+            if (i == excludedIndex)
+            {
+                continue;
+            }
+
+            if (excludeParentKey && IsExcludedParentKey(i, excludedParentKey))
+            {
+                continue;
+            }
+
+            eligibleCount++;
+            if (eligibleCount == 1 || _random.NextInt(eligibleCount) == 0)
+            {
+                selectedIndex = i;
+            }
         }
 
-        var selected = _random.NextInt(available);
-        if (excludedIndex >= 0 && selected >= excludedIndex)
+        return selectedIndex;
+    }
+
+    // Caller must hold _gate.
+    private bool ShouldExcludeParentKey(int excludedIndex, string? excludedParentKey)
+    {
+        if (string.IsNullOrWhiteSpace(excludedParentKey))
         {
-            selected++;
+            return false;
         }
 
-        return selected;
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            if (i == excludedIndex)
+            {
+                continue;
+            }
+
+            if (!IsExcludedParentKey(i, excludedParentKey))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Caller must hold _gate.
+    private bool IsExcludedParentKey(int parentIndex, string? excludedParentKey)
+    {
+        if (parentIndex < 0
+            || parentIndex >= _parentPool.Count
+            || string.IsNullOrWhiteSpace(excludedParentKey))
+        {
+            return false;
+        }
+
+        return TryBuildParentKey(_parentPool[parentIndex], out var candidateKey)
+            && string.Equals(candidateKey, excludedParentKey, StringComparison.OrdinalIgnoreCase);
     }
 
     // Caller must hold _gate.
@@ -558,6 +679,78 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
+    private Dictionary<string, double> BuildSelectionSpeciesAgeWeights(
+        IEnumerable<string> speciesKeys,
+        bool flattenSpeciesAge,
+        bool useFamilyRelativeSpeciesAge,
+        ulong nowSpeciesOrdinal)
+    {
+        var normalizedSpeciesKeys = speciesKeys
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var familyRelativeNowSpeciesOrdinals = useFamilyRelativeSpeciesAge && !flattenSpeciesAge
+            ? BuildSelectionCurrentSpeciesOrdinalsByLineageFamily(normalizedSpeciesKeys)
+            : null;
+        var weights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var speciesKey in normalizedSpeciesKeys)
+        {
+            var effectiveNowSpeciesOrdinal = nowSpeciesOrdinal;
+            if (familyRelativeNowSpeciesOrdinals is not null)
+            {
+                var lineageFamilyKey = ResolveTrackedLineageFamilyKey(speciesKey);
+                if (familyRelativeNowSpeciesOrdinals.TryGetValue(lineageFamilyKey, out var trackedNowSpeciesOrdinal)
+                    && trackedNowSpeciesOrdinal > 0)
+                {
+                    effectiveNowSpeciesOrdinal = trackedNowSpeciesOrdinal;
+                }
+            }
+
+            var age = flattenSpeciesAge
+                ? 1UL
+                : ResolveSelectionSpeciesAge(speciesKey, effectiveNowSpeciesOrdinal);
+            weights[speciesKey] = ResolveParentSelectionAgeWeight(age);
+        }
+
+        return weights;
+    }
+
+    // Caller must hold _gate.
+    private Dictionary<string, ulong> BuildSelectionCurrentSpeciesOrdinalsByLineageFamily(
+        IEnumerable<string> speciesKeys)
+    {
+        var ordinals = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+        foreach (var speciesKey in speciesKeys)
+        {
+            var lineageFamilyKey = ResolveTrackedLineageFamilyKey(speciesKey);
+            var speciesOrdinal = _speciesFirstSeenOrdinals.TryGetValue(speciesKey, out var trackedSpeciesOrdinal)
+                ? trackedSpeciesOrdinal
+                : 0UL;
+            var currentNowOrdinal = Math.Max(1UL, speciesOrdinal + 1UL);
+            ordinals[lineageFamilyKey] = ordinals.TryGetValue(lineageFamilyKey, out var existingNowOrdinal)
+                ? Math.Max(existingNowOrdinal, currentNowOrdinal)
+                : currentNowOrdinal;
+        }
+
+        return ordinals;
+    }
+
+    // Caller must hold _gate.
+    private Dictionary<string, double> BuildSelectionLineageFamilySpeciesWeightTotals(
+        IReadOnlyDictionary<string, double> speciesAgeWeightByKey)
+    {
+        var totals = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in speciesAgeWeightByKey)
+        {
+            var lineageFamilyKey = ResolveTrackedLineageFamilyKey(entry.Key);
+            totals[lineageFamilyKey] = totals.TryGetValue(lineageFamilyKey, out var total)
+                ? total + entry.Value
+                : entry.Value;
+        }
+
+        return totals;
+    }
+
+    // Caller must hold _gate.
     private ulong ResolveSelectionAgeForBias(
         int parentIndex,
         bool useLineageFamilyAgeBias,
@@ -594,6 +787,34 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
+    private ulong ResolveSelectionSpeciesAge(string speciesId, ulong nowSpeciesOrdinal)
+    {
+        var normalizedSpeciesId = NormalizeSpeciesId(speciesId);
+        if (normalizedSpeciesId.Length == 0
+            || !_speciesFirstSeenOrdinals.TryGetValue(normalizedSpeciesId, out var firstSeenSpeciesOrdinal))
+        {
+            return 1UL;
+        }
+
+        return Math.Max(1UL, nowSpeciesOrdinal - firstSeenSpeciesOrdinal);
+    }
+
+    // Caller must hold _gate.
+    private ulong ResolveSelectionLineageFamilyAge(string lineageFamilyId, ulong nowLineageFamilyOrdinal)
+    {
+        var normalizedLineageFamilyId = NormalizeSpeciesId(lineageFamilyId);
+        if (normalizedLineageFamilyId.Length == 0
+            || !_lineageFamilyFirstSeenOrdinals.TryGetValue(
+                normalizedLineageFamilyId,
+                out var firstSeenLineageFamilyOrdinal))
+        {
+            return 1UL;
+        }
+
+        return Math.Max(1UL, nowLineageFamilyOrdinal - firstSeenLineageFamilyOrdinal);
+    }
+
+    // Caller must hold _gate.
     private int ResolveSelectionSpeciesPopulation(
         int parentIndex,
         IReadOnlyDictionary<string, int> speciesPopulationByKey)
@@ -627,16 +848,21 @@ public sealed class EvolutionSimulationSession
 
     private double ResolveParentSelectionWeight(ulong age, int speciesPopulation)
     {
+        var ageWeight = ResolveParentSelectionAgeWeight(age);
+        var representationWeight = 1d / Math.Max(1d, speciesPopulation);
+        return ageWeight * representationWeight;
+    }
+
+    private double ResolveParentSelectionAgeWeight(ulong age)
+    {
         var normalizedAge = Math.Max(1d, age);
         var weightedAge = Math.Pow(normalizedAge, ParentSelectionBiasExponent);
-        var ageWeight = _options.ParentSelectionBias switch
+        return _options.ParentSelectionBias switch
         {
             EvolutionParentSelectionBias.Divergence => 1d / weightedAge,
             EvolutionParentSelectionBias.Stability => weightedAge,
             _ => 1d
         };
-        var representationWeight = 1d / Math.Max(1d, speciesPopulation);
-        return ageWeight * representationWeight;
     }
 
     private int AddChildrenToPool(ReproductionOutcome reproduction)

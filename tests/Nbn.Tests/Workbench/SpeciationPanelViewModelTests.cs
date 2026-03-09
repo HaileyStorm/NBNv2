@@ -338,6 +338,35 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshMembershipsCommand_PreservesNumberedRootSpeciesDisplayName()
+    {
+        var brain = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            MembershipsResponse = new SpeciationListMembershipsResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Memberships =
+                {
+                    new SpeciationMembershipRecord
+                    {
+                        BrainId = brain.ToProtoUuid(),
+                        SpeciesId = "unclassified-founder-root-2",
+                        SpeciesDisplayName = "Unclassified-2"
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(client);
+
+        vm.RefreshMembershipsCommand.Execute(null);
+        await WaitForAsync(() => vm.SpeciesCounts.Count == 1);
+
+        Assert.Equal("Unclassified-2", vm.SpeciesCounts[0].SpeciesDisplayName);
+    }
+
+    [Fact]
     public async Task StartSimulatorCommand_InvalidParentOverrideFile_FailsFast()
     {
         var brainA = Guid.NewGuid();

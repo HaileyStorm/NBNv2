@@ -42,6 +42,9 @@ public sealed class SpeciationManagerActor : IActor
     private readonly Dictionary<string, SpeciesSimilarityFloorState> _speciesSimilarityFloors = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<RecentDerivedSpeciesHint>> _recentDerivedSpeciesHintsBySourceSpecies = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RecentDerivedSpeciesHint> _recentDerivedSpeciesHintsByTargetSpecies = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _speciesDisplayNamesBySpeciesId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _rootSpeciesOrdinalsBySpeciesId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _maxRootSpeciesOrdinalByStem = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _initializing;
     private bool _initialized;
@@ -1503,16 +1506,37 @@ public sealed class SpeciationManagerActor : IActor
             resolvedDecisionMetadata,
             parentBrainId,
             resolved.SourceArtifactRef ?? parentArtifactRef);
+        var speciesDisplayNameUpdates =
+            !string.IsNullOrWhiteSpace(assignmentResolution.DisplayNameRewriteSpeciesId)
+            && !string.IsNullOrWhiteSpace(assignmentResolution.DisplayNameRewriteSpeciesDisplayName)
+                ? new[]
+                {
+                    new SpeciationSpeciesDisplayNameUpdate(
+                        assignmentResolution.DisplayNameRewriteSpeciesId!,
+                        assignmentResolution.DisplayNameRewriteSpeciesDisplayName!)
+                }
+                : null;
         var outcome = await _store.TryAssignMembershipAsync(
             epoch.EpochId,
             assignment,
             decisionTimeMs,
             cancellationToken: default,
             lineageParentBrainIds: orderedParentBrainIds,
-            lineageMetadataJson: resolvedDecisionMetadata).ConfigureAwait(false);
+            lineageMetadataJson: resolvedDecisionMetadata,
+            speciesDisplayNameUpdates: speciesDisplayNameUpdates).ConfigureAwait(false);
 
         if (outcome.Created)
         {
+            if (speciesDisplayNameUpdates is not null)
+            {
+                foreach (var speciesDisplayNameUpdate in speciesDisplayNameUpdates)
+                {
+                    RecordSpeciesDisplayName(
+                        speciesDisplayNameUpdate.SpeciesId,
+                        speciesDisplayNameUpdate.SpeciesDisplayName);
+                }
+            }
+
             RecordCommittedMembership(
                 outcome.Membership,
                 intraSpeciesSimilaritySample,
@@ -2004,6 +2028,9 @@ public sealed class SpeciationManagerActor : IActor
         _speciesSimilarityFloors.Clear();
         _recentDerivedSpeciesHintsBySourceSpecies.Clear();
         _recentDerivedSpeciesHintsByTargetSpecies.Clear();
+        _speciesDisplayNamesBySpeciesId.Clear();
+        _rootSpeciesOrdinalsBySpeciesId.Clear();
+        _maxRootSpeciesOrdinalByStem.Clear();
     }
 
     private SpeciesSimilarityFloorState? ResolveSpeciesSimilarityFloor(string? speciesId)
@@ -2195,6 +2222,7 @@ public sealed class SpeciationManagerActor : IActor
             return;
         }
 
+        RecordSpeciesDisplayName(membership.SpeciesId, membership.SpeciesDisplayName);
         var actualSimilaritySample = HasActualAssignedSpeciesSimilaritySample(membership);
         var similaritySample = NormalizeSpeciesFloorSimilaritySample(
             membership,
@@ -2205,6 +2233,95 @@ public sealed class SpeciationManagerActor : IActor
             similaritySample,
             actualSimilaritySample);
         UpdateRecentDerivedSpeciesHints(membership);
+    }
+
+    private void RecordSpeciesDisplayName(string? speciesId, string? speciesDisplayName)
+    {
+        if (string.IsNullOrWhiteSpace(speciesId) || string.IsNullOrWhiteSpace(speciesDisplayName))
+        {
+            return;
+        }
+
+        var normalizedSpeciesId = speciesId.Trim();
+        var normalizedDisplayName = speciesDisplayName.Trim();
+        _speciesDisplayNamesBySpeciesId[normalizedSpeciesId] = normalizedDisplayName;
+
+        var (stem, lineageCode) = ParseLineageDisplayName(normalizedDisplayName);
+        if (lineageCode.Length == 0
+            && TryParseNumberedRootSpeciesDisplayName(stem, out var rootStem, out var rootOrdinal))
+        {
+            _rootSpeciesOrdinalsBySpeciesId[normalizedSpeciesId] = rootOrdinal;
+            _maxRootSpeciesOrdinalByStem[rootStem] = _maxRootSpeciesOrdinalByStem.TryGetValue(rootStem, out var existingOrdinal)
+                ? Math.Max(existingOrdinal, rootOrdinal)
+                : rootOrdinal;
+            return;
+        }
+
+        _rootSpeciesOrdinalsBySpeciesId.Remove(normalizedSpeciesId);
+    }
+
+    private string ResolveTrackedSpeciesDisplayName(
+        string speciesId,
+        string? preferredDisplayName = null,
+        string? fallbackDisplayName = null)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredDisplayName))
+        {
+            return preferredDisplayName.Trim();
+        }
+
+        var normalizedSpeciesId = speciesId?.Trim() ?? string.Empty;
+        if (normalizedSpeciesId.Length > 0
+            && _speciesDisplayNamesBySpeciesId.TryGetValue(normalizedSpeciesId, out var trackedDisplayName)
+            && !string.IsNullOrWhiteSpace(trackedDisplayName))
+        {
+            return trackedDisplayName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(fallbackDisplayName))
+        {
+            return fallbackDisplayName.Trim();
+        }
+
+        return BuildDisplayNameFromSpeciesId(normalizedSpeciesId);
+    }
+
+    private FounderRootSpeciesNamingPlan BuildFounderRootSpeciesNamingPlan(
+        string sourceSpeciesId,
+        string? sourceSpeciesDisplayName)
+    {
+        var resolvedSourceDisplayName = ResolveTrackedSpeciesDisplayName(
+            sourceSpeciesId,
+            sourceSpeciesDisplayName);
+        var (stem, _) = ParseLineageDisplayName(resolvedSourceDisplayName);
+        var rootStem = stem.Trim().Length == 0 ? "Species" : stem.Trim();
+        var sourceRootOrdinal = 0;
+        if (TryParseNumberedRootSpeciesDisplayName(rootStem, out var parsedStem, out var parsedOrdinal))
+        {
+            rootStem = parsedStem;
+            sourceRootOrdinal = parsedOrdinal;
+        }
+        else if (_rootSpeciesOrdinalsBySpeciesId.TryGetValue(sourceSpeciesId.Trim(), out var trackedOrdinal)
+                 && trackedOrdinal > 0)
+        {
+            sourceRootOrdinal = trackedOrdinal;
+        }
+
+        var maxKnownOrdinal = _maxRootSpeciesOrdinalByStem.TryGetValue(rootStem, out var existingMaxOrdinal)
+            ? existingMaxOrdinal
+            : 0;
+        string? sourceDisplayNameRewrite = null;
+        if (sourceRootOrdinal <= 0)
+        {
+            sourceRootOrdinal = 1;
+            sourceDisplayNameRewrite = BuildNumberedRootSpeciesDisplayName(rootStem, sourceRootOrdinal);
+        }
+
+        var founderRootOrdinal = Math.Max(sourceRootOrdinal, maxKnownOrdinal) + 1;
+        return new FounderRootSpeciesNamingPlan(
+            BuildNumberedRootSpeciesDisplayName(rootStem, founderRootOrdinal),
+            sourceDisplayNameRewrite,
+            sourceDisplayNameRewrite is null ? null : sourceSpeciesId.Trim());
     }
 
     private static double? NormalizeSpeciesFloorSimilaritySample(
@@ -4112,7 +4229,7 @@ public sealed class SpeciationManagerActor : IActor
         if (!string.IsNullOrWhiteSpace(requestedSpeciesId))
         {
             var speciesId = requestedSpeciesId.Trim();
-            var speciesDisplayName = ResolveSpeciesDisplayName(requestedSpeciesDisplayName, speciesId);
+            var speciesDisplayName = ResolveTrackedSpeciesDisplayName(speciesId, requestedSpeciesDisplayName);
             return new AssignmentResolution(
                 speciesId,
                 speciesDisplayName,
@@ -4126,7 +4243,10 @@ public sealed class SpeciationManagerActor : IActor
         {
             return new AssignmentResolution(
                 _runtimeConfig.DefaultSpeciesId,
-                NormalizeOrFallback(requestedSpeciesDisplayName, _runtimeConfig.DefaultSpeciesDisplayName),
+                ResolveTrackedSpeciesDisplayName(
+                    _runtimeConfig.DefaultSpeciesId,
+                    requestedSpeciesDisplayName,
+                    _runtimeConfig.DefaultSpeciesDisplayName),
                 DecisionReason: "lineage_unavailable_default",
                 Strategy: "default",
                 StrategyDetail: "No parent membership evidence available in current epoch.",
@@ -4137,7 +4257,9 @@ public sealed class SpeciationManagerActor : IActor
         {
             return new AssignmentResolution(
                 _runtimeConfig.DefaultSpeciesId,
-                _runtimeConfig.DefaultSpeciesDisplayName,
+                ResolveTrackedSpeciesDisplayName(
+                    _runtimeConfig.DefaultSpeciesId,
+                    fallbackDisplayName: _runtimeConfig.DefaultSpeciesDisplayName),
                 DecisionReason: "lineage_source_unavailable_default",
                 Strategy: "default",
                 StrategyDetail: "Parent memberships did not resolve to a reusable source species.",
@@ -4155,7 +4277,9 @@ public sealed class SpeciationManagerActor : IActor
             {
                 return new AssignmentResolution(
                     lineageEvidence.HysteresisSpeciesId!,
-                    ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                    ResolveTrackedSpeciesDisplayName(
+                        lineageEvidence.HysteresisSpeciesId!,
+                        lineageEvidence.HysteresisSpeciesDisplayName),
                     DecisionReason: "lineage_hysteresis_low_consensus",
                     Strategy: "hysteresis_hold",
                     StrategyDetail: "Parent memberships did not resolve to a reusable source species; reused prior lineage species.",
@@ -4164,7 +4288,9 @@ public sealed class SpeciationManagerActor : IActor
 
             return new AssignmentResolution(
                 _runtimeConfig.DefaultSpeciesId,
-                _runtimeConfig.DefaultSpeciesDisplayName,
+                ResolveTrackedSpeciesDisplayName(
+                    _runtimeConfig.DefaultSpeciesId,
+                    fallbackDisplayName: _runtimeConfig.DefaultSpeciesDisplayName),
                 DecisionReason: "lineage_source_unavailable_default",
                 Strategy: "default",
                 StrategyDetail: "Parent memberships did not resolve to a reusable source species.",
@@ -4172,11 +4298,11 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         sourceSpeciesId = sourceSpeciesId.Trim();
-        var sourceSpeciesDisplayName = ResolveSpeciesDisplayName(
+        var sourceSpeciesDisplayName = ResolveTrackedSpeciesDisplayName(
+            sourceSpeciesId,
             bestParentSpeciesFit.HasValue
                 ? bestParentSpeciesFit.Value.SpeciesDisplayName
-                : lineageEvidence.DominantSpeciesDisplayName,
-            sourceSpeciesId);
+                : lineageEvidence.DominantSpeciesDisplayName);
         var sourceConsensusShare = bestParentSpeciesFit.HasValue && lineageEvidence.ParentMembershipCount > 0
             ? (double)bestParentSpeciesFit.Value.SupportingParentCount / lineageEvidence.ParentMembershipCount
             : 1d;
@@ -4264,7 +4390,9 @@ public sealed class SpeciationManagerActor : IActor
         {
             return BuildSimilarityResolution(
                 lineageEvidence.HysteresisSpeciesId!,
-                ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                ResolveTrackedSpeciesDisplayName(
+                    lineageEvidence.HysteresisSpeciesId!,
+                    lineageEvidence.HysteresisSpeciesDisplayName),
                 DecisionReason: "lineage_realign_recent_split",
                 Strategy: "lineage_realign",
                 StrategyDetail: "Recent derived split hint reused within bounded parent-membership realignment window.",
@@ -4287,9 +4415,9 @@ public sealed class SpeciationManagerActor : IActor
         {
             return BuildSimilarityResolution(
                 recentDerivedHint.TargetSpeciesId,
-                ResolveSpeciesDisplayName(
-                    recentDerivedHint.TargetSpeciesDisplayName,
-                    recentDerivedHint.TargetSpeciesId),
+                ResolveTrackedSpeciesDisplayName(
+                    recentDerivedHint.TargetSpeciesId,
+                    recentDerivedHint.TargetSpeciesDisplayName),
                 DecisionReason: "lineage_reuse_recent_derived_species",
                 Strategy: "lineage_recent_derived_reuse",
                 StrategyDetail: "Recent derived species from the same source lineage reused within bounded founder-similarity band.",
@@ -4302,16 +4430,16 @@ public sealed class SpeciationManagerActor : IActor
             if (isSeedFounderCandidate
                 && lineageEvidence.ParentMembershipCount == 1)
             {
+                var founderRootNamingPlan = BuildFounderRootSpeciesNamingPlan(
+                    sourceSpeciesId,
+                    sourceSpeciesDisplayName);
                 var founderRootSpeciesId = BuildFounderRootSpeciesId(
                     sourceSpeciesId,
                     lineageEvidence.LineageKey,
                     epoch.EpochId);
                 return new AssignmentResolution(
                     founderRootSpeciesId,
-                    BuildFounderRootSpeciesDisplayName(
-                        sourceSpeciesDisplayName,
-                        sourceSpeciesId,
-                        founderRootSpeciesId),
+                    founderRootNamingPlan.FounderSpeciesDisplayName,
                     DecisionReason: "lineage_diverged_founder_root_species",
                     Strategy: "lineage_founder_root",
                     StrategyDetail:
@@ -4324,7 +4452,9 @@ public sealed class SpeciationManagerActor : IActor
                     SourceConsensusShare: sourceConsensusShare,
                     SpeciesFloorSimilarityScore: speciesFloorSimilarityScore,
                     SpeciesFloorSampleCount: speciesFloorSampleCount,
-                    SpeciesFloorMembershipCount: speciesFloorMembershipCount);
+                    SpeciesFloorMembershipCount: speciesFloorMembershipCount,
+                    DisplayNameRewriteSpeciesId: founderRootNamingPlan.SourceSpeciesIdToRewrite,
+                    DisplayNameRewriteSpeciesDisplayName: founderRootNamingPlan.SourceSpeciesDisplayNameRewrite);
             }
 
             if (isRecentDerivedSourceSpecies && !hasInSpeciesEvidence)
@@ -4345,7 +4475,9 @@ public sealed class SpeciationManagerActor : IActor
                 {
                     return BuildSimilarityResolution(
                         lineageEvidence.HysteresisSpeciesId!,
-                        ResolveSpeciesDisplayName(lineageEvidence.HysteresisSpeciesDisplayName, lineageEvidence.HysteresisSpeciesId!),
+                        ResolveTrackedSpeciesDisplayName(
+                            lineageEvidence.HysteresisSpeciesId!,
+                            lineageEvidence.HysteresisSpeciesDisplayName),
                         DecisionReason: "lineage_split_guarded_hysteresis_hold",
                         Strategy: "hysteresis_hold",
                         StrategyDetail: "Split threshold crossed but minimum parent-membership evidence not met; reused prior lineage species.",
@@ -4384,7 +4516,9 @@ public sealed class SpeciationManagerActor : IActor
 
             return BuildSimilarityResolution(
                 _runtimeConfig.DefaultSpeciesId,
-                _runtimeConfig.DefaultSpeciesDisplayName,
+                ResolveTrackedSpeciesDisplayName(
+                    _runtimeConfig.DefaultSpeciesId,
+                    fallbackDisplayName: _runtimeConfig.DefaultSpeciesDisplayName),
                 DecisionReason: "lineage_diverged_default",
                 Strategy: "default",
                 StrategyDetail: splitTriggeredBySpeciesFloor
@@ -5641,19 +5775,15 @@ public sealed class SpeciationManagerActor : IActor
     {
         var parentDisplayName = ResolveSpeciesDisplayName(dominantSpeciesDisplayName, dominantSpeciesId);
         var (stem, lineageCode) = ParseLineageDisplayName(parentDisplayName);
+        if (lineageCode.Length == 0
+            && TryParseNumberedRootSpeciesDisplayName(stem, out _, out var rootOrdinal))
+        {
+            lineageCode = BuildRootSpeciesLineagePrefix(rootOrdinal);
+        }
+
         var nextLetter = ComputeLineageLetter(derivedSpeciesId);
         var nextCode = lineageCode + nextLetter;
         return $"{stem} [{nextCode}]";
-    }
-
-    private static string BuildFounderRootSpeciesDisplayName(
-        string? baselineSpeciesDisplayName,
-        string baselineSpeciesId,
-        string founderSpeciesId)
-    {
-        var baselineDisplayName = ResolveSpeciesDisplayName(baselineSpeciesDisplayName, baselineSpeciesId);
-        var (stem, _) = ParseLineageDisplayName(baselineDisplayName);
-        return $"{stem} ({ComputeLineageLetter(founderSpeciesId)})";
     }
 
     private static string ResolveSpeciesDisplayName(string? preferredDisplayName, string speciesId)
@@ -5698,6 +5828,67 @@ public sealed class SpeciationManagerActor : IActor
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed.Trim()));
         var letter = (char)('A' + (hash[0] % 26));
         return letter.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static bool TryParseNumberedRootSpeciesDisplayName(
+        string? speciesDisplayStem,
+        out string rootStem,
+        out int rootOrdinal)
+    {
+        rootStem = string.IsNullOrWhiteSpace(speciesDisplayStem)
+            ? "Species"
+            : speciesDisplayStem.Trim();
+        rootOrdinal = 0;
+
+        var separatorIndex = rootStem.LastIndexOf('-');
+        if (separatorIndex <= 0 || separatorIndex >= rootStem.Length - 1)
+        {
+            return false;
+        }
+
+        var ordinalToken = rootStem[(separatorIndex + 1)..].Trim();
+        if (!int.TryParse(
+                ordinalToken,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out rootOrdinal)
+            || rootOrdinal <= 0)
+        {
+            rootOrdinal = 0;
+            return false;
+        }
+
+        rootStem = rootStem[..separatorIndex].TrimEnd();
+        if (rootStem.Length == 0)
+        {
+            rootStem = "Species";
+        }
+
+        return true;
+    }
+
+    private static string BuildNumberedRootSpeciesDisplayName(string rootStem, int rootOrdinal)
+    {
+        var normalizedStem = string.IsNullOrWhiteSpace(rootStem)
+            ? "Species"
+            : rootStem.Trim();
+        return rootOrdinal > 0
+            ? $"{normalizedStem}-{rootOrdinal.ToString(CultureInfo.InvariantCulture)}"
+            : normalizedStem;
+    }
+
+    private static string BuildRootSpeciesLineagePrefix(int rootOrdinal)
+    {
+        var normalizedOrdinal = Math.Max(1, rootOrdinal);
+        var builder = new StringBuilder();
+        while (normalizedOrdinal > 0)
+        {
+            normalizedOrdinal--;
+            builder.Insert(0, (char)('A' + (normalizedOrdinal % 26)));
+            normalizedOrdinal /= 26;
+        }
+
+        return builder.ToString();
     }
 
     private static bool IsSeedFounderCandidate(
@@ -6081,7 +6272,14 @@ public sealed class SpeciationManagerActor : IActor
         int SpeciesFloorMembershipCount = 0,
         string? RecentDerivedSourceSpeciesId = null,
         string? RecentDerivedSourceSpeciesDisplayName = null,
-        double? RecentDerivedFounderSimilarityScore = null);
+        double? RecentDerivedFounderSimilarityScore = null,
+        string? DisplayNameRewriteSpeciesId = null,
+        string? DisplayNameRewriteSpeciesDisplayName = null);
+
+    private readonly record struct FounderRootSpeciesNamingPlan(
+        string FounderSpeciesDisplayName,
+        string? SourceSpeciesDisplayNameRewrite,
+        string? SourceSpeciesIdToRewrite);
 
     private readonly record struct SpeciesSimilarityFloorState(
         int MembershipCount,
