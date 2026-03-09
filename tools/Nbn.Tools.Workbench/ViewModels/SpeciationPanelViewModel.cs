@@ -2660,45 +2660,56 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var rootIndices = Enumerable.Range(0, speciesCount)
             .Where(index => visibleParentBySpeciesIndex[index] < 0)
             .ToArray();
-        var startsByEpoch = new List<double[]>(epochCount);
-        var endsByEpoch = new List<double[]>(epochCount);
+        var bandsByEpoch = new List<FlowSpeciesRowBands[]>(epochCount);
         for (var epochIndex = 0; epochIndex < epochCount; epochIndex++)
         {
             var row = epochRows[epochIndex];
-            var starts = Enumerable.Repeat(double.NaN, speciesCount).ToArray();
-            var ends = Enumerable.Repeat(double.NaN, speciesCount).ToArray();
-            ResolveFlowLineageRowSpans(
+            var rowBands = Enumerable.Range(0, speciesCount)
+                .Select(_ => FlowSpeciesRowBands.Empty)
+                .ToArray();
+            ResolveFlowLineageRowBands(
                 row,
                 flowSpecies,
                 includeOtherSpecies,
                 rootIndices,
                 childIndicesByParent,
-                starts,
-                ends);
+                rowBands);
 
-            startsByEpoch.Add(starts);
-            endsByEpoch.Add(ends);
+            bandsByEpoch.Add(rowBands);
         }
 
         var areas = new List<SpeciationFlowChartAreaItem>(speciesCount);
         var legend = new List<SpeciationChartLegendItem>(speciesCount);
         for (var speciesIndex = 0; speciesIndex < speciesCount; speciesIndex++)
         {
-            var starts = new double[epochCount];
-            var ends = new double[epochCount];
+            var primaryStarts = new double[epochCount];
+            var primaryEnds = new double[epochCount];
+            var secondaryStarts = new double[epochCount];
+            var secondaryEnds = new double[epochCount];
             for (var epochIndex = 0; epochIndex < epochCount; epochIndex++)
             {
-                starts[epochIndex] = startsByEpoch[epochIndex][speciesIndex];
-                ends[epochIndex] = endsByEpoch[epochIndex][speciesIndex];
+                var rowBands = bandsByEpoch[epochIndex][speciesIndex];
+                primaryStarts[epochIndex] = rowBands.PrimaryStart;
+                primaryEnds[epochIndex] = rowBands.PrimaryEnd;
+                secondaryStarts[epochIndex] = rowBands.SecondaryStart;
+                secondaryEnds[epochIndex] = rowBands.SecondaryEnd;
             }
 
-            var path = BuildFlowAreaPath(
-                starts,
-                ends,
-                plotWidth: FlowChartPlotWidth,
-                plotHeight: FlowChartPlotHeight,
-                paddingX: FlowChartPaddingX,
-                paddingY: FlowChartPaddingY);
+            var path = CombineFlowAreaPaths(
+                BuildFlowAreaPath(
+                    primaryStarts,
+                    primaryEnds,
+                    plotWidth: FlowChartPlotWidth,
+                    plotHeight: FlowChartPlotHeight,
+                    paddingX: FlowChartPaddingX,
+                    paddingY: FlowChartPaddingY),
+                BuildFlowAreaPath(
+                    secondaryStarts,
+                    secondaryEnds,
+                    plotWidth: FlowChartPlotWidth,
+                    plotHeight: FlowChartPlotHeight,
+                    paddingX: FlowChartPaddingX,
+                    paddingY: FlowChartPaddingY));
             if (string.IsNullOrWhiteSpace(path))
             {
                 continue;
@@ -2709,11 +2720,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 ? "#6B7280"
                 : ResolveSpeciesColor(species.SpeciesId, speciesColors);
             var fill = WithAlpha(color, 0x8C);
-            var latestStart = startsByEpoch[^1][speciesIndex];
-            var latestEnd = endsByEpoch[^1][speciesIndex];
-            var lastShare = double.IsFinite(latestStart) && double.IsFinite(latestEnd)
-                ? Math.Max(0d, latestEnd - latestStart)
-                : 0d;
+            var lastShare = bandsByEpoch[^1][speciesIndex].TotalWidth;
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
             areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel));
             legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, string.Empty));
@@ -4099,6 +4106,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return builder.ToString();
     }
 
+    private static string CombineFlowAreaPaths(params string[] paths)
+    {
+        return string.Join(
+            " ",
+            paths.Where(path => !string.IsNullOrWhiteSpace(path)));
+    }
+
     private static int[] BuildFlowVisibleParentIndices(
         IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
         IReadOnlyList<SpeciesPopulationMeta> allSpecies)
@@ -4203,14 +4217,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return childrenByParent;
     }
 
-    private static void ResolveFlowLineageRowSpans(
+    private static void ResolveFlowLineageRowBands(
         EpochPopulationRow row,
         IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
         bool includeOtherSpecies,
         IReadOnlyList<int> rootIndices,
         IReadOnlyList<List<int>> childIndicesByParent,
-        double[] starts,
-        double[] ends)
+        FlowSpeciesRowBands[] rowBands)
     {
         var speciesCount = flowSpecies.Count;
         var countsBySpecies = new double[speciesCount];
@@ -4270,31 +4283,47 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 return;
             }
 
-            var ownCount = countsBySpecies[speciesIndex];
-            var spanWidth = end - start;
-            var cursor = start;
-            if (ownCount > 1e-6d)
-            {
-                var ownWidth = childIndicesByParent[speciesIndex].Count == 0
-                    ? spanWidth
-                    : spanWidth * (ownCount / nodeTotal);
-                var ownEnd = Math.Min(end, start + ownWidth);
-                starts[speciesIndex] = cursor;
-                ends[speciesIndex] = ownEnd;
-                cursor = ownEnd;
-            }
-
             var activeChildren = childIndicesByParent[speciesIndex]
                 .Where(childIndex => subtreeTotals[childIndex] > 1e-6d)
                 .ToList();
+            var ownCount = countsBySpecies[speciesIndex];
+            var spanWidth = end - start;
+            var childStart = start;
+            var childEnd = end;
+            if (ownCount > 1e-6d)
+            {
+                if (activeChildren.Count == 0)
+                {
+                    rowBands[speciesIndex] = new FlowSpeciesRowBands(start, end, double.NaN, double.NaN);
+                    return;
+                }
+
+                var ownWidth = spanWidth * (ownCount / nodeTotal);
+                var leftOwnWidth = ownWidth * 0.5d;
+                var rightOwnWidth = ownWidth - leftOwnWidth;
+                var primaryEnd = Math.Min(end, start + leftOwnWidth);
+                var secondaryStart = Math.Max(start, end - rightOwnWidth);
+                rowBands[speciesIndex] = new FlowSpeciesRowBands(start, primaryEnd, secondaryStart, end);
+                childStart = primaryEnd;
+                childEnd = secondaryStart;
+            }
+
+            if (activeChildren.Count == 0 || childEnd <= childStart)
+            {
+                return;
+            }
+
+            var childClusterWidth = childEnd - childStart;
+            var childTotal = activeChildren.Sum(childIndex => subtreeTotals[childIndex]);
+            var cursor = childStart;
             for (var childOrdinal = 0; childOrdinal < activeChildren.Count; childOrdinal++)
             {
                 var childIndex = activeChildren[childOrdinal];
-                var childEnd = childOrdinal == activeChildren.Count - 1
-                    ? end
-                    : Math.Min(end, cursor + (spanWidth * (subtreeTotals[childIndex] / nodeTotal)));
-                AllocateSpecies(childIndex, cursor, childEnd);
-                cursor = childEnd;
+                var nextChildEnd = childOrdinal == activeChildren.Count - 1
+                    ? childStart + childClusterWidth
+                    : Math.Min(childStart + childClusterWidth, cursor + (childClusterWidth * (subtreeTotals[childIndex] / childTotal)));
+                AllocateSpecies(childIndex, cursor, nextChildEnd);
+                cursor = nextChildEnd;
             }
         }
 
@@ -5067,6 +5096,34 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         int TotalCount,
         ulong FirstAssignedMs,
         string ParentSpeciesId);
+
+    private readonly record struct FlowSpeciesRowBands(
+        double PrimaryStart,
+        double PrimaryEnd,
+        double SecondaryStart,
+        double SecondaryEnd)
+    {
+        public static FlowSpeciesRowBands Empty => new(double.NaN, double.NaN, double.NaN, double.NaN);
+
+        public double TotalWidth
+        {
+            get
+            {
+                var total = 0d;
+                if (double.IsFinite(PrimaryStart) && double.IsFinite(PrimaryEnd) && PrimaryEnd > PrimaryStart)
+                {
+                    total += PrimaryEnd - PrimaryStart;
+                }
+
+                if (double.IsFinite(SecondaryStart) && double.IsFinite(SecondaryEnd) && SecondaryEnd > SecondaryStart)
+                {
+                    total += SecondaryEnd - SecondaryStart;
+                }
+
+                return total;
+            }
+        }
+    }
 
     private readonly record struct EpochSplitProximityRow(
         long EpochId,

@@ -776,14 +776,20 @@ public class SpeciationPanelViewModelTests
         vm.RefreshHistoryCommand.Execute(null);
         await WaitForAsync(() => vm.FlowChartAreas.Count == 4);
 
-        var childSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.child").PathData);
-        var betaSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.beta").PathData);
-        var dominantSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.dominant").PathData);
+        var childRows = ExtractFlowBandsByRow(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.child").PathData);
+        var sourceRows = ExtractFlowBandsByRow(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.source").PathData);
 
-        Assert.Single(childSpans);
-        Assert.True(childSpans[0].StartX >= betaSpans[^1].EndX - 0.01d);
-        Assert.True(childSpans[0].EndX <= dominantSpans[^1].StartX + 0.01d);
-        Assert.True(childSpans[0].EndX > childSpans[0].StartX);
+        Assert.Single(childRows);
+        var childSpan = childRows[0].Bands.Single();
+        var sourceLastRow = sourceRows[^1];
+        var sourceMinX = sourceLastRow.Bands.Min(band => band.StartX);
+        var sourceMaxX = sourceLastRow.Bands.Max(band => band.EndX);
+        var sourceMidX = (sourceMinX + sourceMaxX) * 0.5d;
+        var childMidX = (childSpan.StartX + childSpan.EndX) * 0.5d;
+
+        Assert.Equal(2, sourceLastRow.Bands.Count);
+        Assert.InRange(childMidX, sourceMidX - 1d, sourceMidX + 1d);
+        Assert.True(childSpan.EndX > childSpan.StartX);
     }
 
     [Fact]
@@ -819,10 +825,11 @@ public class SpeciationPanelViewModelTests
         vm.RefreshHistoryCommand.Execute(null);
         await WaitForAsync(() => vm.FlowChartAreas.Count == 3);
 
-        var newSpeciesSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.new").PathData);
+        var newSpeciesRows = ExtractFlowBandsByRow(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.new").PathData);
 
-        Assert.Single(newSpeciesSpans);
-        Assert.True(newSpeciesSpans[0].EndX > newSpeciesSpans[0].StartX);
+        Assert.Single(newSpeciesRows);
+        Assert.Single(newSpeciesRows[0].Bands);
+        Assert.True(newSpeciesRows[0].Bands[0].EndX > newSpeciesRows[0].Bands[0].StartX);
     }
 
     [Fact]
@@ -1816,9 +1823,38 @@ public class SpeciationPanelViewModelTests
         return root.ToJsonString();
     }
 
-    private static IReadOnlyList<(double StartX, double EndX, double Y)> ExtractFlowRowSpans(string pathData)
+    private static IReadOnlyList<(double Y, IReadOnlyList<(double StartX, double EndX)> Bands)> ExtractFlowBandsByRow(string pathData)
     {
         Assert.False(string.IsNullOrWhiteSpace(pathData));
+        var spansByY = new Dictionary<double, List<(double StartX, double EndX)>>();
+        var subpaths = Regex.Split(pathData.Trim(), @"(?=M )")
+            .Where(segment => !string.IsNullOrWhiteSpace(segment));
+        foreach (var subpath in subpaths)
+        {
+            foreach (var span in ExtractSingleFlowSubpathSpans(subpath))
+            {
+                if (!spansByY.TryGetValue(span.Y, out var bands))
+                {
+                    bands = new List<(double StartX, double EndX)>();
+                    spansByY[span.Y] = bands;
+                }
+
+                bands.Add((span.StartX, span.EndX));
+            }
+        }
+
+        return spansByY
+            .OrderBy(entry => entry.Key)
+            .Select(entry => ((double Y, IReadOnlyList<(double StartX, double EndX)> Bands))(
+                entry.Key,
+                entry.Value
+                    .OrderBy(band => band.StartX)
+                    .ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<(double StartX, double EndX, double Y)> ExtractSingleFlowSubpathSpans(string pathData)
+    {
         var numericTokens = Regex.Matches(pathData, @"-?\d+(?:\.\d+)?")
             .Select(match => double.Parse(match.Value, CultureInfo.InvariantCulture))
             .ToArray();
