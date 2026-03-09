@@ -1584,6 +1584,92 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public async Task ProtoAssign_Commit_SecondSeedFounderCanSplitFromFirstFounderUsingPairwiseSeedSimilarity()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.92d,
+            lineageSplitThreshold: 0.88d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch",
+            lineageHysteresisMargin: 0.04d,
+            lineageSplitGuardMargin: 0.02d,
+            lineageMinParentMembershipsBeforeSplit: 1,
+            lineageRealignParentMembershipWindow: 0,
+            lineageRealignMatchMargin: 0d,
+            lineageHindsightReassignCommitWindow: 0,
+            lineageHindsightSimilarityMargin: 0.02d));
+        var system = new ActorSystem();
+        try
+        {
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null)));
+
+            await WaitForEpochAsync(system, managerPid);
+
+            var founderA = Guid.NewGuid();
+            var founderB = Guid.NewGuid();
+            const string founderSeedMetadata =
+                "{\"lineage\":{\"lineage_similarity_score\":0.24,\"parent_a_similarity_score\":1.0,\"parent_b_similarity_score\":0.24}}";
+
+            var firstFounder = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = founderA.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = founderA.ToProtoUuid() },
+                        new ProtoSpec.SpeciationParentRef { BrainId = founderB.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = founderSeedMetadata
+                });
+
+            Assert.True(firstFounder.Decision.Success);
+            Assert.Equal("lineage_unavailable_default", firstFounder.Decision.DecisionReason);
+            Assert.Equal("default-species", firstFounder.Decision.SpeciesId);
+
+            var secondFounder = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = founderB.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = founderB.ToProtoUuid() },
+                        new ProtoSpec.SpeciationParentRef { BrainId = founderA.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = founderSeedMetadata
+                });
+
+            Assert.True(secondFounder.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", secondFounder.Decision.DecisionReason);
+            Assert.NotEqual(firstFounder.Decision.SpeciesId, secondFounder.Decision.SpeciesId);
+
+            using var metadata = JsonDocument.Parse(secondFounder.Decision.DecisionMetadataJson);
+            var lineage = metadata.RootElement.GetProperty("lineage");
+            Assert.Equal(firstFounder.Decision.SpeciesId, lineage.GetProperty("source_species_id").GetString());
+            Assert.Equal(0.24d, lineage.GetProperty("source_species_similarity_score").GetDouble(), 3);
+            Assert.Equal(1, lineage.GetProperty("parent_membership_count").GetInt32());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task ProtoAssign_Commit_LineageSimilarityScore_TakesPrecedenceOverGenericSimilarity()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");

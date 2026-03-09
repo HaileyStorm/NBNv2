@@ -118,7 +118,15 @@ public sealed class EvolutionSimulationSessionTests
 
         Assert.True(status.SpeciationCommitAttempts > 0);
         Assert.NotEmpty(client.CommittedCandidates);
-        Assert.All(client.CommittedCandidates, candidate =>
+        var seededFounderCount = parents
+            .Select(parent => BuildBrainParentKeyOrArtifactKey(parent))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        var iterationCommitCandidates = client.CommittedCandidates
+            .Skip(seededFounderCount)
+            .ToArray();
+        Assert.NotEmpty(iterationCommitCandidates);
+        Assert.All(iterationCommitCandidates, candidate =>
         {
             Assert.True(candidate.SimilarityScore.HasValue);
             Assert.InRange(candidate.SimilarityScore.Value, 0f, 1f);
@@ -130,7 +138,7 @@ public sealed class EvolutionSimulationSessionTests
     {
         var parents = CreateParentPool();
         var options = CreateOptions(seed: 9123UL, maxIterations: 2, commitToSpeciation: true);
-        var client = new DeterministicFakeClient(similarities: new[] { 0.34f, 0.93f })
+        var client = new DeterministicFakeClient(similarities: new[] { 0.81f, 0.82f, 0.34f, 0.93f })
         {
             ReproductionDiagnosticSimilarity = 0.82f,
             CommitCandidateSimilarity = 0.82f,
@@ -156,7 +164,7 @@ public sealed class EvolutionSimulationSessionTests
     {
         var parents = CreateParentPool();
         var options = CreateOptions(seed: 9124UL, maxIterations: 2, commitToSpeciation: true);
-        var client = new DeterministicFakeClient(similarities: new[] { 0.34f, 0.93f })
+        var client = new DeterministicFakeClient(similarities: new[] { 0.81f, 0.82f, 0.34f, 0.93f })
         {
             ReproductionDiagnosticSimilarity = 0.82f,
             CommitCandidateSimilarity = 0.82f
@@ -194,10 +202,55 @@ public sealed class EvolutionSimulationSessionTests
 
         var firstSpeciationIndex = client.Events.FindIndex(
             static entry => entry.StartsWith("speciation:", StringComparison.Ordinal));
+        var firstReproIndex = client.Events.FindIndex(
+            static entry => entry.StartsWith("repro:", StringComparison.Ordinal));
+        Assert.True(firstSpeciationIndex >= 0);
+        Assert.True(firstReproIndex < 0 || firstSpeciationIndex < firstReproIndex);
+    }
+
+    [Fact]
+    public async Task RunAsync_SeedParents_UseAssessedFounderSimilarityInsteadOfSyntheticPerfectScores()
+    {
+        var parents = CreateDuplicatedBrainParentPool();
+        var options = CreateOptions(
+            seed: 7812UL,
+            maxIterations: 1,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds);
+        var client = new DeterministicFakeClient(similarities: new[] { 0.24f, 0.24f, 0.90f });
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        await session.RunAsync(CancellationToken.None);
+
+        var uniqueFounderIds = parents
+            .Where(parent => parent.BrainId.HasValue)
+            .Select(parent => parent.BrainId!.Value)
+            .Distinct()
+            .ToHashSet();
+        var founderSeedCommits = client.CommittedCandidates
+            .Where(candidate => candidate.ChildBrainId.HasValue && uniqueFounderIds.Contains(candidate.ChildBrainId.Value))
+            .ToArray();
+
+        Assert.Equal(2, founderSeedCommits.Length);
+        Assert.False(founderSeedCommits[0].SimilarityScore.HasValue);
+        Assert.False(founderSeedCommits[0].LineageSimilarityScore.HasValue);
+        Assert.False(founderSeedCommits[0].LineageParentASimilarityScore.HasValue);
+        Assert.False(founderSeedCommits[0].LineageParentBSimilarityScore.HasValue);
+        Assert.True(founderSeedCommits[1].SimilarityScore.HasValue);
+        Assert.True(founderSeedCommits[1].LineageSimilarityScore.HasValue);
+        Assert.True(founderSeedCommits[1].LineageParentASimilarityScore.HasValue);
+        Assert.True(founderSeedCommits[1].LineageParentBSimilarityScore.HasValue);
+        Assert.Equal(0.24f, founderSeedCommits[1].SimilarityScore.GetValueOrDefault(), 3);
+        Assert.Equal(0.24f, founderSeedCommits[1].LineageSimilarityScore.GetValueOrDefault(), 3);
+        Assert.Equal(1f, founderSeedCommits[1].LineageParentASimilarityScore.GetValueOrDefault(), 3);
+        Assert.Equal(0.24f, founderSeedCommits[1].LineageParentBSimilarityScore.GetValueOrDefault(), 3);
+
         var firstAssessIndex = client.Events.FindIndex(
             static entry => entry.StartsWith("assess:", StringComparison.Ordinal));
-        Assert.True(firstSpeciationIndex >= 0);
-        Assert.True(firstAssessIndex < 0 || firstSpeciationIndex < firstAssessIndex);
+        var secondSpeciationIndex = client.Events.FindLastIndex(
+            static entry => entry.StartsWith("speciation:", StringComparison.Ordinal));
+        Assert.True(firstAssessIndex >= 0);
+        Assert.True(secondSpeciationIndex > firstAssessIndex);
     }
 
     [Fact]
@@ -858,6 +911,12 @@ public sealed class EvolutionSimulationSessionTests
         return parentKey;
     }
 
+    private static string BuildBrainParentKeyOrArtifactKey(EvolutionParentRef parentRef)
+    {
+        Assert.True(TryBuildParentKey(parentRef, out var parentKey));
+        return parentKey;
+    }
+
     private static IReadOnlyList<EvolutionParentRef> CreateParentPool()
     {
         return new[]
@@ -893,6 +952,17 @@ public sealed class EvolutionSimulationSessionTests
             EvolutionParentRef.FromBrainId(Guid.Parse("11111111-1111-1111-1111-111111111111")),
             EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222")),
             EvolutionParentRef.FromBrainId(Guid.Parse("33333333-3333-3333-3333-333333333333"))
+        };
+    }
+
+    private static IReadOnlyList<EvolutionParentRef> CreateDuplicatedBrainParentPool()
+    {
+        return new[]
+        {
+            EvolutionParentRef.FromBrainId(Guid.Parse("11111111-1111-1111-1111-111111111111")),
+            EvolutionParentRef.FromBrainId(Guid.Parse("11111111-1111-1111-1111-111111111111")),
+            EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222")),
+            EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222"))
         };
     }
 

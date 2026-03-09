@@ -203,11 +203,6 @@ public sealed class EvolutionSimulationSession
         var seededKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var parent in snapshot)
         {
-            if (!TryBuildSeedCandidate(parent, out var candidate))
-            {
-                continue;
-            }
-
             if (TryBuildParentKey(parent, out var seedKey)
                 && !seededKeys.Add(seedKey))
             {
@@ -217,6 +212,28 @@ public sealed class EvolutionSimulationSession
             if (!TrySelectSeedPartner(snapshot, parent, out var seedPartner))
             {
                 continue;
+            }
+
+            CompatibilityAssessment seedAssessment = default;
+            if (seededKeys.Count > 1)
+            {
+                seedAssessment = await _client.AssessCompatibilityAsync(
+                    parent,
+                    seedPartner,
+                    NextSeed(),
+                    _options.StrengthSource,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!TryBuildSeedCandidate(parent, seedAssessment, out var candidate))
+            {
+                continue;
+            }
+
+            if (!seedAssessment.Success
+                && !string.IsNullOrWhiteSpace(seedAssessment.AbortReason))
+            {
+                SetLastFailure($"seed_parent_assess_failed:{seedAssessment.AbortReason}");
             }
 
             var commitOutcome = await _client.CommitSpeciationAsync(
@@ -1514,17 +1531,21 @@ public sealed class EvolutionSimulationSession
         return false;
     }
 
-    private static bool TryBuildSeedCandidate(EvolutionParentRef parentRef, out SpeciationCommitCandidate candidate)
+    private static bool TryBuildSeedCandidate(
+        EvolutionParentRef parentRef,
+        CompatibilityAssessment seedAssessment,
+        out SpeciationCommitCandidate candidate)
     {
+        var hasAssessedSimilarity = TryResolveSeedSimilarity(seedAssessment, out var assessedSimilarity);
         if (parentRef.BrainId is Guid brainId && brainId != Guid.Empty)
         {
             candidate = new SpeciationCommitCandidate(
                 ChildBrainId: brainId,
                 ChildDefinition: null,
-                SimilarityScore: 1f,
-                FunctionScore: 1f,
-                ConnectivityScore: 1f,
-                RegionSpanScore: 1f);
+                SimilarityScore: hasAssessedSimilarity ? assessedSimilarity : null,
+                LineageSimilarityScore: hasAssessedSimilarity ? assessedSimilarity : null,
+                LineageParentASimilarityScore: hasAssessedSimilarity ? 1f : null,
+                LineageParentBSimilarityScore: hasAssessedSimilarity ? assessedSimilarity : null);
             return true;
         }
 
@@ -1534,15 +1555,31 @@ public sealed class EvolutionSimulationSession
             candidate = new SpeciationCommitCandidate(
                 ChildBrainId: null,
                 ChildDefinition: artifactRef,
-                SimilarityScore: 1f,
-                FunctionScore: 1f,
-                ConnectivityScore: 1f,
-                RegionSpanScore: 1f);
+                SimilarityScore: hasAssessedSimilarity ? assessedSimilarity : null,
+                LineageSimilarityScore: hasAssessedSimilarity ? assessedSimilarity : null,
+                LineageParentASimilarityScore: hasAssessedSimilarity ? 1f : null,
+                LineageParentBSimilarityScore: hasAssessedSimilarity ? assessedSimilarity : null);
             return true;
         }
 
         candidate = default;
         return false;
+    }
+
+    private static bool TryResolveSeedSimilarity(
+        CompatibilityAssessment seedAssessment,
+        out float similarity)
+    {
+        similarity = 0f;
+        if (!seedAssessment.Success
+            || float.IsNaN(seedAssessment.SimilarityScore)
+            || float.IsInfinity(seedAssessment.SimilarityScore))
+        {
+            return false;
+        }
+
+        similarity = Math.Clamp(seedAssessment.SimilarityScore, 0f, 1f);
+        return true;
     }
 
     private static bool TrySelectSeedPartner(
