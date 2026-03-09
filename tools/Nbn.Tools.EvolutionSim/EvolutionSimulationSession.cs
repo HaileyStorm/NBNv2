@@ -1522,10 +1522,25 @@ public sealed class EvolutionSimulationSession
             return true;
         }
 
-        if (parentRef.ArtifactRef is not null && parentRef.ArtifactRef.TryToSha256Hex(out var sha))
+        if (parentRef.ArtifactRef is { } artifactRef)
         {
-            key = $"artifact:{sha}|{parentRef.ArtifactRef.StoreUri}|{parentRef.ArtifactRef.MediaType}|{parentRef.ArtifactRef.SizeBytes}";
-            return true;
+            if (artifactRef.TryToSha256Hex(out var sha))
+            {
+                key = $"artifact:{sha}";
+                return true;
+            }
+
+            var storeUri = string.IsNullOrWhiteSpace(artifactRef.StoreUri)
+                ? string.Empty
+                : artifactRef.StoreUri.Trim();
+            if (!string.IsNullOrWhiteSpace(storeUri))
+            {
+                var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
+                    ? string.Empty
+                    : artifactRef.MediaType.Trim();
+                key = $"artifact-uri:{storeUri}|{mediaType}|{artifactRef.SizeBytes}";
+                return true;
+            }
         }
 
         return false;

@@ -1624,16 +1624,18 @@ public sealed class SpeciationManagerActor : IActor
 
     private static string BuildArtifactIdentityKey(ArtifactRef artifactRef)
     {
-        var sha = artifactRef.TryToSha256Hex(out var sha256Hex)
-            ? sha256Hex
-            : string.Empty;
+        if (artifactRef.TryToSha256Hex(out var sha256Hex))
+        {
+            return $"artifact_ref|sha256={sha256Hex}";
+        }
+
         var storeUri = string.IsNullOrWhiteSpace(artifactRef.StoreUri)
             ? string.Empty
             : artifactRef.StoreUri.Trim();
         var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
             ? string.Empty
             : artifactRef.MediaType.Trim();
-        return $"artifact_ref|sha256={sha}|size={artifactRef.SizeBytes}|media_type={mediaType}|store_uri={storeUri}";
+        return $"artifact_ref|size={artifactRef.SizeBytes}|media_type={mediaType}|store_uri={storeUri}";
     }
 
     private async Task<ResolvedCandidate> TryEnrichResolvedCandidateAsync(
@@ -4105,15 +4107,25 @@ public sealed class SpeciationManagerActor : IActor
                 ForceDecisionReason: false);
         }
 
-        if (lineageEvidence.ParentMembershipCount == 0
-            || (string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId) && !bestParentSpeciesFit.HasValue))
+        if (lineageEvidence.ParentMembershipCount == 0)
+        {
+            return new AssignmentResolution(
+                _runtimeConfig.DefaultSpeciesId,
+                NormalizeOrFallback(requestedSpeciesDisplayName, _runtimeConfig.DefaultSpeciesDisplayName),
+                DecisionReason: "lineage_unavailable_default",
+                Strategy: "default",
+                StrategyDetail: "No parent membership evidence available in current epoch.",
+                ForceDecisionReason: true);
+        }
+
+        if (string.IsNullOrWhiteSpace(lineageEvidence.DominantSpeciesId) && !bestParentSpeciesFit.HasValue)
         {
             return new AssignmentResolution(
                 _runtimeConfig.DefaultSpeciesId,
                 _runtimeConfig.DefaultSpeciesDisplayName,
-                DecisionReason: "lineage_unavailable_default",
+                DecisionReason: "lineage_source_unavailable_default",
                 Strategy: "default",
-                StrategyDetail: "No parent membership evidence available in current epoch.",
+                StrategyDetail: "Parent memberships did not resolve to a reusable source species.",
                 ForceDecisionReason: true);
         }
 

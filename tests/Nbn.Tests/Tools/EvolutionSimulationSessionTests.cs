@@ -254,6 +254,38 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_SeedParents_TreatEquivalentArtifactExportsAsSameFounderAcrossStoreUris()
+    {
+        var parents = CreateDuplicatedArtifactParentPool();
+        var options = CreateOptions(seed: 7813UL, maxIterations: 1, commitToSpeciation: true);
+        var client = new DeterministicFakeClient(similarities: new[] { 0.24f, 0.90f });
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        await session.RunAsync(CancellationToken.None);
+
+        var uniqueFounderShas = parents
+            .Where(parent => parent.ArtifactRef is not null)
+            .Select(parent => parent.ArtifactRef!.ToSha256Hex())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var founderSeedCommits = client.CommittedCandidates
+            .Where(candidate => candidate.ChildDefinition is not null
+                && uniqueFounderShas.Contains(candidate.ChildDefinition.ToSha256Hex()))
+            .ToArray();
+
+        Assert.Equal(2, founderSeedCommits.Length);
+        Assert.False(founderSeedCommits[0].SimilarityScore.HasValue);
+        Assert.Equal(0.24f, founderSeedCommits[1].SimilarityScore.GetValueOrDefault(), 3);
+        Assert.Equal(0.24f, founderSeedCommits[1].LineageSimilarityScore.GetValueOrDefault(), 3);
+
+        var firstAssess = client.Events.First(
+            static entry => entry.StartsWith("assess:", StringComparison.Ordinal));
+        var firstAssessParts = firstAssess.Split(':');
+        Assert.True(firstAssessParts.Length >= 6);
+        Assert.NotEqual(firstAssessParts[2], firstAssessParts[3]);
+    }
+
+    [Fact]
     public async Task RunAsync_WhenParentPoolReachesCapacity_ContinuesTurnoverWithNewChildren()
     {
         var parents = CreateParentPool();
@@ -936,10 +968,25 @@ public sealed class EvolutionSimulationSessionTests
             return true;
         }
 
-        if (parentRef.ArtifactRef is not null && parentRef.ArtifactRef.TryToSha256Hex(out var sha))
+        if (parentRef.ArtifactRef is { } artifactRef)
         {
-            key = $"artifact:{sha}|{parentRef.ArtifactRef.StoreUri}|{parentRef.ArtifactRef.MediaType}|{parentRef.ArtifactRef.SizeBytes}";
-            return true;
+            if (artifactRef.TryToSha256Hex(out var sha))
+            {
+                key = $"artifact:{sha}";
+                return true;
+            }
+
+            var storeUri = string.IsNullOrWhiteSpace(artifactRef.StoreUri)
+                ? string.Empty
+                : artifactRef.StoreUri.Trim();
+            if (!string.IsNullOrWhiteSpace(storeUri))
+            {
+                var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
+                    ? string.Empty
+                    : artifactRef.MediaType.Trim();
+                key = $"artifact-uri:{storeUri}|{mediaType}|{artifactRef.SizeBytes}";
+                return true;
+            }
         }
 
         return false;
@@ -963,6 +1010,17 @@ public sealed class EvolutionSimulationSessionTests
             EvolutionParentRef.FromBrainId(Guid.Parse("11111111-1111-1111-1111-111111111111")),
             EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222")),
             EvolutionParentRef.FromBrainId(Guid.Parse("22222222-2222-2222-2222-222222222222"))
+        };
+    }
+
+    private static IReadOnlyList<EvolutionParentRef> CreateDuplicatedArtifactParentPool()
+    {
+        return new[]
+        {
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-a", "file:///tmp/a-1")),
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-a", "file:///tmp/a-2")),
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-b", "file:///tmp/b-1")),
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-b", "file:///tmp/b-2"))
         };
     }
 
