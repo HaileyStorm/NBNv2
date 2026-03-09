@@ -5,6 +5,7 @@ using Nbn.Shared;
 using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Repro = Nbn.Proto.Repro;
 using ProtoSpec = Nbn.Proto.Speciation;
@@ -274,7 +275,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
                     FailureDetail: string.Empty,
                     ExpectedNoOp: false,
                     SpeciesId: decision?.SpeciesId ?? string.Empty,
-                    SourceSpeciesId: ExtractSourceSpeciesId(decision?.DecisionMetadataJson));
+                    SourceSpeciesId: ExtractSourceSpeciesId(decision?.DecisionMetadataJson),
+                    SourceSpeciesSimilarityScore: ExtractSourceSpeciesSimilarityScore(decision?.DecisionMetadataJson));
             }
 
             if (decision is null)
@@ -610,6 +612,60 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
     }
 
+    private static float? ExtractSourceSpeciesSimilarityScore(string? decisionMetadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(decisionMetadataJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            var root = JsonNode.Parse(decisionMetadataJson);
+            var lineage = root?["lineage"];
+            return FindScore(
+                       lineage,
+                       "source_species_similarity_score",
+                       "sourceSpeciesSimilarityScore")
+                   ?? FindScore(
+                       lineage,
+                       "dominant_species_similarity_score",
+                       "dominantSpeciesSimilarityScore")
+                   ?? FindScore(
+                       lineage,
+                       "lineage_similarity_score",
+                       "lineageSimilarityScore")
+                   ?? FindScore(
+                       lineage,
+                       "similarity_score",
+                       "similarityScore")
+                   ?? FindScore(
+                       root?["report"],
+                       "similarity_score",
+                       "similarityScore")
+                   ?? FindScore(
+                       root,
+                       "source_species_similarity_score",
+                       "sourceSpeciesSimilarityScore")
+                   ?? FindScore(
+                       root,
+                       "dominant_species_similarity_score",
+                       "dominantSpeciesSimilarityScore")
+                   ?? FindScore(
+                       root,
+                       "lineage_similarity_score",
+                       "lineageSimilarityScore")
+                   ?? FindScore(
+                       root,
+                       "similarity_score",
+                       "similarityScore");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static float? TryNormalizeScore(float? value)
     {
         if (!value.HasValue || float.IsNaN(value.Value) || float.IsInfinity(value.Value))
@@ -626,6 +682,71 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         {
             target[key] = Math.Clamp(value.Value, 0f, 1f);
         }
+    }
+
+    private static float? FindScore(JsonNode? node, params string[] aliases)
+    {
+        if (node is not JsonObject obj)
+        {
+            return null;
+        }
+
+        foreach (var alias in aliases)
+        {
+            if (!obj.TryGetPropertyValue(alias, out var valueNode))
+            {
+                continue;
+            }
+
+            var numericValue = TryReadNumericValue(valueNode);
+            if (numericValue.HasValue)
+            {
+                return TryNormalizeScore(numericValue.Value);
+            }
+        }
+
+        return null;
+    }
+
+    private static float? TryReadNumericValue(JsonNode? node)
+    {
+        if (node is not JsonValue valueNode)
+        {
+            return null;
+        }
+
+        if (valueNode.TryGetValue<float>(out var asFloat))
+        {
+            return asFloat;
+        }
+
+        if (valueNode.TryGetValue<double>(out var asDouble))
+        {
+            return (float)asDouble;
+        }
+
+        if (valueNode.TryGetValue<decimal>(out var asDecimal))
+        {
+            return (float)asDecimal;
+        }
+
+        if (valueNode.TryGetValue<int>(out var asInt))
+        {
+            return asInt;
+        }
+
+        if (valueNode.TryGetValue<long>(out var asLong))
+        {
+            return asLong;
+        }
+
+        if (valueNode.TryGetValue<string>(out var asString)
+            && float.TryParse(asString, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
     }
 
     private static bool TryBuildCandidateRef(

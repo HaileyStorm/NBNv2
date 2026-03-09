@@ -126,14 +126,15 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
-    public async Task RunAsync_TracksAssessmentAndCommitSimilaritySeparately()
+    public async Task RunAsync_PrefersCommittedSourceSpeciesSimilarity_ForCommitTelemetry()
     {
         var parents = CreateParentPool();
         var options = CreateOptions(seed: 9123UL, maxIterations: 2, commitToSpeciation: true);
         var client = new DeterministicFakeClient(similarities: new[] { 0.34f, 0.93f })
         {
             ReproductionDiagnosticSimilarity = 0.82f,
-            CommitCandidateSimilarity = 0.82f
+            CommitCandidateSimilarity = 0.82f,
+            CommitOutcomeSourceSpeciesSimilarity = 0.61f
         };
         var session = new EvolutionSimulationSession(options, parents, client);
 
@@ -144,9 +145,28 @@ public sealed class EvolutionSimulationSessionTests
         Assert.Equal((ulong)2, status.ReproductionSimilaritySamples);
         Assert.Equal(0.82f, status.MinReproductionSimilarityObserved, 3);
         Assert.True(status.SpeciationCommitSimilaritySamples >= 2);
-        Assert.Equal(0.82f, status.MinSpeciationCommitSimilarityObserved, 3);
+        Assert.Equal(0.61f, status.MinSpeciationCommitSimilarityObserved, 3);
         Assert.True(status.MinSimilarityObserved <= status.MinAssessmentSimilarityObserved);
         Assert.True(status.MinAssessmentSimilarityObserved < status.MinSpeciationCommitSimilarityObserved);
+        Assert.True(status.MinSpeciationCommitSimilarityObserved < status.MinReproductionSimilarityObserved);
+    }
+
+    [Fact]
+    public async Task RunAsync_CommitTelemetryFallsBackToCandidateSimilarity_WhenOutcomeOmitsCommittedSimilarity()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 9124UL, maxIterations: 2, commitToSpeciation: true);
+        var client = new DeterministicFakeClient(similarities: new[] { 0.34f, 0.93f })
+        {
+            ReproductionDiagnosticSimilarity = 0.82f,
+            CommitCandidateSimilarity = 0.82f
+        };
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.True(status.SpeciationCommitSimilaritySamples >= 2);
+        Assert.Equal(0.82f, status.MinSpeciationCommitSimilarityObserved, 3);
     }
 
     [Fact]
@@ -953,6 +973,7 @@ public sealed class EvolutionSimulationSessionTests
         public bool ObservedArtifactParents { get; private set; }
         public float ReproductionDiagnosticSimilarity { get; set; } = 0.5f;
         public float? CommitCandidateSimilarity { get; set; }
+        public float? CommitOutcomeSourceSpeciesSimilarity { get; set; }
 
         public async Task<CompatibilityAssessment> AssessCompatibilityAsync(
             EvolutionParentRef parentA,
@@ -1054,7 +1075,8 @@ public sealed class EvolutionSimulationSessionTests
                 Success: true,
                 FailureDetail: string.Empty,
                 ExpectedNoOp: false,
-                SpeciesId: speciesId));
+                SpeciesId: speciesId,
+                SourceSpeciesSimilarityScore: CommitOutcomeSourceSpeciesSimilarity));
         }
 
         private void ObserveParentKinds(EvolutionParentRef parentA, EvolutionParentRef parentB)

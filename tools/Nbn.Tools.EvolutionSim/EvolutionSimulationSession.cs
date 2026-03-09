@@ -330,7 +330,8 @@ public sealed class EvolutionSimulationSession
             if (commitOutcome.Success)
             {
                 IncrementSpeciationCommitSuccesses();
-                RecordSpeciationCommitSimilarity(commitCandidate.SimilarityScore);
+                RecordSpeciationCommitSimilarity(
+                    commitOutcome.SourceSpeciesSimilarityScore ?? commitCandidate.SimilarityScore);
                 TryAddCommittedCandidateToPool(
                     commitCandidate,
                     commitOutcome.SpeciesId,

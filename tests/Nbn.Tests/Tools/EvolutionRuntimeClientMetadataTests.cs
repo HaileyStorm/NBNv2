@@ -126,6 +126,45 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.Equal("species-beta", sourceSpeciesId);
     }
 
+    [Fact]
+    public void ExtractSourceSpeciesSimilarityScore_PrefersCanonicalSourceSpeciesField()
+    {
+        const string metadataJson = """
+            {"lineage":{"source_species_similarity_score":0.61,"dominant_species_similarity_score":0.72,"lineage_similarity_score":0.83},"report":{"similarity_score":0.94}}
+            """;
+
+        var similarity = InvokeExtractSourceSpeciesSimilarityScore(metadataJson);
+
+        Assert.True(similarity.HasValue);
+        Assert.Equal(0.61f, similarity.Value, 3);
+    }
+
+    [Fact]
+    public void ExtractSourceSpeciesSimilarityScore_FallsBackToLegacyDominantSpeciesField()
+    {
+        const string metadataJson = """
+            {"lineage":{"dominant_species_similarity_score":0.72},"report":{"similarity_score":0.94}}
+            """;
+
+        var similarity = InvokeExtractSourceSpeciesSimilarityScore(metadataJson);
+
+        Assert.True(similarity.HasValue);
+        Assert.Equal(0.72f, similarity.Value, 3);
+    }
+
+    [Fact]
+    public void ExtractSourceSpeciesSimilarityScore_FallsBackToLegacyLineageSimilarity()
+    {
+        const string metadataJson = """
+            {"lineage":{"lineage_similarity_score":0.83},"report":{"similarity_score":0.94}}
+            """;
+
+        var similarity = InvokeExtractSourceSpeciesSimilarityScore(metadataJson);
+
+        Assert.True(similarity.HasValue);
+        Assert.Equal(0.83f, similarity.Value, 3);
+    }
+
     private static object InvokeExtractReproductionData(Repro.ReproduceResult result)
     {
         var method = typeof(EvolutionRuntimeClient).GetMethod(
@@ -155,6 +194,16 @@ public sealed class EvolutionRuntimeClientMetadataTests
         Assert.NotNull(method);
         var value = method!.Invoke(null, [decisionMetadataJson]);
         return Assert.IsType<string>(value);
+    }
+
+    private static float? InvokeExtractSourceSpeciesSimilarityScore(string? decisionMetadataJson)
+    {
+        var method = typeof(EvolutionRuntimeClient).GetMethod(
+            "ExtractSourceSpeciesSimilarityScore",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        var value = method!.Invoke(null, [decisionMetadataJson]);
+        return value is null ? null : Assert.IsType<float>(value);
     }
 
     private static T GetTupleItem<T>(object tuple, string propertyName)
