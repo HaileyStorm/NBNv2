@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Nbn.Proto;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Speciation;
@@ -730,6 +731,100 @@ public class SpeciationPanelViewModelTests
         Assert.Contains("top 11/12 species + Other", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
         Assert.Contains(vm.FlowChartLegend, item => string.Equals(item.Label, "Other species", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_DerivedSpecies_AnchorsToSourceParentSpan()
+    {
+        var history = CreateMemberships(epochId: 40, speciesId: "species.source", speciesDisplayName: "Source", count: 2, assignedMsStart: 1_000)
+            .Concat(CreateMemberships(epochId: 40, speciesId: "species.beta", speciesDisplayName: "Beta", count: 4, assignedMsStart: 2_000))
+            .Concat(CreateMemberships(epochId: 40, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 4, assignedMsStart: 3_000))
+            .Concat(CreateMemberships(epochId: 41, speciesId: "species.source", speciesDisplayName: "Source", count: 6, assignedMsStart: 4_000))
+            .Concat(CreateMemberships(epochId: 41, speciesId: "species.beta", speciesDisplayName: "Beta", count: 2, assignedMsStart: 5_000))
+            .Concat(CreateMemberships(epochId: 41, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 1, assignedMsStart: 6_000))
+            .Concat(new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 41,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = "species.child",
+                    SpeciesDisplayName = "Child",
+                    AssignedMs = 7_000,
+                    DecisionReason = "lineage_diverged_new_species",
+                    DecisionMetadataJson = BuildSplitDecisionMetadata(
+                        similarity: 0.55,
+                        splitThreshold: 0.66,
+                        dominantSpeciesId: "species.dominant",
+                        dominantSpeciesDisplayName: "Dominant",
+                        sourceSpeciesId: "species.source",
+                        sourceSpeciesDisplayName: "Source")
+                }
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 4);
+
+        var childSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.child").PathData);
+        var sourceSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.source").PathData);
+        var dominantSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.dominant").PathData);
+
+        Assert.Equal(2, childSpans.Count);
+        Assert.Equal(sourceSpans[0].StartX, childSpans[0].StartX, 3);
+        Assert.Equal(sourceSpans[0].EndX, childSpans[0].EndX, 3);
+        Assert.True(Math.Abs(dominantSpans[0].StartX - childSpans[0].StartX) > 1d);
+        Assert.True(Math.Abs(dominantSpans[0].EndX - childSpans[0].EndX) > 1d);
+        Assert.True(childSpans[0].EndX > childSpans[0].StartX);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_FirstAppearanceWithoutParentAnchor_DoesNotRenderPreOriginRow()
+    {
+        var history = CreateMemberships(epochId: 50, speciesId: "species.root", speciesDisplayName: "Root", count: 4, assignedMsStart: 1_000)
+            .Concat(CreateMemberships(epochId: 50, speciesId: "species.other", speciesDisplayName: "Other", count: 6, assignedMsStart: 2_000))
+            .Concat(CreateMemberships(epochId: 51, speciesId: "species.root", speciesDisplayName: "Root", count: 4, assignedMsStart: 3_000))
+            .Concat(CreateMemberships(epochId: 51, speciesId: "species.other", speciesDisplayName: "Other", count: 5, assignedMsStart: 4_000))
+            .Concat(new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 51,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = "species.new",
+                    SpeciesDisplayName = "New",
+                    AssignedMs = 5_000
+                }
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 3);
+
+        var newSpeciesSpans = ExtractFlowRowSpans(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.new").PathData);
+
+        Assert.Single(newSpeciesSpans);
+        Assert.True(newSpeciesSpans[0].EndX > newSpeciesSpans[0].StartX);
     }
 
     [Fact]
@@ -1674,7 +1769,9 @@ public class SpeciationPanelViewModelTests
         double splitThreshold,
         double splitGuardMargin = 0d,
         string? dominantSpeciesId = null,
-        string? dominantSpeciesDisplayName = null)
+        string? dominantSpeciesDisplayName = null,
+        string? sourceSpeciesId = null,
+        string? sourceSpeciesDisplayName = null)
     {
         var root = new JsonObject
         {
@@ -1689,9 +1786,22 @@ public class SpeciationPanelViewModelTests
             }
         };
 
-        if (!string.IsNullOrWhiteSpace(dominantSpeciesId) || !string.IsNullOrWhiteSpace(dominantSpeciesDisplayName))
+        if (!string.IsNullOrWhiteSpace(sourceSpeciesId)
+            || !string.IsNullOrWhiteSpace(sourceSpeciesDisplayName)
+            || !string.IsNullOrWhiteSpace(dominantSpeciesId)
+            || !string.IsNullOrWhiteSpace(dominantSpeciesDisplayName))
         {
             var lineage = new JsonObject();
+            if (!string.IsNullOrWhiteSpace(sourceSpeciesId))
+            {
+                lineage["source_species_id"] = sourceSpeciesId;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sourceSpeciesDisplayName))
+            {
+                lineage["source_species_display_name"] = sourceSpeciesDisplayName;
+            }
+
             if (!string.IsNullOrWhiteSpace(dominantSpeciesId))
             {
                 lineage["dominant_species_id"] = dominantSpeciesId;
@@ -1706,6 +1816,34 @@ public class SpeciationPanelViewModelTests
         }
 
         return root.ToJsonString();
+    }
+
+    private static IReadOnlyList<(double StartX, double EndX, double Y)> ExtractFlowRowSpans(string pathData)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(pathData));
+        var numericTokens = Regex.Matches(pathData, @"-?\d+(?:\.\d+)?")
+            .Select(match => double.Parse(match.Value, CultureInfo.InvariantCulture))
+            .ToArray();
+        Assert.True(numericTokens.Length >= 4 && numericTokens.Length % 2 == 0);
+
+        var points = new List<(double X, double Y)>(numericTokens.Length / 2);
+        for (var i = 0; i < numericTokens.Length; i += 2)
+        {
+            points.Add((numericTokens[i], numericTokens[i + 1]));
+        }
+
+        Assert.True(points.Count % 2 == 0);
+        var sampleCount = points.Count / 2;
+        var spans = new List<(double StartX, double EndX, double Y)>(sampleCount);
+        for (var sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++)
+        {
+            var endPoint = points[sampleIndex];
+            var startPoint = points[points.Count - 1 - sampleIndex];
+            Assert.Equal(endPoint.Y, startPoint.Y, 3);
+            spans.Add((Math.Min(startPoint.X, endPoint.X), Math.Max(startPoint.X, endPoint.X), endPoint.Y));
+        }
+
+        return spans;
     }
 
     private static double CalculateColorDistance(string leftHex, string rightHex)
@@ -1757,6 +1895,24 @@ public class SpeciationPanelViewModelTests
         }
 
         return maxX ?? double.NaN;
+    }
+
+    private static IEnumerable<SpeciationMembershipRecord> CreateMemberships(
+        long epochId,
+        string speciesId,
+        string speciesDisplayName,
+        int count,
+        ulong assignedMsStart)
+    {
+        return Enumerable.Range(0, count)
+            .Select(index => new SpeciationMembershipRecord
+            {
+                EpochId = (ulong)epochId,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = speciesId,
+                SpeciesDisplayName = speciesDisplayName,
+                AssignedMs = assignedMsStart + (ulong)index
+            });
     }
 
     private static IEnumerable<SpeciationCladogramItem> FlattenCladogram(IEnumerable<SpeciationCladogramItem> roots)
