@@ -1,7 +1,9 @@
 using Nbn.Proto;
+using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Proto;
+using ProtoIo = Nbn.Proto.Io;
 using ProtoRepro = Nbn.Proto.Repro;
 using ProtoSettings = Nbn.Proto.Settings;
 using ProtoSpec = Nbn.Proto.Speciation;
@@ -33,6 +35,8 @@ public sealed class SpeciationManagerActor : IActor
     private readonly TimeSpan _settingsRequestTimeout;
     private readonly PID? _configuredReproductionManagerPid;
     private PID? _reproductionManagerPid;
+    private readonly PID? _configuredIoGatewayPid;
+    private PID? _ioGatewayPid;
     private readonly TimeSpan _compatibilityRequestTimeout;
     private ProtoRepro.ReproduceConfig _compatibilityAssessmentConfig;
     private readonly Dictionary<string, SpeciesSimilarityFloorState> _speciesSimilarityFloors = new(StringComparer.Ordinal);
@@ -49,6 +53,7 @@ public sealed class SpeciationManagerActor : IActor
         PID? settingsPid,
         TimeSpan? settingsRequestTimeout = null,
         PID? reproductionManagerPid = null,
+        PID? ioGatewayPid = null,
         TimeSpan? compatibilityRequestTimeout = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
@@ -58,6 +63,8 @@ public sealed class SpeciationManagerActor : IActor
         _settingsRequestTimeout = settingsRequestTimeout ?? DefaultSettingsRequestTimeout;
         _configuredReproductionManagerPid = reproductionManagerPid;
         _reproductionManagerPid = reproductionManagerPid;
+        _configuredIoGatewayPid = ioGatewayPid;
+        _ioGatewayPid = ioGatewayPid;
         _compatibilityRequestTimeout = compatibilityRequestTimeout ?? DefaultCompatibilityRequestTimeout;
         _compatibilityAssessmentConfig = ReproductionSettings.CreateDefaultConfig(
             ProtoRepro.SpawnChildPolicy.SpawnChildNever);
@@ -157,26 +164,55 @@ public sealed class SpeciationManagerActor : IActor
             return;
         }
 
-        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.ReproductionManagerKey, out var registration))
+        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.ReproductionManagerKey, out var reproductionRegistration))
         {
-            _reproductionManagerPid = registration.Endpoint.ToPid();
-            return;
+            _reproductionManagerPid = reproductionRegistration.Endpoint.ToPid();
+        }
+        else
+        {
+            _reproductionManagerPid = _configuredReproductionManagerPid;
         }
 
-        _reproductionManagerPid = _configuredReproductionManagerPid;
+        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var ioRegistration))
+        {
+            _ioGatewayPid = ioRegistration.Endpoint.ToPid();
+        }
+        else
+        {
+            _ioGatewayPid = _configuredIoGatewayPid;
+        }
     }
 
     private void ApplyObservedEndpoint(ServiceEndpointObservation observation)
     {
-        if (!string.Equals(observation.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
+        if (string.Equals(observation.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
+        {
+            if (observation.Kind == ServiceEndpointObservationKind.Upserted
+                && observation.Registration is ServiceEndpointRegistration reproductionRegistration)
+            {
+                _reproductionManagerPid = reproductionRegistration.Endpoint.ToPid();
+                return;
+            }
+
+            if (observation.Kind == ServiceEndpointObservationKind.Removed
+                || observation.Kind == ServiceEndpointObservationKind.Invalid
+                || observation.Kind == ServiceEndpointObservationKind.Upserted)
+            {
+                _reproductionManagerPid = _configuredReproductionManagerPid;
+            }
+
+            return;
+        }
+
+        if (!string.Equals(observation.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.Ordinal))
         {
             return;
         }
 
         if (observation.Kind == ServiceEndpointObservationKind.Upserted
-            && observation.Registration is ServiceEndpointRegistration registration)
+            && observation.Registration is ServiceEndpointRegistration ioRegistration)
         {
-            _reproductionManagerPid = registration.Endpoint.ToPid();
+            _ioGatewayPid = ioRegistration.Endpoint.ToPid();
             return;
         }
 
@@ -184,7 +220,7 @@ public sealed class SpeciationManagerActor : IActor
             || observation.Kind == ServiceEndpointObservationKind.Invalid
             || observation.Kind == ServiceEndpointObservationKind.Upserted)
         {
-            _reproductionManagerPid = _configuredReproductionManagerPid;
+            _ioGatewayPid = _configuredIoGatewayPid;
         }
     }
 
@@ -1273,6 +1309,8 @@ public sealed class SpeciationManagerActor : IActor
                 "Speciation candidate must be brain_id, artifact_ref, or artifact_uri.");
         }
 
+        resolved = await TryEnrichResolvedCandidateAsync(context, resolved).ConfigureAwait(false);
+
         var inputOrderedParentBrainIds = ExtractParentBrainIdsByInputOrder(parents);
         var orderedParentBrainIds = ExtractParentBrainIds(parents);
         var orderedParentArtifactRefs = ExtractParentArtifactLabels(parents);
@@ -1596,6 +1634,69 @@ public sealed class SpeciationManagerActor : IActor
             ? string.Empty
             : artifactRef.MediaType.Trim();
         return $"artifact_ref|sha256={sha}|size={artifactRef.SizeBytes}|media_type={mediaType}|store_uri={storeUri}";
+    }
+
+    private async Task<ResolvedCandidate> TryEnrichResolvedCandidateAsync(
+        IContext context,
+        ResolvedCandidate resolvedCandidate)
+    {
+        if (resolvedCandidate.CandidateMode != ProtoSpec.SpeciationCandidateMode.BrainId
+            || resolvedCandidate.BrainId == Guid.Empty)
+        {
+            return resolvedCandidate;
+        }
+
+        var provenance = await TryResolveBrainArtifactProvenanceAsync(
+            context,
+            resolvedCandidate.BrainId).ConfigureAwait(false);
+        if (!HasUsableArtifactReference(provenance.BaseArtifactRef))
+        {
+            return resolvedCandidate;
+        }
+
+        return resolvedCandidate with
+        {
+            SourceArtifactRef = resolvedCandidate.SourceArtifactRef ?? BuildArtifactLabel(provenance.BaseArtifactRef!),
+            CandidateBrainBaseArtifactRef = provenance.BaseArtifactRef!.Clone(),
+            CandidateBrainSnapshotArtifactRef = HasUsableArtifactReference(provenance.SnapshotArtifactRef)
+                ? provenance.SnapshotArtifactRef!.Clone()
+                : null
+        };
+    }
+
+    private async Task<BrainArtifactProvenance> TryResolveBrainArtifactProvenanceAsync(
+        IContext context,
+        Guid brainId)
+    {
+        if (_ioGatewayPid is null || brainId == Guid.Empty)
+        {
+            return default;
+        }
+
+        try
+        {
+            var info = await context.RequestAsync<ProtoIo.BrainInfo>(
+                _ioGatewayPid,
+                new ProtoIo.BrainInfoRequest
+                {
+                    BrainId = brainId.ToProtoUuid()
+                },
+                _compatibilityRequestTimeout).ConfigureAwait(false);
+            if (info is null || !HasUsableArtifactReference(info.BaseDefinition))
+            {
+                return default;
+            }
+
+            return new BrainArtifactProvenance(
+                info.BaseDefinition.Clone(),
+                HasUsableArtifactReference(info.LastSnapshot)
+                    ? info.LastSnapshot.Clone()
+                    : null);
+        }
+        catch
+        {
+            return default;
+        }
     }
 
     private static Guid CreateDeterministicCandidateBrainId(string identityKey)
@@ -2520,7 +2621,10 @@ public sealed class SpeciationManagerActor : IActor
         IReadOnlyList<SpeciationMembershipRecord>? exemplarMemberships = null)
     {
         var assessmentMode = ResolveCompatibilityAssessmentMode(resolvedCandidate.CandidateMode);
-        if (!TryBuildCompatibilitySubject(resolvedCandidate, out var candidateSubject))
+        if (!TryBuildCompatibilitySubjectOptions(
+                resolvedCandidate,
+                out var candidateSubject,
+                out var candidateFallbackSubject))
         {
             return CreateAssignedSpeciesAdmissionAssessment(
                 assessmentAttempted: false,
@@ -2538,6 +2642,7 @@ public sealed class SpeciationManagerActor : IActor
             context,
             epoch,
             candidateSubject,
+            candidateFallbackSubject,
             resolvedCandidate.BrainId,
             assignmentResolution,
             bootstrapRequirement,
@@ -2549,6 +2654,7 @@ public sealed class SpeciationManagerActor : IActor
         IContext context,
         SpeciationEpochInfo epoch,
         CompatibilitySubject candidateSubject,
+        CompatibilitySubject candidateFallbackSubject,
         Guid candidateBrainId,
         AssignmentResolution assignmentResolution,
         BootstrapAssignedSpeciesAdmissionRequirement? bootstrapRequirement,
@@ -2632,15 +2738,24 @@ public sealed class SpeciationManagerActor : IActor
         string? firstAssessmentAbortReason = null;
         foreach (var exemplar in exemplars)
         {
-            if (candidateSubject.Kind == CompatibilitySubjectKind.BrainId
+            if (candidateBrainId != Guid.Empty
                 && exemplar.BrainId == candidateBrainId)
             {
                 continue;
             }
 
             attemptedExemplarBrainIds.Add(exemplar.BrainId.ToString("D"));
-            if (!TryBuildCompatibilitySubject(exemplar, out var exemplarSubject)
-                || exemplarSubject.Kind != candidateSubject.Kind)
+            if (!TryBuildCompatibilitySubjectOptions(
+                    exemplar,
+                    out var exemplarSubject,
+                    out var exemplarFallbackSubject)
+                || !TrySelectCompatibleSubjects(
+                    candidateSubject,
+                    candidateFallbackSubject,
+                    exemplarSubject,
+                    exemplarFallbackSubject,
+                    out var selectedCandidateSubject,
+                    out var selectedExemplarSubject))
             {
                 return BuildAssessment(
                     assessmentAttempted: assessmentAttempted,
@@ -2654,10 +2769,14 @@ public sealed class SpeciationManagerActor : IActor
 
             var assessment = await TryAssessCompatibilitySimilarityAsync(
                 context,
-                candidateSubject,
-                exemplarSubject).ConfigureAwait(false);
+                selectedCandidateSubject,
+                selectedExemplarSubject).ConfigureAwait(false);
             assessmentAttempted |= assessment.RequestAttempted;
             allAssessmentsCompatible &= assessment.Compatible;
+            if (!string.IsNullOrWhiteSpace(assessment.AssessmentMode))
+            {
+                assessmentMode = assessment.AssessmentMode;
+            }
             if (string.IsNullOrWhiteSpace(firstAssessmentAbortReason)
                 && !string.IsNullOrWhiteSpace(assessment.AbortReason))
             {
@@ -2752,7 +2871,8 @@ public sealed class SpeciationManagerActor : IActor
                 AbortReason: string.Empty,
                 FailureReason: _reproductionManagerPid is null
                     ? "reproduction_unavailable"
-                    : "compatibility_subject_kind_mismatch");
+                    : "compatibility_subject_kind_mismatch",
+                AssessmentMode: string.Empty);
         }
 
         try
@@ -2773,15 +2893,26 @@ public sealed class SpeciationManagerActor : IActor
             }
             else
             {
+                var request = new ProtoRepro.AssessCompatibilityByArtifactsRequest
+                {
+                    ParentADef = candidateSubject.ArtifactDefRef!.Clone(),
+                    ParentBDef = exemplarSubject.ArtifactDefRef!.Clone(),
+                    Config = CreateCompatibilityAssessmentConfig(),
+                    RunCount = 1
+                };
+                if (HasUsableArtifactReference(candidateSubject.ArtifactStateRef))
+                {
+                    request.ParentAState = candidateSubject.ArtifactStateRef!.Clone();
+                }
+
+                if (HasUsableArtifactReference(exemplarSubject.ArtifactStateRef))
+                {
+                    request.ParentBState = exemplarSubject.ArtifactStateRef!.Clone();
+                }
+
                 response = await context.RequestAsync<ProtoRepro.ReproduceResult>(
                     _reproductionManagerPid,
-                    new ProtoRepro.AssessCompatibilityByArtifactsRequest
-                    {
-                        ParentADef = candidateSubject.ArtifactRef!.Clone(),
-                        ParentBDef = exemplarSubject.ArtifactRef!.Clone(),
-                        Config = CreateCompatibilityAssessmentConfig(),
-                        RunCount = 1
-                    },
+                    request,
                     _compatibilityRequestTimeout).ConfigureAwait(false);
             }
 
@@ -2794,7 +2925,8 @@ public sealed class SpeciationManagerActor : IActor
                     SimilarityScore: null,
                     Compatible: false,
                     AbortReason: string.Empty,
-                    FailureReason: "compatibility_response_invalid");
+                    FailureReason: "compatibility_response_invalid",
+                    AssessmentMode: ResolveCompatibilityAssessmentMode(candidateSubject.Kind));
             }
 
             var abortReason = NormalizeCompatibilityAbortReason(response.Report.AbortReason);
@@ -2807,7 +2939,8 @@ public sealed class SpeciationManagerActor : IActor
                     SimilarityScore: null,
                     Compatible: false,
                     AbortReason: abortReason,
-                    FailureReason: "compatibility_infrastructure_failure");
+                    FailureReason: "compatibility_infrastructure_failure",
+                    AssessmentMode: ResolveCompatibilityAssessmentMode(candidateSubject.Kind));
             }
 
             return new CompatibilitySimilarityAssessment(
@@ -2815,7 +2948,8 @@ public sealed class SpeciationManagerActor : IActor
                 SimilarityScore: similarityScore,
                 Compatible: response.Report.Compatible,
                 AbortReason: abortReason,
-                FailureReason: string.Empty);
+                FailureReason: string.Empty,
+                AssessmentMode: ResolveCompatibilityAssessmentMode(candidateSubject.Kind));
         }
         catch (Exception ex) when (ex is TimeoutException or TaskCanceledException or OperationCanceledException)
         {
@@ -2824,7 +2958,8 @@ public sealed class SpeciationManagerActor : IActor
                 SimilarityScore: null,
                 Compatible: false,
                 AbortReason: "repro_request_timeout",
-                FailureReason: "compatibility_request_timeout");
+                FailureReason: "compatibility_request_timeout",
+                AssessmentMode: ResolveCompatibilityAssessmentMode(candidateSubject.Kind));
         }
         catch
         {
@@ -2833,7 +2968,8 @@ public sealed class SpeciationManagerActor : IActor
                 SimilarityScore: null,
                 Compatible: false,
                 AbortReason: "repro_request_failed",
-                FailureReason: "compatibility_request_failed");
+                FailureReason: "compatibility_request_failed",
+                AssessmentMode: ResolveCompatibilityAssessmentMode(candidateSubject.Kind));
         }
     }
 
@@ -2924,33 +3060,102 @@ public sealed class SpeciationManagerActor : IActor
     private ProtoRepro.ReproduceConfig CreateCompatibilityAssessmentConfig()
         => _compatibilityAssessmentConfig.Clone();
 
+    private static bool TryBuildCompatibilitySubjectOptions(
+        ResolvedCandidate resolvedCandidate,
+        out CompatibilitySubject preferredSubject,
+        out CompatibilitySubject fallbackSubject)
+    {
+        preferredSubject = default;
+        fallbackSubject = default;
+        if (!TryBuildCompatibilitySubject(
+                resolvedCandidate,
+                preferArtifacts: true,
+                out preferredSubject))
+        {
+            return false;
+        }
+
+        if (!TryBuildCompatibilitySubject(
+                resolvedCandidate,
+                preferArtifacts: false,
+                out fallbackSubject))
+        {
+            fallbackSubject = preferredSubject;
+        }
+
+        return true;
+    }
+
     private static bool TryBuildCompatibilitySubject(
         ResolvedCandidate resolvedCandidate,
+        bool preferArtifacts,
         out CompatibilitySubject subject)
     {
         subject = default;
         switch (resolvedCandidate.CandidateMode)
         {
             case ProtoSpec.SpeciationCandidateMode.BrainId when resolvedCandidate.BrainId != Guid.Empty:
+                if (preferArtifacts
+                    && CanAssessArtifactReference(resolvedCandidate.CandidateBrainBaseArtifactRef))
+                {
+                    subject = new CompatibilitySubject(
+                        CompatibilitySubjectKind.ArtifactRef,
+                        Guid.Empty,
+                        resolvedCandidate.CandidateBrainBaseArtifactRef!.Clone(),
+                        HasUsableArtifactReference(resolvedCandidate.CandidateBrainSnapshotArtifactRef)
+                            ? resolvedCandidate.CandidateBrainSnapshotArtifactRef!.Clone()
+                            : null);
+                    return true;
+                }
+
                 subject = new CompatibilitySubject(
                     CompatibilitySubjectKind.BrainId,
                     resolvedCandidate.BrainId,
-                    ArtifactRef: null);
+                    ArtifactDefRef: null,
+                    ArtifactStateRef: null);
                 return true;
             case ProtoSpec.SpeciationCandidateMode.ArtifactRef
                 when CanAssessArtifactReference(resolvedCandidate.CandidateArtifactRef):
                 subject = new CompatibilitySubject(
                     CompatibilitySubjectKind.ArtifactRef,
                     Guid.Empty,
-                    resolvedCandidate.CandidateArtifactRef!.Clone());
+                    resolvedCandidate.CandidateArtifactRef!.Clone(),
+                    ArtifactStateRef: null);
                 return true;
             default:
                 return false;
         }
     }
 
+    private static bool TryBuildCompatibilitySubjectOptions(
+        SpeciationMembershipRecord membership,
+        out CompatibilitySubject preferredSubject,
+        out CompatibilitySubject fallbackSubject)
+    {
+        preferredSubject = default;
+        fallbackSubject = default;
+        if (!TryBuildCompatibilitySubject(
+                membership,
+                preferArtifacts: true,
+                out preferredSubject))
+        {
+            return false;
+        }
+
+        if (!TryBuildCompatibilitySubject(
+                membership,
+                preferArtifacts: false,
+                out fallbackSubject))
+        {
+            fallbackSubject = preferredSubject;
+        }
+
+        return true;
+    }
+
     private static bool TryBuildCompatibilitySubject(
         SpeciationMembershipRecord membership,
+        bool preferArtifacts,
         out CompatibilitySubject subject)
     {
         subject = default;
@@ -2961,20 +3166,50 @@ public sealed class SpeciationManagerActor : IActor
 
         if (!TryExtractCandidateMode(membership.DecisionMetadataJson, out var candidateMode))
         {
+            if (preferArtifacts
+                && TryExtractStoredCandidateBrainArtifactRefs(
+                    membership.DecisionMetadataJson,
+                    out var storedBaseArtifactRef,
+                    out var storedSnapshotArtifactRef))
+            {
+                subject = new CompatibilitySubject(
+                    CompatibilitySubjectKind.ArtifactRef,
+                    Guid.Empty,
+                    storedBaseArtifactRef,
+                    storedSnapshotArtifactRef);
+                return true;
+            }
+
             subject = new CompatibilitySubject(
                 CompatibilitySubjectKind.BrainId,
                 membership.BrainId,
-                ArtifactRef: null);
+                ArtifactDefRef: null,
+                ArtifactStateRef: null);
             return true;
         }
 
         switch (candidateMode)
         {
             case ProtoSpec.SpeciationCandidateMode.BrainId:
+                if (preferArtifacts
+                    && TryExtractStoredCandidateBrainArtifactRefs(
+                        membership.DecisionMetadataJson,
+                        out var storedBaseArtifactRef,
+                        out var storedSnapshotArtifactRef))
+                {
+                    subject = new CompatibilitySubject(
+                        CompatibilitySubjectKind.ArtifactRef,
+                        Guid.Empty,
+                        storedBaseArtifactRef,
+                        storedSnapshotArtifactRef);
+                    return true;
+                }
+
                 subject = new CompatibilitySubject(
                     CompatibilitySubjectKind.BrainId,
                     membership.BrainId,
-                    ArtifactRef: null);
+                    ArtifactDefRef: null,
+                    ArtifactStateRef: null);
                 return true;
             case ProtoSpec.SpeciationCandidateMode.ArtifactRef when TryExtractStoredCandidateArtifactRef(
                 membership.DecisionMetadataJson,
@@ -2983,11 +3218,49 @@ public sealed class SpeciationManagerActor : IActor
                 subject = new CompatibilitySubject(
                     CompatibilitySubjectKind.ArtifactRef,
                     Guid.Empty,
-                    artifactRef);
+                    artifactRef,
+                    ArtifactStateRef: null);
                 return true;
             default:
                 return false;
         }
+    }
+
+    private static bool TrySelectCompatibleSubjects(
+        CompatibilitySubject preferredCandidateSubject,
+        CompatibilitySubject fallbackCandidateSubject,
+        CompatibilitySubject preferredExemplarSubject,
+        CompatibilitySubject fallbackExemplarSubject,
+        out CompatibilitySubject selectedCandidateSubject,
+        out CompatibilitySubject selectedExemplarSubject)
+    {
+        selectedCandidateSubject = default;
+        selectedExemplarSubject = default;
+
+        CompatibilitySubject[] candidateOptions = [preferredCandidateSubject, fallbackCandidateSubject];
+        CompatibilitySubject[] exemplarOptions = [preferredExemplarSubject, fallbackExemplarSubject];
+        foreach (var candidateOption in candidateOptions)
+        {
+            if (candidateOption.Kind == CompatibilitySubjectKind.None)
+            {
+                continue;
+            }
+
+            foreach (var exemplarOption in exemplarOptions)
+            {
+                if (candidateOption.Kind != exemplarOption.Kind
+                    || exemplarOption.Kind == CompatibilitySubjectKind.None)
+                {
+                    continue;
+                }
+
+                selectedCandidateSubject = candidateOption;
+                selectedExemplarSubject = exemplarOption;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool CanAssessArtifactReference(ArtifactRef? artifactRef)
@@ -3062,6 +3335,40 @@ public sealed class SpeciationManagerActor : IActor
     private static bool TryExtractStoredCandidateArtifactRef(
         string? decisionMetadataJson,
         out ArtifactRef artifactRef)
+        => TryExtractStoredArtifactRef(
+            decisionMetadataJson,
+            "candidate_artifact_ref",
+            out artifactRef);
+
+    private static bool TryExtractStoredCandidateBrainArtifactRefs(
+        string? decisionMetadataJson,
+        out ArtifactRef baseArtifactRef,
+        out ArtifactRef? snapshotArtifactRef)
+    {
+        snapshotArtifactRef = null;
+        if (!TryExtractStoredArtifactRef(
+                decisionMetadataJson,
+                "candidate_brain_base_artifact_ref",
+                out baseArtifactRef))
+        {
+            return false;
+        }
+
+        if (TryExtractStoredArtifactRef(
+                decisionMetadataJson,
+                "candidate_brain_snapshot_artifact_ref",
+                out var storedSnapshotArtifactRef))
+        {
+            snapshotArtifactRef = storedSnapshotArtifactRef;
+        }
+
+        return true;
+    }
+
+    private static bool TryExtractStoredArtifactRef(
+        string? decisionMetadataJson,
+        string propertyName,
+        out ArtifactRef artifactRef)
     {
         artifactRef = new ArtifactRef();
         if (string.IsNullOrWhiteSpace(decisionMetadataJson))
@@ -3086,7 +3393,7 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         if (lineageNode is not JsonObject lineage
-            || !lineage.TryGetPropertyValue("candidate_artifact_ref", out var artifactNode)
+            || !lineage.TryGetPropertyValue(propertyName, out var artifactNode)
             || artifactNode is not JsonObject artifactObject)
         {
             return false;
@@ -3404,7 +3711,10 @@ public sealed class SpeciationManagerActor : IActor
         for (var index = 0; index < eligibleCandidates.Count; index++)
         {
             var (candidate, candidateSimilarity) = eligibleCandidates[index];
-            if (!TryBuildCompatibilitySubject(candidate, out var candidateSubject))
+            if (!TryBuildCompatibilitySubjectOptions(
+                    candidate,
+                    out var candidateSubject,
+                    out var candidateFallbackSubject))
             {
                 continue;
             }
@@ -3413,6 +3723,7 @@ public sealed class SpeciationManagerActor : IActor
                 context,
                 epoch,
                 candidateSubject,
+                candidateFallbackSubject,
                 candidate.BrainId,
                 assignmentResolution,
                 bootstrapRequirement,
@@ -4295,6 +4606,18 @@ public sealed class SpeciationManagerActor : IActor
             && HasUsableArtifactReference(resolvedCandidate.CandidateArtifactRef))
         {
             lineage["candidate_artifact_ref"] = BuildStoredArtifactRefNode(resolvedCandidate.CandidateArtifactRef);
+        }
+        if (resolvedCandidate.CandidateBrainBaseArtifactRef is not null
+            && HasUsableArtifactReference(resolvedCandidate.CandidateBrainBaseArtifactRef))
+        {
+            lineage["candidate_brain_base_artifact_ref"] = BuildStoredArtifactRefNode(
+                resolvedCandidate.CandidateBrainBaseArtifactRef);
+        }
+        if (resolvedCandidate.CandidateBrainSnapshotArtifactRef is not null
+            && HasUsableArtifactReference(resolvedCandidate.CandidateBrainSnapshotArtifactRef))
+        {
+            lineage["candidate_brain_snapshot_artifact_ref"] = BuildStoredArtifactRefNode(
+                resolvedCandidate.CandidateBrainSnapshotArtifactRef);
         }
         if (!string.IsNullOrWhiteSpace(resolvedCandidate.CandidateArtifactUri))
         {
@@ -5696,7 +6019,8 @@ public sealed class SpeciationManagerActor : IActor
         double? SimilarityScore,
         bool Compatible,
         string AbortReason,
-        string FailureReason);
+        string FailureReason,
+        string AssessmentMode);
 
     private enum CompatibilitySubjectKind
     {
@@ -5708,14 +6032,21 @@ public sealed class SpeciationManagerActor : IActor
     private readonly record struct CompatibilitySubject(
         CompatibilitySubjectKind Kind,
         Guid BrainId,
-        ArtifactRef? ArtifactRef);
+        ArtifactRef? ArtifactDefRef,
+        ArtifactRef? ArtifactStateRef);
 
     private readonly record struct ResolvedCandidate(
         ProtoSpec.SpeciationCandidateMode CandidateMode,
         Guid BrainId,
         string? SourceArtifactRef,
         ArtifactRef? CandidateArtifactRef,
-        string? CandidateArtifactUri);
+        string? CandidateArtifactUri,
+        ArtifactRef? CandidateBrainBaseArtifactRef = null,
+        ArtifactRef? CandidateBrainSnapshotArtifactRef = null);
+
+    private readonly record struct BrainArtifactProvenance(
+        ArtifactRef? BaseArtifactRef,
+        ArtifactRef? SnapshotArtifactRef);
 
     private bool TryGetCurrentEpoch(out SpeciationEpochInfo epoch)
     {

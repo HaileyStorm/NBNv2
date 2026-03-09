@@ -120,7 +120,11 @@ static async Task RunDiscoveryBootstrapLoopAsync(
     ServiceEndpointDiscoveryClient discoveryClient,
     CancellationToken cancellationToken)
 {
-    string[] watchedKeys = [ServiceEndpointSettings.ReproductionManagerKey];
+    string[] watchedKeys =
+    [
+        ServiceEndpointSettings.ReproductionManagerKey,
+        ServiceEndpointSettings.IoGatewayKey
+    ];
     var refreshInterval = TimeSpan.FromSeconds(15);
     var attempt = 0;
 
