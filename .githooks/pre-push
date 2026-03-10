@@ -5,13 +5,6 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
 
 run_docs_check() {
-    if command -v pwsh >/dev/null 2>&1; then
-        if pwsh -NoProfile -File ./tools/docs/render-nbnv2-docs.ps1 -Check "$@"; then
-            return 0
-        fi
-        echo "warning: pwsh docs check failed; trying fallback runner." >&2
-    fi
-
     if command -v powershell.exe >/dev/null 2>&1; then
         if powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/docs/render-nbnv2-docs.ps1 -Check "$@"; then
             return 0

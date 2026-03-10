@@ -208,7 +208,7 @@ def main() -> int:
         if existing != rendered:
             fail(
                 "docs/NBNv2.md is stale. Re-render with:\n"
-                "  - Windows: pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1\n"
+                "  - Windows: powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1\n"
                 "  - Linux/macOS: bash tools/docs/render-nbnv2-docs.sh"
             )
         print("docs/NBNv2.md is up to date.")

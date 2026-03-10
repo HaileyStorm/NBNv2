@@ -45,9 +45,9 @@ All paths are repository-root relative. Missing include targets are hard failure
 
 ## Render commands
 
-- Windows render: `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1`
+- Windows render: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1`
 - Linux/macOS render: `bash tools/docs/render-nbnv2-docs.sh`
-- Windows freshness check: `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
+- Windows freshness check: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
 - Linux/macOS freshness check: `bash tools/docs/render-nbnv2-docs.sh --check`
 
 ## Freshness policy
@@ -70,5 +70,5 @@ All paths are repository-root relative. Missing include targets are hard failure
 - Single command to reproduce CI freshness check locally:
   - `bash tools/docs/render-nbnv2-docs.sh --check`
 - Windows self-hosted runner equivalent:
-  - `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
+  - `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
 - Local `act` example (Linux job): `act pull_request -W .github/workflows/docs-render.yml -j render-and-validate`

@@ -53,10 +53,10 @@ Keep docs concise and high-value:
 
 - Renderer implementation: `tools/docs/render_nbnv2_docs.py`.
 - OS wrappers:
-  - Windows: `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1`
+  - Windows: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1`
   - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh`
 - Freshness check (same policy as CI):
-  - Windows: `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
+  - Windows: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
   - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh --check`
 - Freshness policy: CI fails when `docs/NBNv2.md` is stale relative to `docs/INDEX.md` includes.
 - Assembly scope: `docs/NBNv2.md` includes the spec template sections/appendices from `docs/sections/*` only; project `*/Design.md` docs remain standalone.

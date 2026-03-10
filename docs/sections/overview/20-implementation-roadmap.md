@@ -28,5 +28,5 @@
   - Windows: `tools/demo/run_local_hivemind_demo.ps1`
   - Linux: `tools/demo/run_local_hivemind_demo.sh`
 - Documentation freshness:
-  - Windows: `pwsh -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
+  - Windows: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
   - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh --check`
