@@ -450,9 +450,11 @@ public sealed class EvolutionSimulationSession
             var excludedParentKey = TryBuildParentKey(_parentPool[parentAIndex], out var parentAKey)
                 ? parentAKey
                 : string.Empty;
+            var excludedLineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[parentAIndex]);
             var parentBIndex = SelectParentIndexForPair(
                 excludedIndex: parentAIndex,
-                excludedParentKey: excludedParentKey);
+                excludedParentKey: excludedParentKey,
+                excludedLineageFamilyKey: excludedLineageFamilyKey);
             if (parentBIndex < 0)
             {
                 parentA = default;
@@ -469,17 +471,26 @@ public sealed class EvolutionSimulationSession
     // Caller must hold _gate.
     private int SelectParentIndex(int excludedIndex)
     {
-        return SelectParentIndexCore(excludedIndex, excludedParentKey: null);
+        return SelectParentIndexCore(
+            excludedIndex,
+            excludedParentKey: null,
+            excludedLineageFamilyKey: null);
     }
 
     // Caller must hold _gate.
-    private int SelectParentIndexForPair(int excludedIndex, string? excludedParentKey)
+    private int SelectParentIndexForPair(
+        int excludedIndex,
+        string? excludedParentKey,
+        string? excludedLineageFamilyKey)
     {
-        return SelectParentIndexCore(excludedIndex, excludedParentKey);
+        return SelectParentIndexCore(excludedIndex, excludedParentKey, excludedLineageFamilyKey);
     }
 
     // Caller must hold _gate.
-    private int SelectParentIndexCore(int excludedIndex, string? excludedParentKey)
+    private int SelectParentIndexCore(
+        int excludedIndex,
+        string? excludedParentKey,
+        string? excludedLineageFamilyKey)
     {
         if (_parentPool.Count == 0)
         {
@@ -487,9 +498,18 @@ public sealed class EvolutionSimulationSession
         }
 
         var excludeParentKey = ShouldExcludeParentKey(excludedIndex, excludedParentKey);
+        var excludeLineageFamily = ShouldExcludeLineageFamily(
+            excludedIndex,
+            excludedParentKey,
+            excludedLineageFamilyKey);
         if (_options.ParentSelectionBias == EvolutionParentSelectionBias.Neutral)
         {
-            return SelectUniformParentIndexCore(excludedIndex, excludedParentKey, excludeParentKey);
+            return SelectUniformParentIndexCore(
+                excludedIndex,
+                excludedParentKey,
+                excludeParentKey,
+                excludedLineageFamilyKey,
+                excludeLineageFamily);
         }
 
         var speciesPopulationByKey = BuildSelectionSpeciesPopulationCounts(excludedIndex);
@@ -527,6 +547,11 @@ public sealed class EvolutionSimulationSession
             }
 
             if (excludeParentKey && IsExcludedParentKey(i, excludedParentKey))
+            {
+                continue;
+            }
+
+            if (excludeLineageFamily && IsExcludedLineageFamily(i, excludedLineageFamilyKey))
             {
                 continue;
             }
@@ -581,7 +606,12 @@ public sealed class EvolutionSimulationSession
 
         if (totalWeight <= 0d || !double.IsFinite(totalWeight))
         {
-            return SelectUniformParentIndexCore(excludedIndex, excludedParentKey, excludeParentKey);
+            return SelectUniformParentIndexCore(
+                excludedIndex,
+                excludedParentKey,
+                excludeParentKey,
+                excludedLineageFamilyKey,
+                excludeLineageFamily);
         }
 
         var sample = _random.NextUnitDouble() * totalWeight;
@@ -618,14 +648,18 @@ public sealed class EvolutionSimulationSession
         return SelectUniformParentIndexCore(
             excludedIndex,
             excludedParentKey: null,
-            excludeParentKey: false);
+            excludeParentKey: false,
+            excludedLineageFamilyKey: null,
+            excludeLineageFamily: false);
     }
 
     // Caller must hold _gate.
     private int SelectUniformParentIndexCore(
         int excludedIndex,
         string? excludedParentKey,
-        bool excludeParentKey)
+        bool excludeParentKey,
+        string? excludedLineageFamilyKey,
+        bool excludeLineageFamily)
     {
         var selectedIndex = -1;
         var eligibleCount = 0;
@@ -637,6 +671,11 @@ public sealed class EvolutionSimulationSession
             }
 
             if (excludeParentKey && IsExcludedParentKey(i, excludedParentKey))
+            {
+                continue;
+            }
+
+            if (excludeLineageFamily && IsExcludedLineageFamily(i, excludedLineageFamilyKey))
             {
                 continue;
             }
@@ -676,6 +715,40 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
+    private bool ShouldExcludeLineageFamily(
+        int excludedIndex,
+        string? excludedParentKey,
+        string? excludedLineageFamilyKey)
+    {
+        var normalizedExcludedLineageFamilyKey = NormalizeSpeciesId(excludedLineageFamilyKey);
+        if (normalizedExcludedLineageFamilyKey.Length == 0
+            || string.Equals(normalizedExcludedLineageFamilyKey, "(unknown)", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < _parentPool.Count; i++)
+        {
+            if (i == excludedIndex)
+            {
+                continue;
+            }
+
+            if (IsExcludedParentKey(i, excludedParentKey))
+            {
+                continue;
+            }
+
+            if (!IsExcludedLineageFamily(i, normalizedExcludedLineageFamilyKey))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Caller must hold _gate.
     private bool IsExcludedParentKey(int parentIndex, string? excludedParentKey)
     {
         if (parentIndex < 0
@@ -687,6 +760,22 @@ public sealed class EvolutionSimulationSession
 
         return TryBuildParentKey(_parentPool[parentIndex], out var candidateKey)
             && string.Equals(candidateKey, excludedParentKey, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Caller must hold _gate.
+    private bool IsExcludedLineageFamily(int parentIndex, string? excludedLineageFamilyKey)
+    {
+        if (parentIndex < 0
+            || parentIndex >= _parentPool.Count
+            || string.IsNullOrWhiteSpace(excludedLineageFamilyKey))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            ResolveTrackedLineageFamilyKey(_parentPool[parentIndex]),
+            excludedLineageFamilyKey,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     // Caller must hold _gate.

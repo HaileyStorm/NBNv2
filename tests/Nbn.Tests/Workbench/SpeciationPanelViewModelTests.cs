@@ -833,6 +833,42 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_KeepsFounderOrderStableWhenLaterPopulationLeadersChange()
+    {
+        var history = CreateMemberships(epochId: 60, speciesId: "species.alpha", speciesDisplayName: "Alpha", count: 1, assignedMsStart: 1_000)
+            .Concat(CreateMemberships(epochId: 60, speciesId: "species.beta", speciesDisplayName: "Beta", count: 1, assignedMsStart: 2_000))
+            .Concat(CreateMemberships(epochId: 60, speciesId: "species.gamma", speciesDisplayName: "Gamma", count: 1, assignedMsStart: 3_000))
+            .Concat(CreateMemberships(epochId: 61, speciesId: "species.alpha", speciesDisplayName: "Alpha", count: 1, assignedMsStart: 4_000))
+            .Concat(CreateMemberships(epochId: 61, speciesId: "species.beta", speciesDisplayName: "Beta", count: 5, assignedMsStart: 5_000))
+            .Concat(CreateMemberships(epochId: 61, speciesId: "species.gamma", speciesDisplayName: "Gamma", count: 9, assignedMsStart: 6_000))
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 3);
+
+        Assert.Equal(
+            ["species.alpha", "species.beta", "species.gamma"],
+            vm.FlowChartAreas.Select(item => item.SpeciesId).ToArray());
+
+        var alphaLastRow = ExtractFlowBandsByRow(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.alpha").PathData)[^1];
+        var betaLastRow = ExtractFlowBandsByRow(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.beta").PathData)[^1];
+        var gammaLastRow = ExtractFlowBandsByRow(vm.FlowChartAreas.Single(item => item.SpeciesId == "species.gamma").PathData)[^1];
+
+        Assert.True(alphaLastRow.Bands.Single().StartX < betaLastRow.Bands.Single().StartX);
+        Assert.True(betaLastRow.Bands.Single().StartX < gammaLastRow.Bands.Single().StartX);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_ComputesMaxDivergenceForCurrentEpoch()
     {
         var history = new[]

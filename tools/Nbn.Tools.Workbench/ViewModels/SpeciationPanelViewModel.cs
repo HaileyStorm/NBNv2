@@ -2645,12 +2645,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var selectedSpecies = speciesOrder
             .Take(FlowChartTopSpeciesLimit)
             .ToList();
+        var orderedSelectedSpecies = OrderFlowSpeciesForDisplay(selectedSpecies);
         var includeOtherSpecies = totalSpeciesCount > selectedSpecies.Count;
-        var flowSpecies = new List<SpeciesPopulationMeta>(selectedSpecies.Count + (includeOtherSpecies ? 1 : 0));
-        flowSpecies.AddRange(selectedSpecies);
+        var flowSpecies = new List<SpeciesPopulationMeta>(orderedSelectedSpecies.Count + (includeOtherSpecies ? 1 : 0));
+        flowSpecies.AddRange(orderedSelectedSpecies);
         if (includeOtherSpecies)
         {
-            flowSpecies.Add(new SpeciesPopulationMeta("(other)", "Other species", 0, 0UL, string.Empty));
+            flowSpecies.Add(new SpeciesPopulationMeta("(other)", "Other species", 0, 0UL, int.MaxValue, string.Empty));
         }
 
         var speciesCount = flowSpecies.Count;
@@ -2850,6 +2851,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<SpeciationMembershipRecord> history)
     {
         var speciesStats = new Dictionary<string, SpeciesPopulationMeta>(StringComparer.OrdinalIgnoreCase);
+        var nextFirstSeenOrder = 1;
         var epochRows = history
             .GroupBy(entry => (long)entry.EpochId)
             .OrderBy(group => group.Key)
@@ -2876,7 +2878,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                     }
                     else
                     {
-                        speciesStats[speciesId] = new SpeciesPopulationMeta(speciesId, speciesName, 1, record.AssignedMs, parentSpeciesId);
+                        speciesStats[speciesId] = new SpeciesPopulationMeta(
+                            speciesId,
+                            speciesName,
+                            1,
+                            record.AssignedMs,
+                            nextFirstSeenOrder++,
+                            parentSpeciesId);
                     }
                 }
 
@@ -2885,6 +2893,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .ToList();
         var speciesOrder = speciesStats.Values
             .OrderByDescending(item => item.TotalCount)
+            .ThenBy(item => item.FirstSeenOrder)
             .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
             .ToList();
         return (epochRows, speciesOrder);
@@ -2894,6 +2903,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<SpeciationMembershipRecord> orderedHistory)
     {
         var speciesStats = new Dictionary<string, SpeciesPopulationMeta>(StringComparer.OrdinalIgnoreCase);
+        var nextFirstSeenOrder = 1;
         var runningCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var epochRows = new List<EpochPopulationRow>(orderedHistory.Count);
         var runningTotal = 0;
@@ -2919,7 +2929,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             }
             else
             {
-                speciesStats[speciesId] = new SpeciesPopulationMeta(speciesId, speciesName, 1, record.AssignedMs, parentSpeciesId);
+                speciesStats[speciesId] = new SpeciesPopulationMeta(
+                    speciesId,
+                    speciesName,
+                    1,
+                    record.AssignedMs,
+                    nextFirstSeenOrder++,
+                    parentSpeciesId);
             }
 
             epochRows.Add(
@@ -2931,9 +2947,19 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var speciesOrder = speciesStats.Values
             .OrderByDescending(item => item.TotalCount)
+            .ThenBy(item => item.FirstSeenOrder)
             .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
             .ToList();
         return (epochRows, speciesOrder);
+    }
+
+    private static List<SpeciesPopulationMeta> OrderFlowSpeciesForDisplay(
+        IReadOnlyList<SpeciesPopulationMeta> selectedSpecies)
+    {
+        return selectedSpecies
+            .OrderBy(item => item.FirstSeenOrder)
+            .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static SplitProximityChartSnapshot BuildSplitProximityChartSnapshot(
@@ -4201,7 +4227,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
             children.Sort((left, right) =>
             {
-                var firstSeenComparison = flowSpecies[left].FirstAssignedMs.CompareTo(flowSpecies[right].FirstAssignedMs);
+                var firstSeenComparison = flowSpecies[left].FirstSeenOrder.CompareTo(flowSpecies[right].FirstSeenOrder);
                 if (firstSeenComparison != 0)
                 {
                     return firstSeenComparison;
@@ -5095,6 +5121,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         string DisplayName,
         int TotalCount,
         ulong FirstAssignedMs,
+        int FirstSeenOrder,
         string ParentSpeciesId);
 
     private readonly record struct FlowSpeciesRowBands(

@@ -379,7 +379,7 @@
                   </ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:SpeciationFlowChartAreaItem">
-                      <shapes:Path Data="{Binding PathData}" Fill="{Binding Fill}" Stroke="{Binding Stroke}" StrokeThickness="1" IsHitTestVisible="False" />
+                      <shapes:Path Data="{Binding PathData}" Fill="{Binding Fill}" StrokeThickness="0" IsHitTestVisible="False" />
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
