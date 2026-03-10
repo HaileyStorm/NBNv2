@@ -840,18 +840,36 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
-    public void TrySelectParents_WithTwoFounderFamilies_AvoidsSameFamilySelfPairingWhenAlternativesExist()
+    public async Task RunAsync_WithTwoFounderFamilies_WhenCrossFamilyPairsAreIncompatible_StillReproducesWithinFounderFamilies()
     {
-        var parents = CreateOrderedBrainParentPool(6);
+        var parents = CreateOrderedBrainParentPool(4);
         var options = CreateOptions(
             seed: 99127UL,
-            maxIterations: 1,
+            maxIterations: 24,
             commitToSpeciation: false,
             parentMode: EvolutionParentMode.BrainIds) with
         {
             ParentSelectionBias = EvolutionParentSelectionBias.Stability
         };
-        var session = new EvolutionSimulationSession(options, parents, new DeterministicFakeClient());
+        var familyByParentKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [BuildBrainParentKey(parents[0])] = "family-alpha",
+            [BuildBrainParentKey(parents[1])] = "family-alpha",
+            [BuildBrainParentKey(parents[2])] = "family-beta",
+            [BuildBrainParentKey(parents[3])] = "family-beta"
+        };
+        var client = new DeterministicFakeClient
+        {
+            CompatibilitySelector = (parentA, parentB) =>
+            {
+                Assert.True(TryBuildParentKey(parentA, out var parentAKey));
+                Assert.True(TryBuildParentKey(parentB, out var parentBKey));
+                return string.Equals(familyByParentKey[parentAKey], familyByParentKey[parentBKey], StringComparison.OrdinalIgnoreCase)
+                    ? 0.90f
+                    : 0.10f;
+            }
+        };
+        var session = new EvolutionSimulationSession(options, parents, client);
 
         SeedParentSpeciesMetadata(
             session,
@@ -859,37 +877,23 @@ public sealed class EvolutionSimulationSessionTests
             {
                 [BuildBrainParentKey(parents[0])] = "species-alpha",
                 [BuildBrainParentKey(parents[1])] = "species-alpha-branch-a",
-                [BuildBrainParentKey(parents[2])] = "species-alpha-branch-b",
-                [BuildBrainParentKey(parents[3])] = "species-beta",
-                [BuildBrainParentKey(parents[4])] = "species-beta-branch-a",
-                [BuildBrainParentKey(parents[5])] = "species-beta-branch-b"
+                [BuildBrainParentKey(parents[2])] = "species-beta",
+                [BuildBrainParentKey(parents[3])] = "species-beta-branch-a"
             },
             new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
             {
                 ["species-alpha"] = 1UL,
                 ["species-beta"] = 1UL,
                 ["species-alpha-branch-a"] = 2UL,
-                ["species-alpha-branch-b"] = 3UL,
-                ["species-beta-branch-a"] = 2UL,
-                ["species-beta-branch-b"] = 3UL
+                ["species-beta-branch-a"] = 2UL
             },
-            lineageFamilyByParentKey: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                [BuildBrainParentKey(parents[0])] = "family-alpha",
-                [BuildBrainParentKey(parents[1])] = "family-alpha",
-                [BuildBrainParentKey(parents[2])] = "family-alpha",
-                [BuildBrainParentKey(parents[3])] = "family-beta",
-                [BuildBrainParentKey(parents[4])] = "family-beta",
-                [BuildBrainParentKey(parents[5])] = "family-beta"
-            },
+            lineageFamilyByParentKey: familyByParentKey,
             lineageFamilyBySpeciesId: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["species-alpha"] = "family-alpha",
                 ["species-alpha-branch-a"] = "family-alpha",
-                ["species-alpha-branch-b"] = "family-alpha",
                 ["species-beta"] = "family-beta",
-                ["species-beta-branch-a"] = "family-beta",
-                ["species-beta-branch-b"] = "family-beta"
+                ["species-beta-branch-a"] = "family-beta"
             },
             lineageFamilyOrdinals: new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase)
             {
@@ -897,15 +901,18 @@ public sealed class EvolutionSimulationSessionTests
                 ["family-beta"] = 1UL
             });
 
+        var status = await session.RunAsync(CancellationToken.None);
         var selectedPairs = SampleSelectedLineageFamilyPairs(session, sampleCount: 6_000);
 
+        Assert.True(status.CompatiblePairs > 0);
+        Assert.True(status.ReproductionCalls > 0);
         Assert.DoesNotContain(
             selectedPairs,
-            static pair => string.Equals(pair.ParentAFamily, pair.ParentBFamily, StringComparison.OrdinalIgnoreCase));
+            static pair => !string.Equals(pair.ParentAFamily, pair.ParentBFamily, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void TrySelectParents_WithThreeFounderFamilies_AvoidsSameFamilySelfPairingWhenAlternativesExist()
+    public void TrySelectParents_WithThreeFounderFamilies_PrefersDistinctSameFamilyPairsWhenAvailable()
     {
         var parents = CreateOrderedBrainParentPool(8);
         var options = CreateOptions(
@@ -975,7 +982,7 @@ public sealed class EvolutionSimulationSessionTests
 
         Assert.DoesNotContain(
             selectedPairs,
-            static pair => string.Equals(pair.ParentAFamily, pair.ParentBFamily, StringComparison.OrdinalIgnoreCase));
+            static pair => !string.Equals(pair.ParentAFamily, pair.ParentBFamily, StringComparison.OrdinalIgnoreCase));
 
         var parentAFamilyCounts = selectedPairs
             .GroupBy(pair => pair.ParentAFamily, StringComparer.OrdinalIgnoreCase)
@@ -1526,6 +1533,7 @@ public sealed class EvolutionSimulationSessionTests
         public float ReproductionDiagnosticSimilarity { get; set; } = 0.5f;
         public float? CommitCandidateSimilarity { get; set; }
         public float? CommitOutcomeSourceSpeciesSimilarity { get; set; }
+        public Func<EvolutionParentRef, EvolutionParentRef, float>? CompatibilitySelector { get; set; }
 
         public async Task<CompatibilityAssessment> AssessCompatibilityAsync(
             EvolutionParentRef parentA,
@@ -1540,7 +1548,11 @@ public sealed class EvolutionSimulationSessionTests
             }
 
             float similarity;
-            if (_similarityQueue is { Count: > 0 })
+            if (CompatibilitySelector is not null)
+            {
+                similarity = CompatibilitySelector(parentA, parentB);
+            }
+            else if (_similarityQueue is { Count: > 0 })
             {
                 similarity = _similarityQueue.Dequeue();
             }

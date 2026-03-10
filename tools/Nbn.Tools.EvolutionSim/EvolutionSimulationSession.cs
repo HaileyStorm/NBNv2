@@ -450,11 +450,11 @@ public sealed class EvolutionSimulationSession
             var excludedParentKey = TryBuildParentKey(_parentPool[parentAIndex], out var parentAKey)
                 ? parentAKey
                 : string.Empty;
-            var excludedLineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[parentAIndex]);
+            var preferredLineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[parentAIndex]);
             var parentBIndex = SelectParentIndexForPair(
                 excludedIndex: parentAIndex,
                 excludedParentKey: excludedParentKey,
-                excludedLineageFamilyKey: excludedLineageFamilyKey);
+                preferredLineageFamilyKey: preferredLineageFamilyKey);
             if (parentBIndex < 0)
             {
                 parentA = default;
@@ -474,23 +474,23 @@ public sealed class EvolutionSimulationSession
         return SelectParentIndexCore(
             excludedIndex,
             excludedParentKey: null,
-            excludedLineageFamilyKey: null);
+            preferredLineageFamilyKey: null);
     }
 
     // Caller must hold _gate.
     private int SelectParentIndexForPair(
         int excludedIndex,
         string? excludedParentKey,
-        string? excludedLineageFamilyKey)
+        string? preferredLineageFamilyKey)
     {
-        return SelectParentIndexCore(excludedIndex, excludedParentKey, excludedLineageFamilyKey);
+        return SelectParentIndexCore(excludedIndex, excludedParentKey, preferredLineageFamilyKey);
     }
 
     // Caller must hold _gate.
     private int SelectParentIndexCore(
         int excludedIndex,
         string? excludedParentKey,
-        string? excludedLineageFamilyKey)
+        string? preferredLineageFamilyKey)
     {
         if (_parentPool.Count == 0)
         {
@@ -498,18 +498,18 @@ public sealed class EvolutionSimulationSession
         }
 
         var excludeParentKey = ShouldExcludeParentKey(excludedIndex, excludedParentKey);
-        var excludeLineageFamily = ShouldExcludeLineageFamily(
+        var preferLineageFamily = ShouldPreferLineageFamily(
             excludedIndex,
             excludedParentKey,
-            excludedLineageFamilyKey);
+            preferredLineageFamilyKey);
         if (_options.ParentSelectionBias == EvolutionParentSelectionBias.Neutral)
         {
             return SelectUniformParentIndexCore(
                 excludedIndex,
                 excludedParentKey,
                 excludeParentKey,
-                excludedLineageFamilyKey,
-                excludeLineageFamily);
+                preferredLineageFamilyKey,
+                preferLineageFamily);
         }
 
         var speciesPopulationByKey = BuildSelectionSpeciesPopulationCounts(excludedIndex);
@@ -551,7 +551,7 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            if (excludeLineageFamily && IsExcludedLineageFamily(i, excludedLineageFamilyKey))
+            if (preferLineageFamily && !MatchesPreferredLineageFamily(i, preferredLineageFamilyKey))
             {
                 continue;
             }
@@ -610,8 +610,8 @@ public sealed class EvolutionSimulationSession
                 excludedIndex,
                 excludedParentKey,
                 excludeParentKey,
-                excludedLineageFamilyKey,
-                excludeLineageFamily);
+                preferredLineageFamilyKey,
+                preferLineageFamily);
         }
 
         var sample = _random.NextUnitDouble() * totalWeight;
@@ -649,8 +649,8 @@ public sealed class EvolutionSimulationSession
             excludedIndex,
             excludedParentKey: null,
             excludeParentKey: false,
-            excludedLineageFamilyKey: null,
-            excludeLineageFamily: false);
+            preferredLineageFamilyKey: null,
+            preferLineageFamily: false);
     }
 
     // Caller must hold _gate.
@@ -658,8 +658,8 @@ public sealed class EvolutionSimulationSession
         int excludedIndex,
         string? excludedParentKey,
         bool excludeParentKey,
-        string? excludedLineageFamilyKey,
-        bool excludeLineageFamily)
+        string? preferredLineageFamilyKey,
+        bool preferLineageFamily)
     {
         var selectedIndex = -1;
         var eligibleCount = 0;
@@ -675,7 +675,7 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            if (excludeLineageFamily && IsExcludedLineageFamily(i, excludedLineageFamilyKey))
+            if (preferLineageFamily && !MatchesPreferredLineageFamily(i, preferredLineageFamilyKey))
             {
                 continue;
             }
@@ -715,14 +715,14 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private bool ShouldExcludeLineageFamily(
+    private bool ShouldPreferLineageFamily(
         int excludedIndex,
         string? excludedParentKey,
-        string? excludedLineageFamilyKey)
+        string? preferredLineageFamilyKey)
     {
-        var normalizedExcludedLineageFamilyKey = NormalizeSpeciesId(excludedLineageFamilyKey);
-        if (normalizedExcludedLineageFamilyKey.Length == 0
-            || string.Equals(normalizedExcludedLineageFamilyKey, "(unknown)", StringComparison.OrdinalIgnoreCase))
+        var normalizedPreferredLineageFamilyKey = NormalizeSpeciesId(preferredLineageFamilyKey);
+        if (normalizedPreferredLineageFamilyKey.Length == 0
+            || string.Equals(normalizedPreferredLineageFamilyKey, "(unknown)", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -739,7 +739,7 @@ public sealed class EvolutionSimulationSession
                 continue;
             }
 
-            if (!IsExcludedLineageFamily(i, normalizedExcludedLineageFamilyKey))
+            if (MatchesPreferredLineageFamily(i, normalizedPreferredLineageFamilyKey))
             {
                 return true;
             }
@@ -763,18 +763,18 @@ public sealed class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private bool IsExcludedLineageFamily(int parentIndex, string? excludedLineageFamilyKey)
+    private bool MatchesPreferredLineageFamily(int parentIndex, string? preferredLineageFamilyKey)
     {
         if (parentIndex < 0
             || parentIndex >= _parentPool.Count
-            || string.IsNullOrWhiteSpace(excludedLineageFamilyKey))
+            || string.IsNullOrWhiteSpace(preferredLineageFamilyKey))
         {
             return false;
         }
 
         return string.Equals(
             ResolveTrackedLineageFamilyKey(_parentPool[parentIndex]),
-            excludedLineageFamilyKey,
+            preferredLineageFamilyKey,
             StringComparison.OrdinalIgnoreCase);
     }
 
