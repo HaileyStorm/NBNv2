@@ -685,14 +685,16 @@
                          TextWrapping="NoWrap"
                          HorizontalAlignment="Stretch" />
               </Grid>
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="Send Input" Command="{Binding Brain.SendInputCommand}" />
-                <Button Content="Send Vector" Command="{Binding Brain.SendVectorCommand}" />
-                <CheckBox Content="Continuous"
-                          IsChecked="{Binding Brain.AutoSendInputVectorEveryTick}"
-                          IsEnabled="{Binding Brain.AutoSendInputVectorEveryTickAvailable}"
-                          ToolTip.Tip="Send the current vector every tick while enabled (disabled when IO input coordinator replay mode is active)."
-                          VerticalAlignment="Center" />
+              <StackPanel Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="Send Input" Command="{Binding Brain.SendInputCommand}" />
+                  <Button Content="Send Vector" Command="{Binding Brain.SendVectorCommand}" />
+                  <CheckBox Content="Continuous"
+                            IsChecked="{Binding Brain.AutoSendInputVectorEveryTick}"
+                            IsEnabled="{Binding Brain.AutoSendInputVectorEveryTickAvailable}"
+                            ToolTip.Tip="Send the current vector every tick while enabled (disabled when IO input coordinator replay mode is active)."
+                            VerticalAlignment="Center" />
+                </StackPanel>
                 <CheckBox Content="Randomize after send"
                           IsChecked="{Binding Brain.RandomizeInputVectorAfterEverySend}"
                           ToolTip.Tip="After each successful vector send, replace the input vector text with a newly randomized vector of the same width. In continuous mode this advances once per tick."
