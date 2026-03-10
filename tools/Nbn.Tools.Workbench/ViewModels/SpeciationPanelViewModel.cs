@@ -2642,9 +2642,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         var totalSpeciesCount = speciesOrder.Count;
-        var selectedSpecies = speciesOrder
-            .Take(FlowChartTopSpeciesLimit)
-            .ToList();
+        var selectedSpecies = SelectFlowChartSpecies(speciesOrder);
         var orderedSelectedSpecies = OrderFlowSpeciesForDisplay(selectedSpecies);
         var includeOtherSpecies = totalSpeciesCount > selectedSpecies.Count;
         var flowSpecies = new List<SpeciesPopulationMeta>(orderedSelectedSpecies.Count + (includeOtherSpecies ? 1 : 0));
@@ -2741,7 +2739,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             : maxEpoch.ToString(CultureInfo.InvariantCulture);
         var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, 4);
         var topScopeLabel = includeOtherSpecies
-            ? $" top {selectedSpecies.Count}/{totalSpeciesCount} species + Other."
+            ? $" {selectedSpecies.Count}/{totalSpeciesCount} visible species + Other."
             : string.Empty;
         var rangeLabel = minEpoch == maxEpoch && epochRows.Count > 1
             ? $"Stacked share across loaded rows for epoch {minEpoch} ({epochRows.Count} samples).{topScopeLabel}"
@@ -2960,6 +2958,133 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .OrderBy(item => item.FirstSeenOrder)
             .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static List<SpeciesPopulationMeta> SelectFlowChartSpecies(
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
+    {
+        if (speciesOrder.Count <= FlowChartTopSpeciesLimit)
+        {
+            return speciesOrder.ToList();
+        }
+
+        var founderFamilies = BuildFlowFounderFamilies(speciesOrder);
+        if (founderFamilies.Count <= 1)
+        {
+            return speciesOrder
+                .Take(FlowChartTopSpeciesLimit)
+                .ToList();
+        }
+
+        var selectedFamilies = founderFamilies
+            .OrderByDescending(family => family.TotalPopulation)
+            .ThenBy(family => family.Founder.FirstSeenOrder)
+            .ThenBy(family => family.Founder.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Min(FlowChartTopSpeciesLimit, founderFamilies.Count))
+            .OrderBy(family => family.Founder.FirstSeenOrder)
+            .ThenBy(family => family.Founder.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var selectedSpecies = new List<SpeciesPopulationMeta>(FlowChartTopSpeciesLimit);
+        var nextSpeciesIndexByFamily = new int[selectedFamilies.Count];
+        for (var familyIndex = 0; familyIndex < selectedFamilies.Count && selectedSpecies.Count < FlowChartTopSpeciesLimit; familyIndex++)
+        {
+            selectedSpecies.Add(selectedFamilies[familyIndex].Founder);
+            nextSpeciesIndexByFamily[familyIndex] = 1;
+        }
+
+        while (selectedSpecies.Count < FlowChartTopSpeciesLimit)
+        {
+            var addedInRound = false;
+            for (var familyIndex = 0; familyIndex < selectedFamilies.Count && selectedSpecies.Count < FlowChartTopSpeciesLimit; familyIndex++)
+            {
+                var rankedSpecies = selectedFamilies[familyIndex].RankedSpecies;
+                if (nextSpeciesIndexByFamily[familyIndex] >= rankedSpecies.Length)
+                {
+                    continue;
+                }
+
+                selectedSpecies.Add(rankedSpecies[nextSpeciesIndexByFamily[familyIndex]]);
+                nextSpeciesIndexByFamily[familyIndex]++;
+                addedInRound = true;
+            }
+
+            if (!addedInRound)
+            {
+                break;
+            }
+        }
+
+        return selectedSpecies;
+    }
+
+    private static List<FlowFounderFamily> BuildFlowFounderFamilies(
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
+    {
+        var metaBySpeciesId = speciesOrder.ToDictionary(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase);
+        var speciesByFounderId = new Dictionary<string, List<SpeciesPopulationMeta>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var species in speciesOrder)
+        {
+            var founderSpeciesId = ResolveFlowFounderSpeciesId(species.SpeciesId, metaBySpeciesId);
+            if (!speciesByFounderId.TryGetValue(founderSpeciesId, out var familySpecies))
+            {
+                familySpecies = new List<SpeciesPopulationMeta>();
+                speciesByFounderId[founderSpeciesId] = familySpecies;
+            }
+
+            familySpecies.Add(species);
+        }
+
+        var families = new List<FlowFounderFamily>(speciesByFounderId.Count);
+        foreach (var entry in speciesByFounderId)
+        {
+            if (!metaBySpeciesId.TryGetValue(entry.Key, out var founder))
+            {
+                founder = entry.Value
+                    .OrderBy(item => item.FirstSeenOrder)
+                    .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+                    .First();
+            }
+
+            var rankedSpecies = entry.Value
+                .Where(item => !string.Equals(item.SpeciesId, founder.SpeciesId, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(item => item.TotalCount)
+                .ThenBy(item => item.FirstSeenOrder)
+                .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+                .Prepend(founder)
+                .ToArray();
+            families.Add(new FlowFounderFamily(
+                Founder: founder,
+                RankedSpecies: rankedSpecies,
+                TotalPopulation: entry.Value.Sum(item => item.TotalCount)));
+        }
+
+        return families;
+    }
+
+    private static string ResolveFlowFounderSpeciesId(
+        string speciesId,
+        IReadOnlyDictionary<string, SpeciesPopulationMeta> metaBySpeciesId)
+    {
+        if (string.IsNullOrWhiteSpace(speciesId)
+            || !metaBySpeciesId.TryGetValue(speciesId, out var current))
+        {
+            return speciesId;
+        }
+
+        var currentSpeciesId = current.SpeciesId;
+        var visitedSpeciesIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (!string.IsNullOrWhiteSpace(current.ParentSpeciesId) && visitedSpeciesIds.Add(currentSpeciesId))
+        {
+            if (!metaBySpeciesId.TryGetValue(current.ParentSpeciesId, out var parent))
+            {
+                break;
+            }
+
+            current = parent;
+            currentSpeciesId = current.SpeciesId;
+        }
+
+        return currentSpeciesId;
     }
 
     private static SplitProximityChartSnapshot BuildSplitProximityChartSnapshot(
@@ -5123,6 +5248,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ulong FirstAssignedMs,
         int FirstSeenOrder,
         string ParentSpeciesId);
+
+    private readonly record struct FlowFounderFamily(
+        SpeciesPopulationMeta Founder,
+        SpeciesPopulationMeta[] RankedSpecies,
+        int TotalPopulation);
 
     private readonly record struct FlowSpeciesRowBands(
         double PrimaryStart,

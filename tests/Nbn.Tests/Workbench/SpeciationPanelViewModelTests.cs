@@ -690,7 +690,7 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_FlowChart_IncludesTopElevenSpeciesPlusOtherBucket()
+    public async Task RefreshHistoryCommand_FlowChart_CapsVisibleSpeciesAtElevenPlusOtherBucket()
     {
         var history = Enumerable
             .Range(0, 12)
@@ -728,9 +728,73 @@ public class SpeciationPanelViewModelTests
         vm.RefreshHistoryCommand.Execute(null);
         await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
 
-        Assert.Contains("top 11/12 species + Other", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("11/12 visible species + Other", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
         Assert.Contains(vm.FlowChartLegend, item => string.Equals(item.Label, "Other species", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_BalancesVisibleSpeciesAcrossFounderLineages()
+    {
+        var history = CreateMemberships(epochId: 30, speciesId: "species.alpha.root", speciesDisplayName: "Alpha Root", count: 1, assignedMsStart: 1_000)
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.root", speciesDisplayName: "Beta Root", count: 1, assignedMsStart: 2_000))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.alpha.01", speciesDisplayName: "Alpha 01", count: 10, assignedMsStart: 3_000, parentSpeciesId: "species.alpha.root", parentSpeciesDisplayName: "Alpha Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.alpha.02", speciesDisplayName: "Alpha 02", count: 9, assignedMsStart: 4_000, parentSpeciesId: "species.alpha.root", parentSpeciesDisplayName: "Alpha Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.alpha.03", speciesDisplayName: "Alpha 03", count: 8, assignedMsStart: 5_000, parentSpeciesId: "species.alpha.root", parentSpeciesDisplayName: "Alpha Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.01", speciesDisplayName: "Beta 01", count: 20, assignedMsStart: 6_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.02", speciesDisplayName: "Beta 02", count: 19, assignedMsStart: 7_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.03", speciesDisplayName: "Beta 03", count: 18, assignedMsStart: 8_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.04", speciesDisplayName: "Beta 04", count: 17, assignedMsStart: 9_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.05", speciesDisplayName: "Beta 05", count: 16, assignedMsStart: 10_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.06", speciesDisplayName: "Beta 06", count: 15, assignedMsStart: 11_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.07", speciesDisplayName: "Beta 07", count: 14, assignedMsStart: 12_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.08", speciesDisplayName: "Beta 08", count: 13, assignedMsStart: 13_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .Concat(CreateMemberships(epochId: 30, speciesId: "species.beta.09", speciesDisplayName: "Beta 09", count: 12, assignedMsStart: 14_000, parentSpeciesId: "species.beta.root", parentSpeciesDisplayName: "Beta Root"))
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
+
+        var alphaFamilyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "species.alpha.root",
+            "species.alpha.01",
+            "species.alpha.02",
+            "species.alpha.03"
+        };
+        var betaFamilyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "species.beta.root",
+            "species.beta.01",
+            "species.beta.02",
+            "species.beta.03",
+            "species.beta.04",
+            "species.beta.05",
+            "species.beta.06",
+            "species.beta.07",
+            "species.beta.08",
+            "species.beta.09"
+        };
+
+        Assert.Contains("11/14 visible species + Other", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(4, vm.FlowChartAreas.Count(item => alphaFamilyIds.Contains(item.SpeciesId)));
+        Assert.Equal(7, vm.FlowChartAreas.Count(item => betaFamilyIds.Contains(item.SpeciesId)));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.root", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.06", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.07", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.08", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.09", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1972,7 +2036,9 @@ public class SpeciationPanelViewModelTests
         string speciesId,
         string speciesDisplayName,
         int count,
-        ulong assignedMsStart)
+        ulong assignedMsStart,
+        string? parentSpeciesId = null,
+        string? parentSpeciesDisplayName = null)
     {
         return Enumerable.Range(0, count)
             .Select(index => new SpeciationMembershipRecord
@@ -1981,7 +2047,14 @@ public class SpeciationPanelViewModelTests
                 BrainId = Guid.NewGuid().ToProtoUuid(),
                 SpeciesId = speciesId,
                 SpeciesDisplayName = speciesDisplayName,
-                AssignedMs = assignedMsStart + (ulong)index
+                AssignedMs = assignedMsStart + (ulong)index,
+                DecisionMetadataJson = string.IsNullOrWhiteSpace(parentSpeciesId)
+                    ? string.Empty
+                    : BuildSplitDecisionMetadata(
+                        similarity: 0.9d,
+                        splitThreshold: 0.8d,
+                        sourceSpeciesId: parentSpeciesId,
+                        sourceSpeciesDisplayName: parentSpeciesDisplayName)
             });
     }
 
