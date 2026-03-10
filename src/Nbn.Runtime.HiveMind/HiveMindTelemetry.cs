@@ -23,6 +23,9 @@ public static class HiveMindTelemetry
     private static readonly Counter<long> LateDeliverAfterCompletion = Meter.CreateCounter<long>("nbn.hivemind.tick.deliver.late.after");
     private static readonly Histogram<double> TargetTickHz = Meter.CreateHistogram<double>("nbn.hivemind.tick.target.hz");
     private static readonly Counter<long> RescheduleRequested = Meter.CreateCounter<long>("nbn.hivemind.reschedule.requested");
+    private static readonly Counter<long> RecoveryRequested = Meter.CreateCounter<long>("nbn.hivemind.recovery.requested");
+    private static readonly Counter<long> RecoveryCompleted = Meter.CreateCounter<long>("nbn.hivemind.recovery.completed");
+    private static readonly Counter<long> RecoveryFailed = Meter.CreateCounter<long>("nbn.hivemind.recovery.failed");
     private static readonly Counter<long> PauseRequested = Meter.CreateCounter<long>("nbn.hivemind.pause.requested");
     private static readonly Counter<long> BrainTickCostTotal = Meter.CreateCounter<long>("nbn.hivemind.brain.tick_cost.total");
     private static readonly Counter<long> BrainEnergyDepleted = Meter.CreateCounter<long>("nbn.hivemind.brain.energy.depleted");
@@ -82,6 +85,47 @@ public static class HiveMindTelemetry
         RescheduleRequested.Add(1);
         using var activity = ActivitySource.StartActivity("hivemind.reschedule");
         activity?.SetTag("reason", reason);
+    }
+
+    public static void RecordRecoveryRequested(Guid brainId, string? trigger)
+    {
+        var brain = brainId.ToString("D");
+        var normalizedTrigger = NormalizeReason(trigger ?? string.Empty, "unknown");
+        RecoveryRequested.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("trigger", normalizedTrigger));
+
+        using var activity = ActivitySource.StartActivity("hivemind.recovery.requested");
+        activity?.SetTag("brain.id", brain);
+        activity?.SetTag("recovery.trigger", normalizedTrigger);
+    }
+
+    public static void RecordRecoveryCompleted(Guid brainId, ulong placementEpoch)
+    {
+        var brain = brainId.ToString("D");
+        RecoveryCompleted.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch));
+
+        using var activity = ActivitySource.StartActivity("hivemind.recovery.completed");
+        activity?.SetTag("brain.id", brain);
+        activity?.SetTag("placement.epoch", (long)placementEpoch);
+    }
+
+    public static void RecordRecoveryFailed(Guid brainId, string? failureReason)
+    {
+        var brain = brainId.ToString("D");
+        var normalizedReason = NormalizeReason(failureReason ?? string.Empty, "unknown");
+        RecoveryFailed.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brain),
+            new KeyValuePair<string, object?>("failure_reason", normalizedReason));
+
+        using var activity = ActivitySource.StartActivity("hivemind.recovery.failed");
+        activity?.SetTag("brain.id", brain);
+        activity?.SetTag("recovery.failure_reason", normalizedReason);
     }
 
     public static void RecordPause(string? reason)

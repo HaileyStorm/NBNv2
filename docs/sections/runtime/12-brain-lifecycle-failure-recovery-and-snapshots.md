@@ -22,13 +22,15 @@ Snapshots are taken at tick boundaries to avoid needing to store inbox state.
 
 ### 12.3 Failure recovery
 
-If any RegionShard for a brain is lost due to process/node failure:
+If any RegionShard or placement worker for a brain is lost due to process/node failure:
 
 * HiveMind pauses tick dispatch (Section 6.6)
-* HiveMind unloads the brain’s current runtime actors
-* HiveMind restores the **entire brain** from the last `.nbn` + `.nbs` snapshot
+* HiveMind unloads the brain's current runtime actors
+* HiveMind marks the brain `Recovering` before replacement work starts
+* HiveMind restores the **entire brain** from the last stored `.nbn` + `.nbs` artifact refs; it does not rebuild only the missing shard from surviving live shards
 * RegionShards are respawned and re-placed as needed
-* Tick dispatch resumes
+* Tick dispatch resumes only after the recovery placement epoch is active
+* Successful recovery emits `Recovering -> Active` (or `Recovering -> Paused` if the brain was already paused); unrecoverable artifact/placement failure emits `Recovering -> Dead`
 
 Partial shard-only restoration is not used.
 

@@ -38,6 +38,7 @@ Metrics include:
 * late arrival counts
 * shard compute ms, deliver ms
 * reschedule events
+* recovery request/completion/failure counts
 * per-brain cost and energy
 * per-brain tick-cost totals
 * energy depletion counts
@@ -66,5 +67,11 @@ Both are recorded:
 
 * timeouts (deadline exceeded)
 * late arrivals (received after timeout or after tick advancement)
+
+Recovery-specific operator events:
+
+* `brain.recovering`
+* `brain.recovered`
+* `brain.recovery.failed`
 
 ---

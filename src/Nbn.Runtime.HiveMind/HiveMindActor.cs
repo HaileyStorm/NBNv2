@@ -91,6 +91,10 @@ public sealed class HiveMindActor : IActor
     private ulong _lastRescheduleTick;
     private DateTime _lastRescheduleAt;
     private string? _queuedRescheduleReason;
+    private bool _activeRescheduleAllBrains = true;
+    private readonly HashSet<Guid> _activeRescheduleBrains = new();
+    private bool _queuedRescheduleAllBrains;
+    private readonly HashSet<Guid> _queuedRescheduleBrains = new();
     private ulong _lastCompletedTickId;
     private Task<IReadOnlyList<WorkerPeerLatencyMeasurement>>? _peerLatencyRefreshTask;
     private long _lastPeerLatencyRefreshMs;
@@ -1297,10 +1301,33 @@ public sealed class HiveMindActor : IActor
                 return;
             }
 
-            brain.Shards.Remove(shardId);
+            var shouldRecover = !brain.RecoveryInProgress
+                && brain.PlacementEpoch > 0
+                && (brain.PlacementExecution is null || brain.PlacementExecution.Completed)
+                && (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+                    || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning);
+            var removed = brain.Shards.Remove(shardId);
             brain.ShardRegistrationEpochs.Remove(shardId);
             UpdateRoutingTable(context, brain);
-            if (brain.PlacementEpoch > 0 && brain.Shards.Count == 0)
+            if (!removed)
+            {
+                return;
+            }
+
+            if (shouldRecover)
+            {
+                brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
+                UpdatePlacementLifecycle(
+                    brain,
+                    ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                RequestBrainRecovery(
+                    context,
+                    brainId,
+                    trigger: "shard_loss",
+                    detail: $"Unexpected shard unregister for region={regionId} shard={shardIndex}.");
+            }
+            else if (brain.PlacementEpoch > 0 && brain.Shards.Count == 0)
             {
                 brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
                 UpdatePlacementLifecycle(
@@ -3833,7 +3860,7 @@ public sealed class HiveMindActor : IActor
                 ? new PID(string.Empty, worker.WorkerRootActorName)
                 : new PID(worker.WorkerAddress, worker.WorkerRootActorName);
 
-            workerTargets[worker.NodeId] = NormalizePid(context, workerPid) ?? workerPid;
+            workerTargets[worker.NodeId] = ResolveSendTargetPid(context, workerPid);
         }
 
         var execution = new PlacementExecutionState(brain.PlacementEpoch, workerTargets);
@@ -4349,6 +4376,7 @@ public sealed class HiveMindActor : IActor
     {
         var snapshotMs = message.SnapshotMs > 0 ? (long)message.SnapshotMs : NowMs();
         _workerCatalogSnapshotMs = snapshotMs;
+        var seenWorkerIds = new HashSet<Guid>();
 
         foreach (var worker in message.Workers)
         {
@@ -4357,6 +4385,7 @@ public sealed class HiveMindActor : IActor
                 continue;
             }
 
+            seenWorkerIds.Add(nodeId);
             if (!_workerCatalog.TryGetValue(nodeId, out var entry))
             {
                 entry = new WorkerCatalogEntry(nodeId);
@@ -4387,8 +4416,99 @@ public sealed class HiveMindActor : IActor
         }
 
         RefreshWorkerCatalogFreshness(snapshotMs);
+        DetectWorkerLossRecoveries(context, snapshotMs, seenWorkerIds);
         MaybeRefreshPeerLatency(context, force: false);
     }
+
+    private void DetectWorkerLossRecoveries(IContext context, long snapshotMs, IReadOnlySet<Guid> seenWorkerIds)
+    {
+        foreach (var brain in _brains.Values.OrderBy(static value => value.BrainId))
+        {
+            if (!CanTriggerAutomaticRecovery(brain))
+            {
+                continue;
+            }
+
+            foreach (var workerNodeId in GetTrackedWorkerNodeIds(brain))
+            {
+                if (!TryGetWorkerLossReason(workerNodeId, snapshotMs, seenWorkerIds, out var lossReason))
+                {
+                    continue;
+                }
+
+                RequestBrainRecovery(
+                    context,
+                    brain.BrainId,
+                    trigger: $"worker_loss:{lossReason}",
+                    detail: $"Worker {workerNodeId:D} became unavailable ({lossReason}).");
+                break;
+            }
+        }
+    }
+
+    private bool TryGetWorkerLossReason(
+        Guid workerNodeId,
+        long snapshotMs,
+        IReadOnlySet<Guid> seenWorkerIds,
+        out string lossReason)
+    {
+        lossReason = string.Empty;
+        if (!_workerCatalog.TryGetValue(workerNodeId, out var worker))
+        {
+            lossReason = "worker_missing";
+            return true;
+        }
+
+        if (!worker.IsAlive)
+        {
+            lossReason = "worker_offline";
+            return true;
+        }
+
+        if (!worker.IsReady)
+        {
+            lossReason = "worker_unready";
+            return true;
+        }
+
+        if (!worker.IsFresh)
+        {
+            lossReason = "worker_stale";
+            return true;
+        }
+
+        if (!IsPlacementWorkerCandidate(worker.LogicalName, worker.WorkerRootActorName))
+        {
+            lossReason = "worker_not_placeable";
+            return true;
+        }
+
+        if (snapshotMs > 0 && worker.LastUpdatedMs < snapshotMs && !seenWorkerIds.Contains(workerNodeId))
+        {
+            lossReason = "worker_missing_from_snapshot";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IEnumerable<Guid> GetTrackedWorkerNodeIds(BrainState brain)
+    {
+        if (brain.PlacementExecution is null)
+        {
+            return Array.Empty<Guid>();
+        }
+
+        return brain.PlacementExecution.WorkerTargets.Keys.ToArray();
+    }
+
+    private static bool CanTriggerAutomaticRecovery(BrainState brain)
+        => !brain.RecoveryInProgress
+           && brain.PlacementEpoch > 0
+           && brain.Shards.Count > 0
+           && (brain.PlacementExecution is null || brain.PlacementExecution.Completed)
+           && (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+               || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning);
 
     private void HandleNodeListResponse(ProtoSettings.NodeListResponse message)
     {
@@ -5367,12 +5487,109 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private void RequestBrainRecovery(IContext context, Guid brainId, string trigger, string? detail = null)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain) || brain.RecoveryInProgress)
+        {
+            return;
+        }
+
+        var normalizedTrigger = string.IsNullOrWhiteSpace(trigger) ? "recovery" : trigger.Trim();
+        brain.RecoveryInProgress = true;
+        brain.RecoveryReason = normalizedTrigger;
+        brain.RecoveryStartedMs = NowMs();
+        brain.RecoveryPlacementEpoch = 0;
+        brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
+        UpdatePlacementLifecycle(
+            brain,
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleReconciling,
+            ProtoControl.PlacementFailureReason.PlacementFailureNone);
+
+        var notes = string.IsNullOrWhiteSpace(detail) ? normalizedTrigger : detail!.Trim();
+        ReportBrainState(context, brain.BrainId, "Recovering", notes);
+        HiveMindTelemetry.RecordRecoveryRequested(brain.BrainId, normalizedTrigger);
+        EmitDebug(
+            context,
+            ProtoSeverity.SevWarn,
+            "brain.recovering",
+            $"Brain {brain.BrainId} entered recovery. trigger={normalizedTrigger} detail={notes}");
+
+        if (!HasArtifactRef(brain.BaseDefinition))
+        {
+            FailBrainRecovery(
+                context,
+                brain,
+                failureReason: "missing_base_definition",
+                detail: "Recovery failed: base definition artifact is unavailable.");
+            return;
+        }
+
+        RequestReschedule(context, $"recovery:{normalizedTrigger}", new[] { brainId });
+    }
+
+    private void CompleteBrainRecovery(IContext context, BrainState brain)
+    {
+        if (!brain.RecoveryInProgress)
+        {
+            return;
+        }
+
+        brain.RecoveryInProgress = false;
+        brain.RecoveryReason = string.Empty;
+        brain.RecoveryPlacementEpoch = 0;
+        brain.RecoveryStartedMs = 0;
+
+        HiveMindTelemetry.RecordRecoveryCompleted(brain.BrainId, brain.PlacementEpoch);
+        var state = brain.Paused ? "Paused" : "Active";
+        ReportBrainState(context, brain.BrainId, state, "recovery_complete");
+        EmitDebug(
+            context,
+            ProtoSeverity.SevInfo,
+            "brain.recovered",
+            $"Brain {brain.BrainId} recovered at placement epoch={brain.PlacementEpoch}.");
+    }
+
+    private void FailBrainRecovery(IContext context, BrainState brain, string failureReason, string? detail = null)
+    {
+        if (!brain.RecoveryInProgress)
+        {
+            return;
+        }
+
+        var normalizedReason = string.IsNullOrWhiteSpace(failureReason) ? "recovery_failed" : failureReason.Trim();
+        var failureMessage = string.IsNullOrWhiteSpace(detail) ? normalizedReason : detail!.Trim();
+        brain.RecoveryInProgress = false;
+        brain.RecoveryReason = string.Empty;
+        brain.RecoveryPlacementEpoch = 0;
+        brain.RecoveryStartedMs = 0;
+
+        if (brain.PlacementFailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone)
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                ProtoControl.PlacementFailureReason.PlacementFailureInternalError);
+        }
+
+        SetSpawnFailureDetails(brain, normalizedReason, failureMessage);
+        HiveMindTelemetry.RecordRecoveryFailed(brain.BrainId, normalizedReason);
+        ReportBrainState(context, brain.BrainId, "Dead", failureMessage);
+        EmitDebug(
+            context,
+            ProtoSeverity.SevWarn,
+            "brain.recovery.failed",
+            $"Brain {brain.BrainId} recovery failed. reason={normalizedReason} detail={failureMessage}");
+        KillBrain(context, brain.BrainId, $"recovery_failed:{normalizedReason}");
+    }
+
     private void RequestReschedule(IContext context, string reason)
+        => RequestReschedule(context, reason, brainIds: null);
+
+    private void RequestReschedule(IContext context, string reason, IReadOnlyCollection<Guid>? brainIds)
     {
         if (_rescheduleInProgress)
         {
-            _rescheduleQueued = true;
-            _queuedRescheduleReason ??= reason;
+            QueueReschedule(reason, brainIds);
             return;
         }
 
@@ -5383,8 +5600,7 @@ public sealed class HiveMindActor : IActor
             && now - _lastRescheduleAt < TimeSpan.FromMinutes(_options.RescheduleMinMinutes);
         if (blockedByTickWindow || blockedByMinuteWindow)
         {
-            _rescheduleQueued = true;
-            _queuedRescheduleReason ??= reason;
+            QueueReschedule(reason, brainIds);
             ScheduleQueuedRescheduleRetry(context, now, immediate: false);
             return;
         }
@@ -5392,11 +5608,78 @@ public sealed class HiveMindActor : IActor
         _rescheduleQueued = false;
         _queuedRescheduleReason = null;
         _queuedRescheduleRetryScheduled = false;
+        ClearQueuedRescheduleScope();
+        SetActiveRescheduleScope(brainIds);
         _rescheduleInProgress = true;
         _lastRescheduleAt = now;
         _lastRescheduleTick = _lastCompletedTickId;
 
         ScheduleSelf(context, TimeSpan.FromMilliseconds(_options.RescheduleQuietMs), new RescheduleNow(reason));
+    }
+
+    private void QueueReschedule(string reason, IReadOnlyCollection<Guid>? brainIds)
+    {
+        _rescheduleQueued = true;
+        _queuedRescheduleReason ??= reason;
+        MergeQueuedRescheduleScope(brainIds);
+    }
+
+    private void SetActiveRescheduleScope(IReadOnlyCollection<Guid>? brainIds)
+    {
+        _activeRescheduleBrains.Clear();
+        if (brainIds is null || brainIds.Count == 0)
+        {
+            _activeRescheduleAllBrains = true;
+            return;
+        }
+
+        _activeRescheduleAllBrains = false;
+        foreach (var brainId in brainIds)
+        {
+            _activeRescheduleBrains.Add(brainId);
+        }
+    }
+
+    private void ClearActiveRescheduleScope()
+    {
+        _activeRescheduleAllBrains = true;
+        _activeRescheduleBrains.Clear();
+    }
+
+    private void MergeQueuedRescheduleScope(IReadOnlyCollection<Guid>? brainIds)
+    {
+        if (brainIds is null || brainIds.Count == 0)
+        {
+            _queuedRescheduleAllBrains = true;
+            _queuedRescheduleBrains.Clear();
+            return;
+        }
+
+        if (_queuedRescheduleAllBrains)
+        {
+            return;
+        }
+
+        foreach (var brainId in brainIds)
+        {
+            _queuedRescheduleBrains.Add(brainId);
+        }
+    }
+
+    private IReadOnlyCollection<Guid>? CaptureQueuedRescheduleScope()
+    {
+        if (_queuedRescheduleAllBrains || _queuedRescheduleBrains.Count == 0)
+        {
+            return null;
+        }
+
+        return _queuedRescheduleBrains.ToArray();
+    }
+
+    private void ClearQueuedRescheduleScope()
+    {
+        _queuedRescheduleAllBrains = false;
+        _queuedRescheduleBrains.Clear();
     }
 
     private void BeginReschedule(IContext context, RescheduleNow message)
@@ -5445,6 +5728,7 @@ public sealed class HiveMindActor : IActor
     {
         _pendingReschedule = null;
         _rescheduleInProgress = false;
+        ClearActiveRescheduleScope();
         Log($"Reschedule completed: {message.Reason} (success={message.Success})");
 
         if (_rescheduleQueued)
@@ -5468,7 +5752,8 @@ public sealed class HiveMindActor : IActor
         }
 
         var queuedReason = _queuedRescheduleReason ?? "queued";
-        RequestReschedule(context, queuedReason);
+        var queuedBrainIds = CaptureQueuedRescheduleScope();
+        RequestReschedule(context, queuedReason, queuedBrainIds);
     }
 
     private void ScheduleQueuedRescheduleRetry(IContext context, DateTime now, bool immediate)
@@ -5502,36 +5787,76 @@ public sealed class HiveMindActor : IActor
 
     private void BeginRescheduleWithFreshLatency(IContext context, string reason)
     {
-        var candidates = BuildRescheduleBrainCandidates();
-        if (candidates.Count == 0)
+        var buildResult = BuildRescheduleBrainCandidates();
+        if (buildResult.Candidates.Count == 0 && buildResult.Failures.Count == 0)
         {
             ScheduleSelf(context, TimeSpan.Zero, new RescheduleCompleted(reason, true));
             return;
         }
 
-        var prepareTask = PrepareReschedulePlacementRequestsAsync(context.System, _ioPid, candidates);
+        var prepareTask = PrepareReschedulePlacementRequestsAsync(context.System, _ioPid, buildResult.Candidates, buildResult.Failures);
         context.ReenterAfter(
             prepareTask,
             completed => HandlePreparedRescheduleRequests(context, reason, completed));
     }
 
-    private List<RescheduleBrainCandidate> BuildRescheduleBrainCandidates()
+    private RescheduleCandidateBuildResult BuildRescheduleBrainCandidates()
     {
         var nowMs = NowMs();
         var eligibleWorkerCount = BuildPeerLatencyProbeTargets(nowMs).Count;
         var candidates = new List<RescheduleBrainCandidate>();
+        var failures = new Dictionary<Guid, string>();
+        var requireScopedInclusion = !_activeRescheduleAllBrains && _activeRescheduleBrains.Count > 0;
 
         foreach (var brain in _brains.Values.OrderBy(static value => value.BrainId))
         {
-            if (brain.PlacementEpoch == 0
-                || brain.Shards.Count == 0
-                || !HasArtifactRef(brain.BaseDefinition))
+            if (requireScopedInclusion && !_activeRescheduleBrains.Contains(brain.BrainId))
             {
                 continue;
             }
 
-            if (!TryResolvePlacementRegions(brain, out var regions, out var shardStride, out _, out _))
+            var isRecovery = brain.RecoveryInProgress;
+            var mustProduceCandidate = requireScopedInclusion || isRecovery;
+
+            if (brain.PlacementEpoch == 0)
             {
+                if (mustProduceCandidate)
+                {
+                    failures[brain.BrainId] = "brain_not_placed";
+                }
+
+                continue;
+            }
+
+            if (!HasArtifactRef(brain.BaseDefinition))
+            {
+                if (mustProduceCandidate)
+                {
+                    failures[brain.BrainId] = "missing_base_definition";
+                }
+
+                continue;
+            }
+
+            if (!TryResolvePlacementRegions(brain, out var regions, out _, out _, out var failureMessage))
+            {
+                if (mustProduceCandidate)
+                {
+                    failures[brain.BrainId] = string.IsNullOrWhiteSpace(failureMessage)
+                        ? "placement_regions_unavailable"
+                        : failureMessage;
+                }
+
+                continue;
+            }
+
+            if (!isRecovery && brain.Shards.Count == 0)
+            {
+                if (mustProduceCandidate)
+                {
+                    failures[brain.BrainId] = "no_registered_shards";
+                }
+
                 continue;
             }
 
@@ -5546,10 +5871,24 @@ public sealed class HiveMindActor : IActor
                 brain.CostEnergyEnabled,
                 brain.PlasticityEnabled,
                 _lastCompletedTickId,
-                new Dictionary<ShardId32, PID>(brain.Shards)));
+                new Dictionary<ShardId32, PID>(brain.Shards),
+                isRecovery));
         }
 
-        return candidates;
+        if (requireScopedInclusion)
+        {
+            foreach (var scopedBrainId in _activeRescheduleBrains)
+            {
+                if (_brains.ContainsKey(scopedBrainId) || failures.ContainsKey(scopedBrainId))
+                {
+                    continue;
+                }
+
+                failures[scopedBrainId] = "brain_not_tracked";
+            }
+        }
+
+        return new RescheduleCandidateBuildResult(candidates, failures);
     }
 
     private static ProtoControl.ShardPlan? BuildRescheduleShardPlan(
@@ -5594,34 +5933,45 @@ public sealed class HiveMindActor : IActor
     private static async Task<ReschedulePreparationResult> PrepareReschedulePlacementRequestsAsync(
         ActorSystem system,
         PID? ioPid,
-        IReadOnlyList<RescheduleBrainCandidate> candidates)
+        IReadOnlyList<RescheduleBrainCandidate> candidates,
+        IReadOnlyDictionary<Guid, string>? initialFailures = null)
     {
         var requests = new List<ReschedulePlacementRequest>(candidates.Count);
-        var failures = new Dictionary<Guid, string>();
+        var failures = initialFailures is null
+            ? new Dictionary<Guid, string>()
+            : new Dictionary<Guid, string>(initialFailures);
 
         foreach (var candidate in candidates)
         {
             try
             {
-                var energyRemaining = await TryReadBrainEnergyRemainingAsync(system, ioPid, candidate.BrainId).ConfigureAwait(false);
-                var storeRootPath = ResolveArtifactRoot(candidate.BaseDefinition.StoreUri);
-                var storeUri = string.IsNullOrWhiteSpace(candidate.BaseDefinition.StoreUri)
-                    ? storeRootPath
-                    : candidate.BaseDefinition.StoreUri;
-                var snapshot = await BuildAndStoreSnapshotAsync(
-                        system,
-                        new SnapshotBuildRequest(
-                            candidate.BrainId,
-                            candidate.BaseDefinition,
-                            candidate.CurrentTickId,
-                            energyRemaining,
-                            candidate.CostEnergyEnabled,
-                            candidate.CostEnergyEnabled,
-                            candidate.PlasticityEnabled,
-                            new Dictionary<ShardId32, PID>(candidate.Shards),
-                            storeRootPath,
-                            storeUri))
-                    .ConfigureAwait(false);
+                Nbn.Proto.ArtifactRef? snapshot;
+                if (candidate.IsRecovery)
+                {
+                    snapshot = candidate.LastSnapshot?.Clone();
+                }
+                else
+                {
+                    var energyRemaining = await TryReadBrainEnergyRemainingAsync(system, ioPid, candidate.BrainId).ConfigureAwait(false);
+                    var storeRootPath = ResolveArtifactRoot(candidate.BaseDefinition.StoreUri);
+                    var storeUri = string.IsNullOrWhiteSpace(candidate.BaseDefinition.StoreUri)
+                        ? storeRootPath
+                        : candidate.BaseDefinition.StoreUri;
+                    snapshot = await BuildAndStoreSnapshotAsync(
+                            system,
+                            new SnapshotBuildRequest(
+                                candidate.BrainId,
+                                candidate.BaseDefinition,
+                                candidate.CurrentTickId,
+                                energyRemaining,
+                                candidate.CostEnergyEnabled,
+                                candidate.CostEnergyEnabled,
+                                candidate.PlasticityEnabled,
+                                new Dictionary<ShardId32, PID>(candidate.Shards),
+                                storeRootPath,
+                                storeUri))
+                        .ConfigureAwait(false);
+                }
 
                 requests.Add(new ReschedulePlacementRequest(
                     candidate.BrainId,
@@ -5634,8 +5984,11 @@ public sealed class HiveMindActor : IActor
                         ShardPlan = candidate.ShardPlan?.Clone(),
                         InputWidth = (uint)Math.Max(0, candidate.InputWidth),
                         OutputWidth = (uint)Math.Max(0, candidate.OutputWidth),
-                        RequestId = $"reschedule:{candidate.BrainId:N}:{candidate.CurrentTickId}",
-                        RequestedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                        RequestId = candidate.IsRecovery
+                            ? $"recovery:{candidate.BrainId:N}:{candidate.CurrentTickId}"
+                            : $"reschedule:{candidate.BrainId:N}:{candidate.CurrentTickId}",
+                        RequestedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        IsRecovery = candidate.IsRecovery
                     }));
             }
             catch (Exception ex)
@@ -5693,17 +6046,45 @@ public sealed class HiveMindActor : IActor
         foreach (var failure in prepared.Failures)
         {
             _pendingReschedule.Failures[failure.Key] = failure.Value;
+            if (_brains.TryGetValue(failure.Key, out var failedBrain) && failedBrain.RecoveryInProgress)
+            {
+                FailBrainRecovery(
+                    context,
+                    failedBrain,
+                    failureReason: "recovery_prepare_failed",
+                    detail: failure.Value);
+            }
         }
 
         foreach (var request in prepared.Requests)
         {
             var ack = ProcessPlacementRequest(context, request.Request);
-            if (!ack.Accepted || !_brains.TryGetValue(request.BrainId, out var brain))
+            if (!_brains.TryGetValue(request.BrainId, out var brain))
+            {
+                _pendingReschedule.Failures[request.BrainId] = "brain_not_tracked";
+                continue;
+            }
+
+            if (!ack.Accepted)
             {
                 _pendingReschedule.Failures[request.BrainId] = string.IsNullOrWhiteSpace(ack.Message)
                     ? "placement_request_rejected"
                     : ack.Message;
+                if (brain.RecoveryInProgress)
+                {
+                    FailBrainRecovery(
+                        context,
+                        brain,
+                        failureReason: "placement_request_rejected",
+                        detail: ack.Message);
+                }
+
                 continue;
+            }
+
+            if (brain.RecoveryInProgress)
+            {
+                brain.RecoveryPlacementEpoch = ack.PlacementEpoch;
             }
 
             _pendingReschedule.PendingBrains[request.BrainId] = ack.PlacementEpoch;
@@ -5727,16 +6108,23 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
+        var completed = false;
+        var succeeded = false;
+        string? failureReason = null;
         if (brain.PlacementEpoch != expectedEpoch)
         {
             _pendingReschedule.PendingBrains.Remove(brain.BrainId);
-            _pendingReschedule.Failures[brain.BrainId] = "placement_epoch_changed";
+            failureReason = "placement_epoch_changed";
+            _pendingReschedule.Failures[brain.BrainId] = failureReason;
+            completed = true;
         }
         else if (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed
                  || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleTerminated)
         {
             _pendingReschedule.PendingBrains.Remove(brain.BrainId);
-            _pendingReschedule.Failures[brain.BrainId] = ToFailureReasonLabel(brain.PlacementFailureReason);
+            failureReason = ToFailureReasonLabel(brain.PlacementFailureReason);
+            _pendingReschedule.Failures[brain.BrainId] = failureReason;
+            completed = true;
         }
         else if (brain.PlacementExecution is not null
                  && brain.PlacementExecution.PlacementEpoch == expectedEpoch
@@ -5755,10 +6143,24 @@ public sealed class HiveMindActor : IActor
             }
 
             _pendingReschedule.PendingBrains.Remove(brain.BrainId);
+            completed = true;
+            succeeded = true;
         }
         else
         {
             return;
+        }
+
+        if (completed && brain.RecoveryInProgress && (brain.RecoveryPlacementEpoch == 0 || brain.RecoveryPlacementEpoch == expectedEpoch))
+        {
+            if (succeeded)
+            {
+                CompleteBrainRecovery(context, brain);
+            }
+            else
+            {
+                FailBrainRecovery(context, brain, failureReason ?? "recovery_failed");
+            }
         }
 
         if (_pendingReschedule.PendingBrains.Count == 0)
@@ -7603,6 +8005,10 @@ public sealed class HiveMindActor : IActor
         public Dictionary<string, VisualizationSubscriberPreference> VisualizationSubscribers { get; } = new(StringComparer.Ordinal);
         public bool Paused { get; set; }
         public string? PausedReason { get; set; }
+        public bool RecoveryInProgress { get; set; }
+        public string RecoveryReason { get; set; } = string.Empty;
+        public ulong RecoveryPlacementEpoch { get; set; }
+        public long RecoveryStartedMs { get; set; }
         public long SpawnedMs { get; set; }
         public ulong PlacementEpoch { get; set; }
         public long PlacementRequestedMs { get; set; }
@@ -7754,7 +8160,12 @@ public sealed class HiveMindActor : IActor
         bool CostEnergyEnabled,
         bool PlasticityEnabled,
         ulong CurrentTickId,
-        Dictionary<ShardId32, PID> Shards);
+        Dictionary<ShardId32, PID> Shards,
+        bool IsRecovery);
+
+    private sealed record RescheduleCandidateBuildResult(
+        IReadOnlyList<RescheduleBrainCandidate> Candidates,
+        IReadOnlyDictionary<Guid, string> Failures);
 
     private sealed record ReschedulePlacementRequest(
         Guid BrainId,
@@ -7829,7 +8240,11 @@ public sealed class HiveMindActor : IActor
             BrainId = brain.BrainId.ToProtoUuid(),
             SpawnedMs = brain.SpawnedMs > 0 ? (ulong)brain.SpawnedMs : 0,
             LastTickId = _lastCompletedTickId,
-            State = brain.Paused ? "Paused" : "Active",
+            State = brain.RecoveryInProgress
+                ? "Recovering"
+                : brain.Paused
+                    ? "Paused"
+                    : "Active",
             ControllerNodeAddress = nodeAddress,
             ControllerNodeLogicalName = nodeAddress,
             ControllerRootActorName = controllerPid?.Id ?? string.Empty,
