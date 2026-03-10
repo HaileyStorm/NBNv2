@@ -19,6 +19,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private const int MaxEvents = 300;
     private readonly WorkbenchClient _client;
     private readonly UiDispatcher _dispatcher;
+    private readonly Func<int, string> _buildSuggestedVector;
     private string _brainIdText = string.Empty;
     private string _inputIndexText = "0";
     private string _inputValueText = "0";
@@ -35,6 +36,7 @@ public sealed class IoPanelViewModel : ViewModelBase
     private bool _filterZeroVectorOutputs = true;
     private bool _pauseVectorUiUpdates;
     private bool _autoSendInputVectorEveryTick;
+    private bool _randomizeInputVectorAfterEverySend;
     private bool _costEnabled;
     private bool _energyEnabled;
     private bool _costEnergyEnabled;
@@ -74,10 +76,11 @@ public sealed class IoPanelViewModel : ViewModelBase
     private int _selectedBrainInputWidth = -1;
     private readonly SemaphoreSlim _selectedBrainCommandGate = new(1, 1);
 
-    public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher)
+    public IoPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher, Func<int, string>? buildSuggestedVector = null)
     {
         _client = client;
         _dispatcher = dispatcher;
+        _buildSuggestedVector = buildSuggestedVector ?? BuildSuggestedVector;
         OutputEvents = new ObservableCollection<OutputEventItem>();
         VectorEvents = new ObservableCollection<OutputVectorEventItem>();
         PlasticityModes = new ObservableCollection<PlasticityModeOption>
@@ -513,6 +516,12 @@ public sealed class IoPanelViewModel : ViewModelBase
     }
 
     public bool AutoSendInputVectorEveryTickAvailable => !_selectedBrainInputReplayEveryTick && !_systemInputReplayEveryTick;
+
+    public bool RandomizeInputVectorAfterEverySend
+    {
+        get => _randomizeInputVectorAfterEverySend;
+        set => SetProperty(ref _randomizeInputVectorAfterEverySend, value);
+    }
 
     public string PlasticityRateText
     {
@@ -1112,7 +1121,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         if (shouldRegenerateSuggestion)
         {
-            var suggestedVector = BuildSuggestedVector(inputWidth);
+            var suggestedVector = _buildSuggestedVector(inputWidth);
             _lastSuggestedInputVector = suggestedVector;
             InputVectorText = suggestedVector;
         }
@@ -1178,7 +1187,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        _client.SendInputVector(brainId, values);
+        DispatchInputVector(brainId, values);
     }
 
     private void ApplyEnergyCredit()
@@ -1252,7 +1261,25 @@ public sealed class IoPanelViewModel : ViewModelBase
         _lastAutoVectorSendBrainId = brainId;
         _lastAutoVectorSendTickId = tickId;
         _hasLastAutoVectorSendTick = true;
+        DispatchInputVector(brainId, values);
+    }
+
+    private void DispatchInputVector(Guid brainId, IReadOnlyList<float> values)
+    {
         _client.SendInputVector(brainId, values);
+        MaybeRandomizeInputVectorAfterSend(values.Count);
+    }
+
+    private void MaybeRandomizeInputVectorAfterSend(int inputWidth)
+    {
+        if (!RandomizeInputVectorAfterEverySend || inputWidth <= 0)
+        {
+            return;
+        }
+
+        var suggestedVector = _buildSuggestedVector(inputWidth);
+        _lastSuggestedInputVector = suggestedVector;
+        InputVectorText = suggestedVector;
     }
 
     private void ResetAutoVectorSendTickGate()

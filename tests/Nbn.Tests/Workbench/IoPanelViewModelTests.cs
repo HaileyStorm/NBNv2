@@ -77,6 +77,7 @@ public class IoPanelViewModelTests
         var vm = CreateViewModel(new FakeWorkbenchClient());
         Assert.False(vm.AutoSendInputVectorEveryTick);
         Assert.True(vm.AutoSendInputVectorEveryTickAvailable);
+        Assert.False(vm.RandomizeInputVectorAfterEverySend);
         Assert.Equal(InputCoordinatorMode.DirtyOnChange, vm.SelectedInputCoordinatorMode.Mode);
         Assert.Equal(OutputVectorSource.Potential, vm.SelectedOutputVectorSource.Source);
     }
@@ -217,6 +218,48 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public void SendVector_ValidVector_SendsParsedValues_AndPreservesDraft_WhenRandomizeDisabled()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "0.9,0.8,0.7";
+        ApplyBrainInfo(vm, new BrainInfo { InputWidth = 3, OutputWidth = 1 });
+
+        vm.SendVectorCommand.Execute(null);
+
+        var sent = Assert.Single(client.InputVectorCalls);
+        Assert.Equal(brainId, sent.BrainId);
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, sent.Values);
+        Assert.Equal("0.9,0.8,0.7", vm.InputVectorText);
+    }
+
+    [Fact]
+    public void SendVector_RandomizeAfterEverySendEnabled_RegeneratesDraftAfterSuccessfulSend()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(
+            client,
+            inputWidth =>
+            {
+                Assert.Equal(3, inputWidth);
+                return "0.11,-0.22,0.33";
+            });
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "0.9,0.8,0.7";
+        ApplyBrainInfo(vm, new BrainInfo { InputWidth = 3, OutputWidth = 1 });
+        vm.RandomizeInputVectorAfterEverySend = true;
+
+        vm.SendVectorCommand.Execute(null);
+
+        var sent = Assert.Single(client.InputVectorCalls);
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, sent.Values);
+        Assert.Equal("0.11,-0.22,0.33", vm.InputVectorText);
+    }
+
+    [Fact]
     public void SendVector_WidthMismatch_ShowsValidationError()
     {
         var client = new FakeWorkbenchClient();
@@ -230,6 +273,40 @@ public class IoPanelViewModelTests
 
         Assert.Empty(client.InputVectorCalls);
         Assert.Contains("expected 5, got 3", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ObserveTick_AutoSendEnabled_RandomizeAfterEverySendEnabled_AdvancesVectorEachTick()
+    {
+        var generatedVectors = new Queue<string>(new[]
+        {
+            "0.11,-0.22,0.33",
+            "-0.44,0.55,-0.66"
+        });
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(
+            client,
+            inputWidth =>
+            {
+                Assert.Equal(3, inputWidth);
+                return generatedVectors.Dequeue();
+            });
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "0.9,0.8,0.7";
+        ApplyBrainInfo(vm, new BrainInfo { InputWidth = 3, OutputWidth = 1 });
+        vm.AutoSendInputVectorEveryTick = true;
+        vm.RandomizeInputVectorAfterEverySend = true;
+
+        vm.ObserveTick(brainId, tickId: 77);
+        vm.ObserveTick(brainId, tickId: 77);
+        vm.ObserveTick(brainId, tickId: 78);
+
+        await WaitForAsync(() => client.InputVectorCalls.Count == 2);
+
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[0].Values);
+        Assert.Equal(new[] { 0.11f, -0.22f, 0.33f }, client.InputVectorCalls[1].Values);
+        Assert.Equal("-0.44,0.55,-0.66", vm.InputVectorText);
     }
 
     [Fact]
@@ -537,10 +614,10 @@ public class IoPanelViewModelTests
         method!.Invoke(vm, new object?[] { info });
     }
 
-    private static IoPanelViewModel CreateViewModel(WorkbenchClient client)
+    private static IoPanelViewModel CreateViewModel(WorkbenchClient client, Func<int, string>? buildSuggestedVector = null)
     {
         var dispatcher = new UiDispatcher();
-        return new IoPanelViewModel(client, dispatcher);
+        return new IoPanelViewModel(client, dispatcher, buildSuggestedVector);
     }
 
     private static OutputVectorEventItem CreateVectorEvent(Guid brainId, ulong tickId)
