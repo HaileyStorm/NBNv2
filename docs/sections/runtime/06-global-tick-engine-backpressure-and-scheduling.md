@@ -81,14 +81,16 @@ Rescheduling and full recovery are disruptive. To prevent thrashing:
 
   * at most once every `reschedule_min_ticks`, and/or
   * at most once every `reschedule_min_minutes`
-  * if a reschedule/recovery is triggered too soon, it is queued
+  * if a reschedule/recovery is triggered too soon, it is queued instead of being dropped
+  * queued requests are retried automatically at the earliest tick/time window allowed by the current throttles; duplicate requests may be coalesced into one pending retry
 
 When a reschedule/recovery is initiated:
 
 * HiveMind completes the current tick (compute+deliver) or times out that tick.
 * HiveMind then **pauses new tick dispatch**.
 * HiveMind waits a small stabilization interval (`reschedule_quiet_ms`) after the tick completion decision.
-* HiveMind performs rescheduling and/or recovery.
-* HiveMind resumes tick dispatch.
+* HiveMind performs real rescheduling and/or recovery work: assignment/unassignment, routing snapshot refresh, and placement reconciliation.
+* For shard moves, HiveMind updates shard output sinks and waits for the moved shards to re-register for the new placement epoch before considering the reschedule complete.
+* HiveMind resumes tick dispatch only after the new routing/output-sink state is active for the current placement epoch.
 
 ---

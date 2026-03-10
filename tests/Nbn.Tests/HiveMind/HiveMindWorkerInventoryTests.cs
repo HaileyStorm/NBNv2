@@ -1,3 +1,4 @@
+using System.Reflection;
 using Nbn.Proto.Control;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.WorkerNode;
@@ -198,6 +199,73 @@ public sealed class HiveMindWorkerInventoryTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task PlacementWorkerInventory_Exposes_InterWorkerLatencyTelemetry()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var actor = new HiveMindActor(CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 15_000));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+        var workerAId = Guid.NewGuid();
+        var workerBId = Guid.NewGuid();
+
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerAId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: string.Empty,
+                    rootActorName: "worker-a",
+                    logicalName: "nbn.worker"),
+                BuildWorker(
+                    workerBId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: string.Empty,
+                    rootActorName: "worker-b",
+                    logicalName: "nbn.worker")
+            }
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var current = await root.RequestAsync<PlacementWorkerInventory>(
+                    hiveMind,
+                    new PlacementWorkerInventoryRequest());
+                return current.Workers.Count == 2;
+            },
+            timeoutMs: 2_000);
+
+        SetPeerLatencyMeasurement(actor, workerAId, 1.25f, 1, nowMs);
+        SetPeerLatencyMeasurement(actor, workerBId, 1.5f, 1, nowMs);
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+        Assert.NotNull(inventory);
+        Assert.Equal(2, inventory.Workers.Count);
+        Assert.All(
+            inventory.Workers,
+            worker =>
+            {
+                Assert.Equal((uint)1, worker.PeerLatencySampleCount);
+                Assert.True(worker.AveragePeerLatencyMs > 0f);
+            });
+
+        await system.ShutdownAsync();
+    }
+
     private static ProtoSettings.WorkerReadinessCapability BuildWorker(
         Guid nodeId,
         bool isAlive,
@@ -325,5 +393,53 @@ public sealed class HiveMindWorkerInventoryTests
 
             return Task.CompletedTask;
         }
+    }
+
+    private static void SetPeerLatencyMeasurement(
+        HiveMindActor actor,
+        Guid workerId,
+        float averagePeerLatencyMs,
+        int sampleCount,
+        long snapshotMs)
+    {
+        var catalogField = typeof(HiveMindActor).GetField("_workerCatalog", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(catalogField);
+
+        var catalog = catalogField!.GetValue(actor);
+        Assert.NotNull(catalog);
+
+        var args = new object?[] { workerId, null };
+        var found = (bool)catalog!.GetType().GetMethod("TryGetValue")!.Invoke(catalog, args)!;
+        Assert.True(found);
+
+        var entry = args[1];
+        Assert.NotNull(entry);
+
+        entry!.GetType().GetProperty("AveragePeerLatencyMs")!.SetValue(entry, averagePeerLatencyMs);
+        entry.GetType().GetProperty("PeerLatencySampleCount")!.SetValue(entry, sampleCount);
+        entry.GetType().GetProperty("PeerLatencySnapshotMs")!.SetValue(entry, snapshotMs);
+    }
+
+    private static async Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        while (true)
+        {
+            if (await predicate().ConfigureAwait(false))
+            {
+                return;
+            }
+
+            try
+            {
+                await Task.Delay(20, cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        throw new TimeoutException($"Condition was not met within {timeoutMs} ms.");
     }
 }

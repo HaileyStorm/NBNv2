@@ -351,15 +351,17 @@ Rescheduling and full recovery are disruptive. To prevent thrashing:
 
   * at most once every `reschedule_min_ticks`, and/or
   * at most once every `reschedule_min_minutes`
-  * if a reschedule/recovery is triggered too soon, it is queued
+  * if a reschedule/recovery is triggered too soon, it is queued instead of being dropped
+  * queued requests are retried automatically at the earliest tick/time window allowed by the current throttles; duplicate requests may be coalesced into one pending retry
 
 When a reschedule/recovery is initiated:
 
 * HiveMind completes the current tick (compute+deliver) or times out that tick.
 * HiveMind then **pauses new tick dispatch**.
 * HiveMind waits a small stabilization interval (`reschedule_quiet_ms`) after the tick completion decision.
-* HiveMind performs rescheduling and/or recovery.
-* HiveMind resumes tick dispatch.
+* HiveMind performs real rescheduling and/or recovery work: assignment/unassignment, routing snapshot refresh, and placement reconciliation.
+* For shard moves, HiveMind updates shard output sinks and waits for the moved shards to re-register for the new placement epoch before considering the reschedule complete.
+* HiveMind resumes tick dispatch only after the new routing/output-sink state is active for the current placement epoch.
 
 ---
 
@@ -504,7 +506,7 @@ Shard alignment rules:
   * `neuron_start % stride == 0`
   * `neuron_count % stride == 0`, except the final shard in a region may be shorter to cover `[last_stride_boundary, neuron_span)`
 
-### 9.2 Node capabilities reporting
+### 9.2 Node capabilities and placement telemetry
 
 Worker processes report capabilities periodically to SettingsMonitor:
 
@@ -514,7 +516,12 @@ Worker processes report capabilities periodically to SettingsMonitor:
 * microbenchmark scores (CPU and GPU)
 * ILGPU accelerator availability (CUDA/OpenCL/CPU)
 
-HiveMind uses this for placement decisions.
+HiveMind also maintains placement telemetry in worker inventory snapshots:
+
+* worker-to-worker average peer latency, gathered through targeted RTT probes between workers
+* peer latency sample counts, so scheduling can distinguish measured locality from unknown paths
+
+Placement decisions use inter-worker latency as the primary locality signal for shard-to-shard cost. Worker-to-HiveMind latency remains useful for liveness/health checks, but it is not sufficient on its own to score distributed shard placement.
 
 ### 9.3 Placement and rescheduling coordinator
 
@@ -524,10 +531,18 @@ HiveMind runs a `ShardPlacementManager` Actor which:
 * migrates shards on repeated lateness/timeouts
 * splits/merges shards as needed
 * updates all routing tables (BrainSignalRouter and coordinators)
+* refreshes inter-worker peer latency telemetry before latency-sensitive placement/reschedule decisions
+* executes real placement plan changes rather than a simulated reschedule delay
+* resumes tick dispatch only after moved shards have registered for the current placement epoch and their output sinks/routing state have been refreshed
 * respects rescheduling rate limits (Section 6.6)
 
 Placement heuristics:
 
+* prefer keeping a single brain inside the lowest-latency locality available (same machine first, then same low-latency network segment) before splitting it across slower links
+* prefer distributing different brains across workers before splitting one brain across higher-latency worker boundaries
+* accept temporary free-resource imbalance when needed to preserve lower-latency locality for a brain
+* use average inter-worker RTT as the main placement signal; hosted-brain balancing and free-capacity spread are secondary tie-breakers
+* still fall back to higher-latency or cross-device/network placement when the lower-latency worker subset cannot satisfy the required shard plan
 * co-locate shards with heavy mutual traffic
 * prefer GPU-capable nodes for Tier A/B-heavy function mixes
 * avoid shard sizes that exceed memory limits
@@ -2165,6 +2180,48 @@ message UpdateShardRuntimeConfig {
   float plasticity_energy_cost_min_scale = 31;
   float plasticity_energy_cost_max_scale = 32;
 }
+```
+
+Placement and reschedule control-plane telemetry in `nbn_control.proto`:
+
+```proto
+message PlacementWorkerInventoryEntry {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+  bool is_alive = 4;
+  fixed64 last_seen_ms = 5;
+  uint32 cpu_cores = 6;
+  fixed64 ram_free_bytes = 7;
+  bool has_gpu = 8;
+  fixed64 vram_free_bytes = 9;
+  float cpu_score = 10;
+  float gpu_score = 11;
+  fixed64 capability_epoch = 12;
+  fixed64 storage_free_bytes = 13;
+  float average_peer_latency_ms = 14;
+  uint32 peer_latency_sample_count = 15;
+}
+
+message PlacementPeerTarget {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+}
+
+message PlacementPeerLatencyRequest {
+  repeated PlacementPeerTarget peers = 1;
+  uint32 timeout_ms = 2;
+}
+
+message PlacementPeerLatencyResponse {
+  nbn.Uuid worker_node_id = 1;
+  float average_peer_latency_ms = 2;
+  uint32 sample_count = 3;
+}
+
+message PlacementLatencyEchoRequest { }
+message PlacementLatencyEchoAck { }
 ```
 
 ### 19.5 `nbn_signals.proto`

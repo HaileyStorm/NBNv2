@@ -12,7 +12,7 @@ Shard alignment rules:
   * `neuron_start % stride == 0`
   * `neuron_count % stride == 0`, except the final shard in a region may be shorter to cover `[last_stride_boundary, neuron_span)`
 
-### 9.2 Node capabilities reporting
+### 9.2 Node capabilities and placement telemetry
 
 Worker processes report capabilities periodically to SettingsMonitor:
 
@@ -22,7 +22,12 @@ Worker processes report capabilities periodically to SettingsMonitor:
 * microbenchmark scores (CPU and GPU)
 * ILGPU accelerator availability (CUDA/OpenCL/CPU)
 
-HiveMind uses this for placement decisions.
+HiveMind also maintains placement telemetry in worker inventory snapshots:
+
+* worker-to-worker average peer latency, gathered through targeted RTT probes between workers
+* peer latency sample counts, so scheduling can distinguish measured locality from unknown paths
+
+Placement decisions use inter-worker latency as the primary locality signal for shard-to-shard cost. Worker-to-HiveMind latency remains useful for liveness/health checks, but it is not sufficient on its own to score distributed shard placement.
 
 ### 9.3 Placement and rescheduling coordinator
 
@@ -32,10 +37,18 @@ HiveMind runs a `ShardPlacementManager` Actor which:
 * migrates shards on repeated lateness/timeouts
 * splits/merges shards as needed
 * updates all routing tables (BrainSignalRouter and coordinators)
+* refreshes inter-worker peer latency telemetry before latency-sensitive placement/reschedule decisions
+* executes real placement plan changes rather than a simulated reschedule delay
+* resumes tick dispatch only after moved shards have registered for the current placement epoch and their output sinks/routing state have been refreshed
 * respects rescheduling rate limits (Section 6.6)
 
 Placement heuristics:
 
+* prefer keeping a single brain inside the lowest-latency locality available (same machine first, then same low-latency network segment) before splitting it across slower links
+* prefer distributing different brains across workers before splitting one brain across higher-latency worker boundaries
+* accept temporary free-resource imbalance when needed to preserve lower-latency locality for a brain
+* use average inter-worker RTT as the main placement signal; hosted-brain balancing and free-capacity spread are secondary tie-breakers
+* still fall back to higher-latency or cross-device/network placement when the lower-latency worker subset cannot satisfy the required shard plan
 * co-locate shards with heavy mutual traffic
 * prefer GPU-capable nodes for Tier A/B-heavy function mixes
 * avoid shard sizes that exceed memory limits

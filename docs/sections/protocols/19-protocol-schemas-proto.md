@@ -523,6 +523,48 @@ message UpdateShardRuntimeConfig {
 }
 ```
 
+Placement and reschedule control-plane telemetry in `nbn_control.proto`:
+
+```proto
+message PlacementWorkerInventoryEntry {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+  bool is_alive = 4;
+  fixed64 last_seen_ms = 5;
+  uint32 cpu_cores = 6;
+  fixed64 ram_free_bytes = 7;
+  bool has_gpu = 8;
+  fixed64 vram_free_bytes = 9;
+  float cpu_score = 10;
+  float gpu_score = 11;
+  fixed64 capability_epoch = 12;
+  fixed64 storage_free_bytes = 13;
+  float average_peer_latency_ms = 14;
+  uint32 peer_latency_sample_count = 15;
+}
+
+message PlacementPeerTarget {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+}
+
+message PlacementPeerLatencyRequest {
+  repeated PlacementPeerTarget peers = 1;
+  uint32 timeout_ms = 2;
+}
+
+message PlacementPeerLatencyResponse {
+  nbn.Uuid worker_node_id = 1;
+  float average_peer_latency_ms = 2;
+  uint32 sample_count = 3;
+}
+
+message PlacementLatencyEchoRequest { }
+message PlacementLatencyEchoAck { }
+```
+
 ### 19.5 `nbn_signals.proto`
 
 ```proto

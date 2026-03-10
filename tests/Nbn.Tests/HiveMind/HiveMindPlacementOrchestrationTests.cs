@@ -1,11 +1,17 @@
+using System.Reflection;
+using Microsoft.Data.Sqlite;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
+using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.HiveMind;
+using Nbn.Shared.Format;
+using Nbn.Tests.Format;
 using Nbn.Shared;
 using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
 using Xunit.Sdk;
+using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 namespace Nbn.Tests.HiveMind;
 
@@ -173,6 +179,251 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.All(workerProbe.ActivePlacementEpochs, epoch => Assert.Equal(secondAck.PlacementEpoch, epoch));
 
         await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task Queued_Reschedule_Retries_After_MinTick_Window_Clears()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var actor = new HiveMindActor(CreateOptions(
+            assignmentTimeoutMs: 1_000,
+            retryBackoffMs: 10,
+            maxRetries: 1,
+            reconcileTimeoutMs: 500,
+            rescheduleMinTicks: 2,
+            rescheduleMinMinutes: 0,
+            rescheduleQuietMs: 10));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+        SetPrivateField(actor, "_rescheduleInProgress", true);
+        SetPrivateField(actor, "_rescheduleQueued", true);
+        SetPrivateField(actor, "_queuedRescheduleReason", "queued-timeout");
+        SetPrivateField(actor, "_lastRescheduleTick", 5UL);
+        SetPrivateField(actor, "_lastCompletedTickId", 5UL);
+        SetPrivateField(actor, "_lastRescheduleAt", DateTime.UtcNow);
+
+        root.Send(hiveMind, CreateHiveMindPrivateMessage("RescheduleCompleted", "initial", true));
+
+        await Task.Delay(100);
+        Assert.Equal<ulong>(5, GetPrivateField<ulong>(actor, "_lastRescheduleTick"));
+        Assert.False((await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus())).RescheduleInProgress);
+
+        SetPrivateField(actor, "_lastCompletedTickId", 7UL);
+
+        await WaitForAsync(
+            () => Task.FromResult(GetPrivateField<ulong>(actor, "_lastRescheduleTick") == 7UL),
+            timeoutMs: 3_000);
+
+        Assert.False(GetPrivateField<bool>(actor, "_rescheduleQueued"));
+        Assert.Null(GetPrivateField<string?>(actor, "_queuedRescheduleReason"));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task PendingReschedule_Waits_For_New_Shards_And_OutputSinkRefresh_Before_Completion()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-reschedule-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+        ActorSystem? system = null;
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var richNbn = NbnTestVectors.CreateRichNbnVector();
+            var baseManifest = await store.StoreAsync(new MemoryStream(richNbn.Bytes), "application/x-nbn");
+            var baseRef = baseManifest.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)baseManifest.ByteLength,
+                "application/x-nbn",
+                artifactRoot);
+
+            system = new ActorSystem();
+            var root = system.Root;
+
+            var workerAId = Guid.NewGuid();
+            var workerBId = Guid.NewGuid();
+            var workerA = new PlacementWorkerProbe(workerAId, dropAcks: false, failFirstRetryable: false);
+            var workerB = new PlacementWorkerProbe(
+                workerBId,
+                dropAcks: false,
+                failFirstRetryable: false,
+                autoRespondAssignments: false,
+                autoRespondReconcile: false);
+            var workerAPid = root.Spawn(Props.FromProducer(() => workerA));
+            var workerBPid = root.Spawn(Props.FromProducer(() => workerB));
+            var actor = new HiveMindActor(CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000,
+                rescheduleMinMinutes: 0));
+            var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+            PrimeWorkers(root, hiveMind, workerAPid, workerAId);
+
+            var brainId = Guid.NewGuid();
+            var firstAck = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(firstAck.Accepted);
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 4_000);
+
+            var region0Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(0, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 10, 11, 12 },
+                enabledBitset: new byte[] { 0b0000_0111 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+            var region1Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(1, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 20, 21, 22, 23 },
+                enabledBitset: new byte[] { 0b0000_1111 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+            var region31Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                brainId,
+                ShardId32.From(31, 0),
+                neuronStart: 0,
+                bufferCodes: new[] { 30, 31 },
+                enabledBitset: new byte[] { 0b0000_0011 },
+                overlays: Array.Empty<SnapshotOverlayRecord>())));
+
+            await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 0,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region0Shard),
+                NeuronStart = 0,
+                NeuronCount = 3
+            }));
+            await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 1,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region1Shard),
+                NeuronStart = 0,
+                NeuronCount = 4
+            }));
+            await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = 31,
+                ShardIndex = 0,
+                ShardPid = PidLabel(region31Shard),
+                NeuronStart = 0,
+                NeuronCount = 2
+            }));
+            await WaitForAsync(
+                async () =>
+                {
+                    var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+                    return status.RegisteredShards >= 3;
+                },
+                timeoutMs: 2_000);
+
+            var outputSinkPid = root.Spawn(Props.FromProducer(static () => new NullActor()));
+            root.Send(workerAPid, new RegisterOutputSinkForBrain(hiveMind, brainId, outputSinkPid));
+            await WaitForAsync(
+                () => Task.FromResult(GetOutputSinkPid(actor, brainId) is not null),
+                timeoutMs: 2_000);
+
+            PrimeWorkers(root, hiveMind, (workerAPid, workerAId, false, true), (workerBPid, workerBId, true, true));
+            await WaitForAsync(
+                async () =>
+                {
+                    var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+                        hiveMind,
+                        new PlacementWorkerInventoryRequest());
+                    return inventory.Workers.Count == 1
+                           && inventory.Workers[0].WorkerNodeId.Value.SequenceEqual(workerBId.ToProtoUuid().Value);
+                },
+                timeoutMs: 2_000);
+
+            var secondAck = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(secondAck.Accepted);
+
+            var pending = CreateHiveMindPrivateObject("PendingRescheduleState", "replacement-check");
+            var pendingBrains = pending.GetType().GetProperty("PendingBrains", BindingFlags.Instance | BindingFlags.Public);
+            Assert.NotNull(pendingBrains);
+            var pendingBrainMap = pendingBrains!.GetValue(pending);
+            Assert.NotNull(pendingBrainMap);
+            pendingBrainMap!.GetType().GetMethod("Add")!.Invoke(pendingBrainMap, new object?[] { brainId, secondAck.PlacementEpoch });
+            SetPrivateField(actor, "_rescheduleInProgress", true);
+            SetPrivateField(actor, "_pendingReschedule", pending);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    if (workerA.UnassignmentRequestCount < 7)
+                    {
+                        return false;
+                    }
+
+                    var deferred = await root.RequestAsync<DeferredAssignmentAckSnapshot>(
+                        workerBPid,
+                        new GetDeferredAssignmentAckSnapshot());
+                    return deferred.AssignmentIds.Count >= 7;
+                },
+                timeoutMs: 5_000);
+
+            root.Send(workerBPid, new ReleaseDeferredAssignmentAcks());
+            await WaitForAsync(
+                () => Task.FromResult(workerB.ReconcileRequestCount >= 1),
+                timeoutMs: 5_000);
+            root.Send(workerBPid, new ReleaseDeferredReconcileReports());
+
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+
+            var pendingBeforeRegisters = GetPrivateField<object?>(actor, "_pendingReschedule");
+            Assert.NotNull(pendingBeforeRegisters);
+            Assert.Equal(0, workerB.OutputSinkUpdateCount);
+
+            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 0, 0, 0, 3));
+            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 4));
+            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 31, 0, 0, 2));
+
+            await WaitForAsync(
+                () => Task.FromResult(GetPendingRescheduleBrainCount(actor) == 0),
+                timeoutMs: 5_000);
+
+            var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+            AssertPlacementStable(finalStatus);
+            Assert.True(workerB.OutputSinkUpdateCount >= 1);
+            Assert.Equal(workerBPid.Id, GetRegisteredShardPid(actor, brainId, 31, 0).Id);
+
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (system is not null)
+            {
+                await system.ShutdownAsync();
+            }
+
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -1775,22 +2026,25 @@ public sealed class HiveMindPlacementOrchestrationTests
     }
 
     private static void PrimeWorkers(IRootContext root, PID hiveMind, PID workerPid, Guid workerId)
+        => PrimeWorkers(root, hiveMind, (workerPid, workerId, true, true));
+
+    private static void PrimeWorkers(
+        IRootContext root,
+        PID hiveMind,
+        params (PID WorkerPid, Guid WorkerId, bool IsReady, bool IsAlive)[] workers)
     {
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
         {
             SnapshotMs = (ulong)nowMs,
-            Workers =
-            {
-                BuildWorker(
-                    workerId,
-                    isAlive: true,
-                    isReady: true,
-                    lastSeenMs: nowMs,
-                    capabilityTimeMs: nowMs,
-                    address: string.Empty,
-                    rootActorName: workerPid.Id)
-            }
+            Workers = { workers.Select(worker => BuildWorker(
+                worker.WorkerId,
+                isAlive: worker.IsAlive,
+                isReady: worker.IsReady,
+                lastSeenMs: nowMs,
+                capabilityTimeMs: nowMs,
+                address: string.Empty,
+                rootActorName: worker.WorkerPid.Id)) }
         });
     }
 
@@ -1850,6 +2104,96 @@ public sealed class HiveMindPlacementOrchestrationTests
         => state == PlacementLifecycleState.PlacementLifecycleAssigned
            || state == PlacementLifecycleState.PlacementLifecycleRunning;
 
+    private static object CreateHiveMindPrivateMessage(string typeName, params object?[] args)
+    {
+        var messageType = typeof(HiveMindActor).GetNestedType(typeName, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(messageType);
+        return Activator.CreateInstance(
+            messageType!,
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+            binder: null,
+            args: args,
+            culture: null)!;
+    }
+
+    private static object CreateHiveMindPrivateObject(string typeName, params object?[] args)
+        => CreateHiveMindPrivateMessage(typeName, args);
+
+    private static void SetPrivateField<T>(HiveMindActor actor, string fieldName, T value)
+    {
+        var field = typeof(HiveMindActor).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field!.SetValue(actor, value);
+    }
+
+    private static T GetPrivateField<T>(HiveMindActor actor, string fieldName)
+    {
+        var field = typeof(HiveMindActor).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return (T)field!.GetValue(actor)!;
+    }
+
+    private static PID GetRegisteredShardPid(HiveMindActor actor, Guid brainId, int regionId, int shardIndex)
+    {
+        var brainState = GetBrainState(actor, brainId);
+
+        var shardsProperty = brainState!.GetType().GetProperty("Shards", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(shardsProperty);
+
+        var shards = shardsProperty!.GetValue(brainState);
+        Assert.NotNull(shards);
+
+        var shardArgs = new object?[] { ShardId32.From(regionId, shardIndex), null };
+        var foundShard = (bool)shards!.GetType().GetMethod("TryGetValue")!.Invoke(shards, shardArgs)!;
+        Assert.True(foundShard);
+
+        return Assert.IsType<PID>(shardArgs[1]);
+    }
+
+    private static PID? GetOutputSinkPid(HiveMindActor actor, Guid brainId)
+    {
+        var brainState = GetBrainState(actor, brainId);
+        var outputSinkProperty = brainState.GetType().GetProperty("OutputSinkPid", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(outputSinkProperty);
+        return outputSinkProperty!.GetValue(brainState) as PID;
+    }
+
+    private static object GetBrainState(HiveMindActor actor, Guid brainId)
+    {
+        var brainsField = typeof(HiveMindActor).GetField("_brains", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(brainsField);
+
+        var brains = brainsField!.GetValue(actor);
+        Assert.NotNull(brains);
+
+        var brainArgs = new object?[] { brainId, null };
+        var foundBrain = (bool)brains!.GetType().GetMethod("TryGetValue")!.Invoke(brains, brainArgs)!;
+        Assert.True(foundBrain);
+        Assert.NotNull(brainArgs[1]);
+        return brainArgs[1]!;
+    }
+
+    private static int GetPendingRescheduleBrainCount(HiveMindActor actor)
+    {
+        var pending = GetPrivateField<object?>(actor, "_pendingReschedule");
+        if (pending is null)
+        {
+            return 0;
+        }
+
+        var pendingBrains = pending.GetType().GetProperty("PendingBrains", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(pendingBrains);
+        var map = pendingBrains!.GetValue(pending);
+        Assert.NotNull(map);
+
+        var countProperty = map!.GetType().GetProperty("Count", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(countProperty);
+        return (int)countProperty!.GetValue(map)!;
+    }
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
     private static ProtoSettings.WorkerReadinessCapability BuildWorker(
         Guid nodeId,
         bool isAlive,
@@ -1883,7 +2227,10 @@ public sealed class HiveMindPlacementOrchestrationTests
         int assignmentTimeoutMs,
         int retryBackoffMs,
         int maxRetries,
-        int reconcileTimeoutMs)
+        int reconcileTimeoutMs,
+        int rescheduleMinTicks = 10,
+        int rescheduleMinMinutes = 1,
+        int rescheduleQuietMs = 50)
         => new(
             BindHost: "127.0.0.1",
             Port: 0,
@@ -1898,9 +2245,9 @@ public sealed class HiveMindPlacementOrchestrationTests
             LateBackpressureThreshold: 2,
             TimeoutRescheduleThreshold: 3,
             TimeoutPauseThreshold: 6,
-            RescheduleMinTicks: 10,
-            RescheduleMinMinutes: 1,
-            RescheduleQuietMs: 50,
+            RescheduleMinTicks: rescheduleMinTicks,
+            RescheduleMinMinutes: rescheduleMinMinutes,
+            RescheduleQuietMs: rescheduleQuietMs,
             RescheduleSimulatedMs: 50,
             AutoStart: false,
             EnableOpenTelemetry: false,
@@ -1923,6 +2270,8 @@ public sealed class HiveMindPlacementOrchestrationTests
             PlacementReconcileTimeoutMs: reconcileTimeoutMs);
 
     private sealed record GetDebugProbeSnapshot;
+    private sealed record SendMessage(PID Target, object Message);
+    private sealed record SendMessageAck;
     private sealed record ForwardControlPlaneMessage(PID Target, object Message);
     private sealed record ReleaseNextDeferredAssignmentAck;
     private sealed record ReleaseNextDeferredAssignmentAckResult(string AssignmentId, bool Released);
@@ -1930,6 +2279,8 @@ public sealed class HiveMindPlacementOrchestrationTests
     private sealed record DeferredAssignmentAckSnapshot(IReadOnlyList<string> AssignmentIds);
     private sealed record ReleaseDeferredAssignmentAcks;
     private sealed record ReleaseDeferredReconcileReports;
+    private sealed record RegisterHostedShard(PID HiveMind, Guid BrainId, uint RegionId, uint ShardIndex, uint NeuronStart, uint NeuronCount);
+    private sealed record RegisterOutputSinkForBrain(PID HiveMind, Guid BrainId, PID OutputSinkPid);
 
     private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts, IReadOnlyList<DebugProbeEvent> Events)
     {
@@ -2000,6 +2351,80 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
     }
 
+    private sealed class SnapshotShardProbe : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly int _neuronStart;
+        private readonly int[] _bufferCodes;
+        private readonly byte[] _enabledBitset;
+        private readonly IReadOnlyList<SnapshotOverlayRecord> _overlays;
+
+        public SnapshotShardProbe(
+            Guid brainId,
+            ShardId32 shardId,
+            int neuronStart,
+            int[] bufferCodes,
+            byte[] enabledBitset,
+            IReadOnlyList<SnapshotOverlayRecord> overlays)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _neuronStart = neuronStart;
+            _bufferCodes = bufferCodes;
+            _enabledBitset = enabledBitset;
+            _overlays = overlays;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is SendMessage send)
+            {
+                context.Request(send.Target, send.Message);
+                context.Respond(new SendMessageAck());
+                return Task.CompletedTask;
+            }
+
+            if (context.Message is not CaptureShardSnapshot capture)
+            {
+                return Task.CompletedTask;
+            }
+
+            var response = new CaptureShardSnapshotAck
+            {
+                BrainId = _brainId.ToProtoUuid(),
+                RegionId = (uint)_shardId.RegionId,
+                ShardIndex = (uint)_shardId.ShardIndex,
+                NeuronStart = (uint)_neuronStart,
+                NeuronCount = (uint)_bufferCodes.Length,
+                Success = capture.BrainId is not null
+                          && capture.BrainId.TryToGuid(out var requestedBrainId)
+                          && requestedBrainId == _brainId
+                          && capture.RegionId == (uint)_shardId.RegionId
+                          && capture.ShardIndex == (uint)_shardId.ShardIndex
+            };
+
+            if (!response.Success)
+            {
+                response.Error = "mismatch";
+                context.Respond(response);
+                return Task.CompletedTask;
+            }
+
+            response.BufferCodes.AddRange(_bufferCodes);
+            response.EnabledBitset = Google.Protobuf.ByteString.CopyFrom(_enabledBitset);
+            response.Overlays.Add(_overlays);
+            context.Respond(response);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NullActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+            => Task.CompletedTask;
+    }
+
     private sealed class PlacementWorkerProbe : IActor
     {
         private readonly Guid _workerId;
@@ -2038,6 +2463,7 @@ public sealed class HiveMindPlacementOrchestrationTests
         public int RetryDispatchCount { get; private set; }
         public int ReconcileRequestCount { get; private set; }
         public int UnassignmentRequestCount { get; private set; }
+        public int OutputSinkUpdateCount { get; private set; }
         public int ActiveAssignmentCount => _knownAssignments.Count;
         public IReadOnlyList<ulong> ActivePlacementEpochs
             => _knownAssignments.Values.Select(static value => value.PlacementEpoch).Distinct().OrderBy(static value => value).ToArray();
@@ -2076,6 +2502,27 @@ public sealed class HiveMindPlacementOrchestrationTests
                     break;
                 case ReleaseDeferredReconcileReports:
                     FlushDeferredReconcileReports(context);
+                    break;
+                case RegisterHostedShard register:
+                    context.Request(register.HiveMind, new RegisterShard
+                    {
+                        BrainId = register.BrainId.ToProtoUuid(),
+                        RegionId = register.RegionId,
+                        ShardIndex = register.ShardIndex,
+                        ShardPid = PidLabel(context.Self),
+                        NeuronStart = register.NeuronStart,
+                        NeuronCount = register.NeuronCount
+                    });
+                    break;
+                case RegisterOutputSinkForBrain register:
+                    context.Request(register.HiveMind, new RegisterOutputSink
+                    {
+                        BrainId = register.BrainId.ToProtoUuid(),
+                        OutputPid = PidLabel(register.OutputSinkPid)
+                    });
+                    break;
+                case UpdateShardOutputSink:
+                    OutputSinkUpdateCount++;
                     break;
             }
 

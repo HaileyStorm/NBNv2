@@ -271,10 +271,32 @@ public class ProtoCompatibilityTests
         AssertField(workerInventoryEntry, "gpu_score", 11, FieldType.Float);
         AssertField(workerInventoryEntry, "capability_epoch", 12, FieldType.Fixed64);
         AssertField(workerInventoryEntry, "storage_free_bytes", 13, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "average_peer_latency_ms", 14, FieldType.Float);
+        AssertField(workerInventoryEntry, "peer_latency_sample_count", 15, FieldType.UInt32);
 
         var workerInventory = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventory");
         AssertRepeatedField(workerInventory, "workers", 1, FieldType.Message, "nbn.control.PlacementWorkerInventoryEntry");
         AssertField(workerInventory, "snapshot_ms", 2, FieldType.Fixed64);
+
+        var peerTarget = descriptor.MessageTypes.Single(message => message.Name == "PlacementPeerTarget");
+        AssertField(peerTarget, "worker_node_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(peerTarget, "worker_address", 2, FieldType.String);
+        AssertField(peerTarget, "worker_root_actor_name", 3, FieldType.String);
+
+        var peerLatencyRequest = descriptor.MessageTypes.Single(message => message.Name == "PlacementPeerLatencyRequest");
+        AssertRepeatedField(peerLatencyRequest, "peers", 1, FieldType.Message, "nbn.control.PlacementPeerTarget");
+        AssertField(peerLatencyRequest, "timeout_ms", 2, FieldType.UInt32);
+
+        var peerLatencyResponse = descriptor.MessageTypes.Single(message => message.Name == "PlacementPeerLatencyResponse");
+        AssertField(peerLatencyResponse, "worker_node_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(peerLatencyResponse, "average_peer_latency_ms", 2, FieldType.Float);
+        AssertField(peerLatencyResponse, "sample_count", 3, FieldType.UInt32);
+
+        var latencyEchoRequest = descriptor.MessageTypes.Single(message => message.Name == "PlacementLatencyEchoRequest");
+        Assert.Empty(latencyEchoRequest.Fields.InDeclarationOrder());
+
+        var latencyEchoAck = descriptor.MessageTypes.Single(message => message.Name == "PlacementLatencyEchoAck");
+        Assert.Empty(latencyEchoAck.Fields.InDeclarationOrder());
 
         var assignment = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignment");
         AssertField(assignment, "assignment_id", 1, FieldType.String);

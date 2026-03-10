@@ -93,6 +93,12 @@ public sealed class WorkerNodeActor : IActor
             case PlacementReconcileRequest request:
                 HandlePlacementReconcile(context, request);
                 break;
+            case PlacementPeerLatencyRequest request:
+                await HandlePlacementPeerLatencyAsync(context, request).ConfigureAwait(false);
+                break;
+            case PlacementLatencyEchoRequest:
+                context.Respond(new PlacementLatencyEchoAck());
+                break;
             case TickComputeDone computeDone:
                 ForwardTickCompletion(context, computeDone);
                 break;
@@ -659,6 +665,73 @@ public sealed class WorkerNodeActor : IActor
             failureReason);
 
         ReplyToSender(context, report);
+    }
+
+    private async Task HandlePlacementPeerLatencyAsync(IContext context, PlacementPeerLatencyRequest request)
+    {
+        var response = new PlacementPeerLatencyResponse
+        {
+            WorkerNodeId = _workerNodeId.ToProtoUuid()
+        };
+
+        var peers = request.Peers
+            .Where(static peer => peer is not null && !string.IsNullOrWhiteSpace(peer.WorkerRootActorName))
+            .OrderBy(static peer => peer.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(static peer => peer.WorkerRootActorName ?? string.Empty, StringComparer.Ordinal)
+            .ToArray();
+        if (peers.Length == 0)
+        {
+            ReplyToSender(context, response);
+            return;
+        }
+
+        var timeoutMs = request.TimeoutMs > 0 ? (int)request.TimeoutMs : 250;
+        double totalLatencyMs = 0;
+        var sampleCount = 0;
+
+        foreach (var peer in peers)
+        {
+            if (peer.WorkerNodeId is not null
+                && peer.WorkerNodeId.TryToGuid(out var peerNodeId)
+                && peerNodeId == _workerNodeId)
+            {
+                continue;
+            }
+
+            var target = ResolvePeerLatencyProbePid(peer);
+            if (target is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                var started = Stopwatch.GetTimestamp();
+                var ack = await context.RequestAsync<PlacementLatencyEchoAck>(
+                        target,
+                        new PlacementLatencyEchoRequest(),
+                        TimeSpan.FromMilliseconds(Math.Max(50, timeoutMs)))
+                    .ConfigureAwait(false);
+                if (ack is null)
+                {
+                    continue;
+                }
+
+                totalLatencyMs += Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                sampleCount++;
+            }
+            catch
+            {
+            }
+        }
+
+        if (sampleCount > 0)
+        {
+            response.AveragePeerLatencyMs = (float)(totalLatencyMs / sampleCount);
+            response.SampleCount = (uint)sampleCount;
+        }
+
+        ReplyToSender(context, response);
     }
 
     private WorkerNodeSnapshot BuildSnapshot()
@@ -1586,6 +1659,16 @@ public sealed class WorkerNodeActor : IActor
         }
 
         toStop[PidLabel(pid)] = pid;
+    }
+
+    private static PID? ResolvePeerLatencyProbePid(PlacementPeerTarget peer)
+    {
+        if (peer is null || string.IsNullOrWhiteSpace(peer.WorkerRootActorName))
+        {
+            return null;
+        }
+
+        return new PID(peer.WorkerAddress ?? string.Empty, peer.WorkerRootActorName);
     }
 
     private void HandleTerminated(Terminated terminated)

@@ -246,11 +246,11 @@ public sealed class HiveMindPlacementPlannerTests
 
         var workers = new[]
         {
-            new PlacementPlanner.WorkerCandidate(workerB, "worker-b:12040", "region-host", true, true, true, 8, 8L * 1024 * 1024 * 1024, 40L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 20f, 70f),
-            new PlacementPlanner.WorkerCandidate(staleWorker, "worker-c:12040", "region-host", true, true, false, 8, 8L * 1024 * 1024 * 1024, 40L * 1024 * 1024 * 1024, true, 8L * 1024 * 1024 * 1024, 30f, 65f),
-            new PlacementPlanner.WorkerCandidate(workerA, "worker-a:12040", "region-host", true, true, true, 16, 16L * 1024 * 1024 * 1024, 80L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 40f, 50f),
-            new PlacementPlanner.WorkerCandidate(offlineWorker, "worker-d:12040", "region-host", false, true, true, 16, 16L * 1024 * 1024 * 1024, 80L * 1024 * 1024 * 1024, true, 16L * 1024 * 1024 * 1024, 45f, 80f),
-            new PlacementPlanner.WorkerCandidate(unreadyWorker, "worker-e:12040", "region-host", true, false, true, 16, 16L * 1024 * 1024 * 1024, 80L * 1024 * 1024 * 1024, false, 0, 35f, 0f)
+            CreateWorkerCandidate(workerB, "worker-b:12040", isAlive: true, isReady: true, isFresh: true, cpuCores: 8, ramFreeBytes: 8L * 1024 * 1024 * 1024, storageFreeBytes: 40L * 1024 * 1024 * 1024, hasGpu: true, vramFreeBytes: 8L * 1024 * 1024 * 1024, cpuScore: 20f, gpuScore: 70f),
+            CreateWorkerCandidate(staleWorker, "worker-c:12040", isAlive: true, isReady: true, isFresh: false, cpuCores: 8, ramFreeBytes: 8L * 1024 * 1024 * 1024, storageFreeBytes: 40L * 1024 * 1024 * 1024, hasGpu: true, vramFreeBytes: 8L * 1024 * 1024 * 1024, cpuScore: 30f, gpuScore: 65f),
+            CreateWorkerCandidate(workerA, "worker-a:12040", isAlive: true, isReady: true, isFresh: true, cpuCores: 16, ramFreeBytes: 16L * 1024 * 1024 * 1024, storageFreeBytes: 80L * 1024 * 1024 * 1024, hasGpu: true, vramFreeBytes: 16L * 1024 * 1024 * 1024, cpuScore: 40f, gpuScore: 50f),
+            CreateWorkerCandidate(offlineWorker, "worker-d:12040", isAlive: false, isReady: true, isFresh: true, cpuCores: 16, ramFreeBytes: 16L * 1024 * 1024 * 1024, storageFreeBytes: 80L * 1024 * 1024 * 1024, hasGpu: true, vramFreeBytes: 16L * 1024 * 1024 * 1024, cpuScore: 45f, gpuScore: 80f),
+            CreateWorkerCandidate(unreadyWorker, "worker-e:12040", isAlive: true, isReady: false, isFresh: true, cpuCores: 16, ramFreeBytes: 16L * 1024 * 1024 * 1024, storageFreeBytes: 80L * 1024 * 1024 * 1024, hasGpu: false, vramFreeBytes: 0, cpuScore: 35f, gpuScore: 0f)
         };
 
         var shardPlan = new ShardPlan
@@ -272,7 +272,8 @@ public sealed class HiveMindPlacementPlannerTests
                 new PlacementPlanner.RegionSpan(0, 4),
                 new PlacementPlanner.RegionSpan(1, 4096),
                 new PlacementPlanner.RegionSpan(31, 2)
-            });
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>());
 
         var builtFirst = PlacementPlanner.TryBuildPlan(
             plannerInputs,
@@ -302,12 +303,126 @@ public sealed class HiveMindPlacementPlannerTests
 
         var assignedWorkers = firstPlan.Assignments.Select(AssignmentWorkerId).ToArray();
         Assert.Contains(workerA, assignedWorkers);
-        Assert.Contains(workerB, assignedWorkers);
-        Assert.Equal(1, firstPlan.Assignments.Count(assignment =>
+        Assert.DoesNotContain(workerB, assignedWorkers);
+        Assert.Equal(2, firstPlan.Assignments.Count(assignment =>
             assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
             && assignment.RegionId == 1
-            && assignment.ShardIndex == 1
-            && AssignmentWorkerId(assignment) == workerB));
+            && AssignmentWorkerId(assignment) == workerA));
+    }
+
+    [Fact]
+    public void PlacementPlanner_Prefers_LowLatency_CurrentLocality_Over_Freeer_Remote_Worker()
+    {
+        var workerA = Guid.Parse("10000000-0000-0000-0000-000000000001");
+        var workerB = Guid.Parse("10000000-0000-0000-0000-000000000002");
+        var workerC = Guid.Parse("10000000-0000-0000-0000-000000000003");
+        var brainId = Guid.Parse("20000000-0000-0000-0000-000000000001");
+
+        var workers = new[]
+        {
+            CreateWorkerCandidate(workerA, "worker-a:12040", averagePeerLatencyMs: 1.5f, peerLatencySampleCount: 2, hostedBrainCount: 2),
+            CreateWorkerCandidate(workerB, "worker-b:12040", averagePeerLatencyMs: 1.7f, peerLatencySampleCount: 2, hostedBrainCount: 2),
+            CreateWorkerCandidate(workerC, "worker-c:12040", averagePeerLatencyMs: 35f, peerLatencySampleCount: 2, hostedBrainCount: 0)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: brainId,
+            PlacementEpoch: 3,
+            RequestId: "locality-first",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 2
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 16_384),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: new[] { workerA, workerB });
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+
+        var assignedWorkers = plan.Assignments
+            .Where(static assignment => assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard)
+            .Select(AssignmentWorkerId)
+            .Distinct()
+            .OrderBy(static id => id)
+            .ToArray();
+
+        Assert.Equal(new[] { workerA, workerB }, assignedWorkers);
+        Assert.DoesNotContain(plan.Assignments, assignment => AssignmentWorkerId(assignment) == workerC);
+    }
+
+    [Fact]
+    public void PlacementPlanner_Falls_Back_To_HigherLatency_Worker_When_LocalitySubset_Is_Insufficient()
+    {
+        var workerA = Guid.Parse("30000000-0000-0000-0000-000000000001");
+        var workerB = Guid.Parse("30000000-0000-0000-0000-000000000002");
+        var workerC = Guid.Parse("30000000-0000-0000-0000-000000000003");
+        var brainId = Guid.Parse("40000000-0000-0000-0000-000000000001");
+
+        var workers = new[]
+        {
+            CreateWorkerCandidate(workerA, "worker-a:12040", averagePeerLatencyMs: 1.4f, peerLatencySampleCount: 2, hostedBrainCount: 2),
+            CreateWorkerCandidate(workerB, "worker-b:12040", averagePeerLatencyMs: 1.6f, peerLatencySampleCount: 2, hostedBrainCount: 2),
+            CreateWorkerCandidate(workerC, "worker-c:12040", averagePeerLatencyMs: 40f, peerLatencySampleCount: 2, hostedBrainCount: 0)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: brainId,
+            PlacementEpoch: 4,
+            RequestId: "locality-fallback",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 3
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 24_576),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: new[] { workerA, workerB });
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+
+        var computeWorkers = plan.Assignments
+            .Where(static assignment =>
+                assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
+                && assignment.RegionId == 1)
+            .Select(AssignmentWorkerId)
+            .Distinct()
+            .OrderBy(static id => id)
+            .ToArray();
+
+        Assert.Equal(new[] { workerA, workerB, workerC }, computeWorkers);
     }
 
     private static PlacementPlanner.PlacementPlanningResult? GetPlannedPlacement(HiveMindActor actor, Guid brainId)
@@ -343,6 +458,40 @@ public sealed class HiveMindPlacementPlannerTests
         Assert.True(assignment.WorkerNodeId!.TryToGuid(out var workerId));
         return workerId;
     }
+
+    private static PlacementPlanner.WorkerCandidate CreateWorkerCandidate(
+        Guid nodeId,
+        string workerAddress,
+        bool isAlive = true,
+        bool isReady = true,
+        bool isFresh = true,
+        uint cpuCores = 8,
+        long ramFreeBytes = 8L * 1024 * 1024 * 1024,
+        long storageFreeBytes = 40L * 1024 * 1024 * 1024,
+        bool hasGpu = true,
+        long vramFreeBytes = 8L * 1024 * 1024 * 1024,
+        float cpuScore = 30f,
+        float gpuScore = 60f,
+        float averagePeerLatencyMs = 0f,
+        uint peerLatencySampleCount = 0,
+        int hostedBrainCount = 0)
+        => new(
+            nodeId,
+            workerAddress,
+            "region-host",
+            isAlive,
+            isReady,
+            isFresh,
+            cpuCores,
+            ramFreeBytes,
+            storageFreeBytes,
+            hasGpu,
+            vramFreeBytes,
+            cpuScore,
+            gpuScore,
+            averagePeerLatencyMs,
+            peerLatencySampleCount,
+            hostedBrainCount);
 
     private static ProtoSettings.WorkerReadinessCapability BuildWorker(
         Guid nodeId,

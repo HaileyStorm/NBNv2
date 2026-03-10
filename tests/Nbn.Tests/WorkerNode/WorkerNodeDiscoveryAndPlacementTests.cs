@@ -336,6 +336,73 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementPeerLatencyRequest_Reports_PeerRoundTripSamples()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var workerAId = Guid.NewGuid();
+        var workerBId = Guid.NewGuid();
+        var workerAPid = root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(workerAId, string.Empty)),
+            $"worker-a-{Guid.NewGuid():N}");
+        var workerBPid = root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(workerBId, string.Empty)),
+            $"worker-b-{Guid.NewGuid():N}");
+
+        PlacementPeerLatencyResponse? response = null;
+        await WaitForAsync(
+            async () =>
+            {
+                response = await root.RequestAsync<PlacementPeerLatencyResponse>(
+                    workerAPid,
+                    new PlacementPeerLatencyRequest
+                    {
+                        TimeoutMs = 250,
+                        Peers =
+                        {
+                            new PlacementPeerTarget
+                            {
+                                WorkerNodeId = workerBId.ToProtoUuid(),
+                                WorkerAddress = workerBPid.Address,
+                                WorkerRootActorName = workerBPid.Id
+                            }
+                        }
+                    });
+
+                return response.SampleCount == 1;
+            },
+            timeoutMs: 5_000);
+
+        Assert.NotNull(response);
+        Assert.Equal(workerAId.ToProtoUuid().Value, response!.WorkerNodeId.Value);
+        Assert.Equal((uint)1, response.SampleCount);
+        Assert.True(response.AveragePeerLatencyMs >= 0f);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task PlacementLatencyEchoRequest_Returns_Ack()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var workerPid = root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(Guid.NewGuid(), string.Empty)),
+            $"worker-echo-{Guid.NewGuid():N}");
+
+        var response = await root.RequestAsync<PlacementLatencyEchoAck>(
+            workerPid,
+            new PlacementLatencyEchoRequest(),
+            TimeSpan.FromSeconds(5));
+
+        Assert.NotNull(response);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_TargetingWorker_ReturnsReadyAck()
     {
         using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);

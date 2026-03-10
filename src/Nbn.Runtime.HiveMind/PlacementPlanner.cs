@@ -9,6 +9,8 @@ namespace Nbn.Runtime.HiveMind;
 
 public static class PlacementPlanner
 {
+    private const int NeuronLocalityThresholdPerWorker = 8192;
+
     public readonly record struct WorkerCandidate(
         Guid NodeId,
         string WorkerAddress,
@@ -22,7 +24,10 @@ public static class PlacementPlanner
         bool HasGpu,
         long VramFreeBytes,
         float CpuScore,
-        float GpuScore);
+        float GpuScore,
+        float AveragePeerLatencyMs,
+        uint PeerLatencySampleCount,
+        int HostedBrainCount);
 
     public readonly record struct RegionSpan(int RegionId, int NeuronSpan);
 
@@ -35,7 +40,8 @@ public static class PlacementPlanner
         ulong WorkerSnapshotMs,
         int ShardStride,
         ProtoControl.ShardPlan? RequestedShardPlan,
-        IReadOnlyList<RegionSpan> Regions);
+        IReadOnlyList<RegionSpan> Regions,
+        IReadOnlyList<Guid> CurrentWorkerNodeIds);
 
     public sealed class PlacementPlanningResult
     {
@@ -130,14 +136,15 @@ public static class PlacementPlanner
 
         var stride = Math.Max(1, inputs.ShardStride);
         var shardPlan = BuildShardPlan(inputs.Regions, stride, inputs.RequestedShardPlan);
-        var warnings = shardPlan.Warnings.ToArray();
+        var warnings = shardPlan.Warnings.ToList();
         var assignments = BuildAssignments(
             inputs.BrainId,
             inputs.PlacementEpoch,
             normalizedRequestId,
             stride,
             eligibleWorkers,
-            shardPlan);
+            shardPlan,
+            inputs.CurrentWorkerNodeIds);
 
         plan = new PlacementPlanningResult(
             inputs.PlacementEpoch,
@@ -159,22 +166,33 @@ public static class PlacementPlanner
         string requestId,
         int stride,
         IReadOnlyList<WorkerCandidate> eligibleWorkers,
-        ShardPlanResult shardPlan)
+        ShardPlanResult shardPlan,
+        IReadOnlyList<Guid> currentWorkerNodeIds)
     {
         var assignments = new List<ProtoControl.PlacementAssignment>();
-        var controlWorker = SelectControlWorker(eligibleWorkers);
+        var currentWorkers = currentWorkerNodeIds?.Count > 0
+            ? currentWorkerNodeIds.ToHashSet()
+            : new HashSet<Guid>();
+        var computeShards = shardPlan.Regions
+            .OrderBy(static region => region.Key)
+            .SelectMany(static region => region.Value)
+            .Where(static shard => shard.RegionId != NbnConstants.InputRegionId && shard.RegionId != NbnConstants.OutputRegionId)
+            .ToArray();
+        var preferGpuWorkload = computeShards.Any(shard => shard.NeuronCount >= Math.Max(4096, stride * 2));
+        var controlWorker = SelectPrimaryWorker(eligibleWorkers, currentWorkers, preferGpuWorkload);
+        var computeWorkers = SelectComputeWorkers(eligibleWorkers, currentWorkers, computeShards, controlWorker, preferGpuWorkload);
+        var assignedNeurons = computeWorkers.ToDictionary(static worker => worker.NodeId, static _ => 0);
 
         AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot);
         AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetSignalRouter);
         AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetInputCoordinator);
         AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetOutputCoordinator);
 
-        var computeCursor = 0;
         foreach (var region in shardPlan.Regions.OrderBy(static entry => entry.Key))
         {
             foreach (var shard in region.Value.OrderBy(static span => span.ShardIndex))
             {
-                var worker = SelectShardWorker(shard, stride, eligibleWorkers, controlWorker, ref computeCursor);
+                var worker = SelectShardWorker(shard, stride, computeWorkers, controlWorker, assignedNeurons, currentWorkers);
                 assignments.Add(BuildShardAssignment(brainId, placementEpoch, requestId, worker, shard));
             }
         }
@@ -222,47 +240,99 @@ public static class PlacementPlanner
         return ShardPlanner.BuildPlan(header, mode, fixedShardCount, maxNeuronsPerShard);
     }
 
-    private static WorkerCandidate SelectControlWorker(IReadOnlyList<WorkerCandidate> eligibleWorkers)
-        => eligibleWorkers
-            .OrderByDescending(static worker => worker.CpuScore)
+    private static WorkerCandidate SelectPrimaryWorker(
+        IReadOnlyList<WorkerCandidate> eligibleWorkers,
+        IReadOnlySet<Guid> currentWorkers,
+        bool preferGpu)
+        => OrderWorkersForBrain(eligibleWorkers, currentWorkers, preferGpu).First();
+
+    private static IReadOnlyList<WorkerCandidate> SelectComputeWorkers(
+        IReadOnlyList<WorkerCandidate> eligibleWorkers,
+        IReadOnlySet<Guid> currentWorkers,
+        IReadOnlyList<ShardPlanSpan> computeShards,
+        WorkerCandidate controlWorker,
+        bool preferGpu)
+    {
+        var desiredWorkerCount = DetermineDesiredWorkerCount(computeShards, eligibleWorkers.Count);
+        var selected = new List<WorkerCandidate> { controlWorker };
+        foreach (var worker in OrderWorkersForBrain(eligibleWorkers, currentWorkers, preferGpu))
+        {
+            if (selected.Count >= desiredWorkerCount)
+            {
+                break;
+            }
+
+            if (selected.Any(existing => existing.NodeId == worker.NodeId))
+            {
+                continue;
+            }
+
+            selected.Add(worker);
+        }
+
+        return selected;
+    }
+
+    private static int DetermineDesiredWorkerCount(IReadOnlyList<ShardPlanSpan> computeShards, int eligibleWorkerCount)
+    {
+        if (eligibleWorkerCount <= 1 || computeShards.Count == 0)
+        {
+            return 1;
+        }
+
+        var totalComputeNeurons = computeShards.Sum(static shard => Math.Max(1, shard.NeuronCount));
+        var desired = Math.Max(1, (int)Math.Ceiling(totalComputeNeurons / (double)NeuronLocalityThresholdPerWorker));
+        desired = Math.Min(desired, computeShards.Count);
+        return Math.Clamp(desired, 1, eligibleWorkerCount);
+    }
+
+    private static IOrderedEnumerable<WorkerCandidate> OrderWorkersForBrain(
+        IEnumerable<WorkerCandidate> workers,
+        IReadOnlySet<Guid> currentWorkers,
+        bool preferGpu)
+        => workers
+            .OrderBy(static worker => worker.PeerLatencySampleCount == 0 ? 1 : 0)
+            .ThenBy(static worker => worker.PeerLatencySampleCount > 0 ? worker.AveragePeerLatencyMs : float.MaxValue)
+            .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
+            .ThenBy(static worker => worker.HostedBrainCount)
+            .ThenByDescending(worker => preferGpu && worker.HasGpu ? 1 : 0)
+            .ThenByDescending(worker => preferGpu ? worker.GpuScore : worker.CpuScore)
             .ThenByDescending(static worker => worker.CpuCores)
             .ThenByDescending(static worker => worker.GpuScore)
             .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
-            .ThenBy(static worker => worker.NodeId)
-            .First();
+            .ThenBy(static worker => worker.NodeId);
 
     private static WorkerCandidate SelectShardWorker(
         ShardPlanSpan shard,
         int stride,
-        IReadOnlyList<WorkerCandidate> eligibleWorkers,
+        IReadOnlyList<WorkerCandidate> computeWorkers,
         WorkerCandidate controlWorker,
-        ref int computeCursor)
+        Dictionary<Guid, int> assignedNeurons,
+        IReadOnlySet<Guid> currentWorkers)
     {
         if (shard.RegionId == NbnConstants.InputRegionId || shard.RegionId == NbnConstants.OutputRegionId)
         {
             return controlWorker;
         }
 
-        var preferGpu = shard.NeuronCount >= Math.Max(4096, stride * 2) && eligibleWorkers.Any(static worker => worker.HasGpu);
-        var ordered = preferGpu
-            ? eligibleWorkers
-                .OrderByDescending(static worker => worker.HasGpu)
-                .ThenByDescending(static worker => worker.GpuScore)
-                .ThenByDescending(static worker => worker.CpuScore)
-                .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
-                .ThenBy(static worker => worker.NodeId)
-                .ToArray()
-            : eligibleWorkers
-                .OrderByDescending(static worker => worker.CpuScore)
-                .ThenByDescending(static worker => worker.CpuCores)
-                .ThenByDescending(static worker => worker.HasGpu)
-                .ThenByDescending(static worker => worker.GpuScore)
-                .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
-                .ThenBy(static worker => worker.NodeId)
-                .ToArray();
+        var preferGpu = shard.NeuronCount >= Math.Max(4096, stride * 2) && computeWorkers.Any(static worker => worker.HasGpu);
+        var selected = computeWorkers
+            .OrderBy(worker => assignedNeurons.TryGetValue(worker.NodeId, out var load) ? load : 0)
+            .ThenBy(static worker => worker.PeerLatencySampleCount == 0 ? 1 : 0)
+            .ThenBy(static worker => worker.PeerLatencySampleCount > 0 ? worker.AveragePeerLatencyMs : float.MaxValue)
+            .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
+            .ThenBy(static worker => worker.HostedBrainCount)
+            .ThenByDescending(worker => preferGpu && worker.HasGpu ? 1 : 0)
+            .ThenByDescending(worker => preferGpu ? worker.GpuScore : worker.CpuScore)
+            .ThenByDescending(static worker => worker.CpuCores)
+            .ThenByDescending(static worker => worker.GpuScore)
+            .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(static worker => worker.NodeId)
+            .First();
 
-        var selected = ordered[computeCursor % ordered.Length];
-        computeCursor++;
+        assignedNeurons[selected.NodeId] = assignedNeurons.TryGetValue(selected.NodeId, out var current)
+            ? current + Math.Max(1, shard.NeuronCount)
+            : Math.Max(1, shard.NeuronCount);
         return selected;
     }
 
