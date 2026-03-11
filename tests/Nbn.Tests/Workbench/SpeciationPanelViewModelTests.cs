@@ -1096,6 +1096,63 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_SpeciesColors_ProvideDistinctWidePaletteCoverage()
+    {
+        var history = Enumerable
+            .Range(0, 47)
+            .SelectMany(index => new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 74,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(1_000 + index)
+                },
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 75,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(2_000 + index)
+                }
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.IncludeNewestSpeciesInFlowChart = false;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.ExpandedFlowChartAreas.Count == 24);
+
+        vm.UpdateExpandedFlowChartViewport(1800d, 720d, 1800d);
+        await WaitForAsync(() => vm.ExpandedFlowChartAreas.Count == 47);
+
+        var colors = vm.ExpandedFlowChartAreas
+            .Select(item => item.Stroke)
+            .ToArray();
+
+        Assert.True(vm.SpeciesColorPickerPalette.Count >= 47, $"Expected at least 47 picker colors, found {vm.SpeciesColorPickerPalette.Count}.");
+        Assert.Equal(47, colors.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        for (var index = 1; index < colors.Length; index++)
+        {
+            Assert.True(
+                CalculateColorDistance(colors[index - 1], colors[index]) >= 45d,
+                $"Expected adjacent visible species colors to remain visually distinct, but saw {colors[index - 1]} vs {colors[index]}.");
+        }
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_FlowChart_DerivedSpecies_StaysWithinSourceLineageBand()
     {
         var history = CreateMemberships(epochId: 40, speciesId: "species.beta", speciesDisplayName: "Beta", count: 5, assignedMsStart: 1_000)

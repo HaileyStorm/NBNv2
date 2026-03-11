@@ -66,6 +66,22 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     ];
     private static readonly string[] SpeciesChartPalette =
     [
+        "#0072B2",
+        "#D55E00",
+        "#009E73",
+        "#CC79A7",
+        "#F0E442",
+        "#56B4E9",
+        "#E69F00",
+        "#332288",
+        "#117733",
+        "#AA4499",
+        "#88CCEE",
+        "#DDCC77",
+        "#CC6677",
+        "#44AA99",
+        "#999933",
+        "#882255",
         "#3B82F6",
         "#E76F51",
         "#2A9D8F",
@@ -77,7 +93,39 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         "#D9467A",
         "#6D597A",
         "#00A896",
-        "#577590"
+        "#577590",
+        "#2E86AB",
+        "#F2542D",
+        "#3FA34D",
+        "#F7B267",
+        "#7B2CBF",
+        "#0FA3B1",
+        "#C8553D",
+        "#8E9A46",
+        "#FF006E",
+        "#5C4D7D",
+        "#00B4D8",
+        "#6B705C",
+        "#4361EE",
+        "#FF7F11",
+        "#2DC653",
+        "#FF9F1C",
+        "#8338EC",
+        "#06D6A0",
+        "#EF476F",
+        "#118AB2",
+        "#FFD166",
+        "#073B4C",
+        "#FB5607",
+        "#3A86FF",
+        "#FFBE0B",
+        "#8AC926",
+        "#FF595E",
+        "#1982C4",
+        "#6A4C93",
+        "#C9184A",
+        "#4CC9F0",
+        "#F72585"
     ];
     private static readonly IReadOnlyList<SpeciationColorPickerSwatchItem> SpeciesChartColorPickerPalette = BuildSpeciesColorPickerPalette();
 
@@ -4058,6 +4106,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var orderedHistory = OrderHistoryForSampling(history);
         var speciesColors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var recentColors = new Queue<string>(SpeciesColorRecentWindow);
+        var nextPaletteIndex = 0;
         foreach (var record in orderedHistory)
         {
             var speciesId = NormalizeSpeciesId(record.SpeciesId);
@@ -4066,7 +4115,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 continue;
             }
 
-            var color = ResolveSpeciesColor(speciesId, recentColors);
+            var color = TakeNextSpeciesPaletteColor(nextPaletteIndex, recentColors, out nextPaletteIndex);
             speciesColors[speciesId] = color;
             recentColors.Enqueue(color);
             if (recentColors.Count > SpeciesColorRecentWindow)
@@ -4089,44 +4138,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private static IReadOnlyList<SpeciationColorPickerSwatchItem> BuildSpeciesColorPickerPalette()
-    {
-        var colors = new List<SpeciationColorPickerSwatchItem>(SpeciesColorPickerOptionCount);
-        var seenColors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var recentColors = new Queue<string>(SpeciesColorRecentWindow);
-        for (var index = 0; index < SpeciesColorPickerOptionCount * 4 && colors.Count < SpeciesColorPickerOptionCount; index++)
-        {
-            var colorHex = NormalizeHexColor(ResolveSpeciesColor($"species-picker.{index:000}", recentColors));
-            if (string.IsNullOrWhiteSpace(colorHex) || !seenColors.Add(colorHex))
-            {
-                continue;
-            }
-
-            colors.Add(new SpeciationColorPickerSwatchItem(colorHex));
-            recentColors.Enqueue(colorHex);
-            if (recentColors.Count > SpeciesColorRecentWindow)
-            {
-                recentColors.Dequeue();
-            }
-        }
-
-        foreach (var paletteColor in SpeciesChartPalette)
-        {
-            if (colors.Count >= SpeciesColorPickerOptionCount)
-            {
-                break;
-            }
-
-            var colorHex = NormalizeHexColor(paletteColor);
-            if (string.IsNullOrWhiteSpace(colorHex) || !seenColors.Add(colorHex))
-            {
-                continue;
-            }
-
-            colors.Add(new SpeciationColorPickerSwatchItem(colorHex));
-        }
-
-        return colors;
-    }
+        => SpeciesChartPalette
+            .Select(NormalizeHexColor)
+            .Where(colorHex => !string.IsNullOrWhiteSpace(colorHex))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(SpeciesColorPickerOptionCount, SpeciesChartPalette.Length))
+            .Select(colorHex => new SpeciationColorPickerSwatchItem(colorHex))
+            .ToArray();
 
     private static bool TryExtractLineageParentSpeciesFromMetadata(
         string? metadataJson,
@@ -5232,37 +5250,51 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private static string ResolveSpeciesColor(string speciesId)
-        => ResolveSpeciesColor(speciesId, Array.Empty<string>());
+    {
+        if (string.IsNullOrWhiteSpace(speciesId))
+        {
+            return NormalizeHexColor(SpeciesChartPalette[0]);
+        }
+
+        var hash = ComputeSpeciesColorHash(speciesId);
+        var paletteIndex = (int)(hash % (uint)SpeciesChartPalette.Length);
+        return NormalizeHexColor(SpeciesChartPalette[paletteIndex]);
+    }
 
     private static string ResolveSpeciesColor(string speciesId, IEnumerable<string> recentColors)
     {
         if (string.IsNullOrWhiteSpace(speciesId))
         {
-            return SpeciesChartPalette[0];
+            return NormalizeHexColor(SpeciesChartPalette[0]);
         }
 
+        var hash = ComputeSpeciesColorHash(speciesId);
+        var startIndex = (int)(hash % (uint)SpeciesChartPalette.Length);
+        return TakeNextSpeciesPaletteColor(startIndex, recentColors, out _);
+    }
+
+    private static string TakeNextSpeciesPaletteColor(int startIndex, IEnumerable<string> recentColors, out int nextPaletteIndex)
+    {
         var guardedColors = recentColors
             .Where(color => !string.IsNullOrWhiteSpace(color))
             .Take(SpeciesColorRecentWindow)
+            .Select(NormalizeHexColor)
+            .Where(color => !string.IsNullOrWhiteSpace(color))
             .ToArray();
-        var hash = ComputeSpeciesColorHash(speciesId);
-        var hue = (hash % 360u) / 360d;
-        var saturation = (62d + ((hash >> 9) % 24u)) / 100d;
-        var lightness = (42d + ((hash >> 17) % 18u)) / 100d;
-        for (var attempt = 0; attempt < 8; attempt++)
+        for (var attempt = 0; attempt < SpeciesChartPalette.Length; attempt++)
         {
-            var candidate = HslToHex(hue, saturation, lightness);
+            var paletteIndex = (startIndex + attempt) % SpeciesChartPalette.Length;
+            var candidate = NormalizeHexColor(SpeciesChartPalette[paletteIndex]);
             if (guardedColors.All(guardedColor => !AreColorsTooSimilar(candidate, guardedColor)))
             {
+                nextPaletteIndex = (paletteIndex + 1) % SpeciesChartPalette.Length;
                 return candidate;
             }
-
-            hue = (hue + SpeciesColorHueRetryStep) % 1d;
-            saturation = Math.Clamp(saturation + (attempt % 2 == 0 ? 0.07d : -0.05d), 0.52d, 0.86d);
-            lightness = Math.Clamp(lightness + (attempt % 3 == 0 ? 0.08d : -0.06d), 0.34d, 0.68d);
         }
 
-        return HslToHex(hue, saturation, lightness);
+        var fallbackIndex = ((startIndex % SpeciesChartPalette.Length) + SpeciesChartPalette.Length) % SpeciesChartPalette.Length;
+        nextPaletteIndex = (fallbackIndex + 1) % SpeciesChartPalette.Length;
+        return NormalizeHexColor(SpeciesChartPalette[fallbackIndex]);
     }
 
     private static uint ComputeSpeciesColorHash(string speciesId)

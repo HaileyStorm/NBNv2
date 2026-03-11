@@ -23,12 +23,18 @@
                 IsHitTestVisible="{Binding IsColorEditable}"
                 Click="LegendSwatch_Click">
           <Border Width="12"
-                  Height="{Binding SwatchHeight}"
+                  Height="12"
                   CornerRadius="2"
                   VerticalAlignment="Center"
-                  Background="{Binding SwatchColor}"
+                  Background="Transparent"
                   BorderBrush="{DynamicResource NbnBorderBrush}"
-                  BorderThickness="1" />
+                  BorderThickness="1">
+            <Border Height="{Binding SwatchHeight}"
+                    Margin="1"
+                    CornerRadius="1"
+                    VerticalAlignment="Center"
+                    Background="{Binding SwatchColor}" />
+          </Border>
         </Button>
         <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
       </StackPanel>
@@ -158,7 +164,7 @@
 	    </ScrollViewer>
     <primitives:Popup x:Name="LegendColorPickerPopup"
                       IsLightDismissEnabled="True"
-                      Placement="Bottom"
+                      Placement="Pointer"
                       VerticalOffset="4"
                       Closed="LegendColorPickerPopup_Closed">
       <Border Background="{DynamicResource NbnSurfaceBrush}"

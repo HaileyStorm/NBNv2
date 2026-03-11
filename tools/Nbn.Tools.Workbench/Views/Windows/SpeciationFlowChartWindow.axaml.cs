@@ -40,14 +40,13 @@ public partial class SpeciationFlowChartWindow : Window
     private void LegendSwatch_Click(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is null
-            || sender is not Control { DataContext: SpeciationChartLegendItem legendItem } swatchButton
+            || sender is not Control { DataContext: SpeciationChartLegendItem legendItem }
             || !legendItem.IsColorEditable)
         {
             return;
         }
 
         _legendColorPickerSpeciesId = legendItem.SpeciesId;
-        LegendColorPickerPopup.PlacementTarget = swatchButton;
         LegendColorPickerPopup.IsOpen = true;
     }
 
@@ -74,10 +73,7 @@ public partial class SpeciationFlowChartWindow : Window
     }
 
     private void LegendColorPickerPopup_Closed(object? sender, System.EventArgs e)
-    {
-        _legendColorPickerSpeciesId = null;
-        LegendColorPickerPopup.PlacementTarget = null;
-    }
+        => _legendColorPickerSpeciesId = null;
 
     private void RefreshViewport()
     {
@@ -99,14 +95,13 @@ public partial class SpeciationFlowChartWindow : Window
 
     private void CloseLegendColorPicker()
     {
-        if (!LegendColorPickerPopup.IsOpen && LegendColorPickerPopup.PlacementTarget is null)
+        if (!LegendColorPickerPopup.IsOpen)
         {
             _legendColorPickerSpeciesId = null;
             return;
         }
 
         LegendColorPickerPopup.IsOpen = false;
-        LegendColorPickerPopup.PlacementTarget = null;
         _legendColorPickerSpeciesId = null;
     }
 }
