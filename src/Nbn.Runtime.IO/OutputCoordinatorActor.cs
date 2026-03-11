@@ -342,12 +342,12 @@ public sealed class OutputCoordinatorActor : IActor
 
     private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
     {
-        if (context.Sender is not null)
+        if (TryParsePid(subscriberActor, out var parsed))
         {
-            return context.Sender;
+            return parsed;
         }
 
-        return TryParsePid(subscriberActor, out var parsed) ? parsed : null;
+        return context.Sender;
     }
 
     private static string PidLabel(PID? pid)

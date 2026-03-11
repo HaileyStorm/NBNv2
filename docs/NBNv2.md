@@ -824,6 +824,7 @@ Brain lifecycle control carries backpressure pause metadata:
 * when omitted, `pause_priority` defaults to `0`
 
 **Placement:** Coordinators may be placed on any worker process(es). IO Gateway maintains their location and routes to them transparently.
+Registration/refresh metadata includes the current input/output coordinator PID labels plus ownership flags so IO Gateway can route directly to worker-hosted coordinators and preserve live state across coordinator moves.
 
 ### 13.3 Input mapping
 
@@ -2138,6 +2139,12 @@ message BrainIoInfo {
   nbn.Uuid brain_id = 1;
   uint32 input_width = 2;
   uint32 output_width = 3;
+  InputCoordinatorMode input_coordinator_mode = 4;
+  OutputVectorSource output_vector_source = 5;
+  string input_coordinator_pid = 6; // "address/id" or "id" if local
+  string output_coordinator_pid = 7; // "address/id" or "id" if local
+  bool io_gateway_owns_input_coordinator = 8;
+  bool io_gateway_owns_output_coordinator = 9;
 }
 
 message SetBrainCostEnergy {
@@ -2414,6 +2421,12 @@ message RegisterBrain {
   float plasticity_energy_cost_response_strength = 27;
   float plasticity_energy_cost_min_scale = 28;
   float plasticity_energy_cost_max_scale = 29;
+  nbn.control.InputCoordinatorMode input_coordinator_mode = 30;
+  nbn.control.OutputVectorSource output_vector_source = 31;
+  string input_coordinator_pid = 32; // "address/id" or "id" if local
+  string output_coordinator_pid = 33; // "address/id" or "id" if local
+  bool io_gateway_owns_input_coordinator = 34;
+  bool io_gateway_owns_output_coordinator = 35;
 }
 
 message UnregisterBrain {

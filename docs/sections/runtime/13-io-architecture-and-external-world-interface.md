@@ -22,6 +22,7 @@ Brain lifecycle control carries backpressure pause metadata:
 * when omitted, `pause_priority` defaults to `0`
 
 **Placement:** Coordinators may be placed on any worker process(es). IO Gateway maintains their location and routes to them transparently.
+Registration/refresh metadata includes the current input/output coordinator PID labels plus ownership flags so IO Gateway can route directly to worker-hosted coordinators and preserve live state across coordinator moves.
 
 ### 13.3 Input mapping
 

@@ -7,6 +7,7 @@ Owns IO Gateway and per-brain coordinator integration paths for external command
 - Exposes canonical IO/proto wrappers for external runtime operations, including reproduction and speciation contract calls.
 - Normalizes upstream service failures into explicit, stable contract reason codes (unavailable, empty response, request failed) before returning to callers.
 - Forwards speciation stateful and batch requests to the dedicated Speciation manager endpoint without embedding assignment policy in the gateway.
+- Tracks coordinator PID ownership/location metadata from HiveMind so input/output traffic can route to worker-hosted coordinators and preserve subscriptions/pending input state across coordinator moves.
 
 ## Maintenance guidance
 

@@ -117,6 +117,10 @@ message RegisterBrain {
   float plasticity_energy_cost_max_scale = 29;
   nbn.control.InputCoordinatorMode input_coordinator_mode = 30;
   nbn.control.OutputVectorSource output_vector_source = 31;
+  string input_coordinator_pid = 32; // "address/id" or "id" if local
+  string output_coordinator_pid = 33; // "address/id" or "id" if local
+  bool io_gateway_owns_input_coordinator = 34;
+  bool io_gateway_owns_output_coordinator = 35;
 }
 
 message UnregisterBrain {

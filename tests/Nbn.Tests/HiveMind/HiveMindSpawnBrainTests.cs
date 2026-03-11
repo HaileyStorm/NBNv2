@@ -9,6 +9,7 @@ using Nbn.Shared;
 using Nbn.Tests.Format;
 using Proto;
 using ProtoIo = Nbn.Proto.Io;
+using ProtoControl = Nbn.Proto.Control;
 using ProtoSettings = Nbn.Proto.Settings;
 using Xunit.Sdk;
 
@@ -124,10 +125,99 @@ public sealed class HiveMindSpawnBrainTests
             Assert.Equal($"worker.local/brain-{brainId:N}-root", routing.BrainRootPid);
             Assert.Equal($"worker.local/brain-{brainId:N}-router", routing.SignalRouterPid);
 
+            var ioInfo = await root.RequestAsync<ProtoControl.BrainIoInfo>(
+                hiveMind,
+                new ProtoControl.GetBrainIoInfo
+                {
+                    BrainId = brainId.ToProtoUuid()
+                });
+
+            Assert.Equal($"worker.local/brain-{brainId:N}-input", ioInfo.InputCoordinatorPid);
+            Assert.Equal($"worker.local/brain-{brainId:N}-output", ioInfo.OutputCoordinatorPid);
+            Assert.False(ioInfo.IoGatewayOwnsInputCoordinator);
+            Assert.False(ioInfo.IoGatewayOwnsOutputCoordinator);
+
             var workerSnapshot = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
                 workerPid,
                 new WorkerNodeActor.GetWorkerNodeSnapshot());
             Assert.True(workerSnapshot.TrackedAssignmentCount >= 5);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_DirectHiveMindRequest_Registers_RemoteCoordinator_Metadata_With_Io()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+            var workerAddress = "worker.local";
+            var registerTcs = new TaskCompletionSource<ProtoIo.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var ioProbe = root.SpawnNamed(
+                Props.FromProducer(() => new IoRegisterProbeActor(
+                    registerTcs,
+                    register => !string.IsNullOrWhiteSpace(register.InputCoordinatorPid)
+                                && !string.IsNullOrWhiteSpace(register.OutputCoordinatorPid))),
+                $"io-register-{Guid.NewGuid():N}");
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 1_000,
+                    retryBackoffMs: 10,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 1_000),
+                ioPid: ioProbe)));
+            var metadata = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+            var workerPid = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(workerId, workerAddress, artifactRootPath: artifactRoot)));
+
+            PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMind.Id, metadata.Id);
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var worker = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                        workerPid,
+                        new WorkerNodeActor.GetWorkerNodeSnapshot());
+                    return worker.IoGatewayEndpoint.HasValue;
+                },
+                timeoutMs: 2_000);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(70));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.NotEqual(Guid.Empty, brainId);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var register = await registerTcs.Task.WaitAsync(cts.Token);
+
+            Assert.Equal($"worker.local/brain-{brainId:N}-input", register.InputCoordinatorPid);
+            Assert.Equal($"worker.local/brain-{brainId:N}-output", register.OutputCoordinatorPid);
+            Assert.False(register.IoGatewayOwnsInputCoordinator);
+            Assert.False(register.IoGatewayOwnsOutputCoordinator);
 
             await system.ShutdownAsync();
         }
@@ -738,6 +828,30 @@ public sealed class HiveMindSpawnBrainTests
             }
 
             context.Request(context.Sender, report);
+        }
+    }
+
+    private sealed class IoRegisterProbeActor : IActor
+    {
+        private readonly TaskCompletionSource<ProtoIo.RegisterBrain> _tcs;
+        private readonly Func<ProtoIo.RegisterBrain, bool> _predicate;
+
+        public IoRegisterProbeActor(
+            TaskCompletionSource<ProtoIo.RegisterBrain> tcs,
+            Func<ProtoIo.RegisterBrain, bool> predicate)
+        {
+            _tcs = tcs;
+            _predicate = predicate;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoIo.RegisterBrain register && _predicate(register))
+            {
+                _tcs.TrySetResult(register);
+            }
+
+            return Task.CompletedTask;
         }
     }
 }

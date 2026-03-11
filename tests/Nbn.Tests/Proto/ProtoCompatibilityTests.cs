@@ -214,6 +214,10 @@ public class ProtoCompatibilityTests
         AssertField(brainIoInfo, "output_width", 3, FieldType.UInt32);
         AssertField(brainIoInfo, "input_coordinator_mode", 4, FieldType.Enum, "nbn.control.InputCoordinatorMode");
         AssertField(brainIoInfo, "output_vector_source", 5, FieldType.Enum, "nbn.control.OutputVectorSource");
+        AssertField(brainIoInfo, "input_coordinator_pid", 6, FieldType.String);
+        AssertField(brainIoInfo, "output_coordinator_pid", 7, FieldType.String);
+        AssertField(brainIoInfo, "io_gateway_owns_input_coordinator", 8, FieldType.Bool);
+        AssertField(brainIoInfo, "io_gateway_owns_output_coordinator", 9, FieldType.Bool);
 
         var snapshotOverlay = descriptor.MessageTypes.Single(message => message.Name == "SnapshotOverlayRecord");
         AssertField(snapshotOverlay, "from_address", 1, FieldType.Fixed32);
@@ -683,6 +687,10 @@ public class ProtoCompatibilityTests
         AssertField(registerBrain, "plasticity_energy_cost_max_scale", 29, FieldType.Float);
         AssertField(registerBrain, "input_coordinator_mode", 30, FieldType.Enum, "nbn.control.InputCoordinatorMode");
         AssertField(registerBrain, "output_vector_source", 31, FieldType.Enum, "nbn.control.OutputVectorSource");
+        AssertField(registerBrain, "input_coordinator_pid", 32, FieldType.String);
+        AssertField(registerBrain, "output_coordinator_pid", 33, FieldType.String);
+        AssertField(registerBrain, "io_gateway_owns_input_coordinator", 34, FieldType.Bool);
+        AssertField(registerBrain, "io_gateway_owns_output_coordinator", 35, FieldType.Bool);
     }
 
     [Fact]

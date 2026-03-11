@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Nbn.Proto;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
@@ -12,6 +13,8 @@ internal sealed class BrainIoEntry
         Guid brainId,
         PID inputPid,
         PID outputPid,
+        bool ownsInputCoordinator,
+        bool ownsOutputCoordinator,
         uint inputWidth,
         uint outputWidth,
         BrainEnergyState energy,
@@ -21,22 +24,30 @@ internal sealed class BrainIoEntry
         BrainId = brainId;
         InputPid = inputPid;
         OutputPid = outputPid;
+        OwnsInputCoordinator = ownsInputCoordinator;
+        OwnsOutputCoordinator = ownsOutputCoordinator;
         InputWidth = inputWidth;
         OutputWidth = outputWidth;
         Energy = energy;
         InputCoordinatorMode = inputCoordinatorMode;
         OutputVectorSource = outputVectorSource;
+        InputState = new InputCoordinatorShadowState(brainId, inputWidth, inputCoordinatorMode);
         RegisteredAtMs = NowMs();
     }
 
     public Guid BrainId { get; }
     public PID InputPid { get; set; }
     public PID OutputPid { get; set; }
+    public bool OwnsInputCoordinator { get; set; }
+    public bool OwnsOutputCoordinator { get; set; }
     public uint InputWidth { get; set; }
     public uint OutputWidth { get; set; }
     public BrainEnergyState Energy { get; }
     public ProtoControl.InputCoordinatorMode InputCoordinatorMode { get; set; }
     public ProtoControl.OutputVectorSource OutputVectorSource { get; set; }
+    public InputCoordinatorShadowState InputState { get; }
+    public Dictionary<string, PID> OutputSubscribers { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, PID> OutputVectorSubscribers { get; } = new(StringComparer.Ordinal);
     public ArtifactRef? BaseDefinition { get; set; }
     public ArtifactRef? LastSnapshot { get; set; }
     public bool EnergyDepletedSignaled { get; set; }

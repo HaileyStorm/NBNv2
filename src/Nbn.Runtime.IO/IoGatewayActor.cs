@@ -531,6 +531,7 @@ public sealed class IoGatewayActor : IActor
 
         if (entry is not null)
         {
+            TrackInputState(entry, message);
             context.Send(entry.InputPid, message);
         }
 
@@ -583,6 +584,8 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
+        TrackOutputSubscription(context, entry, message);
+
         if (LogOutput)
         {
             var subscriberActor = message switch
@@ -629,6 +632,7 @@ public sealed class IoGatewayActor : IActor
         try
         {
             var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, DefaultRequestTimeout);
+            entry.InputState.ApplyDrain(drain);
             context.Respond(drain);
         }
         catch (Exception ex)
@@ -932,16 +936,30 @@ public sealed class IoGatewayActor : IActor
 
         var inputCoordinatorMode = NormalizeInputCoordinatorMode(message.InputCoordinatorMode);
         var outputVectorSource = NormalizeOutputVectorSource(message.OutputVectorSource);
+        var hasRegisteredInputPid = TryParsePid(message.InputCoordinatorPid, out var registeredInputPid)
+                                    && registeredInputPid is not null;
+        var hasRegisteredOutputPid = TryParsePid(message.OutputCoordinatorPid, out var registeredOutputPid)
+                                     && registeredOutputPid is not null;
+        var registeredInputOwned = hasRegisteredInputPid && message.IoGatewayOwnsInputCoordinator;
+        var registeredOutputOwned = hasRegisteredOutputPid && message.IoGatewayOwnsOutputCoordinator;
 
         if (_brains.TryGetValue(brainId, out var existing))
         {
+            var outputWidthChanged = false;
             if (existing.InputWidth != message.InputWidth || existing.OutputWidth != message.OutputWidth)
             {
+                if (message.InputWidth > existing.InputWidth && message.InputWidth > 0)
+                {
+                    existing.InputWidth = message.InputWidth;
+                }
+
                 if (message.OutputWidth > existing.OutputWidth && message.OutputWidth > 0)
                 {
                     existing.OutputWidth = message.OutputWidth;
+                    outputWidthChanged = true;
                 }
-                else
+
+                if (existing.InputWidth != message.InputWidth && existing.OutputWidth != message.OutputWidth)
                 {
                     Console.WriteLine($"RegisterBrain width mismatch for {brainId}. Keeping existing widths.");
                 }
@@ -996,9 +1014,56 @@ public sealed class IoGatewayActor : IActor
             var inputModeChanged = existing.InputCoordinatorMode != inputCoordinatorMode;
             existing.InputCoordinatorMode = inputCoordinatorMode;
             existing.OutputVectorSource = outputVectorSource;
-            if (inputModeChanged)
+            existing.InputState.UpdateConfiguration(existing.InputWidth, inputCoordinatorMode);
+
+            var inputCoordinatorChanged = false;
+            if (hasRegisteredInputPid && registeredInputPid is not null)
+            {
+                inputCoordinatorChanged = UpdateCoordinatorReference(
+                    context,
+                    existing.InputPid,
+                    existing.OwnsInputCoordinator,
+                    registeredInputPid,
+                    registeredInputOwned,
+                    out var updatedInputPid,
+                    out var updatedOwnsInputCoordinator);
+                existing.InputPid = updatedInputPid;
+                existing.OwnsInputCoordinator = updatedOwnsInputCoordinator;
+            }
+
+            var outputCoordinatorChanged = false;
+            if (hasRegisteredOutputPid && registeredOutputPid is not null)
+            {
+                outputCoordinatorChanged = UpdateCoordinatorReference(
+                    context,
+                    existing.OutputPid,
+                    existing.OwnsOutputCoordinator,
+                    registeredOutputPid,
+                    registeredOutputOwned,
+                    out var updatedOutputPid,
+                    out var updatedOwnsOutputCoordinator);
+                existing.OutputPid = updatedOutputPid;
+                existing.OwnsOutputCoordinator = updatedOwnsOutputCoordinator;
+            }
+
+            if (inputModeChanged || inputCoordinatorChanged)
             {
                 context.Send(existing.InputPid, new UpdateInputCoordinatorMode(inputCoordinatorMode));
+            }
+
+            if (outputWidthChanged || outputCoordinatorChanged)
+            {
+                context.Send(existing.OutputPid, new UpdateOutputWidth(existing.OutputWidth));
+            }
+
+            if (inputCoordinatorChanged)
+            {
+                ReplayInputState(context, existing);
+            }
+
+            if (outputCoordinatorChanged)
+            {
+                ReplayOutputSubscriptions(context, existing);
             }
 
             if (LogMetadataDiagnostics)
@@ -1012,30 +1077,14 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        var inputName = IoNames.InputCoordinatorPrefix + brainId.ToString("N");
-        var outputName = IoNames.OutputCoordinatorPrefix + brainId.ToString("N");
-
-        PID inputPid;
-        PID outputPid;
-        try
-        {
-            inputPid = context.SpawnNamed(
-                Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth, inputCoordinatorMode)),
-                inputName);
-        }
-        catch
-        {
-            inputPid = context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, message.InputWidth, inputCoordinatorMode)));
-        }
-
-        try
-        {
-            outputPid = context.SpawnNamed(Props.FromProducer(() => new OutputCoordinatorActor(brainId, message.OutputWidth)), outputName);
-        }
-        catch
-        {
-            outputPid = context.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, message.OutputWidth)));
-        }
+        var ownsInputCoordinator = !hasRegisteredInputPid || registeredInputOwned;
+        var ownsOutputCoordinator = !hasRegisteredOutputPid || registeredOutputOwned;
+        var inputPid = hasRegisteredInputPid && registeredInputPid is not null
+            ? registeredInputPid
+            : SpawnOwnedInputCoordinator(context, brainId, message.InputWidth, inputCoordinatorMode);
+        var outputPid = hasRegisteredOutputPid && registeredOutputPid is not null
+            ? registeredOutputPid
+            : SpawnOwnedOutputCoordinator(context, brainId, message.OutputWidth);
 
         var energy = new BrainEnergyState();
         if (message.EnergyState is not null)
@@ -1075,6 +1124,8 @@ public sealed class IoGatewayActor : IActor
             brainId,
             inputPid,
             outputPid,
+            ownsInputCoordinator,
+            ownsOutputCoordinator,
             message.InputWidth,
             message.OutputWidth,
             energy,
@@ -1086,6 +1137,9 @@ public sealed class IoGatewayActor : IActor
         };
 
         _brains.Add(brainId, entry);
+
+        context.Send(entry.InputPid, new UpdateInputCoordinatorMode(inputCoordinatorMode));
+        context.Send(entry.OutputPid, new UpdateOutputWidth(entry.OutputWidth));
 
         if (LogMetadataDiagnostics)
         {
@@ -1968,7 +2022,11 @@ public sealed class IoGatewayActor : IActor
                 InputWidth = info.InputWidth,
                 OutputWidth = info.OutputWidth,
                 InputCoordinatorMode = info.InputCoordinatorMode,
-                OutputVectorSource = info.OutputVectorSource
+                OutputVectorSource = info.OutputVectorSource,
+                InputCoordinatorPid = info.InputCoordinatorPid,
+                OutputCoordinatorPid = info.OutputCoordinatorPid,
+                IoGatewayOwnsInputCoordinator = info.IoGatewayOwnsInputCoordinator,
+                IoGatewayOwnsOutputCoordinator = info.IoGatewayOwnsOutputCoordinator
             };
             await RegisterBrainAsync(context, register);
 
@@ -2324,11 +2382,170 @@ public sealed class IoGatewayActor : IActor
 
     private void StopAndRemoveBrain(IContext context, BrainIoEntry entry)
     {
-        context.Stop(entry.InputPid);
-        context.Stop(entry.OutputPid);
+        if (entry.OwnsInputCoordinator)
+        {
+            context.Stop(entry.InputPid);
+        }
+
+        if (entry.OwnsOutputCoordinator)
+        {
+            context.Stop(entry.OutputPid);
+        }
+
         _brains.Remove(entry.BrainId);
         _routerCache.Remove(entry.BrainId);
         _routerRegistration.Remove(entry.BrainId);
+    }
+
+    private static PID SpawnOwnedInputCoordinator(
+        IContext context,
+        Guid brainId,
+        uint inputWidth,
+        ProtoControl.InputCoordinatorMode inputCoordinatorMode)
+    {
+        var inputName = IoNames.InputCoordinatorPrefix + brainId.ToString("N");
+        try
+        {
+            return context.SpawnNamed(
+                Props.FromProducer(() => new InputCoordinatorActor(brainId, inputWidth, inputCoordinatorMode)),
+                inputName);
+        }
+        catch
+        {
+            return context.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, inputWidth, inputCoordinatorMode)));
+        }
+    }
+
+    private static PID SpawnOwnedOutputCoordinator(IContext context, Guid brainId, uint outputWidth)
+    {
+        var outputName = IoNames.OutputCoordinatorPrefix + brainId.ToString("N");
+        try
+        {
+            return context.SpawnNamed(
+                Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth)),
+                outputName);
+        }
+        catch
+        {
+            return context.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth)));
+        }
+    }
+
+    private static void TrackInputState(BrainIoEntry entry, object message)
+    {
+        switch (message)
+        {
+            case InputWrite inputWrite:
+                entry.InputState.Apply(inputWrite);
+                break;
+            case InputVector inputVector:
+                entry.InputState.Apply(inputVector);
+                break;
+        }
+    }
+
+    private static void TrackOutputSubscription(IContext context, BrainIoEntry entry, object message)
+    {
+        switch (message)
+        {
+            case SubscribeOutputs subscribe:
+                AddSubscriber(context, subscribe.SubscriberActor, entry.OutputSubscribers);
+                break;
+            case UnsubscribeOutputs unsubscribe:
+                RemoveSubscriber(context, unsubscribe.SubscriberActor, entry.OutputSubscribers);
+                break;
+            case SubscribeOutputsVector subscribeVector:
+                AddSubscriber(context, subscribeVector.SubscriberActor, entry.OutputVectorSubscribers);
+                break;
+            case UnsubscribeOutputsVector unsubscribeVector:
+                RemoveSubscriber(context, unsubscribeVector.SubscriberActor, entry.OutputVectorSubscribers);
+                break;
+        }
+    }
+
+    private static void AddSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
+    {
+        var subscriber = ResolveSubscriberPid(context, subscriberActor);
+        if (subscriber is null)
+        {
+            return;
+        }
+
+        set[PidKey(subscriber)] = subscriber;
+    }
+
+    private static void RemoveSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
+    {
+        var subscriber = ResolveSubscriberPid(context, subscriberActor);
+        if (subscriber is null)
+        {
+            return;
+        }
+
+        set.Remove(PidKey(subscriber));
+    }
+
+    private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
+    {
+        if (TryParsePid(subscriberActor, out var parsed) && parsed is not null)
+        {
+            return parsed;
+        }
+
+        return context.Sender;
+    }
+
+    private static bool UpdateCoordinatorReference(
+        IContext context,
+        PID currentPid,
+        bool currentlyOwned,
+        PID requestedPid,
+        bool requestedOwned,
+        out PID updatedPid,
+        out bool updatedOwned)
+    {
+        updatedPid = currentPid;
+        updatedOwned = currentlyOwned;
+        if (PidEquals(currentPid, requestedPid) && currentlyOwned == requestedOwned)
+        {
+            return false;
+        }
+
+        if (currentlyOwned && !PidEquals(currentPid, requestedPid))
+        {
+            context.Stop(currentPid);
+        }
+
+        updatedPid = requestedPid;
+        updatedOwned = requestedOwned;
+        return true;
+    }
+
+    private static void ReplayInputState(IContext context, BrainIoEntry entry)
+    {
+        context.Send(entry.InputPid, new UpdateInputCoordinatorMode(entry.InputCoordinatorMode));
+        entry.InputState.ReplayTo(context, entry.InputPid);
+    }
+
+    private static void ReplayOutputSubscriptions(IContext context, BrainIoEntry entry)
+    {
+        foreach (var subscriber in entry.OutputSubscribers.Values)
+        {
+            context.Send(entry.OutputPid, new SubscribeOutputs
+            {
+                BrainId = entry.BrainId.ToProtoUuid(),
+                SubscriberActor = PidLabel(subscriber)
+            });
+        }
+
+        foreach (var subscriber in entry.OutputVectorSubscribers.Values)
+        {
+            context.Send(entry.OutputPid, new SubscribeOutputsVector
+            {
+                BrainId = entry.BrainId.ToProtoUuid(),
+                SubscriberActor = PidLabel(subscriber)
+            });
+        }
     }
 
     private static PID? TryCreatePid(string? address, string? name)
@@ -2346,6 +2563,13 @@ public sealed class IoGatewayActor : IActor
 
     private static string PidLabel(PID? pid)
         => pid is null ? "unknown" : PidKey(pid);
+
+    private static bool PidEquals(PID? left, PID right)
+    {
+        return left is not null
+               && string.Equals(left.Id, right.Id, StringComparison.Ordinal)
+               && string.Equals(left.Address, right.Address, StringComparison.Ordinal);
+    }
 
     private static bool IsEnvTrue(string key)
     {

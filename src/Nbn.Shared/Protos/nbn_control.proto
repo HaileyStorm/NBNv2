@@ -210,6 +210,10 @@ message BrainIoInfo {
   uint32 output_width = 3;
   InputCoordinatorMode input_coordinator_mode = 4;
   OutputVectorSource output_vector_source = 5;
+  string input_coordinator_pid = 6; // "address/id" or "id" if local
+  string output_coordinator_pid = 7; // "address/id" or "id" if local
+  bool io_gateway_owns_input_coordinator = 8;
+  bool io_gateway_owns_output_coordinator = 9;
 }
 
 enum ShardPlanMode {
