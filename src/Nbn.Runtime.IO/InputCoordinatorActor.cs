@@ -34,49 +34,51 @@ public sealed class InputCoordinatorActor : IActor
         switch (context.Message)
         {
             case InputWrite message:
-                HandleInputWrite(message);
+                Respond(context, "input_write", HandleInputWrite(message));
                 break;
             case InputVector message:
-                HandleInputVector(message);
+                Respond(context, "input_vector", HandleInputVector(message));
                 break;
             case DrainInputs message:
                 Drain(context, message);
                 break;
             case UpdateInputCoordinatorMode message:
                 ApplyMode(message);
+                Respond(context, "update_input_mode", success: true);
                 break;
         }
 
         return Task.CompletedTask;
     }
 
-    private void HandleInputWrite(InputWrite message)
+    private bool HandleInputWrite(InputWrite message)
     {
         if (!TryMatchBrain(message.BrainId))
         {
-            return;
+            return false;
         }
 
         var index = message.InputIndex;
         if (index >= (uint)_inputWidth)
         {
-            return;
+            return false;
         }
 
         _values[index] = message.Value;
         MarkDirty((int)index);
+        return true;
     }
 
-    private void HandleInputVector(InputVector message)
+    private bool HandleInputVector(InputVector message)
     {
         if (!TryMatchBrain(message.BrainId))
         {
-            return;
+            return false;
         }
 
         if (message.Values.Count != _inputWidth)
         {
-            return;
+            return false;
         }
 
         for (var i = 0; i < _inputWidth; i++)
@@ -84,6 +86,8 @@ public sealed class InputCoordinatorActor : IActor
             _values[i] = message.Values[i];
             MarkDirty(i);
         }
+
+        return true;
     }
 
     private void Drain(IContext context, DrainInputs message)
@@ -209,6 +213,22 @@ public sealed class InputCoordinatorActor : IActor
             ProtoControl.InputCoordinatorMode.ReplayLatestVector => mode,
             _ => ProtoControl.InputCoordinatorMode.DirtyOnChange
         };
+    }
+
+    private void Respond(IContext context, string command, bool success)
+    {
+        if (context.Sender is null)
+        {
+            return;
+        }
+
+        context.Respond(new IoCommandAck
+        {
+            BrainId = _brainId.ToProtoUuid(),
+            Command = command,
+            Success = success,
+            Message = success ? "applied" : "ignored"
+        });
     }
 }
 

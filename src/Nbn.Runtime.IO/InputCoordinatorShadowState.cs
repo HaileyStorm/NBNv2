@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Nbn.Proto.Io;
 using Nbn.Shared;
 using Proto;
@@ -96,7 +97,7 @@ internal sealed class InputCoordinatorShadowState
         }
     }
 
-    public void ReplayTo(IContext context, PID target)
+    public async Task ReplayToAsync(Func<object, Task> dispatchAsync)
     {
         if (_mode == ProtoControl.InputCoordinatorMode.ReplayLatestVector)
         {
@@ -105,7 +106,7 @@ internal sealed class InputCoordinatorShadowState
                 BrainId = _brainId.ToProtoUuid()
             };
             vector.Values.Add(_values);
-            context.Send(target, vector);
+            await dispatchAsync(vector).ConfigureAwait(false);
             return;
         }
 
@@ -116,12 +117,12 @@ internal sealed class InputCoordinatorShadowState
                 continue;
             }
 
-            context.Send(target, new InputWrite
+            await dispatchAsync(new InputWrite
             {
                 BrainId = _brainId.ToProtoUuid(),
                 InputIndex = (uint)index,
                 Value = _values[index]
-            });
+            }).ConfigureAwait(false);
         }
     }
 

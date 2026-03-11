@@ -38,6 +38,7 @@ public sealed class OutputCoordinatorActor : IActor
                 {
                     Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleSubscriber)} total={_outputSubscribers.Count}.");
                 }
+                Respond(context, "subscribe_outputs", success: singleSubscriber is not null);
                 break;
             case UnsubscribeOutputs unsubscribe:
                 var singleUnsubscriber = ResolveSubscriberPid(context, unsubscribe.SubscriberActor);
@@ -46,6 +47,7 @@ public sealed class OutputCoordinatorActor : IActor
                 {
                     Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleUnsubscriber)} total={_outputSubscribers.Count}.");
                 }
+                Respond(context, "unsubscribe_outputs", success: singleUnsubscriber is not null);
                 break;
             case SubscribeOutputsVector subscribeVector:
                 var vectorSubscriber = ResolveSubscriberPid(context, subscribeVector.SubscriberActor);
@@ -54,6 +56,7 @@ public sealed class OutputCoordinatorActor : IActor
                 {
                     Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorSubscriber)} total={_vectorSubscribers.Count}.");
                 }
+                Respond(context, "subscribe_outputs_vector", success: vectorSubscriber is not null);
                 break;
             case UnsubscribeOutputsVector unsubscribeVector:
                 var vectorUnsubscriber = ResolveSubscriberPid(context, unsubscribeVector.SubscriberActor);
@@ -62,6 +65,7 @@ public sealed class OutputCoordinatorActor : IActor
                 {
                     Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorUnsubscriber)} total={_vectorSubscribers.Count}.");
                 }
+                Respond(context, "unsubscribe_outputs_vector", success: vectorUnsubscriber is not null);
                 break;
             case OutputEvent outputEvent:
                 EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
@@ -77,6 +81,7 @@ public sealed class OutputCoordinatorActor : IActor
                 break;
             case UpdateOutputWidth message:
                 ApplyOutputWidthUpdate(message);
+                Respond(context, "update_output_width", success: true);
                 break;
             case EmitOutputVectorSegment message:
                 EmitVectorSegment(context, message);
@@ -358,6 +363,22 @@ public sealed class OutputCoordinatorActor : IActor
         }
 
         return string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+    }
+
+    private void Respond(IContext context, string command, bool success)
+    {
+        if (context.Sender is null)
+        {
+            return;
+        }
+
+        context.Respond(new IoCommandAck
+        {
+            BrainId = _brainIdProto,
+            Command = command,
+            Success = success,
+            Message = success ? "applied" : "ignored"
+        });
     }
 
     private static bool IsEnvTrue(string key)

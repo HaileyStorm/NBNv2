@@ -532,7 +532,7 @@ public sealed class IoGatewayActor : IActor
         if (entry is not null)
         {
             TrackInputState(entry, message);
-            context.Send(entry.InputPid, message);
+            await DispatchCoordinatorMessageAsync(context, entry.InputPid, message).ConfigureAwait(false);
         }
 
         if (_hiveMindPid is null)
@@ -600,7 +600,11 @@ public sealed class IoGatewayActor : IActor
                 $"IoGateway output forward type={message.GetType().Name} sender={PidLabel(context.Sender)} subscriber={subscriberActor} target={PidLabel(entry.OutputPid)}.");
         }
 
-        context.Forward(entry.OutputPid);
+        await DispatchCoordinatorMessageAsync(
+                context,
+                entry.OutputPid,
+                NormalizeOutputSubscriptionMessage(context, message))
+            .ConfigureAwait(false);
     }
 
     private async Task HandleDrainInputsAsync(IContext context, DrainInputs message)
@@ -942,6 +946,7 @@ public sealed class IoGatewayActor : IActor
                                      && registeredOutputPid is not null;
         var registeredInputOwned = hasRegisteredInputPid && message.IoGatewayOwnsInputCoordinator;
         var registeredOutputOwned = hasRegisteredOutputPid && message.IoGatewayOwnsOutputCoordinator;
+        var shouldRegisterOutputSink = hasRegisteredOutputPid || message.IoGatewayOwnsOutputCoordinator;
 
         if (_brains.TryGetValue(brainId, out var existing))
         {
@@ -1048,22 +1053,30 @@ public sealed class IoGatewayActor : IActor
 
             if (inputModeChanged || inputCoordinatorChanged)
             {
-                context.Send(existing.InputPid, new UpdateInputCoordinatorMode(inputCoordinatorMode));
+                await DispatchCoordinatorMessageAsync(
+                        context,
+                        existing.InputPid,
+                        new UpdateInputCoordinatorMode(inputCoordinatorMode))
+                    .ConfigureAwait(false);
             }
 
             if (outputWidthChanged || outputCoordinatorChanged)
             {
-                context.Send(existing.OutputPid, new UpdateOutputWidth(existing.OutputWidth));
+                await DispatchCoordinatorMessageAsync(
+                        context,
+                        existing.OutputPid,
+                        new UpdateOutputWidth(existing.OutputWidth))
+                    .ConfigureAwait(false);
             }
 
             if (inputCoordinatorChanged)
             {
-                ReplayInputState(context, existing);
+                await ReplayInputStateAsync(context, existing).ConfigureAwait(false);
             }
 
             if (outputCoordinatorChanged)
             {
-                ReplayOutputSubscriptions(context, existing);
+                await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
             }
 
             if (LogMetadataDiagnostics)
@@ -1073,7 +1086,7 @@ public sealed class IoGatewayActor : IActor
             }
 
             await EnsureIoGatewayRegisteredAsync(context, brainId);
-            await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid);
+            await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid, shouldRegisterOutputSink);
             return;
         }
 
@@ -1138,8 +1151,16 @@ public sealed class IoGatewayActor : IActor
 
         _brains.Add(brainId, entry);
 
-        context.Send(entry.InputPid, new UpdateInputCoordinatorMode(inputCoordinatorMode));
-        context.Send(entry.OutputPid, new UpdateOutputWidth(entry.OutputWidth));
+        await DispatchCoordinatorMessageAsync(
+                context,
+                entry.InputPid,
+                new UpdateInputCoordinatorMode(inputCoordinatorMode))
+            .ConfigureAwait(false);
+        await DispatchCoordinatorMessageAsync(
+                context,
+                entry.OutputPid,
+                new UpdateOutputWidth(entry.OutputWidth))
+            .ConfigureAwait(false);
 
         if (LogMetadataDiagnostics)
         {
@@ -1148,7 +1169,7 @@ public sealed class IoGatewayActor : IActor
         }
 
         await EnsureIoGatewayRegisteredAsync(context, brainId);
-        await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid);
+        await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid, shouldRegisterOutputSink);
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)
@@ -2043,8 +2064,17 @@ public sealed class IoGatewayActor : IActor
         return null;
     }
 
-    private async Task EnsureOutputSinkRegisteredAsync(IContext context, Guid brainId, PID outputPid)
+    private async Task EnsureOutputSinkRegisteredAsync(
+        IContext context,
+        Guid brainId,
+        PID outputPid,
+        bool shouldRegisterOutputSink)
     {
+        if (!shouldRegisterOutputSink)
+        {
+            return;
+        }
+
         if (_hiveMindPid is null)
         {
             Console.WriteLine($"RegisterOutputSink skipped (no HiveMind PID) for {brainId}");
@@ -2489,10 +2519,49 @@ public sealed class IoGatewayActor : IActor
     {
         if (TryParsePid(subscriberActor, out var parsed) && parsed is not null)
         {
-            return parsed;
+            return ToRemotePid(context, parsed);
         }
 
-        return context.Sender;
+        return context.Sender is null ? null : ToRemotePid(context, context.Sender);
+    }
+
+    private static object NormalizeOutputSubscriptionMessage(IContext context, object message)
+    {
+        return message switch
+        {
+            SubscribeOutputs subscribe => new SubscribeOutputs
+            {
+                BrainId = subscribe.BrainId,
+                SubscriberActor = ResolveSubscriberActorLabel(context, subscribe.SubscriberActor)
+            },
+            UnsubscribeOutputs unsubscribe => new UnsubscribeOutputs
+            {
+                BrainId = unsubscribe.BrainId,
+                SubscriberActor = ResolveSubscriberActorLabel(context, unsubscribe.SubscriberActor)
+            },
+            SubscribeOutputsVector subscribeVector => new SubscribeOutputsVector
+            {
+                BrainId = subscribeVector.BrainId,
+                SubscriberActor = ResolveSubscriberActorLabel(context, subscribeVector.SubscriberActor)
+            },
+            UnsubscribeOutputsVector unsubscribeVector => new UnsubscribeOutputsVector
+            {
+                BrainId = unsubscribeVector.BrainId,
+                SubscriberActor = ResolveSubscriberActorLabel(context, unsubscribeVector.SubscriberActor)
+            },
+            _ => message
+        };
+    }
+
+    private static string ResolveSubscriberActorLabel(IContext context, string? subscriberActor)
+    {
+        if (!string.IsNullOrWhiteSpace(subscriberActor))
+        {
+            return subscriberActor;
+        }
+
+        var subscriberPid = ResolveSubscriberPid(context, subscriberActor);
+        return subscriberPid is null ? string.Empty : PidLabel(subscriberPid);
     }
 
     private static bool UpdateCoordinatorReference(
@@ -2521,31 +2590,42 @@ public sealed class IoGatewayActor : IActor
         return true;
     }
 
-    private static void ReplayInputState(IContext context, BrainIoEntry entry)
+    private static async Task ReplayInputStateAsync(IContext context, BrainIoEntry entry)
     {
-        context.Send(entry.InputPid, new UpdateInputCoordinatorMode(entry.InputCoordinatorMode));
-        entry.InputState.ReplayTo(context, entry.InputPid);
+        await DispatchCoordinatorMessageAsync(
+                context,
+                entry.InputPid,
+                new UpdateInputCoordinatorMode(entry.InputCoordinatorMode))
+            .ConfigureAwait(false);
+        await entry.InputState
+            .ReplayToAsync(message => DispatchCoordinatorMessageAsync(context, entry.InputPid, message))
+            .ConfigureAwait(false);
     }
 
-    private static void ReplayOutputSubscriptions(IContext context, BrainIoEntry entry)
+    private static async Task ReplayOutputSubscriptionsAsync(IContext context, BrainIoEntry entry)
     {
         foreach (var subscriber in entry.OutputSubscribers.Values)
         {
-            context.Send(entry.OutputPid, new SubscribeOutputs
+            await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputs
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
                 SubscriberActor = PidLabel(subscriber)
-            });
+            }).ConfigureAwait(false);
         }
 
         foreach (var subscriber in entry.OutputVectorSubscribers.Values)
         {
-            context.Send(entry.OutputPid, new SubscribeOutputsVector
+            await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputsVector
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
                 SubscriberActor = PidLabel(subscriber)
-            });
+            }).ConfigureAwait(false);
         }
+    }
+
+    private static async Task DispatchCoordinatorMessageAsync(IContext context, PID target, object message)
+    {
+        await context.RequestAsync<IoCommandAck>(target, message, DefaultRequestTimeout).ConfigureAwait(false);
     }
 
     private static PID? TryCreatePid(string? address, string? name)

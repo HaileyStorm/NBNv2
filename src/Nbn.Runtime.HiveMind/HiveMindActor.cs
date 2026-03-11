@@ -6856,6 +6856,8 @@ public sealed class HiveMindActor : IActor
         }
 
         var outputCoordinatorPid = brain.OutputCoordinatorPid ?? brain.OutputSinkPid;
+        var ioGatewayOwnsInputCoordinator = ResolveIoGatewayOwnsInputCoordinator(brain);
+        var ioGatewayOwnsOutputCoordinator = ResolveIoGatewayOwnsOutputCoordinator(brain, outputCoordinatorPid);
 
         return new ProtoControl.BrainIoInfo
         {
@@ -6866,8 +6868,8 @@ public sealed class HiveMindActor : IActor
             OutputVectorSource = _outputVectorSource,
             InputCoordinatorPid = brain.InputCoordinatorPid is null ? string.Empty : PidLabel(brain.InputCoordinatorPid),
             OutputCoordinatorPid = outputCoordinatorPid is null ? string.Empty : PidLabel(outputCoordinatorPid),
-            IoGatewayOwnsInputCoordinator = false,
-            IoGatewayOwnsOutputCoordinator = false
+            IoGatewayOwnsInputCoordinator = ioGatewayOwnsInputCoordinator,
+            IoGatewayOwnsOutputCoordinator = ioGatewayOwnsOutputCoordinator
         };
     }
 
@@ -7805,6 +7807,8 @@ public sealed class HiveMindActor : IActor
         var outputCoordinatorPidLabel = outputCoordinatorPid is null
             ? string.Empty
             : PidLabel(outputCoordinatorPid);
+        var ioGatewayOwnsInputCoordinator = ResolveIoGatewayOwnsInputCoordinator(brain);
+        var ioGatewayOwnsOutputCoordinator = ResolveIoGatewayOwnsOutputCoordinator(brain, outputCoordinatorPid);
 
         if (!force
             && brain.IoRegistered
@@ -7812,6 +7816,8 @@ public sealed class HiveMindActor : IActor
             && brain.IoRegisteredOutputWidth == outputWidth
             && brain.IoRegisteredInputCoordinatorMode == _inputCoordinatorMode
             && brain.IoRegisteredOutputVectorSource == _outputVectorSource
+            && brain.IoRegisteredOwnsInputCoordinator == ioGatewayOwnsInputCoordinator
+            && brain.IoRegisteredOwnsOutputCoordinator == ioGatewayOwnsOutputCoordinator
             && string.Equals(brain.IoRegisteredInputCoordinatorPid, inputCoordinatorPidLabel, StringComparison.Ordinal)
             && string.Equals(brain.IoRegisteredOutputCoordinatorPid, outputCoordinatorPidLabel, StringComparison.Ordinal))
         {
@@ -7859,8 +7865,8 @@ public sealed class HiveMindActor : IActor
             LastTickCost = brain.LastTickCost,
             InputCoordinatorPid = inputCoordinatorPidLabel,
             OutputCoordinatorPid = outputCoordinatorPidLabel,
-            IoGatewayOwnsInputCoordinator = false,
-            IoGatewayOwnsOutputCoordinator = false
+            IoGatewayOwnsInputCoordinator = ioGatewayOwnsInputCoordinator,
+            IoGatewayOwnsOutputCoordinator = ioGatewayOwnsOutputCoordinator
         };
 
         if (brain.BaseDefinition is not null)
@@ -7887,8 +7893,38 @@ public sealed class HiveMindActor : IActor
         brain.IoRegisteredOutputWidth = outputWidth;
         brain.IoRegisteredInputCoordinatorMode = _inputCoordinatorMode;
         brain.IoRegisteredOutputVectorSource = _outputVectorSource;
+        brain.IoRegisteredOwnsInputCoordinator = ioGatewayOwnsInputCoordinator;
+        brain.IoRegisteredOwnsOutputCoordinator = ioGatewayOwnsOutputCoordinator;
         brain.IoRegisteredInputCoordinatorPid = inputCoordinatorPidLabel;
         brain.IoRegisteredOutputCoordinatorPid = outputCoordinatorPidLabel;
+    }
+
+    private static bool ResolveIoGatewayOwnsInputCoordinator(BrainState brain)
+        => brain.InputCoordinatorPid is null
+           && !HasPlacementAssignmentTarget(brain, ProtoControl.PlacementAssignmentTarget.PlacementTargetInputCoordinator);
+
+    private static bool ResolveIoGatewayOwnsOutputCoordinator(BrainState brain, PID? outputCoordinatorPid)
+        => outputCoordinatorPid is null
+           && !HasPlacementAssignmentTarget(brain, ProtoControl.PlacementAssignmentTarget.PlacementTargetOutputCoordinator);
+
+    private static bool HasPlacementAssignmentTarget(BrainState brain, ProtoControl.PlacementAssignmentTarget target)
+    {
+        var execution = brain.PlacementExecution;
+        if (execution is null)
+        {
+            return false;
+        }
+
+        foreach (var assignmentState in execution.Assignments.Values)
+        {
+            if (assignmentState.Assignment.Target == target
+                && assignmentState.Assignment.PlacementEpoch == brain.PlacementEpoch)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID? outputSink)
@@ -8181,6 +8217,8 @@ public sealed class HiveMindActor : IActor
         public uint IoRegisteredOutputWidth { get; set; }
         public string IoRegisteredInputCoordinatorPid { get; set; } = string.Empty;
         public string IoRegisteredOutputCoordinatorPid { get; set; } = string.Empty;
+        public bool IoRegisteredOwnsInputCoordinator { get; set; }
+        public bool IoRegisteredOwnsOutputCoordinator { get; set; }
         public ProtoControl.InputCoordinatorMode IoRegisteredInputCoordinatorMode { get; set; } =
             ProtoControl.InputCoordinatorMode.DirtyOnChange;
         public ProtoControl.OutputVectorSource IoRegisteredOutputVectorSource { get; set; } =
