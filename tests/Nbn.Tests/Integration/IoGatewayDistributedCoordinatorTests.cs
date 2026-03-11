@@ -339,6 +339,76 @@ public sealed class IoGatewayDistributedCoordinatorTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task ForwardInput_Refreshes_RouterRegistration_When_BrainRouting_Changes()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var routerA = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var routerB = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerA,
+            inputWidth: 1,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.25f }
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+                    routerA,
+                    new InputRouterProbeActor.GetSnapshot());
+                return snapshot.InputVectorCount >= 1 && snapshot.RegisterIoGatewayCount >= 1;
+            },
+            timeoutMs: 2_000);
+
+        root.Send(hivePid, new BrainIoInfoHiveProbeActor.UpdateRouter(routerB));
+
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.5f }
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+                    routerB,
+                    new InputRouterProbeActor.GetSnapshot());
+                return snapshot.InputVectorCount >= 1 && snapshot.RegisterIoGatewayCount >= 1;
+            },
+            timeoutMs: 2_000);
+
+        var routerASnapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+            routerA,
+            new InputRouterProbeActor.GetSnapshot());
+        var routerBSnapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+            routerB,
+            new InputRouterProbeActor.GetSnapshot());
+
+        Assert.Equal(1, routerASnapshot.InputVectorCount);
+        Assert.Equal(1, routerBSnapshot.InputVectorCount);
+        Assert.Equal(1, routerASnapshot.RegisterIoGatewayCount);
+        Assert.Equal(1, routerBSnapshot.RegisterIoGatewayCount);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -388,7 +458,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private readonly Guid _brainId;
         private readonly PID _inputCoordinatorPid;
         private readonly PID _outputCoordinatorPid;
-        private readonly PID _routerPid;
+        private PID _routerPid;
         private readonly uint _inputWidth;
         private readonly uint _outputWidth;
         private readonly ProtoControl.InputCoordinatorMode _inputMode;
@@ -414,6 +484,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
         }
 
         public sealed record GetSnapshot;
+
+        public sealed record UpdateRouter(PID RouterPid);
 
         public sealed record Snapshot(int RegisterOutputSinkCount, string LastOutputSinkPid);
 
@@ -442,12 +514,49 @@ public sealed class IoGatewayDistributedCoordinatorTests
                         SignalRouterPid = PidLabel(_routerPid)
                     });
                     break;
+                case UpdateRouter update:
+                    _routerPid = update.RouterPid;
+                    break;
                 case ProtoControl.RegisterOutputSink register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
                     _registerOutputSinkCount++;
                     _lastOutputSinkPid = register.OutputPid ?? string.Empty;
                     break;
                 case GetSnapshot:
                     context.Respond(new Snapshot(_registerOutputSinkCount, _lastOutputSinkPid));
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class InputRouterProbeActor : IActor
+    {
+        private readonly Guid _brainId;
+        private int _inputVectorCount;
+        private int _registerIoGatewayCount;
+
+        public InputRouterProbeActor(Guid brainId)
+        {
+            _brainId = brainId;
+        }
+
+        public sealed record GetSnapshot;
+
+        public sealed record Snapshot(int InputVectorCount, int RegisterIoGatewayCount);
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case InputVector input when input.BrainId.TryToGuid(out var brainId) && brainId == _brainId:
+                    _inputVectorCount++;
+                    break;
+                case RegisterIoGateway register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
+                    _registerIoGatewayCount++;
+                    break;
+                case GetSnapshot:
+                    context.Respond(new Snapshot(_inputVectorCount, _registerIoGatewayCount));
                     break;
             }
 

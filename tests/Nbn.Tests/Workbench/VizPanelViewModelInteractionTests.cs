@@ -686,6 +686,60 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void SelectedBrain_ManualChange_UpdatesIoPanelVectorSendTarget()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        client.BrainInfoById[brainA.BrainId] = new BrainInfo { InputWidth = 1, OutputWidth = 1 };
+        client.BrainInfoById[brainB.BrainId] = new BrainInfo { InputWidth = 1, OutputWidth = 1 };
+
+        vm.SetBrains(new[] { brainA, brainB });
+        vm.SelectedBrain = brainB;
+        vm.Brain.InputVectorText = "1";
+        vm.Brain.SendVectorCommand.Execute(null);
+
+        vm.SelectedBrain = brainA;
+        vm.Brain.InputVectorText = "1";
+        vm.Brain.SendVectorCommand.Execute(null);
+
+        Assert.Equal(2, client.InputVectorCalls.Count);
+        Assert.Equal(brainB.BrainId, client.InputVectorCalls[0].BrainId);
+        Assert.Equal(brainA.BrainId, client.InputVectorCalls[1].BrainId);
+    }
+
+    [Fact]
+    public void SetBrains_NewBrainArrival_DoesNotRetargetIoPanelVectorSendAwayFromSelection()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = new BrainListItem(Guid.NewGuid(), "A", true);
+        var brainB = new BrainListItem(Guid.NewGuid(), "B", true);
+        var brainC = new BrainListItem(Guid.NewGuid(), "C", true);
+        client.BrainInfoById[brainA.BrainId] = new BrainInfo { InputWidth = 1, OutputWidth = 1 };
+        client.BrainInfoById[brainB.BrainId] = new BrainInfo { InputWidth = 1, OutputWidth = 1 };
+        client.BrainInfoById[brainC.BrainId] = new BrainInfo { InputWidth = 1, OutputWidth = 1 };
+
+        vm.SetBrains(new[] { brainA, brainB });
+        vm.SelectedBrain = brainA;
+
+        vm.SetBrains(new[]
+        {
+            new BrainListItem(brainC.BrainId, "C", true),
+            new BrainListItem(brainA.BrainId, "A refreshed", true),
+            new BrainListItem(brainB.BrainId, "B refreshed", true)
+        });
+
+        vm.Brain.InputVectorText = "1";
+        vm.Brain.SendVectorCommand.Execute(null);
+
+        var sent = Assert.Single(client.InputVectorCalls);
+        Assert.Equal(brainA.BrainId, sent.BrainId);
+        Assert.Equal(brainA.BrainId, vm.SelectedBrain?.BrainId);
+    }
+
+    [Fact]
     public void SetBrains_DoesNotForceFirstBrainWhenSelectionTemporarilyMissing()
     {
         var vm = CreateViewModel();
@@ -1438,6 +1492,7 @@ public class VizPanelViewModelInteractionTests
         public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
         public Dictionary<string, string> SettingsByKey { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<(string Key, string Value)> SetSettingCalls { get; } = new();
+        public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
         public HiveMindStatus? HiveMindStatusResponse { get; set; }
 
         public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
@@ -1464,6 +1519,11 @@ public class VizPanelViewModelInteractionTests
 
         public override Task<HiveMindStatus?> GetHiveMindStatusAsync()
             => Task.FromResult(HiveMindStatusResponse);
+
+        public override void SendInputVector(Guid brainId, IReadOnlyList<float> values)
+        {
+            InputVectorCalls.Add((brainId, values.ToArray()));
+        }
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

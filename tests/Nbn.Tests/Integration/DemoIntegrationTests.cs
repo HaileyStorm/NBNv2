@@ -13,10 +13,13 @@ using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
 using Nbn.Runtime.Observability;
 using Nbn.Runtime.RegionHost;
+using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.HiveMind;
+using Nbn.Tests.Format;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoSettings = Nbn.Proto.Settings;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
 using Proto;
@@ -169,7 +172,10 @@ public class DemoIntegrationTests
             var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
             var nbnBytes = BuildDemoNbnWithInput();
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
-            var nbnRef = BuildArtifactRef(manifest);
+            var nbnRef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)manifest.ByteLength,
+                "application/x-nbn",
+                artifactRoot);
 
             var options = CreateOptions(hiveNode.Port, ioAddress: ioNode.Address, ioName: IoNames.Gateway);
             var hiveMindLocal = hiveNode.Root.SpawnNamed(
@@ -342,7 +348,10 @@ public class DemoIntegrationTests
             var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
             var nbnBytes = BuildDemoNbnWithInput();
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
-            var nbnRef = BuildArtifactRef(manifest);
+            var nbnRef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)manifest.ByteLength,
+                "application/x-nbn",
+                artifactRoot);
 
             var vizHubLocal = obsNode.Root.SpawnNamed(
                 Props.FromProducer(() => new VizHubActor()),
@@ -498,6 +507,202 @@ public class DemoIntegrationTests
                 vizEvent.TickId,
                 statusBefore.LastCompletedTickId + 1,
                 statusBefore.LastCompletedTickId + 32);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnedBrains_ViaIoGateway_WhileTicking_Keep_InputVectors_Working_For_Earlier_And_Later_Brains()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-demo-spawn-io-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var hiveNode = await RemoteTestNode.StartAsync(BuildHiveMindConfig(GetFreePort()));
+            await using var ioNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+            await using var workerNode = await RemoteTestNode.StartAsync(BuildRemoteConfig(GetFreePort()));
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var nbnBytes = BuildDemoNbnWithInput();
+            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
+            var nbnRef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)manifest.ByteLength,
+                "application/x-nbn",
+                artifactRoot);
+
+            var hiveOptions = CreateOptions(hiveNode.Port, ioAddress: ioNode.Address, ioName: IoNames.Gateway);
+            var hiveMindLocal = hiveNode.Root.SpawnNamed(
+                Props.FromProducer(() => new HiveMindActor(hiveOptions)),
+                HiveMindNames.HiveMind);
+
+            var ioOptions = new IoOptions(
+                BindHost: "127.0.0.1",
+                Port: ioNode.Port,
+                AdvertisedHost: null,
+                AdvertisedPort: null,
+                GatewayName: IoNames.Gateway,
+                ServerName: "nbn.io.tests",
+                SettingsHost: null,
+                SettingsPort: 0,
+                SettingsName: "SettingsMonitor",
+                HiveMindAddress: hiveNode.Address,
+                HiveMindName: HiveMindNames.HiveMind,
+                ReproAddress: null,
+                ReproName: null);
+            var ioGatewayLocal = ioNode.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
+                IoNames.Gateway);
+            var ioPid = new PID(ioNode.Address, ioGatewayLocal.Id);
+
+            var workerId = Guid.NewGuid();
+            var workerRoot = workerNode.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(workerId, workerNode.Address, artifactRootPath: artifactRoot)),
+                "worker-node");
+
+            PrimeWorkerDiscoveryEndpoints(
+                workerNode.Root,
+                workerRoot,
+                hiveNode.Address,
+                hiveMindLocal.Id,
+                ioNode.Address,
+                ioGatewayLocal.Id);
+            PrimeWorkers(
+                hiveNode.Root,
+                hiveMindLocal,
+                workerId,
+                workerNode.Address,
+                workerRoot.Id);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var worker = await workerNode.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                        workerRoot,
+                        new WorkerNodeActor.GetWorkerNodeSnapshot());
+                    return worker.IoGatewayEndpoint.HasValue
+                           && worker.HiveMindEndpoint.HasValue;
+                },
+                timeout: TimeSpan.FromSeconds(5));
+
+            async Task<Guid> SpawnBrainAsync()
+            {
+                var response = await ioNode.Root.RequestAsync<SpawnBrainViaIOAck>(
+                    ioPid,
+                    new SpawnBrainViaIO
+                    {
+                        Request = new ProtoControl.SpawnBrain
+                        {
+                            BrainDef = nbnRef
+                        }
+                    },
+                    TimeSpan.FromSeconds(70));
+
+                Assert.NotNull(response.Ack);
+                Assert.True(response.Ack.BrainId.TryToGuid(out var brainId));
+                Assert.True(
+                    brainId != Guid.Empty,
+                    $"Spawn failed: reason={response.Ack.FailureReasonCode} message={response.Ack.FailureMessage}");
+                Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode), response.Ack.FailureMessage);
+                return brainId;
+            }
+
+            var brainA = await SpawnBrainAsync();
+
+            await WaitForBrainInfo(
+                ioNode.Root,
+                ioPid,
+                brainA,
+                info => info.InputWidth > 0 && info.OutputWidth > 0,
+                TimeSpan.FromSeconds(5));
+
+            await WaitForStatus(
+                hiveNode.Root,
+                hiveMindLocal,
+                status => status.RegisteredBrains >= 1 && status.RegisteredShards > 0,
+                TimeSpan.FromSeconds(10));
+
+            hiveNode.Root.Send(hiveMindLocal, new StartTickLoop());
+
+            var brainB = await SpawnBrainAsync();
+            Assert.NotEqual(brainA, brainB);
+
+            await WaitForBrainInfo(
+                ioNode.Root,
+                ioPid,
+                brainB,
+                info => info.InputWidth > 0 && info.OutputWidth > 0,
+                TimeSpan.FromSeconds(10));
+
+            await WaitForStatus(
+                hiveNode.Root,
+                hiveMindLocal,
+                status => status.RegisteredBrains >= 2 && status.RegisteredShards >= 6,
+                TimeSpan.FromSeconds(10));
+
+            var infoA = await ioNode.Root.RequestAsync<BrainInfo>(
+                ioPid,
+                new BrainInfoRequest { BrainId = brainA.ToProtoUuid() },
+                TimeSpan.FromSeconds(5));
+            var infoB = await ioNode.Root.RequestAsync<BrainInfo>(
+                ioPid,
+                new BrainInfoRequest { BrainId = brainB.ToProtoUuid() },
+                TimeSpan.FromSeconds(5));
+
+            Assert.True(infoA.InputWidth > 0);
+            Assert.True(infoB.InputWidth > 0);
+            var valuesA = Enumerable.Repeat(1f, checked((int)infoA.InputWidth)).ToArray();
+            var valuesB = Enumerable.Repeat(1f, checked((int)infoB.InputWidth)).ToArray();
+
+            async Task<OutputEvent> SendVectorAndWaitForOutputAsync(Guid brainId, float[] values)
+            {
+                var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var outputSink = ioNode.Root.Spawn(Props.FromProducer(() => new OutputSinkActor(brainId, outputTcs)));
+                var subscribeAck = await ioNode.Root.RequestAsync<IoCommandAck>(
+                    ioPid,
+                    new SubscribeOutputs
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SubscriberActor = $"{ioNode.Address}/{outputSink.Id}"
+                    },
+                    TimeSpan.FromSeconds(5));
+                Assert.True(subscribeAck.Success, $"SubscribeOutputs failed for {brainId:D}: {subscribeAck.Message}");
+
+                ioNode.Root.Send(ioPid, new InputVector
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    Values = { values }
+                });
+
+                using var outputTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                return await outputTcs.Task.WaitAsync(outputTimeout.Token);
+            }
+
+            var outputA1 = await SendVectorAndWaitForOutputAsync(brainA, valuesA);
+            var outputB = await SendVectorAndWaitForOutputAsync(brainB, valuesB);
+            var outputA2 = await SendVectorAndWaitForOutputAsync(brainA, valuesA);
+
+            hiveNode.Root.Send(hiveMindLocal, new StopTickLoop());
+
+            Assert.True(outputA1.BrainId.TryToGuid(out var outputBrainA1) && outputBrainA1 == brainA);
+            Assert.True(outputB.BrainId.TryToGuid(out var outputBrainB) && outputBrainB == brainB);
+            Assert.True(outputA2.BrainId.TryToGuid(out var outputBrainA2) && outputBrainA2 == brainA);
+            Assert.Equal(0u, outputA1.OutputIndex);
+            Assert.Equal(0u, outputB.OutputIndex);
+            Assert.Equal(0u, outputA2.OutputIndex);
+            Assert.True(outputA1.Value > 0f);
+            Assert.True(outputB.Value > 0f);
+            Assert.True(outputA2.Value > 0f);
+            Assert.True(outputA1.TickId >= 1);
+            Assert.True(outputB.TickId >= 1);
+            Assert.True(outputA2.TickId > outputA1.TickId);
         }
         finally
         {
@@ -901,6 +1106,100 @@ public class DemoIntegrationTests
         throw new TimeoutException(
             $"IO brain info did not reach expected state. Last: input={lastInfo?.InputWidth}, output={lastInfo?.OutputWidth}.");
     }
+
+    private static async Task WaitForAsync(Func<Task<bool>> predicate, TimeSpan timeout)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (await predicate().ConfigureAwait(false))
+            {
+                return;
+            }
+
+            await Task.Delay(20).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException($"Condition was not met within {timeout.TotalMilliseconds:0} ms.");
+    }
+
+    private static void PrimeWorkerDiscoveryEndpoints(
+        IRootContext root,
+        PID workerRoot,
+        string hiveAddress,
+        string hiveName,
+        string ioAddress,
+        string ioName)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+        {
+            [ServiceEndpointSettings.HiveMindKey] = new ServiceEndpointRegistration(
+                ServiceEndpointSettings.HiveMindKey,
+                new ServiceEndpoint(hiveAddress, hiveName),
+                nowMs),
+            [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                ServiceEndpointSettings.IoGatewayKey,
+                new ServiceEndpoint(ioAddress, ioName),
+                nowMs)
+        };
+
+        root.Send(workerRoot, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+    }
+
+    private static void PrimeWorkers(
+        IRootContext root,
+        PID hiveMind,
+        Guid workerId,
+        string workerAddress,
+        string workerRootActor)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: workerAddress,
+                    rootActorName: workerRootActor)
+            }
+        });
+    }
+
+    private static ProtoSettings.WorkerReadinessCapability BuildWorker(
+        Guid nodeId,
+        bool isAlive,
+        bool isReady,
+        long lastSeenMs,
+        long capabilityTimeMs,
+        string address,
+        string rootActorName)
+        => new()
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            Address = address,
+            RootActorName = rootActorName,
+            IsAlive = isAlive,
+            IsReady = isReady,
+            LastSeenMs = lastSeenMs > 0 ? (ulong)lastSeenMs : 0,
+            HasCapabilities = capabilityTimeMs > 0,
+            CapabilityTimeMs = capabilityTimeMs > 0 ? (ulong)capabilityTimeMs : 0,
+            Capabilities = new ProtoSettings.NodeCapabilities
+            {
+                CpuCores = 8,
+                RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                HasGpu = true,
+                VramFreeBytes = 8UL * 1024 * 1024 * 1024,
+                CpuScore = 40f,
+                GpuScore = 80f
+            }
+        };
 
     private static HiveMindOptions CreateOptions(
         int port,

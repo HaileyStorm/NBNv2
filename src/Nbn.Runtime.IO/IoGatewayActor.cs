@@ -548,7 +548,7 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        var routerPid = await ResolveRouterPidAsync(context, brainId).ConfigureAwait(false);
+        var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
         if (routerPid is null)
         {
             return;
@@ -564,7 +564,7 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        var routerPid = await ResolveRouterPidAsync(context, brainId).ConfigureAwait(false);
+        var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
         if (routerPid is null)
         {
             return;
@@ -2067,7 +2067,7 @@ public sealed class IoGatewayActor : IActor
 
         try
         {
-            await ResolveRouterPidAsync(context, brainId).ConfigureAwait(false);
+            await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -2816,9 +2816,10 @@ public sealed class IoGatewayActor : IActor
         };
     }
 
-    private async Task<PID?> ResolveRouterPidAsync(IContext context, Guid brainId)
+    private async Task<PID?> ResolveRouterPidAsync(IContext context, Guid brainId, bool allowCached = true)
     {
-        if (_routerCache.TryGetValue(brainId, out var cached))
+        _routerCache.TryGetValue(brainId, out var cached);
+        if (allowCached && cached is not null)
         {
             return cached;
         }
@@ -2838,11 +2839,16 @@ public sealed class IoGatewayActor : IActor
 
             if (info is null)
             {
-                return null;
+                return cached;
             }
 
             if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
             {
+                if (!PidEquals(cached, routerPid))
+                {
+                    _routerRegistration.Remove(brainId);
+                }
+
                 _routerCache[brainId] = routerPid;
                 RegisterIoGatewayPid(context, brainId, routerPid);
                 return routerPid;
@@ -2850,6 +2856,11 @@ public sealed class IoGatewayActor : IActor
 
             if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
             {
+                if (!PidEquals(cached, rootPid))
+                {
+                    _routerRegistration.Remove(brainId);
+                }
+
                 _routerCache[brainId] = rootPid;
                 RegisterIoGatewayPid(context, brainId, rootPid);
                 return rootPid;
@@ -2860,7 +2871,7 @@ public sealed class IoGatewayActor : IActor
             Console.WriteLine($"Resolve router failed: {ex.Message}");
         }
 
-        return null;
+        return cached;
     }
 
     private static bool TryParsePid(string? value, out PID? pid)
