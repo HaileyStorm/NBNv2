@@ -758,14 +758,16 @@ public class SpeciationPanelViewModelTests
         vm.UpdateFlowChartHover(alpha, sample.Bands[0].StartX + 1d, sample.CenterY);
 
         Assert.True(vm.IsFlowChartHoverCardVisible);
+        Assert.Equal("Alpha", vm.FlowChartHoverCardTitle);
+        Assert.Equal(alpha.Stroke, vm.FlowChartHoverCardSwatchColor);
         Assert.Contains("Alpha", vm.FlowChartHoverCardText, StringComparison.Ordinal);
-        Assert.Contains("Epoch 10", vm.FlowChartHoverCardText, StringComparison.Ordinal);
-        Assert.Contains("Population 2 of 3", vm.FlowChartHoverCardText, StringComparison.Ordinal);
-        Assert.Contains("66.7", vm.FlowChartHoverCardText, StringComparison.Ordinal);
+        Assert.Contains("Epoch 10", vm.FlowChartHoverCardDetail, StringComparison.Ordinal);
+        Assert.Contains("Population 2 of 3", vm.FlowChartHoverCardDetail, StringComparison.Ordinal);
+        Assert.Contains("66.7", vm.FlowChartHoverCardDetail, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_FlowChart_CapsVisibleSpeciesAtElevenPlusOtherBucket()
+    public async Task RefreshHistoryCommand_FlowChart_ShowsAllSpeciesWhenTotalFitsVisiblePlusOtherCapacity()
     {
         var history = Enumerable
             .Range(0, 12)
@@ -803,9 +805,9 @@ public class SpeciationPanelViewModelTests
         vm.RefreshHistoryCommand.Execute(null);
         await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
 
-        Assert.Contains("11/12 visible species + Other", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
-        Assert.Contains(vm.FlowChartLegend, item => string.Equals(item.Label, "Other species", StringComparison.Ordinal));
+        Assert.Contains("12/12 visible species", vm.FlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartLegend, item => string.Equals(item.Label, "Other species", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -880,6 +882,56 @@ public class SpeciationPanelViewModelTests
         Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.12", StringComparison.Ordinal));
         Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.14", StringComparison.Ordinal));
         Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_DefaultMixedMode_NewestBucketPrefersPopulationAboveTwo()
+    {
+        var descendantCounts = new Dictionary<int, int>
+        {
+            [1] = 40,
+            [2] = 39,
+            [3] = 38,
+            [4] = 37,
+            [5] = 36,
+            [6] = 35,
+            [7] = 34,
+            [8] = 33,
+            [9] = 32,
+            [10] = 5,
+            [11] = 4,
+            [12] = 3,
+            [13] = 2,
+            [14] = 1
+        };
+        var history = CreateMemberships(epochId: 27, speciesId: "species.root", speciesDisplayName: "Root", count: 1, assignedMsStart: 1_000)
+            .Concat(descendantCounts.SelectMany(entry => CreateMemberships(
+                epochId: 27,
+                speciesId: $"species.branch.{entry.Key:00}",
+                speciesDisplayName: $"Branch {entry.Key:00}",
+                count: entry.Value,
+                assignedMsStart: (ulong)(2_000 + (entry.Key * 100)),
+                parentSpeciesId: "species.root",
+                parentSpeciesDisplayName: "Root")))
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
+
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.08", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.12", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.13", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.14", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -994,6 +1046,53 @@ public class SpeciationPanelViewModelTests
 
         Assert.Contains("47/60 visible species + Other", vm.ExpandedFlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(vm.ExpandedFlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UpdateExpandedFlowChartViewport_ShowsAllSpeciesWhenWideWindowFitsVisiblePlusOtherCapacity()
+    {
+        var history = Enumerable
+            .Range(0, 48)
+            .SelectMany(index => new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 72,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(1_000 + index)
+                },
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 73,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(2_000 + index)
+                }
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.IncludeNewestSpeciesInFlowChart = false;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.ExpandedFlowChartAreas.Count == 24);
+
+        vm.UpdateExpandedFlowChartViewport(1800d, 720d, 1800d);
+        await WaitForAsync(() => vm.ExpandedFlowChartAreas.Count == 48);
+
+        Assert.Contains("48/48 visible species", vm.ExpandedFlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(vm.ExpandedFlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
     }
 
     [Fact]

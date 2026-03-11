@@ -353,16 +353,34 @@
           <StackPanel Spacing="8">
             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
               <TextBlock Text="Species Flow (Epoch Top to Bottom)" Classes="card-title" />
-              <CheckBox Grid.Column="1"
-                        Content="Include newest"
-                        IsChecked="{Binding IncludeNewestSpeciesInFlowChart}"
-                        VerticalAlignment="Center"
-                        ToolTip.Tip="Blend newer species into the visible flow selection while preserving founder-family balancing." />
-              <Button Grid.Column="2"
-                      Content="Pop Out"
-                      MinWidth="72"
-                      Click="OpenFlowChartPopout_Click"
-                      ToolTip.Tip="Open a larger responsive Species Flow window." />
+	              <CheckBox Grid.Column="1"
+	                        Content="Include newest"
+	                        IsChecked="{Binding IncludeNewestSpeciesInFlowChart}"
+	                        VerticalAlignment="Center"
+	                        ToolTip.Tip="Blend newer species into the visible flow selection while preserving founder-family balancing." />
+	              <Button Grid.Column="2"
+	                      Width="28"
+	                      Height="28"
+	                      Padding="0"
+	                      Click="OpenFlowChartPopout_Click"
+	                      ToolTip.Tip="Open a larger responsive Species Flow window.">
+	                <Viewbox Width="12" Height="12">
+	                  <Canvas Width="12" Height="12">
+	                    <shapes:Path Data="M1.5,4.5 V10.5 H7.5"
+	                                 Stroke="{DynamicResource NbnInkBrush}"
+	                                 StrokeThickness="1.2"
+	                                 StrokeLineCap="Square" />
+	                    <shapes:Path Data="M5.5,1.5 H10.5 V6.5"
+	                                 Stroke="{DynamicResource NbnInkBrush}"
+	                                 StrokeThickness="1.2"
+	                                 StrokeLineCap="Square" />
+	                    <shapes:Path Data="M10.5,1.5 L4.5,7.5"
+	                                 Stroke="{DynamicResource NbnInkBrush}"
+	                                 StrokeThickness="1.2"
+	                                 StrokeLineCap="Round" />
+	                  </Canvas>
+	                </Viewbox>
+	              </Button>
             </Grid>
             <TextBlock Text="Stacked widths show per-species population share over the loaded history window (full width = 100%). Left-axis ticks show epoch numbers, or row-sample positions when the window is a single sampled epoch." Classes="muted" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="64,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
@@ -404,26 +422,37 @@
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
                 <Canvas IsHitTestVisible="False">
-                  <Border Canvas.Left="{Binding FlowChartHoverCardLeft}"
-                          Canvas.Top="{Binding FlowChartHoverCardTop}"
-                          IsVisible="{Binding IsFlowChartHoverCardVisible}"
-                          MaxWidth="320"
+	                  <Border Canvas.Left="{Binding FlowChartHoverCardLeft}"
+	                          Canvas.Top="{Binding FlowChartHoverCardTop}"
+	                          IsVisible="{Binding IsFlowChartHoverCardVisible}"
+	                          MaxWidth="320"
                           Background="{DynamicResource NbnSurfaceBrush}"
-                          BorderBrush="{DynamicResource NbnBorderBrush}"
-                          BorderThickness="1"
-                          CornerRadius="8"
-                          Padding="8">
-                    <TextBox Text="{Binding FlowChartHoverCardText}"
-                             IsReadOnly="True"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             Padding="0"
-                             FontSize="11"
-                             TextWrapping="Wrap"
-                             AcceptsReturn="True" />
-                  </Border>
-                </Canvas>
-              </Grid>
+	                          BorderBrush="{DynamicResource NbnBorderBrush}"
+	                          BorderThickness="1"
+	                          CornerRadius="8"
+	                          Padding="8">
+	                    <StackPanel Spacing="6">
+	                      <StackPanel Orientation="Horizontal" Spacing="8">
+	                        <Border Width="12"
+	                                Height="12"
+	                                CornerRadius="2"
+	                                VerticalAlignment="Center"
+	                                BorderBrush="{DynamicResource NbnBorderBrush}"
+	                                BorderThickness="1"
+	                                Background="{Binding FlowChartHoverCardSwatchColor}" />
+	                        <TextBlock Text="{Binding FlowChartHoverCardTitle}"
+	                                   FontSize="11"
+	                                   FontWeight="SemiBold"
+	                                   TextWrapping="Wrap"
+	                                   VerticalAlignment="Center" />
+	                      </StackPanel>
+	                      <TextBlock Text="{Binding FlowChartHoverCardDetail}"
+	                                 FontSize="11"
+	                                 TextWrapping="Wrap" />
+	                    </StackPanel>
+	                  </Border>
+	                </Canvas>
+	              </Grid>
               <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                 <TextBlock Text="0%" Classes="muted" FontSize="10" />
                 <TextBlock Grid.Column="1" Text="50%" Classes="muted" FontSize="10" HorizontalAlignment="Center" />

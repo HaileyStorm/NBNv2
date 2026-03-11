@@ -60,26 +60,37 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <Canvas IsHitTestVisible="False">
-              <Border Canvas.Left="{Binding ExpandedFlowChartHoverCardLeft}"
-                      Canvas.Top="{Binding ExpandedFlowChartHoverCardTop}"
-                      IsVisible="{Binding IsExpandedFlowChartHoverCardVisible}"
-                      MaxWidth="320"
+	            <Canvas IsHitTestVisible="False">
+	              <Border Canvas.Left="{Binding ExpandedFlowChartHoverCardLeft}"
+	                      Canvas.Top="{Binding ExpandedFlowChartHoverCardTop}"
+	                      IsVisible="{Binding IsExpandedFlowChartHoverCardVisible}"
+	                      MaxWidth="320"
                       Background="{DynamicResource NbnSurfaceBrush}"
-                      BorderBrush="{DynamicResource NbnBorderBrush}"
-                      BorderThickness="1"
-                      CornerRadius="8"
-                      Padding="8">
-                <TextBox Text="{Binding ExpandedFlowChartHoverCardText}"
-                         IsReadOnly="True"
-                         Background="Transparent"
-                         BorderThickness="0"
-                         Padding="0"
-                         FontSize="11"
-                         TextWrapping="Wrap"
-                         AcceptsReturn="True" />
-              </Border>
-            </Canvas>
+	                      BorderBrush="{DynamicResource NbnBorderBrush}"
+	                      BorderThickness="1"
+	                      CornerRadius="8"
+	                      Padding="8">
+	                <StackPanel Spacing="6">
+	                  <StackPanel Orientation="Horizontal" Spacing="8">
+	                    <Border Width="12"
+	                            Height="12"
+	                            CornerRadius="2"
+	                            VerticalAlignment="Center"
+	                            BorderBrush="{DynamicResource NbnBorderBrush}"
+	                            BorderThickness="1"
+	                            Background="{Binding ExpandedFlowChartHoverCardSwatchColor}" />
+	                    <TextBlock Text="{Binding ExpandedFlowChartHoverCardTitle}"
+	                               FontSize="11"
+	                               FontWeight="SemiBold"
+	                               TextWrapping="Wrap"
+	                               VerticalAlignment="Center" />
+	                  </StackPanel>
+	                  <TextBlock Text="{Binding ExpandedFlowChartHoverCardDetail}"
+	                             FontSize="11"
+	                             TextWrapping="Wrap" />
+	                </StackPanel>
+	              </Border>
+	            </Canvas>
           </Grid>
 
           <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">

@@ -173,7 +173,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _flowChartEndEpochLabel = "(n/a)";
     private int _flowChartLegendColumns = 2;
     private bool _includeNewestSpeciesInFlowChart = true;
+    private string _flowChartHoverCardTitle = string.Empty;
+    private string _flowChartHoverCardDetail = string.Empty;
     private string _flowChartHoverCardText = string.Empty;
+    private string _flowChartHoverCardSwatchColor = "Transparent";
     private bool _isFlowChartHoverCardVisible;
     private double _flowChartHoverCardLeft = 8d;
     private double _flowChartHoverCardTop = 8d;
@@ -185,7 +188,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private double _expandedFlowChartPlotWidth = ExpandedFlowChartDefaultPlotWidth;
     private double _expandedFlowChartPlotHeight = ExpandedFlowChartDefaultPlotHeight;
     private double _expandedFlowChartWindowWidth = ExpandedFlowChartDefaultPlotWidth;
+    private string _expandedFlowChartHoverCardTitle = string.Empty;
+    private string _expandedFlowChartHoverCardDetail = string.Empty;
     private string _expandedFlowChartHoverCardText = string.Empty;
+    private string _expandedFlowChartHoverCardSwatchColor = "Transparent";
     private bool _isExpandedFlowChartHoverCardVisible;
     private double _expandedFlowChartHoverCardLeft = 8d;
     private double _expandedFlowChartHoverCardTop = 8d;
@@ -829,6 +835,24 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _flowChartHoverCardText, value);
     }
 
+    public string FlowChartHoverCardTitle
+    {
+        get => _flowChartHoverCardTitle;
+        set => SetProperty(ref _flowChartHoverCardTitle, value);
+    }
+
+    public string FlowChartHoverCardDetail
+    {
+        get => _flowChartHoverCardDetail;
+        set => SetProperty(ref _flowChartHoverCardDetail, value);
+    }
+
+    public string FlowChartHoverCardSwatchColor
+    {
+        get => _flowChartHoverCardSwatchColor;
+        set => SetProperty(ref _flowChartHoverCardSwatchColor, value);
+    }
+
     public bool IsFlowChartHoverCardVisible
     {
         get => _isFlowChartHoverCardVisible;
@@ -881,6 +905,24 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _expandedFlowChartHoverCardText;
         set => SetProperty(ref _expandedFlowChartHoverCardText, value);
+    }
+
+    public string ExpandedFlowChartHoverCardTitle
+    {
+        get => _expandedFlowChartHoverCardTitle;
+        set => SetProperty(ref _expandedFlowChartHoverCardTitle, value);
+    }
+
+    public string ExpandedFlowChartHoverCardDetail
+    {
+        get => _expandedFlowChartHoverCardDetail;
+        set => SetProperty(ref _expandedFlowChartHoverCardDetail, value);
+    }
+
+    public string ExpandedFlowChartHoverCardSwatchColor
+    {
+        get => _expandedFlowChartHoverCardSwatchColor;
+        set => SetProperty(ref _expandedFlowChartHoverCardSwatchColor, value);
     }
 
     public bool IsExpandedFlowChartHoverCardVisible
@@ -2849,12 +2891,15 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         var totalSpeciesCount = speciesOrder.Count;
-        var selectedSpecies = SelectFlowChartSpecies(
-            speciesOrder,
-            layout.VisibleSpeciesLimit,
-            layout.IncludeNewestSpecies);
+        var showAllSpecies = totalSpeciesCount <= layout.VisibleSpeciesLimit + 1;
+        var selectedSpecies = showAllSpecies
+            ? speciesOrder.ToList()
+            : SelectFlowChartSpecies(
+                speciesOrder,
+                layout.VisibleSpeciesLimit,
+                layout.IncludeNewestSpecies);
         var orderedSelectedSpecies = OrderFlowSpeciesForDisplay(selectedSpecies);
-        var includeOtherSpecies = totalSpeciesCount > selectedSpecies.Count;
+        var includeOtherSpecies = !showAllSpecies && totalSpeciesCount > selectedSpecies.Count;
         var flowSpecies = new List<SpeciesPopulationMeta>(orderedSelectedSpecies.Count + (includeOtherSpecies ? 1 : 0));
         flowSpecies.AddRange(orderedSelectedSpecies);
         if (includeOtherSpecies)
@@ -2955,9 +3000,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             ? epochRows.Count.ToString(CultureInfo.InvariantCulture)
             : maxEpoch.ToString(CultureInfo.InvariantCulture);
         var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, layout.MaxLegendColumns);
-        var topScopeLabel = includeOtherSpecies
-            ? $" {selectedSpecies.Count}/{totalSpeciesCount} visible species + Other."
-            : string.Empty;
+        var topScopeLabel = BuildFlowChartVisibilityScopeLabel(selectedSpecies.Count, totalSpeciesCount, includeOtherSpecies);
         var rangeLabel = minEpoch == maxEpoch && epochRows.Count > 1
             ? $"Stacked share across loaded rows for epoch {minEpoch} ({epochRows.Count} samples).{topScopeLabel}"
             : $"Stacked share of total population per epoch ({minEpoch}..{maxEpoch}).{topScopeLabel}";
@@ -3074,7 +3117,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        var detail = $"{area.Label}{Environment.NewLine}{sample.RowLabel}{Environment.NewLine}Population {sample.PopulationCount} of {sample.TotalCount} ({sample.Share.ToString("P1", CultureInfo.InvariantCulture)})";
+        var title = area.Label;
+        var detail = $"{sample.RowLabel}{Environment.NewLine}Population {sample.PopulationCount} of {sample.TotalCount} ({sample.Share.ToString("P1", CultureInfo.InvariantCulture)})";
+        var text = $"{title}{Environment.NewLine}{detail}";
         var chartWidth = expanded ? ExpandedFlowChartWidth : FlowChartWidth;
         var chartHeight = expanded ? ExpandedFlowChartHeight : FlowChartHeight;
         var hoverLeft = Math.Clamp(pointerX + FlowChartHoverCardOffset, 4d, Math.Max(4d, chartWidth - FlowChartHoverCardMaxWidth));
@@ -3082,14 +3127,20 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (expanded)
         {
-            ExpandedFlowChartHoverCardText = detail;
+            ExpandedFlowChartHoverCardTitle = title;
+            ExpandedFlowChartHoverCardDetail = detail;
+            ExpandedFlowChartHoverCardText = text;
+            ExpandedFlowChartHoverCardSwatchColor = area.Stroke;
             ExpandedFlowChartHoverCardLeft = hoverLeft;
             ExpandedFlowChartHoverCardTop = hoverTop;
             IsExpandedFlowChartHoverCardVisible = true;
             return;
         }
 
-        FlowChartHoverCardText = detail;
+        FlowChartHoverCardTitle = title;
+        FlowChartHoverCardDetail = detail;
+        FlowChartHoverCardText = text;
+        FlowChartHoverCardSwatchColor = area.Stroke;
         FlowChartHoverCardLeft = hoverLeft;
         FlowChartHoverCardTop = hoverTop;
         IsFlowChartHoverCardVisible = true;
@@ -3099,14 +3150,25 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         if (expanded)
         {
+            ExpandedFlowChartHoverCardTitle = string.Empty;
+            ExpandedFlowChartHoverCardDetail = string.Empty;
             ExpandedFlowChartHoverCardText = string.Empty;
+            ExpandedFlowChartHoverCardSwatchColor = "Transparent";
             IsExpandedFlowChartHoverCardVisible = false;
             return;
         }
 
+        FlowChartHoverCardTitle = string.Empty;
+        FlowChartHoverCardDetail = string.Empty;
         FlowChartHoverCardText = string.Empty;
+        FlowChartHoverCardSwatchColor = "Transparent";
         IsFlowChartHoverCardVisible = false;
     }
+
+    private static string BuildFlowChartVisibilityScopeLabel(int visibleSpeciesCount, int totalSpeciesCount, bool includeOtherSpecies)
+        => includeOtherSpecies
+            ? $" {visibleSpeciesCount}/{totalSpeciesCount} visible species + Other."
+            : $" {visibleSpeciesCount}/{totalSpeciesCount} visible species.";
 
     private static SpeciationFlowChartSampleItem? ResolveFlowChartHoverSample(
         IReadOnlyList<SpeciationFlowChartSampleItem> samples,
@@ -3453,9 +3515,16 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         var newestRanked = descendants
+            .Where(item => item.TotalCount > 2)
             .OrderByDescending(item => item.FirstAssignedMs)
             .ThenByDescending(item => item.FirstSeenOrder)
             .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .Concat(
+                descendants
+                    .Where(item => item.TotalCount <= 2)
+                    .OrderByDescending(item => item.FirstAssignedMs)
+                    .ThenByDescending(item => item.FirstSeenOrder)
+                    .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase))
             .ToArray();
         var ranked = new List<SpeciesPopulationMeta>(descendants.Count + 1) { founder };
         var seenSpeciesIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
