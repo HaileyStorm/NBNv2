@@ -343,6 +343,17 @@ Pause priority strategies include:
 * lowest configured priority value
 * external-world-specified ordering (list of IDs)
 
+HiveMind configures the selector with:
+
+* `NBN_HIVE_PAUSE_STRATEGY` / `--pause-strategy`
+* `NBN_HIVE_PAUSE_ORDER` / `--pause-order` when strategy = `external-order`
+
+Current implementation detail:
+
+* each backpressure pause decision pauses the first eligible Brain selected by the configured ordering
+* repeated timeout streaks continue applying the same ordering and can pause additional Brains over time
+* `lowest configured priority value` uses `pause_priority` from `SpawnBrain` or direct `RegisterBrain` control messages (default `0`)
+
 ### 6.6 Rescheduling rate limits and tick pausing
 
 Rescheduling and full recovery are disruptive. To prevent thrashing:
@@ -805,6 +816,12 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 * accepts client connections, subscriptions, and control messages
 * forwards brain-level requests to HiveMind and/or ReproductionManager
 * spawns per-brain `InputCoordinator` and `OutputCoordinator` actors
+
+Brain lifecycle control carries backpressure pause metadata:
+
+* `SpawnBrain.pause_priority` sets the Brain's configured ranking for `lowest-priority` backpressure pausing
+* direct controller `RegisterBrain.pause_priority` can override or supply the same value for already-running Brains
+* when omitted, `pause_priority` defaults to `0`
 
 **Placement:** Coordinators may be placed on any worker process(es). IO Gateway maintains their location and routes to them transparently.
 
@@ -1990,10 +2007,13 @@ import "nbn_common.proto";
 
 message SpawnBrain {
   nbn.ArtifactRef brain_def = 1; // .nbn
+  optional sint32 pause_priority = 2;
 }
 
 message SpawnBrainAck {
   nbn.Uuid brain_id = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
 }
 
 message PauseBrain {
@@ -2003,6 +2023,13 @@ message PauseBrain {
 
 message ResumeBrain {
   nbn.Uuid brain_id = 1;
+}
+
+message RegisterBrain {
+  nbn.Uuid brain_id = 1;
+  string brain_root_pid = 2;
+  string signal_router_pid = 3;
+  optional sint32 pause_priority = 4;
 }
 
 message KillBrain {

@@ -58,6 +58,16 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoControl_SpawnBrain_Fields_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+        var spawnBrain = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrain");
+
+        AssertField(spawnBrain, "brain_def", 1, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(spawnBrain, "pause_priority", 2, FieldType.SInt32);
+    }
+
+    [Fact]
     public void ProtoControl_SpawnBrainAck_Fields_AreStable()
     {
         var descriptor = NbnControlReflection.Descriptor;
@@ -66,6 +76,18 @@ public class ProtoCompatibilityTests
         AssertField(spawnAck, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(spawnAck, "failure_reason_code", 2, FieldType.String);
         AssertField(spawnAck, "failure_message", 3, FieldType.String);
+    }
+
+    [Fact]
+    public void ProtoControl_RegisterBrain_Fields_AreStable()
+    {
+        var descriptor = NbnControlReflection.Descriptor;
+        var registerBrain = descriptor.MessageTypes.Single(message => message.Name == "RegisterBrain");
+
+        AssertField(registerBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(registerBrain, "brain_root_pid", 2, FieldType.String);
+        AssertField(registerBrain, "signal_router_pid", 3, FieldType.String);
+        AssertField(registerBrain, "pause_priority", 4, FieldType.SInt32);
     }
 
     [Fact]

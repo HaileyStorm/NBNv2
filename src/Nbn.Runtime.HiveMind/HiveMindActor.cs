@@ -1005,7 +1005,7 @@ public sealed class HiveMindActor : IActor
         };
     }
 
-    private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid)
+    private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid, int? pausePriority = null)
     {
         var isNew = !_brains.TryGetValue(brainId, out var brain) || brain is null;
         if (isNew)
@@ -1039,6 +1039,10 @@ public sealed class HiveMindActor : IActor
         }
 
         var brainState = brain ?? throw new InvalidOperationException("Brain state was not initialized.");
+        if (pausePriority.HasValue)
+        {
+            brainState.PausePriority = pausePriority.Value;
+        }
 
         if (brainRootPid is not null)
         {
@@ -1366,7 +1370,12 @@ public sealed class HiveMindActor : IActor
             return;
         }
 
-        RegisterBrainInternal(context, brainId, brainRootPid, routerPid);
+        RegisterBrainInternal(
+            context,
+            brainId,
+            brainRootPid,
+            routerPid,
+            message.HasPausePriority ? message.PausePriority : null);
     }
 
     private void HandleUpdateBrainSignalRouter(IContext context, ProtoControl.UpdateBrainSignalRouter message)
@@ -2082,6 +2091,11 @@ public sealed class HiveMindActor : IActor
                         fallbackReasonCode: reasonCode);
                 context.Respond(BuildSpawnFailureAck(reasonCode, failureMessage));
                 return;
+            }
+
+            if (message.HasPausePriority)
+            {
+                brain.PausePriority = message.PausePriority;
             }
 
             var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch);
@@ -5340,8 +5354,11 @@ public sealed class HiveMindActor : IActor
 
         if (decision.RequestPause)
         {
-            PauseAllBrains(context, decision.Reason);
-            HiveMindTelemetry.RecordPause(decision.Reason);
+            var nextTickDelay = ComputeTickDelay(elapsed, decision.TargetTickHz);
+            if (TryApplyBackpressurePause(context, decision.Reason, nextTickDelay))
+            {
+                return;
+            }
         }
 
         ScheduleNextTick(context, ComputeTickDelay(elapsed, decision.TargetTickHz));
@@ -5459,32 +5476,150 @@ public sealed class HiveMindActor : IActor
         }
     }
 
-    private void PauseAllBrains(IContext context, string reason)
+    private bool TryApplyBackpressurePause(IContext context, string reason, TimeSpan nextTickDelay)
     {
+        var candidates = BuildBackpressurePauseCandidates();
+        if (candidates.Count == 0)
+        {
+            EmitDebug(context, ProtoSeverity.SevWarn, "backpressure.pause.skipped", $"Backpressure pause skipped: no eligible brains. reason={reason}");
+            return false;
+        }
+
+        if (_options.BackpressurePauseStrategy == BackpressurePauseStrategy.LowestEnergy)
+        {
+            var ioPid = _ioPid is null ? null : ResolveSendTargetPid(context, _ioPid);
+            var resolveTask = ResolveBackpressurePauseCandidatesAsync(context.System, ioPid, candidates);
+            context.ReenterAfter(
+                resolveTask,
+                task =>
+                {
+                    var resolvedCandidates = task.IsCompletedSuccessfully ? task.Result : candidates;
+                    ApplyBackpressurePauseSelection(context, resolvedCandidates, reason);
+                    ScheduleNextTick(context, nextTickDelay);
+                    return Task.CompletedTask;
+                });
+            return true;
+        }
+
+        ApplyBackpressurePauseSelection(context, candidates, reason);
+        return false;
+    }
+
+    private List<BackpressurePauseCandidate> BuildBackpressurePauseCandidates()
+    {
+        var candidates = new List<BackpressurePauseCandidate>();
         foreach (var brain in _brains.Values)
         {
-            brain.Paused = true;
-            brain.PausedReason = reason;
+            if (!CanDispatchTickToBrain(brain))
+            {
+                continue;
+            }
+
+            candidates.Add(new BackpressurePauseCandidate(brain.BrainId, brain.SpawnedMs, brain.PausePriority, 0L));
         }
 
-        if (_phase == TickPhase.Compute)
+        return candidates;
+    }
+
+    private void ApplyBackpressurePauseSelection(
+        IContext context,
+        IReadOnlyList<BackpressurePauseCandidate> candidates,
+        string reason)
+    {
+        foreach (var candidate in OrderBackpressurePauseCandidates(candidates))
         {
-            ClearPendingCompute();
-            MaybeCompleteCompute(context);
+            if (!_brains.TryGetValue(candidate.BrainId, out var brain) || !CanDispatchTickToBrain(brain))
+            {
+                continue;
+            }
+
+            PauseBrain(
+                context,
+                candidate.BrainId,
+                $"{reason}; strategy={FormatBackpressurePauseStrategy(_options.BackpressurePauseStrategy)}");
+            HiveMindTelemetry.RecordPause(reason);
+            return;
         }
 
-        if (_phase == TickPhase.Deliver)
+        EmitDebug(
+            context,
+            ProtoSeverity.SevWarn,
+            "backpressure.pause.skipped",
+            $"Backpressure pause skipped: no matching brain remained eligible. reason={reason}");
+    }
+
+    private IEnumerable<BackpressurePauseCandidate> OrderBackpressurePauseCandidates(IReadOnlyList<BackpressurePauseCandidate> candidates)
+    {
+        return _options.BackpressurePauseStrategy switch
         {
-            ClearPendingDeliver();
-            MaybeCompleteDeliver(context);
-        }
+            BackpressurePauseStrategy.NewestFirst => candidates
+                .OrderByDescending(static candidate => candidate.SpawnedMs)
+                .ThenBy(static candidate => candidate.BrainId),
+            BackpressurePauseStrategy.LowestEnergy => candidates
+                .OrderBy(static candidate => candidate.EnergyRemaining)
+                .ThenBy(static candidate => candidate.SpawnedMs)
+                .ThenBy(static candidate => candidate.BrainId),
+            BackpressurePauseStrategy.LowestPriority => candidates
+                .OrderBy(static candidate => candidate.PausePriority)
+                .ThenBy(static candidate => candidate.SpawnedMs)
+                .ThenBy(static candidate => candidate.BrainId),
+            BackpressurePauseStrategy.ExternalOrder => OrderBackpressurePauseCandidatesByExternalOrder(candidates),
+            _ => candidates
+                .OrderBy(static candidate => candidate.SpawnedMs)
+                .ThenBy(static candidate => candidate.BrainId)
+        };
+    }
 
-        Log($"Paused all brains: {reason}");
-
-        foreach (var brain in _brains.Values)
+    private IEnumerable<BackpressurePauseCandidate> OrderBackpressurePauseCandidatesByExternalOrder(IReadOnlyList<BackpressurePauseCandidate> candidates)
+    {
+        if (_options.BackpressurePauseExternalOrder is not { Length: > 0 } externalOrder)
         {
-            ReportBrainState(context, brain.BrainId, "Paused", reason);
+            return Array.Empty<BackpressurePauseCandidate>();
         }
+
+        var byId = candidates.ToDictionary(static candidate => candidate.BrainId);
+        var ordered = new List<BackpressurePauseCandidate>(Math.Min(externalOrder.Length, candidates.Count));
+        foreach (var brainId in externalOrder)
+        {
+            if (byId.TryGetValue(brainId, out var candidate))
+            {
+                ordered.Add(candidate);
+            }
+        }
+
+        return ordered;
+    }
+
+    private static async Task<List<BackpressurePauseCandidate>> ResolveBackpressurePauseCandidatesAsync(
+        ActorSystem system,
+        PID? ioPid,
+        IReadOnlyList<BackpressurePauseCandidate> candidates)
+    {
+        if (candidates.Count == 0 || ioPid is null)
+        {
+            return new List<BackpressurePauseCandidate>(candidates);
+        }
+
+        var resolved = await Task.WhenAll(
+                candidates.Select(
+                    async candidate => candidate with
+                    {
+                        EnergyRemaining = await TryReadBrainEnergyRemainingAsync(system, ioPid, candidate.BrainId).ConfigureAwait(false)
+                    }))
+            .ConfigureAwait(false);
+        return resolved.ToList();
+    }
+
+    private static string FormatBackpressurePauseStrategy(BackpressurePauseStrategy strategy)
+    {
+        return strategy switch
+        {
+            BackpressurePauseStrategy.NewestFirst => "newest-first",
+            BackpressurePauseStrategy.LowestEnergy => "lowest-energy",
+            BackpressurePauseStrategy.LowestPriority => "lowest-priority",
+            BackpressurePauseStrategy.ExternalOrder => "external-order",
+            _ => "oldest-first"
+        };
     }
 
     private void RequestBrainRecovery(IContext context, Guid brainId, string trigger, string? detail = null)
@@ -8010,6 +8145,7 @@ public sealed class HiveMindActor : IActor
         public ulong RecoveryPlacementEpoch { get; set; }
         public long RecoveryStartedMs { get; set; }
         public long SpawnedMs { get; set; }
+        public int PausePriority { get; set; }
         public ulong PlacementEpoch { get; set; }
         public long PlacementRequestedMs { get; set; }
         public long PlacementUpdatedMs { get; set; }
@@ -8199,6 +8335,12 @@ public sealed class HiveMindActor : IActor
         Dictionary<ShardId32, PID> Shards,
         string StoreRootPath,
         string StoreUri);
+
+    private readonly record struct BackpressurePauseCandidate(
+        Guid BrainId,
+        long SpawnedMs,
+        int PausePriority,
+        long EnergyRemaining);
 
     private sealed record RebasedDefinitionBuildRequest(
         Guid BrainId,

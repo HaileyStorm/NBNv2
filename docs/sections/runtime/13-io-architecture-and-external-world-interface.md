@@ -15,6 +15,12 @@
 * forwards brain-level requests to HiveMind and/or ReproductionManager
 * spawns per-brain `InputCoordinator` and `OutputCoordinator` actors
 
+Brain lifecycle control carries backpressure pause metadata:
+
+* `SpawnBrain.pause_priority` sets the Brain's configured ranking for `lowest-priority` backpressure pausing
+* direct controller `RegisterBrain.pause_priority` can override or supply the same value for already-running Brains
+* when omitted, `pause_priority` defaults to `0`
+
 **Placement:** Coordinators may be placed on any worker process(es). IO Gateway maintains their location and routes to them transparently.
 
 ### 13.3 Input mapping

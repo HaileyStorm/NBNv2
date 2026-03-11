@@ -41,6 +41,44 @@ public sealed class HiveMindOptionsTests
         Assert.Equal("io-custom", options.IoName);
     }
 
+    [Fact]
+    public void FromArgs_ParsesBackpressurePauseStrategyAndExternalOrder()
+    {
+        var first = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+        var options = HiveMindOptions.FromArgs(
+        [
+            "--pause-strategy", "external-order",
+            "--pause-order", $"{second},{first}"
+        ]);
+
+        Assert.Equal(BackpressurePauseStrategy.ExternalOrder, options.BackpressurePauseStrategy);
+        Assert.Equal(new[] { second, first }, options.BackpressurePauseExternalOrder);
+    }
+
+    [Fact]
+    public void FromArgs_UsesBackpressurePauseStrategyEnvironmentFallback()
+    {
+        using var _ = new EnvironmentVariableScope(
+            ("NBN_HIVE_PAUSE_STRATEGY", "lowest-priority"),
+            ("NBN_HIVE_PAUSE_ORDER", null));
+
+        var options = HiveMindOptions.FromArgs(Array.Empty<string>());
+
+        Assert.Equal(BackpressurePauseStrategy.LowestPriority, options.BackpressurePauseStrategy);
+        Assert.Null(options.BackpressurePauseExternalOrder);
+    }
+
+    [Fact]
+    public void FromArgs_RejectsExternalOrderStrategyWithoutPauseOrder()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => HiveMindOptions.FromArgs(["--pause-strategy", "external-order"]));
+
+        Assert.Contains("pause-order", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class EnvironmentVariableScope : IDisposable
     {
         private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);

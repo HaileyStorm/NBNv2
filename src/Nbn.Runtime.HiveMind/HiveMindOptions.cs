@@ -2,6 +2,15 @@ using Nbn.Runtime.SettingsMonitor;
 
 namespace Nbn.Runtime.HiveMind;
 
+public enum BackpressurePauseStrategy
+{
+    OldestFirst = 0,
+    NewestFirst = 1,
+    LowestEnergy = 2,
+    LowestPriority = 3,
+    ExternalOrder = 4
+}
+
 public sealed record HiveMindOptions(
     string BindHost,
     int Port,
@@ -38,7 +47,9 @@ public sealed record HiveMindOptions(
     int PlacementAssignmentTimeoutMs = 10000,
     int PlacementAssignmentRetryBackoffMs = 250,
     int PlacementAssignmentMaxRetries = 2,
-    int PlacementReconcileTimeoutMs = 10000)
+    int PlacementReconcileTimeoutMs = 10000,
+    BackpressurePauseStrategy BackpressurePauseStrategy = BackpressurePauseStrategy.OldestFirst,
+    Guid[]? BackpressurePauseExternalOrder = null)
 {
     private const string DefaultIoHost = "127.0.0.1";
     private const int DefaultIoPort = 12050;
@@ -59,6 +70,10 @@ public sealed record HiveMindOptions(
         var backpressureDecay = GetEnvFloat("NBN_HIVE_BACKPRESSURE_DECAY") ?? 0.8f;
         var backpressureRecovery = GetEnvFloat("NBN_HIVE_BACKPRESSURE_RECOVERY") ?? 1.05f;
         var lateBackpressureThreshold = GetEnvInt("NBN_HIVE_LATE_BACKPRESSURE_TICKS") ?? 2;
+        var backpressurePauseStrategy = ParseBackpressurePauseStrategy(
+            GetEnv("NBN_HIVE_PAUSE_STRATEGY"),
+            BackpressurePauseStrategy.OldestFirst);
+        var backpressurePauseExternalOrder = ParseGuidList(GetEnv("NBN_HIVE_PAUSE_ORDER"));
 
         var rescheduleThreshold = GetEnvInt("NBN_HIVE_RESCHEDULE_TIMEOUTS") ?? 3;
         var pauseThreshold = GetEnvInt("NBN_HIVE_PAUSE_TIMEOUTS") ?? 6;
@@ -172,6 +187,20 @@ public sealed record HiveMindOptions(
                     if (i + 1 < args.Length && int.TryParse(args[++i], out var lateBackpressureValue))
                     {
                         lateBackpressureThreshold = lateBackpressureValue;
+                    }
+                    continue;
+                case "--pause-strategy":
+                    if (i + 1 < args.Length)
+                    {
+                        backpressurePauseStrategy = ParseBackpressurePauseStrategy(
+                            args[++i],
+                            backpressurePauseStrategy);
+                    }
+                    continue;
+                case "--pause-order":
+                    if (i + 1 < args.Length)
+                    {
+                        backpressurePauseExternalOrder = ParseGuidList(args[++i]);
                     }
                     continue;
                 case "--reschedule-timeouts":
@@ -408,6 +437,20 @@ public sealed record HiveMindOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--pause-strategy=", StringComparison.OrdinalIgnoreCase))
+            {
+                backpressurePauseStrategy = ParseBackpressurePauseStrategy(
+                    arg.Substring("--pause-strategy=".Length),
+                    backpressurePauseStrategy);
+                continue;
+            }
+
+            if (arg.StartsWith("--pause-order=", StringComparison.OrdinalIgnoreCase))
+            {
+                backpressurePauseExternalOrder = ParseGuidList(arg.Substring("--pause-order=".Length));
+                continue;
+            }
+
             if (arg.StartsWith("--reschedule-timeouts=", StringComparison.OrdinalIgnoreCase) && int.TryParse(arg.Substring("--reschedule-timeouts=".Length), out var rescheduleInline))
             {
                 rescheduleThreshold = rescheduleInline;
@@ -614,6 +657,12 @@ public sealed record HiveMindOptions(
             ioName = "io-gateway";
         }
 
+        if (backpressurePauseStrategy == BackpressurePauseStrategy.ExternalOrder
+            && (backpressurePauseExternalOrder is null || backpressurePauseExternalOrder.Length == 0))
+        {
+            throw new ArgumentException("Backpressure pause strategy 'external-order' requires --pause-order or NBN_HIVE_PAUSE_ORDER.");
+        }
+
         enableOtelMetrics ??= enableOtel;
         enableOtelTraces ??= enableOtel;
 
@@ -653,7 +702,9 @@ public sealed record HiveMindOptions(
             placementAssignmentTimeoutMs,
             placementAssignmentRetryBackoffMs,
             placementAssignmentMaxRetries,
-            placementReconcileTimeoutMs);
+            placementReconcileTimeoutMs,
+            backpressurePauseStrategy,
+            backpressurePauseExternalOrder);
     }
 
     private static string BuildDefaultIoAddress()
@@ -705,6 +756,49 @@ public sealed record HiveMindOptions(
             || value.Equals("y", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static BackpressurePauseStrategy ParseBackpressurePauseStrategy(string? value, BackpressurePauseStrategy fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "oldest" or "oldest-first" => BackpressurePauseStrategy.OldestFirst,
+            "newest" or "newest-first" => BackpressurePauseStrategy.NewestFirst,
+            "energy" or "lowest-energy" => BackpressurePauseStrategy.LowestEnergy,
+            "priority" or "lowest-priority" => BackpressurePauseStrategy.LowestPriority,
+            "external" or "external-order" or "external-world" => BackpressurePauseStrategy.ExternalOrder,
+            _ => throw new ArgumentException($"Unsupported backpressure pause strategy '{value}'.")
+        };
+    }
+
+    private static Guid[]? ParseGuidList(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var seen = new HashSet<Guid>();
+        var parsed = new List<Guid>();
+        foreach (var rawPart in value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Guid.TryParse(rawPart, out var guid))
+            {
+                throw new ArgumentException($"Invalid GUID '{rawPart}' in backpressure pause order.");
+            }
+
+            if (seen.Add(guid))
+            {
+                parsed.Add(guid);
+            }
+        }
+
+        return parsed.Count == 0 ? null : parsed.ToArray();
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("NBN HiveMind options:");
@@ -719,6 +813,8 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --backpressure-decay <ratio>        Target tick decay multiplier (default 0.8)");
         Console.WriteLine("  --backpressure-recovery <ratio>     Target tick recovery multiplier (default 1.05)");
         Console.WriteLine("  --late-backpressure-ticks <count>   Late ticks before backpressure (default 2)");
+        Console.WriteLine("  --pause-strategy <mode>             Backpressure pause strategy: oldest-first|newest-first|lowest-energy|lowest-priority|external-order");
+        Console.WriteLine("  --pause-order <id,id,...>           Explicit brain-id order for external-order pause strategy");
         Console.WriteLine("  --reschedule-timeouts <count>       Timeout streak before reschedule (default 3)");
         Console.WriteLine("  --pause-timeouts <count>            Timeout streak before pause (default 6)");
         Console.WriteLine("  --reschedule-min-ticks <count>      Minimum ticks between reschedules (default 10)");

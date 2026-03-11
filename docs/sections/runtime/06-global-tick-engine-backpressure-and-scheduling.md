@@ -73,6 +73,17 @@ Pause priority strategies include:
 * lowest configured priority value
 * external-world-specified ordering (list of IDs)
 
+HiveMind configures the selector with:
+
+* `NBN_HIVE_PAUSE_STRATEGY` / `--pause-strategy`
+* `NBN_HIVE_PAUSE_ORDER` / `--pause-order` when strategy = `external-order`
+
+Current implementation detail:
+
+* each backpressure pause decision pauses the first eligible Brain selected by the configured ordering
+* repeated timeout streaks continue applying the same ordering and can pause additional Brains over time
+* `lowest configured priority value` uses `pause_priority` from `SpawnBrain` or direct `RegisterBrain` control messages (default `0`)
+
 ### 6.6 Rescheduling rate limits and tick pausing
 
 Rescheduling and full recovery are disruptive. To prevent thrashing:

@@ -322,10 +322,13 @@ import "nbn_common.proto";
 
 message SpawnBrain {
   nbn.ArtifactRef brain_def = 1; // .nbn
+  optional sint32 pause_priority = 2;
 }
 
 message SpawnBrainAck {
   nbn.Uuid brain_id = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
 }
 
 message PauseBrain {
@@ -335,6 +338,13 @@ message PauseBrain {
 
 message ResumeBrain {
   nbn.Uuid brain_id = 1;
+}
+
+message RegisterBrain {
+  nbn.Uuid brain_id = 1;
+  string brain_root_pid = 2;
+  string signal_router_pid = 3;
+  optional sint32 pause_priority = 4;
 }
 
 message KillBrain {

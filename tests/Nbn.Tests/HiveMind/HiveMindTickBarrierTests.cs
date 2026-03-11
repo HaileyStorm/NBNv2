@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Nbn.Proto.Debug;
 using Nbn.Proto.Control;
 using Nbn.Proto.Signal;
 using Nbn.Runtime.Brain;
@@ -7,6 +8,7 @@ using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Shared.HiveMind;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoIo = Nbn.Proto.Io;
 using Proto;
 using Xunit;
 
@@ -261,6 +263,101 @@ public class HiveMindTickBarrierTests
         root.Send(hiveMind, new StopTickLoop());
 
         Assert.True(status.TargetTickHz < options.TargetTickHz);
+
+        await system.ShutdownAsync();
+    }
+
+    public static IEnumerable<object[]> BackpressurePauseStrategyCases()
+    {
+        yield return [BackpressurePauseStrategy.OldestFirst, Array.Empty<int>(), 0];
+        yield return [BackpressurePauseStrategy.NewestFirst, Array.Empty<int>(), 2];
+        yield return [BackpressurePauseStrategy.LowestEnergy, Array.Empty<int>(), 1];
+        yield return [BackpressurePauseStrategy.LowestPriority, Array.Empty<int>(), 1];
+        yield return [BackpressurePauseStrategy.ExternalOrder, new[] { 2, 0, 1 }, 2];
+    }
+
+    [Theory]
+    [MemberData(nameof(BackpressurePauseStrategyCases))]
+    public async Task BackpressurePause_UsesConfiguredStrategy(
+        BackpressurePauseStrategy pauseStrategy,
+        int[] externalOrderIndices,
+        int expectedPausedIndex)
+    {
+        var brainIds = new[]
+        {
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid()
+        };
+        var pauseOrder = externalOrderIndices.Length == 0
+            ? null
+            : externalOrderIndices.Select(index => brainIds[index]).ToArray();
+        var energies = new Dictionary<Guid, long>
+        {
+            [brainIds[0]] = 90,
+            [brainIds[1]] = 10,
+            [brainIds[2]] = 50
+        };
+        var priorities = new[] { 30, 10, 20 };
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        var ioPid = root.Spawn(Props.FromProducer(() => new BrainInfoProbeActor(energies)));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                targetTickHz: 1f,
+                minTickHz: 1f,
+                computeTimeoutMs: 100,
+                deliverTimeoutMs: 100,
+                backpressureDecay: 0.5f,
+                timeoutRescheduleThreshold: int.MaxValue,
+                timeoutPauseThreshold: 1,
+                pauseStrategy: pauseStrategy,
+                pauseOrder: pauseOrder),
+            ioPid: ioPid,
+            debugHubPid: debugProbePid)));
+
+        for (var i = 0; i < brainIds.Length; i++)
+        {
+            var controller = root.Spawn(Props.FromProducer(static () => new ManualSenderActor()));
+            await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new ProtoControl.RegisterBrain
+            {
+                BrainId = brainIds[i].ToProtoUuid(),
+                BrainRootPid = PidLabel(controller),
+                SignalRouterPid = PidLabel(controller),
+                PausePriority = priorities[i]
+            }));
+            await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == (uint)(i + 1), TimeSpan.FromSeconds(2));
+
+            var shardId = ShardId32.From(1, 0);
+            var shardPid = root.Spawn(Props.FromProducer(() => new SilentComputeShardActor(brainIds[i], shardId, controller)));
+            await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new ProtoControl.RegisterShard
+            {
+                BrainId = brainIds[i].ToProtoUuid(),
+                RegionId = (uint)shardId.RegionId,
+                ShardIndex = (uint)shardId.ShardIndex,
+                ShardPid = PidLabel(shardPid),
+                NeuronStart = 0,
+                NeuronCount = 1
+            }));
+
+            await Task.Delay(20);
+        }
+
+        root.Send(hiveMind, new StartTickLoop());
+
+        var pauseSnapshot = await WaitForDebugSnapshotAsync(
+            root,
+            debugProbePid,
+            snapshot => snapshot.Count("brain.paused") >= 1
+                && snapshot.CountMessageContains("brain.paused", brainIds[expectedPausedIndex].ToString()) >= 1,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+
+        Assert.Equal(1, pauseSnapshot.Count("brain.paused"));
+        Assert.Equal(1, pauseSnapshot.CountMessageContains("brain.paused", brainIds[expectedPausedIndex].ToString()));
 
         await system.ShutdownAsync();
     }
@@ -1130,9 +1227,60 @@ public class HiveMindTickBarrierTests
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+    private static async Task<DebugProbeSnapshot> WaitForDebugSnapshotAsync(
+        IRootContext root,
+        PID debugProbePid,
+        Func<DebugProbeSnapshot, bool> predicate,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        DebugProbeSnapshot? lastSnapshot = null;
+        while (DateTime.UtcNow <= deadline)
+        {
+            lastSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+            if (predicate(lastSnapshot))
+            {
+                return lastSnapshot;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException($"Debug snapshot predicate was not satisfied. Last paused count={lastSnapshot?.Count("brain.paused") ?? 0}.");
+    }
+
     private sealed record SendMessage(PID Target, object Message);
     private sealed record SendMessageAck;
     private sealed record TestSignalReceived;
+    private sealed record GetDebugProbeSnapshot;
+
+    private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts, IReadOnlyList<DebugProbeEvent> Events)
+    {
+        public int Count(string category)
+            => Counts.TryGetValue(category, out var value) ? value : 0;
+
+        public int CountMessageContains(string category, string fragment)
+        {
+            if (string.IsNullOrWhiteSpace(category) || string.IsNullOrWhiteSpace(fragment))
+            {
+                return 0;
+            }
+
+            var count = 0;
+            foreach (var entry in Events)
+            {
+                if (string.Equals(entry.Summary, category, StringComparison.Ordinal)
+                    && entry.Message.Contains(fragment, StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+    }
+
+    private sealed record DebugProbeEvent(string Summary, string Message);
 
     private sealed class ManualSenderActor : IActor
     {
@@ -1142,6 +1290,65 @@ public class HiveMindTickBarrierTests
             {
                 context.Request(send.Target, send.Message);
                 context.Respond(new SendMessageAck());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class DebugProbeActor : IActor
+    {
+        private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
+        private readonly List<DebugProbeEvent> _events = new();
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case DebugOutbound outbound:
+                    var summary = outbound.Summary ?? string.Empty;
+                    if (summary.Length > 0)
+                    {
+                        _counts[summary] = _counts.TryGetValue(summary, out var count) ? count + 1 : 1;
+                        _events.Add(new DebugProbeEvent(summary, outbound.Message ?? string.Empty));
+                    }
+                    break;
+                case GetDebugProbeSnapshot:
+                    context.Respond(new DebugProbeSnapshot(
+                        new Dictionary<string, int>(_counts, StringComparer.Ordinal),
+                        _events.ToArray()));
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BrainInfoProbeActor : IActor
+    {
+        private readonly IReadOnlyDictionary<Guid, long> _energies;
+
+        public BrainInfoProbeActor(IReadOnlyDictionary<Guid, long> energies)
+        {
+            _energies = energies;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoIo.BrainInfoRequest request:
+                    var brainId = request.BrainId is not null && request.BrainId.TryToGuid(out var parsedBrainId)
+                        ? parsedBrainId
+                        : Guid.Empty;
+                    context.Respond(new ProtoIo.BrainInfo
+                    {
+                        BrainId = request.BrainId,
+                        EnergyRemaining = _energies.TryGetValue(brainId, out var energy) ? energy : 0
+                    });
+                    break;
+                case ProtoIo.RegisterBrain:
+                    break;
             }
 
             return Task.CompletedTask;
@@ -1382,7 +1589,11 @@ public class HiveMindTickBarrierTests
         int deliverTimeoutMs = 500,
         float backpressureDecay = 0.9f,
         float backpressureRecovery = 1.1f,
-        int lateBackpressureThreshold = 2)
+        int lateBackpressureThreshold = 2,
+        int timeoutRescheduleThreshold = 3,
+        int timeoutPauseThreshold = 6,
+        BackpressurePauseStrategy pauseStrategy = BackpressurePauseStrategy.OldestFirst,
+        Guid[]? pauseOrder = null)
         => new(
             BindHost: "127.0.0.1",
             Port: 0,
@@ -1395,8 +1606,8 @@ public class HiveMindTickBarrierTests
             BackpressureDecay: backpressureDecay,
             BackpressureRecovery: backpressureRecovery,
             LateBackpressureThreshold: lateBackpressureThreshold,
-            TimeoutRescheduleThreshold: 3,
-            TimeoutPauseThreshold: 6,
+            TimeoutRescheduleThreshold: timeoutRescheduleThreshold,
+            TimeoutPauseThreshold: timeoutPauseThreshold,
             RescheduleMinTicks: 10,
             RescheduleMinMinutes: 1,
             RescheduleQuietMs: 50,
@@ -1413,5 +1624,7 @@ public class HiveMindTickBarrierTests
             SettingsPort: 0,
             SettingsName: "SettingsMonitor",
             IoAddress: null,
-            IoName: null);
+            IoName: null,
+            BackpressurePauseStrategy: pauseStrategy,
+            BackpressurePauseExternalOrder: pauseOrder);
 }
