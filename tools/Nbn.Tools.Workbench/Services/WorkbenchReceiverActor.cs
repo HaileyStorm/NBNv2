@@ -16,6 +16,8 @@ public sealed class WorkbenchReceiverActor : IActor
 {
     private static readonly TimeSpan CommandAckTimeout = TimeSpan.FromSeconds(10);
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogInputDiagnostics =
+        IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private readonly IWorkbenchEventSink _sink;
     private PID? _ioGateway;
 
@@ -60,6 +62,7 @@ public sealed class WorkbenchReceiverActor : IActor
                 });
                 return Task.CompletedTask;
             case InputWriteCommand input:
+                LogInputForward(context, input.BrainId, $"input index={input.InputIndex} value={input.Value:0.###}");
                 SendToIo(context, new InputWrite
                 {
                     BrainId = input.BrainId.ToProtoUuid(),
@@ -68,6 +71,7 @@ public sealed class WorkbenchReceiverActor : IActor
                 });
                 return Task.CompletedTask;
             case InputVectorCommand vector:
+                LogInputForward(context, vector.BrainId, $"vector width={vector.Values.Count} values={PreviewValues(vector.Values)}");
                 var message = new InputVector { BrainId = vector.BrainId.ToProtoUuid() };
                 message.Values.Add(vector.Values);
                 SendToIo(context, message);
@@ -247,6 +251,17 @@ public sealed class WorkbenchReceiverActor : IActor
         }
 
         context.Send(_ioGateway, message);
+    }
+
+    private void LogInputForward(IContext context, Guid brainId, string detail)
+    {
+        if (!LogInputDiagnostics || !WorkbenchLog.Enabled)
+        {
+            return;
+        }
+
+        WorkbenchLog.Info(
+            $"ReceiverInputForward brain={brainId:D} detail={detail} io={PidLabel(_ioGateway ?? context.Self, context.System.Address)} sender={PidLabel(context.Self, context.System.Address)}");
     }
 
     private void SendToIoRequest(IContext context, object message)

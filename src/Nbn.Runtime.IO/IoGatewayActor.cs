@@ -11,6 +11,8 @@ namespace Nbn.Runtime.IO;
 public sealed class IoGatewayActor : IActor
 {
     private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
+    private static readonly bool LogInputDiagnostics =
+        IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private static readonly bool LogMetadataDiagnostics =
         IsEnvTrue("NBN_METADATA_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_IO_METADATA_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
@@ -549,6 +551,12 @@ public sealed class IoGatewayActor : IActor
         }
 
         var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
+        if (LogInputDiagnostics)
+        {
+            Console.WriteLine(
+                $"[IoGatewayInput] forward type={message.GetType().Name} brain={brainId} input={PidLabel(entry?.InputPid)} router={PidLabel(routerPid)} payload={DescribeInputPayload(message)}");
+        }
+
         if (routerPid is null)
         {
             return;
@@ -672,8 +680,20 @@ public sealed class IoGatewayActor : IActor
 
         try
         {
+            if (LogInputDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayInput] drain request brain={brainId} tick={message.TickId} input={PidLabel(entry.InputPid)}");
+            }
+
             var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, DefaultRequestTimeout);
             entry.InputState.ApplyDrain(drain);
+            if (LogInputDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayInput] drain response brain={brainId} tick={message.TickId} contribs={drain.Contribs.Count} input={PidLabel(entry.InputPid)}");
+            }
+
             context.Respond(drain);
         }
         catch (Exception ex)
@@ -2821,6 +2841,11 @@ public sealed class IoGatewayActor : IActor
         _routerCache.TryGetValue(brainId, out var cached);
         if (allowCached && cached is not null)
         {
+            if (LogInputDiagnostics)
+            {
+                Console.WriteLine($"[IoGatewayInput] router cached brain={brainId} router={PidLabel(cached)}");
+            }
+
             return cached;
         }
 
@@ -2844,6 +2869,12 @@ public sealed class IoGatewayActor : IActor
 
             if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
             {
+                if (LogInputDiagnostics)
+                {
+                    Console.WriteLine(
+                        $"[IoGatewayInput] router resolved brain={brainId} target=signal_router previous={PidLabel(cached)} current={PidLabel(routerPid)}");
+                }
+
                 if (!PidEquals(cached, routerPid))
                 {
                     _routerRegistration.Remove(brainId);
@@ -2856,6 +2887,12 @@ public sealed class IoGatewayActor : IActor
 
             if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
             {
+                if (LogInputDiagnostics)
+                {
+                    Console.WriteLine(
+                        $"[IoGatewayInput] router resolved brain={brainId} target=brain_root previous={PidLabel(cached)} current={PidLabel(rootPid)}");
+                }
+
                 if (!PidEquals(cached, rootPid))
                 {
                     _routerRegistration.Remove(brainId);
@@ -2872,6 +2909,18 @@ public sealed class IoGatewayActor : IActor
         }
 
         return cached;
+    }
+
+    private static string DescribeInputPayload(object message)
+    {
+        return message switch
+        {
+            InputWrite inputWrite => $"index={inputWrite.InputIndex} value={inputWrite.Value:0.###}",
+            InputVector inputVector => $"width={inputVector.Values.Count}",
+            RuntimeNeuronPulse pulse => $"region={pulse.TargetRegionId} neuron={pulse.TargetNeuronId} value={pulse.Value:0.###}",
+            RuntimeNeuronStateWrite stateWrite => $"region={stateWrite.TargetRegionId} neuron={stateWrite.TargetNeuronId} buffer={stateWrite.SetBuffer} accumulator={stateWrite.SetAccumulator}",
+            _ => string.Empty
+        };
     }
 
     private static bool TryParsePid(string? value, out PID? pid)

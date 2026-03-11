@@ -236,6 +236,25 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public void SendVector_SelectedBrain_IsPreferred_Over_StaleBrainIdText()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var selectedBrainId = Guid.NewGuid();
+        var staleBrainId = Guid.NewGuid();
+        vm.SelectBrain(selectedBrainId);
+        ApplyBrainInfo(vm, new BrainInfo { InputWidth = 3, OutputWidth = 1 });
+        vm.BrainIdText = staleBrainId.ToString("D");
+        vm.InputVectorText = "0.9,0.8,0.7";
+
+        vm.SendVectorCommand.Execute(null);
+
+        var sent = Assert.Single(client.InputVectorCalls);
+        Assert.Equal(selectedBrainId, sent.BrainId);
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, sent.Values);
+    }
+
+    [Fact]
     public void SendVector_RandomizeAfterEverySendEnabled_RegeneratesDraftAfterSuccessfulSend()
     {
         var client = new FakeWorkbenchClient();

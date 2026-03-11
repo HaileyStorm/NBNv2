@@ -17,6 +17,8 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class IoPanelViewModel : ViewModelBase
 {
     private const int MaxEvents = 300;
+    private static readonly bool LogInputDiagnostics =
+        IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private readonly WorkbenchClient _client;
     private readonly UiDispatcher _dispatcher;
     private readonly Func<int, string> _buildSuggestedVector;
@@ -712,6 +714,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
+        var previousBrainId = _selectedBrainId;
+
         if (_selectedBrainId.HasValue)
         {
             _client.UnsubscribeOutputs(_selectedBrainId.Value, vector: false);
@@ -723,6 +727,8 @@ public sealed class IoPanelViewModel : ViewModelBase
         _selectedBrainInputReplayEveryTick = false;
         OnPropertyChanged(nameof(AutoSendInputVectorEveryTickAvailable));
         BrainIdText = brainId?.ToString("D") ?? string.Empty;
+        LogInputDiagnostic(
+            $"IoSelectBrain previous={FormatBrainId(previousBrainId)} next={FormatBrainId(brainId)} brainIdText={BrainIdText}");
         TrackKnownBrain(brainId);
         ResetAutoVectorSendTickGate();
         if (!preserveOutputs)
@@ -1054,11 +1060,14 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private async Task RequestInfoAsync()
     {
-        if (!TryGetBrainId(out var brainId))
+        if (!TryGetPreferredBrainId(out var brainId))
         {
             BrainInfoSummary = "Invalid BrainId.";
             return;
         }
+
+        LogInputDiagnostic(
+            $"IoRequestInfo selected={FormatBrainId(_selectedBrainId)} brainIdText={BrainIdText} resolved={brainId:D}");
 
         await _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfoForSelection(brainId, info));
     }
@@ -1147,7 +1156,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void Subscribe(bool vector)
     {
-        if (!TryGetBrainId(out var brainId))
+        if (!TryGetPreferredBrainId(out var brainId))
         {
             BrainInfoSummary = "Invalid BrainId.";
             return;
@@ -1158,7 +1167,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void Unsubscribe(bool vector)
     {
-        if (!TryGetBrainId(out var brainId))
+        if (!TryGetPreferredBrainId(out var brainId))
         {
             BrainInfoSummary = "Invalid BrainId.";
             return;
@@ -1169,7 +1178,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void SendInput()
     {
-        if (!TryGetBrainId(out var brainId))
+        if (!TryGetPreferredBrainId(out var brainId))
         {
             BrainInfoSummary = "Invalid BrainId.";
             return;
@@ -1187,12 +1196,14 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
+        LogInputDiagnostic(
+            $"IoSendInput selected={FormatBrainId(_selectedBrainId)} brainIdText={BrainIdText} resolved={brainId:D} index={index} value={value:0.###}");
         _client.SendInput(brainId, index, value);
     }
 
     private void SendVector()
     {
-        if (!TryGetBrainId(out var brainId))
+        if (!TryGetPreferredBrainId(out var brainId))
         {
             BrainInfoSummary = "Invalid BrainId.";
             return;
@@ -1203,6 +1214,8 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
+        LogInputDiagnostic(
+            $"IoSendVector selected={FormatBrainId(_selectedBrainId)} brainIdText={BrainIdText} resolved={brainId:D} width={values.Count} values={PreviewValues(values)}");
         DispatchInputVector(brainId, values);
     }
 
@@ -1347,6 +1360,17 @@ public sealed class IoPanelViewModel : ViewModelBase
         return false;
     }
 
+    private bool TryGetPreferredBrainId(out Guid brainId)
+    {
+        if (_selectedBrainId.HasValue)
+        {
+            brainId = _selectedBrainId.Value;
+            return true;
+        }
+
+        return TryGetBrainId(out brainId);
+    }
+
     private bool TryGetSelectedBrain(out Guid brainId)
     {
         if (_selectedBrainId.HasValue)
@@ -1358,6 +1382,42 @@ public sealed class IoPanelViewModel : ViewModelBase
         BrainInfoSummary = "No brain selected.";
         brainId = Guid.Empty;
         return false;
+    }
+
+    private void LogInputDiagnostic(string message)
+    {
+        if (!LogInputDiagnostics || !WorkbenchLog.Enabled)
+        {
+            return;
+        }
+
+        WorkbenchLog.Info(message);
+    }
+
+    private static string FormatBrainId(Guid? brainId)
+        => brainId.HasValue ? brainId.Value.ToString("D") : "none";
+
+    private static string PreviewValues(IReadOnlyList<float> values)
+    {
+        if (values.Count == 0)
+        {
+            return "(empty)";
+        }
+
+        var take = Math.Min(values.Count, 8);
+        var preview = string.Join(",", values.Take(take).Select(static value => value.ToString("0.###", CultureInfo.InvariantCulture)));
+        return values.Count > take ? $"{preview},...({values.Count})" : preview;
+    }
+
+    private static bool IsEnvTrue(string key)
+    {
+        var value = Environment.GetEnvironmentVariable(key);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
     }
 
     private async Task ApplyEnergyCreditSelectedAsync()
