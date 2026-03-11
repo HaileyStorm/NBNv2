@@ -35,8 +35,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const double FlowChartPlotHeight = 220d;
     private const double FlowChartPaddingX = 8d;
     private const double FlowChartPaddingY = 8d;
+    private const double FlowChartHoverCardOffset = 14d;
+    private const double FlowChartHoverCardMaxWidth = 320d;
+    private const double FlowChartHoverCardMaxHeight = 140d;
     private const int PopulationChartTopSpeciesLimit = 12;
     private const int FlowChartTopSpeciesLimit = 11;
+    private const int ExpandedFlowChartTopSpeciesLimit = 23;
+    private const int ExpandedFlowChartUltraWideTopSpeciesLimit = 47;
+    private const double ExpandedFlowChartWideWindowThreshold = 1700d;
+    private const double ExpandedFlowChartDefaultPlotWidth = 1240d;
+    private const double ExpandedFlowChartDefaultPlotHeight = 720d;
+    private const double ExpandedFlowChartMinPlotWidth = 720d;
+    private const double ExpandedFlowChartMinPlotHeight = 360d;
     private const int SplitProximityTopSpeciesLimit = 12;
     private const double AdjacentSpeciesColorMinDistance = 72d;
     private const int SpeciesColorRecentWindow = 3;
@@ -162,6 +172,23 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _flowChartMidEpochLabel = "(n/a)";
     private string _flowChartEndEpochLabel = "(n/a)";
     private int _flowChartLegendColumns = 2;
+    private bool _includeNewestSpeciesInFlowChart = true;
+    private string _flowChartHoverCardText = string.Empty;
+    private bool _isFlowChartHoverCardVisible;
+    private double _flowChartHoverCardLeft = 8d;
+    private double _flowChartHoverCardTop = 8d;
+    private string _expandedFlowChartRangeLabel = "Epochs: (no data)";
+    private string _expandedFlowChartStartEpochLabel = "(n/a)";
+    private string _expandedFlowChartMidEpochLabel = "(n/a)";
+    private string _expandedFlowChartEndEpochLabel = "(n/a)";
+    private int _expandedFlowChartLegendColumns = 4;
+    private double _expandedFlowChartPlotWidth = ExpandedFlowChartDefaultPlotWidth;
+    private double _expandedFlowChartPlotHeight = ExpandedFlowChartDefaultPlotHeight;
+    private double _expandedFlowChartWindowWidth = ExpandedFlowChartDefaultPlotWidth;
+    private string _expandedFlowChartHoverCardText = string.Empty;
+    private bool _isExpandedFlowChartHoverCardVisible;
+    private double _expandedFlowChartHoverCardLeft = 8d;
+    private double _expandedFlowChartHoverCardTop = 8d;
     private string _splitProximityChartRangeLabel = "Epochs: (no data)";
     private string _splitProximityChartMetricLabel = "Min lineage similarity minus effective split threshold per species (signed log10(1+|delta|) y-axis; <=0 means split-trigger zone).";
     private string _splitProximityChartYAxisTopLabel = "0";
@@ -171,6 +198,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _cladogramRangeLabel = "Cladogram: (no data)";
     private string _cladogramMetricLabel = "Parent -> child lineage edges inferred from divergence decisions.";
     private string _cladogramKeyLabel = "Key: color strip = species color; each node shows species name + id with membership and direct-derived counts; root badges mark inferred root lineages. New species auto-expand their branch.";
+    private FlowChartSourceFrame? _lastFlowChartSource;
 
     public SpeciationPanelViewModel(
         UiDispatcher dispatcher,
@@ -201,6 +229,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         PopulationChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
         FlowChartAreas = new ObservableCollection<SpeciationFlowChartAreaItem>();
         FlowChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
+        ExpandedFlowChartAreas = new ObservableCollection<SpeciationFlowChartAreaItem>();
+        ExpandedFlowChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
         SplitProximityChartSeries = new ObservableCollection<SpeciationLineChartSeriesItem>();
         SplitProximityChartLegend = new ObservableCollection<SpeciationChartLegendItem>();
         CladogramItems = new ObservableCollection<SpeciationCladogramItem>();
@@ -246,6 +276,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public ObservableCollection<SpeciationChartLegendItem> PopulationChartLegend { get; }
     public ObservableCollection<SpeciationFlowChartAreaItem> FlowChartAreas { get; }
     public ObservableCollection<SpeciationChartLegendItem> FlowChartLegend { get; }
+    public ObservableCollection<SpeciationFlowChartAreaItem> ExpandedFlowChartAreas { get; }
+    public ObservableCollection<SpeciationChartLegendItem> ExpandedFlowChartLegend { get; }
     public ObservableCollection<SpeciationLineChartSeriesItem> SplitProximityChartSeries { get; }
     public ObservableCollection<SpeciationChartLegendItem> SplitProximityChartLegend { get; }
     public ObservableCollection<SpeciationCladogramItem> CladogramItems { get; }
@@ -509,6 +541,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _chartWindowText;
         set => SetProperty(ref _chartWindowText, value);
+    }
+
+    public bool IncludeNewestSpeciesInFlowChart
+    {
+        get => _includeNewestSpeciesInFlowChart;
+        set
+        {
+            if (SetProperty(ref _includeNewestSpeciesInFlowChart, value))
+            {
+                RefreshFlowChartsFromLatestSource();
+            }
+        }
     }
 
     public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
@@ -779,6 +823,84 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         set => SetProperty(ref _flowChartLegendColumns, value);
     }
 
+    public string FlowChartHoverCardText
+    {
+        get => _flowChartHoverCardText;
+        set => SetProperty(ref _flowChartHoverCardText, value);
+    }
+
+    public bool IsFlowChartHoverCardVisible
+    {
+        get => _isFlowChartHoverCardVisible;
+        set => SetProperty(ref _isFlowChartHoverCardVisible, value);
+    }
+
+    public double FlowChartHoverCardLeft
+    {
+        get => _flowChartHoverCardLeft;
+        set => SetProperty(ref _flowChartHoverCardLeft, value);
+    }
+
+    public double FlowChartHoverCardTop
+    {
+        get => _flowChartHoverCardTop;
+        set => SetProperty(ref _flowChartHoverCardTop, value);
+    }
+
+    public string ExpandedFlowChartRangeLabel
+    {
+        get => _expandedFlowChartRangeLabel;
+        set => SetProperty(ref _expandedFlowChartRangeLabel, value);
+    }
+
+    public string ExpandedFlowChartStartEpochLabel
+    {
+        get => _expandedFlowChartStartEpochLabel;
+        set => SetProperty(ref _expandedFlowChartStartEpochLabel, value);
+    }
+
+    public string ExpandedFlowChartMidEpochLabel
+    {
+        get => _expandedFlowChartMidEpochLabel;
+        set => SetProperty(ref _expandedFlowChartMidEpochLabel, value);
+    }
+
+    public string ExpandedFlowChartEndEpochLabel
+    {
+        get => _expandedFlowChartEndEpochLabel;
+        set => SetProperty(ref _expandedFlowChartEndEpochLabel, value);
+    }
+
+    public int ExpandedFlowChartLegendColumns
+    {
+        get => _expandedFlowChartLegendColumns;
+        set => SetProperty(ref _expandedFlowChartLegendColumns, value);
+    }
+
+    public string ExpandedFlowChartHoverCardText
+    {
+        get => _expandedFlowChartHoverCardText;
+        set => SetProperty(ref _expandedFlowChartHoverCardText, value);
+    }
+
+    public bool IsExpandedFlowChartHoverCardVisible
+    {
+        get => _isExpandedFlowChartHoverCardVisible;
+        set => SetProperty(ref _isExpandedFlowChartHoverCardVisible, value);
+    }
+
+    public double ExpandedFlowChartHoverCardLeft
+    {
+        get => _expandedFlowChartHoverCardLeft;
+        set => SetProperty(ref _expandedFlowChartHoverCardLeft, value);
+    }
+
+    public double ExpandedFlowChartHoverCardTop
+    {
+        get => _expandedFlowChartHoverCardTop;
+        set => SetProperty(ref _expandedFlowChartHoverCardTop, value);
+    }
+
     public string SplitProximityChartRangeLabel
     {
         get => _splitProximityChartRangeLabel;
@@ -837,6 +959,52 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public double PopulationChartHeight => PopulationChartPlotHeight;
     public double FlowChartWidth => FlowChartPlotWidth;
     public double FlowChartHeight => FlowChartPlotHeight;
+    public double ExpandedFlowChartWidth => _expandedFlowChartPlotWidth;
+    public double ExpandedFlowChartHeight => _expandedFlowChartPlotHeight;
+
+    public void UpdateExpandedFlowChartViewport(double plotWidth, double plotHeight, double windowWidth)
+    {
+        var normalizedPlotWidth = Math.Max(ExpandedFlowChartMinPlotWidth, plotWidth);
+        var normalizedPlotHeight = Math.Max(ExpandedFlowChartMinPlotHeight, plotHeight);
+        var normalizedWindowWidth = Math.Max(normalizedPlotWidth, windowWidth);
+        var changed = false;
+        if (!AreClose(_expandedFlowChartPlotWidth, normalizedPlotWidth))
+        {
+            _expandedFlowChartPlotWidth = normalizedPlotWidth;
+            OnPropertyChanged(nameof(ExpandedFlowChartWidth));
+            changed = true;
+        }
+
+        if (!AreClose(_expandedFlowChartPlotHeight, normalizedPlotHeight))
+        {
+            _expandedFlowChartPlotHeight = normalizedPlotHeight;
+            OnPropertyChanged(nameof(ExpandedFlowChartHeight));
+            changed = true;
+        }
+
+        if (!AreClose(_expandedFlowChartWindowWidth, normalizedWindowWidth))
+        {
+            _expandedFlowChartWindowWidth = normalizedWindowWidth;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            RefreshFlowChartsFromLatestSource();
+        }
+    }
+
+    public void UpdateFlowChartHover(SpeciationFlowChartAreaItem area, double pointerX, double pointerY)
+        => UpdateFlowChartHoverCore(area, pointerX, pointerY, expanded: false);
+
+    public void ClearFlowChartHover()
+        => ClearFlowChartHoverCore(expanded: false);
+
+    public void UpdateExpandedFlowChartHover(SpeciationFlowChartAreaItem area, double pointerX, double pointerY)
+        => UpdateFlowChartHoverCore(area, pointerX, pointerY, expanded: true);
+
+    public void ClearExpandedFlowChartHover()
+        => ClearFlowChartHoverCore(expanded: true);
 
     public void UpdateActiveBrains(IReadOnlyList<BrainListItem> brains)
     {
@@ -1463,8 +1631,18 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var populationFrame = BuildEpochPopulationFrame(chartHistory);
         var epochSummaries = BuildEpochSummaries(chartHistory);
         var speciesColors = BuildSpeciesColorMap(chartResponse.History);
+        var flowChartSource = new FlowChartSourceFrame(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
-        var flowSnapshot = BuildFlowChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
+        var flowSnapshot = BuildFlowChartSnapshot(
+            flowChartSource.EpochRows,
+            flowChartSource.SpeciesOrder,
+            flowChartSource.SpeciesColors,
+            BuildInlineFlowChartRenderLayout());
+        var expandedFlowSnapshot = BuildFlowChartSnapshot(
+            flowChartSource.EpochRows,
+            flowChartSource.SpeciesOrder,
+            flowChartSource.SpeciesColors,
+            BuildExpandedFlowChartRenderLayout());
         var divergenceSnapshot = BuildCurrentEpochDivergenceSnapshot(chartHistory, CurrentEpochId);
         var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
             chartHistory,
@@ -1483,8 +1661,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 EpochSummaries.Add(row);
             }
 
+            _lastFlowChartSource = flowChartSource;
             ApplyPopulationChartSnapshot(populationSnapshot);
             ApplyFlowChartSnapshot(flowSnapshot);
+            ApplyExpandedFlowChartSnapshot(expandedFlowSnapshot);
             CurrentEpochMaxDivergenceLabel = divergenceSnapshot.Label;
             CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel;
             ApplySplitProximityChartSnapshot(splitProximitySnapshot);
@@ -2653,7 +2833,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private static FlowChartSnapshot BuildFlowChartSnapshot(
         IReadOnlyList<EpochPopulationRow> epochRows,
         IReadOnlyList<SpeciesPopulationMeta> speciesOrder,
-        IReadOnlyDictionary<string, string> speciesColors)
+        IReadOnlyDictionary<string, string> speciesColors,
+        FlowChartRenderLayout layout)
     {
         if (epochRows.Count == 0 || speciesOrder.Count == 0)
         {
@@ -2668,7 +2849,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         var totalSpeciesCount = speciesOrder.Count;
-        var selectedSpecies = SelectFlowChartSpecies(speciesOrder);
+        var selectedSpecies = SelectFlowChartSpecies(
+            speciesOrder,
+            layout.VisibleSpeciesLimit,
+            layout.IncludeNewestSpecies);
         var orderedSelectedSpecies = OrderFlowSpeciesForDisplay(selectedSpecies);
         var includeOtherSpecies = totalSpeciesCount > selectedSpecies.Count;
         var flowSpecies = new List<SpeciesPopulationMeta>(orderedSelectedSpecies.Count + (includeOtherSpecies ? 1 : 0));
@@ -2680,6 +2864,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var speciesCount = flowSpecies.Count;
         var epochCount = epochRows.Count;
+        var minEpoch = epochRows[0].EpochId;
+        var maxEpoch = epochRows[^1].EpochId;
+        var isSingleEpochRowSampling = minEpoch == maxEpoch && epochRows.Count > 1;
         var visibleParentBySpeciesIndex = BuildFlowVisibleParentIndices(flowSpecies, speciesOrder);
         var childIndicesByParent = BuildFlowChildIndices(flowSpecies, visibleParentBySpeciesIndex);
         var rootIndices = Enumerable.Range(0, speciesCount)
@@ -2724,17 +2911,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 BuildFlowAreaPath(
                     primaryStarts,
                     primaryEnds,
-                    plotWidth: FlowChartPlotWidth,
-                    plotHeight: FlowChartPlotHeight,
-                    paddingX: FlowChartPaddingX,
-                    paddingY: FlowChartPaddingY),
+                    plotWidth: layout.PlotWidth,
+                    plotHeight: layout.PlotHeight,
+                    paddingX: layout.PaddingX,
+                    paddingY: layout.PaddingY),
                 BuildFlowAreaPath(
                     secondaryStarts,
                     secondaryEnds,
-                    plotWidth: FlowChartPlotWidth,
-                    plotHeight: FlowChartPlotHeight,
-                    paddingX: FlowChartPaddingX,
-                    paddingY: FlowChartPaddingY));
+                    plotWidth: layout.PlotWidth,
+                    plotHeight: layout.PlotHeight,
+                    paddingX: layout.PaddingX,
+                    paddingY: layout.PaddingY));
             if (string.IsNullOrWhiteSpace(path))
             {
                 continue;
@@ -2747,13 +2934,17 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var fill = WithAlpha(color, 0x8C);
             var lastShare = bandsByEpoch[^1][speciesIndex].TotalWidth;
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
-            areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel));
+            var samples = BuildFlowChartAreaSamples(
+                epochRows,
+                bandsByEpoch,
+                flowSpecies,
+                speciesIndex,
+                isSingleEpochRowSampling,
+                layout);
+            areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel, samples));
             legend.Add(new SpeciationChartLegendItem(species.DisplayName, fill, 10d, string.Empty));
         }
 
-        var minEpoch = epochRows[0].EpochId;
-        var maxEpoch = epochRows[^1].EpochId;
-        var isSingleEpochRowSampling = minEpoch == maxEpoch && epochRows.Count > 1;
         var topAxisLabel = isSingleEpochRowSampling
             ? "1"
             : minEpoch.ToString(CultureInfo.InvariantCulture);
@@ -2763,7 +2954,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var bottomAxisLabel = isSingleEpochRowSampling
             ? epochRows.Count.ToString(CultureInfo.InvariantCulture)
             : maxEpoch.ToString(CultureInfo.InvariantCulture);
-        var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, 4);
+        var legendColumns = Math.Clamp(areas.Count <= 1 ? 2 : areas.Count, 2, layout.MaxLegendColumns);
         var topScopeLabel = includeOtherSpecies
             ? $" {selectedSpecies.Count}/{totalSpeciesCount} visible species + Other."
             : string.Empty;
@@ -2801,6 +2992,151 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         FlowChartMidEpochLabel = snapshot.MidEpochLabel;
         FlowChartEndEpochLabel = snapshot.EndEpochLabel;
         FlowChartLegendColumns = snapshot.LegendColumns;
+        ClearFlowChartHover();
+    }
+
+    private void ApplyExpandedFlowChartSnapshot(FlowChartSnapshot snapshot)
+    {
+        ReplaceItems(ExpandedFlowChartAreas, snapshot.Areas);
+        ReplaceItems(ExpandedFlowChartLegend, snapshot.Legend);
+        ExpandedFlowChartRangeLabel = snapshot.RangeLabel;
+        ExpandedFlowChartStartEpochLabel = snapshot.StartEpochLabel;
+        ExpandedFlowChartMidEpochLabel = snapshot.MidEpochLabel;
+        ExpandedFlowChartEndEpochLabel = snapshot.EndEpochLabel;
+        ExpandedFlowChartLegendColumns = snapshot.LegendColumns;
+        ClearExpandedFlowChartHover();
+    }
+
+    private void RefreshFlowChartsFromLatestSource()
+    {
+        if (!_lastFlowChartSource.HasValue)
+        {
+            return;
+        }
+
+        var source = _lastFlowChartSource.Value;
+        var inlineSnapshot = BuildFlowChartSnapshot(
+            source.EpochRows,
+            source.SpeciesOrder,
+            source.SpeciesColors,
+            BuildInlineFlowChartRenderLayout());
+        var expandedSnapshot = BuildFlowChartSnapshot(
+            source.EpochRows,
+            source.SpeciesOrder,
+            source.SpeciesColors,
+            BuildExpandedFlowChartRenderLayout());
+
+        _dispatcher.Post(() =>
+        {
+            ApplyFlowChartSnapshot(inlineSnapshot);
+            ApplyExpandedFlowChartSnapshot(expandedSnapshot);
+        });
+    }
+
+    private FlowChartRenderLayout BuildInlineFlowChartRenderLayout()
+        => new(
+            PlotWidth: FlowChartPlotWidth,
+            PlotHeight: FlowChartPlotHeight,
+            PaddingX: FlowChartPaddingX,
+            PaddingY: FlowChartPaddingY,
+            VisibleSpeciesLimit: FlowChartTopSpeciesLimit,
+            MaxLegendColumns: 4,
+            IncludeNewestSpecies: IncludeNewestSpeciesInFlowChart);
+
+    private FlowChartRenderLayout BuildExpandedFlowChartRenderLayout()
+    {
+        var visibleSpeciesLimit = _expandedFlowChartWindowWidth >= ExpandedFlowChartWideWindowThreshold
+            ? ExpandedFlowChartUltraWideTopSpeciesLimit
+            : ExpandedFlowChartTopSpeciesLimit;
+        var maxLegendColumns = Math.Clamp((int)Math.Floor(_expandedFlowChartWindowWidth / 280d), 4, 8);
+        return new FlowChartRenderLayout(
+            PlotWidth: Math.Max(ExpandedFlowChartMinPlotWidth, _expandedFlowChartPlotWidth),
+            PlotHeight: Math.Max(ExpandedFlowChartMinPlotHeight, _expandedFlowChartPlotHeight),
+            PaddingX: FlowChartPaddingX,
+            PaddingY: FlowChartPaddingY,
+            VisibleSpeciesLimit: visibleSpeciesLimit,
+            MaxLegendColumns: maxLegendColumns,
+            IncludeNewestSpecies: IncludeNewestSpeciesInFlowChart);
+    }
+
+    private void UpdateFlowChartHoverCore(SpeciationFlowChartAreaItem area, double pointerX, double pointerY, bool expanded)
+    {
+        if (area.Samples.Count == 0)
+        {
+            ClearFlowChartHoverCore(expanded);
+            return;
+        }
+
+        var sample = ResolveFlowChartHoverSample(area.Samples, pointerX, pointerY);
+        if (sample is null)
+        {
+            ClearFlowChartHoverCore(expanded);
+            return;
+        }
+
+        var detail = $"{area.Label}{Environment.NewLine}{sample.RowLabel}{Environment.NewLine}Population {sample.PopulationCount} of {sample.TotalCount} ({sample.Share.ToString("P1", CultureInfo.InvariantCulture)})";
+        var chartWidth = expanded ? ExpandedFlowChartWidth : FlowChartWidth;
+        var chartHeight = expanded ? ExpandedFlowChartHeight : FlowChartHeight;
+        var hoverLeft = Math.Clamp(pointerX + FlowChartHoverCardOffset, 4d, Math.Max(4d, chartWidth - FlowChartHoverCardMaxWidth));
+        var hoverTop = Math.Clamp(pointerY + FlowChartHoverCardOffset, 4d, Math.Max(4d, chartHeight - FlowChartHoverCardMaxHeight));
+
+        if (expanded)
+        {
+            ExpandedFlowChartHoverCardText = detail;
+            ExpandedFlowChartHoverCardLeft = hoverLeft;
+            ExpandedFlowChartHoverCardTop = hoverTop;
+            IsExpandedFlowChartHoverCardVisible = true;
+            return;
+        }
+
+        FlowChartHoverCardText = detail;
+        FlowChartHoverCardLeft = hoverLeft;
+        FlowChartHoverCardTop = hoverTop;
+        IsFlowChartHoverCardVisible = true;
+    }
+
+    private void ClearFlowChartHoverCore(bool expanded)
+    {
+        if (expanded)
+        {
+            ExpandedFlowChartHoverCardText = string.Empty;
+            IsExpandedFlowChartHoverCardVisible = false;
+            return;
+        }
+
+        FlowChartHoverCardText = string.Empty;
+        IsFlowChartHoverCardVisible = false;
+    }
+
+    private static SpeciationFlowChartSampleItem? ResolveFlowChartHoverSample(
+        IReadOnlyList<SpeciationFlowChartSampleItem> samples,
+        double pointerX,
+        double pointerY)
+    {
+        if (samples.Count == 0 || !double.IsFinite(pointerY))
+        {
+            return null;
+        }
+
+        var candidates = double.IsFinite(pointerX)
+            ? samples
+                .Where(sample => sample.Bands.Any(band => pointerX >= band.StartX - 0.5d && pointerX <= band.EndX + 0.5d))
+                .ToArray()
+            : Array.Empty<SpeciationFlowChartSampleItem>();
+        var searchSpace = candidates.Length > 0 ? candidates : samples;
+        SpeciationFlowChartSampleItem? best = null;
+        var bestDistance = double.MaxValue;
+        foreach (var sample in searchSpace)
+        {
+            var distance = Math.Abs(sample.CenterY - pointerY);
+            if (distance < bestDistance)
+            {
+                best = sample;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
     }
 
     private void ApplySplitProximityChartSnapshot(SplitProximityChartSnapshot snapshot)
@@ -2987,18 +3323,27 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private static List<SpeciesPopulationMeta> SelectFlowChartSpecies(
-        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder,
+        int visibleSpeciesLimit,
+        bool includeNewestSpecies)
     {
-        if (speciesOrder.Count <= FlowChartTopSpeciesLimit)
+        if (speciesOrder.Count <= visibleSpeciesLimit)
         {
             return speciesOrder.ToList();
         }
 
-        var founderFamilies = BuildFlowFounderFamilies(speciesOrder);
+        var founderFamilies = BuildFlowFounderFamilies(speciesOrder, includeNewestSpecies);
         if (founderFamilies.Count <= 1)
         {
+            if (includeNewestSpecies && founderFamilies.Count == 1)
+            {
+                return founderFamilies[0].RankedSpecies
+                    .Take(visibleSpeciesLimit)
+                    .ToList();
+            }
+
             return speciesOrder
-                .Take(FlowChartTopSpeciesLimit)
+                .Take(visibleSpeciesLimit)
                 .ToList();
         }
 
@@ -3006,22 +3351,22 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             .OrderByDescending(family => family.TotalPopulation)
             .ThenBy(family => family.Founder.FirstSeenOrder)
             .ThenBy(family => family.Founder.SpeciesId, StringComparer.OrdinalIgnoreCase)
-            .Take(Math.Min(FlowChartTopSpeciesLimit, founderFamilies.Count))
+            .Take(Math.Min(visibleSpeciesLimit, founderFamilies.Count))
             .OrderBy(family => family.Founder.FirstSeenOrder)
             .ThenBy(family => family.Founder.SpeciesId, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var selectedSpecies = new List<SpeciesPopulationMeta>(FlowChartTopSpeciesLimit);
+        var selectedSpecies = new List<SpeciesPopulationMeta>(visibleSpeciesLimit);
         var nextSpeciesIndexByFamily = new int[selectedFamilies.Count];
-        for (var familyIndex = 0; familyIndex < selectedFamilies.Count && selectedSpecies.Count < FlowChartTopSpeciesLimit; familyIndex++)
+        for (var familyIndex = 0; familyIndex < selectedFamilies.Count && selectedSpecies.Count < visibleSpeciesLimit; familyIndex++)
         {
             selectedSpecies.Add(selectedFamilies[familyIndex].Founder);
             nextSpeciesIndexByFamily[familyIndex] = 1;
         }
 
-        while (selectedSpecies.Count < FlowChartTopSpeciesLimit)
+        while (selectedSpecies.Count < visibleSpeciesLimit)
         {
             var addedInRound = false;
-            for (var familyIndex = 0; familyIndex < selectedFamilies.Count && selectedSpecies.Count < FlowChartTopSpeciesLimit; familyIndex++)
+            for (var familyIndex = 0; familyIndex < selectedFamilies.Count && selectedSpecies.Count < visibleSpeciesLimit; familyIndex++)
             {
                 var rankedSpecies = selectedFamilies[familyIndex].RankedSpecies;
                 if (nextSpeciesIndexByFamily[familyIndex] >= rankedSpecies.Length)
@@ -3044,7 +3389,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private static List<FlowFounderFamily> BuildFlowFounderFamilies(
-        IReadOnlyList<SpeciesPopulationMeta> speciesOrder)
+        IReadOnlyList<SpeciesPopulationMeta> speciesOrder,
+        bool includeNewestSpecies)
     {
         var metaBySpeciesId = speciesOrder.ToDictionary(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase);
         var speciesByFounderId = new Dictionary<string, List<SpeciesPopulationMeta>>(StringComparer.OrdinalIgnoreCase);
@@ -3071,13 +3417,10 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                     .First();
             }
 
-            var rankedSpecies = entry.Value
+            var descendants = entry.Value
                 .Where(item => !string.Equals(item.SpeciesId, founder.SpeciesId, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(item => item.TotalCount)
-                .ThenBy(item => item.FirstSeenOrder)
-                .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
-                .Prepend(founder)
                 .ToArray();
+            var rankedSpecies = BuildFlowFounderFamilyRanking(founder, descendants, includeNewestSpecies);
             families.Add(new FlowFounderFamily(
                 Founder: founder,
                 RankedSpecies: rankedSpecies,
@@ -3085,6 +3428,64 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         return families;
+    }
+
+    private static SpeciesPopulationMeta[] BuildFlowFounderFamilyRanking(
+        SpeciesPopulationMeta founder,
+        IReadOnlyList<SpeciesPopulationMeta> descendants,
+        bool includeNewestSpecies)
+    {
+        if (descendants.Count == 0)
+        {
+            return [founder];
+        }
+
+        var populationRanked = descendants
+            .OrderByDescending(item => item.TotalCount)
+            .ThenBy(item => item.FirstSeenOrder)
+            .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (!includeNewestSpecies)
+        {
+            return populationRanked
+                .Prepend(founder)
+                .ToArray();
+        }
+
+        var newestRanked = descendants
+            .OrderByDescending(item => item.FirstAssignedMs)
+            .ThenByDescending(item => item.FirstSeenOrder)
+            .ThenBy(item => item.SpeciesId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var ranked = new List<SpeciesPopulationMeta>(descendants.Count + 1) { founder };
+        var seenSpeciesIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            founder.SpeciesId
+        };
+
+        void TryAdd(SpeciesPopulationMeta candidate)
+        {
+            if (seenSpeciesIds.Add(candidate.SpeciesId))
+            {
+                ranked.Add(candidate);
+            }
+        }
+
+        var maxCount = Math.Max(populationRanked.Length, newestRanked.Length);
+        for (var index = 0; index < maxCount; index++)
+        {
+            if (index < populationRanked.Length)
+            {
+                TryAdd(populationRanked[index]);
+            }
+
+            if (index < newestRanked.Length)
+            {
+                TryAdd(newestRanked[index]);
+            }
+        }
+
+        return ranked.ToArray();
     }
 
     private static string ResolveFlowFounderSpeciesId(
@@ -4283,6 +4684,102 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return builder.ToString();
     }
 
+    private static IReadOnlyList<SpeciationFlowChartSampleItem> BuildFlowChartAreaSamples(
+        IReadOnlyList<EpochPopulationRow> epochRows,
+        IReadOnlyList<FlowSpeciesRowBands[]> bandsByEpoch,
+        IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
+        int speciesIndex,
+        bool isSingleEpochRowSampling,
+        FlowChartRenderLayout layout)
+    {
+        var samples = new List<SpeciationFlowChartSampleItem>(epochRows.Count);
+        var usableWidth = Math.Max(1d, layout.PlotWidth - (layout.PaddingX * 2d));
+        var usableHeight = Math.Max(1d, layout.PlotHeight - (layout.PaddingY * 2d));
+        var yStep = epochRows.Count > 1 ? usableHeight / (epochRows.Count - 1) : 0d;
+        for (var epochIndex = 0; epochIndex < epochRows.Count; epochIndex++)
+        {
+            var bands = BuildFlowChartSampleBands(bandsByEpoch[epochIndex][speciesIndex], layout.PaddingX, usableWidth);
+            if (bands.Count == 0)
+            {
+                continue;
+            }
+
+            var row = epochRows[epochIndex];
+            var populationCount = ResolveFlowChartRowPopulationCount(row, flowSpecies, speciesIndex);
+            if (populationCount <= 0 || row.TotalCount <= 0)
+            {
+                continue;
+            }
+
+            var rowLabel = isSingleEpochRowSampling
+                ? $"Sample {epochIndex + 1} (Epoch {row.EpochId})"
+                : $"Epoch {row.EpochId}";
+            samples.Add(new SpeciationFlowChartSampleItem(
+                RowLabel: rowLabel,
+                PopulationCount: populationCount,
+                TotalCount: row.TotalCount,
+                Share: populationCount / (double)row.TotalCount,
+                CenterY: layout.PaddingY + (epochIndex * yStep),
+                Bands: bands));
+        }
+
+        return samples;
+    }
+
+    private static IReadOnlyList<SpeciationFlowChartSampleBand> BuildFlowChartSampleBands(
+        FlowSpeciesRowBands rowBands,
+        double paddingX,
+        double usableWidth)
+    {
+        var bands = new List<SpeciationFlowChartSampleBand>(2);
+
+        void TryAdd(double start, double end)
+        {
+            if (!double.IsFinite(start) || !double.IsFinite(end) || end <= start)
+            {
+                return;
+            }
+
+            bands.Add(new SpeciationFlowChartSampleBand(
+                StartX: paddingX + (Math.Clamp(start, 0d, 1d) * usableWidth),
+                EndX: paddingX + (Math.Clamp(end, 0d, 1d) * usableWidth)));
+        }
+
+        TryAdd(rowBands.PrimaryStart, rowBands.PrimaryEnd);
+        TryAdd(rowBands.SecondaryStart, rowBands.SecondaryEnd);
+        return bands;
+    }
+
+    private static int ResolveFlowChartRowPopulationCount(
+        EpochPopulationRow row,
+        IReadOnlyList<SpeciesPopulationMeta> flowSpecies,
+        int speciesIndex)
+    {
+        var species = flowSpecies[speciesIndex];
+        if (!string.Equals(species.SpeciesId, "(other)", StringComparison.Ordinal))
+        {
+            return row.Counts.TryGetValue(species.SpeciesId, out var count)
+                ? Math.Max(0, count)
+                : 0;
+        }
+
+        var visibleSpeciesTotal = 0;
+        for (var index = 0; index < flowSpecies.Count; index++)
+        {
+            if (index == speciesIndex)
+            {
+                continue;
+            }
+
+            if (row.Counts.TryGetValue(flowSpecies[index].SpeciesId, out var count))
+            {
+                visibleSpeciesTotal += Math.Max(0, count);
+            }
+        }
+
+        return Math.Max(0, row.TotalCount - visibleSpeciesTotal);
+    }
+
     private static string CombineFlowAreaPaths(params string[] paths)
     {
         return string.Join(
@@ -4883,6 +5380,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    private static bool AreClose(double left, double right)
+        => Math.Abs(left - right) <= 0.5d;
+
     private static string QuoteIfNeeded(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -5226,6 +5726,20 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<SpeciationFlowChartAreaItem> Areas,
         IReadOnlyList<SpeciationChartLegendItem> Legend);
 
+    private readonly record struct FlowChartRenderLayout(
+        double PlotWidth,
+        double PlotHeight,
+        double PaddingX,
+        double PaddingY,
+        int VisibleSpeciesLimit,
+        int MaxLegendColumns,
+        bool IncludeNewestSpecies);
+
+    private readonly record struct FlowChartSourceFrame(
+        IReadOnlyList<EpochPopulationRow> EpochRows,
+        IReadOnlyList<SpeciesPopulationMeta> SpeciesOrder,
+        IReadOnlyDictionary<string, string> SpeciesColors);
+
     private readonly record struct SplitProximityChartSnapshot(
         string RangeLabel,
         string MetricLabel,
@@ -5393,7 +5907,20 @@ public sealed record SpeciationFlowChartAreaItem(
     string Fill,
     string Stroke,
     string PathData,
-    string LatestShareLabel);
+    string LatestShareLabel,
+    IReadOnlyList<SpeciationFlowChartSampleItem> Samples);
+
+public sealed record SpeciationFlowChartSampleItem(
+    string RowLabel,
+    int PopulationCount,
+    int TotalCount,
+    double Share,
+    double CenterY,
+    IReadOnlyList<SpeciationFlowChartSampleBand> Bands);
+
+public sealed record SpeciationFlowChartSampleBand(
+    double StartX,
+    double EndX);
 
 public sealed record SpeciationChartLegendItem(
     string Label,

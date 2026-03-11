@@ -1,0 +1,115 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shapes="clr-namespace:Avalonia.Controls.Shapes;assembly=Avalonia.Controls"
+        xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+        x:Class="Nbn.Tools.Workbench.Views.Windows.SpeciationFlowChartWindow"
+        x:DataType="vm:SpeciationPanelViewModel"
+        Title="Species Flow"
+        Width="1600"
+        Height="900"
+        MinWidth="1100"
+        MinHeight="720"
+        WindowState="Maximized">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12" Margin="16">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+      <StackPanel Spacing="4">
+        <TextBlock Text="Species Flow" Classes="card-title" />
+        <TextBlock Text="Responsive expanded view. Wider windows show more visible species, and the chart rebuilds on resize." Classes="muted" TextWrapping="Wrap" />
+      </StackPanel>
+      <CheckBox Grid.Column="1"
+                Content="Include newest"
+                IsChecked="{Binding IncludeNewestSpeciesInFlowChart}"
+                VerticalAlignment="Center"
+                ToolTip.Tip="Blend newer species into the visible flow selection while preserving founder-family balancing." />
+    </Grid>
+
+    <TextBlock Grid.Row="1"
+               Text="{Binding ExpandedFlowChartRangeLabel}"
+               Classes="muted"
+               TextWrapping="Wrap" />
+
+    <Border Grid.Row="2" Classes="card" Padding="12">
+      <Grid RowDefinitions="*,Auto" RowSpacing="10">
+        <Grid ColumnDefinitions="72,*" RowDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="8">
+          <Grid RowDefinitions="Auto,*,Auto">
+            <TextBlock Text="{Binding ExpandedFlowChartStartEpochLabel}" Classes="muted" FontSize="10" HorizontalAlignment="Right" />
+            <TextBlock Grid.Row="1" Text="{Binding ExpandedFlowChartMidEpochLabel}" Classes="muted" FontSize="10" HorizontalAlignment="Right" VerticalAlignment="Center" />
+            <TextBlock Grid.Row="2" Text="{Binding ExpandedFlowChartEndEpochLabel}" Classes="muted" FontSize="10" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+          </Grid>
+
+          <Grid x:Name="ExpandedFlowChartPlot"
+                Grid.Column="1"
+                Background="Transparent"
+                ClipToBounds="True"
+                PointerExited="FlowChartPlotPointerExited">
+            <ItemsControl ItemsSource="{Binding ExpandedFlowChartAreas}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <Grid />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SpeciationFlowChartAreaItem">
+                  <shapes:Path Data="{Binding PathData}"
+                               Fill="{Binding Fill}"
+                               StrokeThickness="0"
+                               PointerEntered="FlowChartAreaPointerMoved"
+                               PointerMoved="FlowChartAreaPointerMoved"
+                               PointerExited="FlowChartAreaPointerExited" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Canvas IsHitTestVisible="False">
+              <Border Canvas.Left="{Binding ExpandedFlowChartHoverCardLeft}"
+                      Canvas.Top="{Binding ExpandedFlowChartHoverCardTop}"
+                      IsVisible="{Binding IsExpandedFlowChartHoverCardVisible}"
+                      MaxWidth="320"
+                      Background="{DynamicResource NbnSurfaceBrush}"
+                      BorderBrush="{DynamicResource NbnBorderBrush}"
+                      BorderThickness="1"
+                      CornerRadius="8"
+                      Padding="8">
+                <TextBox Text="{Binding ExpandedFlowChartHoverCardText}"
+                         IsReadOnly="True"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         FontSize="11"
+                         TextWrapping="Wrap"
+                         AcceptsReturn="True" />
+              </Border>
+            </Canvas>
+          </Grid>
+
+          <Grid Grid.Row="1" Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+            <TextBlock Text="0%" Classes="muted" FontSize="10" />
+            <TextBlock Grid.Column="1" Text="50%" Classes="muted" FontSize="10" HorizontalAlignment="Center" />
+            <TextBlock Grid.Column="2" Text="100%" Classes="muted" FontSize="10" HorizontalAlignment="Right" />
+          </Grid>
+        </Grid>
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="3"
+                  MaxHeight="220"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding ExpandedFlowChartLegend}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <UniformGrid Columns="{Binding ExpandedFlowChartLegendColumns}" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,10,1">
+              <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
+              <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+            </StackPanel>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </Grid>
+</Window>

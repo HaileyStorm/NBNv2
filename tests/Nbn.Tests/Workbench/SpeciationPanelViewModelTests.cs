@@ -728,6 +728,43 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task UpdateFlowChartHover_ShowsSpeciesPopulationAndShareForHoveredSample()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 1002, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 2000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2002, BrainId = Guid.NewGuid().ToProtoUuid() }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 2);
+
+        var alpha = vm.FlowChartAreas.Single(item => string.Equals(item.SpeciesId, "species.a", StringComparison.Ordinal));
+        var sample = alpha.Samples[0];
+        vm.UpdateFlowChartHover(alpha, sample.Bands[0].StartX + 1d, sample.CenterY);
+
+        Assert.True(vm.IsFlowChartHoverCardVisible);
+        Assert.Contains("Alpha", vm.FlowChartHoverCardText, StringComparison.Ordinal);
+        Assert.Contains("Epoch 10", vm.FlowChartHoverCardText, StringComparison.Ordinal);
+        Assert.Contains("Population 2 of 3", vm.FlowChartHoverCardText, StringComparison.Ordinal);
+        Assert.Contains("66.7", vm.FlowChartHoverCardText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_FlowChart_CapsVisibleSpeciesAtElevenPlusOtherBucket()
     {
         var history = Enumerable
@@ -772,6 +809,80 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_DefaultMixedMode_IncludesNewestSpeciesForSingleFounderFamily()
+    {
+        var history = CreateMemberships(epochId: 25, speciesId: "species.root", speciesDisplayName: "Root", count: 1, assignedMsStart: 1_000)
+            .Concat(Enumerable.Range(1, 14).SelectMany(index => CreateMemberships(
+                epochId: 25,
+                speciesId: $"species.branch.{index:00}",
+                speciesDisplayName: $"Branch {index:00}",
+                count: 32 - index,
+                assignedMsStart: (ulong)(2_000 + (index * 100)),
+                parentSpeciesId: "species.root",
+                parentSpeciesDisplayName: "Root")))
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
+
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.root", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.01", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.05", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.10", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.14", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.06", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.09", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_WhenNewestToggleDisabled_UsesPopulationOnlySelection()
+    {
+        var history = CreateMemberships(epochId: 26, speciesId: "species.root", speciesDisplayName: "Root", count: 1, assignedMsStart: 1_000)
+            .Concat(Enumerable.Range(1, 14).SelectMany(index => CreateMemberships(
+                epochId: 26,
+                speciesId: $"species.branch.{index:00}",
+                speciesDisplayName: $"Branch {index:00}",
+                count: 32 - index,
+                assignedMsStart: (ulong)(2_000 + (index * 100)),
+                parentSpeciesId: "species.root",
+                parentSpeciesDisplayName: "Root")))
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.IncludeNewestSpeciesInFlowChart = false;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
+
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.root", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.01", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.10", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.11", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.12", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.branch.14", StringComparison.Ordinal));
+        Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_FlowChart_BalancesVisibleSpeciesAcrossFounderLineages()
     {
         var history = CreateMemberships(epochId: 30, speciesId: "species.alpha.root", speciesDisplayName: "Alpha Root", count: 1, assignedMsStart: 1_000)
@@ -799,6 +910,7 @@ public class SpeciationPanelViewModelTests
             }
         };
         var vm = CreateViewModel(client);
+        vm.IncludeNewestSpeciesInFlowChart = false;
 
         vm.RefreshHistoryCommand.Execute(null);
         await WaitForAsync(() => vm.FlowChartAreas.Count == 12);
@@ -833,6 +945,55 @@ public class SpeciationPanelViewModelTests
         Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.08", StringComparison.Ordinal));
         Assert.DoesNotContain(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "species.beta.09", StringComparison.Ordinal));
         Assert.Contains(vm.FlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UpdateExpandedFlowChartViewport_UsesResponsiveSpeciesCaps()
+    {
+        var history = Enumerable
+            .Range(0, 60)
+            .SelectMany(index => new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 70,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(1_000 + index)
+                },
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 71,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = $"species.{index:00}",
+                    SpeciesDisplayName = $"Species {index:00}",
+                    AssignedMs = (ulong)(2_000 + index)
+                }
+            })
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+        vm.IncludeNewestSpeciesInFlowChart = false;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.ExpandedFlowChartAreas.Count == 24);
+
+        Assert.Contains("23/60 visible species + Other", vm.ExpandedFlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+
+        vm.UpdateExpandedFlowChartViewport(1800d, 720d, 1800d);
+        await WaitForAsync(() => vm.ExpandedFlowChartAreas.Count == 48);
+
+        Assert.Contains("47/60 visible species + Other", vm.ExpandedFlowChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(vm.ExpandedFlowChartAreas, item => string.Equals(item.SpeciesId, "(other)", StringComparison.Ordinal));
     }
 
     [Fact]
