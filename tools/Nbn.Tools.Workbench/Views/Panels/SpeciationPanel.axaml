@@ -340,7 +340,7 @@
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
                   <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-                    <Border Width="12" Height="2" VerticalAlignment="Center" Background="{Binding Color}" />
+                    <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
                     <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
                   </StackPanel>
                 </DataTemplate>
@@ -400,7 +400,7 @@
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
                   <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-                    <Border Width="12" Height="10" VerticalAlignment="Center" Background="{Binding Color}" />
+                    <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
                     <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
                   </StackPanel>
                 </DataTemplate>
@@ -458,7 +458,7 @@
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-                  <Border Width="12" Height="2" VerticalAlignment="Center" Background="{Binding Color}" />
+                  <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
                   <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
                 </StackPanel>
               </DataTemplate>

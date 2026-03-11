@@ -2627,7 +2627,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var latestCount = rawValues.Length == 0 ? 0 : rawValues[^1];
             var latestCountLabel = latestCount.ToString(CultureInfo.InvariantCulture);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestCountLabel));
-            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, string.Empty));
+            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, 2d, string.Empty));
         }
 
         var legendColumns = Math.Clamp(series.Count <= 1 ? 2 : series.Count, 2, 4);
@@ -2748,7 +2748,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var lastShare = bandsByEpoch[^1][speciesIndex].TotalWidth;
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
             areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel));
-            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, string.Empty));
+            legend.Add(new SpeciationChartLegendItem(species.DisplayName, fill, 10d, string.Empty));
         }
 
         var minEpoch = epochRows[0].EpochId;
@@ -3224,7 +3224,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 : "n/a";
             var color = ResolveSpeciesColor(species.SpeciesId, speciesColors);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestLabel));
-            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, string.Empty));
+            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, 2d, string.Empty));
         }
 
         if (series.Count == 0)
@@ -5397,7 +5397,8 @@ public sealed record SpeciationFlowChartAreaItem(
 
 public sealed record SpeciationChartLegendItem(
     string Label,
-    string Color,
+    string SwatchColor,
+    double SwatchHeight,
     string ValueLabel);
 
 public sealed class SpeciationCladogramItem : ViewModelBase

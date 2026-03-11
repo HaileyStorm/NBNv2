@@ -1465,14 +1465,38 @@ public class SpeciationPanelViewModelTests
         Assert.Equal(rootPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke);
         Assert.Equal(rootPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.0").Stroke);
         Assert.Equal(rootPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.0").Color);
+        Assert.Contains(vm.PopulationChartLegend, item => string.Equals(item.SwatchColor, rootPopulationColor, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            vm.FlowChartLegend,
+            item => string.Equals(
+                item.SwatchColor,
+                vm.FlowChartAreas.Single(area => area.SpeciesId == "species.0").Fill,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(vm.SplitProximityChartLegend, item => string.Equals(item.SwatchColor, rootPopulationColor, StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(firstChildPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.1").Stroke);
         Assert.Equal(firstChildPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.1").Stroke);
         Assert.Equal(firstChildPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.1").Color);
+        Assert.Contains(vm.PopulationChartLegend, item => string.Equals(item.SwatchColor, firstChildPopulationColor, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            vm.FlowChartLegend,
+            item => string.Equals(
+                item.SwatchColor,
+                vm.FlowChartAreas.Single(area => area.SpeciesId == "species.1").Fill,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(vm.SplitProximityChartLegend, item => string.Equals(item.SwatchColor, firstChildPopulationColor, StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal(secondChildPopulationColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.6").Stroke);
         Assert.Equal(secondChildPopulationColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.6").Stroke);
         Assert.Equal(secondChildPopulationColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.6").Color);
+        Assert.Contains(vm.PopulationChartLegend, item => string.Equals(item.SwatchColor, secondChildPopulationColor, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            vm.FlowChartLegend,
+            item => string.Equals(
+                item.SwatchColor,
+                vm.FlowChartAreas.Single(area => area.SpeciesId == "species.6").Fill,
+                StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(vm.SplitProximityChartLegend, item => string.Equals(item.SwatchColor, secondChildPopulationColor, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

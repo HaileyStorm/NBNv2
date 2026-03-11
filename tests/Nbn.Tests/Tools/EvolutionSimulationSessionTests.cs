@@ -385,6 +385,79 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_SeedParents_WithFourFounderFamiliesAcrossEightParents_KeepsFamiliesDistinctWhenSourceSpeciesIsReported()
+    {
+        var parents = CreateOrderedBrainParentPool(8);
+        var options = CreateOptions(
+            seed: 7816UL,
+            maxIterations: 1,
+            commitToSpeciation: true,
+            parentMode: EvolutionParentMode.BrainIds) with
+        {
+            ParentSelectionBias = EvolutionParentSelectionBias.Stability,
+            RunPressureMode = EvolutionRunPressureMode.Neutral
+        };
+        var client = new DeterministicFakeClient(
+            Enumerable.Repeat(0.24f, 28).Concat(new[] { 0.10f }));
+        foreach (var speciesId in new[]
+                 {
+                     "species-alpha",
+                     "species-alpha",
+                     "species-beta",
+                     "species-beta",
+                     "species-gamma",
+                     "species-gamma",
+                     "species-delta",
+                     "species-delta"
+                 })
+        {
+            client.CommitOutcomeSpeciesIds.Enqueue(speciesId);
+        }
+
+        foreach (var sourceSpeciesId in new[]
+                 {
+                     string.Empty,
+                     "species-alpha",
+                     string.Empty,
+                     "species-beta",
+                     "species-beta",
+                     "species-gamma",
+                     "species-alpha",
+                     "species-delta"
+                 })
+        {
+            client.CommitOutcomeSourceSpeciesIds.Enqueue(sourceSpeciesId);
+        }
+
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal(8, client.CommittedCandidates.Count(candidate => candidate.ChildBrainId.HasValue));
+
+        var familyCounts = SnapshotParentPoolLineageFamilyCounts(session);
+        Assert.Equal(4, familyCounts.Count);
+        Assert.Equal(2, familyCounts["species-alpha"]);
+        Assert.Equal(2, familyCounts["species-beta"]);
+        Assert.Equal(2, familyCounts["species-gamma"]);
+        Assert.Equal(2, familyCounts["species-delta"]);
+
+        var selectedPairs = SampleSelectedLineageFamilyPairs(session, sampleCount: 6_000);
+        Assert.DoesNotContain(
+            selectedPairs,
+            static pair => !string.Equals(pair.ParentAFamily, pair.ParentBFamily, StringComparison.OrdinalIgnoreCase));
+
+        var parentAFamilyCounts = selectedPairs
+            .GroupBy(pair => pair.ParentAFamily, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(4, parentAFamilyCounts.Count);
+        Assert.InRange(parentAFamilyCounts["species-alpha"], 900, 2100);
+        Assert.InRange(parentAFamilyCounts["species-beta"], 900, 2100);
+        Assert.InRange(parentAFamilyCounts["species-gamma"], 900, 2100);
+        Assert.InRange(parentAFamilyCounts["species-delta"], 900, 2100);
+    }
+
+    [Fact]
     public async Task RunAsync_WithDuplicatedLogicalParents_SelectsDistinctParentKeysWhenAvailable()
     {
         var parents = CreateDuplicatedBrainParentPool();

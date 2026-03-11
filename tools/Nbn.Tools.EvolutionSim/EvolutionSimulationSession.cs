@@ -241,7 +241,10 @@ public sealed class EvolutionSimulationSession
                 && !string.IsNullOrWhiteSpace(commitOutcome.SpeciesId)
                 && TryBuildParentKey(parent, out var parentKey))
             {
-                RecordParentSpecies(parentKey, commitOutcome.SpeciesId, commitOutcome.SourceSpeciesId);
+                // Initial seed parents define founder roots for simulator lineage tracking.
+                // Preserve the committed species id, but do not fold the founder into an
+                // earlier seeded family just because runtime reported a source species.
+                RecordParentSpecies(parentKey, commitOutcome.SpeciesId, sourceSpeciesId: string.Empty);
             }
 
             if (commitOutcome.Success)
