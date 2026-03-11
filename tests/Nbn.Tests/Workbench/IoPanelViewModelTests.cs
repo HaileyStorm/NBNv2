@@ -276,6 +276,36 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public async Task StaleBrainInfoResponse_DoesNotOverride_CurrentSelection()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainATcs = new TaskCompletionSource<BrainInfo?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var brainBTcs = new TaskCompletionSource<BrainInfo?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.PendingBrainInfoById[brainA] = brainATcs;
+        client.PendingBrainInfoById[brainB] = brainBTcs;
+
+        vm.SelectBrain(brainA);
+        vm.SelectBrain(brainB);
+
+        brainBTcs.SetResult(new BrainInfo { InputWidth = 3, OutputWidth = 1 });
+        await WaitForAsync(() => vm.BrainIdText == brainB.ToString("D"));
+
+        brainATcs.SetResult(new BrainInfo { InputWidth = 0, OutputWidth = 0 });
+        await Task.Delay(50);
+
+        vm.InputVectorText = "0.9,0.8,0.7";
+        vm.SendVectorCommand.Execute(null);
+
+        var sent = Assert.Single(client.InputVectorCalls);
+        Assert.Equal(brainB, sent.BrainId);
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, sent.Values);
+        Assert.DoesNotContain("expected 0, got 3", vm.BrainInfoSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ObserveTick_AutoSendEnabled_RandomizeAfterEverySendEnabled_AdvancesVectorEachTick()
     {
         var generatedVectors = new Queue<string>(new[]
@@ -648,6 +678,7 @@ public class IoPanelViewModelTests
         public List<(Guid BrainId, bool Enabled, float Rate, bool Probabilistic)> PlasticityCalls { get; } = new();
         public Dictionary<Guid, IoCommandResult> CostEnergyResults { get; } = new();
         public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
+        public Dictionary<Guid, TaskCompletionSource<BrainInfo?>> PendingBrainInfoById { get; } = new();
         public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
         public List<(Guid BrainId, bool Enabled, HomeostasisTargetMode TargetMode, HomeostasisUpdateMode UpdateMode, float BaseProbability, uint MinStepCodes, bool EnergyCouplingEnabled, float EnergyTargetScale, float EnergyProbabilityScale)> HomeostasisCalls { get; } = new();
         public List<(string Key, string Value)> SettingCalls { get; } = new();
@@ -707,6 +738,11 @@ public class IoPanelViewModelTests
 
         public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)
         {
+            if (PendingBrainInfoById.TryGetValue(brainId, out var pending))
+            {
+                return pending.Task;
+            }
+
             if (BrainInfoById.TryGetValue(brainId, out var info))
             {
                 return Task.FromResult<BrainInfo?>(info);

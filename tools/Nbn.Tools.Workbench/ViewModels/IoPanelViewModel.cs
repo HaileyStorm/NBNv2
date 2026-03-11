@@ -736,7 +736,7 @@ public sealed class IoPanelViewModel : ViewModelBase
         {
             _client.SubscribeOutputs(brainId.Value, vector: false);
             _client.SubscribeOutputs(brainId.Value, vector: true);
-            _ = _client.RequestBrainInfoAsync(brainId.Value, ApplyBrainInfo);
+            RequestBrainInfo(brainId.Value);
         }
         else
         {
@@ -810,7 +810,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
         _client.SubscribeOutputs(_selectedBrainId.Value, vector: false);
         _client.SubscribeOutputs(_selectedBrainId.Value, vector: true);
-        _ = _client.RequestBrainInfoAsync(_selectedBrainId.Value, ApplyBrainInfo);
+        RequestBrainInfo(_selectedBrainId.Value);
     }
 
     public void ApplyEnergyCreditSelected()
@@ -1047,6 +1047,11 @@ public sealed class IoPanelViewModel : ViewModelBase
         return true;
     }
 
+    private void RequestBrainInfo(Guid brainId)
+    {
+        _ = _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfo(brainId, info));
+    }
+
     private async Task RequestInfoAsync()
     {
         if (!TryGetBrainId(out var brainId))
@@ -1055,11 +1060,22 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        await _client.RequestBrainInfoAsync(brainId, ApplyBrainInfo);
+        await _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfo(brainId, info));
     }
 
     private void ApplyBrainInfo(BrainInfo? info)
     {
+        ApplyBrainInfo(_selectedBrainId, info);
+    }
+
+    private void ApplyBrainInfo(Guid? requestedBrainId, BrainInfo? info)
+    {
+        if (requestedBrainId.HasValue
+            && (!_selectedBrainId.HasValue || _selectedBrainId.Value != requestedBrainId.Value))
+        {
+            return;
+        }
+
         if (info is null)
         {
             _selectedBrainInputWidth = -1;
@@ -1483,7 +1499,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             BrainInfoSummary = $"Input coordinator mode: applied ({FormatInputCoordinatorMode(persisted)}).";
             if (_selectedBrainId.HasValue)
             {
-                _ = _client.RequestBrainInfoAsync(_selectedBrainId.Value, ApplyBrainInfo);
+                RequestBrainInfo(_selectedBrainId.Value);
             }
         });
     }
@@ -1514,7 +1530,7 @@ public sealed class IoPanelViewModel : ViewModelBase
             BrainInfoSummary = $"Output vector source: applied ({FormatOutputVectorSource(persisted)}).";
             if (_selectedBrainId.HasValue)
             {
-                _ = _client.RequestBrainInfoAsync(_selectedBrainId.Value, ApplyBrainInfo);
+                RequestBrainInfo(_selectedBrainId.Value);
             }
         });
     }

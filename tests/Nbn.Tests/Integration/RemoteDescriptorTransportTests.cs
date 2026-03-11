@@ -420,6 +420,158 @@ public class RemoteDescriptorTransportTests
     }
 
     [Fact]
+    public async Task IoGateway_Forwards_InputVectors_To_Distinct_WorkerHosted_Coordinators_For_MultipleBrains()
+    {
+        var receiverPort = GetFreePort();
+        var senderPort = GetFreePort();
+        var workerId = Guid.NewGuid();
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+
+        var options = WorkerNodeOptions.FromArgs(new[]
+        {
+            "--bind-host", "127.0.0.1",
+            "--port", receiverPort.ToString(),
+            "--settings-host", "127.0.0.1",
+            "--settings-port", "12010",
+            "--settings-name", "SettingsMonitor"
+        });
+
+        await using var receiver = await RemoteTestNode.StartAsync(WorkerNodeRemote.BuildConfig(options));
+        var workerRoot = receiver.Root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(workerId, receiver.Address)),
+            options.RootActorName);
+
+        var senderConfig = RemoteConfig.BindToLocalhost(senderPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnControlReflection.Descriptor,
+            NbnIoReflection.Descriptor,
+            NbnSignalsReflection.Descriptor);
+        await using var sender = await RemoteTestNode.StartAsync(senderConfig);
+
+        var workerTarget = new PID(receiver.Address, workerRoot.Id);
+
+        async Task<(string ActorPid, PID CoordinatorPid)> AssignInputCoordinatorAsync(Guid brainId)
+        {
+            var assignment = new PlacementAssignment
+            {
+                AssignmentId = $"assign-multi-input-{brainId:N}",
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 1,
+                Target = PlacementAssignmentTarget.PlacementTargetInputCoordinator,
+                WorkerNodeId = workerId.ToProtoUuid(),
+                RegionId = 0,
+                ShardIndex = 0,
+                NeuronStart = 0,
+                NeuronCount = 4,
+                ActorName = $"brain-{brainId:N}-input"
+            };
+
+            var assignmentAck = await sender.Root.RequestAsync<PlacementAssignmentAck>(
+                workerTarget,
+                new PlacementAssignmentRequest { Assignment = assignment },
+                TimeSpan.FromSeconds(5));
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, assignmentAck.State);
+
+            var reconcile = await sender.Root.RequestAsync<PlacementReconcileReport>(
+                workerTarget,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                },
+                TimeSpan.FromSeconds(5));
+            var observed = Assert.Single(reconcile.Assignments);
+            Assert.Equal(assignment.AssignmentId, observed.AssignmentId);
+            Assert.False(string.IsNullOrWhiteSpace(observed.ActorPid));
+            Assert.True(TryParsePid(observed.ActorPid, out var coordinatorPid));
+            return (observed.ActorPid, coordinatorPid);
+        }
+
+        var observedA = await AssignInputCoordinatorAsync(brainA);
+        var observedB = await AssignInputCoordinatorAsync(brainB);
+        Assert.NotEqual(observedA.ActorPid, observedB.ActorPid);
+
+        var gateway = sender.Root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateIoOptions())));
+        sender.Root.Send(gateway, new Nbn.Proto.Io.RegisterBrain
+        {
+            BrainId = brainA.ToProtoUuid(),
+            InputWidth = 4,
+            OutputWidth = 1,
+            InputCoordinatorMode = InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = observedA.ActorPid,
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = true
+        });
+        sender.Root.Send(gateway, new Nbn.Proto.Io.RegisterBrain
+        {
+            BrainId = brainB.ToProtoUuid(),
+            InputWidth = 4,
+            OutputWidth = 1,
+            InputCoordinatorMode = InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = observedB.ActorPid,
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = true
+        });
+
+        async Task WaitForBrainInfoAsync(Guid brainId)
+        {
+            await WaitForAsync(
+                async () =>
+                {
+                    var info = await sender.Root.RequestAsync<BrainInfo>(
+                        gateway,
+                        new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+                        TimeSpan.FromSeconds(5));
+                    return info.InputWidth == 4;
+                },
+                timeout: TimeSpan.FromSeconds(5));
+        }
+
+        await WaitForBrainInfoAsync(brainA);
+        await WaitForBrainInfoAsync(brainB);
+
+        sender.Root.Send(gateway, new InputVector
+        {
+            BrainId = brainA.ToProtoUuid(),
+            Values = { 1f, 2f, 3f, 4f }
+        });
+        sender.Root.Send(gateway, new InputVector
+        {
+            BrainId = brainB.ToProtoUuid(),
+            Values = { 4f, 3f, 2f, 1f }
+        });
+
+        async Task<InputDrain> WaitForDrainAsync(Guid brainId, float[] expectedValues, ulong tickId)
+        {
+            InputDrain? latest = null;
+            await WaitForAsync(
+                async () =>
+                {
+                    latest = await sender.Root.RequestAsync<InputDrain>(
+                        gateway,
+                        new DrainInputs
+                        {
+                            BrainId = brainId.ToProtoUuid(),
+                            TickId = tickId
+                        },
+                        TimeSpan.FromSeconds(5));
+                    return latest.Contribs.Count == expectedValues.Length
+                        && latest.Contribs.Select(static contrib => contrib.Value).SequenceEqual(expectedValues);
+                },
+                timeout: TimeSpan.FromSeconds(5));
+
+            return latest!;
+        }
+
+        var drainA = await WaitForDrainAsync(brainA, new[] { 1f, 2f, 3f, 4f }, tickId: 21);
+        var drainB = await WaitForDrainAsync(brainB, new[] { 4f, 3f, 2f, 1f }, tickId: 22);
+
+        Assert.Equal(new[] { 1f, 2f, 3f, 4f }, drainA.Contribs.Select(c => c.Value).ToArray());
+        Assert.Equal(new[] { 4f, 3f, 2f, 1f }, drainB.Contribs.Select(c => c.Value).ToArray());
+    }
+
+    [Fact]
     public async Task IoGateway_Forwards_OutputSubscriptions_With_ExplicitSubscriberActor_To_WorkerHosted_OutputCoordinator()
     {
         var receiverPort = GetFreePort();
