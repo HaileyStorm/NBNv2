@@ -1049,7 +1049,7 @@ public sealed class IoPanelViewModel : ViewModelBase
 
     private void RequestBrainInfo(Guid brainId)
     {
-        _ = _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfo(brainId, info));
+        _ = _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfoForSelection(brainId, info));
     }
 
     private async Task RequestInfoAsync()
@@ -1060,15 +1060,15 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
-        await _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfo(brainId, info));
+        await _client.RequestBrainInfoAsync(brainId, info => ApplyBrainInfoForSelection(brainId, info));
     }
 
     private void ApplyBrainInfo(BrainInfo? info)
     {
-        ApplyBrainInfo(_selectedBrainId, info);
+        ApplyBrainInfoForSelection(_selectedBrainId, info);
     }
 
-    private void ApplyBrainInfo(Guid? requestedBrainId, BrainInfo? info)
+    private void ApplyBrainInfoForSelection(Guid? requestedBrainId, BrainInfo? info)
     {
         if (requestedBrainId.HasValue
             && (!_selectedBrainId.HasValue || _selectedBrainId.Value != requestedBrainId.Value))
