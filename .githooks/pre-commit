@@ -16,15 +16,59 @@ if command -v bd >/dev/null 2>&1 && [ -d .beads ]; then
     fi
 fi
 
-run_docs_renderer() {
-    if command -v powershell.exe >/dev/null 2>&1; then
-        if powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/docs/render-nbnv2-docs.ps1 "$@"; then
+detect_docs_platform() {
+    case "${OS-}" in
+        Windows_NT)
+            echo windows
             return 0
-        fi
-        echo "warning: powershell.exe docs render failed; trying bash fallback." >&2
-    fi
+            ;;
+    esac
 
-    bash ./tools/docs/render-nbnv2-docs.sh "$@"
+    case "${OSTYPE-}" in
+        msys*|cygwin*|win32*)
+            echo windows
+            return 0
+            ;;
+        linux*|darwin*)
+            echo posix
+            return 0
+            ;;
+    esac
+
+    os_name="$(uname -s 2>/dev/null || printf 'unknown')"
+    case "$os_name" in
+        Windows_NT|MINGW*|MSYS*|CYGWIN*)
+            echo windows
+            ;;
+        Linux|Darwin)
+            echo posix
+            ;;
+        *)
+            echo "error: unsupported hook platform '$os_name'; run the docs renderer manually for this OS." >&2
+            return 1
+            ;;
+    esac
+}
+
+run_docs_renderer() {
+    platform="$(detect_docs_platform)"
+
+    case "$platform" in
+        windows)
+            if ! command -v powershell.exe >/dev/null 2>&1; then
+                echo "error: powershell.exe is required to render docs on Windows." >&2
+                exit 1
+            fi
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./tools/docs/render-nbnv2-docs.ps1
+            ;;
+        posix)
+            if ! command -v bash >/dev/null 2>&1; then
+                echo "error: bash is required to render docs on Linux/macOS." >&2
+                exit 1
+            fi
+            bash ./tools/docs/render-nbnv2-docs.sh
+            ;;
+    esac
 }
 
 run_docs_renderer

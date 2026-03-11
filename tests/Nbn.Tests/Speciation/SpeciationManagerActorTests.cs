@@ -1892,6 +1892,123 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public void FounderRootNamingState_TracksFiveRootsAndDerivedPrefixes()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var actor = new SpeciationManagerActor(
+            new SpeciationStore(speciationDb.DatabasePath),
+            CreateRuntimeConfig(),
+            settingsPid: null);
+
+        var buildFounderRootNamingPlan = typeof(SpeciationManagerActor).GetMethod(
+            "BuildFounderRootSpeciesNamingPlan",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var recordSpeciesDisplayName = typeof(SpeciationManagerActor).GetMethod(
+            "RecordSpeciesDisplayName",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var recordCommittedMembership = typeof(SpeciationManagerActor).GetMethod(
+            "RecordCommittedMembership",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(SpeciationMembershipRecord), typeof(double?), typeof(bool)],
+            modifiers: null);
+        var buildDerivedSpeciesDisplayName = typeof(SpeciationManagerActor).GetMethod(
+            "BuildDerivedSpeciesDisplayName",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        var buildRootPrefixMethod = typeof(SpeciationManagerActor).GetMethod(
+            "BuildRootSpeciesLineagePrefix",
+            BindingFlags.Static | BindingFlags.NonPublic);
+
+        Assert.NotNull(buildFounderRootNamingPlan);
+        Assert.NotNull(recordSpeciesDisplayName);
+        Assert.NotNull(recordCommittedMembership);
+        Assert.NotNull(buildDerivedSpeciesDisplayName);
+        Assert.NotNull(buildRootPrefixMethod);
+
+        static string ExtractLineageCode(string displayName)
+        {
+            var closeIndex = displayName.LastIndexOf(']');
+            var openIndex = displayName.LastIndexOf('[');
+            Assert.True(openIndex >= 0 && closeIndex > openIndex);
+            return displayName[(openIndex + 1)..closeIndex];
+        }
+
+        static int ExtractRootOrdinal(string displayName)
+        {
+            var dashIndex = displayName.LastIndexOf('-');
+            Assert.True(dashIndex > 0);
+            Assert.True(int.TryParse(displayName[(dashIndex + 1)..], out var ordinal));
+            return ordinal;
+        }
+
+        static string GetPlanString(object plan, string propertyName)
+            => Assert.IsType<string>(plan.GetType().GetProperty(propertyName)!.GetValue(plan));
+
+        static string? GetPlanNullableString(object plan, string propertyName)
+            => plan.GetType().GetProperty(propertyName)!.GetValue(plan) as string;
+
+        const string rootDisplayStem = "Default Species";
+        const string sourceSpeciesId = "default-species";
+        var founderRootDisplays = new List<string>();
+        var sourceDisplayName = rootDisplayStem;
+
+        for (var index = 0; index < 4; index++)
+        {
+            var plan = buildFounderRootNamingPlan!.Invoke(actor, [sourceSpeciesId, sourceDisplayName]);
+            Assert.NotNull(plan);
+
+            var founderDisplayName = GetPlanString(plan, "FounderSpeciesDisplayName");
+            var sourceDisplayNameRewrite = GetPlanNullableString(plan, "SourceSpeciesDisplayNameRewrite");
+            Assert.Equal($"{rootDisplayStem}-{index + 2}", founderDisplayName);
+
+            if (!string.IsNullOrWhiteSpace(sourceDisplayNameRewrite))
+            {
+                Assert.Equal($"{rootDisplayStem}-1", sourceDisplayNameRewrite);
+                recordSpeciesDisplayName!.Invoke(actor, [sourceSpeciesId, sourceDisplayNameRewrite]);
+                sourceDisplayName = sourceDisplayNameRewrite;
+            }
+
+            recordCommittedMembership!.Invoke(
+                actor,
+                [
+                    new SpeciationMembershipRecord(
+                        EpochId: 1,
+                        BrainId: Guid.NewGuid(),
+                        SpeciesId: $"founder-{index + 2}",
+                        SpeciesDisplayName: founderDisplayName,
+                        AssignedMs: index + 2,
+                        PolicyVersion: "test-policy",
+                        DecisionReason: "lineage_diverged_founder_root_species",
+                        DecisionMetadataJson: "{}",
+                        SourceBrainId: null,
+                        SourceArtifactRef: null,
+                        DecisionId: index + 2),
+                    null,
+                    false
+                ]);
+            founderRootDisplays.Add(founderDisplayName);
+        }
+
+        Assert.Equal(
+            Enumerable.Range(2, 4).Select(index => $"{rootDisplayStem}-{index}").ToArray(),
+            founderRootDisplays);
+
+        foreach (var rootDisplayName in Enumerable.Range(1, 5).Select(index => $"{rootDisplayStem}-{index}"))
+        {
+            var derivedDisplayName = Assert.IsType<string>(
+                buildDerivedSpeciesDisplayName!.Invoke(null, [rootDisplayName, $"species-{rootDisplayName}", $"derived-{rootDisplayName}"]));
+            Assert.StartsWith(rootDisplayName + " [", derivedDisplayName, StringComparison.Ordinal);
+
+            var expectedRootPrefix = Assert.IsType<string>(
+                buildRootPrefixMethod!.Invoke(null, [ExtractRootOrdinal(rootDisplayName)]));
+            Assert.StartsWith(
+                expectedRootPrefix,
+                ExtractLineageCode(derivedDisplayName),
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void BuildRootSpeciesLineagePrefix_RemainsUniqueBeyondTwentySixRoots()
     {
         var method = typeof(SpeciationManagerActor).GetMethod(

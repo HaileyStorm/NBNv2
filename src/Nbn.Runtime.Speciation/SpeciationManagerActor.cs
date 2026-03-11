@@ -45,6 +45,7 @@ public sealed class SpeciationManagerActor : IActor
     private readonly Dictionary<string, string> _speciesDisplayNamesBySpeciesId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _rootSpeciesOrdinalsBySpeciesId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _maxRootSpeciesOrdinalByStem = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _decisionProcessingGate = new(1, 1);
 
     private bool _initializing;
     private bool _initialized;
@@ -1593,6 +1594,46 @@ public sealed class SpeciationManagerActor : IActor
         long? decisionTimeMs,
         bool commit)
     {
+        // ReenterAfter allows assign requests to overlap, but this actor keeps
+        // mutable in-memory lineage and root-naming state that must be observed
+        // in commit order.
+        await _decisionProcessingGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await ProcessProtoDecisionCoreAsync(
+                context,
+                epoch,
+                applyMode,
+                candidate,
+                parents,
+                speciesId,
+                speciesDisplayName,
+                policyVersion,
+                decisionReason,
+                decisionMetadataJson,
+                decisionTimeMs,
+                commit).ConfigureAwait(false);
+        }
+        finally
+        {
+            _decisionProcessingGate.Release();
+        }
+    }
+
+    private async Task<ProtoSpec.SpeciationDecision> ProcessProtoDecisionCoreAsync(
+        IContext context,
+        SpeciationEpochInfo epoch,
+        ProtoSpec.SpeciationApplyMode applyMode,
+        ProtoSpec.SpeciationCandidateRef? candidate,
+        IEnumerable<ProtoSpec.SpeciationParentRef> parents,
+        string? speciesId,
+        string? speciesDisplayName,
+        string? policyVersion,
+        string? decisionReason,
+        string? decisionMetadataJson,
+        long? decisionTimeMs,
+        bool commit)
+    {
         if (!TryResolveCandidate(candidate, out var resolved))
         {
             return CreateDecisionFailure(
@@ -2494,6 +2535,7 @@ public sealed class SpeciationManagerActor : IActor
             return;
         }
 
+        RecordSpeciesDisplayName(membership.SpeciesId, membership.SpeciesDisplayName);
         UpdateSpeciesSimilarityFloor(
             membership.SpeciesId,
             NormalizeSpeciesFloorSimilaritySample(
