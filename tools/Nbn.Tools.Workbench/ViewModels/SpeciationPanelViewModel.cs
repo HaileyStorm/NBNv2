@@ -3061,7 +3061,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var color = string.Equals(species.SpeciesId, "(other)", StringComparison.Ordinal)
                 ? "#6B7280"
                 : ResolveSpeciesColor(species.SpeciesId, speciesColors);
-            var fill = WithAlpha(color, 0x8C);
+            var fill = color;
             var lastShare = bandsByEpoch[^1][speciesIndex].TotalWidth;
             var lastShareLabel = lastShare.ToString("P1", CultureInfo.InvariantCulture);
             var samples = BuildFlowChartAreaSamples(

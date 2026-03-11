@@ -95,33 +95,6 @@
     </DataTemplate>
 	    <DataTemplate x:Key="SpeciationLegendItemTemplate" x:DataType="vm:SpeciationChartLegendItem">
 	      <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-        <Button Width="14"
-                Height="12"
-                Padding="0"
-                Background="Transparent"
-                BorderThickness="0"
-                Focusable="False"
-                IsHitTestVisible="{Binding IsColorEditable}"
-                Click="LegendSwatch_Click">
-          <Border Width="12"
-                  Height="12"
-                  CornerRadius="2"
-                  VerticalAlignment="Center"
-                  Background="Transparent"
-                  BorderBrush="{DynamicResource NbnBorderBrush}"
-                  BorderThickness="1">
-            <Border Height="{Binding SwatchHeight}"
-                    Margin="1"
-                    CornerRadius="1"
-                    VerticalAlignment="Center"
-                    Background="{Binding SwatchColor}" />
-          </Border>
-        </Button>
-	        <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-	      </StackPanel>
-	    </DataTemplate>
-	    <DataTemplate x:Key="FlowLegendItemTemplate" x:DataType="vm:SpeciationChartLegendItem">
-	      <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
 	        <Button Width="12"
 	                Height="12"
 	                Padding="0"
@@ -400,9 +373,9 @@
                   <UniformGrid Columns="{Binding $parent[UserControl].DataContext.PopulationChartLegendColumns}" />
                 </ItemsPanelTemplate>
               </ItemsControl.ItemsPanel>
-	              <ItemsControl.ItemTemplate>
-	                <StaticResource ResourceKey="FlowLegendItemTemplate" />
-	              </ItemsControl.ItemTemplate>
+		              <ItemsControl.ItemTemplate>
+		                <StaticResource ResourceKey="SpeciationLegendItemTemplate" />
+		              </ItemsControl.ItemTemplate>
 	            </ItemsControl>
           </StackPanel>
         </Border>
