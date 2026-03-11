@@ -257,6 +257,8 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly Dictionary<string, string> _speciesColorOverrides = new(StringComparer.OrdinalIgnoreCase);
     private FlowChartSourceFrame? _lastFlowChartSource;
     private SpeciationChartSourceFrame? _lastSpeciationChartSource;
+    private FlowChartHoverState? _lastFlowChartHoverState;
+    private FlowChartHoverState? _lastExpandedFlowChartHoverState;
 
     public SpeciationPanelViewModel(
         UiDispatcher dispatcher,
@@ -3124,7 +3126,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         FlowChartMidEpochLabel = snapshot.MidEpochLabel;
         FlowChartEndEpochLabel = snapshot.EndEpochLabel;
         FlowChartLegendColumns = snapshot.LegendColumns;
-        ClearFlowChartHover();
+        RestoreFlowChartHover(expanded: false);
     }
 
     private void ApplyExpandedFlowChartSnapshot(FlowChartSnapshot snapshot)
@@ -3136,7 +3138,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         ExpandedFlowChartMidEpochLabel = snapshot.MidEpochLabel;
         ExpandedFlowChartEndEpochLabel = snapshot.EndEpochLabel;
         ExpandedFlowChartLegendColumns = snapshot.LegendColumns;
-        ClearExpandedFlowChartHover();
+        RestoreFlowChartHover(expanded: true);
     }
 
     private void RefreshFlowChartsFromLatestSource()
@@ -3261,6 +3263,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         if (expanded)
         {
+            _lastExpandedFlowChartHoverState = new FlowChartHoverState(area.SpeciesId, pointerX, pointerY);
             ExpandedFlowChartHoverCardTitle = title;
             ExpandedFlowChartHoverCardDetail = detail;
             ExpandedFlowChartHoverCardText = text;
@@ -3271,6 +3274,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
+        _lastFlowChartHoverState = new FlowChartHoverState(area.SpeciesId, pointerX, pointerY);
         FlowChartHoverCardTitle = title;
         FlowChartHoverCardDetail = detail;
         FlowChartHoverCardText = text;
@@ -3281,6 +3285,49 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private void ClearFlowChartHoverCore(bool expanded)
+    {
+        if (expanded)
+        {
+            _lastExpandedFlowChartHoverState = null;
+            ExpandedFlowChartHoverCardTitle = string.Empty;
+            ExpandedFlowChartHoverCardDetail = string.Empty;
+            ExpandedFlowChartHoverCardText = string.Empty;
+            ExpandedFlowChartHoverCardSwatchColor = "Transparent";
+            IsExpandedFlowChartHoverCardVisible = false;
+            return;
+        }
+
+        _lastFlowChartHoverState = null;
+        FlowChartHoverCardTitle = string.Empty;
+        FlowChartHoverCardDetail = string.Empty;
+        FlowChartHoverCardText = string.Empty;
+        FlowChartHoverCardSwatchColor = "Transparent";
+        IsFlowChartHoverCardVisible = false;
+    }
+
+    private void RestoreFlowChartHover(bool expanded)
+    {
+        var hoverState = expanded ? _lastExpandedFlowChartHoverState : _lastFlowChartHoverState;
+        if (!hoverState.HasValue)
+        {
+            ClearFlowChartHoverPresentation(expanded);
+            return;
+        }
+
+        var areas = expanded
+            ? (IEnumerable<SpeciationFlowChartAreaItem>)ExpandedFlowChartAreas
+            : FlowChartAreas;
+        var matchingArea = areas.FirstOrDefault(item => string.Equals(item.SpeciesId, hoverState.Value.SpeciesId, StringComparison.OrdinalIgnoreCase));
+        if (matchingArea is null)
+        {
+            ClearFlowChartHoverCore(expanded);
+            return;
+        }
+
+        UpdateFlowChartHoverCore(matchingArea, hoverState.Value.PointerX, hoverState.Value.PointerY, expanded);
+    }
+
+    private void ClearFlowChartHoverPresentation(bool expanded)
     {
         if (expanded)
         {
@@ -5999,6 +6046,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<EpochPopulationRow> EpochRows,
         IReadOnlyList<SpeciesPopulationMeta> SpeciesOrder,
         IReadOnlyDictionary<string, string> SpeciesColors);
+
+    private readonly record struct FlowChartHoverState(
+        string SpeciesId,
+        double PointerX,
+        double PointerY);
 
     private readonly record struct SpeciationChartSourceFrame(
         IReadOnlyList<SpeciationMembershipRecord> ChartHistory,

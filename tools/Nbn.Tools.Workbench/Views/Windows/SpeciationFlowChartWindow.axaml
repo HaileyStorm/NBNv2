@@ -11,35 +11,27 @@
         MinWidth="1100"
         MinHeight="720"
         WindowState="Maximized">
-  <Window.Resources>
-    <DataTemplate x:Key="ExpandedFlowLegendItemTemplate" x:DataType="vm:SpeciationChartLegendItem">
-      <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,10,1">
-        <Button Width="14"
-                Height="12"
-                Padding="0"
-                Background="Transparent"
-                BorderThickness="0"
-                Focusable="False"
-                IsHitTestVisible="{Binding IsColorEditable}"
-                Click="LegendSwatch_Click">
-          <Border Width="12"
-                  Height="12"
-                  CornerRadius="2"
-                  VerticalAlignment="Center"
-                  Background="Transparent"
-                  BorderBrush="{DynamicResource NbnBorderBrush}"
-                  BorderThickness="1">
-            <Border Height="{Binding SwatchHeight}"
-                    Margin="1"
-                    CornerRadius="1"
-                    VerticalAlignment="Center"
-                    Background="{Binding SwatchColor}" />
-          </Border>
-        </Button>
-        <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-      </StackPanel>
-    </DataTemplate>
-    <DataTemplate x:Key="SpeciesColorPickerSwatchTemplate" x:DataType="vm:SpeciationColorPickerSwatchItem">
+	  <Window.Resources>
+	    <DataTemplate x:Key="ExpandedFlowLegendItemTemplate" x:DataType="vm:SpeciationChartLegendItem">
+	      <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,10,1">
+	        <Button Width="12"
+	                Height="12"
+	                Padding="0"
+	                Background="Transparent"
+	                BorderThickness="0"
+	                Focusable="False"
+	                IsHitTestVisible="{Binding IsColorEditable}"
+	                Click="LegendSwatch_Click">
+	          <Border Width="12"
+	                  Height="12"
+	                  CornerRadius="2"
+	                  VerticalAlignment="Center"
+	                  Background="{Binding SwatchColor}" />
+	        </Button>
+	        <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+	      </StackPanel>
+	    </DataTemplate>
+	    <DataTemplate x:Key="SpeciesColorPickerSwatchTemplate" x:DataType="vm:SpeciationColorPickerSwatchItem">
       <Button Width="20"
               Height="20"
               Margin="3"

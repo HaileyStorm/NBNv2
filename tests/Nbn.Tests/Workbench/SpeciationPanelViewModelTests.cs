@@ -767,6 +767,46 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_PreservesHoverCardAcrossSnapshotRefresh()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 1002, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 2000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2002, BrainId = Guid.NewGuid().ToProtoUuid() }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 2);
+
+        var alpha = vm.FlowChartAreas.Single(item => string.Equals(item.SpeciesId, "species.a", StringComparison.Ordinal));
+        var sample = alpha.Samples[0];
+        vm.UpdateFlowChartHover(alpha, sample.Bands[0].StartX + 1d, sample.CenterY);
+
+        Assert.True(vm.IsFlowChartHoverCardVisible);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 2 && vm.IsFlowChartHoverCardVisible);
+
+        Assert.Equal("Alpha", vm.FlowChartHoverCardTitle);
+        Assert.Contains("Epoch 10", vm.FlowChartHoverCardDetail, StringComparison.Ordinal);
+        Assert.Contains("Population 2 of 3", vm.FlowChartHoverCardDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_FlowChart_ShowsAllSpeciesWhenTotalFitsVisiblePlusOtherCapacity()
     {
         var history = Enumerable
