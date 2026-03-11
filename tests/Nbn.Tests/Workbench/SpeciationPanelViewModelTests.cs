@@ -1760,6 +1760,121 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task SetSpeciesColorOverride_UpdatesAllSpeciationCharts_AndPersistsAcrossRebuilds()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 90,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.0",
+                SpeciesDisplayName = "Root",
+                DecisionReason = "explicit_species",
+                AssignedMs = 1_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.91d, 0.80d)
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 90,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.1",
+                SpeciesDisplayName = "Root [A]",
+                DecisionReason = "lineage_diverged_new_species",
+                AssignedMs = 1_001,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(
+                    0.89d,
+                    0.80d,
+                    dominantSpeciesId: "species.0",
+                    dominantSpeciesDisplayName: "Root")
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 91,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.6",
+                SpeciesDisplayName = "Root [B]",
+                DecisionReason = "lineage_diverged_new_species",
+                AssignedMs = 1_002,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(
+                    0.88d,
+                    0.80d,
+                    dominantSpeciesId: "species.0",
+                    dominantSpeciesDisplayName: "Root")
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 91,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.0",
+                SpeciesDisplayName = "Root",
+                DecisionReason = "lineage_hysteresis_hold",
+                AssignedMs = 2_000,
+                DecisionMetadataJson = BuildSplitDecisionMetadata(0.93d, 0.80d)
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 3 && FlattenCladogram(vm.CladogramItems).Count() == 3);
+
+        var originalRootColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.0").Stroke;
+        var siblingColor = vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.1").Stroke;
+        var overrideColor = vm.SpeciesColorPickerPalette
+            .Select(item => item.ColorHex)
+            .First(color => !string.Equals(color, originalRootColor, StringComparison.OrdinalIgnoreCase));
+
+        vm.SetSpeciesColorOverride("species.0", overrideColor);
+        await WaitForAsync(() => string.Equals(
+            vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke,
+            overrideColor,
+            StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(overrideColor, vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, vm.ExpandedFlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.0").Color);
+        Assert.Equal(overrideColor, vm.PopulationChartLegend.Single(item => item.SpeciesId == "species.0").SwatchColor);
+        Assert.Equal(
+            vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0").Fill,
+            vm.FlowChartLegend.Single(item => item.SpeciesId == "species.0").SwatchColor);
+        Assert.Equal(overrideColor, vm.SplitProximityChartLegend.Single(item => item.SpeciesId == "species.0").SwatchColor);
+        Assert.Equal(siblingColor, vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.1").Stroke);
+
+        var rootArea = vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0");
+        var rootSample = rootArea.Samples[0];
+        vm.UpdateFlowChartHover(rootArea, rootSample.Bands[0].StartX + 1d, rootSample.CenterY);
+        Assert.Equal(overrideColor, vm.FlowChartHoverCardSwatchColor);
+
+        vm.UpdateExpandedFlowChartViewport(1800d, 720d, 1800d);
+        await WaitForAsync(() => string.Equals(
+            vm.ExpandedFlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke,
+            overrideColor,
+            StringComparison.OrdinalIgnoreCase));
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => string.Equals(
+            vm.PopulationChartSeries.Single(item => item.SpeciesId == "species.0").Stroke,
+            overrideColor,
+            StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(overrideColor, vm.FlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, vm.ExpandedFlowChartAreas.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, vm.SplitProximityChartSeries.Single(item => item.SpeciesId == "species.0").Stroke);
+        Assert.Equal(overrideColor, FlattenCladogram(vm.CladogramItems).Single(item => item.SpeciesId == "species.0").Color);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_BuildsCladogramFromDivergenceLineageMetadata()
     {
         var history = new[]

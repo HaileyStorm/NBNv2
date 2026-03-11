@@ -47,6 +47,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private const double ExpandedFlowChartDefaultPlotHeight = 720d;
     private const double ExpandedFlowChartMinPlotWidth = 720d;
     private const double ExpandedFlowChartMinPlotHeight = 360d;
+    private const int SpeciesColorPickerOptionCount = 36;
     private const int SplitProximityTopSpeciesLimit = 12;
     private const double AdjacentSpeciesColorMinDistance = 72d;
     private const int SpeciesColorRecentWindow = 3;
@@ -78,6 +79,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         "#00A896",
         "#577590"
     ];
+    private static readonly IReadOnlyList<SpeciationColorPickerSwatchItem> SpeciesChartColorPickerPalette = BuildSpeciesColorPickerPalette();
 
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;
@@ -204,7 +206,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _cladogramRangeLabel = "Cladogram: (no data)";
     private string _cladogramMetricLabel = "Parent -> child lineage edges inferred from divergence decisions.";
     private string _cladogramKeyLabel = "Key: color strip = species color; each node shows species name + id with membership and direct-derived counts; root badges mark inferred root lineages. New species auto-expand their branch.";
+    private readonly Dictionary<string, string> _speciesColorOverrides = new(StringComparer.OrdinalIgnoreCase);
     private FlowChartSourceFrame? _lastFlowChartSource;
+    private SpeciationChartSourceFrame? _lastSpeciationChartSource;
 
     public SpeciationPanelViewModel(
         UiDispatcher dispatcher,
@@ -287,6 +291,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public ObservableCollection<SpeciationLineChartSeriesItem> SplitProximityChartSeries { get; }
     public ObservableCollection<SpeciationChartLegendItem> SplitProximityChartLegend { get; }
     public ObservableCollection<SpeciationCladogramItem> CladogramItems { get; }
+    public IReadOnlyList<SpeciationColorPickerSwatchItem> SpeciesColorPickerPalette => SpeciesChartColorPickerPalette;
 
     public AsyncRelayCommand RefreshAllCommand { get; }
     public AsyncRelayCommand RefreshStatusCommand { get; }
@@ -1036,6 +1041,31 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public void SetSpeciesColorOverride(string speciesId, string colorHex)
+    {
+        var normalizedSpeciesId = NormalizeSpeciesId(speciesId);
+        if (string.IsNullOrWhiteSpace(normalizedSpeciesId)
+            || string.Equals(normalizedSpeciesId, "(other)", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var normalizedColor = NormalizeHexColor(colorHex);
+        if (string.IsNullOrWhiteSpace(normalizedColor))
+        {
+            return;
+        }
+
+        if (_speciesColorOverrides.TryGetValue(normalizedSpeciesId, out var existingColor)
+            && string.Equals(existingColor, normalizedColor, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _speciesColorOverrides[normalizedSpeciesId] = normalizedColor;
+        RefreshSpeciationChartsFromLatestSource();
+    }
+
     public void UpdateFlowChartHover(SpeciationFlowChartAreaItem area, double pointerX, double pointerY)
         => UpdateFlowChartHoverCore(area, pointerX, pointerY, expanded: false);
 
@@ -1672,8 +1702,12 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         var chartHistory = TrimHistoryToChartWindow(chartResponse.History, chartWindow);
         var populationFrame = BuildEpochPopulationFrame(chartHistory);
         var epochSummaries = BuildEpochSummaries(chartHistory);
-        var speciesColors = BuildSpeciesColorMap(chartResponse.History);
+        var speciesColors = BuildSpeciesColorMap(chartResponse.History, _speciesColorOverrides);
         var flowChartSource = new FlowChartSourceFrame(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
+        var speciationChartSource = new SpeciationChartSourceFrame(
+            ChartHistory: chartHistory,
+            ColorSourceHistory: chartResponse.History,
+            CladogramHistory: chartResponse.History);
         var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var flowSnapshot = BuildFlowChartSnapshot(
             flowChartSource.EpochRows,
@@ -1703,6 +1737,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 EpochSummaries.Add(row);
             }
 
+            _lastSpeciationChartSource = speciationChartSource;
             _lastFlowChartSource = flowChartSource;
             ApplyPopulationChartSnapshot(populationSnapshot);
             ApplyFlowChartSnapshot(flowSnapshot);
@@ -2849,7 +2884,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             var latestCount = rawValues.Length == 0 ? 0 : rawValues[^1];
             var latestCountLabel = latestCount.ToString(CultureInfo.InvariantCulture);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestCountLabel));
-            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, 2d, string.Empty));
+            legend.Add(new SpeciationChartLegendItem(species.SpeciesId, species.DisplayName, color, 2d, string.Empty, true));
         }
 
         var legendColumns = Math.Clamp(series.Count <= 1 ? 2 : series.Count, 2, 4);
@@ -2987,7 +3022,13 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 isSingleEpochRowSampling,
                 layout);
             areas.Add(new SpeciationFlowChartAreaItem(species.SpeciesId, species.DisplayName, fill, color, path, lastShareLabel, samples));
-            legend.Add(new SpeciationChartLegendItem(species.DisplayName, fill, 10d, string.Empty));
+            legend.Add(new SpeciationChartLegendItem(
+                species.SpeciesId,
+                species.DisplayName,
+                fill,
+                10d,
+                string.Empty,
+                !string.Equals(species.SpeciesId, "(other)", StringComparison.OrdinalIgnoreCase)));
         }
 
         var topAxisLabel = isSingleEpochRowSampling
@@ -3073,6 +3114,51 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         {
             ApplyFlowChartSnapshot(inlineSnapshot);
             ApplyExpandedFlowChartSnapshot(expandedSnapshot);
+        });
+    }
+
+    private void RefreshSpeciationChartsFromLatestSource()
+    {
+        if (!_lastSpeciationChartSource.HasValue)
+        {
+            return;
+        }
+
+        var source = _lastSpeciationChartSource.Value;
+        var speciesColors = BuildSpeciesColorMap(source.ColorSourceHistory, _speciesColorOverrides);
+        var populationFrame = BuildEpochPopulationFrame(source.ChartHistory);
+        var flowChartSource = new FlowChartSourceFrame(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
+        var populationSnapshot = BuildPopulationChartSnapshot(
+            populationFrame.EpochRows,
+            populationFrame.SpeciesOrder,
+            speciesColors);
+        var inlineFlowSnapshot = BuildFlowChartSnapshot(
+            flowChartSource.EpochRows,
+            flowChartSource.SpeciesOrder,
+            flowChartSource.SpeciesColors,
+            BuildInlineFlowChartRenderLayout());
+        var expandedFlowSnapshot = BuildFlowChartSnapshot(
+            flowChartSource.EpochRows,
+            flowChartSource.SpeciesOrder,
+            flowChartSource.SpeciesColors,
+            BuildExpandedFlowChartRenderLayout());
+        var splitProximitySnapshot = BuildSplitProximityChartSnapshot(
+            source.ChartHistory,
+            CurrentEpochId,
+            ParseDouble(LineageSplitThreshold, 0.88d),
+            ParseDouble(LineageSplitGuardMargin, 0.02d),
+            speciesColors);
+        var cladogramSnapshot = BuildCladogramSnapshot(source.CladogramHistory, speciesColors);
+
+        _dispatcher.Post(() =>
+        {
+            _lastFlowChartSource = flowChartSource;
+            ApplyPopulationChartSnapshot(populationSnapshot);
+            ApplyFlowChartSnapshot(inlineFlowSnapshot);
+            ApplyExpandedFlowChartSnapshot(expandedFlowSnapshot);
+            CurrentEpochSplitProximityLabel = splitProximitySnapshot.CurrentEpochSummaryLabel;
+            ApplySplitProximityChartSnapshot(splitProximitySnapshot);
+            ApplyCladogramSnapshot(cladogramSnapshot);
         });
     }
 
@@ -3694,7 +3780,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 : "n/a";
             var color = ResolveSpeciesColor(species.SpeciesId, speciesColors);
             series.Add(new SpeciationLineChartSeriesItem(species.SpeciesId, species.DisplayName, color, path, latestLabel));
-            legend.Add(new SpeciationChartLegendItem(species.DisplayName, color, 2d, string.Empty));
+            legend.Add(new SpeciationChartLegendItem(species.SpeciesId, species.DisplayName, color, 2d, string.Empty, true));
         }
 
         if (series.Count == 0)
@@ -3960,7 +4046,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             children: childNodes);
     }
 
-    private static IReadOnlyDictionary<string, string> BuildSpeciesColorMap(IReadOnlyList<SpeciationMembershipRecord> history)
+    private static IReadOnlyDictionary<string, string> BuildSpeciesColorMap(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        IReadOnlyDictionary<string, string> overrides)
     {
         if (history.Count == 0)
         {
@@ -3987,7 +4075,57 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             }
         }
 
+        foreach (var entry in overrides)
+        {
+            var speciesId = NormalizeSpeciesId(entry.Key);
+            var colorHex = NormalizeHexColor(entry.Value);
+            if (!string.IsNullOrWhiteSpace(speciesId) && !string.IsNullOrWhiteSpace(colorHex))
+            {
+                speciesColors[speciesId] = colorHex;
+            }
+        }
+
         return speciesColors;
+    }
+
+    private static IReadOnlyList<SpeciationColorPickerSwatchItem> BuildSpeciesColorPickerPalette()
+    {
+        var colors = new List<SpeciationColorPickerSwatchItem>(SpeciesColorPickerOptionCount);
+        var seenColors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var recentColors = new Queue<string>(SpeciesColorRecentWindow);
+        for (var index = 0; index < SpeciesColorPickerOptionCount * 4 && colors.Count < SpeciesColorPickerOptionCount; index++)
+        {
+            var colorHex = NormalizeHexColor(ResolveSpeciesColor($"species-picker.{index:000}", recentColors));
+            if (string.IsNullOrWhiteSpace(colorHex) || !seenColors.Add(colorHex))
+            {
+                continue;
+            }
+
+            colors.Add(new SpeciationColorPickerSwatchItem(colorHex));
+            recentColors.Enqueue(colorHex);
+            if (recentColors.Count > SpeciesColorRecentWindow)
+            {
+                recentColors.Dequeue();
+            }
+        }
+
+        foreach (var paletteColor in SpeciesChartPalette)
+        {
+            if (colors.Count >= SpeciesColorPickerOptionCount)
+            {
+                break;
+            }
+
+            var colorHex = NormalizeHexColor(paletteColor);
+            if (string.IsNullOrWhiteSpace(colorHex) || !seenColors.Add(colorHex))
+            {
+                continue;
+            }
+
+            colors.Add(new SpeciationColorPickerSwatchItem(colorHex));
+        }
+
+        return colors;
     }
 
     private static bool TryExtractLineageParentSpeciesFromMetadata(
@@ -5239,6 +5377,27 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return (byte)Math.Round(clamped * 255d, MidpointRounding.AwayFromZero);
     }
 
+    private static string NormalizeHexColor(string colorHex)
+    {
+        if (string.IsNullOrWhiteSpace(colorHex))
+        {
+            return string.Empty;
+        }
+
+        var normalized = colorHex.Trim();
+        if (normalized.StartsWith('#'))
+        {
+            normalized = normalized[1..];
+        }
+
+        return normalized.Length switch
+        {
+            6 => $"#{normalized.ToUpperInvariant()}",
+            8 => $"#{normalized.ToUpperInvariant()}",
+            _ => string.Empty
+        };
+    }
+
     private static string WithAlpha(string colorHex, byte alpha)
     {
         if (string.IsNullOrWhiteSpace(colorHex))
@@ -5809,6 +5968,11 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         IReadOnlyList<SpeciesPopulationMeta> SpeciesOrder,
         IReadOnlyDictionary<string, string> SpeciesColors);
 
+    private readonly record struct SpeciationChartSourceFrame(
+        IReadOnlyList<SpeciationMembershipRecord> ChartHistory,
+        IReadOnlyList<SpeciationMembershipRecord> ColorSourceHistory,
+        IReadOnlyList<SpeciationMembershipRecord> CladogramHistory);
+
     private readonly record struct SplitProximityChartSnapshot(
         string RangeLabel,
         string MetricLabel,
@@ -5992,10 +6156,14 @@ public sealed record SpeciationFlowChartSampleBand(
     double EndX);
 
 public sealed record SpeciationChartLegendItem(
+    string SpeciesId,
     string Label,
     string SwatchColor,
     double SwatchHeight,
-    string ValueLabel);
+    string ValueLabel,
+    bool IsColorEditable);
+
+public sealed record SpeciationColorPickerSwatchItem(string ColorHex);
 
 public sealed class SpeciationCladogramItem : ViewModelBase
 {

@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:primitives="clr-namespace:Avalonia.Controls.Primitives;assembly=Avalonia.Controls"
              xmlns:shapes="clr-namespace:Avalonia.Controls.Shapes;assembly=Avalonia.Controls"
              xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
              x:Class="Nbn.Tools.Workbench.Views.Panels.SpeciationPanel"
@@ -92,9 +93,46 @@
         </Border>
       </StackPanel>
     </DataTemplate>
+    <DataTemplate x:Key="SpeciationLegendItemTemplate" x:DataType="vm:SpeciationChartLegendItem">
+      <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
+        <Button Width="14"
+                Height="12"
+                Padding="0"
+                Background="Transparent"
+                BorderThickness="0"
+                Focusable="False"
+                IsHitTestVisible="{Binding IsColorEditable}"
+                Click="LegendSwatch_Click">
+          <Border Width="12"
+                  Height="{Binding SwatchHeight}"
+                  CornerRadius="2"
+                  VerticalAlignment="Center"
+                  Background="{Binding SwatchColor}"
+                  BorderBrush="{DynamicResource NbnBorderBrush}"
+                  BorderThickness="1" />
+        </Button>
+        <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+      </StackPanel>
+    </DataTemplate>
+    <DataTemplate x:Key="SpeciesColorPickerSwatchTemplate" x:DataType="vm:SpeciationColorPickerSwatchItem">
+      <Button Width="20"
+              Height="20"
+              Margin="3"
+              Padding="0"
+              Background="Transparent"
+              BorderThickness="0"
+              Focusable="False"
+              Click="LegendColorPickerSwatch_Click">
+        <Border Background="{Binding ColorHex}"
+                BorderBrush="{DynamicResource NbnBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="3" />
+      </Button>
+    </DataTemplate>
   </UserControl.Resources>
-  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Spacing="16">
+  <Grid>
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="16">
       <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
@@ -338,12 +376,7 @@
                 </ItemsPanelTemplate>
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
-                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-                    <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
-                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-                  </StackPanel>
-                </DataTemplate>
+                <StaticResource ResourceKey="SpeciationLegendItemTemplate" />
               </ItemsControl.ItemTemplate>
             </ItemsControl>
           </StackPanel>
@@ -467,12 +500,7 @@
                 </ItemsPanelTemplate>
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
-                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-                    <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
-                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-                  </StackPanel>
-                </DataTemplate>
+                <StaticResource ResourceKey="SpeciationLegendItemTemplate" />
               </ItemsControl.ItemTemplate>
             </ItemsControl>
           </StackPanel>
@@ -525,12 +553,7 @@
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:SpeciationChartLegendItem">
-                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,8,1">
-                  <Border Width="12" Height="{Binding SwatchHeight}" VerticalAlignment="Center" Background="{Binding SwatchColor}" />
-                  <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
-                </StackPanel>
-              </DataTemplate>
+              <StaticResource ResourceKey="SpeciationLegendItemTemplate" />
             </ItemsControl.ItemTemplate>
           </ItemsControl>
         </StackPanel>
@@ -749,6 +772,30 @@
       </Border>
 
       <TextBlock Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" />
-    </StackPanel>
-  </ScrollViewer>
+      </StackPanel>
+    </ScrollViewer>
+    <primitives:Popup x:Name="LegendColorPickerPopup"
+                      IsLightDismissEnabled="True"
+                      Placement="Bottom"
+                      VerticalOffset="4"
+                      Closed="LegendColorPickerPopup_Closed">
+      <Border Background="{DynamicResource NbnSurfaceBrush}"
+              BorderBrush="{DynamicResource NbnBorderBrush}"
+              BorderThickness="1"
+              CornerRadius="8"
+              Padding="6"
+              PointerPressed="LegendColorPickerCard_PointerPressed">
+        <ItemsControl ItemsSource="{Binding SpeciesColorPickerPalette}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="6" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <StaticResource ResourceKey="SpeciesColorPickerSwatchTemplate" />
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+    </primitives:Popup>
+  </Grid>
 </UserControl>
