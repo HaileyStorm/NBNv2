@@ -4202,20 +4202,22 @@ public sealed class SpeciationManagerActorTests
             lineageHindsightReassignCommitWindow: 0,
             lineageHindsightSimilarityMargin: 0.02d));
         var system = new ActorSystem();
+        var compatibilityTimeout = TimeSpan.FromMilliseconds(50);
         var releaseAssessments = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
+            var reproProbe = new BlockingCompatibilityProbe(
+                CreateCompatibilityAssessmentResult(0.96f),
+                releaseAssessments.Task);
             var reproPid = system.Root.Spawn(Props.FromProducer(
-                () => new BlockingCompatibilityProbe(
-                    CreateCompatibilityAssessmentResult(0.96f),
-                    releaseAssessments.Task)));
+                () => reproProbe));
             var managerPid = system.Root.Spawn(Props.FromProducer(
                 () => new SpeciationManagerActor(
                     new SpeciationStore(speciationDb.DatabasePath),
                     runtimeConfig,
                     settingsPid: null,
                     reproductionManagerPid: reproPid,
-                    compatibilityRequestTimeout: TimeSpan.FromMilliseconds(50))));
+                    compatibilityRequestTimeout: compatibilityTimeout)));
 
             await WaitForEpochAsync(system, managerPid);
 
@@ -4297,10 +4299,13 @@ public sealed class SpeciationManagerActorTests
             Assert.Equal(
                 "compatibility_request_timeout",
                 lineage.GetProperty("assigned_species_compatibility_failure_reason").GetString());
-            Assert.True(lineage.GetProperty("assigned_species_compatibility_elapsed_ms").GetInt64() >= 50L);
+            Assert.True(
+                lineage.GetProperty("assigned_species_compatibility_elapsed_ms").GetInt64()
+                >= (long)Math.Ceiling(compatibilityTimeout.TotalMilliseconds));
             Assert.Equal(1, lineage.GetProperty("assigned_species_compatibility_exemplar_count").GetInt32());
             Assert.Equal(1, lineage.GetProperty("assigned_species_compatibility_exemplar_brain_ids").GetArrayLength());
             Assert.False(lineage.TryGetProperty("assigned_species_compatibility_similarity_score", out _));
+            Assert.Equal(1, reproProbe.CompatibilityRequestCount);
         }
         finally
         {

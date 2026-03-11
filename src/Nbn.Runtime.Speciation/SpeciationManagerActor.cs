@@ -3102,7 +3102,7 @@ public sealed class SpeciationManagerActor : IActor
                 compatible,
                 abortReason,
                 failureReason,
-                stopwatch.ElapsedMilliseconds);
+                ResolveAssignedSpeciesAdmissionElapsedMs(stopwatch, failureReason));
 
         if (_reproductionManagerPid is null
             || epoch.EpochId <= 0
@@ -3430,6 +3430,40 @@ public sealed class SpeciationManagerActor : IActor
             AbortReason: abortReason,
             FailureReason: failureReason,
             ElapsedMs: elapsedMs);
+
+    private long ResolveAssignedSpeciesAdmissionElapsedMs(Stopwatch stopwatch, string failureReason)
+    {
+        ArgumentNullException.ThrowIfNull(stopwatch);
+
+        var elapsedMs = (long)Math.Ceiling(stopwatch.Elapsed.TotalMilliseconds);
+        if (elapsedMs < 0)
+        {
+            elapsedMs = 0;
+        }
+
+        if (!string.Equals(failureReason, "compatibility_request_timeout", StringComparison.Ordinal))
+        {
+            return elapsedMs;
+        }
+
+        var timeoutFloorMs = GetPositiveCeilingMilliseconds(_compatibilityRequestTimeout);
+        return timeoutFloorMs > 0
+            ? Math.Max(elapsedMs, timeoutFloorMs)
+            : elapsedMs;
+    }
+
+    private static long GetPositiveCeilingMilliseconds(TimeSpan value)
+    {
+        if (value <= TimeSpan.Zero)
+        {
+            return 0;
+        }
+
+        var totalMilliseconds = value.TotalMilliseconds;
+        return double.IsNaN(totalMilliseconds) || double.IsInfinity(totalMilliseconds) || totalMilliseconds <= 0d
+            ? 0
+            : (long)Math.Ceiling(totalMilliseconds);
+    }
 
     private static string NormalizeCompatibilityAbortReason(string? abortReason)
         => string.IsNullOrWhiteSpace(abortReason)
