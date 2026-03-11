@@ -406,6 +406,9 @@ public sealed class HiveMindPlacementOrchestrationTests
             await WaitForAsync(
                 () => Task.FromResult(GetPendingRescheduleBrainCount(actor) == 0),
                 timeoutMs: 5_000);
+            await WaitForAsync(
+                () => Task.FromResult(workerB.OutputSinkUpdateCount >= 1),
+                timeoutMs: 5_000);
 
             var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
             AssertPlacementStable(finalStatus);

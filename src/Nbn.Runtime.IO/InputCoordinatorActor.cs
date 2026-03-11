@@ -6,14 +6,15 @@ using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.IO;
 
+public sealed record UpdateInputWidth(uint InputWidth);
 public sealed record UpdateInputCoordinatorMode(ProtoControl.InputCoordinatorMode Mode);
 
 public sealed class InputCoordinatorActor : IActor
 {
     private readonly Guid _brainId;
-    private readonly int _inputWidth;
-    private readonly float[] _values;
-    private readonly bool[] _dirty;
+    private int _inputWidth;
+    private float[] _values;
+    private bool[] _dirty;
     private readonly List<int> _dirtyIndices = new();
     private ProtoControl.InputCoordinatorMode _mode;
 
@@ -41,6 +42,10 @@ public sealed class InputCoordinatorActor : IActor
                 break;
             case DrainInputs message:
                 Drain(context, message);
+                break;
+            case UpdateInputWidth message:
+                ApplyInputWidthUpdate(message);
+                Respond(context, "update_input_width", success: true);
                 break;
             case UpdateInputCoordinatorMode message:
                 ApplyMode(message);
@@ -194,6 +199,19 @@ public sealed class InputCoordinatorActor : IActor
         {
             ClearDirtyState();
         }
+    }
+
+    private void ApplyInputWidthUpdate(UpdateInputWidth message)
+    {
+        var requestedWidth = checked((int)message.InputWidth);
+        if (requestedWidth <= _inputWidth)
+        {
+            return;
+        }
+
+        Array.Resize(ref _values, requestedWidth);
+        Array.Resize(ref _dirty, requestedWidth);
+        _inputWidth = requestedWidth;
     }
 
     private void ClearDirtyState()

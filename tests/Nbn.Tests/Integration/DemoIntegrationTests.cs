@@ -277,8 +277,24 @@ public class DemoIntegrationTests
                 IoNames.Gateway);
             var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
+            await WaitForBrainInfo(
+                ioNode.Root,
+                ioPid,
+                brainId,
+                info => info.InputWidth == 1 && info.OutputWidth == 1,
+                TimeSpan.FromSeconds(5));
+
             var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-            ioNode.Root.Spawn(Props.FromProducer(() => new IoOutputSubscriberActor(brainId, ioPid, outputTcs)));
+            var outputSink = ioNode.Root.Spawn(Props.FromProducer(() => new OutputSinkActor(brainId, outputTcs)));
+            var subscribeAck = await ioNode.Root.RequestAsync<IoCommandAck>(
+                ioPid,
+                new SubscribeOutputs
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    SubscriberActor = $"{ioNode.Address}/{outputSink.Id}"
+                },
+                TimeSpan.FromSeconds(5));
+            Assert.True(subscribeAck.Success);
 
             ioNode.Root.Send(ioPid, new InputWrite
             {
@@ -856,6 +872,34 @@ public class DemoIntegrationTests
         }
 
         throw new TimeoutException($"HiveMind status did not reach expected state. Last: brains={lastStatus?.RegisteredBrains}, shards={lastStatus?.RegisteredShards}, pendingCompute={lastStatus?.PendingCompute}, pendingDeliver={lastStatus?.PendingDeliver}.");
+    }
+
+    private static async Task<BrainInfo> WaitForBrainInfo(
+        IRootContext root,
+        PID ioGateway,
+        Guid brainId,
+        Func<BrainInfo, bool> predicate,
+        TimeSpan timeout)
+    {
+        var sw = Stopwatch.StartNew();
+        BrainInfo? lastInfo = null;
+        while (sw.Elapsed < timeout)
+        {
+            var info = await root.RequestAsync<BrainInfo>(
+                ioGateway,
+                new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+                timeout);
+            lastInfo = info;
+            if (predicate(info))
+            {
+                return info;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException(
+            $"IO brain info did not reach expected state. Last: input={lastInfo?.InputWidth}, output={lastInfo?.OutputWidth}.");
     }
 
     private static HiveMindOptions CreateOptions(

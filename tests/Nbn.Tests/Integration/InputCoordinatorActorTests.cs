@@ -182,5 +182,66 @@ public sealed class InputCoordinatorActorTests
             await system.ShutdownAsync();
         }
     }
+
+    [Fact]
+    public async Task WidthUpdate_ExpandsCoordinator_And_Allows_LargerVectors()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+                brainId,
+                inputWidth: 1,
+                InputCoordinatorMode.ReplayLatestVector)));
+
+            var initialWrite = await root.RequestAsync<IoCommandAck>(coordinator, new InputWrite
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputIndex = 0,
+                Value = 0.25f
+            });
+            Assert.True(initialWrite.Success);
+
+            var rejectedVector = await root.RequestAsync<IoCommandAck>(coordinator, new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 0.25f, 0.5f, 0.75f, 1f }
+            });
+            Assert.False(rejectedVector.Success);
+
+            var resizeAck = await root.RequestAsync<IoCommandAck>(
+                coordinator,
+                new UpdateInputWidth(4));
+            Assert.True(resizeAck.Success);
+
+            var expandedDrain = await root.RequestAsync<InputDrain>(coordinator, new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 1
+            });
+            Assert.Equal(new[] { 0.25f, 0f, 0f, 0f }, expandedDrain.Contribs.Select(c => c.Value).ToArray());
+
+            var acceptedVector = await root.RequestAsync<IoCommandAck>(coordinator, new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 1f, 2f, 3f, 4f }
+            });
+            Assert.True(acceptedVector.Success);
+
+            var updatedDrain = await root.RequestAsync<InputDrain>(coordinator, new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 2
+            });
+            Assert.Equal(new[] { 1f, 2f, 3f, 4f }, updatedDrain.Contribs.Select(c => c.Value).ToArray());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
 }
 

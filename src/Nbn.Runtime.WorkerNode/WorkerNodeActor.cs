@@ -446,6 +446,7 @@ public sealed class WorkerNodeActor : IActor
         brain.Assignments[assignment.AssignmentId] = hostedState;
 
         UpdateRuntimeWidthsFromShards(brain);
+        UpdateInputCoordinatorWidth(context, brain);
         UpdateOutputCoordinatorWidth(context, brain);
         PushRouting(context, brain);
         PushShardEndpoints(context, brain);
@@ -1060,6 +1061,17 @@ public sealed class WorkerNodeActor : IActor
 
     private void RegisterOutputSink(IContext context, BrainHostingState brain)
         => RegisterOutputSink(context, brain, allowClear: false);
+
+    private void UpdateInputCoordinatorWidth(IContext context, BrainHostingState brain)
+    {
+        if (brain.InputCoordinatorPid is null)
+        {
+            return;
+        }
+
+        var inputWidth = ResolveInputWidth(brain);
+        context.Send(brain.InputCoordinatorPid, new UpdateInputWidth((uint)Math.Max(1, inputWidth)));
+    }
 
     private void UpdateOutputCoordinatorWidth(IContext context, BrainHostingState brain)
     {
