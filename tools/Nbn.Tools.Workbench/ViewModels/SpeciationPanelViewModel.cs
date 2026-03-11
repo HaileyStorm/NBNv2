@@ -222,6 +222,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         BrowseSimParentAOverrideFileCommand = new AsyncRelayCommand(() => BrowseSimulatorParentFileAsync(SimulatorParentFileKind.ParentAOverride));
         BrowseSimParentBOverrideFileCommand = new AsyncRelayCommand(() => BrowseSimulatorParentFileAsync(SimulatorParentFileKind.ParentBOverride));
         AddSimSeedParentCommand = new RelayCommand(AddSimulatorSeedParentFromCandidate);
+        AddAllSimSeedParentsCommand = new RelayCommand(AddAllSimulatorSeedParents);
         AddSimSeedParentsFromFileCommand = new AsyncRelayCommand(AddSimulatorSeedParentsFromFileAsync);
         ClearSimSeedParentsCommand = new RelayCommand(ClearSimulatorSeedParents);
 
@@ -266,6 +267,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     public AsyncRelayCommand BrowseSimParentAOverrideFileCommand { get; }
     public AsyncRelayCommand BrowseSimParentBOverrideFileCommand { get; }
     public RelayCommand AddSimSeedParentCommand { get; }
+    public RelayCommand AddAllSimSeedParentsCommand { get; }
     public AsyncRelayCommand AddSimSeedParentsFromFileCommand { get; }
     public RelayCommand ClearSimSeedParentsCommand { get; }
 
@@ -2138,6 +2140,30 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             SimExtraParentCandidateBrain.BrainId,
             SimExtraParentCandidateBrain.Label,
             source: "dropdown");
+    }
+
+    private void AddAllSimulatorSeedParents()
+    {
+        if (SimActiveBrains.Count == 0)
+        {
+            SimulatorStatus = "No active brains are available to add as seed parents.";
+            Status = SimulatorStatus;
+            return;
+        }
+
+        var added = 0;
+        foreach (var activeBrain in SimActiveBrains)
+        {
+            if (TryAddSimulatorSeedParent(activeBrain.BrainId, activeBrain.Label, source: "dropdown", updateStatus: false))
+            {
+                added++;
+            }
+        }
+
+        SimulatorStatus = added > 0
+            ? $"Added {added} seed parent(s) from active brains."
+            : "No new seed parents were added from active brains (all duplicates).";
+        Status = SimulatorStatus;
     }
 
     private async Task AddSimulatorSeedParentsFromFileAsync()

@@ -508,6 +508,44 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public void AddAllSimSeedParentsCommand_AddsAllActiveBrainsWithoutDuplicates()
+    {
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
+        var brainD = Guid.NewGuid();
+        var deadBrain = Guid.NewGuid();
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Alpha", true),
+            new BrainListItem(brainB, "Beta", true),
+            new BrainListItem(brainC, "Gamma", true),
+            new BrainListItem(brainD, "Delta", true),
+            new BrainListItem(deadBrain, "Dead", false)
+        ]);
+
+        var selectedParentIds = new HashSet<Guid>
+        {
+            vm.SimSelectedParentABrain!.BrainId,
+            vm.SimSelectedParentBBrain!.BrainId
+        };
+        vm.SimExtraParentCandidateBrain = vm.SimActiveBrains.First(entry => !selectedParentIds.Contains(entry.BrainId));
+        vm.AddSimSeedParentCommand.Execute(null);
+
+        vm.AddAllSimSeedParentsCommand.Execute(null);
+
+        var seedParentIds = vm.SimSeedParents.Select(item => item.BrainId).ToList();
+        var activeBrainIds = vm.SimActiveBrains.Select(item => item.BrainId).ToHashSet();
+
+        Assert.Equal(activeBrainIds.Count, seedParentIds.Count);
+        Assert.Equal(seedParentIds.Count, seedParentIds.Distinct().Count());
+        Assert.Equal(activeBrainIds, seedParentIds.ToHashSet());
+        Assert.DoesNotContain(deadBrain, seedParentIds);
+        Assert.Equal("Added 1 seed parent(s) from active brains.", vm.SimulatorStatus);
+    }
+
+    [Fact]
     public async Task StartSimulatorCommand_BrainDropdownMode_RequiresDistinctParents()
     {
         var sharedBrain = Guid.NewGuid();

@@ -584,7 +584,7 @@
             </ComboBox>
           </Grid>
 
-          <Grid ColumnDefinitions="Auto,*,Auto,Auto"
+          <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
                 RowDefinitions="Auto,Auto"
                 ColumnSpacing="10"
                 RowSpacing="6">
@@ -600,14 +600,15 @@
               </ComboBox.ItemTemplate>
             </ComboBox>
             <Button Grid.Column="2" Content="Add" Command="{Binding AddSimSeedParentCommand}" />
-            <Button Grid.Column="3" Content="Add From File" Command="{Binding AddSimSeedParentsFromFileCommand}" />
+            <Button Grid.Column="3" Content="Add All" Command="{Binding AddAllSimSeedParentsCommand}" />
+            <Button Grid.Column="4" Content="Add From File" Command="{Binding AddSimSeedParentsFromFileCommand}" />
 
             <TextBlock Grid.Row="1" Text="Seed parents" Classes="muted" />
             <Border Grid.Row="1" Grid.Column="1" Classes="row">
               <TextBlock Text="{Binding SimSeedParentsSummary}" Classes="muted" />
             </Border>
             <Button Grid.Row="1" Grid.Column="2" Content="Clear Extras" Command="{Binding ClearSimSeedParentsCommand}" />
-            <TextBlock Grid.Row="1" Grid.Column="3"
+            <TextBlock Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="2"
                        Text="Requires 2+ distinct total parents to start."
                        Classes="muted"
                        VerticalAlignment="Center" />
