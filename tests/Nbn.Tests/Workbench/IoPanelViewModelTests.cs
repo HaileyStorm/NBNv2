@@ -128,6 +128,27 @@ public class IoPanelViewModelTests
     }
 
     [Fact]
+    public async Task AddOutputEvent_AutoSendEnabled_SendsOncePerTick_ForSelectedBrain()
+    {
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(client);
+        var brainId = Guid.NewGuid();
+        vm.SelectBrain(brainId);
+        vm.InputVectorText = "0.9,0.8,0.7";
+        vm.AutoSendInputVectorEveryTick = true;
+
+        vm.AddOutputEvent(CreateOutputEvent(brainId, tickId: 77, outputIndex: 0, value: 0.1f));
+        vm.AddOutputEvent(CreateOutputEvent(brainId, tickId: 77, outputIndex: 1, value: 0.2f));
+        vm.AddOutputEvent(CreateOutputEvent(brainId, tickId: 78, outputIndex: 0, value: 0.3f));
+
+        await WaitForAsync(() => client.InputVectorCalls.Count == 2);
+
+        Assert.All(client.InputVectorCalls, call => Assert.Equal(brainId, call.BrainId));
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[0].Values);
+        Assert.Equal(new[] { 0.9f, 0.8f, 0.7f }, client.InputVectorCalls[1].Values);
+    }
+
+    [Fact]
     public async Task ObserveTick_AutoSendEnabled_WithEmptyVector_DoesNotSend()
     {
         var client = new FakeWorkbenchClient();
@@ -673,6 +694,12 @@ public class IoPanelViewModelTests
     {
         var now = DateTimeOffset.UtcNow;
         return new OutputVectorEventItem(now, now.ToString("g", CultureInfo.InvariantCulture), brainId.ToString("D"), "1, -0.25, 0.5", AllZero: false, tickId);
+    }
+
+    private static OutputEventItem CreateOutputEvent(Guid brainId, ulong tickId, uint outputIndex, float value)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new OutputEventItem(now, now.ToString("g", CultureInfo.InvariantCulture), brainId.ToString("D"), outputIndex, value, tickId);
     }
 
     private static async Task WaitForAsync(Func<bool> predicate, int timeoutMs = 2000)

@@ -656,6 +656,12 @@ public sealed class IoPanelViewModel : ViewModelBase
             return;
         }
 
+        var brainId = Guid.Empty;
+        var shouldObserveTick =
+            AutoSendInputVectorEveryTick
+            && _selectedBrainId.HasValue
+            && Guid.TryParse(item.BrainId, out brainId);
+
         _dispatcher.Post(() =>
         {
             LastOutputTickLabel = item.TickId.ToString();
@@ -667,6 +673,11 @@ public sealed class IoPanelViewModel : ViewModelBase
             OutputEvents.Insert(0, item);
             Trim(OutputEvents);
         });
+
+        if (shouldObserveTick)
+        {
+            ObserveTick(brainId, item.TickId);
+        }
     }
 
     public void AddVectorEvent(OutputVectorEventItem item)
@@ -1290,6 +1301,8 @@ public sealed class IoPanelViewModel : ViewModelBase
         _lastAutoVectorSendBrainId = brainId;
         _lastAutoVectorSendTickId = tickId;
         _hasLastAutoVectorSendTick = true;
+        LogInputDiagnostic(
+            $"IoAutoSendVector selected={FormatBrainId(_selectedBrainId)} brainIdText={BrainIdText} resolved={brainId:D} tick={tickId} width={values.Count} values={PreviewValues(values)}");
         DispatchInputVector(brainId, values);
     }
 
