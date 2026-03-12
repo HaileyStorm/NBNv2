@@ -11,6 +11,7 @@ namespace Nbn.Runtime.Brain;
 public sealed class BrainSignalRouterActor : IActor
 {
     private static readonly bool LogDelivery = IsEnvTrue("NBN_BRAIN_LOG_DELIVERY");
+    private static readonly bool LogInputDiagnostics = IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private readonly RoutingTable _routingTable = new();
@@ -120,6 +121,14 @@ public sealed class BrainSignalRouterActor : IActor
             return;
         }
 
+        if (!ShouldDrainInputs()
+            && LogInputDiagnostics
+            && _routingTable.Entries.Any(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId))
+        {
+            LogInput(
+                $"TickDeliver skip-drain tick={tickDeliver.TickId} ioGateway={PidLabel(_ioGatewayPid)} inputRoutes={_routingTable.Entries.Count(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId)}");
+        }
+
         if (ShouldDrainInputs())
         {
             var replyTo = context.Sender ?? context.Parent;
@@ -127,6 +136,11 @@ public sealed class BrainSignalRouterActor : IActor
                 tickDeliver.TickId,
                 replyTo,
                 Stopwatch.StartNew());
+
+            if (LogInputDiagnostics)
+            {
+                LogInput($"TickDeliver request-drain tick={tickDeliver.TickId} ioGateway={PidLabel(_ioGatewayPid)}");
+            }
 
             context.Request(_ioGatewayPid!, new DrainInputs
             {
@@ -211,6 +225,10 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         CaptureIoGateway(context.Sender);
+        if (LogInputDiagnostics)
+        {
+            LogInput($"InputWrite received sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} index={message.InputIndex} value={message.Value:0.###}");
+        }
     }
 
     private void HandleInputVector(IContext context, InputVector message)
@@ -221,6 +239,10 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         CaptureIoGateway(context.Sender);
+        if (LogInputDiagnostics)
+        {
+            LogInput($"InputVector received sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} width={message.Values.Count}");
+        }
     }
 
     private void HandleRuntimeNeuronPulse(IContext context, RuntimeNeuronPulse message)
@@ -292,10 +314,20 @@ public sealed class BrainSignalRouterActor : IActor
 
         if (!_pendingInputDrains.TryGetValue(message.TickId, out var pending))
         {
+            if (LogInputDiagnostics)
+            {
+                LogInput($"InputDrain ignored tick={message.TickId} sender={PidLabel(context.Sender)} contribs={message.Contribs.Count}");
+            }
+
             return;
         }
 
         _pendingInputDrains.Remove(message.TickId);
+        if (LogInputDiagnostics)
+        {
+            LogInput($"InputDrain accepted tick={message.TickId} sender={PidLabel(context.Sender)} contribs={message.Contribs.Count}");
+        }
+
         ProcessTickDeliver(context, message.TickId, pending.ReplyTo, message.Contribs, pending.Stopwatch);
     }
 
@@ -310,10 +342,19 @@ public sealed class BrainSignalRouterActor : IActor
             && TryParsePid(message.IoGatewayPid, out var parsed))
         {
             _ioGatewayPid = parsed;
+            if (LogInputDiagnostics)
+            {
+                LogInput($"RegisterIoGateway explicit sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)}");
+            }
+
             return;
         }
 
         CaptureIoGateway(context.Sender);
+        if (LogInputDiagnostics)
+        {
+            LogInput($"RegisterIoGateway sender-capture sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)}");
+        }
     }
 
     private void ProcessTickDeliver(
@@ -645,8 +686,12 @@ public sealed class BrainSignalRouterActor : IActor
             $"SignalBatchAck ignored tick={ack.TickId} reason={reason} region={ack.RegionId} shard={shardLabel} sender={senderLabel}{expectedLabel}");
     }
 
-    private static string PidLabel(PID pid)
-        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+    private static string PidLabel(PID? pid)
+        => pid is null
+            ? "<missing>"
+            : string.IsNullOrWhiteSpace(pid.Address)
+                ? pid.Id
+                : $"{pid.Address}/{pid.Id}";
 
     private static void ForwardToParent(IContext context, object message)
     {
@@ -752,6 +797,9 @@ public sealed class BrainSignalRouterActor : IActor
 
     private static void Log(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [BrainSignalRouter] {message}");
+
+    private void LogInput(string message)
+        => Console.WriteLine($"[{DateTime.UtcNow:O}] [BrainSignalRouterInput] brain={_brainId:D} {message}");
 
     private static bool IsEnvTrue(string key)
     {
