@@ -69,7 +69,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
         var routerSnapshot = await root.RequestAsync<IoGatewayRegistrationProbeActor.Snapshot>(
             routerPid,
             new IoGatewayRegistrationProbeActor.GetSnapshot());
-        Assert.Equal(1, routerSnapshot.RegistrationCount);
+        Assert.Equal(2, routerSnapshot.RegistrationCount);
         Assert.False(string.IsNullOrWhiteSpace(routerSnapshot.LastIoGatewayPid));
 
         var bootstrapOutputTick = 8UL;
@@ -409,6 +409,84 @@ public sealed class IoGatewayDistributedCoordinatorTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task ForwardInput_ReRegisters_IoGateway_When_Same_Router_Forgets_Registration()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var router = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            router,
+            inputWidth: 1,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.25f }
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+                    router,
+                    new InputRouterProbeActor.GetSnapshot());
+                return snapshot.InputVectorCount >= 1
+                    && snapshot.RegisterIoGatewayCount >= 1
+                    && snapshot.HasIoGatewayRegistration;
+            },
+            timeoutMs: 2_000);
+
+        root.Send(router, new InputRouterProbeActor.ForgetIoGatewayRegistration());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+                    router,
+                    new InputRouterProbeActor.GetSnapshot());
+                return !snapshot.HasIoGatewayRegistration;
+            },
+            timeoutMs: 2_000);
+
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.5f }
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+                    router,
+                    new InputRouterProbeActor.GetSnapshot());
+                return snapshot.InputVectorCount >= 2
+                    && snapshot.RegisterIoGatewayCount >= 2
+                    && snapshot.HasIoGatewayRegistration;
+            },
+            timeoutMs: 2_000);
+
+        var routerSnapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+            router,
+            new InputRouterProbeActor.GetSnapshot());
+        Assert.Equal(2, routerSnapshot.InputVectorCount);
+        Assert.Equal(2, routerSnapshot.RegisterIoGatewayCount);
+        Assert.True(routerSnapshot.HasIoGatewayRegistration);
+
+        await system.ShutdownAsync();
+    }
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -535,6 +613,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private readonly Guid _brainId;
         private int _inputVectorCount;
         private int _registerIoGatewayCount;
+        private bool _hasIoGatewayRegistration;
 
         public InputRouterProbeActor(Guid brainId)
         {
@@ -542,8 +621,9 @@ public sealed class IoGatewayDistributedCoordinatorTests
         }
 
         public sealed record GetSnapshot;
+        public sealed record ForgetIoGatewayRegistration;
 
-        public sealed record Snapshot(int InputVectorCount, int RegisterIoGatewayCount);
+        public sealed record Snapshot(int InputVectorCount, int RegisterIoGatewayCount, bool HasIoGatewayRegistration);
 
         public Task ReceiveAsync(IContext context)
         {
@@ -554,9 +634,13 @@ public sealed class IoGatewayDistributedCoordinatorTests
                     break;
                 case RegisterIoGateway register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
                     _registerIoGatewayCount++;
+                    _hasIoGatewayRegistration = true;
+                    break;
+                case ForgetIoGatewayRegistration:
+                    _hasIoGatewayRegistration = false;
                     break;
                 case GetSnapshot:
-                    context.Respond(new Snapshot(_inputVectorCount, _registerIoGatewayCount));
+                    context.Respond(new Snapshot(_inputVectorCount, _registerIoGatewayCount, _hasIoGatewayRegistration));
                     break;
             }
 

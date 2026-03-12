@@ -535,7 +535,8 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
-        if (!TryGetBrainEntry(message, out var entry))
+        var hadBrainEntry = TryGetBrainEntry(message, out var entry);
+        if (!hadBrainEntry)
         {
             entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
         }
@@ -551,7 +552,15 @@ public sealed class IoGatewayActor : IActor
             return;
         }
 
+        _routerRegistration.TryGetValue(brainId, out var registeredRouterBeforeForward);
         var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
+        if (hadBrainEntry
+            && routerPid is not null
+            && string.Equals(registeredRouterBeforeForward, PidLabel(routerPid), StringComparison.Ordinal))
+        {
+            RegisterIoGatewayPid(context, brainId, routerPid, force: true);
+        }
+
         if (LogInputDiagnostics)
         {
             Console.WriteLine(
@@ -2951,10 +2960,12 @@ public sealed class IoGatewayActor : IActor
         return true;
     }
 
-    private void RegisterIoGatewayPid(IContext context, Guid brainId, PID routerPid)
+    private void RegisterIoGatewayPid(IContext context, Guid brainId, PID routerPid, bool force = false)
     {
         var routerLabel = PidLabel(routerPid);
-        if (_routerRegistration.TryGetValue(brainId, out var registered) && registered == routerLabel)
+        if (!force
+            && _routerRegistration.TryGetValue(brainId, out var registered)
+            && registered == routerLabel)
         {
             return;
         }
