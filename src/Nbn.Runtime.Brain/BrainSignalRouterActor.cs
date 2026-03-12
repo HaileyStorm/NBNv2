@@ -12,6 +12,7 @@ public sealed class BrainSignalRouterActor : IActor
 {
     private static readonly bool LogDelivery = IsEnvTrue("NBN_BRAIN_LOG_DELIVERY");
     private static readonly bool LogInputDiagnostics = IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogInputTraceDiagnostics = IsEnvTrue("NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED");
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private readonly RoutingTable _routingTable = new();
@@ -137,7 +138,7 @@ public sealed class BrainSignalRouterActor : IActor
                 replyTo,
                 Stopwatch.StartNew());
 
-            if (LogInputDiagnostics)
+            if (LogInputTraceDiagnostics)
             {
                 LogInput($"TickDeliver request-drain tick={tickDeliver.TickId} ioGateway={PidLabel(_ioGatewayPid)}");
             }
@@ -314,7 +315,7 @@ public sealed class BrainSignalRouterActor : IActor
 
         if (!_pendingInputDrains.TryGetValue(message.TickId, out var pending))
         {
-            if (LogInputDiagnostics)
+            if (LogInputTraceDiagnostics || message.Contribs.Count > 0)
             {
                 LogInput($"InputDrain ignored tick={message.TickId} sender={PidLabel(context.Sender)} contribs={message.Contribs.Count}");
             }
@@ -323,7 +324,7 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         _pendingInputDrains.Remove(message.TickId);
-        if (LogInputDiagnostics)
+        if (LogInputTraceDiagnostics || message.Contribs.Count > 0)
         {
             LogInput($"InputDrain accepted tick={message.TickId} sender={PidLabel(context.Sender)} contribs={message.Contribs.Count}");
         }

@@ -13,6 +13,7 @@ public sealed class IoGatewayActor : IActor
     private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
     private static readonly bool LogInputDiagnostics =
         IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogInputTraceDiagnostics = IsEnvTrue("NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED");
     private static readonly bool LogMetadataDiagnostics =
         IsEnvTrue("NBN_METADATA_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_IO_METADATA_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
@@ -680,7 +681,7 @@ public sealed class IoGatewayActor : IActor
 
         try
         {
-            if (LogInputDiagnostics)
+            if (LogInputTraceDiagnostics)
             {
                 Console.WriteLine(
                     $"[IoGatewayInput] drain request brain={brainId} tick={message.TickId} input={PidLabel(entry.InputPid)}");
@@ -688,7 +689,7 @@ public sealed class IoGatewayActor : IActor
 
             var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, DefaultRequestTimeout);
             entry.InputState.ApplyDrain(drain);
-            if (LogInputDiagnostics)
+            if (LogInputTraceDiagnostics || drain.Contribs.Count > 0)
             {
                 Console.WriteLine(
                     $"[IoGatewayInput] drain response brain={brainId} tick={message.TickId} contribs={drain.Contribs.Count} input={PidLabel(entry.InputPid)}");
@@ -2841,7 +2842,7 @@ public sealed class IoGatewayActor : IActor
         _routerCache.TryGetValue(brainId, out var cached);
         if (allowCached && cached is not null)
         {
-            if (LogInputDiagnostics)
+            if (LogInputTraceDiagnostics)
             {
                 Console.WriteLine($"[IoGatewayInput] router cached brain={brainId} router={PidLabel(cached)}");
             }
@@ -2869,7 +2870,7 @@ public sealed class IoGatewayActor : IActor
 
             if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
             {
-                if (LogInputDiagnostics)
+                if (LogInputTraceDiagnostics || !PidEquals(cached, routerPid))
                 {
                     Console.WriteLine(
                         $"[IoGatewayInput] router resolved brain={brainId} target=signal_router previous={PidLabel(cached)} current={PidLabel(routerPid)}");
@@ -2887,7 +2888,7 @@ public sealed class IoGatewayActor : IActor
 
             if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
             {
-                if (LogInputDiagnostics)
+                if (LogInputTraceDiagnostics || !PidEquals(cached, rootPid))
                 {
                     Console.WriteLine(
                         $"[IoGatewayInput] router resolved brain={brainId} target=brain_root previous={PidLabel(cached)} current={PidLabel(rootPid)}");
