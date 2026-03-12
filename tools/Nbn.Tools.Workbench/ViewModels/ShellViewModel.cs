@@ -18,12 +18,17 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private bool IsConnectionActive => _connectCts is not null && !_connectCts.IsCancellationRequested;
 
     public ShellViewModel()
+        : this(client: null, autoConnect: true)
+    {
+    }
+
+    internal ShellViewModel(WorkbenchClient? client, bool autoConnect)
     {
         WorkbenchProcessRegistry.Default.CleanupStale();
         LocalDemoRunner.CleanupStaleProcesses();
 
         Connections = new ConnectionViewModel();
-        _client = new WorkbenchClient(this);
+        _client = client ?? new WorkbenchClient(this);
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
@@ -58,7 +63,10 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         DisconnectAllCommand = new RelayCommand(DisconnectAll);
         RefreshSettingsCommand = Orchestrator.RefreshCommand;
 
-        _ = ConnectAllAsync();
+        if (autoConnect)
+        {
+            _ = ConnectAllAsync();
+        }
     }
 
     public ConnectionViewModel Connections { get; }
