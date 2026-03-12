@@ -3037,6 +3037,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
                 secondaryEnds[epochIndex] = rowBands.SecondaryEnd;
             }
 
+            AddFlowAreaTransitionCaps(secondaryStarts, secondaryEnds, primaryEnds);
             var path = CombineFlowAreaPaths(
                 BuildFlowAreaPath(
                     primaryStarts,
@@ -5057,6 +5058,36 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return string.Join(
             " ",
             paths.Where(path => !string.IsNullOrWhiteSpace(path)));
+    }
+
+    private static void AddFlowAreaTransitionCaps(
+        double[] starts,
+        double[] ends,
+        IReadOnlyList<double> edgeAnchors)
+    {
+        if (starts.Length == 0
+            || starts.Length != ends.Length
+            || starts.Length != edgeAnchors.Count)
+        {
+            return;
+        }
+
+        for (var rowIndex = 0; rowIndex < starts.Length - 1; rowIndex++)
+        {
+            var currentValid = double.IsFinite(starts[rowIndex]) && double.IsFinite(ends[rowIndex]);
+            var nextValid = double.IsFinite(starts[rowIndex + 1]) && double.IsFinite(ends[rowIndex + 1]);
+            if (!currentValid && nextValid && double.IsFinite(edgeAnchors[rowIndex]))
+            {
+                starts[rowIndex] = edgeAnchors[rowIndex];
+                ends[rowIndex] = edgeAnchors[rowIndex];
+            }
+
+            if (currentValid && !nextValid && double.IsFinite(edgeAnchors[rowIndex + 1]))
+            {
+                starts[rowIndex + 1] = edgeAnchors[rowIndex + 1];
+                ends[rowIndex + 1] = edgeAnchors[rowIndex + 1];
+            }
+        }
     }
 
     private static int[] BuildFlowVisibleParentIndices(

@@ -1292,6 +1292,65 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_FlowChart_ParentSplitHalf_BridgesIntoChildOrigin()
+    {
+        var history = CreateMemberships(epochId: 70, speciesId: "species.beta", speciesDisplayName: "Beta", count: 5, assignedMsStart: 1_000)
+            .Concat(CreateMemberships(epochId: 70, speciesId: "species.source", speciesDisplayName: "Source", count: 4, assignedMsStart: 2_000))
+            .Concat(CreateMemberships(epochId: 70, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 1, assignedMsStart: 3_000))
+            .Concat(CreateMemberships(epochId: 71, speciesId: "species.beta", speciesDisplayName: "Beta", count: 4, assignedMsStart: 4_000))
+            .Concat(CreateMemberships(epochId: 71, speciesId: "species.source", speciesDisplayName: "Source", count: 2, assignedMsStart: 5_000))
+            .Concat(new[]
+            {
+                new SpeciationMembershipRecord
+                {
+                    EpochId = 71,
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    SpeciesId = "species.child",
+                    SpeciesDisplayName = "Child",
+                    AssignedMs = 6_000,
+                    DecisionReason = "lineage_diverged_new_species",
+                    DecisionMetadataJson = BuildSplitDecisionMetadata(
+                        similarity: 0.55,
+                        splitThreshold: 0.66,
+                        dominantSpeciesId: "species.dominant",
+                        dominantSpeciesDisplayName: "Dominant",
+                        sourceSpeciesId: "species.source",
+                        sourceSpeciesDisplayName: "Source")
+                }
+            })
+            .Concat(CreateMemberships(epochId: 71, speciesId: "species.dominant", speciesDisplayName: "Dominant", count: 3, assignedMsStart: 7_000))
+            .ToArray();
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.FlowChartAreas.Count == 4);
+
+        var sourcePath = vm.FlowChartAreas.Single(item => item.SpeciesId == "species.source").PathData;
+        var sourceRows = ExtractFlowBandsByRow(sourcePath);
+        var sourceSubpaths = ExtractFlowSubpaths(sourcePath);
+        var bridgedSecondary = Assert.Single(sourceSubpaths, subpath =>
+            subpath.Count == 2
+            && Math.Abs(subpath[0].EndX - subpath[0].StartX) <= 0.001d
+            && subpath[1].EndX > subpath[1].StartX);
+
+        var sourceFirstRowRightEdge = sourceRows[0].Bands.Max(band => band.EndX);
+
+        Assert.InRange(bridgedSecondary[0].StartX, sourceFirstRowRightEdge - 0.5d, sourceFirstRowRightEdge + 0.5d);
+        Assert.InRange(bridgedSecondary[0].EndX, sourceFirstRowRightEdge - 0.5d, sourceFirstRowRightEdge + 0.5d);
+        Assert.Equal(sourceRows[0].Y, bridgedSecondary[0].Y, 3);
+        Assert.Equal(sourceRows[1].Y, bridgedSecondary[1].Y, 3);
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_FlowChart_KeepsFounderOrderStableWhenLaterPopulationLeadersChange()
     {
         var history = CreateMemberships(epochId: 60, speciesId: "species.alpha", speciesDisplayName: "Alpha", count: 1, assignedMsStart: 1_000)
@@ -2461,8 +2520,7 @@ public class SpeciationPanelViewModelTests
     {
         Assert.False(string.IsNullOrWhiteSpace(pathData));
         var spansByY = new Dictionary<double, List<(double StartX, double EndX)>>();
-        var subpaths = Regex.Split(pathData.Trim(), @"(?=M )")
-            .Where(segment => !string.IsNullOrWhiteSpace(segment));
+        var subpaths = SplitFlowSubpaths(pathData);
         foreach (var subpath in subpaths)
         {
             foreach (var span in ExtractSingleFlowSubpathSpans(subpath))
@@ -2485,6 +2543,18 @@ public class SpeciationPanelViewModelTests
                     .OrderBy(band => band.StartX)
                     .ToArray()))
             .ToArray();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<(double StartX, double EndX, double Y)>> ExtractFlowSubpaths(string pathData)
+        => SplitFlowSubpaths(pathData)
+            .Select(ExtractSingleFlowSubpathSpans)
+            .ToArray();
+
+    private static IEnumerable<string> SplitFlowSubpaths(string pathData)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(pathData));
+        return Regex.Split(pathData.Trim(), @"(?=M )")
+            .Where(segment => !string.IsNullOrWhiteSpace(segment));
     }
 
     private static IReadOnlyList<(double StartX, double EndX, double Y)> ExtractSingleFlowSubpathSpans(string pathData)
