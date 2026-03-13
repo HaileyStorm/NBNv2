@@ -351,6 +351,52 @@
               </StackPanel>
             </Border>
 
+            <Border Classes="row">
+              <StackPanel Spacing="8">
+                <TextBlock Text="Artifact Store Round Trip" Classes="row-title" />
+                <TextBlock Text="Store `.nbn` / `.nbs` artifacts directly in a local or non-file store, reopen them by artifact reference, or restore through IO/HiveMind without exporting local files first."
+                           Classes="muted"
+                           TextWrapping="Wrap" />
+                <StackPanel Spacing="4">
+                  <TextBlock Text="Target store URI or root" Classes="muted" />
+                  <TextBox Text="{Binding ArtifactStoreUri}" />
+                </StackPanel>
+                <WrapPanel Orientation="Horizontal">
+                  <Button Content="Save Definition Ref" Command="{Binding SaveDefinitionArtifactCommand}" Margin="0,0,8,8" />
+                  <Button Content="Save Snapshot Ref" Command="{Binding SaveSnapshotArtifactCommand}" Margin="0,0,8,8" />
+                  <Button Content="Load Definition Ref" Command="{Binding LoadDefinitionArtifactCommand}" Margin="0,0,8,8" />
+                  <Button Content="Load Snapshot Ref" Command="{Binding LoadSnapshotArtifactCommand}" Margin="0,0,8,8" />
+                  <Button Content="Restore Brain" Command="{Binding RestoreArtifactBrainCommand}" Margin="0,0,8,8" />
+                </WrapPanel>
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                  <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="Definition Artifact" Classes="muted" />
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                      <TextBlock Text="SHA-256" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding DefinitionArtifactShaText}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                      <TextBlock Text="Store URI" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding DefinitionArtifactStoreUriText}" />
+                    </Grid>
+                    <TextBlock Text="{Binding DefinitionArtifactSummary}" Classes="muted" TextWrapping="Wrap" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="6">
+                    <TextBlock Text="Snapshot Artifact" Classes="muted" />
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                      <TextBlock Text="SHA-256" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding SnapshotArtifactShaText}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                      <TextBlock Text="Store URI" VerticalAlignment="Center" />
+                      <TextBox Grid.Column="1" Text="{Binding SnapshotArtifactStoreUriText}" />
+                    </Grid>
+                    <TextBlock Text="{Binding SnapshotArtifactSummary}" Classes="muted" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
           </StackPanel>
 
           <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Classes="row" IsVisible="{Binding IsDesignVisible}">
