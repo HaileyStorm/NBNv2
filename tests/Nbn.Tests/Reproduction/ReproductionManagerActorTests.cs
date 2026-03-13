@@ -1660,6 +1660,54 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task ReproduceByArtifacts_Uses_HttpArtifactStore_And_Persists_ChildArtifact_When_Gates_Pass()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var remoteStore = new HttpArtifactStore(server.BaseUri);
+
+        var parentA = NbnTestVectors.CreateMinimalNbn();
+        var parentB = NbnTestVectors.CreateMinimalNbn();
+
+        var manifestA = await server.SeedAsync(parentA, "application/x-nbn");
+        var manifestB = await server.SeedAsync(parentB, "application/x-nbn");
+
+        var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", server.BaseUri.AbsoluteUri);
+        var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", server.BaseUri.AbsoluteUri);
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+        var response = await root.RequestAsync<Repro.ReproduceResult>(
+            manager,
+            new Repro.ReproduceByArtifactsRequest
+            {
+                ParentADef = parentARef,
+                ParentBDef = parentBRef,
+                Seed = 111,
+                Config = new Repro.ReproduceConfig
+                {
+                    MaxRegionSpanDiffRatio = 0f,
+                    SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                }
+            });
+
+        Assert.NotNull(response.Report);
+        Assert.True(response.Report.Compatible);
+        Assert.Equal(string.Empty, response.Report.AbortReason);
+        Assert.NotNull(response.ChildDef);
+        Assert.Equal(server.BaseUri.AbsoluteUri, response.ChildDef.StoreUri);
+        Assert.True(response.ChildDef.TryToSha256Bytes(out var childHash));
+        await using (var childStream = await remoteStore.TryOpenArtifactAsync(new Sha256Hash(childHash)))
+        {
+            Assert.NotNull(childStream);
+        }
+
+        Assert.False(response.Spawned);
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_Uses_EnvironmentFallback_When_StoreUri_Missing()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-env-{Guid.NewGuid():N}");

@@ -143,4 +143,84 @@ public sealed class ArtifactStoreResolverTests
             }
         }
     }
+
+    [Fact]
+    public async Task Resolve_HttpStoreUri_Reuses_NodeLocalCache_After_FirstFetch()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-http-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+
+        try
+        {
+            var payload = new byte[] { 11, 12, 13, 14, 15, 16 };
+            var manifest = await server.SeedAsync(payload, "application/x-nbn");
+            var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(localRoot));
+            var store = resolver.Resolve(server.BaseUri.AbsoluteUri);
+
+            await using (var first = await store.TryOpenArtifactAsync(manifest.ArtifactId))
+            {
+                Assert.NotNull(first);
+            }
+
+            await using (var second = await store.TryOpenArtifactAsync(manifest.ArtifactId))
+            {
+                Assert.NotNull(second);
+            }
+
+            Assert.Equal(1, server.ArtifactRequests);
+            Assert.Equal(0, server.RangeRequests);
+            var cachedArtifactPath = Path.Combine(localRoot, ".cache", "artifacts", manifest.ArtifactId.ToHex());
+            Assert.True(File.Exists(cachedArtifactPath));
+        }
+        finally
+        {
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_NonFileStoreUri_Uses_EnvironmentHttpTarget_When_Configured()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-http-env-root-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+
+        var original = Environment.GetEnvironmentVariable("NBN_ARTIFACT_STORE_URI_MAP");
+        var storeUri = $"memory+env-http://{Guid.NewGuid():N}/artifacts";
+        Environment.SetEnvironmentVariable(
+            "NBN_ARTIFACT_STORE_URI_MAP",
+            JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                [storeUri] = server.BaseUri.AbsoluteUri
+            }));
+
+        try
+        {
+            var payload = new byte[] { 21, 22, 23, 24 };
+            var manifest = await server.SeedAsync(payload, "application/x-nbn");
+            var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(localRoot));
+            var store = resolver.Resolve(storeUri);
+
+            await using (var stream = await store.TryOpenArtifactAsync(manifest.ArtifactId))
+            {
+                Assert.NotNull(stream);
+            }
+
+            Assert.Equal(1, server.ArtifactRequests);
+            var cachedArtifactPath = Path.Combine(localRoot, ".cache", "artifacts", manifest.ArtifactId.ToHex());
+            Assert.True(File.Exists(cachedArtifactPath));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_STORE_URI_MAP", original);
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+        }
+    }
 }

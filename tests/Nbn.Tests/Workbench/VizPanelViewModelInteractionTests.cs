@@ -1294,6 +1294,65 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public async Task TryLoadDefinitionTopologyAsync_EnvironmentMappedHttpArtifactStore_LoadsTopology()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-http-root-{Guid.NewGuid():N}");
+        var cacheRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-http-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+        Directory.CreateDirectory(cacheRoot);
+
+        var originalRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        var originalCache = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        var originalMap = Environment.GetEnvironmentVariable("NBN_ARTIFACT_STORE_URI_MAP");
+        var storeUri = $"memory+env-http://{Guid.NewGuid():N}/artifacts";
+
+        try
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", localRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", cacheRoot);
+            Environment.SetEnvironmentVariable(
+                "NBN_ARTIFACT_STORE_URI_MAP",
+                JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    [storeUri] = server.BaseUri.AbsoluteUri
+                }));
+
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var manifest = await server.SeedAsync(vector.Bytes, "application/x-nbn");
+            var artifactRef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", storeUri);
+
+            var attempt = await InvokePrivateTaskWithResultAsync(
+                TryLoadDefinitionTopologyAsyncMethod,
+                null,
+                artifactRef,
+                null);
+
+            Assert.NotNull(GetAttemptTopology(attempt));
+            Assert.Null(GetAttemptFailure(attempt));
+            Assert.Contains(GetAttemptRoots(attempt), root => root.Contains("memory+env-http://", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(1, server.ArtifactRequests);
+            Assert.True(File.Exists(Path.Combine(cacheRoot, "artifacts", manifest.ArtifactId.ToHex())));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", originalCache);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_STORE_URI_MAP", originalMap);
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task TryLoadDefinitionTopologyAsync_UnregisteredNonFileStoreUri_ReturnsActionableFailure()
     {
         var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-missing-root-{Guid.NewGuid():N}");

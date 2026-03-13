@@ -45,18 +45,32 @@ Clients:
 * resolve non-file `store_uri` values through a pluggable artifact-store adapter/client path instead of treating them as local filesystem roots
 * keep a node-local cache of fetched full artifacts/chunks so repeated loads reuse local bytes after the first fetch
 * fail explicitly when no adapter is registered for a non-file `store_uri`; do not silently redirect those reads/writes to a local fallback path
-* bootstrap exact non-file `store_uri` mappings at process start through `NBN_ARTIFACT_STORE_URI_MAP` (JSON object of `store_uri -> backing root/adapter target`) when an in-process adapter registration path is not available
+* support a built-in HTTP(S) artifact-service backend in addition to in-process registrations and file-backed stores
+* bootstrap exact non-file `store_uri` mappings at process start through `NBN_ARTIFACT_STORE_URI_MAP` (JSON object of `store_uri -> local backing root | file:// URI | HTTP(S) artifact-service base URI`) when an in-process adapter registration path is not available
 
 Example bootstrap mapping:
 
 ```json
 {
   "memory+prod://artifact-store/main": "D:\\nbn\\artifact-mirror",
-  "s3+cache://cluster-a/artifacts": "E:\\nbn\\s3-cache"
+  "s3+cache://cluster-a/artifacts": "https://artifact-gateway.cluster-a.internal/"
 }
 ```
 
 Runtime fetch/store callers that honor this resolver path include HiveMind, RegionHost, WorkerNode, and Reproduction. Use exact key matches rather than prefix matching so different logical stores do not alias accidentally.
+
+Built-in HTTP(S) backend contract:
+
+* direct `http://...` / `https://...` `store_uri` values resolve through the built-in client without extra registration
+* env-map values that are HTTP(S) URIs resolve through the same client, while non-URI values still resolve as local backing roots
+* the service base URI must expose:
+  * `GET {base}/v1/manifests/{sha256}` -> manifest JSON
+  * `GET {base}/v1/artifacts/{sha256}` -> full canonical bytes
+  * `GET {base}/v1/artifacts/{sha256}` with `Range: bytes=start-end` -> exact partial bytes when supported
+  * `POST {base}/v1/artifacts` -> raw artifact bytes with artifact media type in `Content-Type`; callers may supply optional region-index metadata via `X-Nbn-Artifact-Region-Index` (base64-encoded JSON array of `{ regionId, offset, length }`)
+* transport errors and non-success responses are explicit runtime failures; they do not trigger local-path fallback
+* `404` means the requested artifact or manifest is missing from that store
+* `405` / `501` on range reads fall back to full-artifact reads; other range failures remain explicit errors
 
 ### 16.4 Dedup interactions with plasticity and reproduction
 
@@ -79,6 +93,7 @@ The store may additionally index `.nbn` region sections:
 * may be produced automatically for seekable `.nbn` writes or supplied explicitly by callers that already know the region boundaries
 * is an optimization hint only: complete artifact reads remain supported, and indexed reads must still agree with the canonical `.nbn` header directory before a region section is trusted
 * auto-produced region indexes are best-effort metadata extraction only: malformed or out-of-range `.nbn` header data skips persisted region-index entries rather than failing the CAS write path by itself
+* the built-in HTTP(S) backend issues HTTP `Range` requests when manifest metadata carries a matching region index; if the remote service returns `405`/`501`, callers fall back to full-artifact reads instead of failing solely because range reads are unavailable
 
 Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
 
@@ -99,5 +114,6 @@ Shared-root note:
 
 * a local CAS root may be shared by multiple processes on one machine; concurrent writers rely on SQLite WAL/busy-timeout behavior plus chunk metadata recovery for duplicate chunk files
 * node-local cache roots are still per-process or per-node optimizations, not shared cache-coherence layers; avoid pointing multiple processes or hosts at the same `.cache` root for a remote store
+* built-in HTTP(S) backends use the same node-local cache path (`NBN_ARTIFACT_CACHE_ROOT` or `<artifact-root>/.cache`) after the first successful remote fetch/write-through; cache contents are never authoritative over upstream manifest/content responses
 
 ---

@@ -1861,6 +1861,101 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         }
     }
 
+    [Fact]
+    public async Task PlacementAssignmentRequest_HttpArtifactStore_Reuses_NodeLocalCache_Across_Assignments()
+    {
+        var workerArtifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-http-store-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workerArtifactRoot);
+
+        await using var server = new HttpArtifactStoreTestServer();
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await server.SeedAsync(richNbn, "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", server.BaseUri.AbsoluteUri);
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+
+            _ = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoWithBaseDefinitionActor(brainDef, inputWidth: 2, outputWidth: 2)),
+                ioName);
+            var workerPid = harness.Root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactRootPath: workerArtifactRoot)));
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            harness.Root.Send(
+                workerPid,
+                new WorkerNodeActor.DiscoverySnapshotApplied(
+                    new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+                    {
+                        [ServiceEndpointSettings.IoGatewayKey] = new(
+                            ServiceEndpointSettings.IoGatewayKey,
+                            new ServiceEndpoint(string.Empty, ioName),
+                            nowMs)
+                    }));
+
+            var firstBrainId = Guid.NewGuid();
+            var firstAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-http-store-1",
+                        brainId: firstBrainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: NbnConstants.InputRegionId,
+                        shardIndex: 0,
+                        actorName: $"region-0-shard-0-{firstBrainId:N}",
+                        neuronStart: 0,
+                        neuronCount: 1)
+                });
+
+            Assert.True(firstAck.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, firstAck.State);
+            Assert.Equal(2, server.ArtifactRequests);
+            Assert.Equal(2, server.RangeRequests);
+
+            var secondBrainId = Guid.NewGuid();
+            var secondAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-http-store-2",
+                        brainId: secondBrainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 2,
+                        regionId: NbnConstants.InputRegionId,
+                        shardIndex: 0,
+                        actorName: $"region-0-shard-0-{secondBrainId:N}",
+                        neuronStart: 0,
+                        neuronCount: 1)
+                });
+
+            Assert.True(secondAck.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, secondAck.State);
+            Assert.Equal(2, server.ArtifactRequests);
+            Assert.Equal(2, server.RangeRequests);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(workerArtifactRoot))
+            {
+                Directory.Delete(workerArtifactRoot, recursive: true);
+            }
+        }
+    }
+
     private static IoOptions CreateIoOptions()
         => new(
             BindHost: "127.0.0.1",

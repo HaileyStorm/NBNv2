@@ -44,8 +44,11 @@ public static class ArtifactStoreRegistry
         var environmentMap = GetEnvironmentMap();
         if (environmentMap.TryGetValue(key, out var mappedRootPath))
         {
-            store = new LocalArtifactStore(new ArtifactStoreOptions(mappedRootPath));
-            enableNodeLocalCache = true;
+            return TryCreateMappedStore(storeUri, mappedRootPath, out store, out enableNodeLocalCache);
+        }
+
+        if (TryCreateBuiltInStore(key, out store, out enableNodeLocalCache))
+        {
             return true;
         }
 
@@ -120,6 +123,63 @@ public static class ArtifactStoreRegistry
         {
             return new Dictionary<string, string>(StringComparer.Ordinal);
         }
+    }
+
+    private static bool TryCreateMappedStore(
+        string storeUri,
+        string mappedTarget,
+        out IArtifactStore store,
+        out bool enableNodeLocalCache)
+    {
+        if (string.IsNullOrWhiteSpace(mappedTarget))
+        {
+            store = default!;
+            enableNodeLocalCache = false;
+            return false;
+        }
+
+        var trimmed = mappedTarget.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
+        {
+            store = new LocalArtifactStore(new ArtifactStoreOptions(trimmed));
+            enableNodeLocalCache = true;
+            return true;
+        }
+
+        if (uri.IsFile)
+        {
+            store = new LocalArtifactStore(new ArtifactStoreOptions(uri.LocalPath));
+            enableNodeLocalCache = true;
+            return true;
+        }
+
+        if (TryCreateBuiltInStore(uri.AbsoluteUri, out store, out enableNodeLocalCache))
+        {
+            return true;
+        }
+
+        throw new InvalidOperationException(
+            $"Artifact store URI map target '{trimmed}' for '{storeUri}' is unsupported. Supported target types are local paths, file:// URIs, and http(s) base URIs.");
+    }
+
+    private static bool TryCreateBuiltInStore(
+        string normalizedStoreUri,
+        out IArtifactStore store,
+        out bool enableNodeLocalCache)
+    {
+        if (Uri.TryCreate(normalizedStoreUri, UriKind.Absolute, out var uri)
+            && !uri.IsFile
+            && (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            store = new HttpArtifactStore(uri);
+            enableNodeLocalCache = true;
+            return true;
+        }
+
+        store = default!;
+        enableNodeLocalCache = false;
+        return false;
     }
 
     private sealed class RegistrationLease : IDisposable
