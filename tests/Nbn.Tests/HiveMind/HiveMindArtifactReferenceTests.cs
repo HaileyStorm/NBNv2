@@ -85,6 +85,30 @@ public class HiveMindArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task RequestPlacement_UnsupportedNonFileStoreUri_FallsBack_To_IoWidths()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
+
+        var placement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                BaseDef = new string('E', 64).ToLowerInvariant().ToArtifactRef(128, "application/x-nbn", "memory+missing://placement/base"),
+                InputWidth = 3,
+                OutputWidth = 2
+            });
+
+        Assert.True(placement.Accepted);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, placement.FailureReason);
+
+        await system.ShutdownAsync();
+    }
+
     private static void PrimeEligibleWorker(IRootContext root, PID hiveMind)
     {
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

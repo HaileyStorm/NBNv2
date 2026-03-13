@@ -2,10 +2,10 @@ namespace Nbn.Runtime.Artifacts;
 
 public sealed class LocalArtifactCache : IArtifactCache
 {
-    private readonly LocalArtifactStore _store;
+    private readonly IArtifactStore _store;
     private readonly ArtifactCacheOptions _options;
 
-    public LocalArtifactCache(LocalArtifactStore store, ArtifactCacheOptions options)
+    public LocalArtifactCache(IArtifactStore store, ArtifactCacheOptions options)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -62,7 +62,13 @@ public sealed class LocalArtifactCache : IArtifactCache
         try
         {
             await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, _options.WriteBufferSize, useAsync: true);
-            await using var source = _store.OpenArtifactStream(manifest);
+            var source = await _store.TryOpenArtifactAsync(manifest.ArtifactId, cancellationToken);
+            if (source is null)
+            {
+                throw new InvalidOperationException($"Artifact {manifest.ArtifactId} could not be opened from source store.");
+            }
+
+            await using var _ = source;
             await source.CopyToAsync(output, cancellationToken);
             await output.FlushAsync(cancellationToken);
             completed = true;

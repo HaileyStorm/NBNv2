@@ -8,6 +8,7 @@ using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
 using Nbn.Shared.Validation;
 using Nbn.Tests.Format;
+using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
 using ProtoIo = Nbn.Proto.Io;
@@ -1611,6 +1612,53 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task ReproduceByArtifacts_Uses_RegisteredNonFileStoreUri_And_Persists_ChildArtifact_When_Gates_Pass()
+    {
+        using var remoteScope = new RegisteredArtifactStoreScope();
+
+        var parentA = NbnTestVectors.CreateMinimalNbn();
+        var parentB = NbnTestVectors.CreateMinimalNbn();
+
+        var manifestA = await remoteScope.Store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+        var manifestB = await remoteScope.Store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+
+        var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", remoteScope.StoreUri);
+        var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", remoteScope.StoreUri);
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+        var response = await root.RequestAsync<Repro.ReproduceResult>(
+            manager,
+            new Repro.ReproduceByArtifactsRequest
+            {
+                ParentADef = parentARef,
+                ParentBDef = parentBRef,
+                Seed = 111,
+                Config = new Repro.ReproduceConfig
+                {
+                    MaxRegionSpanDiffRatio = 0f,
+                    SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                }
+            });
+
+        Assert.NotNull(response.Report);
+        Assert.True(response.Report.Compatible);
+        Assert.Equal(string.Empty, response.Report.AbortReason);
+        Assert.NotNull(response.ChildDef);
+        Assert.Equal(remoteScope.StoreUri, response.ChildDef.StoreUri);
+        Assert.True(response.ChildDef.TryToSha256Bytes(out var childHash));
+        await using (var childStream = await remoteScope.Store.TryOpenArtifactAsync(new Sha256Hash(childHash)))
+        {
+            Assert.NotNull(childStream);
+        }
+
+        Assert.False(response.Spawned);
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_Uses_EnvironmentFallback_When_StoreUri_Missing()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-env-{Guid.NewGuid():N}");
@@ -1857,6 +1905,34 @@ public class ReproductionManagerActorTests
                 Directory.Delete(artifactRoot, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public async Task ReproduceByArtifacts_NonFileStoreUriWithoutRegisteredStore_Returns_ArtifactStoreUnavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+
+        var response = await root.RequestAsync<Repro.ReproduceResult>(
+            manager,
+            new Repro.ReproduceByArtifactsRequest
+            {
+                ParentADef = new string('a', 64).ToArtifactRef(64, "application/x-nbn", "memory+missing://parents/a"),
+                ParentBDef = new string('b', 64).ToArtifactRef(64, "application/x-nbn", "memory+missing://parents/b"),
+                Seed = 111,
+                Config = new Repro.ReproduceConfig
+                {
+                    SpawnChild = Repro.SpawnChildPolicy.SpawnChildNever
+                }
+            });
+
+        Assert.NotNull(response.Report);
+        Assert.False(response.Report.Compatible);
+        Assert.Equal("repro_parent_a_artifact_store_unavailable", response.Report.AbortReason);
+        Assert.False(response.Spawned);
+
+        await system.ShutdownAsync();
     }
 
     [Fact]

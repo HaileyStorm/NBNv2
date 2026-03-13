@@ -32,6 +32,7 @@ public sealed class ReproductionManagerActor : IActor
     private static readonly byte[] PreferredAccumulationFunctionIds = { 0, 0, 2, 2, 1 };
     private readonly PID? _configuredIoGatewayPid;
     private PID? _ioGatewayPid;
+    private readonly ArtifactStoreResolver _artifactStoreResolver;
     private readonly object _parsedParentCacheGate = new();
     private readonly Dictionary<string, ParsedParent> _parsedParentCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _parsedParentCacheOrder = new();
@@ -40,6 +41,7 @@ public sealed class ReproductionManagerActor : IActor
     {
         _configuredIoGatewayPid = ioGatewayPid;
         _ioGatewayPid = ioGatewayPid;
+        _artifactStoreResolver = new ArtifactStoreResolver();
     }
 
     public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
@@ -519,7 +521,7 @@ public sealed class ReproductionManagerActor : IActor
         return response;
     }
 
-    private static async Task<ChildBuildResult> BuildAndStoreChildDefinitionAsync(
+    private async Task<ChildBuildResult> BuildAndStoreChildDefinitionAsync(
         ParsedParent parentA,
         ParsedParent parentB,
         ArtifactRef parentARef,
@@ -561,7 +563,16 @@ public sealed class ReproductionManagerActor : IActor
         var bytes = NbnBinary.WriteNbn(childHeader, childSections);
         var storeRoot = ResolveChildStoreRoot(parentARef.StoreUri, parentBRef.StoreUri);
         var storeUri = ResolveChildStoreUri(parentARef.StoreUri, parentBRef.StoreUri, storeRoot);
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(storeRoot));
+        IArtifactStore store;
+        try
+        {
+            store = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(storeRoot)).Resolve(storeUri);
+        }
+        catch
+        {
+            return new ChildBuildResult(null, null, "repro_child_artifact_store_unavailable");
+        }
+
         await using var stream = new MemoryStream(bytes, writable: false);
         var manifest = await store.StoreAsync(stream, NbnMediaType).ConfigureAwait(false);
 
@@ -2832,8 +2843,16 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         var hash = new Sha256Hash(hashBytes);
-        var storeRoot = ResolveArtifactRoot(reference.StoreUri);
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(storeRoot));
+        IArtifactStore store;
+        try
+        {
+            store = _artifactStoreResolver.Resolve(reference.StoreUri);
+        }
+        catch
+        {
+            return new LoadParentResult(null, $"{prefix}_artifact_store_unavailable");
+        }
+
         var manifest = await store.TryGetManifestAsync(hash).ConfigureAwait(false);
         if (manifest is null)
         {
@@ -2846,8 +2865,13 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         byte[] bytes;
-        await using (var stream = store.OpenArtifactStream(manifest))
+        await using (var stream = await store.TryOpenArtifactAsync(hash).ConfigureAwait(false))
         {
+            if (stream is null)
+            {
+                return new LoadParentResult(null, $"{prefix}_artifact_not_found");
+            }
+
             bytes = await ReadAllBytesAsync(stream, reference.SizeBytes).ConfigureAwait(false);
         }
 
@@ -2924,7 +2948,7 @@ public sealed class ReproductionManagerActor : IActor
         return true;
     }
 
-    private static async Task<TransformParentResult> ResolveTransformParentAsync(
+    private async Task<TransformParentResult> ResolveTransformParentAsync(
         ParsedParent baseParent,
         ArtifactRef parentDef,
         ArtifactRef? parentState,
@@ -2955,8 +2979,17 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         var stateHash = new Sha256Hash(stateHashBytes);
-        var stateRoot = ResolveArtifactRoot(parentState.StoreUri ?? parentDef.StoreUri);
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(stateRoot));
+        IArtifactStore store;
+        try
+        {
+            store = _artifactStoreResolver.Resolve(parentState.StoreUri ?? parentDef.StoreUri);
+        }
+        catch
+        {
+            ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_artifact_store_unavailable");
+            return new TransformParentResult(baseParent);
+        }
+
         var manifest = await store.TryGetManifestAsync(stateHash).ConfigureAwait(false);
         if (manifest is null)
         {
@@ -2971,8 +3004,14 @@ public sealed class ReproductionManagerActor : IActor
         }
 
         byte[] stateBytes;
-        await using (var stream = store.OpenArtifactStream(manifest))
+        await using (var stream = await store.TryOpenArtifactAsync(stateHash).ConfigureAwait(false))
         {
+            if (stream is null)
+            {
+                ReproductionTelemetry.RecordStrengthOverlayFallback(label, "state_artifact_not_found");
+                return new TransformParentResult(baseParent);
+            }
+
             stateBytes = await ReadAllBytesAsync(stream, parentState.SizeBytes).ConfigureAwait(false);
         }
 

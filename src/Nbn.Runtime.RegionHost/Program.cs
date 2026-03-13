@@ -38,7 +38,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ShardName,
     options.ShardName);
 
-var store = new LocalArtifactStore(new ArtifactStoreOptions(options.ArtifactRootPath));
+var artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(options.ArtifactRootPath));
+var store = artifactStoreResolver.Resolve(options.StoreUri);
 var nbnRef = BuildArtifactRef(options.NbnSha256, options.NbnSize, "application/x-nbn", options.StoreUri);
 ArtifactRef? nbsRef = null;
 if (!string.IsNullOrWhiteSpace(options.NbsSha256))

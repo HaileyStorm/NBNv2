@@ -41,6 +41,10 @@ Clients:
 * download manifest
 * download missing chunks
 * reconstruct canonical bytes on demand
+* resolve non-file `store_uri` values through a pluggable artifact-store adapter/client path instead of treating them as local filesystem roots
+* keep a node-local cache of fetched full artifacts/chunks so repeated loads reuse local bytes after the first fetch
+* fail explicitly when no adapter is registered for a non-file `store_uri`; do not silently redirect those reads/writes to a local fallback path
+* bootstrap exact non-file `store_uri` mappings at process start through `NBN_ARTIFACT_STORE_URI_MAP` (JSON object of `store_uri -> backing root/adapter target`) when an in-process adapter registration path is not available
 
 ### 16.4 Dedup interactions with plasticity and reproduction
 

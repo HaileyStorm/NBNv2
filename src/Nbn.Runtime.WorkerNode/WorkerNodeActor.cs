@@ -29,7 +29,7 @@ public sealed class WorkerNodeActor : IActor
     private readonly string _workerAddress;
     private readonly IArtifactStore _artifactStore;
     private readonly string _defaultArtifactRootPath;
-    private readonly Dictionary<string, IArtifactStore> _artifactStoresByRoot;
+    private readonly ArtifactStoreResolver _artifactStoreResolver;
     private readonly Dictionary<string, ServiceEndpointRegistration> _endpoints = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HostedAssignmentState> _assignments = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, BrainHostingState> _brains = new();
@@ -58,10 +58,7 @@ public sealed class WorkerNodeActor : IActor
         _workerAddress = workerAddress ?? string.Empty;
         _defaultArtifactRootPath = ResolveArtifactRoot(artifactRootPath);
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(_defaultArtifactRootPath));
-        _artifactStoresByRoot = new Dictionary<string, IArtifactStore>(StringComparer.OrdinalIgnoreCase)
-        {
-            [_defaultArtifactRootPath] = _artifactStore
-        };
+        _artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(_defaultArtifactRootPath));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
         _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
         _observabilityDefaultHost = string.IsNullOrWhiteSpace(observabilityDefaultHost)
@@ -1459,20 +1456,13 @@ public sealed class WorkerNodeActor : IActor
             return _artifactStore;
         }
 
-        var storeRoot = ResolveArtifactRoot(reference.StoreUri);
-        if (ArePathsEquivalent(storeRoot, _defaultArtifactRootPath))
+        if (ArtifactStoreResolver.TryGetLocalStoreRoot(reference.StoreUri, _defaultArtifactRootPath, out var storeRoot)
+            && ArePathsEquivalent(storeRoot, _defaultArtifactRootPath))
         {
             return _artifactStore;
         }
 
-        if (_artifactStoresByRoot.TryGetValue(storeRoot, out var cached))
-        {
-            return cached;
-        }
-
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(storeRoot));
-        _artifactStoresByRoot[storeRoot] = store;
-        return store;
+        return _artifactStoreResolver.Resolve(reference.StoreUri);
     }
 
     private string ResolveArtifactStoreRootLabel(ArtifactRef? reference)
@@ -1482,7 +1472,12 @@ public sealed class WorkerNodeActor : IActor
             return _defaultArtifactRootPath;
         }
 
-        return ResolveArtifactRoot(reference.StoreUri);
+        if (ArtifactStoreResolver.TryGetLocalStoreRoot(reference.StoreUri, _defaultArtifactRootPath, out var storeRoot))
+        {
+            return storeRoot;
+        }
+
+        return reference.StoreUri;
     }
 
     private static bool ArePathsEquivalent(string left, string right)

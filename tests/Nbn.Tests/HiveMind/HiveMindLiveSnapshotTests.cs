@@ -7,6 +7,7 @@ using Nbn.Runtime.HiveMind;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Tests.Format;
+using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoSettings = Nbn.Proto.Settings;
 using SharedAddress32 = Nbn.Shared.Addressing.Address32;
@@ -184,6 +185,114 @@ public class HiveMindLiveSnapshotTests
                 Directory.Delete(artifactRoot, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public async Task RequestSnapshot_Builds_And_Persists_Live_Nbs_To_RegisteredNonFileStoreUri()
+    {
+        using var remoteScope = new RegisteredArtifactStoreScope();
+
+        var richNbn = NbnTestVectors.CreateRichNbnVector();
+        var baseManifest = await remoteScope.Store.StoreAsync(new MemoryStream(richNbn.Bytes), "application/x-nbn");
+        var baseRef = baseManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)baseManifest.ByteLength, "application/x-nbn", remoteScope.StoreUri);
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
+
+        var brainId = Guid.NewGuid();
+        var placement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                BaseDef = baseRef,
+                InputWidth = 3,
+                OutputWidth = 2
+            });
+        Assert.True(placement.Accepted);
+
+        var region0Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+            brainId,
+            ShardId32.From(0, 0),
+            neuronStart: 0,
+            bufferCodes: new[] { 10, 11, 12 },
+            enabledBitset: new byte[] { 0b0000_0111 },
+            overlays: Array.Empty<SnapshotOverlayRecord>())));
+        var region1Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+            brainId,
+            ShardId32.From(1, 0),
+            neuronStart: 0,
+            bufferCodes: new[] { 20, 21, 22, 23 },
+            enabledBitset: new byte[] { 0b0000_1101 },
+            overlays: new[]
+            {
+                new SnapshotOverlayRecord
+                {
+                    FromAddress = SharedAddress32.From(1, 1).Value,
+                    ToAddress = SharedAddress32.From(31, 1).Value,
+                    StrengthCode = 22
+                }
+            })));
+        var region31Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+            brainId,
+            ShardId32.From(31, 0),
+            neuronStart: 0,
+            bufferCodes: new[] { 30, 31 },
+            enabledBitset: new byte[] { 0b0000_0001 },
+            overlays: Array.Empty<SnapshotOverlayRecord>())));
+
+        await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 0,
+            ShardIndex = 0,
+            ShardPid = PidLabel(region0Shard),
+            NeuronStart = 0,
+            NeuronCount = 3
+        }));
+        await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(region1Shard),
+            NeuronStart = 0,
+            NeuronCount = 4
+        }));
+        await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 31,
+            ShardIndex = 0,
+            ShardPid = PidLabel(region31Shard),
+            NeuronStart = 0,
+            NeuronCount = 2
+        }));
+
+        var ready = await root.RequestAsync<SnapshotReady>(
+            hiveMind,
+            new RequestSnapshot
+            {
+                BrainId = brainId.ToProtoUuid(),
+                HasRuntimeState = true,
+                EnergyRemaining = 777,
+                CostEnabled = true,
+                EnergyEnabled = true,
+                PlasticityEnabled = true
+            });
+
+        Assert.NotNull(ready.Snapshot);
+        Assert.Equal(remoteScope.StoreUri, ready.Snapshot.StoreUri);
+        Assert.True(ready.Snapshot.TryToSha256Bytes(out var snapshotHashBytes));
+
+        await using (var snapshotStream = await remoteScope.Store.TryOpenArtifactAsync(new Sha256Hash(snapshotHashBytes)))
+        {
+            Assert.NotNull(snapshotStream);
+        }
+
+        await system.ShutdownAsync();
     }
 
     [Fact]

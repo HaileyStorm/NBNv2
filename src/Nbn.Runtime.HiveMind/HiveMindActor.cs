@@ -4357,11 +4357,9 @@ public sealed class HiveMindActor : IActor
             return false;
         }
 
-        var storeRoot = ResolveArtifactRoot(baseDefinition.StoreUri);
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(storeRoot));
-
         try
         {
+            var store = CreateArtifactStoreResolver(baseDefinition.StoreUri).Resolve(baseDefinition.StoreUri);
             var stream = store.TryOpenArtifactAsync(new Sha256Hash(baseHashBytes))
                 .ConfigureAwait(false)
                 .GetAwaiter()
@@ -7062,7 +7060,8 @@ public sealed class HiveMindActor : IActor
 
     private static async Task<Nbn.Proto.ArtifactRef?> BuildAndStoreRebasedDefinitionAsync(ActorSystem system, RebasedDefinitionBuildRequest request)
     {
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(request.StoreRootPath));
+        var store = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(request.StoreRootPath))
+            .Resolve(request.StoreUri);
         if (!request.BaseDefinition.TryToSha256Bytes(out var baseHashBytes))
         {
             throw new InvalidOperationException("Base definition sha256 is required to build rebased exports.");
@@ -7226,7 +7225,8 @@ public sealed class HiveMindActor : IActor
 
     private static async Task<Nbn.Proto.ArtifactRef?> BuildAndStoreSnapshotAsync(ActorSystem system, SnapshotBuildRequest request)
     {
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(request.StoreRootPath));
+        var store = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(request.StoreRootPath))
+            .Resolve(request.StoreUri);
         if (!request.BaseDefinition.TryToSha256Bytes(out var baseHashBytes))
         {
             throw new InvalidOperationException("Base definition sha256 is required to build snapshots.");
@@ -7457,6 +7457,9 @@ public sealed class HiveMindActor : IActor
 
         return Path.Combine(Environment.CurrentDirectory, "artifacts");
     }
+
+    private static ArtifactStoreResolver CreateArtifactStoreResolver(string? storeUri)
+        => new(new ArtifactStoreResolverOptions(ResolveArtifactRoot(storeUri)));
 
     private void UpdateRoutingTable(IContext? context, BrainState brain)
     {
