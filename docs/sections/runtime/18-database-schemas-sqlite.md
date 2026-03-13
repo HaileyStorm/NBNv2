@@ -81,4 +81,6 @@ Tables (recommended):
 
 When present, `artifact_region_index` records canonical `.nbn` region-section byte ranges that can guide selective region fetches; callers must still cross-check those ranges against the `.nbn` header directory before trusting them.
 
+Current artifact-store implementations use `stored_length` and `compression` as chunk-storage metadata, and use `ref_count` as insert-time bookkeeping for unique artifact/chunk references. There is currently no release/delete API, no ref-count decrement path, and no automatic GC, so these counters do not drive reclamation yet.
+
 ---

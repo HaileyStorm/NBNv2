@@ -1208,6 +1208,7 @@ Compression:
 
 * chunks may (should) be compressed (e.g., zstd) before storage
 * compression is chunk-local; hash is computed on uncompressed chunk bytes for correctness
+* runtime chunk metadata persists the original byte length, stored byte length, and compression label needed to reopen the chunk stream; those fields are storage metadata and do not participate in chunk identity
 
 ### 16.3 Manifest structure
 
@@ -1262,6 +1263,18 @@ The store may additionally index `.nbn` region sections:
 * is an optimization hint only: complete artifact reads remain supported, and indexed reads must still agree with the canonical `.nbn` header directory before a region section is trusted
 
 Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
+
+### 16.6 Retention and maintenance limits
+
+Current artifact-store lifecycle management is append-only:
+
+* storing a distinct artifact writes one `artifacts` row plus ordered `artifact_chunks` references
+* storing another artifact that reuses an existing chunk hash increments that chunk row's `ref_count` instead of writing a duplicate chunk payload
+* duplicate stores are keyed by `artifact_sha256`; re-storing the same artifact bytes with the same effective manifest metadata reuses the existing manifest/catalog row rather than incrementing those counters again
+* that duplicate-artifact path does not currently merge a later media-type or region-index change into the existing row
+* there is currently no public delete/release API, no ref-count decrement path, and no automatic GC/TTL eviction for the CAS store or node-local cache
+
+Operators should plan manual/external cleanup for artifact-store roots and node-local cache roots until explicit reclamation tooling exists.
 
 ---
 
@@ -1706,6 +1719,8 @@ Tables (recommended):
 * PRIMARY KEY (artifact_sha256, region_id)
 
 When present, `artifact_region_index` records canonical `.nbn` region-section byte ranges that can guide selective region fetches; callers must still cross-check those ranges against the `.nbn` header directory before trusting them.
+
+Current artifact-store implementations use `stored_length` and `compression` as chunk-storage metadata, and use `ref_count` as insert-time bookkeeping for unique artifact/chunk references. There is currently no release/delete API, no ref-count decrement path, and no automatic GC, so these counters do not drive reclamation yet.
 
 ---
 
