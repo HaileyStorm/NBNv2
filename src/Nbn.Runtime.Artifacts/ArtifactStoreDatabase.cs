@@ -6,6 +6,7 @@ namespace Nbn.Runtime.Artifacts;
 
 internal sealed class ArtifactStoreDatabase
 {
+    private const int BusyTimeoutMilliseconds = 30000;
     private readonly string _connectionString;
 
     public ArtifactStoreDatabase(string databasePath)
@@ -20,8 +21,7 @@ internal sealed class ArtifactStoreDatabase
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
 
         await connection.ExecuteAsync(
             "PRAGMA journal_mode=WAL;" +
@@ -66,8 +66,7 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
 
     public async Task<bool> ArtifactExistsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
 
         var exists = await connection.ExecuteScalarAsync<long?>(
             "SELECT 1 FROM artifacts WHERE artifact_sha256 = @Id LIMIT 1;",
@@ -78,8 +77,7 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
 
     public async Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
         return await TryGetManifestAsync(connection, transaction: null, artifactId);
     }
 
@@ -87,8 +85,7 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
         ArtifactManifest requestedManifest,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         var existingManifest = await TryGetManifestAsync(connection, transaction, requestedManifest.ArtifactId);
@@ -210,8 +207,7 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
         DateTimeOffset createdAt,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         var exists = await connection.ExecuteScalarAsync<long?>(
@@ -316,8 +312,7 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
 
     public async Task<ChunkMetadata?> TryGetChunkMetadataAsync(Sha256Hash chunkHash, CancellationToken cancellationToken = default)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await OpenConnectionAsync(cancellationToken);
 
         var row = await connection.QuerySingleOrDefaultAsync<ChunkMetadata>(
             "SELECT byte_length AS ByteLength, stored_length AS StoredLength, compression AS Compression FROM chunks WHERE chunk_sha256 = @Id;",
@@ -327,6 +322,15 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
     }
 
     internal sealed record ChunkMetadata(long ByteLength, long StoredLength, string Compression);
+
+    private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
+    {
+        var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await connection.ExecuteAsync(
+            $"PRAGMA foreign_keys=ON;PRAGMA busy_timeout={BusyTimeoutMilliseconds};");
+        return connection;
+    }
 
     private static ArtifactManifest ReconcileManifest(ArtifactManifest existingManifest, ArtifactManifest requestedManifest)
     {

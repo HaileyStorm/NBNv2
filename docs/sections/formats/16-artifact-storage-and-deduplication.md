@@ -95,4 +95,9 @@ Current artifact-store lifecycle management is append-only:
 
 Operators should plan manual/external cleanup for artifact-store roots and node-local cache roots until explicit reclamation tooling exists.
 
+Shared-root note:
+
+* a local CAS root may be shared by multiple processes on one machine; concurrent writers rely on SQLite WAL/busy-timeout behavior plus chunk metadata recovery for duplicate chunk files
+* node-local cache roots are still per-process or per-node optimizations, not shared cache-coherence layers; avoid pointing multiple processes or hosts at the same `.cache` root for a remote store
+
 ---

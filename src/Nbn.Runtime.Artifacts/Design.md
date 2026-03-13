@@ -27,6 +27,8 @@ Duplicate stores are keyed by `artifact_sha256`. Re-storing the same artifact by
 
 Lifecycle management is currently append-only. There is no public delete/release API for artifact rows, chunk rows, or node-local cache files, and there is no automatic GC/TTL eviction path. Operators should treat both the CAS store and node-local caches as manually cleaned artifacts until an explicit reclamation feature is implemented.
 
+Shared-root contention is supported for the local CAS store on a single machine: multiple processes may point `LocalArtifactStore` at the same artifact root and rely on SQLite WAL/busy-timeout behavior plus chunk metadata recovery for duplicate chunks. The node-local `.cache` tree is still a per-process or per-node optimization, not a shared cache-coherence layer, so operators should keep cache roots distinct when multiple processes or hosts resolve the same remote store.
+
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
