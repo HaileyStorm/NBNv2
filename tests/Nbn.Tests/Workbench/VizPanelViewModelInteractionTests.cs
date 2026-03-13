@@ -1,13 +1,18 @@
+using Microsoft.Data.Sqlite;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
+using Nbn.Tests.Format;
+using Nbn.Tests.TestSupport;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -41,6 +46,11 @@ public class VizPanelViewModelInteractionTests
             "EnsureDefinitionTopologyCoverage",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("EnsureDefinitionTopologyCoverage method not found.");
+    private static readonly MethodInfo TryLoadDefinitionTopologyAsyncMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "TryLoadDefinitionTopologyAsync",
+            BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TryLoadDefinitionTopologyAsync method not found.");
     private static readonly FieldInfo DefinitionTopologyGateField =
         typeof(VizPanelViewModel).GetField(
             "_definitionTopologyGate",
@@ -1132,6 +1142,199 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public async Task TryLoadDefinitionTopologyAsync_LocalStoreUri_LoadsTopology()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-local-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var manifest = await store.StoreAsync(new MemoryStream(vector.Bytes), "application/x-nbn");
+            var artifactRef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var attempt = await InvokePrivateTaskWithResultAsync(
+                TryLoadDefinitionTopologyAsyncMethod,
+                null,
+                artifactRef,
+                null);
+
+            Assert.NotNull(GetAttemptTopology(attempt));
+            Assert.Null(GetAttemptFailure(attempt));
+            Assert.Contains(
+                GetAttemptRoots(attempt),
+                root => string.Equals(Path.GetFullPath(root), Path.GetFullPath(artifactRoot), StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TryLoadDefinitionTopologyAsync_RegisteredNonFileStoreUri_UsesResolver()
+    {
+        using var remoteScope = new RegisteredArtifactStoreScope();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-registered-root-{Guid.NewGuid():N}");
+        var cacheRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-registered-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+        Directory.CreateDirectory(cacheRoot);
+
+        var originalRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        var originalCache = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        try
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", localRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", cacheRoot);
+
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var manifest = await remoteScope.Store.StoreAsync(new MemoryStream(vector.Bytes), "application/x-nbn");
+            var artifactRef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", remoteScope.StoreUri);
+
+            var attempt = await InvokePrivateTaskWithResultAsync(
+                TryLoadDefinitionTopologyAsyncMethod,
+                null,
+                artifactRef,
+                null);
+
+            Assert.NotNull(GetAttemptTopology(attempt));
+            Assert.Null(GetAttemptFailure(attempt));
+            Assert.Contains(GetAttemptRoots(attempt), root => root.Contains("memory+test://", StringComparison.OrdinalIgnoreCase));
+            Assert.Equal(1, remoteScope.Store.OpenCalls);
+            Assert.True(File.Exists(Path.Combine(cacheRoot, "artifacts", manifest.ArtifactId.ToHex())));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", originalCache);
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TryLoadDefinitionTopologyAsync_EnvironmentMappedNonFileStoreUri_LoadsTopology()
+    {
+        var remoteRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-env-remote-{Guid.NewGuid():N}");
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-env-root-{Guid.NewGuid():N}");
+        var cacheRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-env-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(remoteRoot);
+        Directory.CreateDirectory(localRoot);
+        Directory.CreateDirectory(cacheRoot);
+
+        var originalRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        var originalCache = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        var originalMap = Environment.GetEnvironmentVariable("NBN_ARTIFACT_STORE_URI_MAP");
+        var storeUri = $"memory+env://{Guid.NewGuid():N}/artifacts";
+
+        try
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", localRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", cacheRoot);
+            Environment.SetEnvironmentVariable(
+                "NBN_ARTIFACT_STORE_URI_MAP",
+                JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    [storeUri] = remoteRoot
+                }));
+
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(remoteRoot));
+            var manifest = await store.StoreAsync(new MemoryStream(vector.Bytes), "application/x-nbn");
+            var artifactRef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", storeUri);
+
+            var attempt = await InvokePrivateTaskWithResultAsync(
+                TryLoadDefinitionTopologyAsyncMethod,
+                null,
+                artifactRef,
+                null);
+
+            Assert.NotNull(GetAttemptTopology(attempt));
+            Assert.Null(GetAttemptFailure(attempt));
+            Assert.Contains(GetAttemptRoots(attempt), root => root.Contains("memory+env://", StringComparison.OrdinalIgnoreCase));
+            Assert.True(File.Exists(Path.Combine(cacheRoot, "artifacts", manifest.ArtifactId.ToHex())));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", originalCache);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_STORE_URI_MAP", originalMap);
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(remoteRoot))
+            {
+                Directory.Delete(remoteRoot, recursive: true);
+            }
+
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task TryLoadDefinitionTopologyAsync_UnregisteredNonFileStoreUri_ReturnsActionableFailure()
+    {
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-missing-root-{Guid.NewGuid():N}");
+        var cacheRoot = Path.Combine(Path.GetTempPath(), $"nbn-viz-missing-cache-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+        Directory.CreateDirectory(cacheRoot);
+
+        var originalRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        var originalCache = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        try
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", localRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", cacheRoot);
+
+            var artifactRef = new string('a', 64).ToArtifactRef(128, "application/x-nbn", "memory+missing://artifact-store/main");
+            var attempt = await InvokePrivateTaskWithResultAsync(
+                TryLoadDefinitionTopologyAsyncMethod,
+                null,
+                artifactRef,
+                null);
+
+            Assert.Null(GetAttemptTopology(attempt));
+            Assert.Contains("No artifact store adapter is registered", GetAttemptFailure(attempt), StringComparison.Ordinal);
+            Assert.Contains(GetAttemptRoots(attempt), root => root.Contains("memory+missing://", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", originalCache);
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void AddVizEvent_GlobalTickWithoutBrainId_IsSuppressed()
     {
         var vm = CreateViewModel();
@@ -1445,6 +1648,24 @@ public class VizPanelViewModelInteractionTests
         Assert.NotNull(task);
         await task!;
     }
+
+    private static async Task<object?> InvokePrivateTaskWithResultAsync(MethodInfo method, object? instance, params object?[] args)
+    {
+        var task = method.Invoke(instance, args) as Task;
+        Assert.NotNull(task);
+        await task!;
+        return task.GetType().GetProperty("Result", BindingFlags.Instance | BindingFlags.Public)?.GetValue(task);
+    }
+
+    private static object? GetAttemptTopology(object? attempt)
+        => attempt?.GetType().GetProperty("Topology", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(attempt);
+
+    private static IReadOnlyList<string> GetAttemptRoots(object? attempt)
+        => (IReadOnlyList<string>?)attempt?.GetType().GetProperty("RootsTried", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(attempt)
+           ?? Array.Empty<string>();
+
+    private static string? GetAttemptFailure(object? attempt)
+        => attempt?.GetType().GetProperty("Failure", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(attempt) as string;
 
     private static (double X, double Y) ParseMiniChartFirstPoint(string pathData)
     {

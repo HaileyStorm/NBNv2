@@ -2938,7 +2938,9 @@ public sealed class VizPanelViewModel : ViewModelBase
                     }
 
                     state.DefinitionSource = resolvedReference.Source;
-                    state.DefinitionLoadStatus = $"Definition {definitionShaHex[..8]} not found in {loadAttempt.RootsTried.Count} candidate roots.";
+                    state.DefinitionLoadStatus = string.IsNullOrWhiteSpace(loadAttempt.Failure)
+                        ? $"Definition {definitionShaHex[..8]} not found in {loadAttempt.RootsTried.Count} candidate roots."
+                        : $"Definition {definitionShaHex[..8]} load failed: {loadAttempt.Failure}";
                     state.LastDefinitionRootsTried.Clear();
                     state.LastDefinitionRootsTried.AddRange(loadAttempt.RootsTried.Take(12));
                 });
@@ -3078,25 +3080,41 @@ public sealed class VizPanelViewModel : ViewModelBase
     {
         if (!artifactRef.TryToSha256Bytes(out var shaBytes))
         {
-            return new DefinitionTopologyLoadAttempt(null, Array.Empty<string>());
+            return new DefinitionTopologyLoadAttempt(null, Array.Empty<string>(), "ArtifactRef is missing sha256.");
         }
 
         var hash = Sha256Hash.FromBytes(shaBytes);
+        if (ArtifactStoreResolver.IsNonFileStoreUri(artifactRef.StoreUri))
+        {
+            var resolver = CreateWorkbenchArtifactStoreResolver();
+            var targets = new[] { resolver.Describe(artifactRef.StoreUri) };
+            try
+            {
+                var store = resolver.Resolve(artifactRef.StoreUri);
+                var definitionBytes = await TryReadArtifactBytesAsync(store, hash).ConfigureAwait(false);
+                return definitionBytes is null
+                    ? new DefinitionTopologyLoadAttempt(null, targets, null)
+                    : new DefinitionTopologyLoadAttempt(BuildDefinitionTopology(definitionBytes, focusRegionId), targets, null);
+            }
+            catch (Exception ex)
+            {
+                return new DefinitionTopologyLoadAttempt(null, targets, ex.Message);
+            }
+        }
+
         var candidateRoots = ResolveArtifactStoreRoots(artifactRef.StoreUri);
         foreach (var artifactRoot in candidateRoots)
         {
             try
             {
                 var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
-                await using var stream = await store.TryOpenArtifactAsync(hash).ConfigureAwait(false);
-                if (stream is null)
+                var definitionBytes = await TryReadArtifactBytesAsync(store, hash).ConfigureAwait(false);
+                if (definitionBytes is null)
                 {
                     continue;
                 }
 
-                using var buffer = new MemoryStream();
-                await stream.CopyToAsync(buffer).ConfigureAwait(false);
-                return new DefinitionTopologyLoadAttempt(BuildDefinitionTopology(buffer.ToArray(), focusRegionId), candidateRoots);
+                return new DefinitionTopologyLoadAttempt(BuildDefinitionTopology(definitionBytes, focusRegionId), candidateRoots, null);
             }
             catch
             {
@@ -3104,7 +3122,47 @@ public sealed class VizPanelViewModel : ViewModelBase
             }
         }
 
-        return new DefinitionTopologyLoadAttempt(null, candidateRoots);
+        return new DefinitionTopologyLoadAttempt(null, candidateRoots, null);
+    }
+
+    private static ArtifactStoreResolver CreateWorkbenchArtifactStoreResolver()
+        => new(new ArtifactStoreResolverOptions(
+            localStoreRootPath: ResolveWorkbenchArtifactLocalRoot(),
+            cacheRootPath: ResolveWorkbenchArtifactCacheRoot()));
+
+    private static async Task<byte[]?> TryReadArtifactBytesAsync(IArtifactStore store, Sha256Hash hash)
+    {
+        await using var stream = await store.TryOpenArtifactAsync(hash).ConfigureAwait(false);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer).ConfigureAwait(false);
+        return buffer.ToArray();
+    }
+
+    private static string ResolveWorkbenchArtifactLocalRoot()
+    {
+        var envRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        return string.IsNullOrWhiteSpace(envRoot)
+            ? BuildWorkbenchArtifactRoot("artifacts")
+            : envRoot.Trim();
+    }
+
+    private static string ResolveWorkbenchArtifactCacheRoot()
+    {
+        var envRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        return string.IsNullOrWhiteSpace(envRoot)
+            ? BuildWorkbenchArtifactRoot("artifact-cache")
+            : envRoot.Trim();
+    }
+
+    private static string BuildWorkbenchArtifactRoot(string suffix)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return Path.Combine(localAppData, "Nbn.Workbench", suffix);
     }
 
     private static DefinitionTopologyLoadResult BuildDefinitionTopology(byte[] definitionBytes, uint? focusRegionId)
@@ -3198,12 +3256,6 @@ public sealed class VizPanelViewModel : ViewModelBase
             return trimmed;
         }
 
-        static string BuildDefaultRoot(string suffix)
-        {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            return Path.Combine(localAppData, "Nbn.Workbench", suffix);
-        }
-
         static bool IsArtifactStoreRoot(string path)
             => File.Exists(Path.Combine(path, "artifacts.db"))
                || Directory.Exists(Path.Combine(path, "chunks"));
@@ -3271,9 +3323,9 @@ public sealed class VizPanelViewModel : ViewModelBase
         AddCandidate(RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo", "artifacts"));
         AddCandidate(Directory.GetCurrentDirectory());
         AddCandidate(AppContext.BaseDirectory);
-        AddCandidate(BuildDefaultRoot("designer-artifacts"));
-        AddCandidate(BuildDefaultRoot(Path.Combine("sample-brain", "artifacts")));
-        AddCandidate(BuildDefaultRoot("repro-artifacts"));
+        AddCandidate(BuildWorkbenchArtifactRoot("designer-artifacts"));
+        AddCandidate(BuildWorkbenchArtifactRoot(Path.Combine("sample-brain", "artifacts")));
+        AddCandidate(BuildWorkbenchArtifactRoot("repro-artifacts"));
         return roots;
     }
 
@@ -5444,7 +5496,8 @@ public sealed class VizPanelViewModel : ViewModelBase
 
     private readonly record struct DefinitionTopologyLoadAttempt(
         DefinitionTopologyLoadResult? Topology,
-        IReadOnlyList<string> RootsTried);
+        IReadOnlyList<string> RootsTried,
+        string? Failure);
 
     private readonly record struct DefinitionReferenceResolution(
         Nbn.Proto.ArtifactRef? Reference,
