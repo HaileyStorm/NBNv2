@@ -17,6 +17,7 @@ using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 
 namespace Nbn.Tests.Reproduction;
 
+[Collection("ArtifactEnvSerial")]
 public class ReproductionManagerActorTests
 {
     [Fact]

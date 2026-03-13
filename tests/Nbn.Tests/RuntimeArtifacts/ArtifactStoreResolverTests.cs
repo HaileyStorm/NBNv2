@@ -6,6 +6,7 @@ using System.Text.Json;
 
 namespace Nbn.Tests.Artifacts;
 
+[Collection("ArtifactEnvSerial")]
 public sealed class ArtifactStoreResolverTests
 {
     [Fact]

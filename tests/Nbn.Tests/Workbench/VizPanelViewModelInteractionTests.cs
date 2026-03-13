@@ -19,6 +19,7 @@ using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tests.Workbench;
 
+[Collection("ArtifactEnvSerial")]
 public class VizPanelViewModelInteractionTests
 {
     private static readonly MethodInfo RebuildHitIndexMethod =
