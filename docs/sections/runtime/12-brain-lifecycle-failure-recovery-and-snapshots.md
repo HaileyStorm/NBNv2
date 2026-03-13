@@ -34,6 +34,8 @@ If any RegionShard or placement worker for a brain is lost due to process/node f
 
 Partial shard-only restoration is not used.
 
+RegionShard startup may selectively fetch only the assigned `.nbn` region section when artifact manifests provide region-index metadata, but that optimization does not change recovery ownership or scope. HiveMind still restores the entire brain from durable `.nbn + .nbs` artifacts, and `.nbs` snapshot validation still uses whole-brain snapshot bytes rather than shard-only snapshot fragments.
+
 ### 12.4 Brain termination notifications and rebalancing
 
 When a brain terminates (energy exhaustion, explicit kill from External World or Workbench, unrecoverable error):

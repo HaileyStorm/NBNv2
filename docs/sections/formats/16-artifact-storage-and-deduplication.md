@@ -75,5 +75,9 @@ The store may additionally index `.nbn` region sections:
 
 * per region: offset and length in canonical bytes
 * enables efficient partial fetch of required regions for worker nodes
+* may be produced automatically for seekable `.nbn` writes or supplied explicitly by callers that already know the region boundaries
+* is an optimization hint only: complete artifact reads remain supported, and indexed reads must still agree with the canonical `.nbn` header directory before a region section is trusted
+
+Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
 
 ---

@@ -38,6 +38,7 @@ public sealed class CountingArtifactStore : IArtifactStore, IDisposable
     private int _containsCalls;
     private int _manifestCalls;
     private int _openCalls;
+    private int _rangeOpenCalls;
     private int _storeCalls;
     private bool _disposed;
 
@@ -53,6 +54,7 @@ public sealed class CountingArtifactStore : IArtifactStore, IDisposable
     public int ManifestCalls => Volatile.Read(ref _manifestCalls);
     public int ContainsCalls => Volatile.Read(ref _containsCalls);
     public int OpenCalls => Volatile.Read(ref _openCalls);
+    public int RangeOpenCalls => Volatile.Read(ref _rangeOpenCalls);
 
     public async Task<ArtifactManifest> StoreAsync(
         Stream content,
@@ -80,6 +82,12 @@ public sealed class CountingArtifactStore : IArtifactStore, IDisposable
     {
         Interlocked.Increment(ref _openCalls);
         return await _store.TryOpenArtifactAsync(artifactId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<Stream?> TryOpenArtifactRangeAsync(Sha256Hash artifactId, long offset, long length, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _rangeOpenCalls);
+        return await _store.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose()

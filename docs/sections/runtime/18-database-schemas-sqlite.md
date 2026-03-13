@@ -79,4 +79,6 @@ Tables (recommended):
 * length INTEGER
 * PRIMARY KEY (artifact_sha256, region_id)
 
+When present, `artifact_region_index` records canonical `.nbn` region-section byte ranges that can guide selective region fetches; callers must still cross-check those ranges against the `.nbn` header directory before trusting them.
+
 ---

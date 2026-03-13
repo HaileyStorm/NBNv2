@@ -18,6 +18,7 @@ public sealed class CachingArtifactStore : IArtifactStore
         ArtifactStoreWriteOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        options = ArtifactRegionIndexBuilder.PopulateIfMissing(content, mediaType, options);
         var manifest = await _upstream.StoreAsync(content, mediaType, options, cancellationToken).ConfigureAwait(false);
         CacheManifest(manifest);
         await _cache.EnsureAsync(manifest, cancellationToken).ConfigureAwait(false);
@@ -70,6 +71,49 @@ public sealed class CachingArtifactStore : IArtifactStore
         return cachedEntry is not null
             ? OpenCachedEntry(cachedEntry)
             : await _upstream.TryOpenArtifactAsync(artifactId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<Stream?> TryOpenArtifactRangeAsync(Sha256Hash artifactId, long offset, long length, CancellationToken cancellationToken = default)
+    {
+        ArtifactRangeSupport.ValidateRange(offset, length);
+
+        var cachedEntry = await _cache.TryGetAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        if (cachedEntry is not null)
+        {
+            if (offset > cachedEntry.ByteLength || offset + length > cachedEntry.ByteLength)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
+            }
+
+            return new ArtifactRangeStream(OpenCachedEntry(cachedEntry), offset, length);
+        }
+
+        var cachedRange = await _cache.TryGetRangeAsync(artifactId, offset, length, cancellationToken).ConfigureAwait(false);
+        if (cachedRange is not null)
+        {
+            return OpenCachedEntry(cachedRange);
+        }
+
+        var manifest = await TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        if (offset > manifest.ByteLength || offset + length > manifest.ByteLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
+        }
+
+        var upstreamRange = await _upstream.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken).ConfigureAwait(false);
+        if (upstreamRange is null)
+        {
+            return null;
+        }
+
+        await using var _ = upstreamRange;
+        var rangeEntry = await _cache.StoreRangeAsync(artifactId, offset, length, upstreamRange, cancellationToken).ConfigureAwait(false);
+        return OpenCachedEntry(rangeEntry);
     }
 
     private static Stream OpenCachedEntry(ArtifactCacheEntry entry)

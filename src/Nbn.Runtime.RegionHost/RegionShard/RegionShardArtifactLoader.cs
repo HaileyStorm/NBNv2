@@ -15,6 +15,10 @@ public sealed record RegionShardLoadResult(
     NbnHeaderV2 Header,
     NbsHeaderV2? SnapshotHeader);
 
+internal sealed record IndexedNbnRegionLoadResult(
+    NbnHeaderV2 Header,
+    NbnRegionSection Region);
+
 public static class RegionShardArtifactLoader
 {
     public static async Task<RegionShardLoadResult> LoadAsync(
@@ -37,12 +41,32 @@ public static class RegionShardArtifactLoader
             throw new ArgumentNullException(nameof(nbnRef));
         }
 
-        var nbnBytes = await ReadArtifactAsync(store, nbnRef, cancellationToken);
-        var header = NbnBinary.ReadNbnHeader(nbnBytes);
-
         if (regionId < NbnConstants.RegionMinId || regionId > NbnConstants.RegionMaxId)
         {
             throw new ArgumentOutOfRangeException(nameof(regionId), regionId, "Region id must be between 0 and 31.");
+        }
+
+        var indexedDefinition = await TryReadIndexedNbnRegionAsync(store, nbnRef, regionId, cancellationToken);
+        NbnHeaderV2 header;
+        NbnRegionSection regionSection;
+
+        if (indexedDefinition is null)
+        {
+            var nbnBytes = await ReadArtifactAsync(store, nbnRef, cancellationToken);
+            header = NbnBinary.ReadNbnHeader(nbnBytes);
+
+            var fullEntry = header.Regions[regionId];
+            if (fullEntry.NeuronSpan == 0)
+            {
+                throw new InvalidOperationException($"Region {regionId} is not present in the NBN definition.");
+            }
+
+            regionSection = NbnBinary.ReadNbnRegionSection(nbnBytes, fullEntry.Offset);
+        }
+        else
+        {
+            header = indexedDefinition.Header;
+            regionSection = indexedDefinition.Region;
         }
 
         var entry = header.Regions[regionId];
@@ -50,8 +74,6 @@ public static class RegionShardArtifactLoader
         {
             throw new InvalidOperationException($"Region {regionId} is not present in the NBN definition.");
         }
-
-        var regionSection = NbnBinary.ReadNbnRegionSection(nbnBytes, entry.Offset);
 
         NbsHeaderV2? nbsHeader = null;
         NbsRegionSection? nbsRegion = null;
@@ -377,13 +399,7 @@ public static class RegionShardArtifactLoader
 
     private static async Task<byte[]> ReadArtifactAsync(IArtifactStore store, ArtifactRef reference, CancellationToken cancellationToken)
     {
-        if (reference.Sha256 is null)
-        {
-            throw new ArgumentException("ArtifactRef is missing sha256.", nameof(reference));
-        }
-
-        var bytes = reference.Sha256.ToByteArray();
-        var hash = new Sha256Hash(bytes);
+        var hash = GetArtifactHash(reference);
         var stream = await store.TryOpenArtifactAsync(hash, cancellationToken);
         if (stream is null)
         {
@@ -397,6 +413,100 @@ public static class RegionShardArtifactLoader
             await stream.CopyToAsync(ms, cancellationToken);
             return ms.ToArray();
         }
+    }
+
+    private static async Task<IndexedNbnRegionLoadResult?> TryReadIndexedNbnRegionAsync(
+        IArtifactStore store,
+        ArtifactRef reference,
+        int regionId,
+        CancellationToken cancellationToken)
+    {
+        var hash = GetArtifactHash(reference);
+        var manifest = await store.TryGetManifestAsync(hash, cancellationToken).ConfigureAwait(false);
+        if (manifest is null || manifest.RegionIndex.Count == 0)
+        {
+            return null;
+        }
+
+        ArtifactRegionIndexEntry? regionIndexEntry = null;
+        foreach (var entry in manifest.RegionIndex)
+        {
+            if (entry.RegionId == regionId)
+            {
+                regionIndexEntry = entry;
+                break;
+            }
+        }
+
+        if (regionIndexEntry is null)
+        {
+            return null;
+        }
+
+        var headerBytes = await ReadArtifactRangeAsync(store, hash, 0, NbnBinary.NbnHeaderBytes, cancellationToken).ConfigureAwait(false);
+        if (headerBytes is null)
+        {
+            return null;
+        }
+
+        var header = NbnBinary.ReadNbnHeader(headerBytes);
+        var regionEntry = header.Regions[regionId];
+        if (regionEntry.NeuronSpan == 0)
+        {
+            throw new InvalidOperationException($"Region {regionId} is not present in the NBN definition.");
+        }
+
+        var expectedOffset = checked((long)regionEntry.Offset);
+        var expectedLength = NbnBinary.GetNbnRegionSectionSize(regionEntry.NeuronSpan, regionEntry.TotalAxons, header.AxonStride);
+        if (regionIndexEntry.Offset != expectedOffset || regionIndexEntry.Length != expectedLength)
+        {
+            return null;
+        }
+
+        var regionBytes = await ReadArtifactRangeAsync(store, hash, regionIndexEntry.Offset, checked((int)regionIndexEntry.Length), cancellationToken).ConfigureAwait(false);
+        if (regionBytes is null)
+        {
+            return null;
+        }
+
+        var region = NbnBinary.ReadNbnRegionSection(regionBytes, 0);
+        return new IndexedNbnRegionLoadResult(header, region);
+    }
+
+    private static async Task<byte[]?> ReadArtifactRangeAsync(
+        IArtifactStore store,
+        Sha256Hash hash,
+        long offset,
+        int length,
+        CancellationToken cancellationToken)
+    {
+        var stream = await store.TryOpenArtifactRangeAsync(hash, offset, length, cancellationToken).ConfigureAwait(false);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        await using (stream)
+        {
+            var ms = length > 0 ? new MemoryStream(length) : new MemoryStream();
+            await stream.CopyToAsync(ms, cancellationToken).ConfigureAwait(false);
+            if (ms.Length != length)
+            {
+                throw new InvalidOperationException($"Artifact {hash} range {offset}+{length} produced {ms.Length} bytes.");
+            }
+
+            return ms.ToArray();
+        }
+    }
+
+    private static Sha256Hash GetArtifactHash(ArtifactRef reference)
+    {
+        if (reference.Sha256 is null)
+        {
+            throw new ArgumentException("ArtifactRef is missing sha256.", nameof(reference));
+        }
+
+        return new Sha256Hash(reference.Sha256.ToByteArray());
     }
 
     private static (Dictionary<int, NbsRegionSection> Regions, NbsOverlaySection? Overlays) ReadNbsRegions(

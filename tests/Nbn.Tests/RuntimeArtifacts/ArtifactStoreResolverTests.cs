@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Nbn.Runtime.Artifacts;
+using Nbn.Tests.Format;
 using Nbn.Tests.TestSupport;
 using System.Text.Json;
 
@@ -36,6 +37,46 @@ public sealed class ArtifactStoreResolverTests
             Assert.Equal(1, remoteScope.Store.OpenCalls);
             var cachedArtifactPath = Path.Combine(localRoot, ".cache", "artifacts", manifest.ArtifactId.ToHex());
             Assert.True(File.Exists(cachedArtifactPath));
+        }
+        finally
+        {
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_NonFileStoreUri_Reuses_NodeLocalRangeCache_After_FirstFetch()
+    {
+        using var remoteScope = new RegisteredArtifactStoreScope();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-range-resolver-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+
+        try
+        {
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var manifest = await remoteScope.Store.StoreAsync(new MemoryStream(vector.Bytes), "application/x-nbn");
+            var range = manifest.RegionIndex.Single(entry => entry.RegionId == 1);
+            var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(localRoot));
+            var store = resolver.Resolve(remoteScope.StoreUri);
+
+            await using (var first = await store.TryOpenArtifactRangeAsync(manifest.ArtifactId, range.Offset, range.Length))
+            {
+                Assert.NotNull(first);
+            }
+
+            Assert.Equal(1, remoteScope.Store.RangeOpenCalls);
+
+            await using (var second = await store.TryOpenArtifactRangeAsync(manifest.ArtifactId, range.Offset, range.Length))
+            {
+                Assert.NotNull(second);
+            }
+
+            Assert.Equal(1, remoteScope.Store.RangeOpenCalls);
+            var cachedRangePath = Path.Combine(localRoot, ".cache", "ranges", manifest.ArtifactId.ToHex(), $"{range.Offset}-{range.Length}.bin");
+            Assert.True(File.Exists(cachedRangePath));
         }
         finally
         {

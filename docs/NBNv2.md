@@ -517,6 +517,8 @@ Shard alignment rules:
   * `neuron_start % stride == 0`
   * `neuron_count % stride == 0`, except the final shard in a region may be shorter to cover `[last_stride_boundary, neuron_span)`
 
+RegionHost may materialize a shard from a selective `.nbn` region fetch when the artifact manifest exposes region-index metadata, but placement ownership and epoch activation still remain with HiveMind.
+
 ### 9.2 Node capabilities and placement telemetry
 
 Worker processes report capabilities periodically to SettingsMonitor:
@@ -788,6 +790,8 @@ If any RegionShard or placement worker for a brain is lost due to process/node f
 * Successful recovery emits `Recovering -> Active` (or `Recovering -> Paused` if the brain was already paused); unrecoverable artifact/placement failure emits `Recovering -> Dead`
 
 Partial shard-only restoration is not used.
+
+RegionShard startup may selectively fetch only the assigned `.nbn` region section when artifact manifests provide region-index metadata, but that optimization does not change recovery ownership or scope. HiveMind still restores the entire brain from durable `.nbn + .nbs` artifacts, and `.nbs` snapshot validation still uses whole-brain snapshot bytes rather than shard-only snapshot fragments.
 
 ### 12.4 Brain termination notifications and rebalancing
 
@@ -1254,6 +1258,10 @@ The store may additionally index `.nbn` region sections:
 
 * per region: offset and length in canonical bytes
 * enables efficient partial fetch of required regions for worker nodes
+* may be produced automatically for seekable `.nbn` writes or supplied explicitly by callers that already know the region boundaries
+* is an optimization hint only: complete artifact reads remain supported, and indexed reads must still agree with the canonical `.nbn` header directory before a region section is trusted
+
+Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
 
 ---
 
@@ -1696,6 +1704,8 @@ Tables (recommended):
 * offset INTEGER
 * length INTEGER
 * PRIMARY KEY (artifact_sha256, region_id)
+
+When present, `artifact_region_index` records canonical `.nbn` region-section byte ranges that can guide selective region fetches; callers must still cross-check those ranges against the `.nbn` header directory before trusting them.
 
 ---
 

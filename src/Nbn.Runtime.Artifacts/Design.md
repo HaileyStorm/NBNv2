@@ -15,7 +15,7 @@ Non-file `store_uri` values resolve through registered artifact-store adapters r
 
 Keys must match the exact non-file `store_uri` carried in artifact refs. Values point to the local backing root or adapter target for that URI. Use exact keys rather than prefix matching so different logical stores cannot alias accidentally.
 
-Remote adapters preserve content-addressed reads/writes by hash and may populate a node-local full-artifact cache after the first fetch. Partial or region-indexed reads remain a separate concern; `IArtifactStore.TryOpenArtifactAsync(...)` continues to mean a complete artifact stream.
+Remote adapters preserve content-addressed reads/writes by hash and may populate a node-local full-artifact cache after the first fetch. `IArtifactStore.TryOpenArtifactAsync(...)` continues to mean a complete artifact stream; selective reads use the separate `TryOpenArtifactRangeAsync(...)` path. `.nbn` manifests may carry region-index metadata so RegionHost and WorkerNode can fetch only the required region section when the store supports range reads. Seekable `.nbn` writes auto-populate that index unless the caller supplies explicit `ArtifactStoreWriteOptions.RegionIndex` values.
 
 ## Maintenance guidance
 

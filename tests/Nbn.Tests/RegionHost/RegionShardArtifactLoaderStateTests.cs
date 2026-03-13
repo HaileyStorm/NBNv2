@@ -4,6 +4,7 @@ using Nbn.Proto;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.RegionHost;
 using Nbn.Tests.Format;
+using Nbn.Tests.TestSupport;
 using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 
 namespace Nbn.Tests.RegionHost;
@@ -108,6 +109,57 @@ public class RegionShardArtifactLoaderStateTests
                 Directory.Delete(artifactRoot, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithIndexedDefinition_UsesArtifactRangeReadsForNbn()
+    {
+        using var scope = new RegisteredArtifactStoreScope();
+        var richNbn = NbnTestVectors.CreateRichNbnVector();
+
+        var nbnManifest = await scope.Store.StoreAsync(new MemoryStream(richNbn.Bytes), "application/x-nbn");
+        Assert.NotEmpty(nbnManifest.RegionIndex);
+
+        var load = await RegionShardArtifactLoader.LoadAsync(
+            scope.Store,
+            BuildArtifactRef(nbnManifest),
+            nbsRef: null,
+            regionId: 1,
+            neuronStart: 0,
+            neuronCount: 4);
+
+        Assert.Equal(4, load.State.NeuronCount);
+        Assert.Equal(0, scope.Store.OpenCalls);
+        Assert.Equal(2, scope.Store.RangeOpenCalls);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WithoutRegionIndex_FallsBackToFullArtifactRead()
+    {
+        using var scope = new RegisteredArtifactStoreScope();
+        var richNbn = NbnTestVectors.CreateRichNbnVector();
+
+        var nbnManifest = await scope.Store.StoreAsync(
+            new MemoryStream(richNbn.Bytes),
+            "application/x-nbn",
+            new ArtifactStoreWriteOptions
+            {
+                RegionIndex = Array.Empty<ArtifactRegionIndexEntry>()
+            });
+
+        Assert.Empty(nbnManifest.RegionIndex);
+
+        var load = await RegionShardArtifactLoader.LoadAsync(
+            scope.Store,
+            BuildArtifactRef(nbnManifest),
+            nbsRef: null,
+            regionId: 1,
+            neuronStart: 0,
+            neuronCount: 4);
+
+        Assert.Equal(4, load.State.NeuronCount);
+        Assert.Equal(1, scope.Store.OpenCalls);
+        Assert.Equal(0, scope.Store.RangeOpenCalls);
     }
 
     private static ArtifactRef BuildArtifactRef(ArtifactManifest manifest)

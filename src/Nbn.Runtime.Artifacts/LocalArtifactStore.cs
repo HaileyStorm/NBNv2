@@ -38,6 +38,8 @@ public sealed class LocalArtifactStore : IArtifactStore
             throw new ArgumentException("Media type is required.", nameof(mediaType));
         }
 
+        options = ArtifactRegionIndexBuilder.PopulateIfMissing(content, mediaType, options);
+
         var chunks = new List<ArtifactChunkInfo>();
         var byteLength = 0L;
 
@@ -105,6 +107,29 @@ public sealed class LocalArtifactStore : IArtifactStore
         }
 
         return OpenArtifactStream(manifest);
+    }
+
+    public async Task<Stream?> TryOpenArtifactRangeAsync(Sha256Hash artifactId, long offset, long length, CancellationToken cancellationToken = default)
+    {
+        ArtifactRangeSupport.ValidateRange(offset, length);
+
+        var manifest = await TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        if (offset > manifest.ByteLength || offset + length > manifest.ByteLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
+        }
+
+        if (length == 0)
+        {
+            return new MemoryStream(Array.Empty<byte>(), writable: false);
+        }
+
+        return new ArtifactChunkRangeStream(_chunkStore, manifest.Chunks, offset, length);
     }
 
     public Stream OpenArtifactStream(ArtifactManifest manifest)

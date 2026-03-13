@@ -12,6 +12,8 @@ Shard alignment rules:
   * `neuron_start % stride == 0`
   * `neuron_count % stride == 0`, except the final shard in a region may be shorter to cover `[last_stride_boundary, neuron_span)`
 
+RegionHost may materialize a shard from a selective `.nbn` region fetch when the artifact manifest exposes region-index metadata, but placement ownership and epoch activation still remain with HiveMind.
+
 ### 9.2 Node capabilities and placement telemetry
 
 Worker processes report capabilities periodically to SettingsMonitor:

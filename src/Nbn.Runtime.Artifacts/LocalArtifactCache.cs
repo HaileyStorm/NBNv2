@@ -100,6 +100,94 @@ public sealed class LocalArtifactCache : IArtifactCache
         return new ArtifactCacheEntry(manifest.ArtifactId, path, manifest.ByteLength, DateTimeOffset.UtcNow);
     }
 
+    public ValueTask<ArtifactCacheEntry?> TryGetRangeAsync(
+        Sha256Hash artifactId,
+        long offset,
+        long length,
+        CancellationToken cancellationToken = default)
+    {
+        ArtifactRangeSupport.ValidateRange(offset, length);
+
+        var path = GetRangePath(artifactId, offset, length);
+        if (!File.Exists(path))
+        {
+            return ValueTask.FromResult<ArtifactCacheEntry?>(null);
+        }
+
+        var info = new FileInfo(path);
+        if (info.Length != length)
+        {
+            return ValueTask.FromResult<ArtifactCacheEntry?>(null);
+        }
+
+        return ValueTask.FromResult<ArtifactCacheEntry?>(new ArtifactCacheEntry(artifactId, path, info.Length, new DateTimeOffset(info.LastWriteTimeUtc)));
+    }
+
+    public async ValueTask<ArtifactCacheEntry> StoreRangeAsync(
+        Sha256Hash artifactId,
+        long offset,
+        long length,
+        Stream source,
+        CancellationToken cancellationToken = default)
+    {
+        ArtifactRangeSupport.ValidateRange(offset, length);
+
+        if (source is null)
+        {
+            throw new ArgumentNullException(nameof(source));
+        }
+
+        var path = GetRangePath(artifactId, offset, length);
+        if (File.Exists(path))
+        {
+            var info = new FileInfo(path);
+            return new ArtifactCacheEntry(artifactId, path, info.Length, new DateTimeOffset(info.LastWriteTimeUtc));
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        var tempPath = path + ".tmp";
+        var completed = false;
+
+        try
+        {
+            await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, _options.WriteBufferSize, useAsync: true);
+            await source.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+            if (output.Length != length)
+            {
+                throw new InvalidOperationException($"Artifact range {artifactId}@{offset}+{length} produced {output.Length} bytes.");
+            }
+
+            completed = true;
+        }
+        finally
+        {
+            if (!completed && File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+
+        try
+        {
+            File.Move(tempPath, path);
+        }
+        catch (IOException)
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(tempPath);
+            }
+            else
+            {
+                throw;
+            }
+        }
+
+        return new ArtifactCacheEntry(artifactId, path, length, DateTimeOffset.UtcNow);
+    }
+
     private string GetArtifactPath(Sha256Hash artifactId)
     {
         var hex = artifactId.ToHex();
@@ -109,5 +197,16 @@ public sealed class LocalArtifactCache : IArtifactCache
         }
 
         return Path.Combine(_options.RootPath, "artifacts", hex);
+    }
+
+    private string GetRangePath(Sha256Hash artifactId, long offset, long length)
+    {
+        var hex = artifactId.ToHex();
+        if (string.IsNullOrWhiteSpace(hex))
+        {
+            throw new ArgumentException("Invalid artifact id.", nameof(artifactId));
+        }
+
+        return Path.Combine(_options.RootPath, "ranges", hex, $"{offset}-{length}.bin");
     }
 }
