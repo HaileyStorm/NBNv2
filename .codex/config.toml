@@ -1,0 +1,13 @@
+# Project-specific multi-agent roles for NBNv2.
+
+[agents.nbn_spec_guard]
+description = "NBN spec scout that reads docs/NBNv2.md and nearby Design.md files before non-trivial behavior work."
+config_file = "agents/nbn_spec_guard.toml"
+
+[agents.nbn_runtime_invariants]
+description = "NBN invariant checker for IO regions, tick barriers, snapshots, reproduction protections, and runtime ownership."
+config_file = "agents/nbn_runtime_invariants.toml"
+
+[agents.nbn_docs_guard]
+description = "NBN documentation guard for canonical doc updates, render freshness, and hook/CI impact."
+config_file = "agents/nbn_docs_guard.toml"

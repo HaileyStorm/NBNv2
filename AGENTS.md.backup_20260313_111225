@@ -3,7 +3,7 @@
 ## Scope and precedence
 
 - Repo-local guide for coding agents in this repository.
-- Global baseline remains `~/.codex/AGENTS.md`.
+- Global baseline remains `~./codex/AGENTS.md`.
 - If rules conflict, this file wins for this repo.
 
 ## NBN in one minute
@@ -24,23 +24,13 @@
   - project docs near code in `src/*/Design.md`, `tools/*/Design.md`, `tests/*/Design.md`
 - Do not create `Docs/` or `docs/` subfolders under `src/*`, `tools/*`, or `tests/*`; project docs must live at project root.
 
-## Codex multi-agent doc-first workflow (required)
+## Aleph doc-first workflow (required)
 
-- For non-trivial code/behavior tasks, start with `nbn_spec_guard` or an equivalent scout that reads `docs/NBNv2.md` before deep code analysis.
-- For clearly bounded mechanical or docs-only edits, that full spec pass is optional when the task does not depend on spec details.
-- Default repo fan-out for behavior work:
-  1. `nbn_spec_guard` for expected behavior, ownership boundaries, and doc anchors
-  2. `nbn_runtime_invariants` for region/tick/snapshot/reproduction rules
-  3. `test_mapper` or `verifier` for regression surface and commands
-- Prefer multiple narrow agents over one broad worker; keep final synthesis and merge decisions in the main thread.
-- When the spec or code surface is large, split it across fresh read-only agents and compress the findings with `packetizer` before editing.
-- Continue to refer back to `docs/NBNv2.md` and nearby `Design.md` docs throughout edits, verification, and handoff; re-run targeted repo agents when scope shifts.
-
-## Repo-specific agent roles
-
-- `nbn_spec_guard`: reads `docs/NBNv2.md` and relevant `Design.md` files, then maps expected behavior, ownership, and doc impact.
-- `nbn_runtime_invariants`: checks region `0`/`31`, tick barrier ordering, snapshot/recovery, and reproduction protections against the assigned change.
-- `nbn_docs_guard`: decides whether canonical docs or render/check commands must change, and points to the exact doc files.
+- For non-trivial code/behavior tasks, load `docs/NBNv2.md` into Aleph early before deep code analysis.
+- For clearly bounded mechanical or docs-only edits, this step is optional when the task does not depend on spec details.
+- Use focused sub-queries on that loaded spec to answer concrete questions (ownership, invariants, call paths, expected behavior, and test impact).
+- Prefer multiple narrow sub-queries over one broad prompt; keep outputs evidence-oriented.
+- Continue to refer back to `docs/NBNv2.md` throughout edits, verification, and handoff; re-run targeted sub-queries when scope shifts or uncertainty appears.
 
 ## Documentation maintenance policy (required)
 
@@ -122,5 +112,5 @@ Keep docs concise and high-value:
 
 ## Beads rules (repo-specific)
 
-- Beads/BV lifecycle rules are defined in `~/.codex/AGENTS.md`.
+- Beads/BV lifecycle rules are defined in `~./codex/AGENTS.md`.
 - This repo does not add Beads-specific overrides.
