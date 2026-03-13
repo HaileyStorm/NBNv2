@@ -113,6 +113,15 @@ Keep docs concise and high-value:
 - If binaries are locked:
   - `dotnet build -c Release --disable-build-servers --artifacts-path .artifacts-temp`
   - `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
+- When tests create temporary SQLite-backed artifact stores on Windows, clear pools before deleting the temp directory (`SqliteConnection.ClearAllPools()`) or cleanup may fail on `artifacts.db` locks.
+
+## Artifact store bootstrap
+
+- Non-file `store_uri` values must resolve through the shared artifact resolver, not local-path fallback.
+- Runtime fetch/store callers that honor this path include `Nbn.Runtime.HiveMind`, `Nbn.Runtime.RegionHost`, `Nbn.Runtime.WorkerNode`, and `Nbn.Runtime.Reproduction`.
+- When no in-process adapter registration path is available, bootstrap exact mappings through `NBN_ARTIFACT_STORE_URI_MAP`.
+- Expected format: JSON object mapping exact `store_uri` strings to backing roots or adapter targets.
+- Example: `{"memory+prod://artifact-store/main":"D:\\nbn\\artifact-mirror","s3+cache://cluster-a/artifacts":"E:\\nbn\\s3-cache"}`
 
 ## Workbench UI dispatch rule (required)
 

@@ -1225,6 +1225,17 @@ Clients:
 * fail explicitly when no adapter is registered for a non-file `store_uri`; do not silently redirect those reads/writes to a local fallback path
 * bootstrap exact non-file `store_uri` mappings at process start through `NBN_ARTIFACT_STORE_URI_MAP` (JSON object of `store_uri -> backing root/adapter target`) when an in-process adapter registration path is not available
 
+Example bootstrap mapping:
+
+```json
+{
+  "memory+prod://artifact-store/main": "D:\\nbn\\artifact-mirror",
+  "s3+cache://cluster-a/artifacts": "E:\\nbn\\s3-cache"
+}
+```
+
+Runtime fetch/store callers that honor this resolver path include HiveMind, RegionHost, WorkerNode, and Reproduction. Use exact key matches rather than prefix matching so different logical stores do not alias accidentally.
+
 ### 16.4 Dedup interactions with plasticity and reproduction
 
 Plasticity:
