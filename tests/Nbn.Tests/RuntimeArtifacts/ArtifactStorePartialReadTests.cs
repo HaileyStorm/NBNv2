@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Nbn.Runtime.Artifacts;
 using Nbn.Tests.Format;
+using System.Buffers.Binary;
 
 namespace Nbn.Tests.Artifacts;
 
@@ -33,6 +34,76 @@ public sealed class ArtifactStorePartialReadTests
 
             var expected = vector.Bytes.AsSpan((int)region1.Offset, (int)region1.Length).ToArray();
             Assert.Equal(expected, ms.ToArray());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task StoreAsync_MalformedSeekableNbn_SkipsAutoRegionIndex_AndStillStoresBytes()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-malformed-nbn-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var malformed = vector.Bytes.ToArray();
+
+            BinaryPrimitives.WriteUInt32LittleEndian(malformed.AsSpan(0x100, 4), uint.MaxValue);
+
+            var manifest = await store.StoreAsync(new MemoryStream(malformed), "application/x-nbn");
+            var persistedManifest = await store.TryGetManifestAsync(manifest.ArtifactId);
+
+            Assert.NotNull(persistedManifest);
+            Assert.Empty(manifest.RegionIndex);
+            Assert.Empty(persistedManifest!.RegionIndex);
+
+            await using var stream = await store.TryOpenArtifactAsync(manifest.ArtifactId);
+            Assert.NotNull(stream);
+
+            using var ms = new MemoryStream();
+            await stream!.CopyToAsync(ms);
+            Assert.Equal(malformed, ms.ToArray());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task StoreAsync_SeekableNbn_WithOutOfRangeSectionOffsets_SkipsAutoRegionIndex()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-range-bounds-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var vector = NbnTestVectors.CreateRichNbnVector();
+            var malformed = vector.Bytes.ToArray();
+            var regionEntryOffset = 0x100 + 24;
+
+            BinaryPrimitives.WriteUInt64LittleEndian(malformed.AsSpan(regionEntryOffset + 12, 8), (ulong)malformed.Length + 128UL);
+
+            var manifest = await store.StoreAsync(new MemoryStream(malformed), "application/x-nbn");
+            var persistedManifest = await store.TryGetManifestAsync(manifest.ArtifactId);
+
+            Assert.NotNull(persistedManifest);
+            Assert.Empty(manifest.RegionIndex);
+            Assert.Empty(persistedManifest!.RegionIndex);
         }
         finally
         {

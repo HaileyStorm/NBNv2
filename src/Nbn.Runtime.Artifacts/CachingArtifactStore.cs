@@ -27,18 +27,16 @@ public sealed class CachingArtifactStore : IArtifactStore
 
     public async Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
-        if (_manifestCache.TryGetValue(artifactId.ToHex(), out var cached))
-        {
-            return cached;
-        }
-
         var manifest = await _upstream.TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
         if (manifest is not null)
         {
             CacheManifest(manifest);
+            return manifest;
         }
 
-        return manifest;
+        return _manifestCache.TryGetValue(artifactId.ToHex(), out var cached)
+            ? cached
+            : null;
     }
 
     public async Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)

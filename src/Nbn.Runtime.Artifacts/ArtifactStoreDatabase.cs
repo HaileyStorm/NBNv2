@@ -1,5 +1,6 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
+using System.Data;
 
 namespace Nbn.Runtime.Artifacts;
 
@@ -79,10 +80,80 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+        return await TryGetManifestAsync(connection, transaction: null, artifactId);
+    }
 
+    public async Task<ArtifactManifest?> ResolveExistingManifestAsync(
+        ArtifactManifest requestedManifest,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var existingManifest = await TryGetManifestAsync(connection, transaction, requestedManifest.ArtifactId);
+        if (existingManifest is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        var reconciledManifest = ReconcileManifest(existingManifest, requestedManifest);
+        if (HasSameManifestMetadata(existingManifest, reconciledManifest))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return existingManifest;
+        }
+
+        var reconciledManifestHash = reconciledManifest.ComputeManifestHash();
+        await connection.ExecuteAsync(
+            @"UPDATE artifacts
+              SET media_type = @MediaType,
+                  manifest_sha256 = @ManifestSha256
+              WHERE artifact_sha256 = @ArtifactSha256;",
+            new
+            {
+                ArtifactSha256 = reconciledManifest.ArtifactId.Bytes.ToArray(),
+                MediaType = reconciledManifest.MediaType,
+                ManifestSha256 = reconciledManifestHash.Bytes.ToArray()
+            },
+            transaction);
+
+        await connection.ExecuteAsync(
+            "DELETE FROM artifact_region_index WHERE artifact_sha256 = @ArtifactSha256;",
+            new
+            {
+                ArtifactSha256 = reconciledManifest.ArtifactId.Bytes.ToArray()
+            },
+            transaction);
+
+        if (reconciledManifest.RegionIndex.Count > 0)
+        {
+            var regionRows = new List<ArtifactRegionInsertRow>(reconciledManifest.RegionIndex.Count);
+            foreach (var entry in reconciledManifest.RegionIndex)
+            {
+                regionRows.Add(new ArtifactRegionInsertRow(reconciledManifest.ArtifactId.Bytes.ToArray(), entry.RegionId, entry.Offset, entry.Length));
+            }
+
+            await connection.ExecuteAsync(
+                "INSERT INTO artifact_region_index (artifact_sha256, region_id, offset, length) VALUES (@ArtifactSha256, @RegionId, @Offset, @Length);",
+                regionRows,
+                transaction);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return reconciledManifest;
+    }
+
+    private static async Task<ArtifactManifest?> TryGetManifestAsync(
+        SqliteConnection connection,
+        IDbTransaction? transaction,
+        Sha256Hash artifactId)
+    {
         var artifactRow = await connection.QuerySingleOrDefaultAsync<ArtifactRow>(
             "SELECT artifact_sha256 AS ArtifactSha256, media_type AS MediaType, byte_length AS ByteLength FROM artifacts WHERE artifact_sha256 = @Id;",
-            new { Id = artifactId.Bytes.ToArray() });
+            new { Id = artifactId.Bytes.ToArray() },
+            transaction);
 
         if (artifactRow is null)
         {
@@ -99,7 +170,8 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
               JOIN chunks c ON ac.chunk_sha256 = c.chunk_sha256
               WHERE ac.artifact_sha256 = @Id
               ORDER BY ac.seq;",
-            new { Id = artifactId.Bytes.ToArray() })).ToList();
+            new { Id = artifactId.Bytes.ToArray() },
+            transaction)).ToList();
 
         var chunks = new List<ArtifactChunkInfo>(chunkRows.Count);
         foreach (var row in chunkRows)
@@ -114,7 +186,8 @@ CREATE TABLE IF NOT EXISTS artifact_region_index (
 
         var regionRows = (await connection.QueryAsync<ArtifactRegionRow>(
             "SELECT region_id AS RegionId, offset AS Offset, length AS Length FROM artifact_region_index WHERE artifact_sha256 = @Id ORDER BY region_id;",
-            new { Id = artifactId.Bytes.ToArray() })).ToList();
+            new { Id = artifactId.Bytes.ToArray() },
+            transaction)).ToList();
 
         IReadOnlyList<ArtifactRegionIndexEntry> regionIndex = Array.Empty<ArtifactRegionIndexEntry>();
         if (regionRows.Count > 0)
@@ -254,4 +327,75 @@ VALUES (@ArtifactSha256, @MediaType, @ByteLength, @CreatedMs, @ManifestSha256, 1
     }
 
     internal sealed record ChunkMetadata(long ByteLength, long StoredLength, string Compression);
+
+    private static ArtifactManifest ReconcileManifest(ArtifactManifest existingManifest, ArtifactManifest requestedManifest)
+    {
+        if (!string.Equals(existingManifest.MediaType, requestedManifest.MediaType, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Artifact {existingManifest.ArtifactId} is already stored as media type '{existingManifest.MediaType}' and cannot be stored as '{requestedManifest.MediaType}'.");
+        }
+
+        var mergedRegionIndex = MergeRegionIndex(existingManifest.ArtifactId, existingManifest.RegionIndex, requestedManifest.RegionIndex);
+        return new ArtifactManifest(
+            existingManifest.ArtifactId,
+            existingManifest.MediaType,
+            existingManifest.ByteLength,
+            existingManifest.Chunks,
+            mergedRegionIndex);
+    }
+
+    private static IReadOnlyList<ArtifactRegionIndexEntry> MergeRegionIndex(
+        Sha256Hash artifactId,
+        IReadOnlyList<ArtifactRegionIndexEntry> existingRegionIndex,
+        IReadOnlyList<ArtifactRegionIndexEntry> requestedRegionIndex)
+    {
+        if (requestedRegionIndex.Count == 0)
+        {
+            return existingRegionIndex;
+        }
+
+        var merged = new SortedDictionary<int, ArtifactRegionIndexEntry>();
+        foreach (var entry in existingRegionIndex)
+        {
+            merged[entry.RegionId] = entry;
+        }
+
+        foreach (var entry in requestedRegionIndex)
+        {
+            if (merged.TryGetValue(entry.RegionId, out var existingEntry))
+            {
+                if (existingEntry != entry)
+                {
+                    throw new InvalidOperationException(
+                        $"Artifact {artifactId} already stores region {entry.RegionId} at offset {existingEntry.Offset} length {existingEntry.Length} and cannot reconcile conflicting region index metadata.");
+                }
+
+                continue;
+            }
+
+            merged[entry.RegionId] = entry;
+        }
+
+        return merged.Values.ToList();
+    }
+
+    private static bool HasSameManifestMetadata(ArtifactManifest left, ArtifactManifest right)
+    {
+        if (!string.Equals(left.MediaType, right.MediaType, StringComparison.OrdinalIgnoreCase)
+            || left.RegionIndex.Count != right.RegionIndex.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.RegionIndex.Count; i++)
+        {
+            if (left.RegionIndex[i] != right.RegionIndex[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

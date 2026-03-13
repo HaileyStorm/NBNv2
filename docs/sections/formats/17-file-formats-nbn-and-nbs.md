@@ -21,6 +21,8 @@
 
 Regions 0 and 31 must be present. Regions without neurons are not included.
 
+Artifact-store auto-indexing may reuse this header directory as best-effort metadata for seekable `.nbn` writes, but malformed headers or out-of-range section offsets do not produce trusted persisted region indexes by themselves.
+
 #### 17.2.2 `NbnHeaderV2` (1024 bytes)
 
 Offsets and sizes:

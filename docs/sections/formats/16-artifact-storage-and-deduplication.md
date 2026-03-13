@@ -78,6 +78,7 @@ The store may additionally index `.nbn` region sections:
 * enables efficient partial fetch of required regions for worker nodes
 * may be produced automatically for seekable `.nbn` writes or supplied explicitly by callers that already know the region boundaries
 * is an optimization hint only: complete artifact reads remain supported, and indexed reads must still agree with the canonical `.nbn` header directory before a region section is trusted
+* auto-produced region indexes are best-effort metadata extraction only: malformed or out-of-range `.nbn` header data skips persisted region-index entries rather than failing the CAS write path by itself
 
 Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
 
@@ -87,8 +88,9 @@ Current artifact-store lifecycle management is append-only:
 
 * storing a distinct artifact writes one `artifacts` row plus ordered `artifact_chunks` references
 * storing another artifact that reuses an existing chunk hash increments that chunk row's `ref_count` instead of writing a duplicate chunk payload
-* duplicate stores are keyed by `artifact_sha256`; re-storing the same artifact bytes with the same effective manifest metadata reuses the existing manifest/catalog row rather than incrementing those counters again
-* that duplicate-artifact path does not currently merge a later media-type or region-index change into the existing row
+* when concurrent writers race on an existing chunk file, later writers tolerate the transient file-present/metadata-missing state by re-reading committed metadata or deriving the storage metadata from the existing chunk bytes before reusing that chunk
+* duplicate stores are keyed by `artifact_sha256`; re-storing the same artifact bytes with the same media type reuses the existing manifest/catalog row rather than incrementing those counters again
+* later compatible stores may enrich missing region-index metadata on that existing row, but conflicting media-type changes or conflicting region-index entries are rejected explicitly
 * there is currently no public delete/release API, no ref-count decrement path, and no automatic GC/TTL eviction for the CAS store or node-local cache
 
 Operators should plan manual/external cleanup for artifact-store roots and node-local cache roots until explicit reclamation tooling exists.

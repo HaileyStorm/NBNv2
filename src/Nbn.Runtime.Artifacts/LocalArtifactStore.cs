@@ -4,6 +4,8 @@ namespace Nbn.Runtime.Artifacts;
 
 public sealed class LocalArtifactStore : IArtifactStore
 {
+    private static readonly TimeSpan ChunkMetadataResolutionTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ChunkMetadataWaitDelay = TimeSpan.FromMilliseconds(25);
     private readonly ArtifactStoreOptions _options;
     private readonly FastCdcChunker _chunker;
     private readonly ChunkStore _chunkStore;
@@ -59,7 +61,7 @@ public sealed class LocalArtifactStore : IArtifactStore
 
             if (!wrote)
             {
-                var metadata = await _database.TryGetChunkMetadataAsync(chunkHash, cancellationToken);
+                var metadata = await ResolveChunkMetadataAsync(chunkHash, chunk, cancellationToken);
                 if (metadata is null)
                 {
                     throw new InvalidOperationException($"Chunk {chunkHash} exists on disk but metadata is missing.");
@@ -79,7 +81,7 @@ public sealed class LocalArtifactStore : IArtifactStore
         var inserted = await _database.TryInsertArtifactAsync(manifest, manifestHash, DateTimeOffset.UtcNow, cancellationToken);
         if (!inserted)
         {
-            var existing = await _database.TryGetManifestAsync(artifactId, cancellationToken);
+            var existing = await _database.ResolveExistingManifestAsync(manifest, cancellationToken);
             return existing ?? manifest;
         }
 
@@ -143,6 +145,77 @@ public sealed class LocalArtifactStore : IArtifactStore
     }
 
     internal string GetChunkPath(Sha256Hash chunkHash) => _chunkStore.GetChunkPath(chunkHash);
+
+    private async Task<ArtifactStoreDatabase.ChunkMetadata?> ResolveChunkMetadataAsync(
+        Sha256Hash chunkHash,
+        ReadOnlyMemory<byte> chunk,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + ChunkMetadataResolutionTimeout;
+
+        while (true)
+        {
+            var metadata = await _database.TryGetChunkMetadataAsync(chunkHash, cancellationToken);
+            if (metadata is not null)
+            {
+                return metadata;
+            }
+
+            var derivedMetadata = await TryDeriveChunkMetadataAsync(chunkHash, chunk, cancellationToken);
+            if (derivedMetadata is not null)
+            {
+                return derivedMetadata;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                return null;
+            }
+
+            await Task.Delay(ChunkMetadataWaitDelay, cancellationToken);
+        }
+    }
+
+    private async Task<ArtifactStoreDatabase.ChunkMetadata?> TryDeriveChunkMetadataAsync(
+        Sha256Hash chunkHash,
+        ReadOnlyMemory<byte> chunk,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var path = _chunkStore.GetChunkPath(chunkHash);
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var storedBytes = await File.ReadAllBytesAsync(path, cancellationToken);
+            if (storedBytes.Length == chunk.Length
+                && storedBytes.AsSpan().SequenceEqual(chunk.Span))
+            {
+                return new ArtifactStoreDatabase.ChunkMetadata(chunk.Length, storedBytes.Length, ChunkCompression.NoneLabel);
+            }
+
+            try
+            {
+                var decompressed = ChunkCompression.DecompressZstd(storedBytes, chunk.Length);
+                if (decompressed.AsSpan().SequenceEqual(chunk.Span))
+                {
+                    return new ArtifactStoreDatabase.ChunkMetadata(chunk.Length, storedBytes.Length, ChunkCompression.ZstdLabel);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
 
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {

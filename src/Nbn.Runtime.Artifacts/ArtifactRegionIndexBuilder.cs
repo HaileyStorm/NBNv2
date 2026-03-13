@@ -1,3 +1,4 @@
+using Nbn.Shared;
 using Nbn.Shared.Format;
 
 namespace Nbn.Runtime.Artifacts;
@@ -5,6 +6,10 @@ namespace Nbn.Runtime.Artifacts;
 public static class ArtifactRegionIndexBuilder
 {
     private const string NbnMediaType = "application/x-nbn";
+    private const string CanonicalMagic = "NBN2";
+    private const ushort CanonicalVersion = 2;
+    private const byte CanonicalEndianness = 1;
+    private const byte CanonicalHeaderBytesPow2 = 10;
 
     public static IReadOnlyList<ArtifactRegionIndexEntry> BuildFromNbnBytes(ReadOnlySpan<byte> data)
     {
@@ -53,7 +58,11 @@ public static class ArtifactRegionIndexBuilder
                 content.Seek(originalPosition, SeekOrigin.Begin);
                 ReadExactly(content, headerBytes);
 
-                var regionIndex = BuildFromNbnBytes(headerBytes);
+                if (!TryBuildFromHeaderBytes(headerBytes, content.Length - originalPosition, out var regionIndex))
+                {
+                    return options;
+                }
+
                 return regionIndex.Count == 0
                     ? options
                     : new ArtifactStoreWriteOptions
@@ -70,6 +79,68 @@ public static class ArtifactRegionIndexBuilder
         {
             return options;
         }
+    }
+
+    private static bool TryBuildFromHeaderBytes(
+        ReadOnlySpan<byte> headerBytes,
+        long streamLength,
+        out IReadOnlyList<ArtifactRegionIndexEntry> regionIndex)
+    {
+        regionIndex = Array.Empty<ArtifactRegionIndexEntry>();
+
+        try
+        {
+            var header = NbnBinary.ReadNbnHeader(headerBytes);
+            if (!IsCanonicalHeader(header))
+            {
+                return false;
+            }
+
+            var built = BuildFromNbnHeader(header);
+            if (!IsWithinStreamBounds(built, streamLength))
+            {
+                return false;
+            }
+
+            regionIndex = built;
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsCanonicalHeader(NbnHeaderV2 header)
+        => string.Equals(header.Magic, CanonicalMagic, StringComparison.Ordinal)
+           && header.Version == CanonicalVersion
+           && header.Endianness == CanonicalEndianness
+           && header.HeaderBytesPow2 == CanonicalHeaderBytesPow2
+           && header.AxonStride > 0
+           && header.Regions.Length == NbnConstants.RegionCount;
+
+    private static bool IsWithinStreamBounds(IReadOnlyList<ArtifactRegionIndexEntry> regionIndex, long streamLength)
+    {
+        foreach (var entry in regionIndex)
+        {
+            if (entry.Offset < NbnBinary.NbnHeaderBytes
+                || entry.Length < 0
+                || entry.Offset > streamLength
+                || entry.Length > streamLength - entry.Offset)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static void ReadExactly(Stream stream, byte[] buffer)
