@@ -21,6 +21,8 @@ Runtime behavior:
 * Visualization cadence is settings-backed:
 * `viz.tick.min_interval_ms` throttles HiveMind `VizTick` emissions.
 * `viz.stream.min_interval_ms` throttles RegionShard visualization stream collection/emission.
+* Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
+* When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
 
 ### 15.2 OpenTelemetry (NBN-managed)

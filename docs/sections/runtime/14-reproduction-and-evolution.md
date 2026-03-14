@@ -33,6 +33,8 @@ Run-count behavior:
 * omitted/`0` defaults to `1`
 * values above runtime bounds are rejected with `repro_run_count_out_of_range` (current runtime max: `64`)
 * multi-run responses preserve deterministic ordering by `run_index`
+* Workbench reproduction defaults are SettingsMonitor-backed operator inputs (`repro.config.*`) loaded from settings snapshots/live change feeds, including external Settings DB value updates detected by SettingsMonitor for existing setting rows.
+* ReproductionManager authority remains per-request `ReproduceConfig` + `StrengthSource`; changing settings-backed defaults affects future requests only when the caller rebuilds its request payload from those settings.
 
 IO-region neuron-count protection and overrides:
 

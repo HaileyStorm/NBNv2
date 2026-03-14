@@ -15,6 +15,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
     private CancellationTokenSource? _connectCts;
+    private int _tickCadenceRefreshVersion;
     private bool IsConnectionActive => _connectCts is not null && !_connectCts.IsCancellationRequested;
 
     public ShellViewModel()
@@ -139,6 +140,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             _connectCts?.Cancel();
             _connectCts = new CancellationTokenSource();
+            Interlocked.Increment(ref _tickCadenceRefreshVersion);
             var token = _connectCts.Token;
 
             await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
@@ -165,6 +167,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private void DisconnectAll()
     {
+        Interlocked.Increment(ref _tickCadenceRefreshVersion);
         _connectCts?.Cancel();
         _connectCts = null;
         SetDisconnectedStatuses();
@@ -278,6 +281,12 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 UpdateObservabilitySubscriptions();
             }
         });
+
+        if (string.Equals(item.Key, TickSettingsKeys.CadenceHzKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var refreshVersion = Interlocked.Increment(ref _tickCadenceRefreshVersion);
+            _ = RefreshHiveMindTickCadenceStatusAsync(refreshVersion);
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -420,6 +429,11 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
             if (status is not null)
             {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 _dispatcher.Post(() =>
                 {
                     if (!IsConnectionActive)
@@ -601,6 +615,28 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         }
 
         _dispatcher.Post(UpdateObservabilitySubscriptions);
+    }
+
+    private async Task RefreshHiveMindTickCadenceStatusAsync(int refreshVersion)
+    {
+        var status = await _client.GetHiveMindStatusAsync().ConfigureAwait(false);
+        if (status is null || refreshVersion != Volatile.Read(ref _tickCadenceRefreshVersion))
+        {
+            return;
+        }
+
+        _dispatcher.Post(() =>
+        {
+            if (refreshVersion != Volatile.Read(ref _tickCadenceRefreshVersion))
+            {
+                return;
+            }
+
+            Viz.ApplyHiveMindTickStatus(
+                status.TargetTickHz,
+                status.HasTickRateOverride,
+                status.TickRateOverrideHz);
+        });
     }
 
     private void UpdateObservabilitySubscriptions()

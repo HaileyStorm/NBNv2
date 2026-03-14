@@ -156,7 +156,7 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
-    public async Task<Nbn.Proto.Control.HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
+    public virtual async Task<Nbn.Proto.Control.HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
     {
         if (_root is null)
         {

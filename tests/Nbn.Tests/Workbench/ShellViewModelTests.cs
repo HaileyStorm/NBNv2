@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Reflection;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Repro;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -72,6 +75,174 @@ public sealed class ShellViewModelTests
             client.InputVectorCalls.Select(call => call.BrainId).ToArray());
     }
 
+    [Fact]
+    public async Task OnSettingChanged_UpdatesReproDefaultsFromExternalSettings()
+    {
+        var client = new FakeWorkbenchClient();
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        shell.OnSettingChanged(new SettingItem(
+            ReproductionSettingsKeys.SpawnChildKey,
+            "spawn_child_never",
+            "1"));
+
+        await WaitForAsync(() => shell.Repro.SelectedSpawnPolicy.Value == SpawnChildPolicy.SpawnChildNever);
+
+        Assert.Equal(SpawnChildPolicy.SpawnChildNever, shell.Repro.SelectedSpawnPolicy.Value);
+    }
+
+    [Fact]
+    public async Task OnSettingChanged_TickCadenceRefreshesAuthoritativeHiveMindStatus()
+    {
+        var client = new FakeWorkbenchClient
+        {
+            HiveMindStatusResponse = new HiveMindStatus
+            {
+                TargetTickHz = 12.5f,
+                HasTickRateOverride = true,
+                TickRateOverrideHz = 25f
+            }
+        };
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        shell.OnSettingChanged(new SettingItem(
+            TickSettingsKeys.CadenceHzKey,
+            "25",
+            "1"));
+
+        await WaitForAsync(() =>
+            shell.Viz.TickRateOverrideText == "40ms"
+            && shell.Viz.TickCadenceSummary == "Current cadence: 12.5 Hz (80 ms/tick).");
+
+        Assert.Equal("40ms", shell.Viz.TickRateOverrideText);
+        Assert.Equal("Current cadence: 12.5 Hz (80 ms/tick).", shell.Viz.TickCadenceSummary);
+        Assert.Equal(
+            "Tick cadence control target: 25 Hz (40 ms/tick). Current runtime target 12.5 Hz (80 ms/tick).",
+            shell.Viz.TickRateOverrideSummary);
+    }
+
+    [Fact]
+    public async Task OnSettingChanged_TickCadenceIgnoresStaleHiveMindStatusResponses()
+    {
+        var firstStatus = new TaskCompletionSource<HiveMindStatus?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStatus = new TaskCompletionSource<HiveMindStatus?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeWorkbenchClient();
+        client.PendingHiveMindStatusResponses.Enqueue(firstStatus.Task);
+        client.PendingHiveMindStatusResponses.Enqueue(secondStatus.Task);
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        shell.OnSettingChanged(new SettingItem(TickSettingsKeys.CadenceHzKey, "25", "1"));
+        shell.OnSettingChanged(new SettingItem(TickSettingsKeys.CadenceHzKey, "20", "2"));
+
+        secondStatus.TrySetResult(new HiveMindStatus
+        {
+            TargetTickHz = 20f,
+            HasTickRateOverride = true,
+            TickRateOverrideHz = 20f
+        });
+
+        await WaitForAsync(() =>
+            shell.Viz.TickRateOverrideText == "50ms"
+            && shell.Viz.TickCadenceSummary == "Current cadence: 20 Hz (50 ms/tick).");
+
+        firstStatus.TrySetResult(new HiveMindStatus
+        {
+            TargetTickHz = 12.5f,
+            HasTickRateOverride = true,
+            TickRateOverrideHz = 25f
+        });
+
+        await Task.Delay(100);
+
+        Assert.Equal("50ms", shell.Viz.TickRateOverrideText);
+        Assert.Equal("Current cadence: 20 Hz (50 ms/tick).", shell.Viz.TickCadenceSummary);
+        Assert.Equal(
+            "Tick cadence control target: 20 Hz (50 ms/tick). Current runtime target 20 Hz (50 ms/tick).",
+            shell.Viz.TickRateOverrideSummary);
+    }
+
+    [Fact]
+    public async Task DisconnectAll_IgnoresInFlightTickCadenceRefreshResponses()
+    {
+        var pendingStatus = new TaskCompletionSource<HiveMindStatus?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeWorkbenchClient();
+        client.PendingHiveMindStatusResponses.Enqueue(pendingStatus.Task);
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        shell.OnSettingChanged(new SettingItem(TickSettingsKeys.CadenceHzKey, "20", "1"));
+        shell.DisconnectAllCommand.Execute(null);
+
+        pendingStatus.TrySetResult(new HiveMindStatus
+        {
+            TargetTickHz = 20f,
+            HasTickRateOverride = true,
+            TickRateOverrideHz = 20f
+        });
+
+        await Task.Delay(100);
+
+        Assert.Equal("Current cadence: awaiting HiveMind status.", shell.Viz.TickCadenceSummary);
+        Assert.Equal("Tick cadence control is not set.", shell.Viz.TickRateOverrideSummary);
+    }
+
+    [Fact]
+    public async Task ConnectHiveMindWithRetryAsync_IgnoresCanceledResponses()
+    {
+        var pendingStatus = new TaskCompletionSource<HiveMindStatus?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeWorkbenchClient();
+        client.PendingConnectHiveMindResponses.Enqueue(pendingStatus.Task);
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        var method = typeof(ShellViewModel).GetMethod(
+            "ConnectHiveMindWithRetryAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        using var cts = new CancellationTokenSource();
+        var task = (Task)method!.Invoke(shell, new object[] { cts.Token })!;
+        await WaitForAsync(() => client.ConnectHiveMindCallCount == 1);
+
+        cts.Cancel();
+        pendingStatus.TrySetResult(new HiveMindStatus
+        {
+            TargetTickHz = 20f,
+            HasTickRateOverride = true,
+            TickRateOverrideHz = 20f
+        });
+
+        await task;
+
+        Assert.Equal("Current cadence: awaiting HiveMind status.", shell.Viz.TickCadenceSummary);
+        Assert.Equal("Tick cadence control is not set.", shell.Viz.TickRateOverrideSummary);
+    }
+
+    [Fact]
+    public async Task OnSettingChanged_PreservesDirtyOrchestratorSettingEdits()
+    {
+        var client = new FakeWorkbenchClient();
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        shell.OnSettingChanged(new SettingItem("demo.setting", "server-1", "server-1"));
+        await WaitForAsync(() => shell.Orchestrator.Settings.Count == 1);
+
+        var entry = Assert.Single(shell.Orchestrator.Settings);
+        entry.Value = "local-draft";
+        Assert.True(entry.IsDirty);
+
+        shell.OnSettingChanged(new SettingItem("demo.setting", "server-2", "server-2"));
+        await WaitForAsync(() => entry.Updated == "server-2");
+
+        Assert.Equal("local-draft", entry.Value);
+        Assert.Equal("server-2", entry.Updated);
+        Assert.True(entry.IsDirty);
+    }
+
     private static VizEventItem CreateVizEvent(Guid brainId, ulong tickId, string eventId)
     {
         return new VizEventItem(
@@ -119,6 +290,10 @@ public sealed class ShellViewModelTests
     {
         public Dictionary<Guid, BrainInfo> BrainInfoById { get; } = new();
         public List<(Guid BrainId, float[] Values)> InputVectorCalls { get; } = new();
+        public Queue<Task<HiveMindStatus?>> PendingHiveMindStatusResponses { get; } = new();
+        public Queue<Task<HiveMindStatus?>> PendingConnectHiveMindResponses { get; } = new();
+        public int ConnectHiveMindCallCount { get; private set; }
+        public HiveMindStatus? HiveMindStatusResponse { get; set; }
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
@@ -138,6 +313,19 @@ public sealed class ShellViewModelTests
         public override void SendInputVector(Guid brainId, IReadOnlyList<float> values)
         {
             InputVectorCalls.Add((brainId, values.ToArray()));
+        }
+
+        public override Task<HiveMindStatus?> GetHiveMindStatusAsync()
+            => PendingHiveMindStatusResponses.Count > 0
+                ? PendingHiveMindStatusResponses.Dequeue()
+                : Task.FromResult(HiveMindStatusResponse);
+
+        public override Task<HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
+        {
+            ConnectHiveMindCallCount++;
+            return PendingConnectHiveMindResponses.Count > 0
+                ? PendingConnectHiveMindResponses.Dequeue()
+                : Task.FromResult(HiveMindStatusResponse);
         }
     }
 

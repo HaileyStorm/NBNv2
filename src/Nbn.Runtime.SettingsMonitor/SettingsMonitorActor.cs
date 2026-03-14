@@ -6,13 +6,21 @@ namespace Nbn.Runtime.SettingsMonitor;
 
 public sealed class SettingsMonitorActor : IActor
 {
+    private static readonly TimeSpan DefaultExternalSettingsPollInterval = TimeSpan.FromMilliseconds(250);
     private readonly SettingsMonitorStore _store;
+    private readonly TimeSpan _externalSettingsPollInterval;
     private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, NodeStatus> _nodes = new();
+    private readonly Dictionary<string, ObservedSetting> _observedSettings = new(StringComparer.OrdinalIgnoreCase);
+    private bool _externalSettingsPollInFlight;
 
-    public SettingsMonitorActor(SettingsMonitorStore store)
+    public SettingsMonitorActor(SettingsMonitorStore store, TimeSpan? externalSettingsPollInterval = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        var pollInterval = externalSettingsPollInterval.GetValueOrDefault(DefaultExternalSettingsPollInterval);
+        _externalSettingsPollInterval = pollInterval > TimeSpan.Zero
+            ? pollInterval
+            : DefaultExternalSettingsPollInterval;
     }
 
     public Task ReceiveAsync(IContext context)
@@ -21,6 +29,9 @@ public sealed class SettingsMonitorActor : IActor
         {
             case Started:
                 Initialize(context);
+                break;
+            case PollExternalSettings:
+                HandlePollExternalSettings(context);
                 break;
             case ProtoSettings.NodeOnline message:
                 HandleNodeOnline(context, message);
@@ -80,7 +91,7 @@ public sealed class SettingsMonitorActor : IActor
 
     private void Initialize(IContext context)
     {
-        var task = _store.EnsureDefaultSettingsAsync();
+        var task = InitializeSettingsAsync();
         context.ReenterAfter(task, completed =>
         {
             if (completed.IsFaulted)
@@ -88,8 +99,16 @@ public sealed class SettingsMonitorActor : IActor
                 LogError($"Failed to initialize default settings: {completed.Exception?.GetBaseException().Message}");
             }
 
+            ScheduleSelf(context, _externalSettingsPollInterval, PollExternalSettings.Instance);
             return Task.CompletedTask;
         });
+    }
+
+    private async Task InitializeSettingsAsync()
+    {
+        await _store.EnsureDefaultSettingsAsync().ConfigureAwait(false);
+        var settings = await _store.ListSettingsAsync().ConfigureAwait(false);
+        ObserveSettings(settings);
     }
 
     private void HandleNodeOnline(IContext context, ProtoSettings.NodeOnline message)
@@ -387,7 +406,8 @@ public sealed class SettingsMonitorActor : IActor
         }
 
         var updatedMs = NowMs();
-        var task = _store.SetSettingAsync(message.Key, message.Value ?? string.Empty, updatedMs);
+        var requestedValue = message.Value ?? string.Empty;
+        var task = PersistSettingAsync(message.Key, requestedValue, updatedMs);
         context.ReenterAfter(task, completed =>
         {
             if (completed.IsFaulted)
@@ -395,16 +415,24 @@ public sealed class SettingsMonitorActor : IActor
                 LogError($"SettingSet failed: {completed.Exception?.GetBaseException().Message}");
             }
 
+            var entry = completed.IsCompletedSuccessfully
+                ? completed.Result
+                : new SettingEntry(message.Key, requestedValue, updatedMs);
             context.Respond(new ProtoSettings.SettingValue
             {
-                Key = message.Key,
-                Value = message.Value ?? string.Empty,
-                UpdatedMs = (ulong)updatedMs
+                Key = entry.Key,
+                Value = entry.Value,
+                UpdatedMs = (ulong)entry.UpdatedMs
             });
 
             if (!completed.IsFaulted)
             {
-                PublishSettingChanged(context, message.Key, message.Value ?? string.Empty, updatedMs);
+                var shouldPublish = ShouldPublishObservedSetting(entry.Key, entry.Value, entry.UpdatedMs);
+                RememberObservedSetting(entry.Key, entry.Value, entry.UpdatedMs);
+                if (shouldPublish)
+                {
+                    PublishSettingChanged(context, entry.Key, entry.Value, entry.UpdatedMs);
+                }
             }
 
             return Task.CompletedTask;
@@ -641,6 +669,39 @@ public sealed class SettingsMonitorActor : IActor
         });
     }
 
+    private void HandlePollExternalSettings(IContext context)
+    {
+        if (_externalSettingsPollInFlight)
+        {
+            ScheduleSelf(context, _externalSettingsPollInterval, PollExternalSettings.Instance);
+            return;
+        }
+
+        _externalSettingsPollInFlight = true;
+        var task = _store.ListSettingsAsync();
+        context.ReenterAfter(task, completed =>
+        {
+            try
+            {
+                if (completed.IsFaulted)
+                {
+                    LogError($"External settings poll failed: {completed.Exception?.GetBaseException().Message}");
+                }
+                else
+                {
+                    PublishObservedSettingChanges(context, completed.Result);
+                }
+            }
+            finally
+            {
+                _externalSettingsPollInFlight = false;
+                ScheduleSelf(context, _externalSettingsPollInterval, PollExternalSettings.Instance);
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
     private void HandleSettingSubscribe(IContext context, ProtoSettings.SettingSubscribe subscribe)
     {
         if (!TryParsePid(subscribe.SubscriberActor, out var pid))
@@ -699,6 +760,73 @@ public sealed class SettingsMonitorActor : IActor
         _subscribers.Remove(key);
     }
 
+    private void PublishObservedSettingChanges(IContext context, IReadOnlyList<SettingEntry> settings)
+    {
+        foreach (var entry in settings)
+        {
+            if (!ShouldPublishObservedSetting(entry.Key, entry.Value, entry.UpdatedMs))
+            {
+                continue;
+            }
+
+            PublishSettingChanged(context, entry.Key, entry.Value, entry.UpdatedMs);
+        }
+
+        ObserveSettings(settings);
+    }
+
+    private void ObserveSettings(IReadOnlyList<SettingEntry> settings)
+    {
+        foreach (var entry in settings)
+        {
+            RememberObservedSetting(entry.Key, entry.Value, entry.UpdatedMs);
+        }
+    }
+
+    private bool ShouldPublishObservedSetting(string key, string value, long updatedMs)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        if (!_observedSettings.TryGetValue(key, out var existing))
+        {
+            return true;
+        }
+
+        if (updatedMs < existing.UpdatedMs)
+        {
+            return false;
+        }
+
+        return updatedMs != existing.UpdatedMs
+               || !string.Equals(value, existing.Value, StringComparison.Ordinal);
+    }
+
+    private async Task<SettingEntry> PersistSettingAsync(string key, string value, long updatedMs)
+    {
+        await _store.SetSettingAsync(key, value, updatedMs).ConfigureAwait(false);
+        return await _store.GetSettingAsync(key).ConfigureAwait(false)
+               ?? new SettingEntry(key, value, updatedMs);
+    }
+
+    private void RememberObservedSetting(string key, string value, long updatedMs)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        if (_observedSettings.TryGetValue(key, out var existing)
+            && updatedMs < existing.UpdatedMs)
+        {
+            return;
+        }
+
+        _observedSettings[key] = new ObservedSetting(value, updatedMs);
+    }
+
     private static bool TryGetGuid(Nbn.Proto.Uuid? uuid, out Guid guid)
     {
         if (uuid is null)
@@ -711,6 +839,21 @@ public sealed class SettingsMonitorActor : IActor
     }
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
+    {
+        if (delay <= TimeSpan.Zero)
+        {
+            context.Send(context.Self, message);
+            return;
+        }
+
+        context.ReenterAfter(Task.Delay(delay), _ =>
+        {
+            context.Send(context.Self, message);
+            return Task.CompletedTask;
+        });
+    }
 
     private static void LogError(string message)
         => Console.WriteLine($"[{DateTime.UtcNow:O}] [SettingsMonitor][ERROR] {message}");
@@ -789,4 +932,11 @@ public sealed class SettingsMonitorActor : IActor
 
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private sealed record PollExternalSettings
+    {
+        public static readonly PollExternalSettings Instance = new();
+    }
+
+    private sealed record ObservedSetting(string Value, long UpdatedMs);
 }

@@ -203,7 +203,8 @@ INSERT INTO settings (key, value, updated_ms)
 VALUES (@key, @value, @updated_ms)
 ON CONFLICT(key) DO UPDATE SET
     value = excluded.value,
-    updated_ms = excluded.updated_ms;
+    updated_ms = excluded.updated_ms
+WHERE excluded.updated_ms >= settings.updated_ms;
 """;
 
     private const string InsertSettingIfMissingSql = """

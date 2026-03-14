@@ -267,6 +267,73 @@ public sealed class ServiceEndpointDiscoveryClientTests
     }
 
     [Fact]
+    public async Task SubscribeAsync_RemoteSettingsMonitor_DeliversEndpointChangedUpdates_FromDirectStoreEdit()
+    {
+        using var databaseScope = new TempDatabaseScope();
+        var store = new SettingsMonitorStore(databaseScope.DatabasePath);
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var subscriberPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        var settingsConfig = RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
+        settingsSystem.WithRemote(settingsConfig);
+        await settingsSystem.Remote().StartAsync();
+        var settingsPid = settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store, TimeSpan.FromMilliseconds(25))),
+            "SettingsMonitor");
+
+        var subscriberSystem = new ActorSystem();
+        var subscriberConfig = RemoteConfig.BindToLocalhost(subscriberPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
+        subscriberSystem.WithRemote(subscriberConfig);
+        await subscriberSystem.Remote().StartAsync();
+
+        var client = new ServiceEndpointDiscoveryClient(
+            subscriberSystem,
+            new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"));
+
+        try
+        {
+            var key = ServiceEndpointSettings.IoGatewayKey;
+            var initialEndpoint = new ServiceEndpoint("127.0.0.1:12050", "io-gateway");
+            var updatedEndpoint = new ServiceEndpoint("127.0.0.1:12051", "io-gateway");
+            await client.PublishAsync(key, initialEndpoint);
+
+            var changeTask = new TaskCompletionSource<ServiceEndpointRegistration>(TaskCreationOptions.RunContinuationsAsynchronously);
+            client.EndpointChanged += registration =>
+            {
+                if (registration.Key == key && registration.Endpoint == updatedEndpoint)
+                {
+                    changeTask.TrySetResult(registration);
+                }
+            };
+
+            await client.SubscribeAsync([key]);
+            await Task.Delay(200);
+            await store.SetSettingAsync(
+                key,
+                updatedEndpoint.ToSettingValue(),
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+            var changed = await changeTask.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(key, changed.Key);
+            Assert.Equal(updatedEndpoint, changed.Endpoint);
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await subscriberSystem.Remote().ShutdownAsync(true);
+            await subscriberSystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task SubscribeAsync_UsesRoutableSubscriberActor_WhenSystemHasRemoteAddress()
     {
         var port = GetFreePort();

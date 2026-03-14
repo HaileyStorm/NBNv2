@@ -965,6 +965,8 @@ Run-count behavior:
 * omitted/`0` defaults to `1`
 * values above runtime bounds are rejected with `repro_run_count_out_of_range` (current runtime max: `64`)
 * multi-run responses preserve deterministic ordering by `run_index`
+* Workbench reproduction defaults are SettingsMonitor-backed operator inputs (`repro.config.*`) loaded from settings snapshots/live change feeds, including external Settings DB value updates detected by SettingsMonitor for existing setting rows.
+* ReproductionManager authority remains per-request `ReproduceConfig` + `StrengthSource`; changing settings-backed defaults affects future requests only when the caller rebuilds its request payload from those settings.
 
 IO-region neuron-count protection and overrides:
 
@@ -1126,6 +1128,8 @@ Runtime behavior:
 * Visualization cadence is settings-backed:
 * `viz.tick.min_interval_ms` throttles HiveMind `VizTick` emissions.
 * `viz.stream.min_interval_ms` throttles RegionShard visualization stream collection/emission.
+* Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
+* When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
 
 ### 15.2 OpenTelemetry (NBN-managed)
