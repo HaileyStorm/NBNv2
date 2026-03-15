@@ -19,6 +19,7 @@ Tables (recommended, values not exhaustive):
 * time_ms INTEGER
 * cpu_cores INTEGER
 * ram_free_bytes INTEGER
+* storage_free_bytes INTEGER
 * has_gpu INTEGER
 * gpu_name TEXT
 * vram_free_bytes INTEGER

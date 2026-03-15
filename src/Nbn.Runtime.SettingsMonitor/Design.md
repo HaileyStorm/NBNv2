@@ -5,6 +5,7 @@ Owns node registry, settings distribution, capability heartbeats, and status que
 ## Stable behavior boundaries
 
 - Seeds canonical default settings for shared runtime/operator policy keys, including reproduction profile keys (`repro.config.*`) consumed by Workbench Reproduction and EvolutionSim.
+- Persists worker capability heartbeats as the canonical source for placement-facing CPU/RAM/storage/GPU/ILGPU telemetry and explicit CPU/GPU score rows; SettingsMonitor does not fabricate missing capability values, and freshness filtering remains a HiveMind placement concern layered on top of the stored snapshot.
 
 ## Maintenance guidance
 

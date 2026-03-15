@@ -42,6 +42,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly LocalServiceRunner _speciationRunner = new();
     private readonly LocalServiceRunner _workerRunner = new();
     private readonly LocalServiceRunner _obsRunner = new();
+    private readonly LocalServiceRunner _profileCurrentSystemRunner = new();
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private readonly Func<Task>? _connectAll;
@@ -57,6 +58,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _workerLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _sampleBrainStatus = "Not running.";
+    private string _profileCurrentSystemStatus = "Idle";
     private string _workerEndpointSummary = "No active workers.";
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
     private readonly CancellationTokenSource _refreshCts = new();
@@ -135,6 +137,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StopAllCommand = new AsyncRelayCommand(StopAllAsync);
         SpawnSampleBrainCommand = new AsyncRelayCommand(SpawnSampleBrainAsync);
         StopSampleBrainCommand = new AsyncRelayCommand(StopSampleBrainAsync);
+        ProfileCurrentSystemCommand = new AsyncRelayCommand(ProfileCurrentSystemAsync);
         RefreshEndpointRows();
         _ = StartAutoRefreshAsync();
     }
@@ -193,6 +196,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand StopSampleBrainCommand { get; }
 
+    public AsyncRelayCommand ProfileCurrentSystemCommand { get; }
+
     public string SettingsLaunchStatus
     {
         get => _settingsLaunchStatus;
@@ -245,6 +250,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _workerEndpointSummary;
         set => SetProperty(ref _workerEndpointSummary, value);
+    }
+
+    public string ProfileCurrentSystemStatus
+    {
+        get => _profileCurrentSystemStatus;
+        set => SetProperty(ref _profileCurrentSystemStatus, value);
     }
 
     public void UpdateSetting(SettingItem item)
@@ -740,6 +751,66 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         await StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_hiveMindRunner, value => HiveMindLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value).ConfigureAwait(false);
+    }
+
+    private async Task ProfileCurrentSystemAsync()
+    {
+        if (!HasSpawnServiceReadiness())
+        {
+            ProfileCurrentSystemStatus = Connections.BuildSpawnReadinessGuidance();
+            StatusMessage = $"Profile current system: {ProfileCurrentSystemStatus}";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
+        {
+            ProfileCurrentSystemStatus = "Invalid Settings port.";
+            StatusMessage = $"Profile current system: {ProfileCurrentSystemStatus}";
+            return;
+        }
+
+        var projectPath = RepoLocator.ResolvePathFromRepo("tools", "Nbn.Tools.PerfProbe");
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            ProfileCurrentSystemStatus = "PerfProbe project not found.";
+            StatusMessage = $"Profile current system: {ProfileCurrentSystemStatus}";
+            return;
+        }
+
+        var outputDirectory = ResolveProfileCurrentSystemOutputDirectory();
+        Directory.CreateDirectory(outputDirectory);
+        var bindPort = ResolveProfileClientPort();
+        var args = $"current-system --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}"
+                 + $" --bind-host {Connections.LocalBindHost} --bind-port {bindPort}"
+                 + $" --output-dir \"{outputDirectory}\"";
+        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Tools.PerfProbe", args, "PerfProbe").ConfigureAwait(false);
+        if (!launch.Success || launch.StartInfo is null)
+        {
+            ProfileCurrentSystemStatus = launch.Message;
+            StatusMessage = $"Profile current system: {launch.Message}";
+            return;
+        }
+
+        ProfileCurrentSystemStatus = "Profiling current runtime...";
+        StatusMessage = "Profile current system: running.";
+        var result = await _profileCurrentSystemRunner.StartAsync(launch.StartInfo, waitForExit: true, label: "PerfProbe").ConfigureAwait(false);
+        if (!result.Success)
+        {
+            ProfileCurrentSystemStatus = result.Message;
+            StatusMessage = $"Profile current system: {result.Message}";
+            return;
+        }
+
+        var reportPath = Path.Combine(outputDirectory, "perf-report.html");
+        if (!File.Exists(reportPath))
+        {
+            ProfileCurrentSystemStatus = "Perf probe did not produce report artifacts.";
+            StatusMessage = $"Profile current system: {ProfileCurrentSystemStatus}";
+            return;
+        }
+
+        ProfileCurrentSystemStatus = $"Completed. Report: {reportPath}";
+        StatusMessage = "Profile current system: completed.";
     }
 
     private async Task SpawnSampleBrainAsync()
@@ -1654,6 +1725,24 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private bool HasSpawnServiceReadiness()
     {
         return Connections.HasSpawnServiceReadiness();
+    }
+
+    private string ResolveProfileCurrentSystemOutputDirectory()
+    {
+        var root = RepoLocator.ResolvePathFromRepo(".artifacts-temp", "perf-probe");
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            root = Path.Combine(Environment.CurrentDirectory, ".artifacts-temp", "perf-probe");
+        }
+
+        return Path.Combine(root, DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss"));
+    }
+
+    private int ResolveProfileClientPort()
+    {
+        return TryParsePort(Connections.LocalPortText, out var localPort)
+            ? Math.Max(1024, localPort + 20)
+            : 12110;
     }
 
     private static EndpointStatusItem CreateEndpointStatusItem(string serviceName, string endpointDisplay, bool discoverable)

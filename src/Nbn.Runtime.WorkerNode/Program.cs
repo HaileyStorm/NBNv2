@@ -34,16 +34,17 @@ if (workerNodeId == Guid.Empty)
     throw new InvalidOperationException("WorkerNode could not derive a stable worker node id.");
 }
 
+var capabilityProvider = new WorkerNodeCapabilityProvider(options.ResourceAvailability);
 var workerPid = system.Root.SpawnNamed(
     Props.FromProducer(() => new WorkerNodeActor(
         workerNodeId,
         nodeAddress,
         enabledRoles: options.ServiceRoles,
+        capabilityProfileChanged: capabilityProvider.MarkDirty,
         resourceAvailability: options.ResourceAvailability,
         observabilityDefaultHost: options.SettingsHost)),
     options.RootActorName);
 
-var heartbeatCapabilities = WorkerCapabilityScaling.BuildScaledCapabilities(options.ResourceAvailability);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -52,7 +53,7 @@ var settingsReporter = SettingsMonitorReporter.Start(
     nodeAddress,
     options.LogicalName,
     options.RootActorName,
-    capabilities: heartbeatCapabilities);
+    capabilitiesProvider: capabilityProvider.GetCapabilities);
 
 var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,

@@ -63,6 +63,46 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task ProfileCurrentSystemCommand_WhenServicesNotReady_ShowsPrereqMessage_AndSkipsLaunch()
+    {
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer();
+        var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient(), launchPreparer);
+
+        vm.ProfileCurrentSystemCommand.Execute(null);
+
+        await WaitForAsync(
+            () => string.Equals(vm.ProfileCurrentSystemStatus, "Connect Settings, HiveMind, and IO first.", StringComparison.Ordinal));
+
+        Assert.Equal("Connect Settings, HiveMind, and IO first.", vm.ProfileCurrentSystemStatus);
+        Assert.Equal("Profile current system: Connect Settings, HiveMind, and IO first.", vm.StatusMessage);
+        Assert.Equal(0, launchPreparer.CallCount);
+    }
+
+    [Fact]
+    public async Task ProfileCurrentSystemCommand_WhenLaunchPreparationFails_ReportsFailure()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Ready",
+            HiveMindStatus = "Online",
+            IoStatus = "Connected"
+        };
+
+        var vm = CreateViewModel(
+            connections,
+            new FakeWorkbenchClient(),
+            new FakeLocalProjectLaunchPreparer("Build failed (code 1). PERF1000"));
+
+        vm.ProfileCurrentSystemCommand.Execute(null);
+
+        await WaitForAsync(
+            () => string.Equals(vm.ProfileCurrentSystemStatus, "Build failed (code 1). PERF1000", StringComparison.Ordinal));
+
+        Assert.Equal("Build failed (code 1). PERF1000", vm.ProfileCurrentSystemStatus);
+        Assert.Equal("Profile current system: Build failed (code 1). PERF1000", vm.StatusMessage);
+    }
+
+    [Fact]
     public async Task StopAllCommand_StopsWorkerRunner()
     {
         var connections = new ConnectionViewModel();
@@ -1871,6 +1911,17 @@ public class OrchestratorPanelViewModelTests
         public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
+        }
+    }
+
+    private sealed class RecordingLocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
+    {
+        public int CallCount { get; private set; }
+
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
+        {
+            CallCount++;
+            return Task.FromResult(new LocalProjectLaunchPreparation(false, null, "unexpected"));
         }
     }
 }

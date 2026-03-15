@@ -20,9 +20,12 @@ Worker processes report capabilities periodically to SettingsMonitor:
 
 * CPU core count
 * free RAM
+* free storage at the worker artifact/runtime root
 * GPU presence and VRAM (if any)
 * microbenchmark scores (CPU and GPU)
 * ILGPU accelerator availability (CUDA/OpenCL/CPU)
+
+For workers, these values are expected to come from real host probing or explicit operator configuration, not placeholder defaults. CPU scores can be derived from a representative RegionShard CPU microbenchmark; GPU score/report rows may exist before runtime GPU execution is enabled, but GPU runtime benchmark scenarios must skip cleanly until the RegionShard GPU backend is available.
 
 HiveMind also maintains placement telemetry in worker inventory snapshots:
 

@@ -35,6 +35,7 @@ public sealed class WorkerNodeActor : IActor
     private readonly Dictionary<Guid, BrainHostingState> _brains = new();
     private PID? _hiveMindHintPid;
     private readonly WorkerServiceRole _enabledRoles;
+    private readonly Action? _capabilityProfileChanged;
     private readonly WorkerResourceAvailability _resourceAvailability;
     private readonly string? _observabilityDefaultHost;
     private readonly Severity _debugMinSeverityDefault;
@@ -46,6 +47,7 @@ public sealed class WorkerNodeActor : IActor
         string? artifactRootPath = null,
         IArtifactStore? artifactStore = null,
         WorkerServiceRole enabledRoles = WorkerServiceRole.All,
+        Action? capabilityProfileChanged = null,
         WorkerResourceAvailability? resourceAvailability = null,
         string? observabilityDefaultHost = null)
     {
@@ -60,6 +62,7 @@ public sealed class WorkerNodeActor : IActor
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(_defaultArtifactRootPath));
         _artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(_defaultArtifactRootPath));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
+        _capabilityProfileChanged = capabilityProfileChanged;
         _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
         _observabilityDefaultHost = string.IsNullOrWhiteSpace(observabilityDefaultHost)
             ? null
@@ -441,6 +444,7 @@ public sealed class WorkerNodeActor : IActor
 
         _assignments[assignment.AssignmentId] = hostedState;
         brain.Assignments[assignment.AssignmentId] = hostedState;
+        NotifyCapabilityProfileChanged();
 
         UpdateRuntimeWidthsFromShards(brain);
         UpdateInputCoordinatorWidth(context, brain);
@@ -540,6 +544,7 @@ public sealed class WorkerNodeActor : IActor
         var outcome = UnassignHostedAssignment(context, brain, hostedState, notifyHiveMind: true)
             ? "unassigned"
             : "already_unassigned";
+        NotifyCapabilityProfileChanged();
         ReplyToSender(context, BuildUnassignmentAck(assignment, accepted: true, outcome));
     }
 
@@ -662,8 +667,12 @@ public sealed class WorkerNodeActor : IActor
             report.Assignments.Count > 0 ? "matched" : "empty",
             failureReason);
 
+        NotifyCapabilityProfileChanged();
         ReplyToSender(context, report);
     }
+
+    private void NotifyCapabilityProfileChanged()
+        => _capabilityProfileChanged?.Invoke();
 
     private async Task HandlePlacementPeerLatencyAsync(IContext context, PlacementPeerLatencyRequest request)
     {

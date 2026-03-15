@@ -95,6 +95,8 @@ NBN treats placement as a runtime concern:
 * Settings store: global configuration and mutable runtime settings
 * Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
 * Capability store: node CPU/GPU characteristics and benchmark scores
+  * Worker nodes publish real probed CPU cores, free RAM, free storage, GPU/VRAM visibility, and ILGPU accelerator availability when the host/runtime can resolve them.
+  * CPU/GPU scores are explicit measured/configured values used as placement inputs; placeholder zero scores are not the intended steady-state contract for workers.
 * All other services report via SettingsMonitor proto messages (no direct DB access); HiveMind publishes brain lifecycle/tick/controller updates
 
 **HiveMind**
@@ -525,9 +527,12 @@ Worker processes report capabilities periodically to SettingsMonitor:
 
 * CPU core count
 * free RAM
+* free storage at the worker artifact/runtime root
 * GPU presence and VRAM (if any)
 * microbenchmark scores (CPU and GPU)
 * ILGPU accelerator availability (CUDA/OpenCL/CPU)
+
+For workers, these values are expected to come from real host probing or explicit operator configuration, not placeholder defaults. CPU scores can be derived from a representative RegionShard CPU microbenchmark; GPU score/report rows may exist before runtime GPU execution is enabled, but GPU runtime benchmark scenarios must skip cleanly until the RegionShard GPU backend is available.
 
 HiveMind also maintains placement telemetry in worker inventory snapshots:
 
@@ -1687,6 +1692,7 @@ Tables (recommended, values not exhaustive):
 * time_ms INTEGER
 * cpu_cores INTEGER
 * ram_free_bytes INTEGER
+* storage_free_bytes INTEGER
 * has_gpu INTEGER
 * gpu_name TEXT
 * vram_free_bytes INTEGER
@@ -1958,6 +1964,7 @@ message NodeCapabilities {
 
   bool ilgpu_cuda_available = 8;
   bool ilgpu_opencl_available = 9;
+  fixed64 storage_free_bytes = 10;
 }
 
 message NodeStatus {

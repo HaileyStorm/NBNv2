@@ -34,6 +34,7 @@
     <ProjectReference Include="..\..\tools\Nbn.Tools.EvolutionSim\Nbn.Tools.EvolutionSim.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.WorkerNode\Nbn.Runtime.WorkerNode.csproj" />
     <ProjectReference Include="..\Nbn.Tests.CrossProcessArtifactWorker\Nbn.Tests.CrossProcessArtifactWorker.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\tools\Nbn.Tools.PerfProbe\Nbn.Tools.PerfProbe.csproj" />
   </ItemGroup>
 
 </Project>

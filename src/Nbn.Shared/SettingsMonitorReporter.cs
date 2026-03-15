@@ -9,7 +9,8 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     private readonly PID _settingsPid;
     private readonly NodeOnline _online;
     private readonly NodeOffline _offline;
-    private readonly NodeCapabilities _capabilities;
+    private readonly NodeCapabilities _fallbackCapabilities;
+    private readonly Func<NodeCapabilities>? _capabilitiesProvider;
     private readonly TimeSpan _heartbeatInterval;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
@@ -19,14 +20,16 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         PID settingsPid,
         NodeOnline online,
         NodeOffline offline,
-        NodeCapabilities capabilities,
+        NodeCapabilities fallbackCapabilities,
+        Func<NodeCapabilities>? capabilitiesProvider,
         TimeSpan heartbeatInterval)
     {
         _system = system;
         _settingsPid = settingsPid;
         _online = online;
         _offline = offline;
-        _capabilities = capabilities;
+        _fallbackCapabilities = fallbackCapabilities;
+        _capabilitiesProvider = capabilitiesProvider;
         _heartbeatInterval = heartbeatInterval;
     }
 
@@ -39,6 +42,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         string logicalName,
         string rootActorName,
         NodeCapabilities? capabilities = null,
+        Func<NodeCapabilities>? capabilitiesProvider = null,
         TimeSpan? heartbeatInterval = null)
     {
         if (system is null)
@@ -77,6 +81,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             online,
             offline,
             capabilities ?? BuildDefaultCapabilities(),
+            capabilitiesProvider,
             heartbeatInterval ?? TimeSpan.FromSeconds(5));
 
         reporter.StartInternal();
@@ -109,15 +114,33 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     private Task SendHeartbeatAsync()
     {
         _system.Root.Send(_settingsPid, _online);
+        var capabilities = ResolveCapabilities();
         var heartbeat = new NodeHeartbeat
         {
             NodeId = _online.NodeId,
             TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Caps = _capabilities
+            Caps = capabilities
         };
 
         _system.Root.Send(_settingsPid, heartbeat);
         return Task.CompletedTask;
+    }
+
+    private NodeCapabilities ResolveCapabilities()
+    {
+        if (_capabilitiesProvider is null)
+        {
+            return _fallbackCapabilities;
+        }
+
+        try
+        {
+            return _capabilitiesProvider() ?? _fallbackCapabilities;
+        }
+        catch
+        {
+            return _fallbackCapabilities;
+        }
     }
 
     public async ValueTask DisposeAsync()

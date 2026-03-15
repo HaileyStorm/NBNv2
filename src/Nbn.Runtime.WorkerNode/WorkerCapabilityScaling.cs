@@ -5,8 +5,13 @@ namespace Nbn.Runtime.WorkerNode;
 
 public static class WorkerCapabilityScaling
 {
-    public static NodeCapabilities BuildScaledCapabilities(WorkerResourceAvailability? availability = null)
-        => ApplyScale(SettingsMonitorReporter.BuildDefaultCapabilities(), availability);
+    public static NodeCapabilities BuildScaledCapabilities(
+        WorkerResourceAvailability? availability = null,
+        string? storageProbePath = null)
+        => new WorkerNodeCapabilityProvider(
+            availability: availability,
+            storageProbePath: storageProbePath)
+            .GetCapabilities();
 
     public static NodeCapabilities ApplyScale(NodeCapabilities baseline, WorkerResourceAvailability? availability = null)
     {

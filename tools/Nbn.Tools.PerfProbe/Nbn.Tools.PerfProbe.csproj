@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Proto.Actor" Version="1.8.0" />
+    <PackageReference Include="Proto.Remote" Version="1.8.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nbn.Shared\Nbn.Shared.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.HiveMind\Nbn.Runtime.HiveMind.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.IO\Nbn.Runtime.IO.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.WorkerNode\Nbn.Runtime.WorkerNode.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
+  </ItemGroup>
+
+</Project>
