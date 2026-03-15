@@ -178,6 +178,62 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public async Task RequestPlacement_Accepts_When_WorkerRoot_Comes_From_Configured_ServiceEndpoint()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var actor = new HiveMindActor(CreateOptions(workerInventoryStaleAfterMs: 10_000));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+        root.Send(hiveMind, new ProtoSettings.SettingValue
+        {
+            Key = ServiceEndpointSettings.WorkerNodeKey,
+            Value = ServiceEndpointSettings.EncodeValue("127.0.0.1:12041", "custom-worker-root")
+        });
+
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "127.0.0.1:12041",
+                    rootActorName: "custom-worker-root",
+                    logicalName: "custom-placement-worker")
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+        var inventoryWorker = Assert.Single(inventory.Workers);
+        Assert.Equal(workerId.ToProtoUuid().Value, inventoryWorker.WorkerNodeId.Value);
+
+        var brainId = Guid.NewGuid();
+        var ack = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 2
+            });
+
+        Assert.True(ack.Accepted);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, ack.FailureReason);
+        Assert.NotNull(GetPlannedPlacement(actor, brainId));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RequestPlacement_Excludes_ServiceNodes_From_EligibleWorkers()
     {
         var system = new ActorSystem();

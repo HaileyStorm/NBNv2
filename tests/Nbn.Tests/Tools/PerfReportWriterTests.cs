@@ -55,4 +55,47 @@ public sealed class PerfReportWriterTests
         Assert.Contains("placement_planner_profile", csv, StringComparison.Ordinal);
         Assert.Contains("regionshard_gpu_backend_not_available", csv, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void CurrentSystemCharts_UseCurrentSystemMetrics_AndRenderFullScenarioLabels()
+    {
+        var report = new PerfReport(
+            ToolName: "Nbn.Tools.PerfProbe",
+            GeneratedAtUtc: DateTimeOffset.Parse("2026-03-15T12:00:00Z"),
+            Environment: new Dictionary<string, string> { ["machine_name"] = "test-host" },
+            Scenarios:
+            [
+                new PerfScenarioResult(
+                    Suite: "current_system",
+                    Scenario: "service_discovery_snapshot",
+                    Backend: "cpu",
+                    Status: PerfScenarioStatus.Passed,
+                    Summary: "SettingsMonitor discovery snapshot captured.",
+                    Parameters: new Dictionary<string, string>(),
+                    Metrics: new Dictionary<string, double>
+                    {
+                        ["discovered_endpoint_count"] = 6
+                    }),
+                new PerfScenarioResult(
+                    Suite: "current_system",
+                    Scenario: "placement_inventory_snapshot",
+                    Backend: "cpu",
+                    Status: PerfScenarioStatus.Passed,
+                    Summary: "HiveMind placement inventory captured.",
+                    Parameters: new Dictionary<string, string>(),
+                    Metrics: new Dictionary<string, double>
+                    {
+                        ["eligible_workers"] = 2,
+                        ["max_cpu_score"] = 72
+                    })
+            ]);
+
+        var html = PerfReportWriter.BuildHtml(report);
+
+        Assert.Contains("discovered_endpoint_count=6", html, StringComparison.Ordinal);
+        Assert.Contains("eligible_workers=2", html, StringComparison.Ordinal);
+        Assert.Contains("current_system/service_discovery_snapshot (cpu)", html, StringComparison.Ordinal);
+        Assert.Contains("current_system/placement_inventory_snapshot (cpu)", html, StringComparison.Ordinal);
+        Assert.Contains("<rect x=\"360\" y=\"28\" width=\"880\"", html, StringComparison.Ordinal);
+    }
 }

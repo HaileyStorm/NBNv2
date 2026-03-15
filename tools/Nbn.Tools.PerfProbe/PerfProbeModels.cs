@@ -58,33 +58,108 @@ public sealed record PerfScenarioResult(
     public string PrimaryMetricLabel => ResolvePrimaryMetricLabel();
 
     public bool TryResolvePrimaryMetric(out double value)
+        => TryResolvePrimaryMetricCore(out _, out value);
+
+    private string ResolvePrimaryMetricLabel()
+        => TryResolvePrimaryMetricCore(out var label, out _)
+            ? label
+            : "metric";
+
+    private bool TryResolvePrimaryMetricCore(out string label, out double value)
     {
-        foreach (var key in PreferredMetricOrder)
+        foreach (var key in GetPreferredMetricOrder())
         {
-            if (Metrics.TryGetValue(key, out value))
+            if (Metrics.TryGetValue(key, out value)
+                && double.IsFinite(value)
+                && value > 0d)
             {
+                label = key;
                 return true;
             }
         }
 
+        foreach (var pair in Metrics)
+        {
+            if (double.IsFinite(pair.Value) && pair.Value > 0d)
+            {
+                label = pair.Key;
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        foreach (var key in GetPreferredMetricOrder())
+        {
+            if (Metrics.TryGetValue(key, out value) && double.IsFinite(value))
+            {
+                label = key;
+                return true;
+            }
+        }
+
+        foreach (var pair in Metrics)
+        {
+            if (double.IsFinite(pair.Value))
+            {
+                label = pair.Key;
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        label = string.Empty;
         value = 0d;
         return false;
     }
 
-    private string ResolvePrimaryMetricLabel()
+    private IEnumerable<string> GetPreferredMetricOrder()
     {
-        foreach (var key in PreferredMetricOrder)
+        if (ScenarioMetricOrder.TryGetValue((Suite, Scenario), out var preferredKeys))
         {
-            if (Metrics.ContainsKey(key))
+            foreach (var key in preferredKeys)
             {
-                return key;
+                yield return key;
             }
         }
 
-        return "metric";
+        foreach (var key in DefaultPreferredMetricOrder)
+        {
+            yield return key;
+        }
     }
 
-    private static readonly string[] PreferredMetricOrder =
+    private static readonly IReadOnlyDictionary<(string Suite, string Scenario), string[]> ScenarioMetricOrder =
+        new Dictionary<(string Suite, string Scenario), string[]>
+        {
+            [("current_system", "service_discovery_snapshot")] =
+            [
+                "discovered_endpoint_count"
+            ],
+            [("current_system", "worker_inventory_snapshot")] =
+            [
+                "ready_workers",
+                "active_workers",
+                "gpu_ready_workers",
+                "max_cpu_score",
+                "max_gpu_score"
+            ],
+            [("current_system", "hivemind_status_snapshot")] =
+            [
+                "target_tick_hz",
+                "registered_brains",
+                "registered_shards",
+                "last_completed_tick_id"
+            ],
+            [("current_system", "placement_inventory_snapshot")] =
+            [
+                "eligible_workers",
+                "gpu_capable_workers",
+                "max_cpu_score",
+                "max_gpu_score"
+            ]
+        };
+
+    private static readonly string[] DefaultPreferredMetricOrder =
     [
         "cpu_score",
         "gpu_score",

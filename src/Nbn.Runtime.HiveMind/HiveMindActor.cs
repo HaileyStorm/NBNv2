@@ -27,6 +27,7 @@ public sealed class HiveMindActor : IActor
     private readonly BackpressureController _backpressure;
     private readonly PID? _settingsPid;
     private readonly PID? _configuredIoPid;
+    private string _configuredWorkerRootActorName = string.Empty;
     private PID? _ioPid;
     private readonly PID? _debugHubPid;
     private readonly PID? _vizHubPid;
@@ -378,6 +379,7 @@ public sealed class HiveMindActor : IActor
         }
 
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = ServiceEndpointSettings.IoGatewayKey });
+        context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = ServiceEndpointSettings.WorkerNodeKey });
     }
 
     private void HandleSettingValue(IContext context, ProtoSettings.SettingValue message)
@@ -396,6 +398,8 @@ public sealed class HiveMindActor : IActor
         {
             RegisterAllBrainsWithIo(context);
         }
+
+        TryApplyWorkerEndpointSetting(message.Key, message.Value);
 
         if (TryApplySystemCostEnergySetting(message.Key, message.Value))
         {
@@ -454,6 +458,8 @@ public sealed class HiveMindActor : IActor
         {
             RegisterAllBrainsWithIo(context);
         }
+
+        TryApplyWorkerEndpointSetting(message.Key, message.Value);
 
         if (TryApplySystemCostEnergySetting(message.Key, message.Value))
         {
@@ -516,6 +522,32 @@ public sealed class HiveMindActor : IActor
         }
 
         _ioPid = nextPid;
+        return true;
+    }
+
+    private bool TryApplyWorkerEndpointSetting(string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !string.Equals(key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var nextRootActorName = string.Empty;
+        if (ServiceEndpointSettings.TryParseValue(value, out var endpoint))
+        {
+            nextRootActorName = endpoint.ActorName.Trim();
+        }
+
+        if (string.Equals(
+                _configuredWorkerRootActorName,
+                nextRootActorName,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        _configuredWorkerRootActorName = nextRootActorName;
         return true;
     }
 
@@ -4285,28 +4317,11 @@ public sealed class HiveMindActor : IActor
             return false;
         }
 
-        var placementInventory = BuildPlacementWorkerInventory();
-        if (placementInventory.Workers.Count == 0)
-        {
-            plan = new PlacementPlanner.PlacementPlanningResult(
-                brain.PlacementEpoch,
-                brain.PlacementRequestId,
-                brain.PlacementRequestedMs,
-                nowMs,
-                placementInventory.SnapshotMs > 0 ? placementInventory.SnapshotMs : (ulong)nowMs,
-                Array.Empty<PlacementPlanner.WorkerCandidate>(),
-                Array.Empty<ProtoControl.PlacementAssignment>(),
-                regionWarning is null ? Array.Empty<string>() : new[] { regionWarning });
-            failureReason = ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable;
-            failureMessage = "No eligible workers are available for placement.";
-            return false;
-        }
-
-        var snapshotMs = placementInventory.SnapshotMs > 0 ? placementInventory.SnapshotMs : (ulong)nowMs;
+        var snapshotMs = _workerCatalogSnapshotMs > 0 ? (ulong)_workerCatalogSnapshotMs : (ulong)nowMs;
         var currentWorkerNodeIds = GetCurrentPlacementWorkerNodeIds(brain);
         var hostedBrainCounts = BuildHostedBrainCounts(brain.BrainId);
         var workers = _workerCatalog.Values
-            .Where(static entry => IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName))
+            .Where(entry => IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName))
             .Select(entry => new PlacementPlanner.WorkerCandidate(
                 entry.NodeId,
                 entry.WorkerAddress,
@@ -4336,6 +4351,26 @@ public sealed class HiveMindActor : IActor
                 (uint)Math.Max(0, entry.PeerLatencySampleCount),
                 hostedBrainCounts.TryGetValue(entry.NodeId, out var hostedBrainCount) ? hostedBrainCount : 0))
             .ToArray();
+
+        if (!workers.Any(static worker =>
+                worker.IsAlive
+                && worker.IsReady
+                && worker.IsFresh
+                && !string.IsNullOrWhiteSpace(worker.WorkerRootActorName)))
+        {
+            plan = new PlacementPlanner.PlacementPlanningResult(
+                brain.PlacementEpoch,
+                brain.PlacementRequestId,
+                brain.PlacementRequestedMs,
+                nowMs,
+                snapshotMs,
+                Array.Empty<PlacementPlanner.WorkerCandidate>(),
+                Array.Empty<ProtoControl.PlacementAssignment>(),
+                regionWarning is null ? Array.Empty<string>() : new[] { regionWarning });
+            failureReason = ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable;
+            failureMessage = "No eligible workers are available for placement.";
+            return false;
+        }
 
         var plannerInputs = new PlacementPlanner.PlannerInputs(
             brain.BrainId,
@@ -4687,7 +4722,7 @@ public sealed class HiveMindActor : IActor
             };
 
             foreach (var worker in _workerCatalog.Values
-                         .Where(static entry =>
+                         .Where(entry =>
                              entry.IsAlive
                              && IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName)
                              && !string.IsNullOrWhiteSpace(entry.WorkerAddress)
@@ -4807,7 +4842,7 @@ public sealed class HiveMindActor : IActor
     {
         var candidateBrainIds = new HashSet<Guid>();
         foreach (var worker in _workerCatalog.Values
-                     .Where(static entry =>
+                     .Where(entry =>
                          entry.IsAlive
                          && entry.IsReady
                          && entry.IsFresh
@@ -5106,11 +5141,12 @@ public sealed class HiveMindActor : IActor
         };
 
         foreach (var entry in _workerCatalog.Values
-                     .Where(static worker =>
+                     .Where(worker =>
                          worker.IsAlive
                          && worker.IsReady
                          && worker.IsFresh
                          && IsPlacementWorkerCandidate(worker.LogicalName, worker.WorkerRootActorName))
+                     .Where(IsPlacementInventoryEligibleWorker)
                      .OrderBy(static worker => worker.WorkerAddress, StringComparer.Ordinal)
                      .ThenBy(static worker => worker.NodeId))
         {
@@ -5147,6 +5183,46 @@ public sealed class HiveMindActor : IActor
         return inventory;
     }
 
+    private bool IsPlacementInventoryEligibleWorker(WorkerCatalogEntry worker)
+    {
+        if (string.IsNullOrWhiteSpace(worker.WorkerRootActorName)
+            || IsWorkerPressureViolation(worker))
+        {
+            return false;
+        }
+
+        var effectiveRamFreeBytes = WorkerCapabilityMath.EffectiveRamFreeBytes(
+            ToUnsignedBytes(worker.RamFreeBytes),
+            ToUnsignedBytes(worker.RamTotalBytes),
+            ToUnsignedBytes(worker.ProcessRamUsedBytes),
+            worker.RamLimitPercent);
+        var effectiveStorageFreeBytes = WorkerCapabilityMath.EffectiveStorageFreeBytes(
+            ToUnsignedBytes(worker.StorageFreeBytes),
+            ToUnsignedBytes(worker.StorageTotalBytes),
+            worker.StorageLimitPercent);
+        if (effectiveRamFreeBytes == 0 || effectiveStorageFreeBytes == 0)
+        {
+            return false;
+        }
+
+        var effectiveCpuScore = WorkerCapabilityMath.EffectiveCpuScore(worker.CpuScore, worker.CpuLimitPercent);
+        if (effectiveCpuScore > 0f)
+        {
+            return true;
+        }
+
+        if (!worker.HasGpu)
+        {
+            return false;
+        }
+
+        var effectiveGpuScore = WorkerCapabilityMath.EffectiveGpuScore(worker.GpuScore, worker.GpuComputeLimitPercent);
+        var effectiveVramFreeBytes = WorkerCapabilityMath.EffectiveVramFreeBytes(
+            ToUnsignedBytes(worker.VramFreeBytes),
+            ToUnsignedBytes(worker.VramTotalBytes),
+            worker.GpuVramLimitPercent);
+        return effectiveGpuScore > 0f && effectiveVramFreeBytes > 0;
+    }
     private void RefreshWorkerCatalogFreshness(long nowMs)
     {
         foreach (var worker in _workerCatalog.Values)
@@ -5200,7 +5276,7 @@ public sealed class HiveMindActor : IActor
     {
         RefreshWorkerCatalogFreshness(nowMs);
         return _workerCatalog.Values
-            .Where(static entry =>
+            .Where(entry =>
                 entry.IsAlive
                 && entry.IsReady
                 && entry.IsFresh
@@ -5346,7 +5422,7 @@ public sealed class HiveMindActor : IActor
         return measurements;
     }
 
-    private static bool IsPlacementWorkerCandidate(string? logicalName, string? rootActorName)
+    private bool IsPlacementWorkerCandidate(string? logicalName, string? rootActorName)
     {
         if (string.IsNullOrWhiteSpace(logicalName))
         {
@@ -5360,6 +5436,21 @@ public sealed class HiveMindActor : IActor
             return true;
         }
 
+        if (!string.IsNullOrWhiteSpace(_configuredWorkerRootActorName)
+            && !string.IsNullOrWhiteSpace(rootActorName)
+            && string.Equals(
+                rootActorName.Trim(),
+                _configuredWorkerRootActorName,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return MatchesKnownWorkerRootActor(rootActorName);
+    }
+
+    private static bool MatchesKnownWorkerRootActor(string? rootActorName)
+    {
         if (string.IsNullOrWhiteSpace(rootActorName))
         {
             return false;
@@ -9186,4 +9277,3 @@ public sealed class HiveMindActor : IActor
         return new PID(options.IoAddress, options.IoName);
     }
 }
-

@@ -81,9 +81,9 @@ public static class PerfReportWriter
 
     public static string BuildHtml(PerfReport report)
     {
-        const double svgWidth = 1100d;
-        const double chartLeft = 200d;
-        const double chartWidth = 820d;
+        const double svgWidth = 1280d;
+        const double chartLeft = 360d;
+        const double chartWidth = 880d;
         var maxMetric = report.Scenarios
             .Select(static scenario => scenario.PrimaryMetricValue)
             .DefaultIfEmpty(0d)
@@ -123,8 +123,8 @@ public static class PerfReportWriter
   <div class="card">
     <h2>Charts</h2>
     <p class="note">Bar chart uses each scenario's primary metric when available. GPU runtime scenarios may appear as skips until the RegionShard GPU backend lands.</p>
-    <svg width="1100" height="{{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" viewBox="0 0 1100 {{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" role="img" aria-label="Performance scenario bar chart">
-      <line x1="190" y1="20" x2="190" y2="{{40 + (report.Scenarios.Count * 36)}}" stroke="#d5dce8" />
+    <svg width="{{svgWidth.ToString("0.###", CultureInfo.InvariantCulture)}}" height="{{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" viewBox="0 0 {{svgWidth.ToString("0.###", CultureInfo.InvariantCulture)}} {{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" role="img" aria-label="Performance scenario bar chart">
+      <line x1="{{(chartLeft - 10d).ToString("0.###", CultureInfo.InvariantCulture)}}" y1="20" x2="{{(chartLeft - 10d).ToString("0.###", CultureInfo.InvariantCulture)}}" y2="{{40 + (report.Scenarios.Count * 36)}}" stroke="#d5dce8" />
       {{string.Join(Environment.NewLine, chartRows)}}
     </svg>
   </div>
@@ -183,10 +183,12 @@ public static class PerfReportWriter
             ? chartLeft + chartWidth - 8d
             : Math.Min(barRight + 10d, svgWidth - 12d);
         var anchor = labelInside ? "end" : "start";
-        var title = TruncateText($"{scenario.Suite}/{scenario.Scenario} ({scenario.Backend})", 28);
+        var scenarioLabel = $"{scenario.Suite}/{scenario.Scenario} ({scenario.Backend})";
+        var scenarioLabelX = chartLeft - 16d;
 
         return $$"""
-  <text x="16" y="{{top + 14}}">{{EscapeHtml(title)}}</text>
+  <title>{{EscapeHtml(scenarioLabel)}} - {{EscapeHtml(label)}}</title>
+  <text x="{{scenarioLabelX.ToString("0.###", CultureInfo.InvariantCulture)}}" y="{{top + 14}}" text-anchor="end">{{EscapeHtml(scenarioLabel)}}</text>
   <rect x="{{chartLeft}}" y="{{top}}" width="{{width.ToString("0.###", CultureInfo.InvariantCulture)}}" height="{{barHeight}}" rx="6" fill="{{statusColor}}" />
   <text x="{{labelX.ToString("0.###", CultureInfo.InvariantCulture)}}" y="{{top + 14}}" text-anchor="{{anchor}}">{{EscapeHtml(label)}}</text>
 """;
