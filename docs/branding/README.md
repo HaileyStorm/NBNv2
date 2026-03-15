@@ -4,7 +4,9 @@ This workspace explores possible `NBN` identity directions without any `v2` lang
 
 ## Latest round
 
-The current exploration is in [round3/README.md](round3/README.md). It narrows the work to Region Seal, old Region Loop, and old Shard Lattice, then spreads the options from conservative refinements through broader hybrids.
+The current exploration is in [round4/README.md](round4/README.md). It is a micro-variation pack focused only on `Loop Modernized` and `Segmented Diamond`.
+
+The previous broader exploration remains in [round3/README.md](round3/README.md). It narrows the work to Region Seal, old Region Loop, and old Shard Lattice, then spreads the options from conservative refinements through broader hybrids.
 
 The previous round remains in [round2/README.md](round2/README.md).
 
