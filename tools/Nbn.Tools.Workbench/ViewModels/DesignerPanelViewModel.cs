@@ -1565,6 +1565,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 _spawnedBrains.Remove(designBrainId);
             }
 
+            _ = await _client.GetPlacementWorkerInventoryAsync().ConfigureAwait(false);
+
             var artifactRoot = string.IsNullOrWhiteSpace(SpawnArtifactRoot) ? BuildDefaultArtifactRoot() : SpawnArtifactRoot;
             var brainArtifactRoot = Path.Combine(artifactRoot, designBrainId.ToString("N"));
             Directory.CreateDirectory(brainArtifactRoot);
@@ -5624,4 +5626,3 @@ public enum ShardPlanMode
 }
 
 public sealed record ShardPlanOption(string Label, ShardPlanMode Value, string Description);
-

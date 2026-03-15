@@ -1450,6 +1450,34 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task SpawnSampleBrainCommand_DoesNotBlock_WhenPlacementInventorySnapshotIsEmpty()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            PlacementWorkerInventoryResponse = new PlacementWorkerInventory(),
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 2)
+                : null
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.SpawnSampleBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SpawnSampleBrainCommand_UsesIoSpawnPath_WithInvalidLocalEndpointText()
     {
         var connections = new ConnectionViewModel
@@ -1705,6 +1733,41 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task DesignerSpawn_DoesNotBlock_WhenPlacementInventorySnapshotIsEmpty()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            PlacementWorkerInventoryResponse = new PlacementWorkerInventory(),
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
+                : null
+        };
+        var vm = new DesignerPanelViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.Status.Contains("Brain spawned", StringComparison.Ordinal), timeoutMs: 5000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(0, client.RequestPlacementCallCount);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task DesignerSpawn_Shows_Actionable_IoSpawnFailureDetails()
     {
         var connections = new ConnectionViewModel
@@ -1883,6 +1946,7 @@ public class OrchestratorPanelViewModelTests
         public List<(string Key, string Value)> SettingCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
         public PlacementAck? PlacementAck { get; set; }
+        public PlacementWorkerInventory? PlacementWorkerInventoryResponse { get; set; }
         public Func<Guid, PlacementLifecycleInfo?>? PlacementLifecycleFactory { get; init; }
         public Func<string, string, Guid, ulong, PlacementReconcileReport?>? PlacementReconcileFactory { get; init; }
         public bool KillBrainResult { get; set; } = true;
@@ -1917,6 +1981,25 @@ public class OrchestratorPanelViewModelTests
         public override Task<SettingListResponse?> ListSettingsAsync()
             => Task.FromResult(SettingsResponse);
 
+        public override Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
+            => Task.FromResult<PlacementWorkerInventory?>(PlacementWorkerInventoryResponse ?? new PlacementWorkerInventory
+            {
+                Workers =
+                {
+                    new PlacementWorkerInventoryEntry
+                    {
+                        WorkerNodeId = Guid.NewGuid().ToProtoUuid(),
+                        WorkerAddress = "worker:12040",
+                        WorkerRootActorName = "worker-node",
+                        CpuCores = 8,
+                        RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                        RamTotalBytes = 16UL * 1024 * 1024 * 1024,
+                        StorageFreeBytes = 64UL * 1024 * 1024 * 1024,
+                        StorageTotalBytes = 128UL * 1024 * 1024 * 1024,
+                        CpuScore = 40f
+                    }
+                }
+            });
         public override Task<SettingValue?> SetSettingAsync(string key, string value)
         {
             SettingCalls.Add((key, value));

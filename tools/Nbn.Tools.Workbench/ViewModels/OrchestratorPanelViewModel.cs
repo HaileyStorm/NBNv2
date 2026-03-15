@@ -913,6 +913,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        _ = await _client.GetPlacementWorkerInventoryAsync().ConfigureAwait(false);
+
         var runRoot = BuildSampleRunRoot();
         var artifactRoot = Path.Combine(runRoot, "artifacts");
         ResetDirectory(artifactRoot);
@@ -2625,4 +2627,3 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private sealed record SampleArtifact(string Sha256, long Size, string ArtifactRoot);
 }
-

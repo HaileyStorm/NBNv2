@@ -21,6 +21,8 @@ public class WorkbenchClient : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
+    private static readonly TimeSpan PlacementWorkerReadyTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan PlacementWorkerReadyPollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan SpeciationRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
@@ -236,6 +238,55 @@ public class WorkbenchClient : IAsyncDisposable
         catch
         {
             return null;
+        }
+    }
+
+    public virtual async Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
+    {
+        if (_root is null || _hiveMindPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<PlacementWorkerInventory>(
+                    _hiveMindPid,
+                    new PlacementWorkerInventoryRequest(),
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public virtual async Task<PlacementWorkerInventory?> WaitForPlacementWorkerAvailabilityAsync(
+        int minEligibleWorkers = 1,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        var requiredWorkers = Math.Max(1, minEligibleWorkers);
+        var waitTimeout = timeout ?? PlacementWorkerReadyTimeout;
+        var waitInterval = pollInterval ?? PlacementWorkerReadyPollInterval;
+        var deadline = DateTime.UtcNow + waitTimeout;
+        PlacementWorkerInventory? lastInventory = null;
+
+        while (true)
+        {
+            lastInventory = await GetPlacementWorkerInventoryAsync().ConfigureAwait(false);
+            if (lastInventory is not null && lastInventory.Workers.Count >= requiredWorkers)
+            {
+                return lastInventory;
+            }
+
+            if (DateTime.UtcNow >= deadline)
+            {
+                return lastInventory;
+            }
+
+            await Task.Delay(waitInterval).ConfigureAwait(false);
         }
     }
 
