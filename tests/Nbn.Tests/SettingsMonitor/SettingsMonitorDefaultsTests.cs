@@ -140,4 +140,28 @@ public sealed class SettingsMonitorDefaultsTests
             out var historyLimit));
         Assert.Equal("100", historyLimit);
     }
+
+    [Fact]
+    public void DefaultSettings_Include_WorkerCapabilityPolicyDefaults()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey,
+            out var refreshSeconds));
+        Assert.Equal(WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(), refreshSeconds);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey,
+            out var pressureWindow));
+        Assert.Equal(WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(), pressureWindow);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            WorkerCapabilitySettingsKeys.PressureViolationRatioKey,
+            out var pressureRatio));
+        Assert.Equal(WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio), pressureRatio);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey,
+            out var pressureTolerance));
+        Assert.Equal(WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent), pressureTolerance);
+    }
 }

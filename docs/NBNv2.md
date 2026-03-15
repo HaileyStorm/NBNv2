@@ -95,7 +95,8 @@ NBN treats placement as a runtime concern:
 * Settings store: global configuration and mutable runtime settings
 * Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
 * Capability store: node CPU/GPU characteristics and benchmark scores
-  * Worker nodes publish real probed CPU cores, free RAM, free storage, GPU/VRAM visibility, and ILGPU accelerator availability when the host/runtime can resolve them.
+  * Worker nodes publish real probed CPU cores, raw free/total RAM and storage, GPU/VRAM visibility, ILGPU accelerator availability, explicit CPU/GPU scores, explicit NBN limit percentages, and current load/pressure snapshots when the host/runtime can resolve them.
+  * SettingsMonitor is the canonical persisted snapshot for those worker capability rows; HiveMind still owns freshness filtering, rerun requests, and placement/rebalance policy on top of the stored snapshot.
   * CPU/GPU scores are explicit measured/configured values used as placement inputs; placeholder zero scores are not the intended steady-state contract for workers.
 * All other services report via SettingsMonitor proto messages (no direct DB access); HiveMind publishes brain lifecycle/tick/controller updates
 
@@ -104,6 +105,7 @@ NBN treats placement as a runtime concern:
 * Owns the **global tick counter** and all tick pacing
 * Coordinates brain spawning/unloading
 * Coordinates placement, rescheduling, and recovery
+* Owns the settings-backed worker capability rerun cadence and pressure-triggered rebalance decisions
 * Aggregates cost and enforces energy policies
 
 **IO Gateway**
@@ -526,13 +528,15 @@ RegionHost may materialize a shard from a selective `.nbn` region fetch when the
 Worker processes report capabilities periodically to SettingsMonitor:
 
 * CPU core count
-* free RAM
-* free storage at the worker artifact/runtime root
-* GPU presence and VRAM (if any)
+* free and total RAM
+* free and total storage at the worker artifact/runtime root
+* GPU presence plus free and total VRAM (if any)
 * microbenchmark scores (CPU and GPU)
 * ILGPU accelerator availability (CUDA/OpenCL/CPU)
+* explicit worker limit percentages for CPU, RAM, storage, GPU compute, and GPU VRAM
+* current worker load/pressure snapshots used for placement filtering and pressure-triggered rebalance (`process_cpu_load_percent`, process RAM use, and derived storage/VRAM pressure from free vs total bytes)
 
-For workers, these values are expected to come from real host probing or explicit operator configuration, not placeholder defaults. CPU scores can be derived from a representative RegionShard CPU microbenchmark; GPU score/report rows may exist before runtime GPU execution is enabled, but GPU runtime benchmark scenarios must skip cleanly until the RegionShard GPU backend is available.
+For workers, these values are expected to come from real host probing or explicit operator configuration, not placeholder defaults. CPU scores can be derived from a representative RegionShard CPU microbenchmark; GPU score/report rows may exist before runtime GPU execution is enabled, but GPU runtime benchmark scenarios must skip cleanly until the RegionShard GPU backend is available. HiveMind owns the settings-backed worker capability rerun cadence (`worker.capability.benchmark_refresh_seconds`) by sending refresh requests to workers; workers publish the refreshed result back through the normal SettingsMonitor heartbeat path instead of bypassing the stored snapshot.
 
 HiveMind also maintains placement telemetry in worker inventory snapshots:
 
@@ -562,7 +566,8 @@ Placement heuristics:
 * use average inter-worker RTT as the main placement signal; hosted-brain balancing and free-capacity spread are secondary tie-breakers
 * still fall back to higher-latency or cross-device/network placement when the lower-latency worker subset cannot satisfy the required shard plan
 * co-locate shards with heavy mutual traffic
-* prefer GPU-capable nodes for Tier A/B-heavy function mixes
+* prefer GPU-capable nodes for Tier A/B-heavy function mixes, but treat GPU compute score and VRAM fit as separate constraints
+* reject workers whose reported pressure repeatedly exceeds their configured CPU/RAM/storage/VRAM limits, then use the normal queued reschedule path for pressure-triggered rebalance
 * avoid shard sizes that exceed memory limits
 
 ---
@@ -1136,6 +1141,7 @@ Runtime behavior:
 * Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
 * When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
+* Workbench Orchestrator exposes settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, plus `Profile Current System` for attached perf-probe runs against the currently running deployment.
 
 ### 15.2 OpenTelemetry (NBN-managed)
 
@@ -1159,6 +1165,8 @@ Metrics include:
 * plasticity strength-code mutation counts
 * snapshot/rebase overlay record counts
 * signal batch sizes and counts
+* worker capability refresh/reschedule thresholds
+* worker pressure snapshots and pressure-triggered reschedule events
 * speciation startup-reconcile runs plus added/existing membership counts
 * speciation assignment decision counts and latencies by apply mode / candidate mode / decision reason / failure reason
 * speciation epoch-transition counts (initialize, start-new-epoch, delete-epoch, reset-all)
@@ -1698,6 +1706,16 @@ Tables (recommended, values not exhaustive):
 * vram_free_bytes INTEGER
 * cpu_score REAL
 * gpu_score REAL
+* ram_total_bytes INTEGER
+* storage_total_bytes INTEGER
+* vram_total_bytes INTEGER
+* cpu_limit_percent INTEGER
+* ram_limit_percent INTEGER
+* storage_limit_percent INTEGER
+* gpu_compute_limit_percent INTEGER
+* gpu_vram_limit_percent INTEGER
+* process_cpu_load_percent REAL
+* process_ram_used_bytes INTEGER
 * PRIMARY KEY (node_id, time_ms)
 
 **settings**
@@ -1965,6 +1983,16 @@ message NodeCapabilities {
   bool ilgpu_cuda_available = 8;
   bool ilgpu_opencl_available = 9;
   fixed64 storage_free_bytes = 10;
+  fixed64 ram_total_bytes = 11;
+  fixed64 storage_total_bytes = 12;
+  fixed64 vram_total_bytes = 13;
+  uint32 cpu_limit_percent = 14;
+  uint32 ram_limit_percent = 15;
+  uint32 storage_limit_percent = 16;
+  uint32 gpu_compute_limit_percent = 17;
+  uint32 gpu_vram_limit_percent = 18;
+  float process_cpu_load_percent = 19;
+  fixed64 process_ram_used_bytes = 20;
 }
 
 message NodeStatus {
@@ -1995,6 +2023,26 @@ message NodeListRequest { }
 
 message NodeListResponse {
   repeated NodeStatus nodes = 1;
+}
+
+message WorkerInventorySnapshotRequest { }
+
+message WorkerReadinessCapability {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+  string address = 3;
+  string root_actor_name = 4;
+  bool is_alive = 5;
+  bool is_ready = 6;
+  fixed64 last_seen_ms = 7;
+  bool has_capabilities = 8;
+  fixed64 capability_time_ms = 9;
+  NodeCapabilities capabilities = 10;
+}
+
+message WorkerInventorySnapshotResponse {
+  repeated WorkerReadinessCapability workers = 1;
+  fixed64 snapshot_ms = 2;
 }
 
 message BrainListRequest { }
@@ -2320,6 +2368,16 @@ message PlacementWorkerInventoryEntry {
   fixed64 storage_free_bytes = 13;
   float average_peer_latency_ms = 14;
   uint32 peer_latency_sample_count = 15;
+  fixed64 ram_total_bytes = 16;
+  fixed64 storage_total_bytes = 17;
+  fixed64 vram_total_bytes = 18;
+  uint32 cpu_limit_percent = 19;
+  uint32 ram_limit_percent = 20;
+  uint32 storage_limit_percent = 21;
+  uint32 gpu_compute_limit_percent = 22;
+  uint32 gpu_vram_limit_percent = 23;
+  float process_cpu_load_percent = 24;
+  fixed64 process_ram_used_bytes = 25;
 }
 
 message PlacementPeerTarget {
@@ -2341,6 +2399,17 @@ message PlacementPeerLatencyResponse {
 
 message PlacementLatencyEchoRequest { }
 message PlacementLatencyEchoAck { }
+
+message WorkerCapabilityRefreshRequest {
+  fixed64 requested_ms = 1;
+  string reason = 2;
+}
+
+message WorkerCapabilityRefreshAck {
+  bool accepted = 1;
+  fixed64 requested_ms = 2;
+  string message = 3;
+}
 ```
 
 ### 19.5 `nbn_signals.proto`

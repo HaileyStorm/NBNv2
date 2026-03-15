@@ -20,11 +20,22 @@ public static class PlacementPlanner
         bool IsFresh,
         uint CpuCores,
         long RamFreeBytes,
+        long RamTotalBytes,
         long StorageFreeBytes,
+        long StorageTotalBytes,
         bool HasGpu,
         long VramFreeBytes,
+        long VramTotalBytes,
         float CpuScore,
         float GpuScore,
+        uint CpuLimitPercent,
+        uint RamLimitPercent,
+        uint StorageLimitPercent,
+        uint GpuComputeLimitPercent,
+        uint GpuVramLimitPercent,
+        float ProcessCpuLoadPercent,
+        long ProcessRamUsedBytes,
+        float PressureLimitTolerancePercent,
         float AveragePeerLatencyMs,
         uint PeerLatencySampleCount,
         int HostedBrainCount);
@@ -97,7 +108,12 @@ public static class PlacementPlanner
             ? $"{inputs.BrainId:N}:{inputs.PlacementEpoch}"
             : inputs.RequestId.Trim();
         var eligibleWorkers = workers
-            .Where(static worker => worker.IsAlive && worker.IsReady && worker.IsFresh && !string.IsNullOrWhiteSpace(worker.WorkerRootActorName))
+            .Where(static worker =>
+                worker.IsAlive
+                && worker.IsReady
+                && worker.IsFresh
+                && !string.IsNullOrWhiteSpace(worker.WorkerRootActorName)
+                && IsWorkerWithinLimits(worker))
             .OrderBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(static worker => worker.NodeId)
             .ToArray();
@@ -137,14 +153,33 @@ public static class PlacementPlanner
         var stride = Math.Max(1, inputs.ShardStride);
         var shardPlan = BuildShardPlan(inputs.Regions, stride, inputs.RequestedShardPlan);
         var warnings = shardPlan.Warnings.ToList();
-        var assignments = BuildAssignments(
-            inputs.BrainId,
-            inputs.PlacementEpoch,
-            normalizedRequestId,
-            stride,
-            eligibleWorkers,
-            shardPlan,
-            inputs.CurrentWorkerNodeIds);
+        IReadOnlyList<ProtoControl.PlacementAssignment> assignments;
+        try
+        {
+            assignments = BuildAssignments(
+                inputs.BrainId,
+                inputs.PlacementEpoch,
+                normalizedRequestId,
+                stride,
+                eligibleWorkers,
+                shardPlan,
+                inputs.CurrentWorkerNodeIds);
+        }
+        catch (InvalidOperationException ex)
+        {
+            plan = new PlacementPlanningResult(
+                inputs.PlacementEpoch,
+                normalizedRequestId,
+                inputs.RequestedMs,
+                inputs.PlannedMs,
+                inputs.WorkerSnapshotMs,
+                eligibleWorkers,
+                Array.Empty<ProtoControl.PlacementAssignment>(),
+                shardPlan.Warnings);
+            failureReason = ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable;
+            failureMessage = ex.Message;
+            return false;
+        }
 
         plan = new PlacementPlanningResult(
             inputs.PlacementEpoch,
@@ -192,7 +227,7 @@ public static class PlacementPlanner
         {
             foreach (var shard in region.Value.OrderBy(static span => span.ShardIndex))
             {
-                var worker = SelectShardWorker(shard, stride, computeWorkers, controlWorker, assignedNeurons, currentWorkers);
+                var worker = SelectShardWorker(shard, stride, eligibleWorkers, computeWorkers, controlWorker, assignedNeurons, currentWorkers);
                 assignments.Add(BuildShardAssignment(brainId, placementEpoch, requestId, worker, shard));
             }
         }
@@ -294,17 +329,22 @@ public static class PlacementPlanner
             .OrderBy(static worker => worker.PeerLatencySampleCount == 0 ? 1 : 0)
             .ThenBy(static worker => worker.PeerLatencySampleCount > 0 ? worker.AveragePeerLatencyMs : float.MaxValue)
             .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
+            .ThenBy(static worker => worker.ProcessCpuLoadPercent)
             .ThenBy(static worker => worker.HostedBrainCount)
-            .ThenByDescending(worker => preferGpu && worker.HasGpu ? 1 : 0)
-            .ThenByDescending(worker => preferGpu ? worker.GpuScore : worker.CpuScore)
-            .ThenByDescending(static worker => worker.CpuCores)
-            .ThenByDescending(static worker => worker.GpuScore)
+            .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
+            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuScore(worker))
+            .ThenByDescending(static worker => EffectiveCpuCores(worker))
+            .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
+            .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
+            .ThenByDescending(static worker => EffectiveGpuScore(worker))
+            .ThenByDescending(static worker => EffectiveVramFreeBytes(worker))
             .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(static worker => worker.NodeId);
 
     private static WorkerCandidate SelectShardWorker(
         ShardPlanSpan shard,
         int stride,
+        IReadOnlyList<WorkerCandidate> eligibleWorkers,
         IReadOnlyList<WorkerCandidate> computeWorkers,
         WorkerCandidate controlWorker,
         Dictionary<Guid, int> assignedNeurons,
@@ -315,17 +355,36 @@ public static class PlacementPlanner
             return controlWorker;
         }
 
-        var preferGpu = shard.NeuronCount >= Math.Max(4096, stride * 2) && computeWorkers.Any(static worker => worker.HasGpu);
-        var selected = computeWorkers
+        var preferGpu = shard.NeuronCount >= Math.Max(4096, stride * 2) && eligibleWorkers.Any(static worker => HasEffectiveGpu(worker));
+        var candidatePool = computeWorkers
+            .Where(worker => CanPlaceShardOnWorker(shard, worker, preferGpu))
+            .ToArray();
+        if (candidatePool.Length == 0)
+        {
+            candidatePool = eligibleWorkers
+                .Where(worker => CanPlaceShardOnWorker(shard, worker, preferGpu))
+                .ToArray();
+        }
+
+        if (candidatePool.Length == 0)
+        {
+            throw new InvalidOperationException("No eligible worker satisfied the current capacity/pressure limits for the shard plan.");
+        }
+
+        var selected = candidatePool
             .OrderBy(worker => assignedNeurons.TryGetValue(worker.NodeId, out var load) ? load : 0)
             .ThenBy(static worker => worker.PeerLatencySampleCount == 0 ? 1 : 0)
             .ThenBy(static worker => worker.PeerLatencySampleCount > 0 ? worker.AveragePeerLatencyMs : float.MaxValue)
             .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
+            .ThenBy(static worker => worker.ProcessCpuLoadPercent)
             .ThenBy(static worker => worker.HostedBrainCount)
-            .ThenByDescending(worker => preferGpu && worker.HasGpu ? 1 : 0)
-            .ThenByDescending(worker => preferGpu ? worker.GpuScore : worker.CpuScore)
-            .ThenByDescending(static worker => worker.CpuCores)
-            .ThenByDescending(static worker => worker.GpuScore)
+            .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
+            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuScore(worker))
+            .ThenByDescending(static worker => EffectiveCpuCores(worker))
+            .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
+            .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
+            .ThenByDescending(static worker => EffectiveGpuScore(worker))
+            .ThenByDescending(static worker => EffectiveVramFreeBytes(worker))
             .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(static worker => worker.NodeId)
             .First();
@@ -335,6 +394,78 @@ public static class PlacementPlanner
             : Math.Max(1, shard.NeuronCount);
         return selected;
     }
+
+    private static bool IsWorkerWithinLimits(WorkerCandidate worker)
+        => !WorkerCapabilityMath.IsCpuOverLimit(worker.ProcessCpuLoadPercent, worker.CpuLimitPercent, worker.PressureLimitTolerancePercent)
+           && !WorkerCapabilityMath.IsRamOverLimit(
+               ToUnsignedBytes(worker.ProcessRamUsedBytes),
+               ToUnsignedBytes(worker.RamTotalBytes),
+               worker.RamLimitPercent,
+               worker.PressureLimitTolerancePercent)
+           && !WorkerCapabilityMath.IsStorageOverLimit(
+               ToUnsignedBytes(worker.StorageFreeBytes),
+               ToUnsignedBytes(worker.StorageTotalBytes),
+               worker.StorageLimitPercent,
+               worker.PressureLimitTolerancePercent)
+           && (!worker.HasGpu
+               || !WorkerCapabilityMath.IsVramOverLimit(
+                   ToUnsignedBytes(worker.VramFreeBytes),
+                   ToUnsignedBytes(worker.VramTotalBytes),
+                   worker.GpuVramLimitPercent,
+                   worker.PressureLimitTolerancePercent));
+
+    private static bool CanPlaceShardOnWorker(ShardPlanSpan shard, WorkerCandidate worker, bool preferGpu)
+    {
+        if (EffectiveRamFreeBytes(worker) == 0 || EffectiveStorageFreeBytes(worker) == 0)
+        {
+            return false;
+        }
+
+        if (!preferGpu)
+        {
+            return EffectiveCpuScore(worker) > 0f;
+        }
+
+        return HasEffectiveGpu(worker)
+               && EffectiveGpuScore(worker) > 0f
+               && EffectiveVramFreeBytes(worker) > 0;
+    }
+
+    private static bool HasEffectiveGpu(WorkerCandidate worker)
+        => worker.HasGpu
+           && worker.GpuComputeLimitPercent > 0
+           && worker.GpuVramLimitPercent > 0;
+
+    private static uint EffectiveCpuCores(WorkerCandidate worker)
+        => WorkerCapabilityMath.EffectiveCpuCores(worker.CpuCores, worker.CpuLimitPercent);
+
+    private static float EffectiveCpuScore(WorkerCandidate worker)
+        => WorkerCapabilityMath.EffectiveCpuScore(worker.CpuScore, worker.CpuLimitPercent);
+
+    private static float EffectiveGpuScore(WorkerCandidate worker)
+        => WorkerCapabilityMath.EffectiveGpuScore(worker.GpuScore, worker.GpuComputeLimitPercent);
+
+    private static ulong EffectiveRamFreeBytes(WorkerCandidate worker)
+        => WorkerCapabilityMath.EffectiveRamFreeBytes(
+            ToUnsignedBytes(worker.RamFreeBytes),
+            ToUnsignedBytes(worker.RamTotalBytes),
+            ToUnsignedBytes(worker.ProcessRamUsedBytes),
+            worker.RamLimitPercent);
+
+    private static ulong EffectiveStorageFreeBytes(WorkerCandidate worker)
+        => WorkerCapabilityMath.EffectiveStorageFreeBytes(
+            ToUnsignedBytes(worker.StorageFreeBytes),
+            ToUnsignedBytes(worker.StorageTotalBytes),
+            worker.StorageLimitPercent);
+
+    private static ulong EffectiveVramFreeBytes(WorkerCandidate worker)
+        => WorkerCapabilityMath.EffectiveVramFreeBytes(
+            ToUnsignedBytes(worker.VramFreeBytes),
+            ToUnsignedBytes(worker.VramTotalBytes),
+            worker.GpuVramLimitPercent);
+
+    private static ulong ToUnsignedBytes(long value)
+        => value > 0 ? (ulong)value : 0UL;
 
     private static void AddControlAssignment(
         List<ProtoControl.PlacementAssignment> assignments,

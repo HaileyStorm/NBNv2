@@ -75,7 +75,7 @@
             </StackPanel>
           </Grid>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
               <TextBlock Text="SettingsMonitor" Classes="muted" />
               <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
               <Button Grid.Column="2" Content="Start" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
@@ -99,9 +99,6 @@
               <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
               <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
               <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
-
-              <TextBlock Grid.Row="4" Text="Bench Refresh (s)" Classes="muted" />
-              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Connections.WorkerCapabilityBenchmarkRefreshSecondsText}" Width="90" />
             </Grid>
 
             <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
@@ -128,6 +125,30 @@
       </Border>
 
       <StackPanel Spacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <TextBlock Text="Worker Policy" Classes="card-title" />
+              <Button Grid.Column="1" Content="Apply" Command="{Binding ApplyWorkerPolicyCommand}" Classes="accent" />
+            </Grid>
+            <TextBlock Text="Settings-backed worker capability refresh and pressure-rebalance policy. These values apply even when Workbench is not running."
+                       Classes="muted"
+                       TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+              <TextBlock Text="Capability Refresh (s)" Classes="muted" />
+              <TextBox Grid.Column="1" Text="{Binding WorkerCapabilityRefreshSecondsText}" Width="100" />
+              <TextBlock Grid.Column="2" Text="Pressure Window" Classes="muted" />
+              <TextBox Grid.Column="3" Text="{Binding WorkerPressureRebalanceWindowText}" Width="100" />
+
+              <TextBlock Grid.Row="1" Text="Violation Ratio" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding WorkerPressureViolationRatioText}" Width="100" />
+              <TextBlock Grid.Row="1" Grid.Column="2" Text="Limit Tolerance %" Classes="muted" />
+              <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding WorkerPressureTolerancePercentText}" Width="100" />
+            </Grid>
+            <TextBlock Text="{Binding WorkerPolicyStatus}" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
         <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
           <Border Classes="card" Grid.Column="0">
             <StackPanel Spacing="8">

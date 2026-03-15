@@ -15,15 +15,16 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
             ("NBN_WORKER_GPU_PCT", null),
-            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
+            ("NBN_WORKER_GPU_COMPUTE_PCT", null),
+            ("NBN_WORKER_GPU_VRAM_PCT", null));
 
         var options = WorkerNodeOptions.FromArgs([]);
 
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.CpuPercent);
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.RamPercent);
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.StoragePercent);
-        Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.GpuPercent);
-        Assert.Equal(3600, options.CapabilityBenchmarkRefreshSeconds);
+        Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.GpuComputePercent);
+        Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.GpuVramPercent);
     }
 
     [Fact]
@@ -34,22 +35,23 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
             ("NBN_WORKER_GPU_PCT", null),
-            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
+            ("NBN_WORKER_GPU_COMPUTE_PCT", null),
+            ("NBN_WORKER_GPU_VRAM_PCT", null));
 
         var options = WorkerNodeOptions.FromArgs(
         [
             "--cpu-pct", "50",
             "--ram_pct", "-10",
             "--storage-pct", "999",
-            "--gpu_pct=0",
-            "--capability-benchmark-refresh-seconds", "90"
+            "--gpu-compute-pct", "0",
+            "--gpu-vram-pct", "999"
         ]);
 
         Assert.Equal(50, options.ResourceAvailability.CpuPercent);
         Assert.Equal(0, options.ResourceAvailability.RamPercent);
         Assert.Equal(100, options.ResourceAvailability.StoragePercent);
-        Assert.Equal(0, options.ResourceAvailability.GpuPercent);
-        Assert.Equal(90, options.CapabilityBenchmarkRefreshSeconds);
+        Assert.Equal(0, options.ResourceAvailability.GpuComputePercent);
+        Assert.Equal(100, options.ResourceAvailability.GpuVramPercent);
     }
 
     [Fact]
@@ -59,16 +61,17 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_CPU_PCT", "25"),
             ("NBN_WORKER_RAM_PCT", "30"),
             ("NBN_WORKER_STORAGE_PCT", "40"),
-            ("NBN_WORKER_GPU_PCT", "50"),
-            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", "120"));
+            ("NBN_WORKER_GPU_COMPUTE_PCT", "50"),
+            ("NBN_WORKER_GPU_VRAM_PCT", "60"),
+            ("NBN_WORKER_GPU_PCT", null));
 
-        var options = WorkerNodeOptions.FromArgs(["--cpu-pct", "101", "--gpu-pct", "80", "--benchmark-refresh-seconds", "15"]);
+        var options = WorkerNodeOptions.FromArgs(["--cpu-pct", "101", "--gpu-vram-pct", "80"]);
 
         Assert.Equal(100, options.ResourceAvailability.CpuPercent);
         Assert.Equal(30, options.ResourceAvailability.RamPercent);
         Assert.Equal(40, options.ResourceAvailability.StoragePercent);
-        Assert.Equal(80, options.ResourceAvailability.GpuPercent);
-        Assert.Equal(15, options.CapabilityBenchmarkRefreshSeconds);
+        Assert.Equal(50, options.ResourceAvailability.GpuComputePercent);
+        Assert.Equal(80, options.ResourceAvailability.GpuVramPercent);
     }
 
     [Fact]
@@ -79,24 +82,11 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
             ("NBN_WORKER_GPU_PCT", null),
-            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
+            ("NBN_WORKER_GPU_COMPUTE_PCT", null),
+            ("NBN_WORKER_GPU_VRAM_PCT", null));
 
         var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs(["--ram-pct", "not-a-number"]));
         Assert.Contains("--ram-pct", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void FromArgs_Throws_On_Invalid_BenchmarkRefresh_FromCli()
-    {
-        using var _ = new EnvironmentVariableScope(
-            ("NBN_WORKER_CPU_PCT", null),
-            ("NBN_WORKER_RAM_PCT", null),
-            ("NBN_WORKER_STORAGE_PCT", null),
-            ("NBN_WORKER_GPU_PCT", null),
-            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
-
-        var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs(["--capability-benchmark-refresh-seconds", "-1"]));
-        Assert.Contains("--capability-benchmark-refresh-seconds", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,7 +97,8 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
             ("NBN_WORKER_GPU_PCT", "oops"),
-            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
+            ("NBN_WORKER_GPU_COMPUTE_PCT", null),
+            ("NBN_WORKER_GPU_VRAM_PCT", null));
 
         var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs([]));
         Assert.Contains("NBN_WORKER_GPU_PCT", exception.Message, StringComparison.Ordinal);
@@ -132,22 +123,27 @@ public sealed class WorkerNodeResourceAvailabilityTests
 
         var scaled = WorkerCapabilityScaling.ApplyScale(
             baseline,
-            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 25, storagePercent: 10, gpuPercent: 0));
+            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 25, storagePercent: 10, gpuComputePercent: 0, gpuVramPercent: 35));
 
-        Assert.Equal((uint)4, scaled.CpuCores);
-        Assert.Equal((ulong)250, scaled.RamFreeBytes);
-        Assert.Equal((ulong)1_000, scaled.StorageFreeBytes);
-        Assert.Equal(40f, scaled.CpuScore);
-        Assert.False(scaled.HasGpu);
-        Assert.Equal(string.Empty, scaled.GpuName);
-        Assert.Equal((ulong)0, scaled.VramFreeBytes);
-        Assert.Equal(0f, scaled.GpuScore);
-        Assert.False(scaled.IlgpuCudaAvailable);
-        Assert.False(scaled.IlgpuOpenclAvailable);
+        Assert.Equal((uint)8, scaled.CpuCores);
+        Assert.Equal((ulong)1_000, scaled.RamFreeBytes);
+        Assert.Equal((ulong)10_000, scaled.StorageFreeBytes);
+        Assert.Equal(80f, scaled.CpuScore);
+        Assert.True(scaled.HasGpu);
+        Assert.Equal("gpu", scaled.GpuName);
+        Assert.Equal((ulong)20_000, scaled.VramFreeBytes);
+        Assert.Equal(60f, scaled.GpuScore);
+        Assert.True(scaled.IlgpuCudaAvailable);
+        Assert.True(scaled.IlgpuOpenclAvailable);
+        Assert.Equal((uint)50, scaled.CpuLimitPercent);
+        Assert.Equal((uint)25, scaled.RamLimitPercent);
+        Assert.Equal((uint)10, scaled.StorageLimitPercent);
+        Assert.Equal((uint)0, scaled.GpuComputeLimitPercent);
+        Assert.Equal((uint)35, scaled.GpuVramLimitPercent);
     }
 
     [Fact]
-    public void WorkerCapabilityScaling_PreservesMinimumCpuCore_WhenPercentageIsPositive()
+    public void WorkerCapabilityScaling_PublishesExplicitLimitMetadata()
     {
         var baseline = new NodeCapabilities
         {
@@ -159,9 +155,10 @@ public sealed class WorkerNodeResourceAvailabilityTests
 
         var scaled = WorkerCapabilityScaling.ApplyScale(
             baseline,
-            new WorkerResourceAvailability(cpuPercent: 1, ramPercent: 100, storagePercent: 100, gpuPercent: 100));
+            new WorkerResourceAvailability(cpuPercent: 1, ramPercent: 100, storagePercent: 100, gpuComputePercent: 100, gpuVramPercent: 100));
 
         Assert.Equal((uint)1, scaled.CpuCores);
+        Assert.Equal((uint)1, scaled.CpuLimitPercent);
     }
 
     [Fact]
@@ -172,7 +169,7 @@ public sealed class WorkerNodeResourceAvailabilityTests
             Props.FromProducer(() => new WorkerNodeActor(
                 Guid.NewGuid(),
                 "127.0.0.1:12041",
-                resourceAvailability: new WorkerResourceAvailability(cpuPercent: 130, ramPercent: -20, storagePercent: 45, gpuPercent: 0))));
+                resourceAvailability: new WorkerResourceAvailability(cpuPercent: 130, ramPercent: -20, storagePercent: 45, gpuComputePercent: 0, gpuVramPercent: 25))));
 
         var snapshot = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
             workerPid,
@@ -181,7 +178,8 @@ public sealed class WorkerNodeResourceAvailabilityTests
         Assert.Equal(100, snapshot.ResourceAvailability.CpuPercent);
         Assert.Equal(0, snapshot.ResourceAvailability.RamPercent);
         Assert.Equal(45, snapshot.ResourceAvailability.StoragePercent);
-        Assert.Equal(0, snapshot.ResourceAvailability.GpuPercent);
+        Assert.Equal(0, snapshot.ResourceAvailability.GpuComputePercent);
+        Assert.Equal(25, snapshot.ResourceAvailability.GpuVramPercent);
 
         await system.ShutdownAsync();
     }

@@ -42,6 +42,16 @@ CREATE TABLE IF NOT EXISTS node_capabilities (
     gpu_score REAL NOT NULL,
     ilgpu_cuda_available INTEGER NOT NULL,
     ilgpu_opencl_available INTEGER NOT NULL,
+    ram_total_bytes INTEGER NOT NULL DEFAULT 0,
+    storage_total_bytes INTEGER NOT NULL DEFAULT 0,
+    vram_total_bytes INTEGER NOT NULL DEFAULT 0,
+    cpu_limit_percent INTEGER NOT NULL DEFAULT 0,
+    ram_limit_percent INTEGER NOT NULL DEFAULT 0,
+    storage_limit_percent INTEGER NOT NULL DEFAULT 0,
+    gpu_compute_limit_percent INTEGER NOT NULL DEFAULT 0,
+    gpu_vram_limit_percent INTEGER NOT NULL DEFAULT 0,
+    process_cpu_load_percent REAL NOT NULL DEFAULT 0,
+    process_ram_used_bytes INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (node_id, time_ms),
     FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE
 );
@@ -110,7 +120,17 @@ INSERT INTO node_capabilities (
     cpu_score,
     gpu_score,
     ilgpu_cuda_available,
-    ilgpu_opencl_available
+    ilgpu_opencl_available,
+    ram_total_bytes,
+    storage_total_bytes,
+    vram_total_bytes,
+    cpu_limit_percent,
+    ram_limit_percent,
+    storage_limit_percent,
+    gpu_compute_limit_percent,
+    gpu_vram_limit_percent,
+    process_cpu_load_percent,
+    process_ram_used_bytes
 ) VALUES (
     @node_id,
     @time_ms,
@@ -123,7 +143,17 @@ INSERT INTO node_capabilities (
     @cpu_score,
     @gpu_score,
     @ilgpu_cuda_available,
-    @ilgpu_opencl_available
+    @ilgpu_opencl_available,
+    @ram_total_bytes,
+    @storage_total_bytes,
+    @vram_total_bytes,
+    @cpu_limit_percent,
+    @ram_limit_percent,
+    @storage_limit_percent,
+    @gpu_compute_limit_percent,
+    @gpu_vram_limit_percent,
+    @process_cpu_load_percent,
+    @process_ram_used_bytes
 );
 """;
 
@@ -320,6 +350,16 @@ SELECT
     COALESCE(c.gpu_score, 0.0) AS GpuScore,
     COALESCE(c.ilgpu_cuda_available, 0) AS IlgpuCudaAvailable,
     COALESCE(c.ilgpu_opencl_available, 0) AS IlgpuOpenclAvailable,
+    COALESCE(c.ram_total_bytes, 0) AS RamTotalBytes,
+    COALESCE(c.storage_total_bytes, 0) AS StorageTotalBytes,
+    COALESCE(c.vram_total_bytes, 0) AS VramTotalBytes,
+    COALESCE(c.cpu_limit_percent, 0) AS CpuLimitPercent,
+    COALESCE(c.ram_limit_percent, 0) AS RamLimitPercent,
+    COALESCE(c.storage_limit_percent, 0) AS StorageLimitPercent,
+    COALESCE(c.gpu_compute_limit_percent, 0) AS GpuComputeLimitPercent,
+    COALESCE(c.gpu_vram_limit_percent, 0) AS GpuVramLimitPercent,
+    COALESCE(c.process_cpu_load_percent, 0.0) AS ProcessCpuLoadPercent,
+    COALESCE(c.process_ram_used_bytes, 0) AS ProcessRamUsedBytes,
     CASE
         WHEN n.is_alive = 1 AND c.time_ms IS NOT NULL THEN 1
         ELSE 0
@@ -340,6 +380,56 @@ ORDER BY n.logical_name, n.node_id;
     private const string AddStorageFreeBytesColumnSql = """
 ALTER TABLE node_capabilities
 ADD COLUMN storage_free_bytes INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddRamTotalBytesColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN ram_total_bytes INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddStorageTotalBytesColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN storage_total_bytes INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddVramTotalBytesColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN vram_total_bytes INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddCpuLimitPercentColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN cpu_limit_percent INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddRamLimitPercentColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN ram_limit_percent INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddStorageLimitPercentColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN storage_limit_percent INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddGpuComputeLimitPercentColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN gpu_compute_limit_percent INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddGpuVramLimitPercentColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN gpu_vram_limit_percent INTEGER NOT NULL DEFAULT 0;
+""";
+
+    private const string AddProcessCpuLoadPercentColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN process_cpu_load_percent REAL NOT NULL DEFAULT 0;
+""";
+
+    private const string AddProcessRamUsedBytesColumnSql = """
+ALTER TABLE node_capabilities
+ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
 """;
 
     private readonly string _databasePath;
@@ -456,22 +546,47 @@ ADD COLUMN storage_free_bytes INTEGER NOT NULL DEFAULT 0;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(CreateSchemaSql, cancellationToken: cancellationToken));
-        await EnsureNodeCapabilitiesStorageColumnAsync(connection, cancellationToken);
+        await EnsureNodeCapabilitiesColumnsAsync(connection, cancellationToken);
     }
 
-    private static async Task EnsureNodeCapabilitiesStorageColumnAsync(
+    private static async Task EnsureNodeCapabilitiesColumnsAsync(
         SqliteConnection connection,
         CancellationToken cancellationToken)
     {
         var tableInfo = (await connection.QueryAsync<TableInfoRow>(
                 new CommandDefinition(NodeCapabilitiesTableInfoSql, cancellationToken: cancellationToken)))
             .ToArray();
-        if (tableInfo.Any(static column => column.Name.Equals("storage_free_bytes", StringComparison.OrdinalIgnoreCase)))
+        var knownColumns = tableInfo
+            .Select(static column => column.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "storage_free_bytes", AddStorageFreeBytesColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "ram_total_bytes", AddRamTotalBytesColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "storage_total_bytes", AddStorageTotalBytesColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "vram_total_bytes", AddVramTotalBytesColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "cpu_limit_percent", AddCpuLimitPercentColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "ram_limit_percent", AddRamLimitPercentColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "storage_limit_percent", AddStorageLimitPercentColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "gpu_compute_limit_percent", AddGpuComputeLimitPercentColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "gpu_vram_limit_percent", AddGpuVramLimitPercentColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "process_cpu_load_percent", AddProcessCpuLoadPercentColumnSql, cancellationToken);
+        await EnsureNodeCapabilitiesColumnAsync(connection, knownColumns, "process_ram_used_bytes", AddProcessRamUsedBytesColumnSql, cancellationToken);
+    }
+
+    private static async Task EnsureNodeCapabilitiesColumnAsync(
+        SqliteConnection connection,
+        ISet<string> knownColumns,
+        string columnName,
+        string alterSql,
+        CancellationToken cancellationToken)
+    {
+        if (knownColumns.Contains(columnName))
         {
             return;
         }
 
-        await connection.ExecuteAsync(new CommandDefinition(AddStorageFreeBytesColumnSql, cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(new CommandDefinition(alterSql, cancellationToken: cancellationToken));
+        knownColumns.Add(columnName);
     }
 
     public async Task UpsertNodeAsync(
@@ -579,7 +694,17 @@ ADD COLUMN storage_free_bytes INTEGER NOT NULL DEFAULT 0;
             cpu_score = capabilities.CpuScore,
             gpu_score = capabilities.GpuScore,
             ilgpu_cuda_available = capabilities.IlgpuCudaAvailable ? 1 : 0,
-            ilgpu_opencl_available = capabilities.IlgpuOpenclAvailable ? 1 : 0
+            ilgpu_opencl_available = capabilities.IlgpuOpenclAvailable ? 1 : 0,
+            ram_total_bytes = capabilities.RamTotalBytes,
+            storage_total_bytes = capabilities.StorageTotalBytes,
+            vram_total_bytes = capabilities.VramTotalBytes,
+            cpu_limit_percent = capabilities.CpuLimitPercent,
+            ram_limit_percent = capabilities.RamLimitPercent,
+            storage_limit_percent = capabilities.StorageLimitPercent,
+            gpu_compute_limit_percent = capabilities.GpuComputeLimitPercent,
+            gpu_vram_limit_percent = capabilities.GpuVramLimitPercent,
+            process_cpu_load_percent = capabilities.ProcessCpuLoadPercent,
+            process_ram_used_bytes = capabilities.ProcessRamUsedBytes
         };
 
         await connection.ExecuteAsync(

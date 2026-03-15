@@ -18,7 +18,6 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _speciationManager = "SpeciationManager";
     private string _workerHost = "127.0.0.1";
     private string _workerPortText = "12041";
-    private string _workerCapabilityBenchmarkRefreshSecondsText = "3600";
     private string _workerRootName = "worker-node";
     private string _workerLogicalName = "nbn.worker";
     private string _obsHost = "127.0.0.1";
@@ -136,12 +135,6 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _workerPortText;
         set => SetProperty(ref _workerPortText, value);
-    }
-
-    public string WorkerCapabilityBenchmarkRefreshSecondsText
-    {
-        get => _workerCapabilityBenchmarkRefreshSecondsText;
-        set => SetProperty(ref _workerCapabilityBenchmarkRefreshSecondsText, value);
     }
 
     public string WorkerRootName

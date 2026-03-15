@@ -45,6 +45,10 @@ public sealed class HiveMindActor : IActor
         ProtoControl.OutputVectorSource.Potential;
     private uint _vizTickMinIntervalMs = 250;
     private uint _vizStreamMinIntervalMs = 250;
+    private int _workerCapabilityBenchmarkRefreshSeconds = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds;
+    private int _workerPressureRebalanceWindow = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow;
+    private double _workerPressureViolationRatio = WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio;
+    private float _workerPressureLimitTolerancePercent = (float)WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent;
     private ProtoSeverity _debugMinSeverity;
     private bool _debugSettingsSubscribed;
     private readonly Dictionary<Guid, BrainState> _brains = new();
@@ -139,6 +143,7 @@ public sealed class HiveMindActor : IActor
                         EnsureDebugSettingsSubscription(context);
                         RefreshDebugSettings(context);
                         ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerInventoryTick());
+                        ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerCapabilitiesTick());
                     }
                     break;
                 case StartTickLoop:
@@ -288,6 +293,9 @@ public sealed class HiveMindActor : IActor
                 case RefreshWorkerInventoryTick:
                     RefreshWorkerInventory(context);
                     break;
+                case RefreshWorkerCapabilitiesTick:
+                    RefreshWorkerCapabilities(context);
+                    break;
                 case RescheduleNow message:
                     BeginReschedule(context, message);
                     break;
@@ -364,6 +372,10 @@ public sealed class HiveMindActor : IActor
         {
             context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
         }
+        foreach (var key in WorkerCapabilitySettingsKeys.AllKeys)
+        {
+            context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = key });
+        }
 
         context.Request(_settingsPid, new ProtoSettings.SettingGet { Key = ServiceEndpointSettings.IoGatewayKey });
     }
@@ -422,6 +434,8 @@ public sealed class HiveMindActor : IActor
         {
             UpdateAllShardVisualizationConfig(context);
         }
+
+        TryApplyWorkerCapabilitySetting(context, message.Key, message.Value);
     }
 
     private void HandleSettingChanged(IContext context, ProtoSettings.SettingChanged message)
@@ -478,6 +492,8 @@ public sealed class HiveMindActor : IActor
         {
             UpdateAllShardVisualizationConfig(context);
         }
+
+        TryApplyWorkerCapabilitySetting(context, message.Key, message.Value);
     }
 
     private bool TryApplyIoEndpointSetting(string? key, string? value)
@@ -786,6 +802,65 @@ public sealed class HiveMindActor : IActor
         return true;
     }
 
+    private bool TryApplyWorkerCapabilitySetting(IContext context, string? key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseWorkerCapabilityRefreshSeconds(value, _workerCapabilityBenchmarkRefreshSeconds);
+            if (parsed == _workerCapabilityBenchmarkRefreshSeconds)
+            {
+                return false;
+            }
+
+            _workerCapabilityBenchmarkRefreshSeconds = parsed;
+            ScheduleSelf(context, TimeSpan.Zero, new RefreshWorkerCapabilitiesTick());
+            return true;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseWorkerPressureWindow(value, _workerPressureRebalanceWindow);
+            if (parsed == _workerPressureRebalanceWindow)
+            {
+                return false;
+            }
+
+            _workerPressureRebalanceWindow = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.PressureViolationRatioKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseWorkerPressureRatio(value, _workerPressureViolationRatio);
+            if (Math.Abs(parsed - _workerPressureViolationRatio) <= 0.0001d)
+            {
+                return false;
+            }
+
+            _workerPressureViolationRatio = parsed;
+            return true;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseWorkerPressureTolerance(value, _workerPressureLimitTolerancePercent);
+            if (Math.Abs(parsed - _workerPressureLimitTolerancePercent) <= 0.0001f)
+            {
+                return false;
+            }
+
+            _workerPressureLimitTolerancePercent = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
     private void UpdateAllShardRuntimeConfig(IContext context)
     {
         foreach (var brain in _brains.Values)
@@ -956,6 +1031,52 @@ public sealed class HiveMindActor : IActor
         }
 
         return Math.Max(0L, parsed);
+    }
+
+    private static int ParseWorkerCapabilityRefreshSeconds(string? value, int fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Max(0, parsed);
+    }
+
+    private static int ParseWorkerPressureWindow(string? value, int fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Max(1, parsed);
+    }
+
+    private static double ParseWorkerPressureRatio(string? value, double fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !double.TryParse(value.Trim(), NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed)
+            || !double.IsFinite(parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Clamp(parsed, 0d, 1d);
+    }
+
+    private static float ParseWorkerPressureTolerance(string? value, float fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || !float.TryParse(value.Trim(), NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed))
+        {
+            return fallback;
+        }
+
+        return Math.Max(0f, parsed);
     }
 
     private static float ParsePositiveFiniteFloatSetting(string? value, float fallback)
@@ -4170,11 +4291,22 @@ public sealed class HiveMindActor : IActor
                 entry.IsFresh,
                 entry.CpuCores,
                 entry.RamFreeBytes,
+                entry.RamTotalBytes,
                 entry.StorageFreeBytes,
+                entry.StorageTotalBytes,
                 entry.HasGpu,
                 entry.VramFreeBytes,
+                entry.VramTotalBytes,
                 entry.CpuScore,
                 entry.GpuScore,
+                entry.CpuLimitPercent,
+                entry.RamLimitPercent,
+                entry.StorageLimitPercent,
+                entry.GpuComputeLimitPercent,
+                entry.GpuVramLimitPercent,
+                entry.ProcessCpuLoadPercent,
+                entry.ProcessRamUsedBytes,
+                _workerPressureLimitTolerancePercent,
                 entry.AveragePeerLatencyMs,
                 (uint)Math.Max(0, entry.PeerLatencySampleCount),
                 hostedBrainCounts.TryGetValue(entry.NodeId, out var hostedBrainCount) ? hostedBrainCount : 0))
@@ -4429,6 +4561,48 @@ public sealed class HiveMindActor : IActor
         }
     }
 
+    private void RefreshWorkerCapabilities(IContext context)
+    {
+        try
+        {
+            var request = new ProtoControl.WorkerCapabilityRefreshRequest
+            {
+                RequestedMs = (ulong)NowMs(),
+                Reason = "settings_cadence"
+            };
+
+            foreach (var worker in _workerCatalog.Values
+                         .Where(static entry =>
+                             entry.IsAlive
+                             && IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName)
+                             && !string.IsNullOrWhiteSpace(entry.WorkerAddress)
+                             && !string.IsNullOrWhiteSpace(entry.WorkerRootActorName))
+                         .OrderBy(static entry => entry.WorkerAddress, StringComparer.Ordinal)
+                         .ThenBy(static entry => entry.NodeId))
+            {
+                context.Send(new PID(worker.WorkerAddress, worker.WorkerRootActorName), request);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogError($"Worker capability refresh request failed: {ex.Message}");
+        }
+        finally
+        {
+            ScheduleSelf(context, ResolveWorkerCapabilityRefreshInterval(), new RefreshWorkerCapabilitiesTick());
+        }
+    }
+
+    private TimeSpan ResolveWorkerCapabilityRefreshInterval()
+    {
+        if (_workerCapabilityBenchmarkRefreshSeconds > 0)
+        {
+            return TimeSpan.FromSeconds(_workerCapabilityBenchmarkRefreshSeconds);
+        }
+
+        return TimeSpan.FromMilliseconds(Math.Max(1, _options.WorkerInventoryRefreshMs));
+    }
+
     private void HandleWorkerInventorySnapshotResponse(IContext context, ProtoSettings.WorkerInventorySnapshotResponse message)
     {
         var snapshotMs = message.SnapshotMs > 0 ? (long)message.SnapshotMs : NowMs();
@@ -4468,12 +4642,23 @@ public sealed class HiveMindActor : IActor
             entry.VramFreeBytes = hasCapabilities ? (long)capabilities.VramFreeBytes : 0;
             entry.CpuScore = hasCapabilities ? capabilities.CpuScore : 0f;
             entry.GpuScore = hasCapabilities ? capabilities.GpuScore : 0f;
+            entry.RamTotalBytes = hasCapabilities ? (long)capabilities.RamTotalBytes : 0;
+            entry.StorageTotalBytes = hasCapabilities ? (long)capabilities.StorageTotalBytes : 0;
+            entry.VramTotalBytes = hasCapabilities ? (long)capabilities.VramTotalBytes : 0;
+            entry.CpuLimitPercent = hasCapabilities ? capabilities.CpuLimitPercent : 0u;
+            entry.RamLimitPercent = hasCapabilities ? capabilities.RamLimitPercent : 0u;
+            entry.StorageLimitPercent = hasCapabilities ? capabilities.StorageLimitPercent : 0u;
+            entry.GpuComputeLimitPercent = hasCapabilities ? capabilities.GpuComputeLimitPercent : 0u;
+            entry.GpuVramLimitPercent = hasCapabilities ? capabilities.GpuVramLimitPercent : 0u;
+            entry.ProcessCpuLoadPercent = hasCapabilities ? capabilities.ProcessCpuLoadPercent : 0f;
+            entry.ProcessRamUsedBytes = hasCapabilities ? (long)capabilities.ProcessRamUsedBytes : 0;
             entry.CapabilitySnapshotMs = capabilitySnapshotMs;
             entry.LastUpdatedMs = snapshotMs;
         }
 
         RefreshWorkerCatalogFreshness(snapshotMs);
         DetectWorkerLossRecoveries(context, snapshotMs, seenWorkerIds);
+        MaybeRequestWorkerPressureReschedule(context, snapshotMs);
         MaybeRefreshPeerLatency(context, force: false);
     }
 
@@ -4501,6 +4686,107 @@ public sealed class HiveMindActor : IActor
                 break;
             }
         }
+    }
+
+    private void MaybeRequestWorkerPressureReschedule(IContext context, long snapshotMs)
+    {
+        var candidateBrainIds = new HashSet<Guid>();
+        foreach (var worker in _workerCatalog.Values
+                     .Where(static entry =>
+                         entry.IsAlive
+                         && entry.IsReady
+                         && entry.IsFresh
+                         && IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName)))
+        {
+            var violating = IsWorkerPressureViolation(worker);
+            RecordWorkerPressureSample(worker, violating);
+
+            var sampleCount = worker.PressureSamples.Count;
+            var violationRatio = sampleCount == 0
+                ? 0d
+                : worker.PressureViolationCount / (double)sampleCount;
+
+            if (violationRatio < _workerPressureViolationRatio)
+            {
+                worker.PressureRebalanceRequested = false;
+                continue;
+            }
+
+            if (!violating || worker.PressureRebalanceRequested)
+            {
+                continue;
+            }
+
+            worker.PressureRebalanceRequested = true;
+            foreach (var brainId in GetTrackedBrainIdsForWorker(worker.NodeId))
+            {
+                candidateBrainIds.Add(brainId);
+            }
+        }
+
+        if (candidateBrainIds.Count > 0)
+        {
+            RequestReschedule(context, $"worker_pressure:{snapshotMs}", candidateBrainIds.ToArray());
+        }
+    }
+
+    private void RecordWorkerPressureSample(WorkerCatalogEntry worker, bool violating)
+    {
+        var window = Math.Max(1, _workerPressureRebalanceWindow);
+        worker.PressureSamples.Enqueue(violating);
+        if (violating)
+        {
+            worker.PressureViolationCount++;
+        }
+
+        while (worker.PressureSamples.Count > window)
+        {
+            if (worker.PressureSamples.Dequeue())
+            {
+                worker.PressureViolationCount = Math.Max(0, worker.PressureViolationCount - 1);
+            }
+        }
+    }
+
+    private bool IsWorkerPressureViolation(WorkerCatalogEntry worker)
+    {
+        var ramTotalBytes = ToUnsignedBytes(worker.RamTotalBytes);
+        var storageTotalBytes = ToUnsignedBytes(worker.StorageTotalBytes);
+        var vramTotalBytes = ToUnsignedBytes(worker.VramTotalBytes);
+        return WorkerCapabilityMath.IsCpuOverLimit(
+                   worker.ProcessCpuLoadPercent,
+                   worker.CpuLimitPercent,
+                   _workerPressureLimitTolerancePercent)
+               || WorkerCapabilityMath.IsRamOverLimit(
+                   ToUnsignedBytes(worker.ProcessRamUsedBytes),
+                   ramTotalBytes,
+                   worker.RamLimitPercent,
+                   _workerPressureLimitTolerancePercent)
+               || WorkerCapabilityMath.IsStorageOverLimit(
+                   ToUnsignedBytes(worker.StorageFreeBytes),
+                   storageTotalBytes,
+                   worker.StorageLimitPercent,
+                   _workerPressureLimitTolerancePercent)
+               || (worker.HasGpu
+                   && WorkerCapabilityMath.IsVramOverLimit(
+                       ToUnsignedBytes(worker.VramFreeBytes),
+                       vramTotalBytes,
+                       worker.GpuVramLimitPercent,
+                       _workerPressureLimitTolerancePercent));
+    }
+
+    private IReadOnlyList<Guid> GetTrackedBrainIdsForWorker(Guid workerNodeId)
+    {
+        var trackedBrainIds = new HashSet<Guid>();
+        foreach (var brain in _brains.Values)
+        {
+            if (GetCurrentPlacementWorkerNodeIds(brain).Contains(workerNodeId))
+            {
+                trackedBrainIds.Add(brain.BrainId);
+            }
+        }
+
+        return trackedBrainIds.ToArray();
     }
 
     private bool TryGetWorkerLossReason(
@@ -4729,7 +5015,17 @@ public sealed class HiveMindActor : IActor
                 CapabilityEpoch = ToProtoMs(entry.CapabilitySnapshotMs),
                 StorageFreeBytes = ToProtoBytes(entry.StorageFreeBytes),
                 AveragePeerLatencyMs = entry.AveragePeerLatencyMs,
-                PeerLatencySampleCount = (uint)Math.Max(0, entry.PeerLatencySampleCount)
+                PeerLatencySampleCount = (uint)Math.Max(0, entry.PeerLatencySampleCount),
+                RamTotalBytes = ToProtoBytes(entry.RamTotalBytes),
+                StorageTotalBytes = ToProtoBytes(entry.StorageTotalBytes),
+                VramTotalBytes = ToProtoBytes(entry.VramTotalBytes),
+                CpuLimitPercent = entry.CpuLimitPercent,
+                RamLimitPercent = entry.RamLimitPercent,
+                StorageLimitPercent = entry.StorageLimitPercent,
+                GpuComputeLimitPercent = entry.GpuComputeLimitPercent,
+                GpuVramLimitPercent = entry.GpuVramLimitPercent,
+                ProcessCpuLoadPercent = entry.ProcessCpuLoadPercent,
+                ProcessRamUsedBytes = ToProtoBytes(entry.ProcessRamUsedBytes)
             });
         }
 
@@ -8075,6 +8371,7 @@ public sealed class HiveMindActor : IActor
     private sealed record TickStart;
     private sealed record TickPhaseTimeout(ulong TickId, TickPhase Phase);
     private sealed record RefreshWorkerInventoryTick;
+    private sealed record RefreshWorkerCapabilitiesTick;
     private sealed record SweepVisualizationSubscribers;
     private sealed record RescheduleNow(string Reason);
     private sealed record RescheduleCompleted(string Reason, bool Success);
@@ -8335,9 +8632,22 @@ public sealed class HiveMindActor : IActor
         public long VramFreeBytes { get; set; }
         public float CpuScore { get; set; }
         public float GpuScore { get; set; }
+        public long RamTotalBytes { get; set; }
+        public long StorageTotalBytes { get; set; }
+        public long VramTotalBytes { get; set; }
+        public uint CpuLimitPercent { get; set; }
+        public uint RamLimitPercent { get; set; }
+        public uint StorageLimitPercent { get; set; }
+        public uint GpuComputeLimitPercent { get; set; }
+        public uint GpuVramLimitPercent { get; set; }
+        public float ProcessCpuLoadPercent { get; set; }
+        public long ProcessRamUsedBytes { get; set; }
         public float AveragePeerLatencyMs { get; set; }
         public int PeerLatencySampleCount { get; set; }
         public long PeerLatencySnapshotMs { get; set; }
+        public Queue<bool> PressureSamples { get; } = new();
+        public int PressureViolationCount { get; set; }
+        public bool PressureRebalanceRequested { get; set; }
     }
 
     private sealed class PlacementExecutionState
@@ -8571,6 +8881,9 @@ public sealed class HiveMindActor : IActor
         => value > 0 ? (ulong)value : 0;
 
     private static ulong ToProtoBytes(long value)
+        => value > 0 ? (ulong)value : 0;
+
+    private static ulong ToUnsignedBytes(long value)
         => value > 0 ? (ulong)value : 0;
 
     private static string ResolveNodeAddress(IContext context, PID pid)

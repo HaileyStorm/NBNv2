@@ -299,6 +299,16 @@ public class ProtoCompatibilityTests
         AssertField(workerInventoryEntry, "storage_free_bytes", 13, FieldType.Fixed64);
         AssertField(workerInventoryEntry, "average_peer_latency_ms", 14, FieldType.Float);
         AssertField(workerInventoryEntry, "peer_latency_sample_count", 15, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "ram_total_bytes", 16, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "storage_total_bytes", 17, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "vram_total_bytes", 18, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "cpu_limit_percent", 19, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "ram_limit_percent", 20, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "storage_limit_percent", 21, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "gpu_compute_limit_percent", 22, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "gpu_vram_limit_percent", 23, FieldType.UInt32);
+        AssertField(workerInventoryEntry, "process_cpu_load_percent", 24, FieldType.Float);
+        AssertField(workerInventoryEntry, "process_ram_used_bytes", 25, FieldType.Fixed64);
 
         var workerInventory = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventory");
         AssertRepeatedField(workerInventory, "workers", 1, FieldType.Message, "nbn.control.PlacementWorkerInventoryEntry");
@@ -323,6 +333,15 @@ public class ProtoCompatibilityTests
 
         var latencyEchoAck = descriptor.MessageTypes.Single(message => message.Name == "PlacementLatencyEchoAck");
         Assert.Empty(latencyEchoAck.Fields.InDeclarationOrder());
+
+        var capabilityRefreshRequest = descriptor.MessageTypes.Single(message => message.Name == "WorkerCapabilityRefreshRequest");
+        AssertField(capabilityRefreshRequest, "requested_ms", 1, FieldType.Fixed64);
+        AssertField(capabilityRefreshRequest, "reason", 2, FieldType.String);
+
+        var capabilityRefreshAck = descriptor.MessageTypes.Single(message => message.Name == "WorkerCapabilityRefreshAck");
+        AssertField(capabilityRefreshAck, "accepted", 1, FieldType.Bool);
+        AssertField(capabilityRefreshAck, "requested_ms", 2, FieldType.Fixed64);
+        AssertField(capabilityRefreshAck, "message", 3, FieldType.String);
 
         var assignment = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignment");
         AssertField(assignment, "assignment_id", 1, FieldType.String);
@@ -894,6 +913,16 @@ public class ProtoCompatibilityTests
         AssertField(caps, "gpu_score", 7, FieldType.Float);
         AssertField(caps, "ilgpu_cuda_available", 8, FieldType.Bool);
         AssertField(caps, "ilgpu_opencl_available", 9, FieldType.Bool);
+        AssertField(caps, "ram_total_bytes", 11, FieldType.Fixed64);
+        AssertField(caps, "storage_total_bytes", 12, FieldType.Fixed64);
+        AssertField(caps, "vram_total_bytes", 13, FieldType.Fixed64);
+        AssertField(caps, "cpu_limit_percent", 14, FieldType.UInt32);
+        AssertField(caps, "ram_limit_percent", 15, FieldType.UInt32);
+        AssertField(caps, "storage_limit_percent", 16, FieldType.UInt32);
+        AssertField(caps, "gpu_compute_limit_percent", 17, FieldType.UInt32);
+        AssertField(caps, "gpu_vram_limit_percent", 18, FieldType.UInt32);
+        AssertField(caps, "process_cpu_load_percent", 19, FieldType.Float);
+        AssertField(caps, "process_ram_used_bytes", 20, FieldType.Fixed64);
     }
 
     [Fact]

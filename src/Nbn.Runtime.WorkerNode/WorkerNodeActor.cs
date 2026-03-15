@@ -99,6 +99,9 @@ public sealed class WorkerNodeActor : IActor
             case PlacementLatencyEchoRequest:
                 context.Respond(new PlacementLatencyEchoAck());
                 break;
+            case WorkerCapabilityRefreshRequest request:
+                HandleWorkerCapabilityRefresh(context, request);
+                break;
             case TickComputeDone computeDone:
                 ForwardTickCompletion(context, computeDone);
                 break;
@@ -669,6 +672,17 @@ public sealed class WorkerNodeActor : IActor
 
         NotifyCapabilityProfileChanged();
         ReplyToSender(context, report);
+    }
+
+    private void HandleWorkerCapabilityRefresh(IContext context, WorkerCapabilityRefreshRequest request)
+    {
+        NotifyCapabilityProfileChanged();
+        ReplyToSender(context, new WorkerCapabilityRefreshAck
+        {
+            Accepted = true,
+            RequestedMs = request.RequestedMs,
+            Message = "scheduled_for_next_heartbeat"
+        });
     }
 
     private void NotifyCapabilityProfileChanged()

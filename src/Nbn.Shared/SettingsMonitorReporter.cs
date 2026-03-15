@@ -181,7 +181,12 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             CpuScore = 0,
             GpuScore = 0,
             IlgpuCudaAvailable = false,
-            IlgpuOpenclAvailable = false
+            IlgpuOpenclAvailable = false,
+            CpuLimitPercent = 100,
+            RamLimitPercent = 100,
+            StorageLimitPercent = 100,
+            GpuComputeLimitPercent = 100,
+            GpuVramLimitPercent = 100
         };
     }
 }

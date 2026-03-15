@@ -94,10 +94,12 @@ public sealed class HiveMindPlacementPlannerTests
             {
                 CpuCores = 12,
                 RamFreeBytes = 24UL * 1024 * 1024 * 1024,
+                RamTotalBytes = 32UL * 1024 * 1024 * 1024,
                 StorageFreeBytes = 140UL * 1024 * 1024 * 1024,
+                StorageTotalBytes = 180UL * 1024 * 1024 * 1024,
                 CpuScore = 80f
             },
-            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 25, storagePercent: 30, gpuPercent: 100));
+            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 25, storagePercent: 30, gpuComputePercent: 100, gpuVramPercent: 100));
         root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
         {
             SnapshotMs = (ulong)nowMs,
@@ -368,6 +370,77 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public void PlacementPlanner_Rejects_Pressured_And_VramLimited_GpuWorkers()
+    {
+        var goodWorker = Guid.Parse("50000000-0000-0000-0000-000000000001");
+        var pressuredWorker = Guid.Parse("50000000-0000-0000-0000-000000000002");
+        var vramLimitedWorker = Guid.Parse("50000000-0000-0000-0000-000000000003");
+
+        var workers = new[]
+        {
+            CreateWorkerCandidate(
+                goodWorker,
+                "worker-good:12040",
+                gpuScore: 55f,
+                vramFreeBytes: 12L * 1024 * 1024 * 1024,
+                vramTotalBytes: 16L * 1024 * 1024 * 1024,
+                gpuComputeLimitPercent: 100,
+                gpuVramLimitPercent: 100),
+            CreateWorkerCandidate(
+                pressuredWorker,
+                "worker-hot:12040",
+                gpuScore: 99f,
+                processCpuLoadPercent: 92f,
+                cpuLimitPercent: 50,
+                gpuComputeLimitPercent: 100,
+                gpuVramLimitPercent: 100),
+            CreateWorkerCandidate(
+                vramLimitedWorker,
+                "worker-vram:12040",
+                gpuScore: 90f,
+                vramFreeBytes: 12L * 1024 * 1024 * 1024,
+                vramTotalBytes: 16L * 1024 * 1024 * 1024,
+                gpuComputeLimitPercent: 100,
+                gpuVramLimitPercent: 0)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: Guid.NewGuid(),
+            PlacementEpoch: 5,
+            RequestId: "gpu-limits",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 1
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 12_288),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>());
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+        Assert.Equal([goodWorker], plan.EligibleWorkers.Select(static worker => worker.NodeId).ToArray());
+        Assert.All(
+            plan.Assignments.Where(static assignment => assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard),
+            assignment => Assert.Equal(goodWorker, AssignmentWorkerId(assignment)));
+    }
+
+    [Fact]
     public void PlacementPlanner_Falls_Back_To_HigherLatency_Worker_When_LocalitySubset_Is_Insufficient()
     {
         var workerA = Guid.Parse("30000000-0000-0000-0000-000000000001");
@@ -467,11 +540,22 @@ public sealed class HiveMindPlacementPlannerTests
         bool isFresh = true,
         uint cpuCores = 8,
         long ramFreeBytes = 8L * 1024 * 1024 * 1024,
+        long ramTotalBytes = 16L * 1024 * 1024 * 1024,
         long storageFreeBytes = 40L * 1024 * 1024 * 1024,
+        long storageTotalBytes = 80L * 1024 * 1024 * 1024,
         bool hasGpu = true,
         long vramFreeBytes = 8L * 1024 * 1024 * 1024,
+        long vramTotalBytes = 16L * 1024 * 1024 * 1024,
         float cpuScore = 30f,
         float gpuScore = 60f,
+        uint cpuLimitPercent = 100,
+        uint ramLimitPercent = 100,
+        uint storageLimitPercent = 100,
+        uint gpuComputeLimitPercent = 100,
+        uint gpuVramLimitPercent = 100,
+        float processCpuLoadPercent = 0f,
+        long processRamUsedBytes = 0,
+        float pressureLimitTolerancePercent = (float)WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent,
         float averagePeerLatencyMs = 0f,
         uint peerLatencySampleCount = 0,
         int hostedBrainCount = 0)
@@ -484,11 +568,22 @@ public sealed class HiveMindPlacementPlannerTests
             isFresh,
             cpuCores,
             ramFreeBytes,
+            ramTotalBytes,
             storageFreeBytes,
+            storageTotalBytes,
             hasGpu,
             vramFreeBytes,
+            vramTotalBytes,
             cpuScore,
             gpuScore,
+            cpuLimitPercent,
+            ramLimitPercent,
+            storageLimitPercent,
+            gpuComputeLimitPercent,
+            gpuVramLimitPercent,
+            processCpuLoadPercent,
+            processRamUsedBytes,
+            pressureLimitTolerancePercent,
             averagePeerLatencyMs,
             peerLatencySampleCount,
             hostedBrainCount);
@@ -504,8 +599,13 @@ public sealed class HiveMindPlacementPlannerTests
         string logicalName = "",
         uint cpuCores = 8,
         long ramFreeBytes = 8L * 1024 * 1024 * 1024,
+        long ramTotalBytes = 16L * 1024 * 1024 * 1024,
         long storageFreeBytes = 40L * 1024 * 1024 * 1024,
-        float cpuScore = 30f)
+        long storageTotalBytes = 80L * 1024 * 1024 * 1024,
+        float cpuScore = 30f,
+        uint cpuLimitPercent = 100,
+        uint ramLimitPercent = 100,
+        uint storageLimitPercent = 100)
         => new()
         {
             NodeId = nodeId.ToProtoUuid(),
@@ -521,8 +621,13 @@ public sealed class HiveMindPlacementPlannerTests
             {
                 CpuCores = cpuCores,
                 RamFreeBytes = ramFreeBytes > 0 ? (ulong)ramFreeBytes : 0,
+                RamTotalBytes = ramTotalBytes > 0 ? (ulong)ramTotalBytes : 0,
                 StorageFreeBytes = storageFreeBytes > 0 ? (ulong)storageFreeBytes : 0,
-                CpuScore = cpuScore
+                StorageTotalBytes = storageTotalBytes > 0 ? (ulong)storageTotalBytes : 0,
+                CpuScore = cpuScore,
+                CpuLimitPercent = cpuLimitPercent,
+                RamLimitPercent = ramLimitPercent,
+                StorageLimitPercent = storageLimitPercent
             }
         };
 

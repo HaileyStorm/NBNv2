@@ -24,32 +24,32 @@ public sealed class SettingsMonitorWorkerInventoryTests
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             workerA,
             200,
-            new NodeCapabilities(
-                CpuCores: 8,
-                RamFreeBytes: 1_024,
-                StorageFreeBytes: 10_240,
-                HasGpu: true,
-                GpuName: "GPU-old",
-                VramFreeBytes: 2_048,
-                CpuScore: 10.5f,
-                GpuScore: 20.5f,
-                IlgpuCudaAvailable: true,
-                IlgpuOpenclAvailable: false)));
+            CreateCapabilities(
+                cpuCores: 8,
+                ramFreeBytes: 1_024,
+                storageFreeBytes: 10_240,
+                hasGpu: true,
+                gpuName: "GPU-old",
+                vramFreeBytes: 2_048,
+                cpuScore: 10.5f,
+                gpuScore: 20.5f,
+                ilgpuCudaAvailable: true,
+                ilgpuOpenclAvailable: false)));
 
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             workerA,
             250,
-            new NodeCapabilities(
-                CpuCores: 16,
-                RamFreeBytes: 4_096,
-                StorageFreeBytes: 20_480,
-                HasGpu: true,
-                GpuName: "GPU-new",
-                VramFreeBytes: 8_192,
-                CpuScore: 30.5f,
-                GpuScore: 40.5f,
-                IlgpuCudaAvailable: true,
-                IlgpuOpenclAvailable: true)));
+            CreateCapabilities(
+                cpuCores: 16,
+                ramFreeBytes: 4_096,
+                storageFreeBytes: 20_480,
+                hasGpu: true,
+                gpuName: "GPU-new",
+                vramFreeBytes: 8_192,
+                cpuScore: 30.5f,
+                gpuScore: 40.5f,
+                ilgpuCudaAvailable: true,
+                ilgpuOpenclAvailable: true)));
 
         await store.MarkNodeOfflineAsync(workerB, timeMs: 260);
 
@@ -94,17 +94,11 @@ public sealed class SettingsMonitorWorkerInventoryTests
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             persistedWorker,
             120,
-            new NodeCapabilities(
-                CpuCores: 12,
-                RamFreeBytes: 2_048,
-                StorageFreeBytes: 8_192,
-                HasGpu: false,
-                GpuName: null,
-                VramFreeBytes: 0,
-                CpuScore: 12.5f,
-                GpuScore: 0.0f,
-                IlgpuCudaAvailable: false,
-                IlgpuOpenclAvailable: false)));
+            CreateCapabilities(
+                cpuCores: 12,
+                ramFreeBytes: 2_048,
+                storageFreeBytes: 8_192,
+                cpuScore: 12.5f)));
 
         var transientWorker = Guid.NewGuid();
         var system = new ActorSystem();
@@ -177,46 +171,105 @@ public sealed class SettingsMonitorWorkerInventoryTests
             {
                 CpuCores = 16,
                 RamFreeBytes = 40_000,
+                RamTotalBytes = 80_000,
                 StorageFreeBytes = 80_000,
+                StorageTotalBytes = 120_000,
                 HasGpu = true,
                 GpuName = "gpu0",
                 VramFreeBytes = 20_000,
+                VramTotalBytes = 24_000,
                 CpuScore = 100f,
                 GpuScore = 50f,
                 IlgpuCudaAvailable = true,
                 IlgpuOpenclAvailable = true
             },
-            new WorkerResourceAvailability(cpuPercent: 25, ramPercent: 50, storagePercent: 10, gpuPercent: 0));
+            new WorkerResourceAvailability(cpuPercent: 25, ramPercent: 50, storagePercent: 10, gpuComputePercent: 0, gpuVramPercent: 0));
 
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             worker,
             200,
-            new NodeCapabilities(
-                CpuCores: scaled.CpuCores,
-                RamFreeBytes: (long)scaled.RamFreeBytes,
-                StorageFreeBytes: (long)scaled.StorageFreeBytes,
-                HasGpu: scaled.HasGpu,
-                GpuName: scaled.GpuName,
-                VramFreeBytes: (long)scaled.VramFreeBytes,
-                CpuScore: scaled.CpuScore,
-                GpuScore: scaled.GpuScore,
-                IlgpuCudaAvailable: scaled.IlgpuCudaAvailable,
-                IlgpuOpenclAvailable: scaled.IlgpuOpenclAvailable)));
+            CreateCapabilities(
+                cpuCores: scaled.CpuCores,
+                ramFreeBytes: (long)scaled.RamFreeBytes,
+                ramTotalBytes: (long)scaled.RamTotalBytes,
+                storageFreeBytes: (long)scaled.StorageFreeBytes,
+                storageTotalBytes: (long)scaled.StorageTotalBytes,
+                hasGpu: scaled.HasGpu,
+                gpuName: scaled.GpuName,
+                vramFreeBytes: (long)scaled.VramFreeBytes,
+                vramTotalBytes: (long)scaled.VramTotalBytes,
+                cpuScore: scaled.CpuScore,
+                gpuScore: scaled.GpuScore,
+                ilgpuCudaAvailable: scaled.IlgpuCudaAvailable,
+                ilgpuOpenclAvailable: scaled.IlgpuOpenclAvailable,
+                cpuLimitPercent: scaled.CpuLimitPercent,
+                ramLimitPercent: scaled.RamLimitPercent,
+                storageLimitPercent: scaled.StorageLimitPercent,
+                gpuComputeLimitPercent: scaled.GpuComputeLimitPercent,
+                gpuVramLimitPercent: scaled.GpuVramLimitPercent)));
 
         var snapshot = await store.GetWorkerInventorySnapshotAsync();
         var row = snapshot.Workers.Single(entry => entry.NodeId == worker);
 
-        Assert.Equal((uint)4, row.CpuCores);
-        Assert.Equal(20_000, row.RamFreeBytes);
-        Assert.Equal(8_000, row.StorageFreeBytes);
-        Assert.False(row.HasGpu);
-        Assert.Equal(string.Empty, row.GpuName);
-        Assert.Equal(0, row.VramFreeBytes);
-        Assert.Equal(25f, row.CpuScore);
-        Assert.Equal(0f, row.GpuScore);
-        Assert.False(row.IlgpuCudaAvailable);
-        Assert.False(row.IlgpuOpenclAvailable);
+        Assert.Equal((uint)16, row.CpuCores);
+        Assert.Equal(40_000, row.RamFreeBytes);
+        Assert.Equal(80_000, row.StorageFreeBytes);
+        Assert.True(row.HasGpu);
+        Assert.Equal("gpu0", row.GpuName);
+        Assert.Equal(20_000, row.VramFreeBytes);
+        Assert.Equal(100f, row.CpuScore);
+        Assert.Equal(50f, row.GpuScore);
+        Assert.True(row.IlgpuCudaAvailable);
+        Assert.True(row.IlgpuOpenclAvailable);
+        Assert.Equal((uint)25, row.CpuLimitPercent);
+        Assert.Equal((uint)50, row.RamLimitPercent);
+        Assert.Equal((uint)10, row.StorageLimitPercent);
+        Assert.Equal((uint)0, row.GpuComputeLimitPercent);
+        Assert.Equal((uint)0, row.GpuVramLimitPercent);
     }
+
+    private static NodeCapabilities CreateCapabilities(
+        uint cpuCores,
+        long ramFreeBytes,
+        long storageFreeBytes,
+        bool hasGpu = false,
+        string? gpuName = null,
+        long vramFreeBytes = 0,
+        float cpuScore = 0f,
+        float gpuScore = 0f,
+        bool ilgpuCudaAvailable = false,
+        bool ilgpuOpenclAvailable = false,
+        long ramTotalBytes = 8_192,
+        long storageTotalBytes = 32_768,
+        long vramTotalBytes = 4_096,
+        uint cpuLimitPercent = 100,
+        uint ramLimitPercent = 100,
+        uint storageLimitPercent = 100,
+        uint gpuComputeLimitPercent = 100,
+        uint gpuVramLimitPercent = 100,
+        float processCpuLoadPercent = 0f,
+        long processRamUsedBytes = 0)
+        => new(
+            CpuCores: cpuCores,
+            RamFreeBytes: ramFreeBytes,
+            StorageFreeBytes: storageFreeBytes,
+            HasGpu: hasGpu,
+            GpuName: gpuName,
+            VramFreeBytes: vramFreeBytes,
+            CpuScore: cpuScore,
+            GpuScore: gpuScore,
+            IlgpuCudaAvailable: ilgpuCudaAvailable,
+            IlgpuOpenclAvailable: ilgpuOpenclAvailable,
+            RamTotalBytes: ramTotalBytes,
+            StorageTotalBytes: storageTotalBytes,
+            VramTotalBytes: vramTotalBytes,
+            CpuLimitPercent: cpuLimitPercent,
+            RamLimitPercent: ramLimitPercent,
+            StorageLimitPercent: storageLimitPercent,
+            GpuComputeLimitPercent: gpuComputeLimitPercent,
+            GpuVramLimitPercent: gpuVramLimitPercent,
+            ProcessCpuLoadPercent: processCpuLoadPercent,
+            ProcessRamUsedBytes: processRamUsedBytes);
 
     private sealed class TempDatabaseScope : IDisposable
     {

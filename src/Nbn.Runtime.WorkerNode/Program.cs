@@ -35,8 +35,7 @@ if (workerNodeId == Guid.Empty)
 }
 
 var capabilityProvider = new WorkerNodeCapabilityProvider(
-    options.ResourceAvailability,
-    benchmarkRefreshInterval: TimeSpan.FromSeconds(options.CapabilityBenchmarkRefreshSeconds));
+    options.ResourceAvailability);
 var workerPid = system.Root.SpawnNamed(
     Props.FromProducer(() => new WorkerNodeActor(
         workerNodeId,

@@ -18,7 +18,6 @@ public sealed class WorkerNodeCapabilityProvider
 {
     private static readonly Guid CpuBenchmarkBrainId = Guid.Parse("4F20A095-A750-4AFE-99FD-3DE769078D0D");
     private static readonly TimeSpan DefaultProbeRefreshInterval = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan DefaultBenchmarkRefreshInterval = TimeSpan.FromHours(1);
     private const int CpuBenchmarkNeuronCount = 2_048;
     private const int CpuBenchmarkFanOut = 4;
     private const int CpuBenchmarkMinimumIterations = 8;
@@ -34,18 +33,16 @@ public sealed class WorkerNodeCapabilityProvider
     private readonly Func<WorkerCapabilityBaseline> _baselineProbe;
     private readonly Func<WorkerCapabilityBaseline, WorkerCapabilityScores> _scoreProbe;
     private readonly TimeSpan _probeRefreshInterval;
-    private readonly TimeSpan _benchmarkRefreshInterval;
 
     private WorkerCapabilityBaseline? _baseline;
     private WorkerCapabilityScores? _scores;
     private DateTimeOffset _baselineSampledAt;
-    private DateTimeOffset _scoresSampledAt;
+    private ProcessCpuSample? _lastProcessCpuSample;
 
     public WorkerNodeCapabilityProvider(
         WorkerResourceAvailability? availability = null,
         string? storageProbePath = null,
         TimeSpan? probeRefreshInterval = null,
-        TimeSpan? benchmarkRefreshInterval = null,
         Func<DateTimeOffset>? clock = null,
         Func<WorkerCapabilityBaseline>? baselineProbe = null,
         Func<WorkerCapabilityBaseline, WorkerCapabilityScores>? scoreProbe = null)
@@ -53,7 +50,6 @@ public sealed class WorkerNodeCapabilityProvider
         _availability = availability ?? WorkerResourceAvailability.Default;
         _clock = clock ?? (static () => DateTimeOffset.UtcNow);
         _probeRefreshInterval = probeRefreshInterval ?? DefaultProbeRefreshInterval;
-        _benchmarkRefreshInterval = benchmarkRefreshInterval ?? DefaultBenchmarkRefreshInterval;
 
         var resolvedStorageProbePath = ResolveStorageProbePath(storageProbePath);
         _baselineProbe = baselineProbe ?? (() => ProbeBaseline(resolvedStorageProbePath));
@@ -66,7 +62,8 @@ public sealed class WorkerNodeCapabilityProvider
         {
             var now = _clock();
             var baseline = GetOrRefreshBaseline(now);
-            var scores = GetOrRefreshScores(now, baseline);
+            var scores = GetOrRefreshScores(baseline);
+            var runtimeLoad = SampleRuntimeLoad(now);
 
             var capabilities = new ProtoSettings.NodeCapabilities
             {
@@ -79,7 +76,17 @@ public sealed class WorkerNodeCapabilityProvider
                 CpuScore = scores.CpuScore,
                 GpuScore = scores.GpuScore,
                 IlgpuCudaAvailable = baseline.IlgpuCudaAvailable,
-                IlgpuOpenclAvailable = baseline.IlgpuOpenclAvailable
+                IlgpuOpenclAvailable = baseline.IlgpuOpenclAvailable,
+                RamTotalBytes = baseline.RamTotalBytes,
+                StorageTotalBytes = baseline.StorageTotalBytes,
+                VramTotalBytes = baseline.VramTotalBytes,
+                CpuLimitPercent = (uint)_availability.CpuPercent,
+                RamLimitPercent = (uint)_availability.RamPercent,
+                StorageLimitPercent = (uint)_availability.StoragePercent,
+                GpuComputeLimitPercent = (uint)_availability.GpuComputePercent,
+                GpuVramLimitPercent = (uint)_availability.GpuVramPercent,
+                ProcessCpuLoadPercent = runtimeLoad.ProcessCpuLoadPercent,
+                ProcessRamUsedBytes = runtimeLoad.ProcessRamUsedBytes
             };
 
             return WorkerCapabilityScaling.ApplyScale(capabilities, _availability);
@@ -91,7 +98,6 @@ public sealed class WorkerNodeCapabilityProvider
         lock (_sync)
         {
             _scores = null;
-            _scoresSampledAt = default;
         }
     }
 
@@ -102,24 +108,59 @@ public sealed class WorkerNodeCapabilityProvider
             return _baseline;
         }
 
+        var previous = _baseline;
         _baseline = SafeProbeBaseline();
         _baselineSampledAt = now;
-        _scores = null;
-        _scoresSampledAt = default;
+        if (previous is null || !CanReuseScores(previous, _baseline))
+        {
+            _scores = null;
+        }
+
         return _baseline;
     }
 
-    private WorkerCapabilityScores GetOrRefreshScores(DateTimeOffset now, WorkerCapabilityBaseline baseline)
+    private WorkerCapabilityScores GetOrRefreshScores(WorkerCapabilityBaseline baseline)
     {
-        if (_scores is not null && now - _scoresSampledAt < _benchmarkRefreshInterval)
+        if (_scores is not null)
         {
             return _scores;
         }
 
         _scores = SafeProbeScores(baseline);
-        _scoresSampledAt = now;
         return _scores;
     }
+
+    private WorkerCapabilityRuntimeLoad SampleRuntimeLoad(DateTimeOffset now)
+    {
+        using var process = Process.GetCurrentProcess();
+        var processCpuTime = process.TotalProcessorTime;
+        var processRamUsedBytes = ToUnsignedBytes(process.WorkingSet64);
+
+        var cpuLoadPercent = 0f;
+        if (_lastProcessCpuSample is ProcessCpuSample previousSample)
+        {
+            var elapsed = now - previousSample.Timestamp;
+            if (elapsed > TimeSpan.Zero && Environment.ProcessorCount > 0)
+            {
+                var cpuDelta = processCpuTime - previousSample.ProcessCpuTime;
+                var denominator = elapsed.TotalMilliseconds * Environment.ProcessorCount;
+                if (cpuDelta > TimeSpan.Zero && denominator > 0)
+                {
+                    cpuLoadPercent = NormalizePercent(cpuDelta.TotalMilliseconds * 100d / denominator);
+                }
+            }
+        }
+
+        _lastProcessCpuSample = new ProcessCpuSample(now, processCpuTime);
+        return new WorkerCapabilityRuntimeLoad(cpuLoadPercent, processRamUsedBytes);
+    }
+
+    private static bool CanReuseScores(WorkerCapabilityBaseline left, WorkerCapabilityBaseline right)
+        => left.CpuCores == right.CpuCores
+           && left.HasGpu == right.HasGpu
+           && string.Equals(left.GpuName, right.GpuName, StringComparison.Ordinal)
+           && left.IlgpuCudaAvailable == right.IlgpuCudaAvailable
+           && left.IlgpuOpenclAvailable == right.IlgpuOpenclAvailable;
 
     private WorkerCapabilityBaseline SafeProbeBaseline()
     {
@@ -132,10 +173,13 @@ public sealed class WorkerNodeCapabilityProvider
             return new WorkerCapabilityBaseline(
                 CpuCores: (uint)Math.Max(1, Environment.ProcessorCount),
                 RamFreeBytes: 0,
+                RamTotalBytes: 0,
                 StorageFreeBytes: 0,
+                StorageTotalBytes: 0,
                 HasGpu: false,
                 GpuName: string.Empty,
                 VramFreeBytes: 0,
+                VramTotalBytes: 0,
                 IlgpuCudaAvailable: false,
                 IlgpuOpenclAvailable: false);
         }
@@ -156,17 +200,20 @@ public sealed class WorkerNodeCapabilityProvider
     private static WorkerCapabilityBaseline ProbeBaseline(string storageProbePath)
     {
         var cpuCores = (uint)Math.Max(1, Environment.ProcessorCount);
-        var ramFreeBytes = ProbeRamFreeBytes();
-        var storageFreeBytes = ProbeStorageFreeBytes(storageProbePath);
+        var ramInfo = ProbeRamInfo();
+        var storageInfo = ProbeStorageInfo(storageProbePath);
         var gpuInfo = ProbeGpuInfo();
 
         return new WorkerCapabilityBaseline(
             CpuCores: cpuCores,
-            RamFreeBytes: ramFreeBytes,
-            StorageFreeBytes: storageFreeBytes,
+            RamFreeBytes: ramInfo.FreeBytes,
+            RamTotalBytes: ramInfo.TotalBytes,
+            StorageFreeBytes: storageInfo.FreeBytes,
+            StorageTotalBytes: storageInfo.TotalBytes,
             HasGpu: gpuInfo.HasGpu,
             GpuName: gpuInfo.GpuName,
             VramFreeBytes: gpuInfo.VramFreeBytes,
+            VramTotalBytes: gpuInfo.VramTotalBytes,
             IlgpuCudaAvailable: gpuInfo.IlgpuCudaAvailable,
             IlgpuOpenclAvailable: gpuInfo.IlgpuOpenclAvailable);
     }
@@ -272,20 +319,21 @@ public sealed class WorkerNodeCapabilityProvider
             var gpuDevice = SelectPreferredGpuDevice(devices);
             if (gpuDevice is null)
             {
-                return new WorkerGpuInfo(false, string.Empty, 0, cudaAvailable, openclAvailable);
+                return new WorkerGpuInfo(false, string.Empty, 0, 0, cudaAvailable, openclAvailable);
             }
 
-            var vramFreeBytes = ResolveGpuMemoryBytes(context, gpuDevice);
+            var gpuMemory = ResolveGpuMemory(context, gpuDevice);
             return new WorkerGpuInfo(
                 HasGpu: true,
                 GpuName: gpuDevice.Name ?? string.Empty,
-                VramFreeBytes: vramFreeBytes,
+                VramFreeBytes: gpuMemory.FreeBytes,
+                VramTotalBytes: gpuMemory.TotalBytes,
                 IlgpuCudaAvailable: cudaAvailable,
                 IlgpuOpenclAvailable: openclAvailable);
         }
         catch
         {
-            return new WorkerGpuInfo(false, string.Empty, 0, false, false);
+            return new WorkerGpuInfo(false, string.Empty, 0, 0, false, false);
         }
     }
 
@@ -296,25 +344,29 @@ public sealed class WorkerNodeCapabilityProvider
             .ThenByDescending(static device => device.MemorySize)
             .FirstOrDefault();
 
-    private static ulong ResolveGpuMemoryBytes(Context context, Device device)
+    private static WorkerMemoryInfo ResolveGpuMemory(Context context, Device device)
     {
         try
         {
             using var accelerator = device.CreateAccelerator(context);
             if (accelerator is CudaAccelerator cudaAccelerator)
             {
-                return ToUnsignedBytes(cudaAccelerator.GetFreeMemory());
+                return new WorkerMemoryInfo(
+                    ToUnsignedBytes(cudaAccelerator.GetFreeMemory()),
+                    ToUnsignedBytes(accelerator.MemorySize));
             }
 
-            return ToUnsignedBytes(accelerator.MemorySize);
+            var totalBytes = ToUnsignedBytes(accelerator.MemorySize);
+            return new WorkerMemoryInfo(totalBytes, totalBytes);
         }
         catch
         {
-            return ToUnsignedBytes(device.MemorySize);
+            var totalBytes = ToUnsignedBytes(device.MemorySize);
+            return new WorkerMemoryInfo(totalBytes, totalBytes);
         }
     }
 
-    private static ulong ProbeRamFreeBytes()
+    private static WorkerMemoryInfo ProbeRamInfo()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -322,16 +374,19 @@ public sealed class WorkerNodeCapabilityProvider
             {
                 if (GlobalMemoryStatusEx(out var windowsStatus))
                 {
-                    return windowsStatus.AvailPhys;
+                    return new WorkerMemoryInfo(windowsStatus.AvailPhys, windowsStatus.TotalPhys);
                 }
 
                 if (GetPerformanceInfo(out var performanceInfo))
                 {
                     var availablePages = performanceInfo.PhysicalAvailable;
+                    var totalPages = performanceInfo.PhysicalTotal;
                     var pageSize = performanceInfo.PageSize;
-                    if (availablePages > 0 && pageSize > 0)
+                    if (pageSize > 0)
                     {
-                        return availablePages * pageSize;
+                        return new WorkerMemoryInfo(
+                            availablePages > 0 ? availablePages * pageSize : 0UL,
+                            totalPages > 0 ? totalPages * pageSize : 0UL);
                     }
                 }
             }
@@ -341,17 +396,19 @@ public sealed class WorkerNodeCapabilityProvider
         }
 
         if (OperatingSystem.IsLinux()
-            && TryReadMemInfoValue("MemAvailable:", out var memAvailableKb))
+            && TryReadMemInfoValue("MemAvailable:", out var memAvailableKb)
+            && TryReadMemInfoValue("MemTotal:", out var memTotalKb))
         {
-            return memAvailableKb * 1024UL;
+            return new WorkerMemoryInfo(memAvailableKb * 1024UL, memTotalKb * 1024UL);
         }
 
         var gcInfo = GC.GetGCMemoryInfo();
         var totalAvailable = gcInfo.TotalAvailableMemoryBytes;
-        return totalAvailable > 0 ? (ulong)totalAvailable : 0UL;
+        var totalBytes = totalAvailable > 0 ? (ulong)totalAvailable : 0UL;
+        return new WorkerMemoryInfo(totalBytes, totalBytes);
     }
 
-    private static ulong ProbeStorageFreeBytes(string storageProbePath)
+    private static WorkerMemoryInfo ProbeStorageInfo(string storageProbePath)
     {
         try
         {
@@ -378,14 +435,16 @@ public sealed class WorkerNodeCapabilityProvider
 
             if (drive is null)
             {
-                return 0;
+                return WorkerMemoryInfo.Empty;
             }
 
-            return ToUnsignedBytes(drive.AvailableFreeSpace);
+            return new WorkerMemoryInfo(
+                ToUnsignedBytes(drive.AvailableFreeSpace),
+                ToUnsignedBytes(drive.TotalSize));
         }
         catch
         {
-            return 0UL;
+            return WorkerMemoryInfo.Empty;
         }
     }
 
@@ -442,6 +501,16 @@ public sealed class WorkerNodeCapabilityProvider
         }
 
         return (float)Math.Round(rawScore, 3, MidpointRounding.AwayFromZero);
+    }
+
+    private static float NormalizePercent(double rawPercent)
+    {
+        if (!double.IsFinite(rawPercent) || rawPercent <= 0d)
+        {
+            return 0f;
+        }
+
+        return (float)Math.Round(Math.Min(100d, rawPercent), 3, MidpointRounding.AwayFromZero);
     }
 
     private static ulong ToUnsignedBytes(long value)
@@ -541,10 +610,13 @@ public sealed class WorkerNodeCapabilityProvider
     public sealed record WorkerCapabilityBaseline(
         uint CpuCores,
         ulong RamFreeBytes,
+        ulong RamTotalBytes,
         ulong StorageFreeBytes,
+        ulong StorageTotalBytes,
         bool HasGpu,
         string GpuName,
         ulong VramFreeBytes,
+        ulong VramTotalBytes,
         bool IlgpuCudaAvailable,
         bool IlgpuOpenclAvailable);
 
@@ -553,12 +625,22 @@ public sealed class WorkerNodeCapabilityProvider
         public static readonly WorkerCapabilityScores Empty = new(0f, 0f);
     }
 
+    private sealed record WorkerCapabilityRuntimeLoad(float ProcessCpuLoadPercent, ulong ProcessRamUsedBytes);
+
     private sealed record WorkerGpuInfo(
         bool HasGpu,
         string GpuName,
         ulong VramFreeBytes,
+        ulong VramTotalBytes,
         bool IlgpuCudaAvailable,
         bool IlgpuOpenclAvailable);
+
+    private sealed record WorkerMemoryInfo(ulong FreeBytes, ulong TotalBytes)
+    {
+        public static readonly WorkerMemoryInfo Empty = new(0, 0);
+    }
+
+    private sealed record ProcessCpuSample(DateTimeOffset Timestamp, TimeSpan ProcessCpuTime);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
     private struct MemoryStatusEx

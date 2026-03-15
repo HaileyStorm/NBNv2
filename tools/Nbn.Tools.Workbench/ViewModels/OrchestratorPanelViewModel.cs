@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -60,6 +61,19 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _sampleBrainStatus = "Not running.";
     private string _profileCurrentSystemStatus = "Idle";
     private string _workerEndpointSummary = "No active workers.";
+    private string _workerCapabilityRefreshSecondsText = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(CultureInfo.InvariantCulture);
+    private string _workerPressureRebalanceWindowText = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture);
+    private string _workerPressureViolationRatioText = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio);
+    private string _workerPressureTolerancePercentText = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent);
+    private string _workerPolicyStatus = "Settings-backed defaults.";
+    private string _workerCapabilityRefreshSecondsServerValue = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(CultureInfo.InvariantCulture);
+    private string _workerPressureRebalanceWindowServerValue = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture);
+    private string _workerPressureViolationRatioServerValue = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio);
+    private string _workerPressureTolerancePercentServerValue = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent);
+    private bool _workerCapabilityRefreshSecondsDirty;
+    private bool _workerPressureRebalanceWindowDirty;
+    private bool _workerPressureViolationRatioDirty;
+    private bool _workerPressureTolerancePercentDirty;
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
     private readonly CancellationTokenSource _refreshCts = new();
     private static readonly HashSet<string> EndpointRefreshTriggerProperties = new(StringComparer.Ordinal)
@@ -119,6 +133,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Terminations = new ObservableCollection<BrainTerminatedItem>();
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(force: true));
         ApplySettingsCommand = new AsyncRelayCommand(ApplySettingsAsync);
+        ApplyWorkerPolicyCommand = new AsyncRelayCommand(ApplyWorkerPolicyAsync);
         StartSettingsMonitorCommand = new AsyncRelayCommand(StartSettingsMonitorAsync);
         StopSettingsMonitorCommand = new AsyncRelayCommand(() => StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value));
         StartHiveMindCommand = new AsyncRelayCommand(StartHiveMindAsync);
@@ -160,6 +175,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     public AsyncRelayCommand RefreshCommand { get; }
 
     public AsyncRelayCommand ApplySettingsCommand { get; }
+
+    public AsyncRelayCommand ApplyWorkerPolicyCommand { get; }
 
     public AsyncRelayCommand StartSettingsMonitorCommand { get; }
 
@@ -252,6 +269,72 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         set => SetProperty(ref _workerEndpointSummary, value);
     }
 
+    public string WorkerCapabilityRefreshSecondsText
+    {
+        get => _workerCapabilityRefreshSecondsText;
+        set
+        {
+            if (SetProperty(ref _workerCapabilityRefreshSecondsText, value))
+            {
+                _workerCapabilityRefreshSecondsDirty = !string.Equals(
+                    NormalizeWorkerPolicyValue(value),
+                    _workerCapabilityRefreshSecondsServerValue,
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    public string WorkerPressureRebalanceWindowText
+    {
+        get => _workerPressureRebalanceWindowText;
+        set
+        {
+            if (SetProperty(ref _workerPressureRebalanceWindowText, value))
+            {
+                _workerPressureRebalanceWindowDirty = !string.Equals(
+                    NormalizeWorkerPolicyValue(value),
+                    _workerPressureRebalanceWindowServerValue,
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    public string WorkerPressureViolationRatioText
+    {
+        get => _workerPressureViolationRatioText;
+        set
+        {
+            if (SetProperty(ref _workerPressureViolationRatioText, value))
+            {
+                _workerPressureViolationRatioDirty = !string.Equals(
+                    NormalizeWorkerPolicyValue(value),
+                    _workerPressureViolationRatioServerValue,
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    public string WorkerPressureTolerancePercentText
+    {
+        get => _workerPressureTolerancePercentText;
+        set
+        {
+            if (SetProperty(ref _workerPressureTolerancePercentText, value))
+            {
+                _workerPressureTolerancePercentDirty = !string.Equals(
+                    NormalizeWorkerPolicyValue(value),
+                    _workerPressureTolerancePercentServerValue,
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    public string WorkerPolicyStatus
+    {
+        get => _workerPolicyStatus;
+        set => SetProperty(ref _workerPolicyStatus, value);
+    }
+
     public string ProfileCurrentSystemStatus
     {
         get => _profileCurrentSystemStatus;
@@ -274,6 +357,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Settings.Add(new SettingEntryViewModel(item.Key, item.Value, FormatUpdated(item.Updated)));
             }
 
+            TryApplyWorkerPolicySetting(item);
             TryApplyServiceEndpointSetting(item);
         });
     }
@@ -489,12 +573,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        if (!TryParseNonNegativeInt(Connections.WorkerCapabilityBenchmarkRefreshSecondsText, out var benchmarkRefreshSeconds))
-        {
-            WorkerLaunchStatus = "Invalid worker benchmark refresh seconds.";
-            return;
-        }
-
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -505,7 +583,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.WorkerHost} --port {workerPort}"
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
-                 + $" --capability-benchmark-refresh-seconds {benchmarkRefreshSeconds}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.WorkerNode", args, "WorkerNode").ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
@@ -670,6 +747,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     {
                         existing.UpdateFromServer(entry.Value, FormatUpdated(entry.Updated), preserveEdits: true);
                     }
+
+                    TryApplyWorkerPolicySetting(entry);
                 }
 
                 var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(settings);
@@ -1010,6 +1089,125 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
     }
 
+    private bool TryApplyWorkerPolicySetting(SettingItem item)
+    {
+        if (string.IsNullOrWhiteSpace(item.Key))
+        {
+            return false;
+        }
+
+        if (string.Equals(item.Key, WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyWorkerPolicyServerValue(
+                NormalizeWorkerPolicyValue(item.Value, _workerCapabilityRefreshSecondsServerValue),
+                ref _workerCapabilityRefreshSecondsServerValue,
+                ref _workerCapabilityRefreshSecondsDirty,
+                value => WorkerCapabilityRefreshSecondsText = value);
+            return true;
+        }
+
+        if (string.Equals(item.Key, WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyWorkerPolicyServerValue(
+                NormalizeWorkerPolicyValue(item.Value, _workerPressureRebalanceWindowServerValue),
+                ref _workerPressureRebalanceWindowServerValue,
+                ref _workerPressureRebalanceWindowDirty,
+                value => WorkerPressureRebalanceWindowText = value);
+            return true;
+        }
+
+        if (string.Equals(item.Key, WorkerCapabilitySettingsKeys.PressureViolationRatioKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyWorkerPolicyServerValue(
+                NormalizeWorkerPolicyValue(item.Value, _workerPressureViolationRatioServerValue),
+                ref _workerPressureViolationRatioServerValue,
+                ref _workerPressureViolationRatioDirty,
+                value => WorkerPressureViolationRatioText = value);
+            return true;
+        }
+
+        if (string.Equals(item.Key, WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyWorkerPolicyServerValue(
+                NormalizeWorkerPolicyValue(item.Value, _workerPressureTolerancePercentServerValue),
+                ref _workerPressureTolerancePercentServerValue,
+                ref _workerPressureTolerancePercentDirty,
+                value => WorkerPressureTolerancePercentText = value);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task ApplyWorkerPolicyAsync()
+    {
+        if (!Connections.SettingsConnected)
+        {
+            WorkerPolicyStatus = "SettingsMonitor not connected.";
+            return;
+        }
+
+        if (!TryParseNonNegativeInt(WorkerCapabilityRefreshSecondsText, out var refreshSeconds))
+        {
+            WorkerPolicyStatus = "Invalid capability refresh seconds.";
+            return;
+        }
+
+        if (!TryParsePositiveInt(WorkerPressureRebalanceWindowText, out var window))
+        {
+            WorkerPolicyStatus = "Invalid pressure window.";
+            return;
+        }
+
+        if (!TryParseNonNegativeDouble(WorkerPressureViolationRatioText, out var violationRatio))
+        {
+            WorkerPolicyStatus = "Invalid pressure violation ratio.";
+            return;
+        }
+
+        if (!TryParseNonNegativeDouble(WorkerPressureTolerancePercentText, out var tolerancePercent))
+        {
+            WorkerPolicyStatus = "Invalid pressure tolerance percent.";
+            return;
+        }
+
+        var desired = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey] = refreshSeconds.ToString(CultureInfo.InvariantCulture),
+            [WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey] = Math.Max(1, window).ToString(CultureInfo.InvariantCulture),
+            [WorkerCapabilitySettingsKeys.PressureViolationRatioKey] = WorkerCapabilityMath.FormatRatio(Math.Clamp(violationRatio, 0d, 1d)),
+            [WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey] = WorkerCapabilityMath.FormatRatio(Math.Max(0d, tolerancePercent))
+        };
+
+        var dirtyKeys = desired
+            .Where(entry => !string.Equals(GetWorkerPolicyServerValue(entry.Key), entry.Value, StringComparison.Ordinal))
+            .ToArray();
+        if (dirtyKeys.Length == 0)
+        {
+            WorkerPolicyStatus = "No worker policy changes.";
+            return;
+        }
+
+        WorkerPolicyStatus = $"Applying {dirtyKeys.Length} worker policy setting(s)...";
+        foreach (var entry in dirtyKeys)
+        {
+            var result = await _client.SetSettingAsync(entry.Key, entry.Value).ConfigureAwait(false);
+            if (result is null)
+            {
+                continue;
+            }
+
+            _dispatcher.Post(() =>
+            {
+                MarkWorkerPolicyApplied(
+                    result.Key ?? entry.Key,
+                    result.Value ?? entry.Value);
+            });
+        }
+
+        WorkerPolicyStatus = "Worker policy updated.";
+    }
+
     private async Task ApplySettingsAsync()
     {
         if (!Connections.SettingsConnected)
@@ -1042,6 +1240,68 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         StatusMessage = "Settings updated.";
     }
+
+    private static void ApplyWorkerPolicyServerValue(
+        string normalizedValue,
+        ref string serverValue,
+        ref bool dirty,
+        Action<string> applyValue)
+    {
+        serverValue = normalizedValue;
+        if (!dirty)
+        {
+            applyValue(normalizedValue);
+        }
+    }
+
+    private void MarkWorkerPolicyApplied(string key, string value)
+    {
+        var normalized = NormalizeWorkerPolicyValue(value);
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _workerCapabilityRefreshSecondsServerValue = normalized;
+            _workerCapabilityRefreshSecondsDirty = false;
+            WorkerCapabilityRefreshSecondsText = normalized;
+            return;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _workerPressureRebalanceWindowServerValue = normalized;
+            _workerPressureRebalanceWindowDirty = false;
+            WorkerPressureRebalanceWindowText = normalized;
+            return;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.PressureViolationRatioKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _workerPressureViolationRatioServerValue = normalized;
+            _workerPressureViolationRatioDirty = false;
+            WorkerPressureViolationRatioText = normalized;
+            return;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _workerPressureTolerancePercentServerValue = normalized;
+            _workerPressureTolerancePercentDirty = false;
+            WorkerPressureTolerancePercentText = normalized;
+        }
+    }
+
+    private string GetWorkerPolicyServerValue(string key)
+        => key switch
+        {
+            var value when string.Equals(value, WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey, StringComparison.OrdinalIgnoreCase)
+                => _workerCapabilityRefreshSecondsServerValue,
+            var value when string.Equals(value, WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey, StringComparison.OrdinalIgnoreCase)
+                => _workerPressureRebalanceWindowServerValue,
+            var value when string.Equals(value, WorkerCapabilitySettingsKeys.PressureViolationRatioKey, StringComparison.OrdinalIgnoreCase)
+                => _workerPressureViolationRatioServerValue,
+            var value when string.Equals(value, WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, StringComparison.OrdinalIgnoreCase)
+                => _workerPressureTolerancePercentServerValue,
+            _ => string.Empty
+        };
 
     private static void Trim<T>(ObservableCollection<T> collection)
     {
@@ -1356,6 +1616,24 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private static bool TryParseNonNegativeInt(string value, out int parsed)
         => int.TryParse(value, out parsed) && parsed >= 0;
+
+    private static bool TryParsePositiveInt(string value, out int parsed)
+        => int.TryParse(value, out parsed) && parsed > 0;
+
+    private static bool TryParseNonNegativeDouble(string value, out double parsed)
+        => double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out parsed)
+           && double.IsFinite(parsed)
+           && parsed >= 0d;
+
+    private static string NormalizeWorkerPolicyValue(string? value, string? fallback = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback ?? string.Empty;
+        }
+
+        return value.Trim();
+    }
 
     private static bool IsFresh(ulong lastSeenMs, long nowMs)
     {

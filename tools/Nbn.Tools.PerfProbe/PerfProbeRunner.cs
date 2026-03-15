@@ -93,7 +93,14 @@ public static class PerfProbeRunner
                 ["cpu_score"] = capabilities.CpuScore,
                 ["cpu_cores"] = capabilities.CpuCores,
                 ["ram_free_bytes"] = capabilities.RamFreeBytes,
-                ["storage_free_bytes"] = capabilities.StorageFreeBytes
+                ["ram_total_bytes"] = capabilities.RamTotalBytes,
+                ["storage_free_bytes"] = capabilities.StorageFreeBytes,
+                ["storage_total_bytes"] = capabilities.StorageTotalBytes,
+                ["cpu_limit_percent"] = capabilities.CpuLimitPercent,
+                ["ram_limit_percent"] = capabilities.RamLimitPercent,
+                ["storage_limit_percent"] = capabilities.StorageLimitPercent,
+                ["process_cpu_load_percent"] = capabilities.ProcessCpuLoadPercent,
+                ["process_ram_used_bytes"] = capabilities.ProcessRamUsedBytes
             })));
 
         if (capabilities.HasGpu && capabilities.GpuScore > 0f)
@@ -113,7 +120,10 @@ public static class PerfProbeRunner
                 Metrics: new Dictionary<string, double>
                 {
                     ["gpu_score"] = capabilities.GpuScore,
-                    ["vram_free_bytes"] = capabilities.VramFreeBytes
+                    ["vram_free_bytes"] = capabilities.VramFreeBytes,
+                    ["vram_total_bytes"] = capabilities.VramTotalBytes,
+                    ["gpu_compute_limit_percent"] = capabilities.GpuComputeLimitPercent,
+                    ["gpu_vram_limit_percent"] = capabilities.GpuVramLimitPercent
                 })));
         }
         else
@@ -380,7 +390,7 @@ public static class PerfProbeRunner
             var availability = Math.Max(35, 100 - (i * 5));
             var scaled = WorkerCapabilityScaling.ApplyScale(
                 capabilities,
-                new WorkerResourceAvailability(availability, availability, availability, availability));
+                new WorkerResourceAvailability(availability, availability, availability, availability, availability));
             workers[i] = new PlacementPlanner.WorkerCandidate(
                 NodeId: Guid.NewGuid(),
                 WorkerAddress: $"worker-{i}.local",
@@ -390,11 +400,22 @@ public static class PerfProbeRunner
                 IsFresh: true,
                 CpuCores: scaled.CpuCores,
                 RamFreeBytes: (long)scaled.RamFreeBytes,
+                RamTotalBytes: (long)scaled.RamTotalBytes,
                 StorageFreeBytes: (long)scaled.StorageFreeBytes,
+                StorageTotalBytes: (long)scaled.StorageTotalBytes,
                 HasGpu: scaled.HasGpu,
                 VramFreeBytes: (long)scaled.VramFreeBytes,
+                VramTotalBytes: (long)scaled.VramTotalBytes,
                 CpuScore: scaled.CpuScore,
                 GpuScore: scaled.GpuScore,
+                CpuLimitPercent: scaled.CpuLimitPercent,
+                RamLimitPercent: scaled.RamLimitPercent,
+                StorageLimitPercent: scaled.StorageLimitPercent,
+                GpuComputeLimitPercent: scaled.GpuComputeLimitPercent,
+                GpuVramLimitPercent: scaled.GpuVramLimitPercent,
+                ProcessCpuLoadPercent: scaled.ProcessCpuLoadPercent,
+                ProcessRamUsedBytes: (long)scaled.ProcessRamUsedBytes,
+                PressureLimitTolerancePercent: (float)WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent,
                 AveragePeerLatencyMs: 0.75f + i,
                 PeerLatencySampleCount: 4,
                 HostedBrainCount: i % 3);

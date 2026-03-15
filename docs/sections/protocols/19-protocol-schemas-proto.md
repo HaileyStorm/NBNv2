@@ -204,6 +204,16 @@ message NodeCapabilities {
   bool ilgpu_cuda_available = 8;
   bool ilgpu_opencl_available = 9;
   fixed64 storage_free_bytes = 10;
+  fixed64 ram_total_bytes = 11;
+  fixed64 storage_total_bytes = 12;
+  fixed64 vram_total_bytes = 13;
+  uint32 cpu_limit_percent = 14;
+  uint32 ram_limit_percent = 15;
+  uint32 storage_limit_percent = 16;
+  uint32 gpu_compute_limit_percent = 17;
+  uint32 gpu_vram_limit_percent = 18;
+  float process_cpu_load_percent = 19;
+  fixed64 process_ram_used_bytes = 20;
 }
 
 message NodeStatus {
@@ -234,6 +244,26 @@ message NodeListRequest { }
 
 message NodeListResponse {
   repeated NodeStatus nodes = 1;
+}
+
+message WorkerInventorySnapshotRequest { }
+
+message WorkerReadinessCapability {
+  nbn.Uuid node_id = 1;
+  string logical_name = 2;
+  string address = 3;
+  string root_actor_name = 4;
+  bool is_alive = 5;
+  bool is_ready = 6;
+  fixed64 last_seen_ms = 7;
+  bool has_capabilities = 8;
+  fixed64 capability_time_ms = 9;
+  NodeCapabilities capabilities = 10;
+}
+
+message WorkerInventorySnapshotResponse {
+  repeated WorkerReadinessCapability workers = 1;
+  fixed64 snapshot_ms = 2;
 }
 
 message BrainListRequest { }
@@ -559,6 +589,16 @@ message PlacementWorkerInventoryEntry {
   fixed64 storage_free_bytes = 13;
   float average_peer_latency_ms = 14;
   uint32 peer_latency_sample_count = 15;
+  fixed64 ram_total_bytes = 16;
+  fixed64 storage_total_bytes = 17;
+  fixed64 vram_total_bytes = 18;
+  uint32 cpu_limit_percent = 19;
+  uint32 ram_limit_percent = 20;
+  uint32 storage_limit_percent = 21;
+  uint32 gpu_compute_limit_percent = 22;
+  uint32 gpu_vram_limit_percent = 23;
+  float process_cpu_load_percent = 24;
+  fixed64 process_ram_used_bytes = 25;
 }
 
 message PlacementPeerTarget {
@@ -580,6 +620,17 @@ message PlacementPeerLatencyResponse {
 
 message PlacementLatencyEchoRequest { }
 message PlacementLatencyEchoAck { }
+
+message WorkerCapabilityRefreshRequest {
+  fixed64 requested_ms = 1;
+  string reason = 2;
+}
+
+message WorkerCapabilityRefreshAck {
+  bool accepted = 1;
+  fixed64 requested_ms = 2;
+  string message = 3;
+}
 ```
 
 ### 19.5 `nbn_signals.proto`

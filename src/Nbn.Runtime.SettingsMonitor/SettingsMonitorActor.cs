@@ -182,7 +182,17 @@ public sealed class SettingsMonitorActor : IActor
                 caps.CpuScore,
                 caps.GpuScore,
                 caps.IlgpuCudaAvailable,
-                caps.IlgpuOpenclAvailable));
+                caps.IlgpuOpenclAvailable,
+                (long)caps.RamTotalBytes,
+                (long)caps.StorageTotalBytes,
+                (long)caps.VramTotalBytes,
+                caps.CpuLimitPercent,
+                caps.RamLimitPercent,
+                caps.StorageLimitPercent,
+                caps.GpuComputeLimitPercent,
+                caps.GpuVramLimitPercent,
+                caps.ProcessCpuLoadPercent,
+                (long)caps.ProcessRamUsedBytes));
 
         var task = _store.RecordHeartbeatAsync(heartbeat);
         context.ReenterAfter(task, completed =>
@@ -357,7 +367,17 @@ public sealed class SettingsMonitorActor : IActor
                                 CpuScore = worker.CpuScore,
                                 GpuScore = worker.GpuScore,
                                 IlgpuCudaAvailable = worker.IlgpuCudaAvailable,
-                                IlgpuOpenclAvailable = worker.IlgpuOpenclAvailable
+                                IlgpuOpenclAvailable = worker.IlgpuOpenclAvailable,
+                                RamTotalBytes = (ulong)Math.Max(0, worker.RamTotalBytes),
+                                StorageTotalBytes = (ulong)Math.Max(0, worker.StorageTotalBytes),
+                                VramTotalBytes = (ulong)Math.Max(0, worker.VramTotalBytes),
+                                CpuLimitPercent = worker.CpuLimitPercent,
+                                RamLimitPercent = worker.RamLimitPercent,
+                                StorageLimitPercent = worker.StorageLimitPercent,
+                                GpuComputeLimitPercent = worker.GpuComputeLimitPercent,
+                                GpuVramLimitPercent = worker.GpuVramLimitPercent,
+                                ProcessCpuLoadPercent = worker.ProcessCpuLoadPercent,
+                                ProcessRamUsedBytes = (ulong)Math.Max(0, worker.ProcessRamUsedBytes)
                             }
                         });
                     }

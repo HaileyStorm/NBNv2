@@ -22,7 +22,8 @@ NBN treats placement as a runtime concern:
 * Settings store: global configuration and mutable runtime settings
 * Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
 * Capability store: node CPU/GPU characteristics and benchmark scores
-  * Worker nodes publish real probed CPU cores, free RAM, free storage, GPU/VRAM visibility, and ILGPU accelerator availability when the host/runtime can resolve them.
+  * Worker nodes publish real probed CPU cores, raw free/total RAM and storage, GPU/VRAM visibility, ILGPU accelerator availability, explicit CPU/GPU scores, explicit NBN limit percentages, and current load/pressure snapshots when the host/runtime can resolve them.
+  * SettingsMonitor is the canonical persisted snapshot for those worker capability rows; HiveMind still owns freshness filtering, rerun requests, and placement/rebalance policy on top of the stored snapshot.
   * CPU/GPU scores are explicit measured/configured values used as placement inputs; placeholder zero scores are not the intended steady-state contract for workers.
 * All other services report via SettingsMonitor proto messages (no direct DB access); HiveMind publishes brain lifecycle/tick/controller updates
 
@@ -31,6 +32,7 @@ NBN treats placement as a runtime concern:
 * Owns the **global tick counter** and all tick pacing
 * Coordinates brain spawning/unloading
 * Coordinates placement, rescheduling, and recovery
+* Owns the settings-backed worker capability rerun cadence and pressure-triggered rebalance decisions
 * Aggregates cost and enforces energy policies
 
 **IO Gateway**

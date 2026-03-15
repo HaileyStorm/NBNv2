@@ -2764,10 +2764,19 @@ public sealed class HiveMindPlacementOrchestrationTests
             {
                 CpuCores = 8,
                 RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                RamTotalBytes = 16UL * 1024 * 1024 * 1024,
+                StorageFreeBytes = 64UL * 1024 * 1024 * 1024,
+                StorageTotalBytes = 128UL * 1024 * 1024 * 1024,
                 HasGpu = true,
                 VramFreeBytes = 8UL * 1024 * 1024 * 1024,
+                VramTotalBytes = 16UL * 1024 * 1024 * 1024,
                 CpuScore = 40f,
-                GpuScore = 80f
+                GpuScore = 80f,
+                CpuLimitPercent = 100,
+                RamLimitPercent = 100,
+                StorageLimitPercent = 100,
+                GpuComputeLimitPercent = 100,
+                GpuVramLimitPercent = 100
             }
         };
 

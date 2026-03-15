@@ -8,8 +8,8 @@ Owns worker node inventory, placement execution endpoints, and lifecycle partici
 - Artifact-backed placement resolves non-file `store_uri` values through the shared artifact resolver, including built-in HTTP(S) artifact services and env-mapped logical store URIs. Resolver-wrapped remote stores keep node-local cache behavior under `NBN_ARTIFACT_CACHE_ROOT`; transport/configuration failures remain retryable placement failures until metadata or artifact bytes become reachable.
 - WorkerNode answers targeted peer-latency probe requests for HiveMind placement decisions and reports average RTT plus sample count per requested peer.
 - Peer RTT probes use request/reply echo messages against the peer worker root actor. The echo request must respond directly to the caller so remoting preserves the real sender for round-trip measurement.
-- WorkerNode heartbeats publish capability snapshots derived from real host probing plus explicit CPU/GPU score calculation. Scaling knobs (`--cpu-pct`, `--ram-pct`, `--storage-pct`, `--gpu-pct`) apply after probing so simulated partial-capacity workers still preserve realistic relative resource ratios and accelerator flags.
-- Worker CPU/GPU score microbenchmarks run on initial publication, are rerun on the next heartbeat after placement changes invalidate the cache, and have a configurable steady-state rerun cadence (`--capability-benchmark-refresh-seconds`, `0 = every heartbeat`).
+- WorkerNode heartbeats publish raw capability snapshots derived from real host probing plus explicit CPU/GPU score calculation, then attach explicit NBN limit metadata (`--cpu-pct`, `--ram-pct`, `--storage-pct`, `--gpu-compute-pct`, `--gpu-vram-pct`; legacy `--gpu-pct` sets both GPU limits).
+- Worker CPU/GPU score microbenchmarks run on initial publication, are rerun on the next heartbeat after placement changes invalidate the score cache, and are also rerun when HiveMind sends the settings-backed capability refresh request cadence. WorkerNode never bypasses SettingsMonitor with direct capability replies.
 
 ## Maintenance guidance
 

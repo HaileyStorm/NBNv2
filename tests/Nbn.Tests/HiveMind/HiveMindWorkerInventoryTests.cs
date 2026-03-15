@@ -30,13 +30,16 @@ public sealed class HiveMindWorkerInventoryTests
             {
                 CpuCores = 24,
                 RamFreeBytes = 16UL * 1024 * 1024 * 1024,
+                RamTotalBytes = 32UL * 1024 * 1024 * 1024,
                 StorageFreeBytes = 100UL * 1024 * 1024 * 1024,
+                StorageTotalBytes = 150UL * 1024 * 1024 * 1024,
                 HasGpu = true,
                 VramFreeBytes = 24UL * 1024 * 1024 * 1024,
+                VramTotalBytes = 32UL * 1024 * 1024 * 1024,
                 CpuScore = 89f,
                 GpuScore = 88f
             },
-            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 50, storagePercent: 50, gpuPercent: 50));
+            new WorkerResourceAvailability(cpuPercent: 50, ramPercent: 50, storagePercent: 50, gpuComputePercent: 50, gpuVramPercent: 50));
 
         root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
         {
@@ -53,11 +56,19 @@ public sealed class HiveMindWorkerInventoryTests
                     rootActorName: "region-host",
                     cpuCores: scaled.CpuCores,
                     ramFreeBytes: (long)scaled.RamFreeBytes,
+                    ramTotalBytes: (long)scaled.RamTotalBytes,
                     storageFreeBytes: (long)scaled.StorageFreeBytes,
+                    storageTotalBytes: (long)scaled.StorageTotalBytes,
                     hasGpu: scaled.HasGpu,
                     vramFreeBytes: (long)scaled.VramFreeBytes,
+                    vramTotalBytes: (long)scaled.VramTotalBytes,
                     cpuScore: scaled.CpuScore,
-                    gpuScore: scaled.GpuScore),
+                    gpuScore: scaled.GpuScore,
+                    cpuLimitPercent: scaled.CpuLimitPercent,
+                    ramLimitPercent: scaled.RamLimitPercent,
+                    storageLimitPercent: scaled.StorageLimitPercent,
+                    gpuComputeLimitPercent: scaled.GpuComputeLimitPercent,
+                    gpuVramLimitPercent: scaled.GpuVramLimitPercent),
                 BuildWorker(
                     staleWorkerId,
                     isAlive: true,
@@ -104,6 +115,14 @@ public sealed class HiveMindWorkerInventoryTests
         Assert.Equal(scaled.GpuScore, worker.GpuScore);
         Assert.True(worker.HasGpu);
         Assert.Equal(scaled.VramFreeBytes, worker.VramFreeBytes);
+        Assert.Equal(scaled.RamTotalBytes, worker.RamTotalBytes);
+        Assert.Equal(scaled.StorageTotalBytes, worker.StorageTotalBytes);
+        Assert.Equal(scaled.VramTotalBytes, worker.VramTotalBytes);
+        Assert.Equal(scaled.CpuLimitPercent, worker.CpuLimitPercent);
+        Assert.Equal(scaled.RamLimitPercent, worker.RamLimitPercent);
+        Assert.Equal(scaled.StorageLimitPercent, worker.StorageLimitPercent);
+        Assert.Equal(scaled.GpuComputeLimitPercent, worker.GpuComputeLimitPercent);
+        Assert.Equal(scaled.GpuVramLimitPercent, worker.GpuVramLimitPercent);
 
         await system.ShutdownAsync();
     }
@@ -281,7 +300,15 @@ public sealed class HiveMindWorkerInventoryTests
         bool hasGpu = false,
         long vramFreeBytes = 0,
         float cpuScore = 10f,
-        float gpuScore = 0f)
+        float gpuScore = 0f,
+        uint cpuLimitPercent = 100,
+        uint ramLimitPercent = 100,
+        uint storageLimitPercent = 100,
+        uint gpuComputeLimitPercent = 100,
+        uint gpuVramLimitPercent = 100,
+        long ramTotalBytes = 4L * 1024 * 1024 * 1024,
+        long storageTotalBytes = 50L * 1024 * 1024 * 1024,
+        long vramTotalBytes = 8L * 1024 * 1024 * 1024)
     {
         var hasCapabilities = capabilityTimeMs > 0;
         return new ProtoSettings.WorkerReadinessCapability
@@ -299,11 +326,19 @@ public sealed class HiveMindWorkerInventoryTests
             {
                 CpuCores = cpuCores,
                 RamFreeBytes = ramFreeBytes > 0 ? (ulong)ramFreeBytes : 0,
+                RamTotalBytes = ramTotalBytes > 0 ? (ulong)ramTotalBytes : 0,
                 StorageFreeBytes = storageFreeBytes > 0 ? (ulong)storageFreeBytes : 0,
+                StorageTotalBytes = storageTotalBytes > 0 ? (ulong)storageTotalBytes : 0,
                 HasGpu = hasGpu,
                 VramFreeBytes = vramFreeBytes > 0 ? (ulong)vramFreeBytes : 0,
+                VramTotalBytes = vramTotalBytes > 0 ? (ulong)vramTotalBytes : 0,
                 CpuScore = cpuScore,
-                GpuScore = gpuScore
+                GpuScore = gpuScore,
+                CpuLimitPercent = cpuLimitPercent,
+                RamLimitPercent = ramLimitPercent,
+                StorageLimitPercent = storageLimitPercent,
+                GpuComputeLimitPercent = gpuComputeLimitPercent,
+                GpuVramLimitPercent = gpuVramLimitPercent
             }
         };
     }

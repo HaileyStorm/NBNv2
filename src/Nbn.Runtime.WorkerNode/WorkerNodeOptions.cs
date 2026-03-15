@@ -14,8 +14,7 @@ public sealed record WorkerNodeOptions(
     string SettingsName,
     Guid? WorkerNodeId,
     WorkerServiceRole ServiceRoles,
-    WorkerResourceAvailability ResourceAvailability,
-    int CapabilityBenchmarkRefreshSeconds)
+    WorkerResourceAvailability ResourceAvailability)
 {
     public static WorkerNodeOptions FromArgs(string[] args)
     {
@@ -34,8 +33,14 @@ public sealed record WorkerNodeOptions(
         var cpuPercent = GetEnvPercent("NBN_WORKER_CPU_PCT", WorkerResourceAvailability.DefaultPercent);
         var ramPercent = GetEnvPercent("NBN_WORKER_RAM_PCT", WorkerResourceAvailability.DefaultPercent);
         var storagePercent = GetEnvPercent("NBN_WORKER_STORAGE_PCT", WorkerResourceAvailability.DefaultPercent);
-        var gpuPercent = GetEnvPercent("NBN_WORKER_GPU_PCT", WorkerResourceAvailability.DefaultPercent);
-        var capabilityBenchmarkRefreshSeconds = GetEnvNonNegativeInt("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", 3600);
+        var gpuComputePercent = GetEnvPercent("NBN_WORKER_GPU_COMPUTE_PCT", WorkerResourceAvailability.DefaultPercent);
+        var gpuVramPercent = GetEnvPercent("NBN_WORKER_GPU_VRAM_PCT", WorkerResourceAvailability.DefaultPercent);
+        var legacyGpuPercent = GetOptionalEnvPercent("NBN_WORKER_GPU_PCT");
+        if (legacyGpuPercent.HasValue)
+        {
+            gpuComputePercent = legacyGpuPercent.Value;
+            gpuVramPercent = legacyGpuPercent.Value;
+        }
         if (!string.IsNullOrWhiteSpace(serviceRolesRaw))
         {
             serviceRoles = WorkerServiceRoles.ParseRoleSet(serviceRolesRaw, "NBN_WORKER_SERVICE_ROLES");
@@ -148,11 +153,17 @@ public sealed record WorkerNodeOptions(
                     continue;
                 case "--gpu-pct":
                 case "--gpu_pct":
-                    gpuPercent = ParseCliPercent(args, ref index, arg);
+                    var legacyCliGpuPercent = ParseCliPercent(args, ref index, arg);
+                    gpuComputePercent = legacyCliGpuPercent;
+                    gpuVramPercent = legacyCliGpuPercent;
                     continue;
-                case "--capability-benchmark-refresh-seconds":
-                case "--benchmark-refresh-seconds":
-                    capabilityBenchmarkRefreshSeconds = ParseCliNonNegativeInt(args, ref index, arg);
+                case "--gpu-compute-pct":
+                case "--gpu_compute_pct":
+                    gpuComputePercent = ParseCliPercent(args, ref index, arg);
+                    continue;
+                case "--gpu-vram-pct":
+                case "--gpu_vram_pct":
+                    gpuVramPercent = ParseCliPercent(args, ref index, arg);
                     continue;
             }
 
@@ -308,29 +319,41 @@ public sealed record WorkerNodeOptions(
 
             if (arg.StartsWith("--gpu-pct=", StringComparison.OrdinalIgnoreCase))
             {
-                gpuPercent = ParsePercent(arg.Substring("--gpu-pct=".Length), "--gpu-pct");
+                var legacyInlineGpuPercent = ParsePercent(arg.Substring("--gpu-pct=".Length), "--gpu-pct");
+                gpuComputePercent = legacyInlineGpuPercent;
+                gpuVramPercent = legacyInlineGpuPercent;
                 continue;
             }
 
             if (arg.StartsWith("--gpu_pct=", StringComparison.OrdinalIgnoreCase))
             {
-                gpuPercent = ParsePercent(arg.Substring("--gpu_pct=".Length), "--gpu_pct");
+                var legacyInlineGpuPercent = ParsePercent(arg.Substring("--gpu_pct=".Length), "--gpu_pct");
+                gpuComputePercent = legacyInlineGpuPercent;
+                gpuVramPercent = legacyInlineGpuPercent;
                 continue;
             }
 
-            if (arg.StartsWith("--capability-benchmark-refresh-seconds=", StringComparison.OrdinalIgnoreCase))
+            if (arg.StartsWith("--gpu-compute-pct=", StringComparison.OrdinalIgnoreCase))
             {
-                capabilityBenchmarkRefreshSeconds = ParseNonNegativeInt(
-                    arg.Substring("--capability-benchmark-refresh-seconds=".Length),
-                    "--capability-benchmark-refresh-seconds");
+                gpuComputePercent = ParsePercent(arg.Substring("--gpu-compute-pct=".Length), "--gpu-compute-pct");
                 continue;
             }
 
-            if (arg.StartsWith("--benchmark-refresh-seconds=", StringComparison.OrdinalIgnoreCase))
+            if (arg.StartsWith("--gpu_compute_pct=", StringComparison.OrdinalIgnoreCase))
             {
-                capabilityBenchmarkRefreshSeconds = ParseNonNegativeInt(
-                    arg.Substring("--benchmark-refresh-seconds=".Length),
-                    "--benchmark-refresh-seconds");
+                gpuComputePercent = ParsePercent(arg.Substring("--gpu_compute_pct=".Length), "--gpu_compute_pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--gpu-vram-pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                gpuVramPercent = ParsePercent(arg.Substring("--gpu-vram-pct=".Length), "--gpu-vram-pct");
+                continue;
+            }
+
+            if (arg.StartsWith("--gpu_vram_pct=", StringComparison.OrdinalIgnoreCase))
+            {
+                gpuVramPercent = ParsePercent(arg.Substring("--gpu_vram_pct=".Length), "--gpu_vram_pct");
             }
         }
 
@@ -371,8 +394,7 @@ public sealed record WorkerNodeOptions(
             settingsName,
             workerNodeId,
             WorkerServiceRoles.Sanitize(serviceRoles),
-            new WorkerResourceAvailability(cpuPercent, ramPercent, storagePercent, gpuPercent),
-            capabilityBenchmarkRefreshSeconds);
+            new WorkerResourceAvailability(cpuPercent, ramPercent, storagePercent, gpuComputePercent, gpuVramPercent));
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -400,15 +422,15 @@ public sealed record WorkerNodeOptions(
         return ParsePercent(value, key);
     }
 
-    private static int GetEnvNonNegativeInt(string key, int defaultValue)
+    private static int? GetOptionalEnvPercent(string key)
     {
         var value = GetEnv(key);
         if (string.IsNullOrWhiteSpace(value))
         {
-            return defaultValue;
+            return null;
         }
 
-        return ParseNonNegativeInt(value, key);
+        return ParsePercent(value, key);
     }
 
     private static int ParseCliPercent(string[] args, ref int index, string option)
@@ -420,17 +442,6 @@ public sealed record WorkerNodeOptions(
 
         index++;
         return ParsePercent(args[index], option);
-    }
-
-    private static int ParseCliNonNegativeInt(string[] args, ref int index, string option)
-    {
-        if (index + 1 >= args.Length)
-        {
-            throw new ArgumentException($"{option} requires a value.");
-        }
-
-        index++;
-        return ParseNonNegativeInt(args[index], option);
     }
 
     private static int ParsePercent(string rawValue, string source)
@@ -454,26 +465,6 @@ public sealed record WorkerNodeOptions(
         return WorkerResourceAvailability.ClampPercent(parsed);
     }
 
-    private static int ParseNonNegativeInt(string rawValue, string source)
-    {
-        if (string.IsNullOrWhiteSpace(rawValue))
-        {
-            throw new ArgumentException($"{source} requires a non-empty integer value.");
-        }
-
-        if (!int.TryParse(rawValue.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-        {
-            throw new ArgumentException($"{source} must be an integer value.");
-        }
-
-        if (parsed < 0)
-        {
-            throw new ArgumentException($"{source} must be >= 0.");
-        }
-
-        return parsed;
-    }
-
     public static void PrintHelp()
     {
         Console.WriteLine("NBN WorkerNode options:");
@@ -495,15 +486,15 @@ public sealed record WorkerNodeOptions(
         Console.WriteLine($"  --cpu-pct <0-100>                CPU availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
         Console.WriteLine($"  --ram-pct <0-100>                RAM availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
         Console.WriteLine($"  --storage-pct <0-100>            Storage availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
-        Console.WriteLine($"  --gpu-pct <0-100>                GPU availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
-        Console.WriteLine("  --capability-benchmark-refresh-seconds <n>");
-        Console.WriteLine("                                   Worker microbenchmark rerun cadence in seconds (default 3600, 0 = every heartbeat)");
+        Console.WriteLine($"  --gpu-compute-pct <0-100>        GPU compute availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
+        Console.WriteLine($"  --gpu-vram-pct <0-100>           GPU VRAM availability percentage (default {WorkerResourceAvailability.DefaultPercent})");
+        Console.WriteLine($"  --gpu-pct <0-100>                Legacy alias that sets both GPU compute and VRAM percentages");
         Console.WriteLine("  env: NBN_WORKER_SERVICE_ROLES    Same role token list as --service-roles");
         Console.WriteLine("  env: NBN_WORKER_CPU_PCT          CPU availability percentage");
         Console.WriteLine("  env: NBN_WORKER_RAM_PCT          RAM availability percentage");
         Console.WriteLine("  env: NBN_WORKER_STORAGE_PCT      Storage availability percentage");
-        Console.WriteLine("  env: NBN_WORKER_GPU_PCT          GPU availability percentage");
-        Console.WriteLine("  env: NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS");
-        Console.WriteLine("                                   Worker microbenchmark rerun cadence in seconds");
+        Console.WriteLine("  env: NBN_WORKER_GPU_COMPUTE_PCT  GPU compute availability percentage");
+        Console.WriteLine("  env: NBN_WORKER_GPU_VRAM_PCT     GPU VRAM availability percentage");
+        Console.WriteLine("  env: NBN_WORKER_GPU_PCT          Legacy alias that sets both GPU compute and VRAM percentages");
     }
 }

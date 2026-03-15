@@ -294,6 +294,16 @@ message PlacementWorkerInventoryEntry {
   fixed64 storage_free_bytes = 13;
   float average_peer_latency_ms = 14;
   uint32 peer_latency_sample_count = 15;
+  fixed64 ram_total_bytes = 16;
+  fixed64 storage_total_bytes = 17;
+  fixed64 vram_total_bytes = 18;
+  uint32 cpu_limit_percent = 19;
+  uint32 ram_limit_percent = 20;
+  uint32 storage_limit_percent = 21;
+  uint32 gpu_compute_limit_percent = 22;
+  uint32 gpu_vram_limit_percent = 23;
+  float process_cpu_load_percent = 24;
+  fixed64 process_ram_used_bytes = 25;
 }
 
 message PlacementWorkerInventory {
@@ -321,6 +331,17 @@ message PlacementPeerLatencyResponse {
 message PlacementLatencyEchoRequest { }
 
 message PlacementLatencyEchoAck { }
+
+message WorkerCapabilityRefreshRequest {
+  fixed64 requested_ms = 1;
+  string reason = 2;
+}
+
+message WorkerCapabilityRefreshAck {
+  bool accepted = 1;
+  fixed64 requested_ms = 2;
+  string message = 3;
+}
 
 message PlacementAssignment {
   string assignment_id = 1;

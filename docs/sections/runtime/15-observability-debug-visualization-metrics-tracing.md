@@ -24,6 +24,7 @@ Runtime behavior:
 * Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
 * When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
+* Workbench Orchestrator exposes settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, plus `Profile Current System` for attached perf-probe runs against the currently running deployment.
 
 ### 15.2 OpenTelemetry (NBN-managed)
 
@@ -47,6 +48,8 @@ Metrics include:
 * plasticity strength-code mutation counts
 * snapshot/rebase overlay record counts
 * signal batch sizes and counts
+* worker capability refresh/reschedule thresholds
+* worker pressure snapshots and pressure-triggered reschedule events
 * speciation startup-reconcile runs plus added/existing membership counts
 * speciation assignment decision counts and latencies by apply mode / candidate mode / decision reason / failure reason
 * speciation epoch-transition counts (initialize, start-new-epoch, delete-epoch, reset-all)

@@ -25,6 +25,16 @@ Tables (recommended, values not exhaustive):
 * vram_free_bytes INTEGER
 * cpu_score REAL
 * gpu_score REAL
+* ram_total_bytes INTEGER
+* storage_total_bytes INTEGER
+* vram_total_bytes INTEGER
+* cpu_limit_percent INTEGER
+* ram_limit_percent INTEGER
+* storage_limit_percent INTEGER
+* gpu_compute_limit_percent INTEGER
+* gpu_vram_limit_percent INTEGER
+* process_cpu_load_percent REAL
+* process_ram_used_bytes INTEGER
 * PRIMARY KEY (node_id, time_ms)
 
 **settings**

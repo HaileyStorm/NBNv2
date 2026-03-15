@@ -103,13 +103,12 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task StartWorkerCommand_IncludesBenchmarkRefreshArgument()
+    public async Task StartWorkerCommand_DoesNotIncludeBenchmarkRefreshArgument()
     {
         var connections = new ConnectionViewModel
         {
             WorkerPortText = "12041",
-            SettingsPortText = "12010",
-            WorkerCapabilityBenchmarkRefreshSecondsText = "45"
+            SettingsPortText = "12010"
         };
 
         var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). worker");
@@ -120,27 +119,50 @@ public class OrchestratorPanelViewModelTests
         await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Build failed (code 1). worker", StringComparison.Ordinal));
 
         Assert.Equal(1, launchPreparer.CallCount);
-        Assert.Contains("--capability-benchmark-refresh-seconds 45", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--capability-benchmark-refresh-seconds", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task StartWorkerCommand_RejectsInvalidBenchmarkRefreshSeconds()
+    public async Task ApplyWorkerPolicyCommand_WritesSettingsBackedValues()
     {
         var connections = new ConnectionViewModel
         {
-            WorkerPortText = "12041",
-            SettingsPortText = "12010",
-            WorkerCapabilityBenchmarkRefreshSecondsText = "-1"
+            SettingsConnected = true
         };
 
-        var launchPreparer = new RecordingLocalProjectLaunchPreparer();
-        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+        var client = new FakeWorkbenchClient();
+        var vm = CreateViewModel(connections, client);
+        vm.WorkerCapabilityRefreshSecondsText = "45";
+        vm.WorkerPressureRebalanceWindowText = "8";
+        vm.WorkerPressureViolationRatioText = "0.75";
+        vm.WorkerPressureTolerancePercentText = "4.5";
 
-        vm.StartWorkerCommand.Execute(null);
+        vm.ApplyWorkerPolicyCommand.Execute(null);
 
-        await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Invalid worker benchmark refresh seconds.", StringComparison.Ordinal));
+        await WaitForAsync(() => string.Equals(vm.WorkerPolicyStatus, "Worker policy updated.", StringComparison.Ordinal));
 
-        Assert.Equal(0, launchPreparer.CallCount);
+        Assert.Contains(client.SettingCalls, call => call.Key == WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey && call.Value == "45");
+        Assert.Contains(client.SettingCalls, call => call.Key == WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey && call.Value == "8");
+        Assert.Contains(client.SettingCalls, call => call.Key == WorkerCapabilitySettingsKeys.PressureViolationRatioKey && call.Value == "0.75");
+        Assert.Contains(client.SettingCalls, call => call.Key == WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey && call.Value == "4.5");
+    }
+
+    [Fact]
+    public async Task UpdateSetting_WorkerPolicyValues_UpdateDedicatedInputs()
+    {
+        var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient());
+
+        vm.UpdateSetting(new SettingItem(WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey, "90", "1"));
+        vm.UpdateSetting(new SettingItem(WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey, "7", "2"));
+        vm.UpdateSetting(new SettingItem(WorkerCapabilitySettingsKeys.PressureViolationRatioKey, "0.6", "3"));
+        vm.UpdateSetting(new SettingItem(WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, "3.5", "4"));
+
+        await WaitForAsync(() => string.Equals(vm.WorkerCapabilityRefreshSecondsText, "90", StringComparison.Ordinal));
+
+        Assert.Equal("90", vm.WorkerCapabilityRefreshSecondsText);
+        Assert.Equal("7", vm.WorkerPressureRebalanceWindowText);
+        Assert.Equal("0.6", vm.WorkerPressureViolationRatioText);
+        Assert.Equal("3.5", vm.WorkerPressureTolerancePercentText);
     }
 
     [Fact]
@@ -1858,6 +1880,7 @@ public class OrchestratorPanelViewModelTests
         public BrainListResponse? BrainsResponse { get; set; }
         public Func<BrainListResponse?>? BrainListFactory { get; set; }
         public SettingListResponse? SettingsResponse { get; init; }
+        public List<(string Key, string Value)> SettingCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
         public PlacementAck? PlacementAck { get; set; }
         public Func<Guid, PlacementLifecycleInfo?>? PlacementLifecycleFactory { get; init; }
@@ -1893,6 +1916,17 @@ public class OrchestratorPanelViewModelTests
 
         public override Task<SettingListResponse?> ListSettingsAsync()
             => Task.FromResult(SettingsResponse);
+
+        public override Task<SettingValue?> SetSettingAsync(string key, string value)
+        {
+            SettingCalls.Add((key, value));
+            return Task.FromResult<SettingValue?>(new SettingValue
+            {
+                Key = key,
+                Value = value,
+                UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+        }
 
         public override Task<PlacementLifecycleInfo?> GetPlacementLifecycleAsync(Guid brainId)
         {

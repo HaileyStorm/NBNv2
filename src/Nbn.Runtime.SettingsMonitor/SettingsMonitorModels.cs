@@ -16,7 +16,17 @@ public sealed record NodeCapabilities(
     float CpuScore,
     float GpuScore,
     bool IlgpuCudaAvailable,
-    bool IlgpuOpenclAvailable);
+    bool IlgpuOpenclAvailable,
+    long RamTotalBytes,
+    long StorageTotalBytes,
+    long VramTotalBytes,
+    uint CpuLimitPercent,
+    uint RamLimitPercent,
+    uint StorageLimitPercent,
+    uint GpuComputeLimitPercent,
+    uint GpuVramLimitPercent,
+    float ProcessCpuLoadPercent,
+    long ProcessRamUsedBytes);
 
 public sealed record NodeHeartbeat(
     Guid NodeId,
@@ -63,6 +73,16 @@ public sealed class WorkerReadinessCapability
     public float GpuScore { get; set; }
     public bool IlgpuCudaAvailable { get; set; }
     public bool IlgpuOpenclAvailable { get; set; }
+    public long RamTotalBytes { get; set; }
+    public long StorageTotalBytes { get; set; }
+    public long VramTotalBytes { get; set; }
+    public uint CpuLimitPercent { get; set; }
+    public uint RamLimitPercent { get; set; }
+    public uint StorageLimitPercent { get; set; }
+    public uint GpuComputeLimitPercent { get; set; }
+    public uint GpuVramLimitPercent { get; set; }
+    public float ProcessCpuLoadPercent { get; set; }
+    public long ProcessRamUsedBytes { get; set; }
 }
 
 public sealed record WorkerInventorySnapshot(
