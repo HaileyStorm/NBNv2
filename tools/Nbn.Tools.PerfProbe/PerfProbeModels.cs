@@ -33,7 +33,10 @@ public sealed record PerfReport(
     string ToolName,
     DateTimeOffset GeneratedAtUtc,
     IReadOnlyDictionary<string, string> Environment,
-    IReadOnlyList<PerfScenarioResult> Scenarios);
+    IReadOnlyList<PerfScenarioResult> Scenarios)
+{
+    public double TotalDurationMs { get; init; }
+}
 
 public sealed record PerfScenarioResult(
     string Suite,
@@ -46,6 +49,8 @@ public sealed record PerfScenarioResult(
     string? SkipReason = null,
     string? Failure = null)
 {
+    public double DurationMs { get; init; }
+
     [JsonIgnore]
     public double PrimaryMetricValue => TryResolvePrimaryMetric(out var value) ? value : 0d;
 

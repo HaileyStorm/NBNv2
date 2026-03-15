@@ -41,6 +41,7 @@ public static class PerfProbeRunner
         PerfProbeConfig config,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
         var normalizedMode = string.IsNullOrWhiteSpace(mode)
             ? "all"
             : mode.Trim().ToLowerInvariant();
@@ -56,11 +57,15 @@ public static class PerfProbeRunner
             scenarios.AddRange(await RunLocalhostStressScenariosAsync(config.LocalhostStress, cancellationToken).ConfigureAwait(false));
         }
 
+        totalStopwatch.Stop();
         return new PerfReport(
             ToolName: "Nbn.Tools.PerfProbe",
             GeneratedAtUtc: DateTimeOffset.UtcNow,
             Environment: BuildEnvironmentSnapshot(),
-            Scenarios: scenarios);
+            Scenarios: scenarios)
+        {
+            TotalDurationMs = totalStopwatch.Elapsed.TotalMilliseconds
+        };
     }
 
     public static Task<IReadOnlyList<PerfScenarioResult>> RunWorkerProfileScenariosAsync(
@@ -72,7 +77,7 @@ public static class PerfProbeRunner
         var results = new List<PerfScenarioResult>();
         var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
 
-        results.Add(new PerfScenarioResult(
+        results.Add(TimeScenario(() => new PerfScenarioResult(
             Suite: "worker_profile",
             Scenario: "capability_probe",
             Backend: "cpu",
@@ -89,11 +94,11 @@ public static class PerfProbeRunner
                 ["cpu_cores"] = capabilities.CpuCores,
                 ["ram_free_bytes"] = capabilities.RamFreeBytes,
                 ["storage_free_bytes"] = capabilities.StorageFreeBytes
-            }));
+            })));
 
         if (capabilities.HasGpu && capabilities.GpuScore > 0f)
         {
-            results.Add(new PerfScenarioResult(
+            results.Add(TimeScenario(() => new PerfScenarioResult(
                 Suite: "worker_profile",
                 Scenario: "capability_probe",
                 Backend: "gpu",
@@ -109,11 +114,11 @@ public static class PerfProbeRunner
                 {
                     ["gpu_score"] = capabilities.GpuScore,
                     ["vram_free_bytes"] = capabilities.VramFreeBytes
-                }));
+                })));
         }
         else
         {
-            results.Add(new PerfScenarioResult(
+            results.Add(TimeScenario(() => new PerfScenarioResult(
                 Suite: "worker_profile",
                 Scenario: "capability_probe",
                 Backend: "gpu",
@@ -126,11 +131,11 @@ public static class PerfProbeRunner
                     ["ilgpu_opencl_available"] = capabilities.IlgpuOpenclAvailable.ToString()
                 },
                 Metrics: new Dictionary<string, double>(),
-                SkipReason: ResolveGpuCapabilitySkipReason(capabilities)));
+                SkipReason: ResolveGpuCapabilitySkipReason(capabilities))));
         }
 
-        results.Add(RunPlacementPlannerScenario(config, capabilities));
-        results.Add(BuildGpuRuntimeSkipResult("worker_profile", "placement_planner_profile"));
+        results.Add(TimeScenario(() => RunPlacementPlannerScenario(config, capabilities)));
+        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("worker_profile", "placement_planner_profile")));
 
         return Task.FromResult<IReadOnlyList<PerfScenarioResult>>(results);
     }
@@ -144,22 +149,22 @@ public static class PerfProbeRunner
         var results = new List<PerfScenarioResult>();
         foreach (var targetTickHz in config.TargetTickRates.OrderBy(static value => value))
         {
-            var cpuResult = await MeasureBrainSizeLimitAsync(targetTickHz, config, cancellationToken).ConfigureAwait(false);
+            var cpuResult = await TimeScenarioAsync(() => MeasureBrainSizeLimitAsync(targetTickHz, config, cancellationToken)).ConfigureAwait(false);
             results.Add(cpuResult);
-            results.Add(BuildGpuRuntimeSkipResult("localhost_stress", cpuResult.Scenario));
+            results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", cpuResult.Scenario)));
         }
 
-        var brainCountResult = await MeasureBrainCountLimitAsync(config, cancellationToken).ConfigureAwait(false);
+        var brainCountResult = await TimeScenarioAsync(() => MeasureBrainCountLimitAsync(config, cancellationToken)).ConfigureAwait(false);
         results.Add(brainCountResult);
-        results.Add(BuildGpuRuntimeSkipResult("localhost_stress", brainCountResult.Scenario));
+        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", brainCountResult.Scenario)));
 
-        var sustainableRateResult = await MeasureSustainableTickRateAsync(config, cancellationToken).ConfigureAwait(false);
+        var sustainableRateResult = await TimeScenarioAsync(() => MeasureSustainableTickRateAsync(config, cancellationToken)).ConfigureAwait(false);
         results.Add(sustainableRateResult);
-        results.Add(BuildGpuRuntimeSkipResult("localhost_stress", sustainableRateResult.Scenario));
+        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", sustainableRateResult.Scenario)));
 
-        var spawnChurnResult = await MeasureSpawnChurnAsync(config, cancellationToken).ConfigureAwait(false);
+        var spawnChurnResult = await TimeScenarioAsync(() => MeasureSpawnChurnAsync(config, cancellationToken)).ConfigureAwait(false);
         results.Add(spawnChurnResult);
-        results.Add(BuildGpuRuntimeSkipResult("localhost_stress", spawnChurnResult.Scenario));
+        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", spawnChurnResult.Scenario)));
 
         return results;
     }
@@ -168,18 +173,19 @@ public static class PerfProbeRunner
         CurrentSystemProfileConfig config,
         CancellationToken cancellationToken = default)
     {
+        var totalStopwatch = Stopwatch.StartNew();
         await using var client = await AttachedRuntimeClient.CreateAsync(config, cancellationToken).ConfigureAwait(false);
         var settingsResponse = await client.ListSettingsAsync(cancellationToken).ConfigureAwait(false);
         var workerInventoryResponse = await client.ListWorkerInventoryAsync(cancellationToken).ConfigureAwait(false);
         var endpoints = BuildDiscoveredEndpointLookup(settingsResponse);
         var scenarios = new List<PerfScenarioResult>
         {
-            BuildServiceDiscoveryScenario(config, endpoints)
+            TimeScenario(() => BuildServiceDiscoveryScenario(config, endpoints))
         };
 
         if (workerInventoryResponse is null)
         {
-            scenarios.Add(new PerfScenarioResult(
+            scenarios.Add(TimeScenario(() => new PerfScenarioResult(
                 Suite: "current_system",
                 Scenario: "worker_inventory_snapshot",
                 Backend: "cpu",
@@ -192,12 +198,12 @@ public static class PerfProbeRunner
                     ["settings_name"] = config.SettingsName
                 },
                 Metrics: new Dictionary<string, double>(),
-                Failure: "settings_worker_inventory_unavailable"));
+                Failure: "settings_worker_inventory_unavailable")));
         }
         else
         {
             var workers = workerInventoryResponse.Workers.ToArray();
-            scenarios.Add(new PerfScenarioResult(
+            scenarios.Add(TimeScenario(() => new PerfScenarioResult(
                 Suite: "current_system",
                 Scenario: "worker_inventory_snapshot",
                 Backend: "cpu",
@@ -218,7 +224,7 @@ public static class PerfProbeRunner
                     ["max_gpu_score"] = workers.Max(worker => worker.Capabilities?.GpuScore ?? 0f),
                     ["total_ram_free_bytes"] = workers.Sum(worker => (double)(worker.Capabilities?.RamFreeBytes ?? 0)),
                     ["total_storage_free_bytes"] = workers.Sum(worker => (double)(worker.Capabilities?.StorageFreeBytes ?? 0))
-                }));
+                })));
         }
 
         if (endpoints.TryGetValue(ServiceEndpointSettings.HiveMindKey, out var hiveMindEndpoint))
@@ -226,7 +232,7 @@ public static class PerfProbeRunner
             var hiveMindStatus = await client.GetHiveMindStatusAsync(hiveMindEndpoint, cancellationToken).ConfigureAwait(false);
             if (hiveMindStatus is not null)
             {
-                scenarios.Add(new PerfScenarioResult(
+                scenarios.Add(TimeScenario(() => new PerfScenarioResult(
                     Suite: "current_system",
                     Scenario: "hivemind_status_snapshot",
                     Backend: "cpu",
@@ -242,13 +248,13 @@ public static class PerfProbeRunner
                         ["last_completed_tick_id"] = hiveMindStatus.LastCompletedTickId,
                         ["registered_brains"] = hiveMindStatus.RegisteredBrains,
                         ["registered_shards"] = hiveMindStatus.RegisteredShards
-                    }));
+                    })));
             }
 
             var placementInventory = await client.GetPlacementInventoryAsync(hiveMindEndpoint, cancellationToken).ConfigureAwait(false);
             if (placementInventory is not null)
             {
-                scenarios.Add(new PerfScenarioResult(
+                scenarios.Add(TimeScenario(() => new PerfScenarioResult(
                     Suite: "current_system",
                     Scenario: "placement_inventory_snapshot",
                     Backend: "cpu",
@@ -264,10 +270,11 @@ public static class PerfProbeRunner
                         ["gpu_capable_workers"] = placementInventory.Workers.Count(static worker => worker.HasGpu),
                         ["max_cpu_score"] = placementInventory.Workers.Max(static worker => worker.CpuScore),
                         ["max_gpu_score"] = placementInventory.Workers.Max(static worker => worker.GpuScore)
-                    }));
+                    })));
             }
         }
 
+        totalStopwatch.Stop();
         return new PerfReport(
             ToolName: "Nbn.Tools.PerfProbe",
             GeneratedAtUtc: DateTimeOffset.UtcNow,
@@ -277,7 +284,10 @@ public static class PerfProbeRunner
                 ["settings_port"] = config.SettingsPort.ToString(),
                 ["settings_name"] = config.SettingsName
             },
-            Scenarios: scenarios);
+            Scenarios: scenarios)
+        {
+            TotalDurationMs = totalStopwatch.Elapsed.TotalMilliseconds
+        };
     }
 
     private static PerfScenarioResult RunPlacementPlannerScenario(WorkerProfileConfig config, ProtoSettings.NodeCapabilities capabilities)
@@ -1356,4 +1366,20 @@ public static class PerfProbeRunner
             ["processor_count"] = Environment.ProcessorCount.ToString(),
             ["current_directory"] = Environment.CurrentDirectory
         };
+
+    private static PerfScenarioResult TimeScenario(Func<PerfScenarioResult> factory)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var result = factory();
+        stopwatch.Stop();
+        return result with { DurationMs = stopwatch.Elapsed.TotalMilliseconds };
+    }
+
+    private static async Task<PerfScenarioResult> TimeScenarioAsync(Func<Task<PerfScenarioResult>> factory)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var result = await factory().ConfigureAwait(false);
+        stopwatch.Stop();
+        return result with { DurationMs = stopwatch.Elapsed.TotalMilliseconds };
+    }
 }

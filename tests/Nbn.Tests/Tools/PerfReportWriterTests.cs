@@ -20,7 +20,10 @@ public sealed class PerfReportWriterTests
                     Status: PerfScenarioStatus.Passed,
                     Summary: "Planner throughput captured.",
                     Parameters: new Dictionary<string, string> { ["planner_iterations"] = "100" },
-                    Metrics: new Dictionary<string, double> { ["plans_per_second"] = 1234.5 }),
+                    Metrics: new Dictionary<string, double> { ["plans_per_second"] = 1234.5 })
+                {
+                    DurationMs = 12.5
+                },
                 new PerfScenarioResult(
                     Suite: "localhost_stress",
                     Scenario: "brain_size_limit_10hz",
@@ -30,16 +33,25 @@ public sealed class PerfReportWriterTests
                     Parameters: new Dictionary<string, string>(),
                     Metrics: new Dictionary<string, double>(),
                     SkipReason: "regionshard_gpu_backend_not_available")
-            ]);
+                {
+                    DurationMs = 1.25
+                }
+            ])
+        {
+            TotalDurationMs = 13.75
+        };
 
         var markdown = PerfReportWriter.BuildMarkdown(report);
         var html = PerfReportWriter.BuildHtml(report);
         var csv = PerfReportWriter.BuildCsv(report);
 
-        Assert.Contains("| Suite | Scenario | Backend | Status | Primary Metric | Metrics | Summary |", markdown, StringComparison.Ordinal);
+        Assert.Contains("| Suite | Scenario | Backend | Status | Duration (ms) | Primary Metric | Metrics | Summary |", markdown, StringComparison.Ordinal);
+        Assert.Contains("Total duration: 13.75 ms", markdown, StringComparison.Ordinal);
         Assert.Contains("<svg", html, StringComparison.Ordinal);
         Assert.Contains("<table>", html, StringComparison.Ordinal);
+        Assert.Contains("Total duration 13.75 ms", html, StringComparison.Ordinal);
         Assert.Contains("plans_per_second=1234.5", html, StringComparison.Ordinal);
+        Assert.Contains("\"12.5\"", csv, StringComparison.Ordinal);
         Assert.Contains("placement_planner_profile", csv, StringComparison.Ordinal);
         Assert.Contains("regionshard_gpu_backend_not_available", csv, StringComparison.Ordinal);
     }

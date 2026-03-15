@@ -32,7 +32,7 @@ public static class PerfReportWriter
     public static string BuildCsv(PerfReport report)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("suite,scenario,backend,status,summary,skip_reason,failure,primary_metric_label,primary_metric_value,parameters_json,metrics_json");
+        builder.AppendLine("suite,scenario,backend,status,duration_ms,summary,skip_reason,failure,primary_metric_label,primary_metric_value,parameters_json,metrics_json");
         foreach (var scenario in report.Scenarios)
         {
             var primaryValue = scenario.TryResolvePrimaryMetric(out var value)
@@ -43,6 +43,7 @@ public static class PerfReportWriter
                 EscapeCsv(scenario.Scenario),
                 EscapeCsv(scenario.Backend),
                 EscapeCsv(scenario.Status.ToString()),
+                EscapeCsv(scenario.DurationMs.ToString("0.###", CultureInfo.InvariantCulture)),
                 EscapeCsv(scenario.Summary),
                 EscapeCsv(scenario.SkipReason ?? string.Empty),
                 EscapeCsv(scenario.Failure ?? string.Empty),
@@ -61,9 +62,10 @@ public static class PerfReportWriter
         builder.AppendLine("# NBN Performance Probe");
         builder.AppendLine();
         builder.AppendLine($"Generated: {report.GeneratedAtUtc:O}");
+        builder.AppendLine($"Total duration: {report.TotalDurationMs:0.###} ms");
         builder.AppendLine();
-        builder.AppendLine("| Suite | Scenario | Backend | Status | Primary Metric | Metrics | Summary |");
-        builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
+        builder.AppendLine("| Suite | Scenario | Backend | Status | Duration (ms) | Primary Metric | Metrics | Summary |");
+        builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- | --- |");
 
         foreach (var scenario in report.Scenarios)
         {
@@ -71,7 +73,7 @@ public static class PerfReportWriter
                 ? $"{scenario.PrimaryMetricLabel}={value:0.###}"
                 : "(none)";
             builder.AppendLine(
-                $"| {EscapeMarkdown(scenario.Suite)} | {EscapeMarkdown(scenario.Scenario)} | {EscapeMarkdown(scenario.Backend)} | {scenario.Status} | {EscapeMarkdown(primaryMetric)} | {EscapeMarkdown(FormatKeyValueSummary(scenario.Metrics))} | {EscapeMarkdown(scenario.Summary)} |");
+                $"| {EscapeMarkdown(scenario.Suite)} | {EscapeMarkdown(scenario.Scenario)} | {EscapeMarkdown(scenario.Backend)} | {scenario.Status} | {scenario.DurationMs:0.###} | {EscapeMarkdown(primaryMetric)} | {EscapeMarkdown(FormatKeyValueSummary(scenario.Metrics))} | {EscapeMarkdown(scenario.Summary)} |");
         }
 
         return builder.ToString();
@@ -117,7 +119,7 @@ public static class PerfReportWriter
 </head>
 <body>
   <h1>NBN Performance Probe</h1>
-  <div class="meta">Generated {{report.GeneratedAtUtc:O}}</div>
+  <div class="meta">Generated {{report.GeneratedAtUtc:O}} | Total duration {{report.TotalDurationMs:0.###}} ms</div>
   <div class="card">
     <h2>Charts</h2>
     <p class="note">Bar chart uses each scenario's primary metric when available. GPU runtime scenarios may appear as skips until the RegionShard GPU backend lands.</p>
@@ -135,6 +137,7 @@ public static class PerfReportWriter
           <th>Scenario</th>
           <th>Backend</th>
           <th>Status</th>
+          <th>Duration (ms)</th>
           <th>Primary Metric</th>
           <th>Metrics</th>
           <th>Summary</th>
@@ -214,6 +217,7 @@ public static class PerfReportWriter
           <td>{{EscapeHtml(scenario.Scenario)}}</td>
           <td>{{EscapeHtml(scenario.Backend)}}</td>
           <td class="{{statusClass}}">{{scenario.Status}}</td>
+          <td>{{scenario.DurationMs.ToString("0.###", CultureInfo.InvariantCulture)}}</td>
           <td>{{EscapeHtml(primaryMetric)}}</td>
           <td>{{EscapeHtml(FormatKeyValueSummary(scenario.Metrics))}}</td>
           <td>{{EscapeHtml(summary)}}</td>
