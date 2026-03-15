@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="560" viewBox="0 0 1500 560" fill="none">
+<rect x="0" y="0" width="1500" height="560" fill="white" />
+<g transform="translate(82 84) scale(0.29)">
+<g>
+<polygon points="512,176 848,512 512,848 176,512" stroke="#102038" stroke-width="34" />
+<polygon points="362,640 362,368 310,368 310,640" fill="#102038" />
+<polygon points="317.62,386.38 671.62,740.38 708.38,703.62 354.38,349.62" fill="#2AA8A1" />
+<polygon points="716,722 716,332 664,332 664,722" fill="#102038" />
+<polygon points="242.36,518.36 342.36,418.36 329.64,405.64 229.64,505.64" fill="#F59E0B" />
+<polygon points="696.36,338.36 792.36,242.36 779.64,229.64 683.64,325.64" fill="#F59E0B" />
+<rect x="338" y="368" width="26" height="26" fill="white" transform="rotate(45 351 381)" />
+<rect x="676" y="710" width="26" height="26" fill="white" transform="rotate(45 689 723)" />
+</g>
+</g>
+<g>
+<path d="M 374,422 L 374,190 L 559.6,422 L 559.6,190" stroke="#102038" stroke-width="39.77" stroke-linecap="square" stroke-linejoin="miter" />
+<path d="M 615.94,190 L 615.94,422 M 621.91,190 L 745.33,190 L 818.11,241.04 L 818.11,287.44 L 749.38,306 M 615.94,306 L 749.38,306 L 818.11,324.56 L 818.11,370.96 L 745.33,422 L 621.91,422" stroke="#102038" stroke-width="39.77" stroke-linecap="square" stroke-linejoin="miter" />
+<path d="M 874.46,422 L 874.46,190 L 1060.06,422 L 1060.06,190" stroke="#102038" stroke-width="39.77" stroke-linecap="square" stroke-linejoin="miter" />
+</g>
+<g>
+<polygon points="402,418 436,452 402,486 368,452" fill="#2AA8A1" stroke="#102038" stroke-width="12" />
+<line x1="434" y1="420" x2="518" y2="504" stroke="#102038" stroke-width="18" stroke-linecap="square" />
+</g>
+</svg>

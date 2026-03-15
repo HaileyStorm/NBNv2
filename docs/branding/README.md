@@ -2,6 +2,10 @@
 
 This workspace explores possible `NBN` identity directions without any `v2` language.
 
+## Latest round
+
+The newer exploration is in [round2/README.md](round2/README.md). It pushes harder on Region Loop, Shard Lattice, and Tick Orbit descendants after critique of the first set.
+
 ![NBN concept board](png/nbn-concept-board.png)
 
 ## Brand cues

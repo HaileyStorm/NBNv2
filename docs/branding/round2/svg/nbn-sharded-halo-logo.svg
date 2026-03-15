@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="560" viewBox="0 0 1500 560" fill="none">
+<rect x="0" y="0" width="1500" height="560" fill="white" />
+<g transform="translate(84 86) scale(0.29)">
+<g>
+<path d="M 768.69,417.51 A 292 292 0 0 1 548.71,783.62" stroke="#101827" stroke-width="96" stroke-linecap="butt" />
+<path d="M 415.15,755.48 A 262 262 0 0 1 312.79,373.49" stroke="#0F8A7B" stroke-width="96" stroke-linecap="butt" />
+<path d="M 318.38,311.78 A 282 282 0 0 1 749.62,419.3" stroke="#101827" stroke-width="96" stroke-linecap="butt" />
+<circle cx="456" cy="498" r="92" stroke="#101827" stroke-width="28" />
+<rect x="438" y="480" width="36" height="36" rx="8" fill="#FF6B35" transform="rotate(45 456 498)" />
+<line x1="548" y1="280" x2="612" y2="210" stroke="#FF6B35" stroke-width="18" stroke-linecap="round" />
+</g>
+</g>
+<g>
+<path d="M 398,424 L 398,192 L 576.97,424 L 576.97,192" stroke="#101827" stroke-width="36.46" stroke-linecap="round" stroke-linejoin="round" />
+<path d="M 636.63,192 L 636.63,424 M 636.63,192 L 766.08,192 Q 845.43,192 845.43,250 Q 845.43,308 766.08,308 L 636.63,308 M 636.63,308 L 766.08,308 Q 845.43,308 845.43,366 Q 845.43,424 766.08,424 L 636.63,424" stroke="#101827" stroke-width="36.46" stroke-linecap="round" stroke-linejoin="round" />
+<path d="M 905.09,424 L 905.09,192 L 1084.06,424 L 1084.06,192" stroke="#101827" stroke-width="36.46" stroke-linecap="round" stroke-linejoin="round" />
+</g>
+<g>
+<path d="M 373.44,355.14 A 116 116 0 0 1 559.51,412.03" stroke="#0F8A7B" stroke-width="18" stroke-linecap="butt" />
+<path d="M 588.85,473.94 A 144 144 0 0 1 437.96,587.65" stroke="#101827" stroke-width="18" stroke-linecap="butt" />
+</g>
+</svg>

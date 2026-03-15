@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="560" viewBox="0 0 1500 560" fill="none">
+<rect x="0" y="0" width="1500" height="560" fill="white" />
+<g transform="translate(82 86) scale(0.29)">
+<g>
+<path d="M 783.44,379.61 A 302 302 0 0 1 294.76,721.79" stroke="#10213A" stroke-width="74" stroke-linecap="round" />
+<path d="M 216.6,574.79 A 302 302 0 0 1 768.11,351.96" stroke="#12A4D9" stroke-width="74" stroke-linecap="round" />
+<path d="M 307.9,474.19 A 170 170 0 0 1 621.41,600.86" stroke="#10213A" stroke-width="34" stroke-linecap="round" />
+<circle cx="458" cy="554" r="88" stroke="#10213A" stroke-width="24" />
+<polygon points="428.49,602.49 666.49,364.49 649.51,347.51 411.51,585.51" fill="#FF5A5F" />
+<circle cx="656" cy="354" r="24" fill="#FF5A5F" />
+</g>
+</g>
+<g>
+<path d="M 392,424 L 392,192 L 574.29,424 L 574.29,192" stroke="#10213A" stroke-width="36.46" stroke-linecap="round" stroke-linejoin="round" />
+<path d="M 630.63,192 L 630.63,424 M 648.86,192 L 762.14,192 Q 842.74,192 842.74,250 Q 842.74,308 762.14,308 L 648.86,308 M 648.86,308 L 762.14,308 Q 842.74,308 842.74,366 Q 842.74,424 762.14,424 L 648.86,424" stroke="#10213A" stroke-width="36.46" stroke-linecap="round" stroke-linejoin="round" />
+<path d="M 899.09,424 L 899.09,192 L 1081.37,424 L 1081.37,192" stroke="#10213A" stroke-width="36.46" stroke-linecap="round" stroke-linejoin="round" />
+</g>
+<g>
+<path d="M 368.54,381.35 A 122 122 0 0 1 588.03,483.7" stroke="#12A4D9" stroke-width="18" stroke-linecap="round" />
+<line x1="470" y1="446" x2="560" y2="356" stroke="#FF5A5F" stroke-width="14" stroke-linecap="round" />
+</g>
+</svg>
