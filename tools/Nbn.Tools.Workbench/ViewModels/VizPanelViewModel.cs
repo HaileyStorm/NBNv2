@@ -3319,8 +3319,6 @@ public sealed class VizPanelViewModel : ViewModelBase
 
         AddCandidate(storeUri);
         AddCandidate(RepoLocator.ResolvePathFromRepo("artifacts"));
-        AddCandidate(RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo"));
-        AddCandidate(RepoLocator.ResolvePathFromRepo("tools", "demo", "local-demo", "artifacts"));
         AddCandidate(Directory.GetCurrentDirectory());
         AddCandidate(AppContext.BaseDirectory);
         AddCandidate(BuildWorkbenchArtifactRoot("designer-artifacts"));
