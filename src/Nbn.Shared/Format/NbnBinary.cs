@@ -5,6 +5,7 @@ using System.Text;
 using Nbn.Shared;
 using Nbn.Shared.Packing;
 using Nbn.Shared.Quantization;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Shared.Format;
 
@@ -17,6 +18,15 @@ public static class NbnBinary
     private const int NbnRegionDirectoryEntryBytes = 24;
     private const int NbnQuantizationOffset = 0x020;
     private const int NbnQuantizationFieldBytes = 16;
+    private const int NbsHomeostasisPresentOffset = 0x064;
+    private const int NbsHomeostasisEnabledOffset = 0x065;
+    private const int NbsHomeostasisTargetModeOffset = 0x066;
+    private const int NbsHomeostasisUpdateModeOffset = 0x067;
+    private const int NbsHomeostasisEnergyCouplingOffset = 0x068;
+    private const int NbsHomeostasisBaseProbabilityOffset = 0x06C;
+    private const int NbsHomeostasisMinStepCodesOffset = 0x070;
+    private const int NbsHomeostasisEnergyTargetScaleOffset = 0x074;
+    private const int NbsHomeostasisEnergyProbabilityScaleOffset = 0x078;
 
     public static NbnHeaderV2 ReadNbnHeader(ReadOnlySpan<byte> data)
     {
@@ -310,6 +320,19 @@ public static class NbnBinary
         var baseHash = data.Slice(0x030, 32).ToArray();
         var flags = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(0x050, 4));
         var bufferMap = ReadQuantizationMap(data.Slice(0x054, NbnQuantizationFieldBytes));
+        NbsHomeostasisConfig? homeostasisConfig = null;
+        if (data[NbsHomeostasisPresentOffset] != 0)
+        {
+            homeostasisConfig = new NbsHomeostasisConfig(
+                Enabled: data[NbsHomeostasisEnabledOffset] != 0,
+                TargetMode: (ProtoControl.HomeostasisTargetMode)data[NbsHomeostasisTargetModeOffset],
+                UpdateMode: (ProtoControl.HomeostasisUpdateMode)data[NbsHomeostasisUpdateModeOffset],
+                BaseProbability: BinaryPrimitives.ReadSingleLittleEndian(data.Slice(NbsHomeostasisBaseProbabilityOffset, 4)),
+                MinStepCodes: BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(NbsHomeostasisMinStepCodesOffset, 4)),
+                EnergyCouplingEnabled: data[NbsHomeostasisEnergyCouplingOffset] != 0,
+                EnergyTargetScale: BinaryPrimitives.ReadSingleLittleEndian(data.Slice(NbsHomeostasisEnergyTargetScaleOffset, 4)),
+                EnergyProbabilityScale: BinaryPrimitives.ReadSingleLittleEndian(data.Slice(NbsHomeostasisEnergyProbabilityScaleOffset, 4)));
+        }
 
         return new NbsHeaderV2(
             magic,
@@ -322,7 +345,8 @@ public static class NbnBinary
             energyRemaining,
             baseHash,
             flags,
-            bufferMap);
+            bufferMap,
+            homeostasisConfig);
     }
 
     public static void WriteNbsHeader(Span<byte> destination, NbsHeaderV2 header)
@@ -352,6 +376,21 @@ public static class NbnBinary
         header.BaseNbnSha256.CopyTo(destination.Slice(0x030, 32));
         BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(0x050, 4), header.Flags);
         WriteQuantizationMap(destination.Slice(0x054, NbnQuantizationFieldBytes), header.BufferMap);
+
+        if (header.HomeostasisConfig is null)
+        {
+            return;
+        }
+
+        destination[NbsHomeostasisPresentOffset] = 1;
+        destination[NbsHomeostasisEnabledOffset] = header.HomeostasisConfig.Enabled ? (byte)1 : (byte)0;
+        destination[NbsHomeostasisTargetModeOffset] = (byte)header.HomeostasisConfig.TargetMode;
+        destination[NbsHomeostasisUpdateModeOffset] = (byte)header.HomeostasisConfig.UpdateMode;
+        destination[NbsHomeostasisEnergyCouplingOffset] = header.HomeostasisConfig.EnergyCouplingEnabled ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteSingleLittleEndian(destination.Slice(NbsHomeostasisBaseProbabilityOffset, 4), header.HomeostasisConfig.BaseProbability);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination.Slice(NbsHomeostasisMinStepCodesOffset, 4), header.HomeostasisConfig.MinStepCodes);
+        BinaryPrimitives.WriteSingleLittleEndian(destination.Slice(NbsHomeostasisEnergyTargetScaleOffset, 4), header.HomeostasisConfig.EnergyTargetScale);
+        BinaryPrimitives.WriteSingleLittleEndian(destination.Slice(NbsHomeostasisEnergyProbabilityScaleOffset, 4), header.HomeostasisConfig.EnergyProbabilityScale);
     }
 
     public static NbsRegionSection ReadNbsRegionSection(ReadOnlySpan<byte> data, int offset, bool includeEnabledBitset)

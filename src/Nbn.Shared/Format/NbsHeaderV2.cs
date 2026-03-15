@@ -1,3 +1,4 @@
+using Nbn.Proto.Control;
 using Nbn.Shared.Quantization;
 
 namespace Nbn.Shared.Format;
@@ -15,7 +16,8 @@ public sealed class NbsHeaderV2
         long energyRemaining,
         byte[] baseNbnSha256,
         uint flags,
-        QuantizationMap bufferMap)
+        QuantizationMap bufferMap,
+        NbsHomeostasisConfig? homeostasisConfig = null)
     {
         Magic = magic;
         Version = version;
@@ -28,6 +30,7 @@ public sealed class NbsHeaderV2
         BaseNbnSha256 = baseNbnSha256;
         Flags = flags;
         BufferMap = bufferMap;
+        HomeostasisConfig = homeostasisConfig;
     }
 
     public string Magic { get; }
@@ -41,8 +44,10 @@ public sealed class NbsHeaderV2
     public byte[] BaseNbnSha256 { get; }
     public uint Flags { get; }
     public QuantizationMap BufferMap { get; }
+    public NbsHomeostasisConfig? HomeostasisConfig { get; }
 
     public int HeaderByteCount => 1 << HeaderBytesPow2;
+    public bool HasHomeostasisConfig => HomeostasisConfig is not null;
 
     public bool EnabledBitsetIncluded => (Flags & 0x1u) != 0;
     public bool AxonOverlayIncluded => (Flags & 0x2u) != 0;
@@ -50,3 +55,13 @@ public sealed class NbsHeaderV2
     public bool EnergyEnabled => (Flags & 0x8u) != 0;
     public bool PlasticityEnabled => (Flags & 0x10u) != 0;
 }
+
+public sealed record NbsHomeostasisConfig(
+    bool Enabled,
+    HomeostasisTargetMode TargetMode,
+    HomeostasisUpdateMode UpdateMode,
+    float BaseProbability,
+    uint MinStepCodes,
+    bool EnergyCouplingEnabled,
+    float EnergyTargetScale,
+    float EnergyProbabilityScale);

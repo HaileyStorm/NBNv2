@@ -170,6 +170,36 @@ public class RegionShardCpuBackendHomeostasisTests
         Assert.NotEqual(originalCode, coupledCode);
     }
 
+    [Fact]
+    public void Compute_Homeostasis_Disabled_IsNoOp()
+    {
+        var state = CreateSingleNeuronState(buffer: 0.6f, preActivationThreshold: 1f);
+        var originalBuffer = state.Buffer[0];
+        var backend = new RegionShardCpuBackend(state);
+        var routing = CreateRouting(state.RegionId, state.NeuronCount, destRegionId: 9, destCount: 1);
+
+        var result = backend.Compute(
+            tickId: 77,
+            brainId: Guid.NewGuid(),
+            shardId: ShardId32.From(state.RegionId, 0),
+            routing: routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled,
+            homeostasisConfig: new RegionShardHomeostasisConfig(
+                Enabled: false,
+                TargetMode: HomeostasisTargetMode.HomeostasisTargetZero,
+                UpdateMode: HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                BaseProbability: 1f,
+                MinStepCodes: 4,
+                EnergyCouplingEnabled: true,
+                EnergyTargetScale: 2f,
+                EnergyProbabilityScale: 3f),
+            costEnergyEnabled: true);
+
+        Assert.Equal(originalBuffer, state.Buffer[0], precision: 6);
+        Assert.Equal((uint)0, result.FiredCount);
+        Assert.Empty(result.Outbox);
+    }
+
     private static RegionShardState CreateSingleNeuronState(
         float strength = 0.5f,
         float buffer = 0.9f,

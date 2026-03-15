@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Nbn.Proto.Control;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
@@ -263,6 +264,66 @@ public class NbnBinaryValidatorTests
         Assert.Contains(result.Issues, issue => issue.Message.Contains("sorted by ascending region id", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData("target", "target mode")]
+    [InlineData("update", "update mode")]
+    [InlineData("probability", "base probability")]
+    [InlineData("minstep", "min step codes")]
+    [InlineData("targetscale", "energy target scale")]
+    [InlineData("probabilityscale", "energy probability scale")]
+    public void ValidateNbs_DetectsInvalidHomeostasisConfig(string scenario, string expectedMessageFragment)
+    {
+        var homeostasis = new NbsHomeostasisConfig(
+            Enabled: true,
+            TargetMode: HomeostasisTargetMode.HomeostasisTargetZero,
+            UpdateMode: HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            BaseProbability: 0.25f,
+            MinStepCodes: 2,
+            EnergyCouplingEnabled: true,
+            EnergyTargetScale: 1.5f,
+            EnergyProbabilityScale: 1.25f);
+
+        homeostasis = scenario switch
+        {
+            "target" => homeostasis with { TargetMode = (HomeostasisTargetMode)99 },
+            "update" => homeostasis with { UpdateMode = (HomeostasisUpdateMode)99 },
+            "probability" => homeostasis with { BaseProbability = 1.5f },
+            "minstep" => homeostasis with { MinStepCodes = 0 },
+            "targetscale" => homeostasis with { EnergyTargetScale = 4.5f },
+            "probabilityscale" => homeostasis with { EnergyProbabilityScale = -0.1f },
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, "Unknown invalid homeostasis scenario.")
+        };
+
+        var result = NbnBinaryValidator.ValidateNbs(
+            CreateMinimalValidNbsHeader(homeostasis),
+            CreateMinimalValidNbsRegions(),
+            overlays: null);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, issue => issue.Message.Contains(expectedMessageFragment, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ValidateNbs_AllowsValidHomeostasisConfig()
+    {
+        var homeostasis = new NbsHomeostasisConfig(
+            Enabled: false,
+            TargetMode: HomeostasisTargetMode.HomeostasisTargetFixed,
+            UpdateMode: HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            BaseProbability: 0.5f,
+            MinStepCodes: 4,
+            EnergyCouplingEnabled: true,
+            EnergyTargetScale: 0.5f,
+            EnergyProbabilityScale: 1.75f);
+
+        var result = NbnBinaryValidator.ValidateNbs(
+            CreateMinimalValidNbsHeader(homeostasis),
+            CreateMinimalValidNbsRegions(),
+            overlays: null);
+
+        Assert.True(result.IsValid, FormatIssues(result));
+    }
+
     private static List<NbnRegionSection> ReadRegions(ReadOnlySpan<byte> data, NbnHeaderV2 header)
     {
         var regions = new List<NbnRegionSection>();
@@ -283,5 +344,31 @@ public class NbnBinaryValidatorTests
     private static string FormatIssues(NbnValidationResult result)
     {
         return string.Join(" | ", result.Issues.Select(issue => issue.ToString()));
+    }
+
+    private static NbsHeaderV2 CreateMinimalValidNbsHeader(NbsHomeostasisConfig? homeostasisConfig = null, uint flags = 0)
+    {
+        return new NbsHeaderV2(
+            "NBS2",
+            2,
+            1,
+            9,
+            Guid.NewGuid(),
+            0,
+            0,
+            0,
+            new byte[32],
+            flags,
+            QuantizationSchemas.DefaultBuffer,
+            homeostasisConfig);
+    }
+
+    private static IReadOnlyList<NbsRegionSection> CreateMinimalValidNbsRegions()
+    {
+        return new[]
+        {
+            new NbsRegionSection(0, 1, new short[] { 0 }, enabledBitset: null),
+            new NbsRegionSection(31, 1, new short[] { 0 }, enabledBitset: null)
+        };
     }
 }

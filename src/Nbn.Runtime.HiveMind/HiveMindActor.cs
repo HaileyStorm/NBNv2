@@ -2332,6 +2332,12 @@ public sealed class HiveMindActor : IActor
         if (message.LastSnapshot is not null && message.LastSnapshot.Sha256 is not null && message.LastSnapshot.Sha256.Value.Length == 32)
         {
             brain.LastSnapshot = message.LastSnapshot;
+            if (TryReadPlacementSnapshotHeader(brain.LastSnapshot, out var snapshotHeader)
+                && snapshotHeader.HomeostasisConfig is not null
+                && IsValidSnapshotHomeostasisConfig(snapshotHeader.HomeostasisConfig))
+            {
+                ApplySnapshotHomeostasisConfig(brain, snapshotHeader.HomeostasisConfig);
+            }
         }
 
         if (message.InputWidth > 0)
@@ -2356,6 +2362,7 @@ public sealed class HiveMindActor : IActor
             {
                 brain.PlannedPlacement = null;
                 brain.PlacementExecution = null;
+                RestorePlacementHomeostasis(brain, previousPlacementState);
             }
             UpdatePlacementLifecycle(
                 brain,
@@ -2404,6 +2411,7 @@ public sealed class HiveMindActor : IActor
             {
                 brain.PlannedPlacement = null;
                 brain.PlacementExecution = null;
+                RestorePlacementHomeostasis(brain, previousPlacementState);
             }
             UpdatePlacementLifecycle(
                 brain,
@@ -4277,7 +4285,24 @@ public sealed class HiveMindActor : IActor
             return false;
         }
 
-        var snapshotMs = _workerCatalogSnapshotMs > 0 ? (ulong)_workerCatalogSnapshotMs : (ulong)nowMs;
+        var placementInventory = BuildPlacementWorkerInventory();
+        if (placementInventory.Workers.Count == 0)
+        {
+            plan = new PlacementPlanner.PlacementPlanningResult(
+                brain.PlacementEpoch,
+                brain.PlacementRequestId,
+                brain.PlacementRequestedMs,
+                nowMs,
+                placementInventory.SnapshotMs > 0 ? placementInventory.SnapshotMs : (ulong)nowMs,
+                Array.Empty<PlacementPlanner.WorkerCandidate>(),
+                Array.Empty<ProtoControl.PlacementAssignment>(),
+                regionWarning is null ? Array.Empty<string>() : new[] { regionWarning });
+            failureReason = ProtoControl.PlacementFailureReason.PlacementFailureWorkerUnavailable;
+            failureMessage = "No eligible workers are available for placement.";
+            return false;
+        }
+
+        var snapshotMs = placementInventory.SnapshotMs > 0 ? placementInventory.SnapshotMs : (ulong)nowMs;
         var currentWorkerNodeIds = GetCurrentPlacementWorkerNodeIds(brain);
         var hostedBrainCounts = BuildHostedBrainCounts(brain.BrainId);
         var workers = _workerCatalog.Values
@@ -4404,7 +4429,15 @@ public sealed class HiveMindActor : IActor
             brain.PlacementFailureReason,
             brain.PlacementReconcileState,
             brain.SpawnFailureReasonCode,
-            brain.SpawnFailureMessage);
+            brain.SpawnFailureMessage,
+            brain.HomeostasisEnabled,
+            brain.HomeostasisTargetMode,
+            brain.HomeostasisUpdateMode,
+            brain.HomeostasisBaseProbability,
+            brain.HomeostasisMinStepCodes,
+            brain.HomeostasisEnergyCouplingEnabled,
+            brain.HomeostasisEnergyTargetScale,
+            brain.HomeostasisEnergyProbabilityScale);
 
     private static void RestorePlacementState(BrainState brain, PlacementStateSnapshot snapshot)
     {
@@ -4420,6 +4453,19 @@ public sealed class HiveMindActor : IActor
         brain.PlacementReconcileState = snapshot.PlacementReconcileState;
         brain.SpawnFailureReasonCode = snapshot.SpawnFailureReasonCode;
         brain.SpawnFailureMessage = snapshot.SpawnFailureMessage;
+        RestorePlacementHomeostasis(brain, snapshot);
+    }
+
+    private static void RestorePlacementHomeostasis(BrainState brain, PlacementStateSnapshot snapshot)
+    {
+        brain.HomeostasisEnabled = snapshot.HomeostasisEnabled;
+        brain.HomeostasisTargetMode = snapshot.HomeostasisTargetMode;
+        brain.HomeostasisUpdateMode = snapshot.HomeostasisUpdateMode;
+        brain.HomeostasisBaseProbability = snapshot.HomeostasisBaseProbability;
+        brain.HomeostasisMinStepCodes = snapshot.HomeostasisMinStepCodes;
+        brain.HomeostasisEnergyCouplingEnabled = snapshot.HomeostasisEnergyCouplingEnabled;
+        brain.HomeostasisEnergyTargetScale = snapshot.HomeostasisEnergyTargetScale;
+        brain.HomeostasisEnergyProbabilityScale = snapshot.HomeostasisEnergyProbabilityScale;
     }
 
     private bool TryResolvePlacementRegions(
@@ -4524,6 +4570,75 @@ public sealed class HiveMindActor : IActor
         {
             return false;
         }
+    }
+
+    private static bool TryReadPlacementSnapshotHeader(Nbn.Proto.ArtifactRef snapshot, out NbsHeaderV2 header)
+    {
+        header = default!;
+        if (!snapshot.TryToSha256Bytes(out var snapshotHashBytes))
+        {
+            return false;
+        }
+
+        try
+        {
+            var store = CreateArtifactStoreResolver(snapshot.StoreUri).Resolve(snapshot.StoreUri);
+            var stream = store.TryOpenArtifactAsync(new Sha256Hash(snapshotHashBytes))
+                .ConfigureAwait(false)
+                .GetAwaiter()
+                .GetResult();
+            if (stream is null)
+            {
+                return false;
+            }
+
+            using (stream)
+            {
+                var headerBytes = new byte[NbnBinary.NbsHeaderBytes];
+                var offset = 0;
+                while (offset < headerBytes.Length)
+                {
+                    var read = stream.Read(headerBytes, offset, headerBytes.Length - offset);
+                    if (read <= 0)
+                    {
+                        return false;
+                    }
+
+                    offset += read;
+                }
+
+                header = NbnBinary.ReadNbsHeader(headerBytes);
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void ApplySnapshotHomeostasisConfig(BrainState brain, NbsHomeostasisConfig config)
+    {
+        brain.HomeostasisEnabled = config.Enabled;
+        brain.HomeostasisTargetMode = config.TargetMode;
+        brain.HomeostasisUpdateMode = config.UpdateMode;
+        brain.HomeostasisBaseProbability = config.BaseProbability;
+        brain.HomeostasisMinStepCodes = config.MinStepCodes;
+        brain.HomeostasisEnergyCouplingEnabled = config.EnergyCouplingEnabled;
+        brain.HomeostasisEnergyTargetScale = config.EnergyTargetScale;
+        brain.HomeostasisEnergyProbabilityScale = config.EnergyProbabilityScale;
+    }
+
+    private static bool IsValidSnapshotHomeostasisConfig(NbsHomeostasisConfig config)
+    {
+        return IsSupportedHomeostasisTargetMode(config.TargetMode)
+               && config.UpdateMode == ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep
+               && float.IsFinite(config.BaseProbability)
+               && config.BaseProbability >= 0f
+               && config.BaseProbability <= 1f
+               && config.MinStepCodes != 0
+               && IsFiniteInRange(config.EnergyTargetScale, 0f, 4f)
+               && IsFiniteInRange(config.EnergyProbabilityScale, 0f, 4f);
     }
 
     private void UpdatePlacementLifecycle(
@@ -6344,6 +6459,14 @@ public sealed class HiveMindActor : IActor
                 BuildRescheduleShardPlan(brain, regions, eligibleWorkerCount),
                 brain.CostEnergyEnabled,
                 brain.PlasticityEnabled,
+                brain.HomeostasisEnabled,
+                brain.HomeostasisTargetMode,
+                brain.HomeostasisUpdateMode,
+                brain.HomeostasisBaseProbability,
+                brain.HomeostasisMinStepCodes,
+                brain.HomeostasisEnergyCouplingEnabled,
+                brain.HomeostasisEnergyTargetScale,
+                brain.HomeostasisEnergyProbabilityScale,
                 _lastCompletedTickId,
                 new Dictionary<ShardId32, PID>(brain.Shards),
                 isRecovery));
@@ -6441,6 +6564,14 @@ public sealed class HiveMindActor : IActor
                                 candidate.CostEnergyEnabled,
                                 candidate.CostEnergyEnabled,
                                 candidate.PlasticityEnabled,
+                                candidate.HomeostasisEnabled,
+                                candidate.HomeostasisTargetMode,
+                                candidate.HomeostasisUpdateMode,
+                                candidate.HomeostasisBaseProbability,
+                                candidate.HomeostasisMinStepCodes,
+                                candidate.HomeostasisEnergyCouplingEnabled,
+                                candidate.HomeostasisEnergyTargetScale,
+                                candidate.HomeostasisEnergyProbabilityScale,
                                 new Dictionary<ShardId32, PID>(candidate.Shards),
                                 storeRootPath,
                                 storeUri))
@@ -7265,6 +7396,14 @@ public sealed class HiveMindActor : IActor
             snapshotCostEnergyEnabled,
             snapshotCostEnergyEnabled,
             snapshotPlasticityEnabled,
+            brain.HomeostasisEnabled,
+            brain.HomeostasisTargetMode,
+            brain.HomeostasisUpdateMode,
+            brain.HomeostasisBaseProbability,
+            brain.HomeostasisMinStepCodes,
+            brain.HomeostasisEnergyCouplingEnabled,
+            brain.HomeostasisEnergyTargetScale,
+            brain.HomeostasisEnergyProbabilityScale,
             new Dictionary<ShardId32, PID>(brain.Shards),
             storeRootPath,
             string.IsNullOrWhiteSpace(brain.BaseDefinition.StoreUri) ? storeRootPath : brain.BaseDefinition.StoreUri);
@@ -7580,7 +7719,16 @@ public sealed class HiveMindActor : IActor
             energyRemaining: request.EnergyRemaining,
             baseNbnSha256: baseHashBytes,
             flags: flags,
-            bufferMap: SnapshotBufferQuantization);
+            bufferMap: SnapshotBufferQuantization,
+            homeostasisConfig: new NbsHomeostasisConfig(
+                request.HomeostasisEnabled,
+                request.HomeostasisTargetMode,
+                request.HomeostasisUpdateMode,
+                request.HomeostasisBaseProbability,
+                request.HomeostasisMinStepCodes,
+                request.HomeostasisEnergyCouplingEnabled,
+                request.HomeostasisEnergyTargetScale,
+                request.HomeostasisEnergyProbabilityScale));
 
         NbsOverlaySection? overlaySection = null;
         if (overlays.Count > 0)
@@ -8698,7 +8846,15 @@ public sealed class HiveMindActor : IActor
         ProtoControl.PlacementFailureReason PlacementFailureReason,
         ProtoControl.PlacementReconcileState PlacementReconcileState,
         string SpawnFailureReasonCode,
-        string SpawnFailureMessage);
+        string SpawnFailureMessage,
+        bool HomeostasisEnabled,
+        ProtoControl.HomeostasisTargetMode HomeostasisTargetMode,
+        ProtoControl.HomeostasisUpdateMode HomeostasisUpdateMode,
+        float HomeostasisBaseProbability,
+        uint HomeostasisMinStepCodes,
+        bool HomeostasisEnergyCouplingEnabled,
+        float HomeostasisEnergyTargetScale,
+        float HomeostasisEnergyProbabilityScale);
 
     private readonly record struct PeerLatencyProbeTarget(
         Guid NodeId,
@@ -8720,6 +8876,14 @@ public sealed class HiveMindActor : IActor
         ProtoControl.ShardPlan? ShardPlan,
         bool CostEnergyEnabled,
         bool PlasticityEnabled,
+        bool HomeostasisEnabled,
+        ProtoControl.HomeostasisTargetMode HomeostasisTargetMode,
+        ProtoControl.HomeostasisUpdateMode HomeostasisUpdateMode,
+        float HomeostasisBaseProbability,
+        uint HomeostasisMinStepCodes,
+        bool HomeostasisEnergyCouplingEnabled,
+        float HomeostasisEnergyTargetScale,
+        float HomeostasisEnergyProbabilityScale,
         ulong CurrentTickId,
         Dictionary<ShardId32, PID> Shards,
         bool IsRecovery);
@@ -8757,6 +8921,14 @@ public sealed class HiveMindActor : IActor
         bool CostEnabled,
         bool EnergyEnabled,
         bool PlasticityEnabled,
+        bool HomeostasisEnabled,
+        ProtoControl.HomeostasisTargetMode HomeostasisTargetMode,
+        ProtoControl.HomeostasisUpdateMode HomeostasisUpdateMode,
+        float HomeostasisBaseProbability,
+        uint HomeostasisMinStepCodes,
+        bool HomeostasisEnergyCouplingEnabled,
+        float HomeostasisEnergyTargetScale,
+        float HomeostasisEnergyProbabilityScale,
         Dictionary<ShardId32, PID> Shards,
         string StoreRootPath,
         string StoreUri);

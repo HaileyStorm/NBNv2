@@ -15,8 +15,8 @@ public sealed class HiveMindPlacementPlannerTests
     {
         var system = new ActorSystem();
         var root = system.Root;
-        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
-            CreateOptions(workerInventoryStaleAfterMs: 5_000))));
+        var actor = new HiveMindActor(CreateOptions(workerInventoryStaleAfterMs: 5_000));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
 
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
@@ -51,6 +51,11 @@ public sealed class HiveMindPlacementPlannerTests
             }
         });
 
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+        Assert.Empty(inventory.Workers);
+
         var brainId = Guid.NewGuid();
         var ack = await root.RequestAsync<PlacementAck>(
             hiveMind,
@@ -65,6 +70,7 @@ public sealed class HiveMindPlacementPlannerTests
         Assert.Equal(PlacementFailureReason.PlacementFailureWorkerUnavailable, ack.FailureReason);
         Assert.Equal(PlacementLifecycleState.PlacementLifecycleFailed, ack.LifecycleState);
         Assert.False(string.IsNullOrWhiteSpace(ack.RequestId));
+        Assert.Null(GetPlannedPlacement(actor, brainId));
 
         var lifecycle = await root.RequestAsync<PlacementLifecycleInfo>(
             hiveMind,

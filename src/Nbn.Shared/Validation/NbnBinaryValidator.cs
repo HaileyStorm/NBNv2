@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Nbn.Shared.Format;
 using Nbn.Shared.Packing;
+using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Shared.Validation;
 
@@ -164,6 +165,41 @@ public static class NbnBinaryValidator
             result.Add("NBS header base NBN hash must be 32 bytes.", "header");
         }
 
+        if (header.HomeostasisConfig is not null)
+        {
+            if (!IsSupportedHomeostasisTargetMode(header.HomeostasisConfig.TargetMode))
+            {
+                result.Add("NBS homeostasis target mode must be a supported value.", "header");
+            }
+
+            if (header.HomeostasisConfig.UpdateMode != ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep)
+            {
+                result.Add("NBS homeostasis update mode must be probabilistic quantized step.", "header");
+            }
+
+            if (!float.IsFinite(header.HomeostasisConfig.BaseProbability)
+                || header.HomeostasisConfig.BaseProbability < 0f
+                || header.HomeostasisConfig.BaseProbability > 1f)
+            {
+                result.Add("NBS homeostasis base probability must be finite and within [0,1].", "header");
+            }
+
+            if (header.HomeostasisConfig.MinStepCodes == 0)
+            {
+                result.Add("NBS homeostasis min step codes must be at least 1.", "header");
+            }
+
+            if (!IsFiniteInRange(header.HomeostasisConfig.EnergyTargetScale, 0f, 4f))
+            {
+                result.Add("NBS homeostasis energy target scale must be finite and within [0,4].", "header");
+            }
+
+            if (!IsFiniteInRange(header.HomeostasisConfig.EnergyProbabilityScale, 0f, 4f))
+            {
+                result.Add("NBS homeostasis energy probability scale must be finite and within [0,4].", "header");
+            }
+        }
+
         var seenRegions = new HashSet<byte>();
         var previousRegionId = -1;
         foreach (var region in regions)
@@ -220,6 +256,17 @@ public static class NbnBinaryValidator
         }
 
         return result;
+    }
+
+    private static bool IsSupportedHomeostasisTargetMode(ProtoControl.HomeostasisTargetMode mode)
+    {
+        return mode == ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero
+               || mode == ProtoControl.HomeostasisTargetMode.HomeostasisTargetFixed;
+    }
+
+    private static bool IsFiniteInRange(float value, float min, float max)
+    {
+        return float.IsFinite(value) && value >= min && value <= max;
     }
 
     private static void ValidateRegionSection(

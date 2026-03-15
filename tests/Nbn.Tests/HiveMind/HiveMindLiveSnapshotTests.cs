@@ -4,6 +4,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.HiveMind;
+using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Format;
 using Nbn.Tests.Format;
@@ -176,6 +177,333 @@ public class HiveMindLiveSnapshotTests
             Assert.Equal((byte)22, overlay.StrengthCode);
 
             await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RequestSnapshot_Persists_Homeostasis_Config_That_Reloads_On_Placement()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hive-snapshot-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var richNbn = NbnTestVectors.CreateRichNbnVector();
+            var baseManifest = await store.StoreAsync(new MemoryStream(richNbn.Bytes), "application/x-nbn");
+            var baseRef = baseManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)baseManifest.ByteLength, "application/x-nbn", artifactRoot);
+            var brainId = Guid.NewGuid();
+            var expectedHomeostasis = new NbsHomeostasisConfig(
+                Enabled: false,
+                TargetMode: HomeostasisTargetMode.HomeostasisTargetFixed,
+                UpdateMode: HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                BaseProbability: 0.35f,
+                MinStepCodes: 3,
+                EnergyCouplingEnabled: true,
+                EnergyTargetScale: 0.75f,
+                EnergyProbabilityScale: 1.5f);
+
+            ArtifactRef snapshotRef;
+            var system = new ActorSystem();
+            var systemShutdown = false;
+            try
+            {
+                var root = system.Root;
+                var ioName = $"io-{Guid.NewGuid():N}";
+                var ioPid = new PID(string.Empty, ioName);
+                var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioPid)));
+                var gateway = root.SpawnNamed(
+                    Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(ioName), hiveMindPid: hiveMind)),
+                    ioName);
+                PrimeEligibleWorker(root, hiveMind);
+
+                var placement = await root.RequestAsync<PlacementAck>(
+                    hiveMind,
+                    new RequestPlacement
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        BaseDef = baseRef,
+                        InputWidth = 3,
+                        OutputWidth = 2
+                    });
+                Assert.True(placement.Accepted);
+
+                var region0Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                    brainId,
+                    ShardId32.From(0, 0),
+                    neuronStart: 0,
+                    bufferCodes: new[] { 10, 11, 12 },
+                    enabledBitset: new byte[] { 0b0000_0111 },
+                    overlays: Array.Empty<SnapshotOverlayRecord>())));
+                var region1Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                    brainId,
+                    ShardId32.From(1, 0),
+                    neuronStart: 0,
+                    bufferCodes: new[] { 20, 21, 22, 23 },
+                    enabledBitset: new byte[] { 0b0000_1101 },
+                    overlays: new[]
+                    {
+                        new SnapshotOverlayRecord
+                        {
+                            FromAddress = SharedAddress32.From(1, 1).Value,
+                            ToAddress = SharedAddress32.From(31, 1).Value,
+                            StrengthCode = 22
+                        }
+                    })));
+                var region31Shard = root.Spawn(Props.FromProducer(() => new SnapshotShardProbe(
+                    brainId,
+                    ShardId32.From(31, 0),
+                    neuronStart: 0,
+                    bufferCodes: new[] { 30, 31 },
+                    enabledBitset: new byte[] { 0b0000_0001 },
+                    overlays: Array.Empty<SnapshotOverlayRecord>())));
+
+                await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    RegionId = 0,
+                    ShardIndex = 0,
+                    ShardPid = PidLabel(region0Shard),
+                    NeuronStart = 0,
+                    NeuronCount = 3
+                }));
+                await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    RegionId = 1,
+                    ShardIndex = 0,
+                    ShardPid = PidLabel(region1Shard),
+                    NeuronStart = 0,
+                    NeuronCount = 4
+                }));
+                await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    RegionId = 31,
+                    ShardIndex = 0,
+                    ShardPid = PidLabel(region31Shard),
+                    NeuronStart = 0,
+                    NeuronCount = 2
+                }));
+
+                _ = await WaitForBrainInfoAsync(
+                    root,
+                    gateway,
+                    brainId,
+                    info => info.InputWidth == 3 && info.OutputWidth == 2,
+                    timeoutMs: 4_000);
+
+                var homeostasisAck = await root.RequestAsync<IoCommandAck>(gateway, new SetHomeostasisEnabled
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    HomeostasisEnabled = expectedHomeostasis.Enabled,
+                    HomeostasisTargetMode = expectedHomeostasis.TargetMode,
+                    HomeostasisUpdateMode = expectedHomeostasis.UpdateMode,
+                    HomeostasisBaseProbability = expectedHomeostasis.BaseProbability,
+                    HomeostasisMinStepCodes = expectedHomeostasis.MinStepCodes,
+                    HomeostasisEnergyCouplingEnabled = expectedHomeostasis.EnergyCouplingEnabled,
+                    HomeostasisEnergyTargetScale = expectedHomeostasis.EnergyTargetScale,
+                    HomeostasisEnergyProbabilityScale = expectedHomeostasis.EnergyProbabilityScale
+                });
+                Assert.True(homeostasisAck.Success);
+
+                var ready = await root.RequestAsync<SnapshotReady>(
+                    hiveMind,
+                    new RequestSnapshot
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        HasRuntimeState = true,
+                        EnergyRemaining = 0,
+                        CostEnabled = false,
+                        EnergyEnabled = false,
+                        PlasticityEnabled = true
+                    });
+
+                Assert.NotNull(ready.Snapshot);
+                snapshotRef = ready.Snapshot;
+                Assert.True(snapshotRef.TryToSha256Bytes(out var snapshotHashBytes));
+
+                await using var snapshotStream = await store.TryOpenArtifactAsync(new Sha256Hash(snapshotHashBytes));
+                Assert.NotNull(snapshotStream);
+
+                byte[] snapshotBytes;
+                await using (snapshotStream!)
+                using (var ms = new MemoryStream())
+                {
+                    await snapshotStream.CopyToAsync(ms);
+                    snapshotBytes = ms.ToArray();
+                }
+
+                var snapshotHeader = NbnBinary.ReadNbsHeader(snapshotBytes);
+                Assert.NotNull(snapshotHeader.HomeostasisConfig);
+                AssertHomeostasisConfig(expectedHomeostasis, snapshotHeader.HomeostasisConfig!);
+
+                await system.ShutdownAsync();
+                systemShutdown = true;
+            }
+            finally
+            {
+                if (!systemShutdown)
+                {
+                    await system.ShutdownAsync();
+                }
+            }
+
+            var restoreSystem = new ActorSystem();
+            var restoreSystemShutdown = false;
+            try
+            {
+                var root = restoreSystem.Root;
+                var ioName = $"io-{Guid.NewGuid():N}";
+                var ioPid = new PID(string.Empty, ioName);
+                var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioPid)));
+                var gateway = root.SpawnNamed(
+                    Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(ioName), hiveMindPid: hiveMind)),
+                    ioName);
+                PrimeEligibleWorker(root, hiveMind);
+
+                var placement = await root.RequestAsync<PlacementAck>(
+                    hiveMind,
+                    new RequestPlacement
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        BaseDef = baseRef,
+                        LastSnapshot = snapshotRef,
+                        InputWidth = 3,
+                        OutputWidth = 2
+                    });
+                Assert.True(placement.Accepted);
+
+                var restoredInfo = await WaitForBrainInfoAsync(
+                    root,
+                    gateway,
+                    brainId,
+                    info => info.HomeostasisEnabled == expectedHomeostasis.Enabled
+                            && info.HomeostasisTargetMode == expectedHomeostasis.TargetMode
+                            && info.HomeostasisUpdateMode == expectedHomeostasis.UpdateMode
+                            && Math.Abs(info.HomeostasisBaseProbability - expectedHomeostasis.BaseProbability) < 0.000001f
+                            && info.HomeostasisMinStepCodes == expectedHomeostasis.MinStepCodes
+                            && info.HomeostasisEnergyCouplingEnabled == expectedHomeostasis.EnergyCouplingEnabled
+                            && Math.Abs(info.HomeostasisEnergyTargetScale - expectedHomeostasis.EnergyTargetScale) < 0.000001f
+                            && Math.Abs(info.HomeostasisEnergyProbabilityScale - expectedHomeostasis.EnergyProbabilityScale) < 0.000001f,
+                    timeoutMs: 4_000);
+
+                AssertHomeostasisConfig(restoredInfo, expectedHomeostasis);
+
+                await restoreSystem.ShutdownAsync();
+                restoreSystemShutdown = true;
+            }
+            finally
+            {
+                if (!restoreSystemShutdown)
+                {
+                    await restoreSystem.ShutdownAsync();
+                }
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RequestPlacement_Failure_Restores_Previous_Homeostasis_After_Snapshot_Header_Read()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hive-snapshot-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var richNbn = NbnTestVectors.CreateRichNbnVector();
+            var richNbs = NbnTestVectors.CreateRichNbsVector(richNbn);
+            var customHomeostasis = new NbsHomeostasisConfig(
+                Enabled: false,
+                TargetMode: HomeostasisTargetMode.HomeostasisTargetFixed,
+                UpdateMode: HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                BaseProbability: 0.4f,
+                MinStepCodes: 5,
+                EnergyCouplingEnabled: true,
+                EnergyTargetScale: 0.5f,
+                EnergyProbabilityScale: 1.75f);
+
+            var snapshotBytes = richNbs.Bytes.ToArray();
+            var snapshotHeader = NbnBinary.ReadNbsHeader(snapshotBytes);
+            NbnBinary.WriteNbsHeader(
+                snapshotBytes,
+                new NbsHeaderV2(
+                    snapshotHeader.Magic,
+                    snapshotHeader.Version,
+                    snapshotHeader.Endianness,
+                    snapshotHeader.HeaderBytesPow2,
+                    snapshotHeader.BrainId,
+                    snapshotHeader.SnapshotTickId,
+                    snapshotHeader.TimestampMs,
+                    snapshotHeader.EnergyRemaining,
+                    snapshotHeader.BaseNbnSha256,
+                    snapshotHeader.Flags,
+                    snapshotHeader.BufferMap,
+                    customHomeostasis));
+
+            var snapshotManifest = await store.StoreAsync(new MemoryStream(snapshotBytes), "application/x-nbs");
+            var snapshotRef = snapshotManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)snapshotManifest.ByteLength, "application/x-nbs", artifactRoot);
+
+            var registerBrain = new TaskCompletionSource<Nbn.Proto.Io.RegisterBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var system = new ActorSystem();
+            var systemShutdown = false;
+            try
+            {
+                var root = system.Root;
+                var ioName = $"io-{Guid.NewGuid():N}";
+                var ioPid = new PID(string.Empty, ioName);
+                root.SpawnNamed(Props.FromProducer(() => new RegisterBrainProbeActor(registerBrain)), ioName);
+                var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: ioPid)));
+
+                var placement = await root.RequestAsync<PlacementAck>(
+                    hiveMind,
+                    new RequestPlacement
+                    {
+                        BrainId = Guid.NewGuid().ToProtoUuid(),
+                        LastSnapshot = snapshotRef
+                    });
+
+                Assert.False(placement.Accepted);
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var register = await registerBrain.Task.WaitAsync(cts.Token);
+
+                Assert.True(register.HomeostasisEnabled);
+                Assert.Equal(HomeostasisTargetMode.HomeostasisTargetZero, register.HomeostasisTargetMode);
+                Assert.Equal(HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep, register.HomeostasisUpdateMode);
+                Assert.Equal(0.01f, register.HomeostasisBaseProbability);
+                Assert.Equal((uint)1, register.HomeostasisMinStepCodes);
+                Assert.False(register.HomeostasisEnergyCouplingEnabled);
+                Assert.Equal(1f, register.HomeostasisEnergyTargetScale);
+                Assert.Equal(1f, register.HomeostasisEnergyProbabilityScale);
+
+                await system.ShutdownAsync();
+                systemShutdown = true;
+            }
+            finally
+            {
+                if (!systemShutdown)
+                {
+                    await system.ShutdownAsync();
+                }
+            }
         }
         finally
         {
@@ -546,6 +874,78 @@ public class HiveMindLiveSnapshotTests
         }
     }
 
+    private static async Task<BrainInfo> WaitForBrainInfoAsync(
+        IRootContext root,
+        PID gateway,
+        Guid brainId,
+        Func<BrainInfo, bool> predicate,
+        int timeoutMs)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        BrainInfo? last = null;
+        while (!cts.IsCancellationRequested)
+        {
+            last = await root.RequestAsync<BrainInfo>(
+                gateway,
+                new BrainInfoRequest
+                {
+                    BrainId = brainId.ToProtoUuid()
+                });
+            if (predicate(last))
+            {
+                return last;
+            }
+
+            await Task.Delay(20, cts.Token);
+        }
+
+        throw new TimeoutException($"Brain info did not reach the expected homeostasis state. Last probability={last?.HomeostasisBaseProbability ?? -1f}.");
+    }
+
+    private static void AssertHomeostasisConfig(NbsHomeostasisConfig expected, NbsHomeostasisConfig actual)
+    {
+        Assert.Equal(expected.Enabled, actual.Enabled);
+        Assert.Equal(expected.TargetMode, actual.TargetMode);
+        Assert.Equal(expected.UpdateMode, actual.UpdateMode);
+        Assert.Equal(expected.BaseProbability, actual.BaseProbability);
+        Assert.Equal(expected.MinStepCodes, actual.MinStepCodes);
+        Assert.Equal(expected.EnergyCouplingEnabled, actual.EnergyCouplingEnabled);
+        Assert.Equal(expected.EnergyTargetScale, actual.EnergyTargetScale);
+        Assert.Equal(expected.EnergyProbabilityScale, actual.EnergyProbabilityScale);
+    }
+
+    private static void AssertHomeostasisConfig(BrainInfo actual, NbsHomeostasisConfig expected)
+    {
+        Assert.Equal(expected.Enabled, actual.HomeostasisEnabled);
+        Assert.Equal(expected.TargetMode, actual.HomeostasisTargetMode);
+        Assert.Equal(expected.UpdateMode, actual.HomeostasisUpdateMode);
+        Assert.Equal(expected.BaseProbability, actual.HomeostasisBaseProbability);
+        Assert.Equal(expected.MinStepCodes, actual.HomeostasisMinStepCodes);
+        Assert.Equal(expected.EnergyCouplingEnabled, actual.HomeostasisEnergyCouplingEnabled);
+        Assert.Equal(expected.EnergyTargetScale, actual.HomeostasisEnergyTargetScale);
+        Assert.Equal(expected.EnergyProbabilityScale, actual.HomeostasisEnergyProbabilityScale);
+    }
+
+    private sealed class RegisterBrainProbeActor : IActor
+    {
+        private readonly TaskCompletionSource<Nbn.Proto.Io.RegisterBrain> _registerBrain;
+
+        public RegisterBrainProbeActor(TaskCompletionSource<Nbn.Proto.Io.RegisterBrain> registerBrain)
+        {
+            _registerBrain = registerBrain;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is Nbn.Proto.Io.RegisterBrain registerBrain)
+            {
+                _registerBrain.TrySetResult(registerBrain.Clone());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed record SendMessage(PID Target, object Message);
     private sealed record SendMessageAck;
 
@@ -658,6 +1058,24 @@ public class HiveMindLiveSnapshotTests
 
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static IoOptions CreateIoOptions(string gatewayName)
+    {
+        return new IoOptions(
+            BindHost: "127.0.0.1",
+            Port: 0,
+            AdvertisedHost: null,
+            AdvertisedPort: null,
+            GatewayName: gatewayName,
+            ServerName: "nbn.io.tests",
+            SettingsHost: null,
+            SettingsPort: 0,
+            SettingsName: "SettingsMonitor",
+            HiveMindAddress: null,
+            HiveMindName: null,
+            ReproAddress: null,
+            ReproName: null);
+    }
 
     private static void PrimeEligibleWorker(IRootContext root, PID hiveMind)
     {

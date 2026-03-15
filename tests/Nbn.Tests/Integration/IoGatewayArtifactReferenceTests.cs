@@ -1024,6 +1024,61 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task CommandAck_InvalidHomeostasisTargetMode_Returns_Failure()
+    {
+        await AssertInvalidHomeostasisCommandAsync(
+            command =>
+            {
+                command.HomeostasisTargetMode = (ProtoControl.HomeostasisTargetMode)99;
+            },
+            "homeostasis_target_mode_invalid");
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidHomeostasisUpdateMode_Returns_Failure()
+    {
+        await AssertInvalidHomeostasisCommandAsync(
+            command =>
+            {
+                command.HomeostasisUpdateMode = (ProtoControl.HomeostasisUpdateMode)99;
+            },
+            "homeostasis_update_mode_invalid");
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidHomeostasisMinStepCodes_Returns_Failure()
+    {
+        await AssertInvalidHomeostasisCommandAsync(
+            command =>
+            {
+                command.HomeostasisMinStepCodes = 0;
+            },
+            "homeostasis_min_step_codes_invalid");
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidHomeostasisEnergyTargetScale_Returns_Failure()
+    {
+        await AssertInvalidHomeostasisCommandAsync(
+            command =>
+            {
+                command.HomeostasisEnergyTargetScale = 4.5f;
+            },
+            "homeostasis_energy_target_scale_invalid");
+    }
+
+    [Fact]
+    public async Task CommandAck_InvalidHomeostasisEnergyProbabilityScale_Returns_Failure()
+    {
+        await AssertInvalidHomeostasisCommandAsync(
+            command =>
+            {
+                command.HomeostasisEnergyProbabilityScale = float.NaN;
+            },
+            "homeostasis_energy_probability_scale_invalid");
+    }
+
+    [Fact]
     public async Task CommandAck_InvalidPlasticityDelta_Returns_Failure()
     {
         var system = new ActorSystem();
@@ -2357,6 +2412,51 @@ public class IoGatewayArtifactReferenceTests
 
         public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException(_message);
+    }
+
+    private static async Task AssertInvalidHomeostasisCommandAsync(
+        Action<SetHomeostasisEnabled> mutate,
+        string expectedMessage)
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        var command = CreateValidHomeostasisCommand(brainId);
+        mutate(command);
+
+        var ack = await root.RequestAsync<IoCommandAck>(gateway, command);
+
+        Assert.False(ack.Success);
+        Assert.Equal("set_homeostasis", ack.Command);
+        Assert.Equal(expectedMessage, ack.Message);
+        Assert.True(ack.HasEnergyState);
+
+        await system.ShutdownAsync();
+    }
+
+    private static SetHomeostasisEnabled CreateValidHomeostasisCommand(Guid brainId)
+    {
+        return new SetHomeostasisEnabled
+        {
+            BrainId = brainId.ToProtoUuid(),
+            HomeostasisEnabled = true,
+            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+            HomeostasisBaseProbability = 0.25f,
+            HomeostasisMinStepCodes = 2,
+            HomeostasisEnergyCouplingEnabled = true,
+            HomeostasisEnergyTargetScale = 1.25f,
+            HomeostasisEnergyProbabilityScale = 1.5f
+        };
     }
 
     private sealed class FixedBrainInfoActor : IActor
