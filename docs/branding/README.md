@@ -4,7 +4,9 @@ This workspace explores possible `NBN` identity directions without any `v2` lang
 
 ## Latest round
 
-The current exploration is in [round8/README.md](round8/README.md). It pins `55deg Even Flow` and `55deg Exit Reach`, explores route blends between them, and adds `NBN` wordmark experiments around stroke weight, `B` width, and color.
+The current exploration is in [round9/README.md](round9/README.md). It pins `Bridge Soft` as the loop candidate and focuses on narrower `B` widths plus a broader set of wordmark color treatments.
+
+The previous bridge and wordmark study remains in [round8/README.md](round8/README.md).
 
 The previous route-only study remains in [round7/README.md](round7/README.md).
 
