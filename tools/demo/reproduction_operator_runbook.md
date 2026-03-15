@@ -4,23 +4,19 @@
 This runbook covers reproduction requests sent through IO Gateway (`ReproduceByBrainIds` and `ReproduceByArtifacts`) and handled by `ReproductionManager`.
 
 ## Quick Start (Deterministic Artifact Flow)
-Run the local PowerShell demo script (worker-node-first bring-up):
-- starts `SettingsMonitor`
-- starts worker nodes and waits for worker/service heartbeats
-- starts `HiveMind`, `IO`, `Reproduction`, and `Observability`
-- spawns the demo brain through IO/HiveMind placement (`SpawnBrainViaIO`)
+Open Workbench and use `Orchestrator` `Start All` to launch the local runtime services.
+Use `Spawn Sample Brain` if you want a live IO/HiveMind placement sanity check before running reproduction commands.
 
-```powershell
-tools/demo/run_local_hivemind_demo.ps1
+Create deterministic sample artifacts with:
+
+```bash
+dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
+  init-artifacts --artifact-root <artifact_root_path> --json
 ```
 
-The script emits repro JSON to:
+If you use the `--no-build` commands below, build the repo or the referenced project first.
 
-`tools/demo/local-demo/<timestamp>/logs/repro-scenario.log`
-
-The script also emits a multi-case verification suite report:
-
-`tools/demo/local-demo/<timestamp>/logs/repro-suite.log`
+Use the emitted artifact root and `sha256`/`size` values with the `repro-scenario` and `repro-suite` commands below. Redirect stdout to a file if you want to keep a local log of the JSON output.
 
 Default repro scenario policy is `spawn-policy=never`, so the expected happy-path shape is:
 
@@ -30,7 +26,7 @@ Default repro scenario policy is `spawn-policy=never`, so the expected happy-pat
 - `result.spawned == false`
 - `result.child_brain_id == ""`
 
-For a spawn attempt, set `-ReproSpawnPolicy default` or `-ReproSpawnPolicy always`.
+For a spawn attempt, set `--spawn-policy default` or `--spawn-policy always`.
 
 ## Repro Suite (Multi-Behavior Verification)
 `Nbn.Tools.DemoHost repro-suite` runs a deterministic set of behavior checks and emits per-case pass/fail output:

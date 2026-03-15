@@ -1,16 +1,12 @@
 # Speciation Operator Runbook
 
 ## Scope
-This runbook covers the dedicated Speciation service (`Nbn.Runtime.Speciation`), the IO-routed `nbn.speciation` APIs, and the Workbench Speciation pane.
+This runbook covers the dedicated Speciation service (`Nbn.Runtime.Speciation`) and the Workbench Speciation pane.
 
 ## Quick Start
-Bring the local stack up with the standard demo script so SettingsMonitor, HiveMind, IO, Reproduction, Speciation, and Observability share the same discovery/config path:
+Open Workbench and use `Orchestrator` `Start All` so SettingsMonitor, HiveMind, IO, Reproduction, Speciation, and Observability share the same discovery/config path. Use `Spawn Sample Brain` if you need a live brain for end-to-end placement or assignment checks.
 
-```powershell
-tools/demo/run_local_hivemind_demo.ps1
-```
-
-Open Workbench and use:
+Then use:
 
 - `Orchestrator` to confirm `Speciation` is online and discovery published `service.endpoint.speciation_manager`
 - `Speciation` pane for status, policy settings, history, `Start New Epoch`, `Reset All`, and epoch deletion controls
@@ -23,6 +19,8 @@ dotnet run --project src/Nbn.Runtime.Speciation -c Release --no-build -- `
   --bind-host 127.0.0.1 --port 12080 `
   --settings-host 127.0.0.1 --settings-port 12010 --settings-name SettingsMonitor
 ```
+
+If you use the `--no-build` command above, build the repo or the referenced project first.
 
 Useful flags:
 

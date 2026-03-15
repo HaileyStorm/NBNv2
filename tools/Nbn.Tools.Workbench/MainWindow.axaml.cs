@@ -45,7 +45,6 @@ public partial class MainWindow : Window
         try
         {
             WorkbenchProcessRegistry.Default.CleanupStale();
-            LocalDemoRunner.CleanupStaleProcesses();
         }
         catch
         {

@@ -9,8 +9,9 @@ NBN is not a gradient-descent/backprop training framework.
 
 - Full specification: [`docs/NBNv2.md`](docs/NBNv2.md)
 - Spec assembly source template: [`docs/INDEX.md`](docs/INDEX.md)
-- Local demo scripts: [`tools/demo/run_local_hivemind_demo.ps1`](tools/demo/run_local_hivemind_demo.ps1), [`tools/demo/run_local_hivemind_demo.sh`](tools/demo/run_local_hivemind_demo.sh)
+- Workbench operator surface: [`tools/Nbn.Tools.Workbench`](tools/Nbn.Tools.Workbench)
 - Reproduction operator runbook: [`tools/demo/reproduction_operator_runbook.md`](tools/demo/reproduction_operator_runbook.md)
+- Speciation operator runbook: [`tools/demo/speciation_operator_runbook.md`](tools/demo/speciation_operator_runbook.md)
 
 ## Goals
 
@@ -25,7 +26,7 @@ NBN is not a gradient-descent/backprop training framework.
 3. HiveMind coordinates `Nbn.Runtime.Brain`, `Nbn.Runtime.RegionHost`, and `Nbn.Runtime.WorkerNode`.
 4. Tick execution is two-phase: compute then deliver; outputs from tick `N` are inputs for compute on tick `N+1`.
 5. Shared contracts and formats live in `Nbn.Shared`.
-6. Tooling surfaces are `Nbn.Tools.Workbench` and `Nbn.Tools.DemoHost`.
+6. Tooling surfaces include `Nbn.Tools.Workbench` plus targeted CLI tools under `tools/`.
 
 ## Repository Layout
 
@@ -34,8 +35,8 @@ NBN is not a gradient-descent/backprop training framework.
   - shared contracts and helpers: `Nbn.Shared`
 - `tools/`
   - `Nbn.Tools.Workbench` (Avalonia UI)
-  - `Nbn.Tools.DemoHost` (demo/orchestration host)
-  - `demo/` scripts and runbooks
+  - `Nbn.Tools.DemoHost` (targeted scenario CLI)
+  - `demo/` runbooks
 - `tests/`
   - `Nbn.Tests`
 
@@ -53,17 +54,13 @@ dotnet build NBNv2.sln -c Release --disable-build-servers --artifacts-path .arti
 dotnet test NBNv2.sln -c Release --disable-build-servers --artifacts-path .artifacts-temp
 ```
 
-## Local Demo
-
-```powershell
-pwsh -NoProfile -File tools/demo/run_local_hivemind_demo.ps1
-```
+## Local Launch
 
 ```bash
-bash tools/demo/run_local_hivemind_demo.sh
+dotnet run --project tools/Nbn.Tools.Workbench -c Release
 ```
 
-Demo logs are written under `tools/demo/local-demo/<timestamp>/logs`.
+In `Orchestrator`, use `Start All`, then `Spawn Sample Brain` for the current end-to-end local validation path.
 
 ## Status / Roadmap
 

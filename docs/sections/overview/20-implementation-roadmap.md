@@ -8,7 +8,7 @@
 - Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, and reproduction workflows are implemented and exercised by tests/tools.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
-- Local demo scripts provide repeatable end-to-end bring-up on Windows and Linux.
+- Workbench local launch plus sample-brain workflows provide repeatable operator validation paths.
 - Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.
 
 ### 20.2 Current priorities
@@ -24,9 +24,12 @@
 - Build/test baseline:
   - `dotnet build -c Release --disable-build-servers`
   - `dotnet test -c Release --disable-build-servers`
-- End-to-end demo path:
-  - Windows: `tools/demo/run_local_hivemind_demo.ps1`
-  - Linux: `tools/demo/run_local_hivemind_demo.sh`
+- Workbench operator path:
+  - `dotnet run --project tools/Nbn.Tools.Workbench -c Release`
+  - In `Orchestrator`, use `Start All`, then `Spawn Sample Brain`
+- Operator runbooks:
+  - `tools/demo/reproduction_operator_runbook.md`
+  - `tools/demo/speciation_operator_runbook.md`
 - Documentation freshness:
   - Windows: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
   - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh --check`
