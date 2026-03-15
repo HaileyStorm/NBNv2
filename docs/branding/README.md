@@ -4,7 +4,9 @@ This workspace explores possible `NBN` identity directions without any `v2` lang
 
 ## Latest round
 
-The current exploration is in [round6/README.md](round6/README.md). It corrects the `Loop Offset Core` rotation study by preserving the missing ring segment and rotating that exact structure, with `Diamond Wide Gate` pinned as a comparison candidate.
+The current exploration is in [round7/README.md](round7/README.md). It keeps the corrected `55deg` loop rotation pinned and studies route-only variations around it, with `Diamond Wide Gate` still pinned as a comparison candidate.
+
+The previous corrected rotation study remains in [round6/README.md](round6/README.md).
 
 The previous attempt remains in [round5/README.md](round5/README.md).
 
