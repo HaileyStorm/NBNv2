@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1460" height="520" viewBox="0 0 1460 520" fill="none">
+<rect x="0" y="0" width="1460" height="520" fill="white" />
+<g transform="translate(62 46) scale(0.25)">
+<g>
+<path d="M 477.15,228.13 A 286 286 0 0 1 667.77,272.14" stroke="#E0A31A" stroke-width="70" stroke-linecap="round" />
+<path d="M 734.26,332.01 A 286 286 0 0 1 792.75,566.57" stroke="#131B2C" stroke-width="70" stroke-linecap="round" />
+<path d="M 487.07,796.91 A 286 286 0 0 1 272.14,667.77" stroke="#131B2C" stroke-width="70" stroke-linecap="round" />
+<path d="M 233.33,576.34 A 286 286 0 0 1 261.86,373.34" stroke="#E0A31A" stroke-width="70" stroke-linecap="round" />
+<path d="M 309.77,309.77 A 286 286 0 0 1 428.38,238.5" stroke="#131B2C" stroke-width="70" stroke-linecap="round" />
+<path d="M 248,521 C 350,434 439,394 524,427 C 608,440 613,602 720,614" stroke="#1B8393" stroke-width="42" stroke-linecap="round" stroke-linejoin="round" />
+<circle cx="512" cy="512" r="78" stroke="#131B2C" stroke-width="20" />
+<circle cx="248" cy="521" r="16" fill="#F97316" />
+<circle cx="720" cy="614" r="16" fill="#F97316" />
+</g>
+</g>
+<g>
+<path d="M 314,332 L 314,122 L 479,332 L 479,122" stroke="#131B2C" stroke-width="31.02" stroke-linecap="round" stroke-linejoin="round" />
+<path d="M 530,122 L 530,332 M 542.41,122 L 659.16,122 Q 738.32,122 738.32,174.5 Q 738.32,227 659.16,227 L 542.41,227 M 542.41,227 L 659.16,227 Q 738.32,227 738.32,279.5 Q 738.32,332 659.16,332 L 542.41,332" stroke="#1B8393" stroke-width="31.02" stroke-linecap="round" stroke-linejoin="round" />
+<path d="M 789.32,332 L 789.32,122 L 954.32,332 L 954.32,122" stroke="#131B2C" stroke-width="31.02" stroke-linecap="round" stroke-linejoin="round" />
+</g>
+</svg>

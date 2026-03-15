@@ -4,7 +4,9 @@ This workspace explores possible `NBN` identity directions without any `v2` lang
 
 ## Latest round
 
-The current exploration is in [round7/README.md](round7/README.md). It keeps the corrected `55deg` loop rotation pinned and studies route-only variations around it, with `Diamond Wide Gate` still pinned as a comparison candidate.
+The current exploration is in [round8/README.md](round8/README.md). It pins `55deg Even Flow` and `55deg Exit Reach`, explores route blends between them, and adds `NBN` wordmark experiments around stroke weight, `B` width, and color.
+
+The previous route-only study remains in [round7/README.md](round7/README.md).
 
 The previous corrected rotation study remains in [round6/README.md](round6/README.md).
 
