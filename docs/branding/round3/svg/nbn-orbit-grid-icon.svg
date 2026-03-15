@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+<g>
+<path d="M 274.9,352.07 A 286 286 0 0 1 531.95,226.7" stroke="#E0A31A" stroke-width="38" stroke-linecap="round" />
+<path d="M 703.37,299.46 A 286 286 0 0 1 780.75,609.82" stroke="#131B2C" stroke-width="38" stroke-linecap="round" />
+<path d="M 663.56,754.54 A 286 286 0 0 1 404.86,777.17" stroke="#E0A31A" stroke-width="38" stroke-linecap="round" />
+<polygon points="512,282 742,512 512,742 282,512" stroke="#131B2C" stroke-width="16" />
+<line x1="394" y1="402" x2="628" y2="628" stroke="#1B8393" stroke-width="18" stroke-linecap="round" />
+<line x1="628" y1="402" x2="394" y2="628" stroke="#1B8393" stroke-width="18" stroke-linecap="round" />
+<path d="M 310,572 C 414,458 474,438 532,464 C 592,490 640,590 736,586" stroke="#F97316" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" />
+<circle cx="394" cy="402" r="18" fill="white" stroke="#131B2C" stroke-width="10" />
+<circle cx="628" cy="402" r="18" fill="white" stroke="#131B2C" stroke-width="10" />
+<circle cx="394" cy="628" r="18" fill="white" stroke="#131B2C" stroke-width="10" />
+<circle cx="628" cy="628" r="18" fill="white" stroke="#131B2C" stroke-width="10" />
+</g>
+</svg>

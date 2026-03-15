@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+<g>
+<path d="M 266.06,333.31 A 304 304 0 0 1 730.68,300.82" stroke="#131B2C" stroke-width="56" stroke-linecap="round" />
+<path d="M 785.23,378.74 A 304 304 0 0 1 554.31,813.04" stroke="#E0A31A" stroke-width="56" stroke-linecap="round" />
+<path d="M 438.46,806.97 A 304 304 0 0 1 219.78,428.21" stroke="#131B2C" stroke-width="56" stroke-linecap="round" />
+<polygon points="512,290 734,512 512,734 290,512" stroke="#131B2C" stroke-width="20" />
+<line x1="398" y1="396" x2="512" y2="512" stroke="#1B8393" stroke-width="18" stroke-linecap="round" />
+<line x1="512" y1="512" x2="626" y2="628" stroke="#1B8393" stroke-width="18" stroke-linecap="round" />
+<line x1="626" y1="396" x2="512" y2="512" stroke="#1B8393" stroke-width="18" stroke-linecap="round" />
+<polygon points="419.56,633.56 637.56,415.56 606.44,384.44 388.44,602.44" fill="#F97316" />
+<polygon points="398,378 416,396 398,414 380,396" fill="white" stroke="#131B2C" stroke-width="10" />
+<polygon points="626,378 644,396 626,414 608,396" fill="#F97316" stroke="#131B2C" stroke-width="10" />
+<polygon points="512,494 530,512 512,530 494,512" fill="white" stroke="#131B2C" stroke-width="10" />
+<polygon points="398,610 416,628 398,646 380,628" fill="#F97316" stroke="#131B2C" stroke-width="10" />
+<polygon points="626,610 644,628 626,646 608,628" fill="white" stroke="#131B2C" stroke-width="10" />
+</g>
+</svg>
