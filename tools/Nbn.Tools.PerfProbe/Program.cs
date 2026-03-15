@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Nbn.Tools.PerfProbe;
 
@@ -12,9 +13,11 @@ if (args.Length == 0 || IsHelpToken(args[0]))
 
 var command = args[0].Trim().ToLowerInvariant();
 var remaining = args.Skip(1).ToArray();
-var outputDirectory = GetArg(remaining, "--output-dir")
-                      ?? Path.Combine(Environment.CurrentDirectory, $"perf-probe-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}");
+var outputDirectory = Path.GetFullPath(
+    GetArg(remaining, "--output-dir")
+    ?? Path.Combine(Environment.CurrentDirectory, $"perf-probe-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}"));
 var jsonOnly = HasFlag(remaining, "--json");
+var openReport = !HasFlag(remaining, "--no-open-report");
 
 try
 {
@@ -34,6 +37,11 @@ try
     };
 
     await PerfReportWriter.WriteAsync(report, outputDirectory);
+    var htmlReportPath = Path.Combine(outputDirectory, "perf-report.html");
+    if (openReport)
+    {
+        TryOpenReport(htmlReportPath);
+    }
 
     var payload = new
     {
@@ -90,6 +98,26 @@ static int? GetIntArg(string[] args, string key)
 static bool HasFlag(string[] args, string key)
     => args.Any(arg => arg.Equals(key, StringComparison.OrdinalIgnoreCase));
 
+static void TryOpenReport(string htmlReportPath)
+{
+    if (!File.Exists(htmlReportPath))
+    {
+        return;
+    }
+
+    try
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = htmlReportPath,
+            UseShellExecute = true
+        });
+    }
+    catch
+    {
+    }
+}
+
 static void PrintHelp()
 {
     Console.WriteLine("NBN performance probe");
@@ -105,4 +133,5 @@ static void PrintHelp()
     Console.WriteLine("  --bind-host <host>    Current-system mode: local bind host for the probe actor client (default 127.0.0.1).");
     Console.WriteLine("  --bind-port <port>    Current-system mode: local bind port for the probe actor client (default 12110).");
     Console.WriteLine("  --json                Emit only the JSON completion payload.");
+    Console.WriteLine("  --no-open-report      Do not open the generated HTML report when the run completes.");
 }

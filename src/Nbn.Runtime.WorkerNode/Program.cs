@@ -34,7 +34,9 @@ if (workerNodeId == Guid.Empty)
     throw new InvalidOperationException("WorkerNode could not derive a stable worker node id.");
 }
 
-var capabilityProvider = new WorkerNodeCapabilityProvider(options.ResourceAvailability);
+var capabilityProvider = new WorkerNodeCapabilityProvider(
+    options.ResourceAvailability,
+    benchmarkRefreshInterval: TimeSpan.FromSeconds(options.CapabilityBenchmarkRefreshSeconds));
 var workerPid = system.Root.SpawnNamed(
     Props.FromProducer(() => new WorkerNodeActor(
         workerNodeId,

@@ -75,7 +75,7 @@
             </StackPanel>
           </Grid>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
               <TextBlock Text="SettingsMonitor" Classes="muted" />
               <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
               <Button Grid.Column="2" Content="Start" Command="{Binding StartSettingsMonitorCommand}" Classes="accent" />
@@ -99,6 +99,9 @@
               <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
               <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
               <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+
+              <TextBlock Grid.Row="4" Text="Bench Refresh (s)" Classes="muted" />
+              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Connections.WorkerCapabilityBenchmarkRefreshSecondsText}" Width="90" />
             </Grid>
 
             <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">

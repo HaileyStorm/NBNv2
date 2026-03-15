@@ -103,6 +103,47 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartWorkerCommand_IncludesBenchmarkRefreshArgument()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerPortText = "12041",
+            SettingsPortText = "12010",
+            WorkerCapabilityBenchmarkRefreshSecondsText = "45"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). worker");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartWorkerCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Build failed (code 1). worker", StringComparison.Ordinal));
+
+        Assert.Equal(1, launchPreparer.CallCount);
+        Assert.Contains("--capability-benchmark-refresh-seconds 45", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartWorkerCommand_RejectsInvalidBenchmarkRefreshSeconds()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerPortText = "12041",
+            SettingsPortText = "12010",
+            WorkerCapabilityBenchmarkRefreshSecondsText = "-1"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer();
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartWorkerCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Invalid worker benchmark refresh seconds.", StringComparison.Ordinal));
+
+        Assert.Equal(0, launchPreparer.CallCount);
+    }
+
+    [Fact]
     public async Task StopAllCommand_StopsWorkerRunner()
     {
         var connections = new ConnectionViewModel();
@@ -1914,14 +1955,16 @@ public class OrchestratorPanelViewModelTests
         }
     }
 
-    private sealed class RecordingLocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
+    private sealed class RecordingLocalProjectLaunchPreparer(string failureMessage = "unexpected") : ILocalProjectLaunchPreparer
     {
         public int CallCount { get; private set; }
+        public string LastRuntimeArgs { get; private set; } = string.Empty;
 
         public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
         {
             CallCount++;
-            return Task.FromResult(new LocalProjectLaunchPreparation(false, null, "unexpected"));
+            LastRuntimeArgs = runtimeArgs;
+            return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }
     }
 }

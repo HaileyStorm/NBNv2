@@ -9,6 +9,7 @@ Owns worker node inventory, placement execution endpoints, and lifecycle partici
 - WorkerNode answers targeted peer-latency probe requests for HiveMind placement decisions and reports average RTT plus sample count per requested peer.
 - Peer RTT probes use request/reply echo messages against the peer worker root actor. The echo request must respond directly to the caller so remoting preserves the real sender for round-trip measurement.
 - WorkerNode heartbeats publish capability snapshots derived from real host probing plus explicit CPU/GPU score calculation. Scaling knobs (`--cpu-pct`, `--ram-pct`, `--storage-pct`, `--gpu-pct`) apply after probing so simulated partial-capacity workers still preserve realistic relative resource ratios and accelerator flags.
+- Worker CPU/GPU score microbenchmarks run on initial publication, are rerun on the next heartbeat after placement changes invalidate the cache, and have a configurable steady-state rerun cadence (`--capability-benchmark-refresh-seconds`, `0 = every heartbeat`).
 
 ## Maintenance guidance
 

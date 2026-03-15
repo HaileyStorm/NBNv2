@@ -62,8 +62,8 @@ public static class PerfReportWriter
         builder.AppendLine();
         builder.AppendLine($"Generated: {report.GeneratedAtUtc:O}");
         builder.AppendLine();
-        builder.AppendLine("| Suite | Scenario | Backend | Status | Primary Metric | Summary |");
-        builder.AppendLine("| --- | --- | --- | --- | --- | --- |");
+        builder.AppendLine("| Suite | Scenario | Backend | Status | Primary Metric | Metrics | Summary |");
+        builder.AppendLine("| --- | --- | --- | --- | --- | --- | --- |");
 
         foreach (var scenario in report.Scenarios)
         {
@@ -71,7 +71,7 @@ public static class PerfReportWriter
                 ? $"{scenario.PrimaryMetricLabel}={value:0.###}"
                 : "(none)";
             builder.AppendLine(
-                $"| {EscapeMarkdown(scenario.Suite)} | {EscapeMarkdown(scenario.Scenario)} | {EscapeMarkdown(scenario.Backend)} | {scenario.Status} | {EscapeMarkdown(primaryMetric)} | {EscapeMarkdown(scenario.Summary)} |");
+                $"| {EscapeMarkdown(scenario.Suite)} | {EscapeMarkdown(scenario.Scenario)} | {EscapeMarkdown(scenario.Backend)} | {scenario.Status} | {EscapeMarkdown(primaryMetric)} | {EscapeMarkdown(FormatKeyValueSummary(scenario.Metrics))} | {EscapeMarkdown(scenario.Summary)} |");
         }
 
         return builder.ToString();
@@ -79,12 +79,15 @@ public static class PerfReportWriter
 
     public static string BuildHtml(PerfReport report)
     {
+        const double svgWidth = 1100d;
+        const double chartLeft = 200d;
+        const double chartWidth = 820d;
         var maxMetric = report.Scenarios
             .Select(static scenario => scenario.PrimaryMetricValue)
             .DefaultIfEmpty(0d)
             .Max();
         var chartRows = report.Scenarios
-            .Select((scenario, index) => BuildChartBar(scenario, index, maxMetric))
+            .Select((scenario, index) => BuildChartBar(scenario, index, maxMetric, chartLeft, chartWidth, svgWidth))
             .ToArray();
         var tableRows = report.Scenarios
             .Select(BuildTableRow)
@@ -118,7 +121,7 @@ public static class PerfReportWriter
   <div class="card">
     <h2>Charts</h2>
     <p class="note">Bar chart uses each scenario's primary metric when available. GPU runtime scenarios may appear as skips until the RegionShard GPU backend lands.</p>
-    <svg width="1100" height="{{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" role="img" aria-label="Performance scenario bar chart">
+    <svg width="1100" height="{{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" viewBox="0 0 1100 {{Math.Max(220, 60 + (report.Scenarios.Count * 36))}}" role="img" aria-label="Performance scenario bar chart">
       <line x1="190" y1="20" x2="190" y2="{{40 + (report.Scenarios.Count * 36)}}" stroke="#d5dce8" />
       {{string.Join(Environment.NewLine, chartRows)}}
     </svg>
@@ -133,6 +136,7 @@ public static class PerfReportWriter
           <th>Backend</th>
           <th>Status</th>
           <th>Primary Metric</th>
+          <th>Metrics</th>
           <th>Summary</th>
         </tr>
       </thead>
@@ -146,10 +150,14 @@ public static class PerfReportWriter
 """;
     }
 
-    private static string BuildChartBar(PerfScenarioResult scenario, int index, double maxMetric)
+    private static string BuildChartBar(
+        PerfScenarioResult scenario,
+        int index,
+        double maxMetric,
+        double chartLeft,
+        double chartWidth,
+        double svgWidth)
     {
-        const double chartLeft = 200d;
-        const double chartWidth = 820d;
         const double rowHeight = 36d;
         const double barHeight = 20d;
         var top = 28d + (index * rowHeight);
@@ -166,11 +174,18 @@ public static class PerfReportWriter
         var label = scenario.TryResolvePrimaryMetric(out var value)
             ? $"{scenario.PrimaryMetricLabel}={value:0.###}"
             : scenario.Status.ToString();
+        var barRight = chartLeft + width;
+        var labelInside = barRight >= chartLeft + (chartWidth * 0.82d);
+        var labelX = labelInside
+            ? chartLeft + chartWidth - 8d
+            : Math.Min(barRight + 10d, svgWidth - 12d);
+        var anchor = labelInside ? "end" : "start";
+        var title = TruncateText($"{scenario.Suite}/{scenario.Scenario} ({scenario.Backend})", 28);
 
         return $$"""
-  <text x="16" y="{{top + 14}}">{{EscapeHtml($"{scenario.Suite}/{scenario.Scenario} ({scenario.Backend})")}}</text>
+  <text x="16" y="{{top + 14}}">{{EscapeHtml(title)}}</text>
   <rect x="{{chartLeft}}" y="{{top}}" width="{{width.ToString("0.###", CultureInfo.InvariantCulture)}}" height="{{barHeight}}" rx="6" fill="{{statusColor}}" />
-  <text x="{{(chartLeft + width + 10).ToString("0.###", CultureInfo.InvariantCulture)}}" y="{{top + 14}}">{{EscapeHtml(label)}}</text>
+  <text x="{{labelX.ToString("0.###", CultureInfo.InvariantCulture)}}" y="{{top + 14}}" text-anchor="{{anchor}}">{{EscapeHtml(label)}}</text>
 """;
     }
 
@@ -200,9 +215,34 @@ public static class PerfReportWriter
           <td>{{EscapeHtml(scenario.Backend)}}</td>
           <td class="{{statusClass}}">{{scenario.Status}}</td>
           <td>{{EscapeHtml(primaryMetric)}}</td>
+          <td>{{EscapeHtml(FormatKeyValueSummary(scenario.Metrics))}}</td>
           <td>{{EscapeHtml(summary)}}</td>
         </tr>
 """;
+    }
+
+    private static string FormatKeyValueSummary(IReadOnlyDictionary<string, double> values)
+    {
+        if (values.Count == 0)
+        {
+            return "(none)";
+        }
+
+        return string.Join(
+            "; ",
+            values
+                .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{pair.Key}={pair.Value:0.###}"));
+    }
+
+    private static string TruncateText(string value, int maxLength)
+    {
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..Math.Max(0, maxLength - 3)] + "...";
     }
 
     private static string EscapeCsv(string value)

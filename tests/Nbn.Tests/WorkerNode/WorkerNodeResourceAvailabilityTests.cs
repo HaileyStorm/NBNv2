@@ -14,7 +14,8 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_CPU_PCT", null),
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
-            ("NBN_WORKER_GPU_PCT", null));
+            ("NBN_WORKER_GPU_PCT", null),
+            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
 
         var options = WorkerNodeOptions.FromArgs([]);
 
@@ -22,6 +23,7 @@ public sealed class WorkerNodeResourceAvailabilityTests
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.RamPercent);
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.StoragePercent);
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.GpuPercent);
+        Assert.Equal(3600, options.CapabilityBenchmarkRefreshSeconds);
     }
 
     [Fact]
@@ -31,20 +33,23 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_CPU_PCT", null),
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
-            ("NBN_WORKER_GPU_PCT", null));
+            ("NBN_WORKER_GPU_PCT", null),
+            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
 
         var options = WorkerNodeOptions.FromArgs(
         [
             "--cpu-pct", "50",
             "--ram_pct", "-10",
             "--storage-pct", "999",
-            "--gpu_pct=0"
+            "--gpu_pct=0",
+            "--capability-benchmark-refresh-seconds", "90"
         ]);
 
         Assert.Equal(50, options.ResourceAvailability.CpuPercent);
         Assert.Equal(0, options.ResourceAvailability.RamPercent);
         Assert.Equal(100, options.ResourceAvailability.StoragePercent);
         Assert.Equal(0, options.ResourceAvailability.GpuPercent);
+        Assert.Equal(90, options.CapabilityBenchmarkRefreshSeconds);
     }
 
     [Fact]
@@ -54,14 +59,16 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_CPU_PCT", "25"),
             ("NBN_WORKER_RAM_PCT", "30"),
             ("NBN_WORKER_STORAGE_PCT", "40"),
-            ("NBN_WORKER_GPU_PCT", "50"));
+            ("NBN_WORKER_GPU_PCT", "50"),
+            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", "120"));
 
-        var options = WorkerNodeOptions.FromArgs(["--cpu-pct", "101", "--gpu-pct", "80"]);
+        var options = WorkerNodeOptions.FromArgs(["--cpu-pct", "101", "--gpu-pct", "80", "--benchmark-refresh-seconds", "15"]);
 
         Assert.Equal(100, options.ResourceAvailability.CpuPercent);
         Assert.Equal(30, options.ResourceAvailability.RamPercent);
         Assert.Equal(40, options.ResourceAvailability.StoragePercent);
         Assert.Equal(80, options.ResourceAvailability.GpuPercent);
+        Assert.Equal(15, options.CapabilityBenchmarkRefreshSeconds);
     }
 
     [Fact]
@@ -71,10 +78,25 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_CPU_PCT", null),
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
-            ("NBN_WORKER_GPU_PCT", null));
+            ("NBN_WORKER_GPU_PCT", null),
+            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
 
         var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs(["--ram-pct", "not-a-number"]));
         Assert.Contains("--ram-pct", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromArgs_Throws_On_Invalid_BenchmarkRefresh_FromCli()
+    {
+        using var _ = new EnvironmentVariableScope(
+            ("NBN_WORKER_CPU_PCT", null),
+            ("NBN_WORKER_RAM_PCT", null),
+            ("NBN_WORKER_STORAGE_PCT", null),
+            ("NBN_WORKER_GPU_PCT", null),
+            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
+
+        var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs(["--capability-benchmark-refresh-seconds", "-1"]));
+        Assert.Contains("--capability-benchmark-refresh-seconds", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -84,7 +106,8 @@ public sealed class WorkerNodeResourceAvailabilityTests
             ("NBN_WORKER_CPU_PCT", null),
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
-            ("NBN_WORKER_GPU_PCT", "oops"));
+            ("NBN_WORKER_GPU_PCT", "oops"),
+            ("NBN_WORKER_CAPABILITY_BENCHMARK_REFRESH_SECONDS", null));
 
         var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs([]));
         Assert.Contains("NBN_WORKER_GPU_PCT", exception.Message, StringComparison.Ordinal);

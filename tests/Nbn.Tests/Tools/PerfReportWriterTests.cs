@@ -36,9 +36,10 @@ public sealed class PerfReportWriterTests
         var html = PerfReportWriter.BuildHtml(report);
         var csv = PerfReportWriter.BuildCsv(report);
 
-        Assert.Contains("| Suite | Scenario | Backend | Status | Primary Metric | Summary |", markdown, StringComparison.Ordinal);
+        Assert.Contains("| Suite | Scenario | Backend | Status | Primary Metric | Metrics | Summary |", markdown, StringComparison.Ordinal);
         Assert.Contains("<svg", html, StringComparison.Ordinal);
         Assert.Contains("<table>", html, StringComparison.Ordinal);
+        Assert.Contains("plans_per_second=1234.5", html, StringComparison.Ordinal);
         Assert.Contains("placement_planner_profile", csv, StringComparison.Ordinal);
         Assert.Contains("regionshard_gpu_backend_not_available", csv, StringComparison.Ordinal);
     }

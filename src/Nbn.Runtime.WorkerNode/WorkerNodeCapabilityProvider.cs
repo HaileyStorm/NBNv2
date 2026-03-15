@@ -316,9 +316,28 @@ public sealed class WorkerNodeCapabilityProvider
 
     private static ulong ProbeRamFreeBytes()
     {
-        if (OperatingSystem.IsWindows() && GlobalMemoryStatusEx(out var windowsStatus))
+        if (OperatingSystem.IsWindows())
         {
-            return windowsStatus.AvailPhys;
+            try
+            {
+                if (GlobalMemoryStatusEx(out var windowsStatus))
+                {
+                    return windowsStatus.AvailPhys;
+                }
+
+                if (GetPerformanceInfo(out var performanceInfo))
+                {
+                    var availablePages = performanceInfo.PhysicalAvailable;
+                    var pageSize = performanceInfo.PageSize;
+                    if (availablePages > 0 && pageSize > 0)
+                    {
+                        return availablePages * pageSize;
+                    }
+                }
+            }
+            catch
+            {
+            }
         }
 
         if (OperatingSystem.IsLinux()
@@ -337,14 +356,32 @@ public sealed class WorkerNodeCapabilityProvider
         try
         {
             var fullPath = Path.GetFullPath(storageProbePath);
-            var root = Path.GetPathRoot(fullPath);
-            if (string.IsNullOrWhiteSpace(root))
+            DriveInfo? drive = null;
+            foreach (var candidate in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (!candidate.IsReady || !fullPath.StartsWith(candidate.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (drive is null || candidate.Name.Length > drive.Name.Length)
+                    {
+                        drive = candidate;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (drive is null)
             {
                 return 0;
             }
 
-            var drive = new DriveInfo(root);
-            return drive.IsReady ? ToUnsignedBytes(drive.AvailableFreeSpace) : 0UL;
+            return ToUnsignedBytes(drive.AvailableFreeSpace);
         }
         catch
         {
@@ -537,9 +574,32 @@ public sealed class WorkerNodeCapabilityProvider
         public ulong AvailExtendedVirtual;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PerformanceInformation
+    {
+        public uint Size;
+        public ulong CommitTotal;
+        public ulong CommitLimit;
+        public ulong CommitPeak;
+        public ulong PhysicalTotal;
+        public ulong PhysicalAvailable;
+        public ulong SystemCache;
+        public ulong KernelTotal;
+        public ulong KernelPaged;
+        public ulong KernelNonpaged;
+        public ulong PageSize;
+        public uint HandleCount;
+        public uint ProcessCount;
+        public uint ThreadCount;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusExNative(ref MemoryStatusEx buffer);
+
+    [DllImport("psapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetPerformanceInfoNative(out PerformanceInformation performanceInformation, uint size);
 
     private static bool GlobalMemoryStatusEx(out MemoryStatusEx buffer)
     {
@@ -550,4 +610,7 @@ public sealed class WorkerNodeCapabilityProvider
 
         return GlobalMemoryStatusExNative(ref buffer);
     }
+
+    private static bool GetPerformanceInfo(out PerformanceInformation performanceInformation)
+        => GetPerformanceInfoNative(out performanceInformation, (uint)Marshal.SizeOf<PerformanceInformation>());
 }

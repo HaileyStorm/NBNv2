@@ -489,6 +489,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParseNonNegativeInt(Connections.WorkerCapabilityBenchmarkRefreshSecondsText, out var benchmarkRefreshSeconds))
+        {
+            WorkerLaunchStatus = "Invalid worker benchmark refresh seconds.";
+            return;
+        }
+
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -499,6 +505,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.WorkerHost} --port {workerPort}"
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
+                 + $" --capability-benchmark-refresh-seconds {benchmarkRefreshSeconds}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.WorkerNode", args, "WorkerNode").ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
@@ -1346,6 +1353,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
+
+    private static bool TryParseNonNegativeInt(string value, out int parsed)
+        => int.TryParse(value, out parsed) && parsed >= 0;
 
     private static bool IsFresh(ulong lastSeenMs, long nowMs)
     {
