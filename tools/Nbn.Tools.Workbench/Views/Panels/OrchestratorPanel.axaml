@@ -5,21 +5,6 @@
              x:DataType="vm:OrchestratorPanelViewModel">
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="16">
-      <Border Classes="card">
-        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="18">
-          <Image Source="avares://Nbn.Tools.Workbench/Assets/Branding/nbn-soft-gold-right-n-logo.png"
-                 Width="320"
-                 Stretch="Uniform"
-                 VerticalAlignment="Center" />
-          <StackPanel Spacing="6" VerticalAlignment="Center">
-            <TextBlock Text="Orchestrator" Classes="card-title" />
-            <TextBlock Text="Control local services, worker policy, discovery, and current-system profiling from the adopted NBN operator surface."
-                       Classes="muted"
-                       TextWrapping="Wrap" />
-          </StackPanel>
-        </Grid>
-      </Border>
-
       <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="10">

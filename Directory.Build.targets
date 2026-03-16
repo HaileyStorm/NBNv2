@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe' Or '$(OutputType)' == 'WinExe'">
+    <ApplicationIcon>$(NbnPrimaryIconIco)</ApplicationIcon>
+  </PropertyGroup>
+</Project>

@@ -10,10 +10,6 @@
     <NbnPrimaryIconPng>$(NbnBrandingDir)\png\nbn-soft-gold-right-n-icon.png</NbnPrimaryIconPng>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(OutputType)' == 'Exe' Or '$(OutputType)' == 'WinExe'">
-    <ApplicationIcon>$(NbnPrimaryIconIco)</ApplicationIcon>
-  </PropertyGroup>
-
   <PropertyGroup Condition="'$(IsPackable)' != 'false'">
     <PackageIcon>nbn-soft-gold-right-n-icon.png</PackageIcon>
   </PropertyGroup>
