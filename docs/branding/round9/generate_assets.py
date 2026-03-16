@@ -276,8 +276,8 @@ VARIANTS = [
         slug="bridge-soft-pin",
         title="Bridge Soft",
         kind="loop",
-        tweak="pinned candidate",
-        note="Pinned loop candidate with the softer midpoint route.",
+        tweak="baseline route",
+        note="Original monocolor wordmark retained only as a baseline for the narrow-B color studies.",
     ),
     Variant(
         slug="bridge-soft-narrow-b-90",
@@ -326,36 +326,26 @@ VARIANTS = [
         b_color="#E0A31A",
     ),
     Variant(
-        slug="bridge-soft-dual-ns",
-        title="Soft + Dual Ns",
+        slug="bridge-soft-gold-right-n",
+        title="Soft + Gold B + Gold N",
         kind="loop",
-        tweak="teal right N",
-        note="Keeps the B narrow and ink, but gives the right N a teal counterweight.",
-        b_width_mult=0.80,
-        stroke_mult=0.98,
-        n2_color="#1B8393",
-    ),
-    Variant(
-        slug="bridge-soft-teal-spine",
-        title="Soft + Teal Spine",
-        kind="loop",
-        tweak="teal B and right N",
-        note="Pushes the color further into the wordmark while keeping the left N as anchor.",
-        b_width_mult=0.78,
-        stroke_mult=0.98,
-        b_color="#1B8393",
-        n2_color="#1B8393",
-    ),
-    Variant(
-        slug="bridge-soft-warm-split",
-        title="Soft + Warm Split",
-        kind="loop",
-        tweak="gold B, teal right N",
-        note="A warmer/cooler split to test whether the wordmark can carry both accent hues.",
+        tweak="gold B, gold right N",
+        note="Extends the gold treatment from the narrow B into the right N as well.",
         b_width_mult=0.80,
         stroke_mult=0.98,
         b_color="#E0A31A",
-        n2_color="#1B8393",
+        n2_color="#E0A31A",
+    ),
+    Variant(
+        slug="bridge-soft-teal-b-gold-n",
+        title="Soft + Teal B + Gold N",
+        kind="loop",
+        tweak="teal B, gold right N",
+        note="Keeps the B cool and pushes the warmer accent into the terminal right N.",
+        b_width_mult=0.80,
+        stroke_mult=0.98,
+        b_color="#1B8393",
+        n2_color="#E0A31A",
     ),
     Variant(
         slug="diamond-wide-gate-candidate",
@@ -425,7 +415,7 @@ def build_board() -> None:
     micro_font = load_font(18, bold=True)
 
     draw.text((84, 44), "Bridge Soft text study", fill="#17212D", font=title_font)
-    draw.text((86, 112), "Bridge Soft is pinned. This pass focuses on narrower Bs and a broader range of wordmark color options.", fill="#56636F", font=body_font)
+    draw.text((86, 112), "Bridge Soft stays on the board only as a baseline. This pass focuses on narrower Bs, a gold right N, and a teal-plus-gold split.", fill="#56636F", font=body_font)
 
     card_w = 560
     card_h = 700
@@ -467,20 +457,19 @@ def build_board() -> None:
 
 def build_shortlist() -> None:
     shortlist = [
-        "bridge-soft-pin",
-        "bridge-soft-narrow-b-80",
-        "bridge-soft-narrow-teal-b",
-        "bridge-soft-teal-spine",
+        "bridge-soft-narrow-gold-b",
+        "bridge-soft-gold-right-n",
+        "bridge-soft-teal-b-gold-n",
         "diamond-wide-gate-candidate",
     ]
-    board = Image.new("RGBA", (2720, 1100), "#F7F3EC")
+    board = Image.new("RGBA", (2200, 1100), "#F7F3EC")
     draw = ImageDraw.Draw(board)
     title_font = load_font(58, bold=True)
     body_font = load_font(24)
     label_font = load_font(28, bold=True)
 
     draw.text((96, 56), "Round 9 shortlist", fill="#17212D", font=title_font)
-    draw.text((98, 124), "Bridge Soft pinned, stronger narrow-B text options, and Diamond Wide Gate for comparison.", fill="#56636F", font=body_font)
+    draw.text((98, 124), "Narrow Gold B leads the loop direction, with two right-N color splits and Diamond Wide Gate for comparison.", fill="#56636F", font=body_font)
 
     for index, slug in enumerate(shortlist):
         variant = next(item for item in VARIANTS if item.slug == slug)

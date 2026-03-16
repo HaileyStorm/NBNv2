@@ -4,7 +4,7 @@ This workspace explores possible `NBN` identity directions without any `v2` lang
 
 ## Latest round
 
-The current exploration is in [round9/README.md](round9/README.md). It pins `Bridge Soft` as the loop candidate and focuses on narrower `B` widths plus a broader set of wordmark color treatments.
+The current exploration is in [round9/README.md](round9/README.md). It keeps `Bridge Soft` only as a baseline, pushes `Soft + Narrow Gold B` forward, and compares it against gold right-`N` and teal-plus-gold wordmark treatments.
 
 The previous bridge and wordmark study remains in [round8/README.md](round8/README.md).
 
