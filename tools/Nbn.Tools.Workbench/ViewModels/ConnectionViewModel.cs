@@ -20,10 +20,10 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _workerPortText = "12041";
     private string _workerRootName = "worker-node";
     private string _workerLogicalName = "nbn.worker";
-    private string _workerCpuLimitPercentText = "100";
-    private string _workerRamLimitPercentText = "100";
-    private string _workerGpuLimitPercentText = "100";
-    private string _workerVramLimitPercentText = "100";
+    private string _workerCpuLimitPercentText = "90";
+    private string _workerRamLimitPercentText = "90";
+    private string _workerGpuLimitPercentText = "90";
+    private string _workerVramLimitPercentText = "90";
     private string _obsHost = "127.0.0.1";
     private string _obsPort = "12060";
     private string _debugHub = "DebugHub";

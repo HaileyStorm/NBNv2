@@ -32,6 +32,17 @@ public sealed class ConnectionViewModelTests
     }
 
     [Fact]
+    public void WorkerLimitFields_UseExpectedDefaults()
+    {
+        var vm = new ConnectionViewModel();
+
+        Assert.Equal("90", vm.WorkerCpuLimitPercentText);
+        Assert.Equal("90", vm.WorkerRamLimitPercentText);
+        Assert.Equal("90", vm.WorkerGpuLimitPercentText);
+        Assert.Equal("90", vm.WorkerVramLimitPercentText);
+    }
+
+    [Fact]
     public void ServiceReadiness_AllowsPositiveStatuses_WhenFlagsLag()
     {
         var vm = new ConnectionViewModel
