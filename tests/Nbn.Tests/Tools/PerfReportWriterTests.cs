@@ -5,6 +5,41 @@ namespace Nbn.Tests.Tools;
 public sealed class PerfReportWriterTests
 {
     [Fact]
+    public async Task WriteAsync_EmitsBrandIcon_AndLinkedMarkdownReference()
+    {
+        var report = new PerfReport(
+            ToolName: "Nbn.Tools.PerfProbe",
+            GeneratedAtUtc: DateTimeOffset.Parse("2026-03-15T12:00:00Z"),
+            Environment: new Dictionary<string, string> { ["machine_name"] = "test-host" },
+            Scenarios: [])
+        {
+            TotalDurationMs = 0.5
+        };
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"nbn-perf-report-writer-{Guid.NewGuid():N}");
+
+        try
+        {
+            await PerfReportWriter.WriteAsync(report, outputDirectory);
+
+            var brandIconPath = Path.Combine(outputDirectory, "nbn-soft-gold-right-n-icon.png");
+            var markdownPath = Path.Combine(outputDirectory, "perf-report.md");
+
+            Assert.True(File.Exists(brandIconPath));
+            Assert.Contains(
+                "![NBN](nbn-soft-gold-right-n-icon.png)",
+                await File.ReadAllTextAsync(markdownPath),
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+            {
+                Directory.Delete(outputDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void ReportArtifacts_ContainTablesAndCharts()
     {
         var report = new PerfReport(
@@ -46,9 +81,11 @@ public sealed class PerfReportWriterTests
         var csv = PerfReportWriter.BuildCsv(report);
 
         Assert.Contains("| Suite | Scenario | Backend | Status | Duration (ms) | Primary Metric | Metrics | Summary |", markdown, StringComparison.Ordinal);
+        Assert.Contains("![NBN](nbn-soft-gold-right-n-icon.png)", markdown, StringComparison.Ordinal);
         Assert.Contains("Total duration: 13.75 ms", markdown, StringComparison.Ordinal);
         Assert.Contains("<svg", html, StringComparison.Ordinal);
         Assert.Contains("<table>", html, StringComparison.Ordinal);
+        Assert.Contains("<img class=\"brand-mark\" src=\"nbn-soft-gold-right-n-icon.png\"", html, StringComparison.Ordinal);
         Assert.Contains("Total duration 13.75 ms", html, StringComparison.Ordinal);
         Assert.Contains("plans_per_second=1234.5", html, StringComparison.Ordinal);
         Assert.Contains("\"12.5\"", csv, StringComparison.Ordinal);

@@ -5,7 +5,22 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <Deterministic>true</Deterministic>
+    <NbnBrandingDir>$(MSBuildThisFileDirectory)docs\branding</NbnBrandingDir>
+    <NbnPrimaryIconIco>$(NbnBrandingDir)\ico\nbn-soft-gold-right-n-icon.ico</NbnPrimaryIconIco>
+    <NbnPrimaryIconPng>$(NbnBrandingDir)\png\nbn-soft-gold-right-n-icon.png</NbnPrimaryIconPng>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe' Or '$(OutputType)' == 'WinExe'">
+    <ApplicationIcon>$(NbnPrimaryIconIco)</ApplicationIcon>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsPackable)' != 'false'">
+    <PackageIcon>nbn-soft-gold-right-n-icon.png</PackageIcon>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' != 'false' and Exists('$(NbnPrimaryIconPng)')">
+    <None Include="$(NbnPrimaryIconPng)" Pack="true" PackagePath="\" Visible="false" Link="nbn-soft-gold-right-n-icon.png" />
+  </ItemGroup>
 
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <IsPackable>false</IsPackable>

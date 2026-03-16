@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-import math
 import subprocess
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Literal
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 
 BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent
 SVG_DIR = BASE_DIR / "svg"
 PNG_DIR = BASE_DIR / "png"
+ICO_DIR = BASE_DIR / "ico"
 NODE_RENDERER = BASE_DIR / "render_png.mjs"
 ICON_SIZE = 1024
-LOGO_WIDTH = 1800
-LOGO_HEIGHT = 640
+LOGO_WIDTH = 1460
+LOGO_HEIGHT = 520
 
 
 def fmt(value: float) -> str:
@@ -50,10 +50,6 @@ def rect(x: float, y: float, width: float, height: float, **kwargs: object) -> s
     )
 
 
-def line(x1: float, y1: float, x2: float, y2: float, **kwargs: object) -> str:
-    return f'<line {attrs(x1=fmt(x1), y1=fmt(y1), x2=fmt(x2), y2=fmt(y2), **kwargs)} />'
-
-
 def path(d: str, **kwargs: object) -> str:
     return f'<path {attrs(d=d, **kwargs)} />'
 
@@ -64,7 +60,9 @@ def polygon(points: list[tuple[float, float]], **kwargs: object) -> str:
 
 
 def group(elements: list[str], **kwargs: object) -> str:
-    return f'<g {attrs(**kwargs)}>\n' + "\n".join(elements) + "\n</g>"
+    if kwargs:
+        return f'<g {attrs(**kwargs)}>\n' + "\n".join(elements) + "\n</g>"
+    return "<g>\n" + "\n".join(elements) + "\n</g>"
 
 
 def svg_doc(width: int, height: int, elements: list[str]) -> str:
@@ -77,6 +75,8 @@ def svg_doc(width: int, height: int, elements: list[str]) -> str:
 
 
 def arc_path(cx: float, cy: float, radius: float, start_deg: float, end_deg: float) -> str:
+    import math
+
     start = math.radians(start_deg)
     end = math.radians(end_deg)
     start_pt = (cx + radius * math.cos(start), cy + radius * math.sin(start))
@@ -89,627 +89,276 @@ def arc_path(cx: float, cy: float, radius: float, start_deg: float, end_deg: flo
     )
 
 
-def diamond(cx: float, cy: float, radius: float) -> list[tuple[float, float]]:
-    return [
-        (cx, cy - radius),
-        (cx + radius, cy),
-        (cx, cy + radius),
-        (cx - radius, cy),
-    ]
+def open_ring(cx: float, cy: float, radius: float, start_deg: float, end_deg: float, stroke: str, width: float, cap: str = "round") -> str:
+    return path(
+        arc_path(cx, cy, radius, start_deg, end_deg),
+        stroke=stroke,
+        stroke_width=fmt(width),
+        stroke_linecap=cap,
+    )
 
 
-def hexagon(cx: float, cy: float, rx: float, ry: float) -> list[tuple[float, float]]:
-    return [
-        (cx, cy - ry),
-        (cx + rx, cy - ry / 2),
-        (cx + rx, cy + ry / 2),
-        (cx, cy + ry),
-        (cx - rx, cy + ry / 2),
-        (cx - rx, cy - ry / 2),
-    ]
+def transform_points(
+    points: list[tuple[float, float]],
+    *,
+    dx: float = 0,
+    dy: float = 0,
+    sx: float = 1.0,
+    sy: float = 1.0,
+    cx: float = 512,
+    cy: float = 512,
+) -> list[tuple[float, float]]:
+    transformed: list[tuple[float, float]] = []
+    for x, y in points:
+        transformed.append((cx + (x - cx) * sx + dx, cy + (y - cy) * sy + dy))
+    return transformed
 
 
 @dataclass(frozen=True)
-class Concept:
+class Variant:
     slug: str
     title: str
-    summary: str
-    primary: str
-    secondary: str
-    accent: str
-    ink: str
-    tint: str
-    icon_builder: Callable[["Concept"], str]
-    accent_builder: Callable[["Concept", float, float], str]
+    kind: Literal["loop", "reference"]
+    tweak: str
+    note: str
+    stroke_mult: float = 1.0
+    n_width_mult: float = 1.0
+    b_width_mult: float = 1.0
+    n1_color: str = "#131B2C"
+    b_color: str = "#131B2C"
+    n2_color: str = "#131B2C"
+    ink: str = "#131B2C"
+    orange: str = "#F97316"
+    teal: str = "#1B8393"
+    gold: str = "#E0A31A"
+    symbol_scale: float = 0.246
+    symbol_x: int = 62
+    symbol_y: int = 46
+    wordmark_x: int = 314
+    wordmark_y: int = 122
 
 
-def build_tick_orbit_icon(concept: Concept) -> str:
-    outer_points = [
-        (512 + 290 * math.cos(math.radians(angle)), 512 + 290 * math.sin(math.radians(angle)))
-        for angle in (-38, 40, 120, 210)
-    ]
-    elements = [
-        circle(512, 512, 348, fill=concept.tint),
-        path(
-            arc_path(512, 512, 290, -35, 222),
-            stroke=concept.primary,
-            stroke_width="46",
-            stroke_linecap="round",
-        ),
-        path(
-            arc_path(512, 512, 204, 142, 394),
-            stroke=concept.secondary,
-            stroke_width="24",
-            stroke_linecap="round",
-            opacity="0.95",
-        ),
-        line(
-            326,
-            714,
-            704,
-            322,
-            stroke=concept.primary,
-            stroke_width="34",
-            stroke_linecap="round",
-        ),
-        polygon(diamond(512, 512, 98), fill="white", stroke=concept.primary, stroke_width="18"),
-        circle(512, 512, 22, fill=concept.accent),
-    ]
-    for index, (x, y) in enumerate(outer_points):
-        fill = concept.accent if index == 0 else concept.secondary
-        radius = 28 if index == 0 else 22
-        elements.append(circle(x, y, radius, fill=fill, stroke="white", stroke_width="12"))
-    elements.append(
-        line(
-            outer_points[0][0] + 32,
-            outer_points[0][1] - 40,
-            outer_points[0][0] + 92,
-            outer_points[0][1] - 108,
-            stroke=concept.accent,
-            stroke_width="18",
-            stroke_linecap="round",
-        )
+BRIDGE_SOFT_ROUTE = {
+    "left_shift": 0,
+    "left_drop": 0,
+    "right_shift": -8,
+    "right_drop": 14,
+    "route_raise": -2,
+    "cp1_dx": 0,
+    "cp1_dy": 0,
+    "cp2_dx": 0,
+    "cp2_dy": 18,
+    "cp3_dx": 8,
+    "cp3_dy": 6,
+    "cp4_dx": 12,
+    "cp4_dy": -16,
+    "eye_dx": 0,
+    "eye_dy": 0,
+    "path_width": 42,
+}
+
+
+def build_wordmark(variant: Variant) -> str:
+    x = variant.wordmark_x
+    y = variant.wordmark_y
+    height = 210
+    scale = height / 140
+    stroke = 22 * scale * variant.stroke_mult
+    n_width = 110 * scale * variant.n_width_mult
+    gap = 34 * scale
+    b_width = 124 * scale * variant.b_width_mult
+    bottom = y + height
+    b_x = x + n_width + gap
+    n2_x = b_x + b_width + gap
+
+    left_n = path(
+        f"M {pt(x, bottom)} L {pt(x, y)} L {pt(x + n_width, bottom)} L {pt(x + n_width, y)}",
+        stroke=variant.n1_color,
+        stroke_width=fmt(stroke),
+        stroke_linecap="round",
+        stroke_linejoin="round",
     )
-    return group(elements)
+    b = path(
+        f"M {pt(b_x, y)} L {pt(b_x, bottom)} "
+        f"M {pt(b_x + stroke * 0.4, y)} L {pt(b_x + b_width * 0.62, y)} "
+        f"Q {pt(b_x + b_width, y)} {pt(b_x + b_width, y + height * 0.25)} "
+        f"Q {pt(b_x + b_width, y + height * 0.5)} {pt(b_x + b_width * 0.62, y + height * 0.5)} "
+        f"L {pt(b_x + stroke * 0.4, y + height * 0.5)} "
+        f"M {pt(b_x + stroke * 0.4, y + height * 0.5)} L {pt(b_x + b_width * 0.62, y + height * 0.5)} "
+        f"Q {pt(b_x + b_width, y + height * 0.5)} {pt(b_x + b_width, y + height * 0.75)} "
+        f"Q {pt(b_x + b_width, bottom)} {pt(b_x + b_width * 0.62, bottom)} "
+        f"L {pt(b_x + stroke * 0.4, bottom)}",
+        stroke=variant.b_color,
+        stroke_width=fmt(stroke),
+        stroke_linecap="round",
+        stroke_linejoin="round",
+    )
+    right_n = path(
+        f"M {pt(n2_x, bottom)} L {pt(n2_x, y)} L {pt(n2_x + n_width, bottom)} L {pt(n2_x + n_width, y)}",
+        stroke=variant.n2_color,
+        stroke_width=fmt(stroke),
+        stroke_linecap="round",
+        stroke_linejoin="round",
+    )
+    return group([left_n, b, right_n])
 
 
-def build_region_loop_icon(concept: Concept) -> str:
-    elements = [rect(156, 156, 712, 712, rx="240", fill=concept.tint)]
-    for index in range(8):
-        start = index * 45 - 8
-        end = start + 28
-        color = concept.primary if index % 2 == 0 else concept.secondary
-        if index in (0, 4):
-            color = concept.accent
-        elements.append(
-            path(
-                arc_path(512, 512, 260, start, end),
-                stroke=color,
-                stroke_width="54",
-                stroke_linecap="round",
-            )
-        )
+def build_bridge_soft_symbol(variant: Variant) -> str:
+    p = BRIDGE_SOFT_ROUTE
+    base_rotate = 55
+    left_node = (248 + p["left_shift"], 522 + p["left_drop"] + p["route_raise"] / 2)
+    right_node = (722 + p["right_shift"], 603 + p["right_drop"] + p["route_raise"] / 2)
+    eye_x = 512 + p["eye_dx"]
+    eye_y = 512 + p["eye_dy"]
+    cp1 = (350 + p["cp1_dx"], 436 + p["route_raise"] + p["cp1_dy"])
+    cp2 = (439 + p["cp2_dx"], 380 + p["route_raise"] + p["cp2_dy"])
+    cp_mid = (512 + p["cp3_dx"], 426 + p["route_raise"] / 2 + p["cp3_dy"])
+    cp3 = (590 + p["cp4_dx"], 459 + p["route_raise"] / 2 + p["cp4_dy"])
+    cp4 = (614 + p["right_shift"] / 2, 590 + p["right_drop"])
+
+    base_segments = [
+        (208, 248, variant.gold),
+        (266, 316, variant.ink),
+        (40, 92, variant.ink),
+        (112, 154, variant.gold),
+        (170, 198, variant.ink),
+    ]
+    elements: list[str] = []
+    for start, end, color in base_segments:
+        elements.append(open_ring(512, 512, 286, start + base_rotate, end + base_rotate, color, 70))
+
+    path_d = (
+        f"M {pt(*left_node)} "
+        f"C {pt(*cp1)} {pt(*cp2)} {pt(*cp_mid)} "
+        f"C {pt(*cp3)} {pt(*cp4)} {pt(*right_node)}"
+    )
     elements.extend(
         [
             path(
-                "M 188,512 C 292,512 314,386 422,386 "
-                "C 514,386 540,650 640,650 C 724,650 780,584 838,512",
-                stroke=concept.primary,
-                stroke_width="34",
+                path_d,
+                stroke=variant.teal,
+                stroke_width=fmt(p["path_width"]),
                 stroke_linecap="round",
                 stroke_linejoin="round",
             ),
-            circle(188, 512, 34, fill=concept.secondary, stroke="white", stroke_width="14"),
-            circle(838, 512, 34, fill=concept.accent, stroke="white", stroke_width="14"),
-            circle(512, 512, 86, fill="white", stroke=concept.primary, stroke_width="22"),
-            path(
-                arc_path(512, 512, 116, 210, 332),
-                stroke=concept.accent,
-                stroke_width="18",
-                stroke_linecap="round",
-            ),
+            circle(eye_x, eye_y, 78, stroke=variant.ink, stroke_width="20"),
+            circle(left_node[0], left_node[1], 16, fill=variant.orange),
+            circle(right_node[0], right_node[1], 16, fill=variant.orange),
         ]
     )
     return group(elements)
 
 
-def build_axon_bridge_icon(concept: Concept) -> str:
-    elements = [
-        circle(512, 512, 350, fill=concept.tint),
-        rect(214, 248, 82, 528, rx="41", fill=concept.primary),
-        rect(728, 248, 82, 528, rx="41", fill=concept.primary),
-        path(
-            "M 296,364 C 422,214 612,214 728,364",
-            stroke=concept.secondary,
-            stroke_width="32",
-            stroke_linecap="round",
-        ),
-        path(
-            "M 296,512 C 412,622 612,622 728,512",
-            stroke=concept.accent,
-            stroke_width="34",
-            stroke_linecap="round",
-        ),
-        path(
-            "M 296,660 C 428,816 608,816 728,660",
-            stroke=concept.primary,
-            stroke_width="24",
-            stroke_linecap="round",
-            opacity="0.85",
-        ),
-        circle(512, 512, 90, fill="white", stroke=concept.ink, stroke_width="18"),
-        path(
-            "M 468,512 L 512,468 L 556,512 L 512,556 Z",
-            fill=concept.secondary,
-            stroke=concept.primary,
-            stroke_width="12",
-        ),
-        circle(392, 272, 20, fill=concept.secondary),
-        circle(624, 752, 20, fill=concept.accent),
-    ]
-    return group(elements)
-
-
-def build_shard_lattice_icon(concept: Concept) -> str:
-    nodes = [
-        (512, 228),
-        (396, 344),
-        (628, 344),
-        (280, 460),
-        (512, 460),
-        (744, 460),
-        (396, 576),
-        (628, 576),
-        (512, 692),
-    ]
-    links = [
-        (0, 1),
-        (0, 2),
-        (1, 3),
-        (1, 4),
-        (2, 4),
-        (2, 5),
-        (3, 6),
-        (4, 6),
-        (4, 7),
-        (5, 7),
-        (6, 8),
-        (7, 8),
-    ]
-    route = [0, 1, 4, 7, 8]
-    elements = [
-        polygon(diamond(512, 512, 348), fill=concept.tint),
-        polygon(diamond(512, 512, 320), stroke=concept.primary, stroke_width="18"),
-    ]
-    for start_index, end_index in links:
-        x1, y1 = nodes[start_index]
-        x2, y2 = nodes[end_index]
-        elements.append(
-            line(
-                x1,
-                y1,
-                x2,
-                y2,
-                stroke=concept.secondary,
-                stroke_width="16",
-                stroke_linecap="round",
-                opacity="0.78",
-            )
-        )
-    route_points = " ".join(pt(*nodes[index]) for index in route)
-    elements.append(
-        f'<polyline points="{route_points}" fill="none" stroke="{concept.accent}" '
-        'stroke-width="28" stroke-linecap="round" stroke-linejoin="round" />'
-    )
-    for index, (x, y) in enumerate(nodes):
-        fill = concept.accent if index in route else "white"
-        elements.append(
-            polygon(
-                diamond(x, y, 28 if index in route else 22),
-                fill=fill,
-                stroke=concept.primary,
-                stroke_width="12",
-            )
-        )
-    return group(elements)
-
-
-def build_snapshot_crystal_icon(concept: Concept) -> str:
-    outer = hexagon(512, 512, 262, 324)
-    middle = hexagon(512, 492, 220, 270)
-    inner = hexagon(512, 468, 162, 208)
-    elements = [
-        rect(150, 150, 724, 724, rx="210", fill=concept.tint),
-        polygon(outer, fill=concept.secondary, opacity="0.16", stroke=concept.primary, stroke_width="18"),
-        polygon(middle, fill=concept.accent, opacity="0.12", stroke=concept.primary, stroke_width="16"),
-        polygon(inner, fill="white", stroke=concept.primary, stroke_width="16"),
-        line(512, 232, 512, 760, stroke=concept.primary, stroke_width="26", stroke_linecap="round"),
-        line(350, 378, 674, 558, stroke=concept.secondary, stroke_width="18", stroke_linecap="round"),
-        line(674, 378, 350, 558, stroke=concept.accent, stroke_width="18", stroke_linecap="round"),
-        circle(512, 232, 22, fill=concept.accent),
-        circle(512, 760, 22, fill=concept.secondary),
-        polygon(diamond(512, 496, 54), fill=concept.primary),
-    ]
-    return group(elements)
-
-
-def build_observatory_halo_icon(concept: Concept) -> str:
-    elements = [
-        circle(512, 512, 346, fill=concept.tint),
-        circle(512, 512, 98, fill="white", stroke=concept.primary, stroke_width="24"),
-        path(
-            arc_path(512, 512, 172, -28, 164),
-            stroke=concept.primary,
-            stroke_width="30",
-            stroke_linecap="round",
-        ),
-        path(
-            arc_path(512, 512, 250, 28, 248),
-            stroke=concept.secondary,
-            stroke_width="24",
-            stroke_linecap="round",
-        ),
-        path(
-            arc_path(512, 512, 312, 214, 398),
-            stroke=concept.accent,
-            stroke_width="20",
-            stroke_linecap="round",
-        ),
-        line(512, 512, 740, 318, stroke=concept.primary, stroke_width="18", stroke_linecap="round"),
-        circle(740, 318, 28, fill=concept.accent, stroke="white", stroke_width="10"),
-        circle(350, 635, 18, fill=concept.secondary),
-        circle(612, 744, 18, fill=concept.primary),
-        path(
-            arc_path(512, 512, 118, 236, 302),
-            stroke=concept.accent,
-            stroke_width="14",
-            stroke_linecap="round",
-        ),
-    ]
-    return group(elements)
-
-
-def build_wordmark(x: float, y: float, height: float, color: str) -> str:
-    scale = height / 120
-    stroke = 18 * scale
-    first_n_x = x
-    b_x = x + 142 * scale
-    second_n_x = x + 310 * scale
-    width = 92 * scale
-    bottom = y + height
-    midpoint = y + height / 2
-    elements = [
-        path(
-            f"M {pt(first_n_x, bottom)} L {pt(first_n_x, y)} "
-            f"L {pt(first_n_x + width, bottom)} L {pt(first_n_x + width, y)}",
-            stroke=color,
-            stroke_width=fmt(stroke),
-            stroke_linecap="round",
-            stroke_linejoin="round",
-        ),
-        path(
-            f"M {pt(b_x, y)} L {pt(b_x, bottom)} "
-            f"M {pt(b_x, y)} L {pt(b_x + 58 * scale, y)} "
-            f"Q {pt(b_x + 92 * scale, y)} {pt(b_x + 92 * scale, y + 30 * scale)} "
-            f"Q {pt(b_x + 92 * scale, midpoint)} {pt(b_x + 58 * scale, midpoint)} "
-            f"L {pt(b_x, midpoint)} "
-            f"M {pt(b_x, midpoint)} L {pt(b_x + 58 * scale, midpoint)} "
-            f"Q {pt(b_x + 92 * scale, midpoint)} {pt(b_x + 92 * scale, y + 90 * scale)} "
-            f"Q {pt(b_x + 92 * scale, bottom)} {pt(b_x + 58 * scale, bottom)} "
-            f"L {pt(b_x, bottom)}",
-            stroke=color,
-            stroke_width=fmt(stroke),
-            stroke_linecap="round",
-            stroke_linejoin="round",
-        ),
-        path(
-            f"M {pt(second_n_x, bottom)} L {pt(second_n_x, y)} "
-            f"L {pt(second_n_x + width, bottom)} L {pt(second_n_x + width, y)}",
-            stroke=color,
-            stroke_width=fmt(stroke),
-            stroke_linecap="round",
-            stroke_linejoin="round",
-        ),
-    ]
-    return group(elements)
-
-
-def accent_tick_orbit(concept: Concept, x: float, y: float) -> str:
+def build_diamond_wide_gate_reference(variant: Variant) -> str:
+    top_dark = [(512, 188), (636, 312), (596, 352), (512, 268), (428, 352), (388, 312)]
+    right_gold = [(836, 512), (712, 636), (672, 596), (756, 512), (672, 428), (712, 388)]
+    bottom_dark = [(512, 836), (388, 712), (428, 672), (512, 756), (596, 672), (636, 712)]
+    left_gold = [(188, 512), (312, 388), (352, 428), (268, 512), (352, 596), (312, 636)]
     return group(
         [
+            polygon(transform_points(top_dark), fill=variant.ink),
+            polygon(transform_points(right_gold, dx=-20), fill=variant.gold),
+            polygon(transform_points(bottom_dark), fill=variant.ink),
+            polygon(transform_points(left_gold, dx=-20), fill=variant.gold),
             path(
-                arc_path(x, y, 118, 198, 350),
-                stroke=concept.secondary,
-                stroke_width="14",
-                stroke_linecap="round",
-            ),
-            circle(x + 116, y - 8, 13, fill=concept.accent),
-        ]
-    )
-
-
-def accent_region_loop(concept: Concept, x: float, y: float) -> str:
-    pieces = []
-    for index in range(6):
-        pieces.append(
-            rect(
-                x + index * 48,
-                y - 10,
-                34,
-                20,
-                rx="10",
-                fill=concept.secondary if index % 2 else concept.primary,
-            )
-        )
-    pieces.append(circle(x + 310, y, 10, fill=concept.accent))
-    return group(pieces)
-
-
-def accent_axon_bridge(concept: Concept, x: float, y: float) -> str:
-    return group(
-        [
-            path(
-                f"M {pt(x, y)} C {pt(x + 90, y - 34)} {pt(x + 194, y + 34)} {pt(x + 300, y)}",
-                stroke=concept.secondary,
-                stroke_width="14",
-                stroke_linecap="round",
-            ),
-            circle(x - 6, y, 10, fill=concept.primary),
-            circle(x + 306, y, 10, fill=concept.accent),
-        ]
-    )
-
-
-def accent_shard_lattice(concept: Concept, x: float, y: float) -> str:
-    pieces = [
-        line(x + 28, y, x + 94, y, stroke=concept.secondary, stroke_width="10", stroke_linecap="round"),
-        line(x + 134, y, x + 200, y, stroke=concept.secondary, stroke_width="10", stroke_linecap="round"),
-        line(x + 240, y, x + 306, y, stroke=concept.secondary, stroke_width="10", stroke_linecap="round"),
-    ]
-    for offset, fill in ((0, "white"), (106, concept.accent), (212, "white"), (318, concept.accent)):
-        pieces.append(
-            polygon(diamond(x + offset, y, 14), fill=fill, stroke=concept.primary, stroke_width="8")
-        )
-    return group(pieces)
-
-
-def accent_snapshot_crystal(concept: Concept, x: float, y: float) -> str:
-    return group(
-        [
-            path(
-                f"M {pt(x, y + 18)} L {pt(x + 48, y - 18)} L {pt(x + 96, y + 18)} "
-                f"L {pt(x + 144, y - 18)} L {pt(x + 192, y + 18)}",
-                stroke=concept.primary,
-                stroke_width="14",
+                "M 258,512 C 370,428 470,432 512,512 C 560,602 660,596 770,512",
+                stroke=variant.teal,
+                stroke_width="44",
                 stroke_linecap="round",
                 stroke_linejoin="round",
             ),
-            path(
-                f"M {pt(x + 18, y + 34)} L {pt(x + 174, y + 34)}",
-                stroke=concept.accent,
-                stroke_width="8",
-                stroke_linecap="round",
-            ),
+            circle(512, 512, 72, stroke=variant.ink, stroke_width="18"),
         ]
     )
 
 
-def accent_observatory_halo(concept: Concept, x: float, y: float) -> str:
-    return group(
-        [
-            path(
-                arc_path(x + 100, y, 68, 205, 354),
-                stroke=concept.secondary,
-                stroke_width="12",
-                stroke_linecap="round",
-            ),
-            path(
-                arc_path(x + 100, y, 104, 214, 330),
-                stroke=concept.primary,
-                stroke_width="10",
-                stroke_linecap="round",
-            ),
-            circle(x + 204, y - 8, 10, fill=concept.accent),
-        ]
-    )
-
-
-CONCEPTS = [
-    Concept(
-        slug="tick-orbit",
-        title="Tick Orbit",
-        summary="Global cadence, stable routing, and a disciplined pulse around a shared core.",
-        primary="#103B73",
-        secondary="#2BB6C4",
-        accent="#FF6B4A",
-        ink="#102132",
-        tint="#EAF7F8",
-        icon_builder=build_tick_orbit_icon,
-        accent_builder=accent_tick_orbit,
+VARIANTS = [
+    Variant(
+        slug="soft-gold-right-n",
+        title="Soft + Gold Right N",
+        kind="loop",
+        tweak="adopted primary mark",
+        note="Bridge Soft route with the retained narrow B proportion and a gold right N terminal accent.",
+        b_width_mult=0.80,
+        stroke_mult=0.98,
+        n2_color="#E0A31A",
     ),
-    Concept(
-        slug="region-loop",
-        title="Region Loop",
-        summary="A split-brain atlas with explicit ingress, egress, and region-level structure.",
-        primary="#7A3E2B",
-        secondary="#F2B544",
-        accent="#2D6A73",
-        ink="#2C1912",
-        tint="#FFF4E8",
-        icon_builder=build_region_loop_icon,
-        accent_builder=accent_region_loop,
-    ),
-    Concept(
-        slug="axon-bridge",
-        title="Axon Bridge",
-        summary="Directional relay paths between poles, emphasizing IO and signal handoff.",
-        primary="#19427A",
-        secondary="#22A38F",
-        accent="#F25F5C",
-        ink="#112133",
-        tint="#ECF7F3",
-        icon_builder=build_axon_bridge_icon,
-        accent_builder=accent_axon_bridge,
-    ),
-    Concept(
-        slug="shard-lattice",
-        title="Shard Lattice",
-        summary="Distributed compute cells arranged as a structured, deterministic neural mesh.",
-        primary="#1D3557",
-        secondary="#3AAFA9",
-        accent="#E76F51",
-        ink="#132238",
-        tint="#EEF4F6",
-        icon_builder=build_shard_lattice_icon,
-        accent_builder=accent_shard_lattice,
-    ),
-    Concept(
-        slug="snapshot-crystal",
-        title="Snapshot Crystal",
-        summary="Layered artifact geometry for state capture, replay, and deterministic recovery.",
-        primary="#1E3A8A",
-        secondary="#38BDF8",
-        accent="#F4A261",
-        ink="#111827",
-        tint="#EEF4FF",
-        icon_builder=build_snapshot_crystal_icon,
-        accent_builder=accent_snapshot_crystal,
-    ),
-    Concept(
-        slug="observatory-halo",
-        title="Observatory Halo",
-        summary="Signals, metrics, and debugging treated as first-class parts of the identity.",
-        primary="#0B3954",
-        secondary="#087E8B",
-        accent="#FF5A5F",
-        ink="#10212E",
-        tint="#EEF7F6",
-        icon_builder=build_observatory_halo_icon,
-        accent_builder=accent_observatory_halo,
+    Variant(
+        slug="diamond-wide-gate",
+        title="Diamond Wide Gate",
+        kind="reference",
+        tweak="final secondary candidate",
+        note="Diamond icon study paired with the adopted Soft + Gold Right N wordmark.",
+        b_width_mult=0.80,
+        stroke_mult=0.98,
+        n2_color="#E0A31A",
+        symbol_scale=0.244,
     ),
 ]
 
 
-def render_icon_svg(concept: Concept) -> str:
-    return svg_doc(ICON_SIZE, ICON_SIZE, [concept.icon_builder(concept)])
+def render_icon_svg(variant: Variant) -> str:
+    builder = build_bridge_soft_symbol if variant.kind == "loop" else build_diamond_wide_gate_reference
+    return svg_doc(ICON_SIZE, ICON_SIZE, [builder(variant)])
 
 
-def render_logo_svg(concept: Concept) -> str:
-    icon = concept.icon_builder(concept)
-    elements = [
-        rect(80, 72, LOGO_WIDTH - 160, LOGO_HEIGHT - 144, rx="72", fill="white"),
-        group([icon], transform="translate(96 82) scale(0.34)"),
-        build_wordmark(470, 188, 204, concept.ink),
-        concept.accent_builder(concept, 566, 476),
-        path(
-            f"M {pt(468, 512)} L {pt(1184, 512)}",
-            stroke=concept.primary,
-            stroke_width="6",
-            stroke_linecap="round",
-            opacity="0.18",
-        ),
-    ]
-    return svg_doc(LOGO_WIDTH, LOGO_HEIGHT, elements)
+def render_logo_svg(variant: Variant) -> str:
+    builder = build_bridge_soft_symbol if variant.kind == "loop" else build_diamond_wide_gate_reference
+    return svg_doc(
+        LOGO_WIDTH,
+        LOGO_HEIGHT,
+        [
+            rect(0, 0, LOGO_WIDTH, LOGO_HEIGHT, fill="white"),
+            group([builder(variant)], transform=f"translate({variant.symbol_x} {variant.symbol_y}) scale({fmt(variant.symbol_scale)})"),
+            build_wordmark(variant),
+        ],
+    )
 
 
-def save_svg(path: Path, content: str) -> None:
-    path.write_text(content, encoding="utf-8")
+def save_svg(path_value: Path, content: str) -> None:
+    path_value.write_text(content, encoding="utf-8")
 
 
 def render_png(svg_path: Path, png_path: Path, width: int) -> None:
     subprocess.run(
         ["node", str(NODE_RENDERER), str(svg_path), str(png_path), str(width)],
         check=True,
-        cwd=BASE_DIR,
+        cwd=ROOT_DIR,
     )
 
 
-def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        "C:/Windows/Fonts/trebucbd.ttf" if bold else "C:/Windows/Fonts/trebuc.ttf",
-        "C:/Windows/Fonts/seguisb.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
-        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
-    ]
-    for candidate in candidates:
-        if Path(candidate).exists():
-            return ImageFont.truetype(candidate, size=size)
-    return ImageFont.load_default()
+def clear_generated_dir(path_value: Path) -> None:
+    path_value.mkdir(parents=True, exist_ok=True)
+    for child in path_value.iterdir():
+        if child.is_file():
+            child.unlink()
 
 
-def add_shadow(base: Image.Image, x: int, y: int, width: int, height: int, radius: int) -> None:
-    draw = ImageDraw.Draw(base)
-    for offset, alpha in ((20, 22), (12, 32), (6, 46)):
-        draw.rounded_rectangle(
-            (x, y + offset, x + width, y + height + offset),
-            radius=radius,
-            fill=(16, 28, 40, alpha),
+def save_ico(png_path: Path, ico_path: Path) -> None:
+    with Image.open(png_path) as image:
+        square = image.convert("RGBA")
+        square.save(
+            ico_path,
+            format="ICO",
+            sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)],
         )
 
 
-def build_board() -> None:
-    board = Image.new("RGBA", (2520, 1820), "#F2EEE7")
-    draw = ImageDraw.Draw(board)
-    title_font = load_font(64, bold=True)
-    heading_font = load_font(34, bold=True)
-    body_font = load_font(24)
-
-    draw.text((120, 68), "NBN logo exploration", fill="#14202B", font=title_font)
-    draw.text(
-        (122, 142),
-        "Six finalists selected from broader brainstorming around distributed brains, tick cadence, routing, and observability.",
-        fill="#4C5A67",
-        font=body_font,
-    )
-
-    card_width = 720
-    card_height = 720
-    start_x = 120
-    start_y = 240
-    gap_x = 60
-    gap_y = 58
-
-    for index, concept in enumerate(CONCEPTS):
-        row = index // 3
-        col = index % 3
-        x = start_x + col * (card_width + gap_x)
-        y = start_y + row * (card_height + gap_y)
-        add_shadow(board, x, y, card_width, card_height, 40)
-        draw.rounded_rectangle((x, y, x + card_width, y + card_height), radius=40, fill="white")
-        draw.rounded_rectangle((x, y, x + card_width, y + 16), radius=40, fill=concept.primary)
-        draw.rectangle((x, y + 16, x + card_width, y + 40), fill=concept.primary)
-        draw.text((x + 42, y + 54), concept.title, fill=concept.ink, font=heading_font)
-
-        wrapped = textwrap.fill(concept.summary, width=50)
-        draw.text((x + 42, y + 106), wrapped, fill="#55626E", font=body_font, spacing=6)
-
-        icon_image = Image.open(PNG_DIR / f"nbn-{concept.slug}-icon.png").convert("RGBA")
-        icon_resized = icon_image.resize((220, 220), Image.LANCZOS)
-        board.alpha_composite(icon_resized, (x + 42, y + 232))
-
-        logo_image = Image.open(PNG_DIR / f"nbn-{concept.slug}-logo.png").convert("RGBA")
-        scale = min(580 / logo_image.width, 220 / logo_image.height)
-        logo_size = (int(logo_image.width * scale), int(logo_image.height * scale))
-        logo_resized = logo_image.resize(logo_size, Image.LANCZOS)
-        board.alpha_composite(logo_resized, (x + 88, y + 430))
-
-    board.save(PNG_DIR / "nbn-concept-board.png")
-
-
 def main() -> None:
-    SVG_DIR.mkdir(parents=True, exist_ok=True)
-    PNG_DIR.mkdir(parents=True, exist_ok=True)
+    clear_generated_dir(SVG_DIR)
+    clear_generated_dir(PNG_DIR)
+    clear_generated_dir(ICO_DIR)
 
-    for concept in CONCEPTS:
-        icon_svg = render_icon_svg(concept)
-        logo_svg = render_logo_svg(concept)
-        icon_svg_path = SVG_DIR / f"nbn-{concept.slug}-icon.svg"
-        logo_svg_path = SVG_DIR / f"nbn-{concept.slug}-logo.svg"
+    for variant in VARIANTS:
+        icon_svg = render_icon_svg(variant)
+        logo_svg = render_logo_svg(variant)
+        icon_svg_path = SVG_DIR / f"nbn-{variant.slug}-icon.svg"
+        logo_svg_path = SVG_DIR / f"nbn-{variant.slug}-logo.svg"
         save_svg(icon_svg_path, icon_svg)
         save_svg(logo_svg_path, logo_svg)
-        render_png(icon_svg_path, PNG_DIR / f"nbn-{concept.slug}-icon.png", width=ICON_SIZE)
-        render_png(logo_svg_path, PNG_DIR / f"nbn-{concept.slug}-logo.png", width=LOGO_WIDTH)
-
-    build_board()
+        render_png(icon_svg_path, PNG_DIR / f"nbn-{variant.slug}-icon.png", ICON_SIZE)
+        render_png(logo_svg_path, PNG_DIR / f"nbn-{variant.slug}-logo.png", LOGO_WIDTH)
+        save_ico(PNG_DIR / f"nbn-{variant.slug}-icon.png", ICO_DIR / f"nbn-{variant.slug}-icon.ico")
 
 
 if __name__ == "__main__":

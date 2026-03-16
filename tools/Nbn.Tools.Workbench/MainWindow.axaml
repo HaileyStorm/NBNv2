@@ -7,7 +7,8 @@
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="720"
         x:Class="Nbn.Tools.Workbench.MainWindow"
         x:DataType="vm:ShellViewModel"
-        Title="NothingButNeurons Workbench"
+        Title="NBN Workbench"
+        Icon="avares://Nbn.Tools.Workbench/Assets/Branding/nbn-soft-gold-right-n-icon.ico"
         WindowState="Maximized"
         MinWidth="1100" MinHeight="700">
   <Grid ColumnDefinitions="260,*" RowDefinitions="Auto,*">

@@ -1,4 +1,6 @@
-# NBNv2 specification template
+![NBN](branding/png/nbn-soft-gold-right-n-logo.png)
+
+# NBN specification template
 
 This template is the canonical assembly source for the full specification.
 

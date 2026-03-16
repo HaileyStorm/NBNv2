@@ -20,4 +20,8 @@
     <ProjectReference Include="..\..\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\branding\png\nbn-soft-gold-right-n-icon.png" LogicalName="Nbn.Tools.PerfProbe.Branding.nbn-soft-gold-right-n-icon.png" />
+  </ItemGroup>
+
 </Project>

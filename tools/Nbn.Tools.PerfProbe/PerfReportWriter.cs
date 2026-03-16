@@ -6,10 +6,13 @@ namespace Nbn.Tools.PerfProbe;
 
 public static class PerfReportWriter
 {
+    private const string BrandIconFileName = "nbn-soft-gold-right-n-icon.png";
+    private const string BrandIconResourceName = "Nbn.Tools.PerfProbe.Branding.nbn-soft-gold-right-n-icon.png";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true
     };
+    private static readonly byte[] BrandIconBytes = LoadBrandIconBytes();
 
     public static async Task WriteAsync(
         PerfReport report,
@@ -22,7 +25,9 @@ public static class PerfReportWriter
         var csvPath = Path.Combine(outputDirectory, "perf-report.csv");
         var markdownPath = Path.Combine(outputDirectory, "perf-report.md");
         var htmlPath = Path.Combine(outputDirectory, "perf-report.html");
+        var brandIconPath = Path.Combine(outputDirectory, BrandIconFileName);
 
+        await File.WriteAllBytesAsync(brandIconPath, BrandIconBytes, cancellationToken);
         await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(report, JsonOptions), cancellationToken);
         await File.WriteAllTextAsync(csvPath, BuildCsv(report), cancellationToken);
         await File.WriteAllTextAsync(markdownPath, BuildMarkdown(report), cancellationToken);
@@ -59,6 +64,8 @@ public static class PerfReportWriter
     public static string BuildMarkdown(PerfReport report)
     {
         var builder = new StringBuilder();
+        builder.AppendLine($"![NBN]({BrandIconFileName})");
+        builder.AppendLine();
         builder.AppendLine("# NBN Performance Probe");
         builder.AppendLine();
         builder.AppendLine($"Generated: {report.GeneratedAtUtc:O}");
@@ -101,11 +108,14 @@ public static class PerfReportWriter
 <head>
   <meta charset="utf-8" />
   <title>NBN Performance Probe</title>
+  <link rel="icon" href="{{BrandIconFileName}}" />
   <style>
     :root { color-scheme: light; --ink: #1f2a3d; --grid: #d5dce8; --accent: #1d6fd6; --accent-soft: #9dc4f7; --bg: #f7f9fc; }
     body { font-family: "Segoe UI", sans-serif; margin: 24px; color: var(--ink); background: var(--bg); }
-    h1 { margin-bottom: 4px; }
-    .meta { margin-bottom: 24px; color: #4f5d75; }
+    h1 { margin: 0 0 4px; }
+    .hero { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+    .brand-mark { width: 56px; height: 56px; border-radius: 14px; }
+    .meta { color: #4f5d75; }
     .card { background: white; border: 1px solid var(--grid); border-radius: 14px; padding: 18px; margin-bottom: 20px; box-shadow: 0 6px 20px rgba(29, 54, 96, 0.06); }
     table { width: 100%; border-collapse: collapse; }
     th, td { border-bottom: 1px solid var(--grid); text-align: left; padding: 10px 8px; vertical-align: top; }
@@ -118,8 +128,13 @@ public static class PerfReportWriter
   </style>
 </head>
 <body>
-  <h1>NBN Performance Probe</h1>
-  <div class="meta">Generated {{report.GeneratedAtUtc:O}} | Total duration {{report.TotalDurationMs:0.###}} ms</div>
+  <div class="hero">
+    <img class="brand-mark" src="{{BrandIconFileName}}" alt="NBN icon" />
+    <div>
+      <h1>NBN Performance Probe</h1>
+      <div class="meta">Generated {{report.GeneratedAtUtc:O}} | Total duration {{report.TotalDurationMs:0.###}} ms</div>
+    </div>
+  </div>
   <div class="card">
     <h2>Charts</h2>
     <p class="note">Bar chart uses each scenario's primary metric when available. GPU runtime scenarios may appear as skips until the RegionShard GPU backend lands.</p>
@@ -263,4 +278,13 @@ public static class PerfReportWriter
             .Replace("<", "&lt;", StringComparison.Ordinal)
             .Replace(">", "&gt;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal);
+
+    private static byte[] LoadBrandIconBytes()
+    {
+        using Stream stream = typeof(PerfReportWriter).Assembly.GetManifestResourceStream(BrandIconResourceName)
+            ?? throw new InvalidOperationException($"Missing embedded brand icon resource '{BrandIconResourceName}'.");
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        return memory.ToArray();
+    }
 }

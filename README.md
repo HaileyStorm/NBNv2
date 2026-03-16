@@ -1,6 +1,10 @@
-# NothingButNeurons v2 (NBNv2)
+![NBN](docs/branding/png/nbn-soft-gold-right-n-logo.png)
 
-NBNv2 is a distributed, tick-based neural simulation system that runs brains across
+# NBN
+
+This repository contains the NBN codebase and retains the historical `NBNv2` name in some paths and files.
+
+NBN is a distributed, tick-based neural simulation system that runs brains across
 multiple runtime services and worker processes.
 
 NBN is not a gradient-descent/backprop training framework.
