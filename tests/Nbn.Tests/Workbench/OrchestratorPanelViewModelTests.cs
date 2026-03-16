@@ -144,6 +144,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Contains("--cpu-pct 85", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
         Assert.Contains("--ram-pct 70", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--storage-pct 95", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
         Assert.Contains("--gpu-compute-pct 55", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
         Assert.Contains("--gpu-vram-pct 40", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
     }
@@ -687,6 +688,76 @@ public class OrchestratorPanelViewModelTests
         Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == failedWorker && endpoint.Status == "failed");
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("none", endpoint.BrainHints));
         Assert.Equal("1 degraded worker, 1 failed worker", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_ReportLimitedState_WhenResourceLimitsBlockPlacement()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var limitedWorker = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = limitedWorker.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = limitedWorker.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            CpuCores = 8,
+                            RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                            RamTotalBytes = 16UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 50UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 500UL * 1024 * 1024 * 1024,
+                            CpuScore = 40f,
+                            CpuLimitPercent = 100,
+                            RamLimitPercent = 100,
+                            StorageLimitPercent = 80
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.WorkerDiscoverable);
+        var endpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal("limited", endpoint.Status);
+        Assert.Contains("Storage used", endpoint.PlacementDetail, StringComparison.Ordinal);
+        Assert.Equal("1 limited worker", vm.WorkerEndpointSummary);
     }
 
     [Fact]

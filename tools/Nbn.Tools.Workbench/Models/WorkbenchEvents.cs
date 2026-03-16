@@ -90,27 +90,35 @@ public sealed record WorkerEndpointItem(
     string RootActor,
     string BrainHints,
     string LastSeen,
-    string Status)
+    string Status,
+    string PlacementDetail = "")
 {
     private string StatusKey => (Status ?? string.Empty).Trim().ToLowerInvariant();
     public bool IsActive => StatusKey is "active" or "online";
-    private bool IsDegraded => StatusKey is "degraded" or "warning";
-    private bool IsFailed => StatusKey is "failed";
+    private bool IsLimited => StatusKey is "limited" or "warning";
+    private bool IsUnavailable => StatusKey is "degraded" or "failed" or "offline" or "stale";
+    public bool HasPlacementDetail => !string.IsNullOrWhiteSpace(PlacementDetail) && !string.Equals(PlacementDetail, "none", StringComparison.OrdinalIgnoreCase);
     public string StatusChipBackground => IsActive
         ? "#DDF5E5"
-        : IsDegraded
-            ? "#F6E8BF"
-            : "#FBE8E8";
+        : IsLimited
+            ? "#E3EEFf"
+            : IsUnavailable
+                ? "#FBE8E8"
+                : "#E3EEFF";
     public string StatusChipBorder => IsActive
         ? "#2D9A5E"
-        : IsDegraded
-            ? "#C8A13F"
-            : "#C04A4A";
+        : IsLimited
+            ? "#4D7FD6"
+            : IsUnavailable
+                ? "#C04A4A"
+                : "#4D7FD6";
     public string StatusChipForeground => IsActive
         ? "#0F5832"
-        : IsDegraded
-            ? "#5C4511"
-            : "#6B1F1F";
+        : IsLimited
+            ? "#183B7A"
+            : IsUnavailable
+                ? "#6B1F1F"
+                : "#183B7A";
 }
 
 public sealed record EndpointStatusItem(

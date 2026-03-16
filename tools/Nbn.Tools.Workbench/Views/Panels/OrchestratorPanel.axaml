@@ -180,6 +180,7 @@
                             <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
                             <TextBlock Text="{Binding Address}" Classes="muted" />
                             <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                            <TextBlock Text="{Binding PlacementDetail}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasPlacementDetail}" />
                             <TextBlock Text="{Binding BrainHints, StringFormat='Brains: {0}'}" Classes="muted" TextWrapping="Wrap" />
                           </StackPanel>
                           <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />

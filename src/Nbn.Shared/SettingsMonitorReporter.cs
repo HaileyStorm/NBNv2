@@ -1,5 +1,6 @@
 using Nbn.Proto.Settings;
 using Proto;
+using System.IO;
 
 namespace Nbn.Shared;
 
@@ -14,6 +15,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     private readonly TimeSpan _heartbeatInterval;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
+    private NodeCapabilities? _lastGoodCapabilities;
 
     private SettingsMonitorReporter(
         ActorSystem system,
@@ -31,6 +33,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         _fallbackCapabilities = fallbackCapabilities;
         _capabilitiesProvider = capabilitiesProvider;
         _heartbeatInterval = heartbeatInterval;
+        _lastGoodCapabilities = CloneCapabilities(fallbackCapabilities);
     }
 
     public static SettingsMonitorReporter? Start(
@@ -130,16 +133,24 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     {
         if (_capabilitiesProvider is null)
         {
-            return _fallbackCapabilities;
+            return CloneCapabilities(_lastGoodCapabilities ?? _fallbackCapabilities);
         }
 
         try
         {
-            return _capabilitiesProvider() ?? _fallbackCapabilities;
+            var resolved = _capabilitiesProvider() ?? CloneCapabilities(_fallbackCapabilities);
+            if (HasUsablePlacementCapacity(resolved))
+            {
+                _lastGoodCapabilities = CloneCapabilities(resolved);
+            }
+
+            return resolved;
         }
-        catch
+        catch (Exception ex)
         {
-            return _fallbackCapabilities;
+            Console.Error.WriteLine(
+                $"[WARN] SettingsMonitorReporter capability provider failed for {_online.Address}/{_online.RootActorName}: {ex.GetBaseException().Message}");
+            return CloneCapabilities(_lastGoodCapabilities ?? _fallbackCapabilities);
         }
     }
 
@@ -170,11 +181,13 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
 
     public static NodeCapabilities BuildDefaultCapabilities()
     {
+        var memory = ProbeFallbackMemory();
+        var storage = ProbeFallbackStorage();
         return new NodeCapabilities
         {
             CpuCores = (uint)Math.Max(1, Environment.ProcessorCount),
-            RamFreeBytes = 0,
-            StorageFreeBytes = 0,
+            RamFreeBytes = memory.FreeBytes,
+            StorageFreeBytes = storage.FreeBytes,
             HasGpu = false,
             GpuName = string.Empty,
             VramFreeBytes = 0,
@@ -182,11 +195,99 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             GpuScore = 0,
             IlgpuCudaAvailable = false,
             IlgpuOpenclAvailable = false,
+            RamTotalBytes = memory.TotalBytes,
+            StorageTotalBytes = storage.TotalBytes,
+            VramTotalBytes = 0,
             CpuLimitPercent = 100,
             RamLimitPercent = 100,
             StorageLimitPercent = 100,
             GpuComputeLimitPercent = 100,
             GpuVramLimitPercent = 100
         };
+    }
+
+    private static bool HasUsablePlacementCapacity(NodeCapabilities capabilities)
+        => capabilities is not null
+           && capabilities.CpuCores > 0
+           && capabilities.RamFreeBytes > 0
+           && capabilities.RamTotalBytes > 0
+           && capabilities.StorageFreeBytes > 0
+           && capabilities.StorageTotalBytes > 0;
+
+    private static NodeCapabilities CloneCapabilities(NodeCapabilities source)
+        => new()
+        {
+            CpuCores = source.CpuCores,
+            RamFreeBytes = source.RamFreeBytes,
+            StorageFreeBytes = source.StorageFreeBytes,
+            HasGpu = source.HasGpu,
+            GpuName = source.GpuName,
+            VramFreeBytes = source.VramFreeBytes,
+            CpuScore = source.CpuScore,
+            GpuScore = source.GpuScore,
+            IlgpuCudaAvailable = source.IlgpuCudaAvailable,
+            IlgpuOpenclAvailable = source.IlgpuOpenclAvailable,
+            RamTotalBytes = source.RamTotalBytes,
+            StorageTotalBytes = source.StorageTotalBytes,
+            VramTotalBytes = source.VramTotalBytes,
+            CpuLimitPercent = source.CpuLimitPercent,
+            RamLimitPercent = source.RamLimitPercent,
+            StorageLimitPercent = source.StorageLimitPercent,
+            GpuComputeLimitPercent = source.GpuComputeLimitPercent,
+            GpuVramLimitPercent = source.GpuVramLimitPercent,
+            ProcessCpuLoadPercent = source.ProcessCpuLoadPercent,
+            ProcessRamUsedBytes = source.ProcessRamUsedBytes
+        };
+
+    private static FallbackCapacity ProbeFallbackMemory()
+    {
+        var totalAvailable = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        var totalBytes = totalAvailable > 0 ? (ulong)totalAvailable : 0UL;
+        return new FallbackCapacity(totalBytes, totalBytes);
+    }
+
+    private static FallbackCapacity ProbeFallbackStorage()
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(Environment.CurrentDirectory);
+            DriveInfo? drive = null;
+            foreach (var candidate in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (!candidate.IsReady || !fullPath.StartsWith(candidate.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (drive is null || candidate.Name.Length > drive.Name.Length)
+                    {
+                        drive = candidate;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (drive is null)
+            {
+                return FallbackCapacity.Empty;
+            }
+
+            return new FallbackCapacity(
+                drive.AvailableFreeSpace > 0 ? (ulong)drive.AvailableFreeSpace : 0UL,
+                drive.TotalSize > 0 ? (ulong)drive.TotalSize : 0UL);
+        }
+        catch
+        {
+            return FallbackCapacity.Empty;
+        }
+    }
+
+    private readonly record struct FallbackCapacity(ulong FreeBytes, ulong TotalBytes)
+    {
+        public static readonly FallbackCapacity Empty = new(0, 0);
     }
 }

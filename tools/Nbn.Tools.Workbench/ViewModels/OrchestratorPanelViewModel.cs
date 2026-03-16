@@ -27,6 +27,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private const long SpawnVisibilityGraceMs = 30000;
     private const float LocalDefaultTickHz = 8f;
     private const float LocalDefaultMinTickHz = 2f;
+    private const int LocalDefaultWorkerStorageLimitPercent = 95;
     private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly bool EnableRuntimeDiagnostics = IsEnvTrue("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED");
@@ -609,6 +610,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                  + $" --root-name {Connections.WorkerRootName}"
                  + $" --cpu-pct {workerCpuLimitPercent}"
                  + $" --ram-pct {workerRamLimitPercent}"
+                 + $" --storage-pct {LocalDefaultWorkerStorageLimitPercent}"
                  + $" --gpu-compute-pct {workerGpuLimitPercent}"
                  + $" --gpu-vram-pct {workerVramLimitPercent}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
@@ -1726,7 +1728,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 worker.Address,
                 worker.RootActorName,
                 (long)worker.LastSeenMs,
-                worker.IsAlive);
+                worker.IsAlive,
+                hasCapabilitySnapshot: true,
+                isReady: worker.IsReady,
+                hasCapabilities: worker.HasCapabilities,
+                placementStatus: DescribeWorkerPlacementStatus(worker, out var placementDetail),
+                placementDetail: placementDetail);
         }
 
         foreach (var node in nodes)
@@ -1753,6 +1760,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var rows = new List<(int Rank, long LastSeenMs, WorkerEndpointItem Row)>();
         var staleNodeIds = new List<Guid>();
         var activeCount = 0;
+        var limitedCount = 0;
         var degradedCount = 0;
         var failedCount = 0;
 
@@ -1770,6 +1778,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 case "active":
                     activeCount++;
                     break;
+                case "limited":
+                    limitedCount++;
+                    break;
                 case "degraded":
                     degradedCount++;
                     break;
@@ -1785,7 +1796,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 entry.RootActorName,
                 FormatWorkerBrainHints(workerBrainHints, entry.NodeId),
                 FormatUpdated(entry.LastSeenMs),
-                status)));
+                status,
+                entry.PlacementDetail)));
         }
 
         foreach (var staleNodeId in staleNodeIds)
@@ -1800,8 +1812,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             .Select(entry => entry.Row)
             .ToArray();
 
-        var summary = BuildWorkerEndpointSummary(activeCount, degradedCount, failedCount);
-        return new WorkerEndpointState(orderedRows, activeCount, degradedCount, failedCount, summary);
+        var summary = BuildWorkerEndpointSummary(activeCount, limitedCount, degradedCount, failedCount);
+        return new WorkerEndpointState(orderedRows, activeCount, limitedCount, degradedCount, failedCount, summary);
     }
 
     private void UpdateWorkerEndpointSnapshot(
@@ -1810,7 +1822,12 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         string? address,
         string? rootActorName,
         long lastSeenMs,
-        bool isAlive)
+        bool isAlive,
+        bool? hasCapabilitySnapshot = null,
+        bool? isReady = null,
+        bool? hasCapabilities = null,
+        string? placementStatus = null,
+        string? placementDetail = null)
     {
         if (!_workerEndpointCache.TryGetValue(nodeId, out var snapshot))
         {
@@ -1842,6 +1859,31 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         {
             snapshot.IsAlive = isAlive;
         }
+
+        if (hasCapabilitySnapshot.HasValue)
+        {
+            snapshot.HasCapabilitySnapshot = hasCapabilitySnapshot.Value;
+        }
+
+        if (isReady.HasValue)
+        {
+            snapshot.IsReady = isReady.Value;
+        }
+
+        if (hasCapabilities.HasValue)
+        {
+            snapshot.HasCapabilities = hasCapabilities.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(placementStatus))
+        {
+            snapshot.PlacementStatus = placementStatus.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(placementDetail))
+        {
+            snapshot.PlacementDetail = placementDetail.Trim();
+        }
     }
 
     private static (string Status, bool Remove) ClassifyWorkerEndpointStatus(WorkerEndpointSnapshot snapshot, long nowMs)
@@ -1862,17 +1904,30 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return ("failed", true);
         }
 
-        if (snapshot.IsAlive && ageMs <= StaleNodeMs)
-        {
-            return ("active", false);
-        }
-
         if (!snapshot.IsAlive || ageMs > WorkerFailedAfterMs)
         {
             return ("failed", false);
         }
 
-        return ("degraded", false);
+        if (ageMs > StaleNodeMs)
+        {
+            return ("degraded", false);
+        }
+
+        if (snapshot.HasCapabilitySnapshot)
+        {
+            if (!snapshot.HasCapabilities || !snapshot.IsReady)
+            {
+                return ("degraded", false);
+            }
+
+            if (string.Equals(snapshot.PlacementStatus, "limited", StringComparison.OrdinalIgnoreCase))
+            {
+                return ("limited", false);
+            }
+        }
+
+        return ("active", false);
     }
 
     private static int WorkerStatusRank(string status)
@@ -1880,18 +1935,24 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return status switch
         {
             "active" => 0,
-            "degraded" => 1,
-            "failed" => 2,
-            _ => 3
+            "limited" => 1,
+            "degraded" => 2,
+            "failed" => 3,
+            _ => 4
         };
     }
 
-    private static string BuildWorkerEndpointSummary(int activeCount, int degradedCount, int failedCount)
+    private static string BuildWorkerEndpointSummary(int activeCount, int limitedCount, int degradedCount, int failedCount)
     {
         var parts = new List<string>();
         if (activeCount > 0)
         {
             parts.Add(FormatCount(activeCount, "active"));
+        }
+
+        if (limitedCount > 0)
+        {
+            parts.Add(FormatCount(limitedCount, "limited"));
         }
 
         if (degradedCount > 0)
@@ -1907,6 +1968,74 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return parts.Count == 0
             ? "No active workers."
             : string.Join(", ", parts);
+    }
+
+    private static string DescribeWorkerPlacementStatus(Nbn.Proto.Settings.WorkerReadinessCapability worker, out string detail)
+    {
+        detail = string.Empty;
+        var caps = worker.Capabilities ?? new Nbn.Proto.Settings.NodeCapabilities();
+
+        if (!worker.HasCapabilities)
+        {
+            detail = "Capability warm-up in progress.";
+            return "degraded";
+        }
+
+        if (string.IsNullOrWhiteSpace(worker.RootActorName))
+        {
+            detail = "Missing worker root actor.";
+            return "limited";
+        }
+
+        if (WorkerCapabilityMath.IsCpuOverLimit(caps.ProcessCpuLoadPercent, caps.CpuLimitPercent, 0f))
+        {
+            detail = $"CPU load {caps.ProcessCpuLoadPercent:0.#}% > {caps.CpuLimitPercent}% limit.";
+            return "limited";
+        }
+
+        if (WorkerCapabilityMath.IsRamOverLimit(
+                caps.ProcessRamUsedBytes,
+                caps.RamTotalBytes,
+                caps.RamLimitPercent,
+                0f))
+        {
+            detail = $"RAM use exceeds {caps.RamLimitPercent}% limit.";
+            return "limited";
+        }
+
+        var storageUsedPercent = caps.StorageTotalBytes == 0
+            ? 0f
+            : WorkerCapabilityMath.ComputeUsedPercent(caps.StorageFreeBytes, caps.StorageTotalBytes);
+        if (WorkerCapabilityMath.IsStorageOverLimit(
+                caps.StorageFreeBytes,
+                caps.StorageTotalBytes,
+                caps.StorageLimitPercent,
+                0f))
+        {
+            detail = $"Storage used {storageUsedPercent:0.#}% > {caps.StorageLimitPercent}% limit.";
+            return "limited";
+        }
+
+        if (caps.RamFreeBytes == 0 || caps.RamTotalBytes == 0)
+        {
+            detail = "Missing RAM capacity telemetry.";
+            return "limited";
+        }
+
+        if (caps.StorageFreeBytes == 0 || caps.StorageTotalBytes == 0)
+        {
+            detail = "Missing storage capacity telemetry.";
+            return "limited";
+        }
+
+        if (caps.CpuCores == 0)
+        {
+            detail = "Missing CPU core telemetry.";
+            return "limited";
+        }
+
+        detail = "Placement ready.";
+        return "active";
     }
 
     private static string FormatCount(int count, string label)
@@ -2021,7 +2150,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             Connections.SpeciationStatus = speciationAlive ? "Online" : "Offline";
             Connections.SpeciationEndpointDisplay = speciationEndpointDisplay;
 
-            Connections.WorkerDiscoverable = workerEndpointState.ActiveCount > 0;
+            Connections.WorkerDiscoverable = workerEndpointState.ActiveCount > 0 || workerEndpointState.LimitedCount > 0;
             Connections.WorkerStatus = workerEndpointState.Rows.Count > 0
                 ? workerEndpointState.SummaryText
                 : "Offline";
@@ -2528,6 +2657,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private sealed record WorkerEndpointState(
         IReadOnlyList<WorkerEndpointItem> Rows,
         int ActiveCount,
+        int LimitedCount,
         int DegradedCount,
         int FailedCount,
         string SummaryText);
@@ -2540,6 +2670,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         public string RootActorName { get; set; } = string.Empty;
         public long LastSeenMs { get; set; }
         public bool IsAlive { get; set; }
+        public bool HasCapabilitySnapshot { get; set; }
+        public bool IsReady { get; set; }
+        public bool HasCapabilities { get; set; }
+        public string PlacementStatus { get; set; } = string.Empty;
+        public string PlacementDetail { get; set; } = string.Empty;
     }
 
     private void ApplyObservabilityEnvironment(ProcessStartInfo startInfo)
