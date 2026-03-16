@@ -2842,7 +2842,7 @@ public class SpeciationPanelViewModelTests
 
     private sealed class FakeLocalProjectLaunchPreparer(string failureMessage) : ILocalProjectLaunchPreparer
     {
-        public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }

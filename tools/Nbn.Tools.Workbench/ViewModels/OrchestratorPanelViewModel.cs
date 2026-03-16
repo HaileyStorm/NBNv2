@@ -396,12 +396,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             && !PathsEqual(configuredDbPath, defaultDbPath);
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.SettingsMonitor");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            SettingsLaunchStatus = "Repo root not found.";
-            return;
-        }
-
         if (!TryParsePort(Connections.SettingsPortText, out var port))
         {
             SettingsLaunchStatus = "Invalid Settings port.";
@@ -433,12 +427,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.HiveMind");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            HiveMindLaunchStatus = "Repo root not found.";
-            return;
-        }
-
         var settingsDbPath = ResolveSettingsDbPath();
         var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
@@ -466,12 +454,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.IO");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            IoLaunchStatus = "Repo root not found.";
-            return;
-        }
-
         var args = $"--bind-host {Connections.IoHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.IO", args, "IoGateway").ConfigureAwait(false);
@@ -497,12 +479,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Reproduction");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            ReproLaunchStatus = "Repo root not found.";
-            return;
-        }
-
         var args = $"--bind-host {Connections.ReproHost} --port {reproPort}"
                  + $" --manager-name {Connections.ReproManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
@@ -523,12 +499,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private async Task StartSpeciationAsync()
     {
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Speciation");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            SpeciationLaunchStatus = "Speciation project not found.";
-            return;
-        }
-
         if (!TryParsePort(Connections.SpeciationPortText, out var speciationPort))
         {
             SpeciationLaunchStatus = "Invalid Speciation port.";
@@ -599,12 +569,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            WorkerLaunchStatus = "WorkerNode project not found.";
-            return;
-        }
-
         var args = $"--bind-host {Connections.WorkerHost} --port {workerPort}"
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
@@ -638,12 +602,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Observability");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            ObsLaunchStatus = "Repo root not found.";
-            return;
-        }
-
         var args = $"--bind-host {Connections.ObsHost} --port {port}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
@@ -886,13 +844,6 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("tools", "Nbn.Tools.PerfProbe");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            ProfileCurrentSystemStatus = "PerfProbe project not found.";
-            StatusMessage = $"Profile current system: {ProfileCurrentSystemStatus}";
-            return;
-        }
-
         var outputDirectory = ResolveProfileCurrentSystemOutputDirectory();
         Directory.CreateDirectory(outputDirectory);
         var bindPort = ResolveProfileClientPort();

@@ -2163,7 +2163,7 @@ public class OrchestratorPanelViewModelTests
 
     private sealed class FakeLocalProjectLaunchPreparer(string failureMessage) : ILocalProjectLaunchPreparer
     {
-        public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }
@@ -2174,7 +2174,7 @@ public class OrchestratorPanelViewModelTests
         public int CallCount { get; private set; }
         public string LastRuntimeArgs { get; private set; } = string.Empty;
 
-        public Task<LocalProjectLaunchPreparation> PrepareAsync(string projectPath, string exeName, string runtimeArgs, string label)
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             CallCount++;
             LastRuntimeArgs = runtimeArgs;

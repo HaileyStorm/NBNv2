@@ -1924,13 +1924,6 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("tools", "Nbn.Tools.EvolutionSim");
-        if (string.IsNullOrWhiteSpace(projectPath))
-        {
-            SimulatorStatus = "EvolutionSim project not found.";
-            Status = SimulatorStatus;
-            return;
-        }
-
         if (!TryResolveSimulatorParentPool(out var parentPool, out var parentError))
         {
             SimulatorStatus = parentError;
