@@ -100,16 +100,16 @@
               <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
               <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
-              <TextBlock Grid.Row="4" Text="Limits %" Classes="muted" />
-              <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="4">
+              <TextBlock Grid.Row="4" Text="Limits%" Classes="muted" />
+              <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="3" Margin="-6,0,0,0">
                 <TextBlock Text="C" Classes="muted" VerticalAlignment="Center" />
-                <TextBox Text="{Binding Connections.WorkerCpuLimitPercentText}" Width="36" />
+                <TextBox Text="{Binding Connections.WorkerCpuLimitPercentText}" Width="25" />
                 <TextBlock Text="R" Classes="muted" VerticalAlignment="Center" />
-                <TextBox Text="{Binding Connections.WorkerRamLimitPercentText}" Width="36" />
+                <TextBox Text="{Binding Connections.WorkerRamLimitPercentText}" Width="25" />
                 <TextBlock Text="G" Classes="muted" VerticalAlignment="Center" />
-                <TextBox Text="{Binding Connections.WorkerGpuLimitPercentText}" Width="36" />
+                <TextBox Text="{Binding Connections.WorkerGpuLimitPercentText}" Width="25" />
                 <TextBlock Text="V" Classes="muted" VerticalAlignment="Center" />
-                <TextBox Text="{Binding Connections.WorkerVramLimitPercentText}" Width="36" />
+                <TextBox Text="{Binding Connections.WorkerVramLimitPercentText}" Width="25" />
               </StackPanel>
             </Grid>
 
