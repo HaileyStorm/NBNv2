@@ -128,6 +128,75 @@ public sealed class HiveMindWorkerInventoryTests
     }
 
     [Fact]
+    public async Task PlacementWorkerInventory_Excludes_Workers_Without_PlannerUsable_Capacity()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 15_000))));
+
+        var eligibleWorkerId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    Guid.NewGuid(),
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-missing-root:12040",
+                    rootActorName: string.Empty,
+                    logicalName: "nbn.worker"),
+                BuildWorker(
+                    Guid.NewGuid(),
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-zero-storage:12040",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker",
+                    storageFreeBytes: 8L * 1024 * 1024 * 1024,
+                    storageTotalBytes: 0),
+                BuildWorker(
+                    Guid.NewGuid(),
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-zero-score:12040",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker",
+                    cpuScore: 0f,
+                    hasGpu: false),
+                BuildWorker(
+                    eligibleWorkerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-ready:12040",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker")
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+
+        Assert.Single(inventory.Workers);
+        Assert.Equal(eligibleWorkerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
+        Assert.Equal("worker-ready:12040", inventory.Workers[0].WorkerAddress);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task HiveMind_Pulls_SettingsMonitor_WorkerInventory_Periodically()
     {
         var system = new ActorSystem();
@@ -152,6 +221,16 @@ public sealed class HiveMindWorkerInventoryTests
 
         Assert.True(first >= 1);
         Assert.True(second >= 2);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var current = await root.RequestAsync<PlacementWorkerInventory>(
+                    hiveMind,
+                    new PlacementWorkerInventoryRequest());
+                return current.Workers.Count == 1;
+            },
+            timeoutMs: 2_000);
 
         var inventory = await root.RequestAsync<PlacementWorkerInventory>(
             hiveMind,

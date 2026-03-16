@@ -95,7 +95,17 @@
               <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding IoLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
               <TextBlock Grid.Row="3" Text="Worker Node" Classes="muted" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.WorkerPortText}" Width="90" />
+              <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                <TextBox Text="{Binding Connections.WorkerPortText}" Width="64" />
+                <TextBlock Text="C" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Text="{Binding Connections.WorkerCpuLimitPercentText}" Width="36" />
+                <TextBlock Text="R" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Text="{Binding Connections.WorkerRamLimitPercentText}" Width="36" />
+                <TextBlock Text="G" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Text="{Binding Connections.WorkerGpuLimitPercentText}" Width="36" />
+                <TextBlock Text="V" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Text="{Binding Connections.WorkerVramLimitPercentText}" Width="36" />
+              </StackPanel>
               <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartWorkerCommand}" Classes="accent" />
               <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopWorkerCommand}" />
               <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding WorkerLaunchStatus}" Classes="muted" VerticalAlignment="Center" />

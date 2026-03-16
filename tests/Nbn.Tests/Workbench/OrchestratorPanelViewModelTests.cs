@@ -123,6 +123,32 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartWorkerCommand_IncludesConfiguredWorkerLimitArguments()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerPortText = "12041",
+            SettingsPortText = "12010",
+            WorkerCpuLimitPercentText = "85",
+            WorkerRamLimitPercentText = "70",
+            WorkerGpuLimitPercentText = "55",
+            WorkerVramLimitPercentText = "40"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). worker");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartWorkerCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Build failed (code 1). worker", StringComparison.Ordinal));
+
+        Assert.Contains("--cpu-pct 85", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--ram-pct 70", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--gpu-compute-pct 55", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--gpu-vram-pct 40", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ApplyWorkerPolicyCommand_WritesSettingsBackedValues()
     {
         var connections = new ConnectionViewModel

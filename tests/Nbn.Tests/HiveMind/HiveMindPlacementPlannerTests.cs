@@ -503,6 +503,57 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public void PlacementPlanner_Falls_Back_To_CpuCores_When_BenchmarkScore_Is_Zero()
+    {
+        var workerId = Guid.Parse("60000000-0000-0000-0000-000000000001");
+        var workers = new[]
+        {
+            CreateWorkerCandidate(
+                workerId,
+                "worker-zero-score:12040",
+                cpuCores: 12,
+                cpuScore: 0f,
+                hasGpu: false,
+                gpuScore: 0f)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: Guid.NewGuid(),
+            PlacementEpoch: 6,
+            RequestId: "cpu-core-fallback",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 1
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 8192),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>());
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+        Assert.Equal([workerId], plan.EligibleWorkers.Select(static worker => worker.NodeId).ToArray());
+        Assert.All(
+            plan.Assignments.Where(static assignment => assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard),
+            assignment => Assert.Equal(workerId, AssignmentWorkerId(assignment)));
+    }
+
+    [Fact]
     public void PlacementPlanner_Falls_Back_To_HigherLatency_Worker_When_LocalitySubset_Is_Insufficient()
     {
         var workerA = Guid.Parse("30000000-0000-0000-0000-000000000001");

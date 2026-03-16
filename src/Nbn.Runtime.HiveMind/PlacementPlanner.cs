@@ -332,7 +332,7 @@ public static class PlacementPlanner
             .ThenBy(static worker => worker.ProcessCpuLoadPercent)
             .ThenBy(static worker => worker.HostedBrainCount)
             .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
-            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuScore(worker))
+            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuPlacementScore(worker))
             .ThenByDescending(static worker => EffectiveCpuCores(worker))
             .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
             .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
@@ -379,7 +379,7 @@ public static class PlacementPlanner
             .ThenBy(static worker => worker.ProcessCpuLoadPercent)
             .ThenBy(static worker => worker.HostedBrainCount)
             .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
-            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuScore(worker))
+            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuPlacementScore(worker))
             .ThenByDescending(static worker => EffectiveCpuCores(worker))
             .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
             .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
@@ -423,7 +423,7 @@ public static class PlacementPlanner
 
         if (!preferGpu)
         {
-            return EffectiveCpuScore(worker) > 0f;
+            return EffectiveCpuPlacementScore(worker) > 0f;
         }
 
         return HasEffectiveGpu(worker)
@@ -441,6 +441,18 @@ public static class PlacementPlanner
 
     private static float EffectiveCpuScore(WorkerCandidate worker)
         => WorkerCapabilityMath.EffectiveCpuScore(worker.CpuScore, worker.CpuLimitPercent);
+
+    private static float EffectiveCpuPlacementScore(WorkerCandidate worker)
+    {
+        var effectiveScore = EffectiveCpuScore(worker);
+        if (effectiveScore > 0f)
+        {
+            return effectiveScore;
+        }
+
+        var effectiveCores = EffectiveCpuCores(worker);
+        return effectiveCores > 0 ? effectiveCores / 1000f : 0f;
+    }
 
     private static float EffectiveGpuScore(WorkerCandidate worker)
         => WorkerCapabilityMath.EffectiveGpuScore(worker.GpuScore, worker.GpuComputeLimitPercent);

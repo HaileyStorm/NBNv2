@@ -20,6 +20,10 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _workerPortText = "12041";
     private string _workerRootName = "worker-node";
     private string _workerLogicalName = "nbn.worker";
+    private string _workerCpuLimitPercentText = "100";
+    private string _workerRamLimitPercentText = "100";
+    private string _workerGpuLimitPercentText = "100";
+    private string _workerVramLimitPercentText = "100";
     private string _obsHost = "127.0.0.1";
     private string _obsPort = "12060";
     private string _debugHub = "DebugHub";
@@ -147,6 +151,30 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _workerLogicalName;
         set => SetProperty(ref _workerLogicalName, value);
+    }
+
+    public string WorkerCpuLimitPercentText
+    {
+        get => _workerCpuLimitPercentText;
+        set => SetProperty(ref _workerCpuLimitPercentText, value);
+    }
+
+    public string WorkerRamLimitPercentText
+    {
+        get => _workerRamLimitPercentText;
+        set => SetProperty(ref _workerRamLimitPercentText, value);
+    }
+
+    public string WorkerGpuLimitPercentText
+    {
+        get => _workerGpuLimitPercentText;
+        set => SetProperty(ref _workerGpuLimitPercentText, value);
+    }
+
+    public string WorkerVramLimitPercentText
+    {
+        get => _workerVramLimitPercentText;
+        set => SetProperty(ref _workerVramLimitPercentText, value);
     }
 
     public string ObsHost

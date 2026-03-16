@@ -230,8 +230,8 @@ public static class PerfProbeRunner
                     ["active_workers"] = workers.Count(static worker => worker.IsAlive),
                     ["ready_workers"] = workers.Count(static worker => worker.IsReady),
                     ["gpu_ready_workers"] = workers.Count(worker => worker.Capabilities?.HasGpu == true && worker.Capabilities.GpuScore > 0f),
-                    ["max_cpu_score"] = workers.Max(worker => worker.Capabilities?.CpuScore ?? 0f),
-                    ["max_gpu_score"] = workers.Max(worker => worker.Capabilities?.GpuScore ?? 0f),
+                    ["max_cpu_score"] = workers.Length == 0 ? 0d : workers.Max(worker => worker.Capabilities?.CpuScore ?? 0f),
+                    ["max_gpu_score"] = workers.Length == 0 ? 0d : workers.Max(worker => worker.Capabilities?.GpuScore ?? 0f),
                     ["total_ram_free_bytes"] = workers.Sum(worker => (double)(worker.Capabilities?.RamFreeBytes ?? 0)),
                     ["total_storage_free_bytes"] = workers.Sum(worker => (double)(worker.Capabilities?.StorageFreeBytes ?? 0))
                 })));
@@ -278,8 +278,8 @@ public static class PerfProbeRunner
                     {
                         ["eligible_workers"] = placementInventory.Workers.Count,
                         ["gpu_capable_workers"] = placementInventory.Workers.Count(static worker => worker.HasGpu),
-                        ["max_cpu_score"] = placementInventory.Workers.Max(static worker => worker.CpuScore),
-                        ["max_gpu_score"] = placementInventory.Workers.Max(static worker => worker.GpuScore)
+                        ["max_cpu_score"] = placementInventory.Workers.Count == 0 ? 0d : placementInventory.Workers.Max(static worker => worker.CpuScore),
+                        ["max_gpu_score"] = placementInventory.Workers.Count == 0 ? 0d : placementInventory.Workers.Max(static worker => worker.GpuScore)
                     })));
             }
         }

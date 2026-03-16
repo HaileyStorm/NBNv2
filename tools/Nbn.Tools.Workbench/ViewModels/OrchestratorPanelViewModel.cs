@@ -573,6 +573,30 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        if (!TryParsePercent(Connections.WorkerCpuLimitPercentText, out var workerCpuLimitPercent))
+        {
+            WorkerLaunchStatus = "Invalid worker CPU limit.";
+            return;
+        }
+
+        if (!TryParsePercent(Connections.WorkerRamLimitPercentText, out var workerRamLimitPercent))
+        {
+            WorkerLaunchStatus = "Invalid worker RAM limit.";
+            return;
+        }
+
+        if (!TryParsePercent(Connections.WorkerGpuLimitPercentText, out var workerGpuLimitPercent))
+        {
+            WorkerLaunchStatus = "Invalid worker GPU limit.";
+            return;
+        }
+
+        if (!TryParsePercent(Connections.WorkerVramLimitPercentText, out var workerVramLimitPercent))
+        {
+            WorkerLaunchStatus = "Invalid worker VRAM limit.";
+            return;
+        }
+
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
         if (string.IsNullOrWhiteSpace(projectPath))
         {
@@ -583,6 +607,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var args = $"--bind-host {Connections.WorkerHost} --port {workerPort}"
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
+                 + $" --cpu-pct {workerCpuLimitPercent}"
+                 + $" --ram-pct {workerRamLimitPercent}"
+                 + $" --gpu-compute-pct {workerGpuLimitPercent}"
+                 + $" --gpu-vram-pct {workerVramLimitPercent}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.WorkerNode", args, "WorkerNode").ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
@@ -1615,6 +1643,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
+
+    private static bool TryParsePercent(string? value, out int percent)
+        => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out percent)
+           && percent >= 0
+           && percent <= 100;
 
     private static bool TryParseNonNegativeInt(string value, out int parsed)
         => int.TryParse(value, out parsed) && parsed >= 0;
