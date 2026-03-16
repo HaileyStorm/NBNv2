@@ -13,6 +13,7 @@ NBN is not a gradient-descent/backprop training framework.
 
 - Full specification: [`docs/NBNv2.md`](docs/NBNv2.md)
 - Spec assembly source template: [`docs/INDEX.md`](docs/INDEX.md)
+- Release / installer design: [`tools/dist/Design.md`](tools/dist/Design.md)
 - Workbench operator surface: [`tools/Nbn.Tools.Workbench`](tools/Nbn.Tools.Workbench)
 - Reproduction operator runbook: [`tools/demo/reproduction_operator_runbook.md`](tools/demo/reproduction_operator_runbook.md)
 - Speciation operator runbook: [`tools/demo/speciation_operator_runbook.md`](tools/demo/speciation_operator_runbook.md)
