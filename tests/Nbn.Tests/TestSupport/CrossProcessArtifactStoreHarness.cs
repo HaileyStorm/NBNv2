@@ -15,15 +15,9 @@ public sealed class CrossProcessArtifactStoreHarness : IDisposable
         string? readySignalPath = null,
         string? releaseSignalPath = null)
     {
-        var workerDllPath = ResolveWorkerDllPath();
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
+        var workerPath = ResolveWorkerPath();
+        var startInfo = CreateWorkerStartInfo(workerPath);
 
-        startInfo.ArgumentList.Add(workerDllPath);
         startInfo.ArgumentList.Add(mode);
         startInfo.ArgumentList.Add(rootPath);
         startInfo.ArgumentList.Add(payloadPath);
@@ -63,73 +57,105 @@ public sealed class CrossProcessArtifactStoreHarness : IDisposable
         }
     }
 
-    private static string ResolveWorkerDllPath()
+    private static ProcessStartInfo CreateWorkerStartInfo(string workerPath)
+    {
+        var isManagedAssembly = workerPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+        var startInfo = isManagedAssembly
+            ? new ProcessStartInfo("dotnet")
+            : new ProcessStartInfo(workerPath);
+
+        startInfo.UseShellExecute = false;
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
+
+        if (isManagedAssembly)
+        {
+            startInfo.ArgumentList.Add(workerPath);
+        }
+
+        return startInfo;
+    }
+
+    private static string ResolveWorkerPath()
     {
         var searchRoot = new DirectoryInfo(AppContext.BaseDirectory);
         while (searchRoot is not null)
         {
-            var directCandidate = Path.Combine(
-                searchRoot.FullName,
-                "Nbn.Tests.CrossProcessArtifactWorker",
-                "release",
-                "Nbn.Tests.CrossProcessArtifactWorker.dll");
-            if (File.Exists(directCandidate))
+            var candidate = TryResolveWorkerPath(searchRoot.FullName, includeRepoOutputLayouts: false);
+            if (candidate is not null)
             {
-                return directCandidate;
-            }
-
-            var tfmCandidate = Path.Combine(
-                searchRoot.FullName,
-                "Nbn.Tests.CrossProcessArtifactWorker",
-                "release",
-                "net8.0",
-                "Nbn.Tests.CrossProcessArtifactWorker.dll");
-            if (File.Exists(tfmCandidate))
-            {
-                return tfmCandidate;
-            }
-
-            var binDirectCandidate = Path.Combine(
-                searchRoot.FullName,
-                "bin",
-                "Nbn.Tests.CrossProcessArtifactWorker",
-                "release",
-                "Nbn.Tests.CrossProcessArtifactWorker.dll");
-            if (File.Exists(binDirectCandidate))
-            {
-                return binDirectCandidate;
-            }
-
-            var binTfmCandidate = Path.Combine(
-                searchRoot.FullName,
-                "bin",
-                "Nbn.Tests.CrossProcessArtifactWorker",
-                "release",
-                "net8.0",
-                "Nbn.Tests.CrossProcessArtifactWorker.dll");
-            if (File.Exists(binTfmCandidate))
-            {
-                return binTfmCandidate;
+                return candidate;
             }
 
             searchRoot = searchRoot.Parent;
         }
 
         var repoRoot = FindRepoRoot();
-        var repoBinCandidate = Path.Combine(
-            repoRoot,
-            "tests",
-            "Nbn.Tests.CrossProcessArtifactWorker",
-            "bin",
-            "Release",
-            "net8.0",
-            "Nbn.Tests.CrossProcessArtifactWorker.dll");
-        if (File.Exists(repoBinCandidate))
+        var repoCandidate = TryResolveWorkerPath(repoRoot, includeRepoOutputLayouts: true);
+        if (repoCandidate is not null)
         {
-            return repoBinCandidate;
+            return repoCandidate;
         }
 
         throw new FileNotFoundException("Cross-process artifact worker output was not found near the current test artifacts path.");
+    }
+
+    private static string? TryResolveWorkerPath(string searchRoot, bool includeRepoOutputLayouts)
+    {
+        var candidateDirectories = new List<string>
+        {
+            searchRoot,
+            Path.Combine(searchRoot, "Nbn.Tests.CrossProcessArtifactWorker", "release"),
+            Path.Combine(searchRoot, "Nbn.Tests.CrossProcessArtifactWorker", "release", "net8.0"),
+            Path.Combine(searchRoot, "bin", "Nbn.Tests.CrossProcessArtifactWorker", "release"),
+            Path.Combine(searchRoot, "bin", "Nbn.Tests.CrossProcessArtifactWorker", "release", "net8.0")
+        };
+
+        if (includeRepoOutputLayouts)
+        {
+            candidateDirectories.Add(Path.Combine(searchRoot, "tests", "Nbn.Tests.CrossProcessArtifactWorker", "bin", "Release", "net8.0"));
+            candidateDirectories.Add(Path.Combine(searchRoot, "tests", "Nbn.Tests.CrossProcessArtifactWorker", "bin", "Debug", "net8.0"));
+        }
+
+        foreach (var directory in candidateDirectories)
+        {
+            foreach (var fileName in EnumerateWorkerFileNames())
+            {
+                var candidate = Path.Combine(directory, fileName);
+                if (IsRunnableWorkerCandidate(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateWorkerFileNames()
+    {
+        yield return "Nbn.Tests.CrossProcessArtifactWorker.dll";
+        yield return "Nbn.Tests.CrossProcessArtifactWorker.exe";
+        yield return "Nbn.Tests.CrossProcessArtifactWorker";
+    }
+
+    private static bool IsRunnableWorkerCandidate(string candidatePath)
+    {
+        if (!File.Exists(candidatePath))
+        {
+            return false;
+        }
+
+        if (candidatePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Framework-dependent apphosts need their companion assembly beside them.
+        var companionAssemblyPath = candidatePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? Path.ChangeExtension(candidatePath, ".dll")
+            : candidatePath + ".dll";
+        return File.Exists(companionAssemblyPath);
     }
 
     private static string FindRepoRoot()

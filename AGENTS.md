@@ -133,3 +133,23 @@ Keep docs concise and high-value:
 
 - Beads/BV lifecycle rules are defined in `~/.codex/AGENTS.md`.
 - This repo does not add Beads-specific overrides.
+
+## Landing the Plane (Session Completion)
+
+When ending a work session, complete the full landing flow. Work is not complete until changes are committed and pushed.
+
+1. File follow-up issues for remaining work.
+2. Run quality gates for changed code.
+3. Update issue status.
+4. Push to remote:
+   `git pull --rebase`
+   `bd sync`
+   `git push`
+   `git status` must show up to date with origin.
+5. Clean up temporary state you created.
+6. Verify intended changes are committed and pushed.
+7. Hand off context for the next session.
+
+Critical rules:
+- Do not stop at "ready to push".
+- If push fails, resolve it and retry.
