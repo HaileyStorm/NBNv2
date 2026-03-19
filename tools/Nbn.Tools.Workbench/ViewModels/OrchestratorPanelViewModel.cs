@@ -61,6 +61,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private string _obsLaunchStatus = "Idle";
     private string _sampleBrainStatus = "Not running.";
     private string _profileCurrentSystemStatus = "Idle";
+    private string _pullSettingsHost = string.Empty;
+    private string _pullSettingsPortText = string.Empty;
+    private string _pullSettingsName = string.Empty;
+    private string _settingsPullStatus = "Pull excludes discovery endpoint settings.";
+    private string _lastSeededPullSettingsHost = string.Empty;
+    private string _lastSeededPullSettingsPortText = string.Empty;
+    private string _lastSeededPullSettingsName = string.Empty;
     private string _workerEndpointSummary = "No active workers.";
     private string _workerCapabilityRefreshSecondsText = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureRebalanceWindowText = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture);
@@ -125,6 +132,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
         _disconnectAll = disconnectAll;
+        SeedPullSettingsSourceFromConnections(force: true);
         _connections.PropertyChanged += OnConnectionsPropertyChanged;
         Nodes = new ObservableCollection<NodeStatusItem>();
         WorkerEndpoints = new ObservableCollection<WorkerEndpointItem>();
@@ -134,6 +142,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Terminations = new ObservableCollection<BrainTerminatedItem>();
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(force: true));
         ApplySettingsCommand = new AsyncRelayCommand(ApplySettingsAsync);
+        PullSettingsCommand = new AsyncRelayCommand(PullSettingsAsync);
         ApplyWorkerPolicyCommand = new AsyncRelayCommand(ApplyWorkerPolicyAsync);
         StartSettingsMonitorCommand = new AsyncRelayCommand(StartSettingsMonitorAsync);
         StopSettingsMonitorCommand = new AsyncRelayCommand(() => StopRunnerAsync(_settingsRunner, value => SettingsLaunchStatus = value));
@@ -176,6 +185,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     public AsyncRelayCommand RefreshCommand { get; }
 
     public AsyncRelayCommand ApplySettingsCommand { get; }
+
+    public AsyncRelayCommand PullSettingsCommand { get; }
 
     public AsyncRelayCommand ApplyWorkerPolicyCommand { get; }
 
@@ -340,6 +351,30 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _profileCurrentSystemStatus;
         set => SetProperty(ref _profileCurrentSystemStatus, value);
+    }
+
+    public string PullSettingsHost
+    {
+        get => _pullSettingsHost;
+        set => SetProperty(ref _pullSettingsHost, value);
+    }
+
+    public string PullSettingsPortText
+    {
+        get => _pullSettingsPortText;
+        set => SetProperty(ref _pullSettingsPortText, value);
+    }
+
+    public string PullSettingsName
+    {
+        get => _pullSettingsName;
+        set => SetProperty(ref _pullSettingsName, value);
+    }
+
+    public string SettingsPullStatus
+    {
+        get => _settingsPullStatus;
+        set => SetProperty(ref _settingsPullStatus, value);
     }
 
     public void UpdateSetting(SettingItem item)
@@ -1224,6 +1259,99 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         StatusMessage = "Settings updated.";
     }
 
+    private async Task PullSettingsAsync()
+    {
+        if (!Connections.SettingsConnected)
+        {
+            SettingsPullStatus = "Connect the current SettingsMonitor first.";
+            StatusMessage = SettingsPullStatus;
+            return;
+        }
+
+        var sourceHost = PullSettingsHost?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sourceHost))
+        {
+            SettingsPullStatus = "Pull source host is required.";
+            StatusMessage = SettingsPullStatus;
+            return;
+        }
+
+        if (!TryParsePort(PullSettingsPortText, out var sourcePort))
+        {
+            SettingsPullStatus = "Invalid pull source port.";
+            StatusMessage = SettingsPullStatus;
+            return;
+        }
+
+        var sourceName = PullSettingsName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(sourceName))
+        {
+            SettingsPullStatus = "Pull source actor name is required.";
+            StatusMessage = SettingsPullStatus;
+            return;
+        }
+
+        var sourceDisplay = FormatEndpointDisplay($"{sourceHost}:{sourcePort}", sourceName);
+        SettingsPullStatus = $"Pulling settings from {sourceDisplay}...";
+        StatusMessage = SettingsPullStatus;
+
+        var response = await _client.ListSettingsAsync(sourceHost, sourcePort, sourceName).ConfigureAwait(false);
+        if (response is null)
+        {
+            SettingsPullStatus = $"Pull failed: source {sourceDisplay} is unavailable.";
+            StatusMessage = SettingsPullStatus;
+            return;
+        }
+
+        var imported = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var skippedEndpointCount = 0;
+        foreach (var entry in response.Settings)
+        {
+            var key = entry.Key?.Trim() ?? string.Empty;
+            if (key.Length == 0)
+            {
+                continue;
+            }
+
+            if (!IsPullImportableSetting(key))
+            {
+                skippedEndpointCount++;
+                continue;
+            }
+
+            imported[key] = entry.Value ?? string.Empty;
+        }
+
+        if (imported.Count == 0)
+        {
+            SettingsPullStatus = skippedEndpointCount > 0
+                ? $"No importable settings found at {sourceDisplay}; skipped {skippedEndpointCount} endpoint setting(s)."
+                : $"No settings found at {sourceDisplay}.";
+            StatusMessage = SettingsPullStatus;
+            return;
+        }
+
+        var appliedCount = 0;
+        foreach (var entry in imported.OrderBy(row => row.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var result = await _client.SetSettingAsync(entry.Key, entry.Value).ConfigureAwait(false);
+            if (result is null)
+            {
+                continue;
+            }
+
+            appliedCount++;
+            ApplyAuthoritativeSettingToView(
+                result.Key ?? entry.Key,
+                result.Value ?? entry.Value,
+                result.UpdatedMs);
+        }
+
+        var failedCount = imported.Count - appliedCount;
+        SettingsPullStatus = BuildPullSettingsStatus(sourceDisplay, appliedCount, imported.Count, failedCount, skippedEndpointCount);
+        StatusMessage = SettingsPullStatus;
+    }
+
     private static void ApplyWorkerPolicyServerValue(
         string normalizedValue,
         ref string serverValue,
@@ -1321,6 +1449,79 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         return value;
+    }
+
+    private void SeedPullSettingsSourceFromConnections(bool force)
+    {
+        var currentHost = Connections.SettingsHost?.Trim() ?? string.Empty;
+        var currentPort = Connections.SettingsPortText?.Trim() ?? string.Empty;
+        var currentName = Connections.SettingsName?.Trim() ?? string.Empty;
+
+        if (force || string.Equals(_pullSettingsHost, _lastSeededPullSettingsHost, StringComparison.Ordinal))
+        {
+            PullSettingsHost = currentHost;
+        }
+
+        if (force || string.Equals(_pullSettingsPortText, _lastSeededPullSettingsPortText, StringComparison.Ordinal))
+        {
+            PullSettingsPortText = currentPort;
+        }
+
+        if (force || string.Equals(_pullSettingsName, _lastSeededPullSettingsName, StringComparison.Ordinal))
+        {
+            PullSettingsName = currentName;
+        }
+
+        _lastSeededPullSettingsHost = currentHost;
+        _lastSeededPullSettingsPortText = currentPort;
+        _lastSeededPullSettingsName = currentName;
+    }
+
+    private static bool IsPullImportableSetting(string key)
+        => !string.IsNullOrWhiteSpace(key)
+           && !key.Trim().StartsWith(ServiceEndpointSettings.EndpointPrefix, StringComparison.OrdinalIgnoreCase);
+
+    private void ApplyAuthoritativeSettingToView(string key, string value, ulong updatedMs)
+        => ApplyAuthoritativeSettingToView(key, value, FormatUpdated(updatedMs));
+
+    private void ApplyAuthoritativeSettingToView(string key, string value, string updatedDisplay)
+    {
+        _dispatcher.Post(() =>
+        {
+            var existing = Settings.FirstOrDefault(entry => string.Equals(entry.Key, key, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
+            {
+                Settings.Add(new SettingEntryViewModel(key, value, updatedDisplay));
+            }
+            else
+            {
+                existing.MarkApplied(value, updatedDisplay);
+            }
+
+            var item = new SettingItem(key, value, updatedDisplay);
+            TryApplyWorkerPolicySetting(item);
+            TryApplyServiceEndpointSetting(item);
+            Trim(Settings);
+        });
+    }
+
+    private static string BuildPullSettingsStatus(
+        string sourceDisplay,
+        int appliedCount,
+        int totalCount,
+        int failedCount,
+        int skippedEndpointCount)
+    {
+        var status = failedCount == 0
+            ? $"Pulled {appliedCount} setting(s) from {sourceDisplay}."
+            : $"Pulled {appliedCount} of {totalCount} setting(s) from {sourceDisplay}; {failedCount} failed.";
+
+        if (skippedEndpointCount > 0)
+        {
+            status += $" Skipped {skippedEndpointCount} endpoint setting(s).";
+        }
+
+        return status;
     }
 
     private void SetDiscoveryUnavailable()
@@ -2159,6 +2360,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
     private void OnConnectionsPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (string.Equals(args.PropertyName, nameof(ConnectionViewModel.SettingsHost), StringComparison.Ordinal)
+            || string.Equals(args.PropertyName, nameof(ConnectionViewModel.SettingsPortText), StringComparison.Ordinal)
+            || string.Equals(args.PropertyName, nameof(ConnectionViewModel.SettingsName), StringComparison.Ordinal))
+        {
+            SeedPullSettingsSourceFromConnections(force: false);
+        }
+
         if (string.IsNullOrWhiteSpace(args.PropertyName)
             || !EndpointRefreshTriggerProperties.Contains(args.PropertyName))
         {

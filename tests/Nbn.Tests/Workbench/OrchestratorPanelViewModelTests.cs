@@ -175,6 +175,104 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public void PullSettings_DefaultsToCurrentSettingsCoordinates_AndDoesNotOverwriteCustomSource()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsHost = "127.0.0.1",
+            SettingsPortText = "12010",
+            SettingsName = "SettingsMonitor"
+        };
+
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+
+        Assert.Equal("127.0.0.1", vm.PullSettingsHost);
+        Assert.Equal("12010", vm.PullSettingsPortText);
+        Assert.Equal("SettingsMonitor", vm.PullSettingsName);
+
+        connections.SettingsHost = "10.20.30.40";
+        connections.SettingsPortText = "13010";
+        connections.SettingsName = "RemoteSettings";
+
+        Assert.Equal("10.20.30.40", vm.PullSettingsHost);
+        Assert.Equal("13010", vm.PullSettingsPortText);
+        Assert.Equal("RemoteSettings", vm.PullSettingsName);
+
+        vm.PullSettingsHost = "192.168.1.44";
+        connections.SettingsHost = "10.20.30.41";
+
+        Assert.Equal("192.168.1.44", vm.PullSettingsHost);
+    }
+
+    [Fact]
+    public async Task PullSettingsCommand_CopiesImportableSettings_AndSkipsDiscoveryEndpoints()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true
+        };
+        var client = new FakeWorkbenchClient
+        {
+            RemoteSettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = "tick.cadence.hz",
+                        Value = "24",
+                        UpdatedMs = 11
+                    },
+                    new SettingValue
+                    {
+                        Key = "plasticity.system.enabled",
+                        Value = "false",
+                        UpdatedMs = 12
+                    },
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.HiveMindKey,
+                        Value = "10.20.30.40:12020/HiveMindRemote",
+                        UpdatedMs = 13
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        vm.UpdateSetting(new SettingItem("tick.cadence.hz", "8", "1"));
+        await WaitForAsync(() => vm.Settings.Count == 1);
+
+        var cadence = Assert.Single(vm.Settings);
+        cadence.Value = "16";
+        Assert.True(cadence.IsDirty);
+
+        vm.PullSettingsHost = "10.20.30.50";
+        vm.PullSettingsPortText = "12010";
+        vm.PullSettingsName = "SettingsMonitorRemote";
+        vm.PullSettingsCommand.Execute(null);
+
+        await WaitForAsync(() => client.SettingCalls.Count == 2);
+        await WaitForAsync(() => string.Equals(cadence.Value, "24", StringComparison.Ordinal));
+        await WaitForAsync(() => vm.Settings.Count == 2);
+
+        Assert.Contains(client.RemoteSettingsCalls, call =>
+            string.Equals(call.Host, "10.20.30.50", StringComparison.Ordinal)
+            && call.Port == 12010
+            && string.Equals(call.ActorName, "SettingsMonitorRemote", StringComparison.Ordinal));
+        Assert.Contains(client.SettingCalls, call => call.Key == "tick.cadence.hz" && call.Value == "24");
+        Assert.Contains(client.SettingCalls, call => call.Key == "plasticity.system.enabled" && call.Value == "false");
+        Assert.DoesNotContain(client.SettingCalls, call => string.Equals(call.Key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal));
+        Assert.False(cadence.IsDirty);
+        Assert.Equal("24", cadence.Value);
+        Assert.Contains(vm.Settings, entry => entry.Key == "plasticity.system.enabled" && entry.Value == "false");
+        Assert.Equal(
+            "Pulled 2 setting(s) from 10.20.30.50:12010/SettingsMonitorRemote. Skipped 1 endpoint setting(s).",
+            vm.SettingsPullStatus);
+        Assert.Equal(vm.SettingsPullStatus, vm.StatusMessage);
+    }
+
+    [Fact]
     public async Task UpdateSetting_WorkerPolicyValues_UpdateDedicatedInputs()
     {
         var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient());
@@ -2040,7 +2138,10 @@ public class OrchestratorPanelViewModelTests
         public BrainListResponse? BrainsResponse { get; set; }
         public Func<BrainListResponse?>? BrainListFactory { get; set; }
         public SettingListResponse? SettingsResponse { get; init; }
+        public SettingListResponse? RemoteSettingsResponse { get; set; }
+        public Func<string, int, string, SettingListResponse?>? RemoteSettingsFactory { get; set; }
         public List<(string Key, string Value)> SettingCalls { get; } = new();
+        public List<(string Host, int Port, string ActorName)> RemoteSettingsCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
         public PlacementAck? PlacementAck { get; set; }
         public PlacementWorkerInventory? PlacementWorkerInventoryResponse { get; set; }
@@ -2077,6 +2178,12 @@ public class OrchestratorPanelViewModelTests
 
         public override Task<SettingListResponse?> ListSettingsAsync()
             => Task.FromResult(SettingsResponse);
+
+        public override Task<SettingListResponse?> ListSettingsAsync(string host, int port, string actorName)
+        {
+            RemoteSettingsCalls.Add((host, port, actorName));
+            return Task.FromResult(RemoteSettingsFactory?.Invoke(host, port, actorName) ?? RemoteSettingsResponse);
+        }
 
         public override Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
             => Task.FromResult<PlacementWorkerInventory?>(PlacementWorkerInventoryResponse ?? new PlacementWorkerInventory

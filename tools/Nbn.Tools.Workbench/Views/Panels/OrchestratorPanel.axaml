@@ -236,9 +236,21 @@
               <TextBlock Text="Settings" Classes="card-title" />
               <Button Grid.Column="1" Content="Apply" Command="{Binding ApplySettingsCommand}" Classes="accent" />
             </Grid>
-            <TextBlock Text="Includes policy keys exposed in Energy + Plasticity; values stay synced across both surfaces."
+            <TextBlock Text="Includes policy keys exposed in Energy + Plasticity. Pull copies settings from another SettingsMonitor into the connected one while excluding discovery endpoint rows."
                        Classes="muted"
                        TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <TextBlock Text="Pull From" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="1" Text="{Binding PullSettingsHost}" Width="150" />
+              <TextBox Grid.Column="2" Text="{Binding PullSettingsPortText}" Width="90" />
+              <TextBox Grid.Column="3" Text="{Binding PullSettingsName}" Width="140" />
+              <Button Grid.Column="4" Content="Pull" Command="{Binding PullSettingsCommand}" HorizontalAlignment="Left" />
+              <TextBlock Grid.Row="1"
+                         Grid.ColumnSpan="5"
+                         Text="{Binding SettingsPullStatus}"
+                         Classes="muted"
+                         TextWrapping="Wrap" />
+            </Grid>
             <ScrollViewer MaxHeight="380" HorizontalScrollBarVisibility="Disabled">
               <ItemsControl ItemsSource="{Binding Settings}">
                 <ItemsControl.ItemsPanel>

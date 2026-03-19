@@ -526,6 +526,26 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public virtual async Task<SettingListResponse?> ListSettingsAsync(string host, int port, string actorName)
+    {
+        if (_root is null || string.IsNullOrWhiteSpace(host) || port <= 0 || port >= 65536 || string.IsNullOrWhiteSpace(actorName))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<SettingListResponse>(
+                new PID($"{host.Trim()}:{port}", actorName.Trim()),
+                new SettingListRequest(),
+                DefaultTimeout).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public virtual async Task<SettingValue?> SetSettingAsync(string key, string value)
     {
         if (_root is null || _settingsPid is null || string.IsNullOrWhiteSpace(key))
