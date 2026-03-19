@@ -7,12 +7,34 @@ using Nbn.Proto.Io;
 using Nbn.Shared;
 using Nbn.Tools.EvolutionSim;
 using Proto;
+using Proto.Remote;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Tools;
 
 public sealed class EvolutionRuntimeClientMetadataTests
 {
+    [Fact]
+    public void BuildRemoteConfig_AllInterfaces_UsesResolvedAdvertisedHost()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "10.9.8.7"));
+
+        var method = typeof(EvolutionRuntimeClient).GetMethod(
+            "BuildRemoteConfig",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var config = Assert.IsType<RemoteConfig>(method!.Invoke(null, new object?[]
+        {
+            NetworkAddressDefaults.DefaultBindHost,
+            12074,
+            null,
+            null
+        }));
+
+        Assert.Equal("10.9.8.7", config.AdvertisedHost);
+    }
+
     [Fact]
     public void ExtractReproductionData_MapsSimilarityScoresIntoCommitCandidates()
     {
@@ -258,6 +280,28 @@ public sealed class EvolutionRuntimeClientMetadataTests
         var tuple = method!.Invoke(null, new object?[] { result });
         Assert.NotNull(tuple);
         return tuple!;
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);
+
+        public EnvironmentVariableScope(params (string Key, string? Value)[] values)
+        {
+            foreach (var (key, value) in values)
+            {
+                _originals[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (key, value) in _originals)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
     }
 
     private static string InvokeBuildMetadataJson(SpeciationCommitCandidate candidate)

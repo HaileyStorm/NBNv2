@@ -983,7 +983,7 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         RemoteConfig config;
         if (IsAllInterfaces(bindHost))
         {
-            var advertiseHost = advertisedHost ?? bindHost;
+            var advertiseHost = NetworkAddressDefaults.ResolveAdvertisedHost(bindHost, advertisedHost);
             config = RemoteConfig.BindToAllInterfaces(advertiseHost, port);
         }
         else if (IsLocalhost(bindHost))
@@ -1014,16 +1014,8 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
     }
 
     private static bool IsLocalhost(string host)
-    {
-        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-               || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
-               || host.Equals("::1", StringComparison.OrdinalIgnoreCase);
-    }
+        => NetworkAddressDefaults.IsLoopbackHost(host);
 
     private static bool IsAllInterfaces(string host)
-    {
-        return host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase)
-               || host.Equals("::", StringComparison.OrdinalIgnoreCase)
-               || host.Equals("*", StringComparison.OrdinalIgnoreCase);
-    }
+        => NetworkAddressDefaults.IsAllInterfaces(host);
 }
