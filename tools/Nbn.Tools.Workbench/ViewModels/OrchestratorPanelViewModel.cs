@@ -1439,7 +1439,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return $"Pull failed: source {sourceDisplay} is unavailable. {probe.Detail} Using the same port number on another machine is fine. The remote SettingsMonitor is most likely still bound to 127.0.0.1 or blocked by a firewall. On the remote machine, launch SettingsMonitor with the default bind host (0.0.0.0) or pass --bind-host 0.0.0.0, then allow inbound TCP {sourcePort}.";
         }
 
-        return $"Pull failed: source {sourceDisplay} is unavailable. {probe.Detail} The TCP endpoint is reachable, but actor {sourceName} did not answer as a SettingsMonitor. Verify the actor name and that the remote instance is running a compatible NBN remoting build.";
+        return $"Pull failed: source {sourceDisplay} is unavailable. {probe.Detail} The TCP endpoint is reachable, but actor {sourceName} did not answer as a SettingsMonitor. Verify the actor name and that the remote instance is running a compatible NBN remoting build. If Workbench was started before the networking-defaults update, reconnect after restarting Workbench so the local Workbench client is not still bound to 127.0.0.1.";
     }
 
     private static void ApplyWorkerPolicyServerValue(

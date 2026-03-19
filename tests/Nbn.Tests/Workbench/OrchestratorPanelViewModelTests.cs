@@ -341,6 +341,32 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task PullSettingsCommand_WhenSourceTcpIsReachable_IncludesWorkbenchClientGuidance()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true
+        };
+        var client = new FakeWorkbenchClient
+        {
+            RemoteSettingsResponse = null,
+            ProbeResult = new TcpEndpointProbeResult(true, "TCP connect to 192.168.0.103:12010 succeeded.")
+        };
+
+        var vm = CreateViewModel(connections, client);
+        vm.PullSettingsHost = "192.168.0.103";
+        vm.PullSettingsPortText = "12010";
+        vm.PullSettingsName = "SettingsMonitor";
+
+        vm.PullSettingsCommand.Execute(null);
+
+        await WaitForAsync(() => vm.SettingsPullStatus.Contains("local Workbench client is not still bound to 127.0.0.1", StringComparison.Ordinal));
+
+        Assert.Contains("compatible NBN remoting build", vm.SettingsPullStatus, StringComparison.Ordinal);
+        Assert.Contains("restarting Workbench", vm.SettingsPullStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task UpdateSetting_WorkerPolicyValues_UpdateDedicatedInputs()
     {
         var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient());

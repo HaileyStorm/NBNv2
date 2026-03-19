@@ -1,11 +1,12 @@
 using Avalonia.Media;
+using Nbn.Shared;
 using Nbn.Tools.Workbench.Services;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed class ConnectionViewModel : ViewModelBase
 {
-    private string _localBindHost = "127.0.0.1";
+    private string _localBindHost = NetworkAddressDefaults.DefaultBindHost;
     private string _localPort = "12090";
     private string _ioHost = "127.0.0.1";
     private string _ioPort = "12050";

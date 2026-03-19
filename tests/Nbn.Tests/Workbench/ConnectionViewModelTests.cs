@@ -1,3 +1,4 @@
+using Nbn.Shared;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tests.Workbench;
@@ -29,6 +30,14 @@ public sealed class ConnectionViewModelTests
         Assert.Equal("12060", vm.ObsPortText);
         Assert.Equal("DebugHub", vm.DebugHub);
         Assert.Equal("VisualizationHub", vm.VizHub);
+    }
+
+    [Fact]
+    public void LocalClientBindHost_DefaultsToAllInterfaces()
+    {
+        var vm = new ConnectionViewModel();
+
+        Assert.Equal(NetworkAddressDefaults.DefaultBindHost, vm.LocalBindHost);
     }
 
     [Fact]
