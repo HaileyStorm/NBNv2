@@ -193,7 +193,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private SpeciationSimulatorBrainOption? _simSelectedParentABrain;
     private SpeciationSimulatorBrainOption? _simSelectedParentBBrain;
     private SpeciationSimulatorBrainOption? _simExtraParentCandidateBrain;
-    private string _simBindHost = "127.0.0.1";
+    private string _simBindHost = NetworkAddressDefaults.DefaultBindHost;
     private string _simPortText = "12074";
     private string _simSeedText = "12345";
     private string _simIntervalMsText = "100";
@@ -278,7 +278,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         _stopSpeciationService = stopSpeciationService;
         _refreshOrchestrator = refreshOrchestrator;
         _enableLiveChartsAutoRefresh = enableLiveChartsAutoRefresh;
-        _simBindHost = _connections.LocalBindHost;
+        _simBindHost = NetworkAddressDefaults.DefaultBindHost;
         _connections.PropertyChanged += OnConnectionsPropertyChanged;
 
         SpeciesCounts = new ObservableCollection<SpeciationSpeciesCountItem>();

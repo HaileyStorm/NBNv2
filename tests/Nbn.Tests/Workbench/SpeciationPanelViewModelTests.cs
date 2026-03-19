@@ -18,6 +18,14 @@ namespace Nbn.Tests.Workbench;
 public class SpeciationPanelViewModelTests
 {
     [Fact]
+    public void SimulatorBindHost_DefaultsToAllInterfaces()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+
+        Assert.Equal(NetworkAddressDefaults.DefaultBindHost, vm.SimBindHost);
+    }
+
+    [Fact]
     public async Task LoadConfigCommand_ParsesPolicyFields()
     {
         var client = new FakeWorkbenchClient

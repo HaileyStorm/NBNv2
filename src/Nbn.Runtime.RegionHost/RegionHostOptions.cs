@@ -35,7 +35,7 @@ public sealed record RegionHostOptions(
 {
     public static RegionHostOptions FromArgs(string[] args)
     {
-        var bindHost = GetEnv("NBN_REGIONHOST_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_REGIONHOST_BIND_HOST") ?? NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_REGIONHOST_PORT") ?? 12040;
         var advertisedHost = GetEnv("NBN_REGIONHOST_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_REGIONHOST_ADVERTISE_PORT");
@@ -538,7 +538,7 @@ public sealed record RegionHostOptions(
     private static void PrintHelp()
     {
         Console.WriteLine("NBN RegionHost options:");
-        Console.WriteLine("  --bind, --bind-host <host>       Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>       Host/interface to bind (default {NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                    Port to bind (default 12040)");
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");

@@ -7,6 +7,7 @@ using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
+using Nbn.Shared;
 using Proto.Remote;
 
 namespace Nbn.Tools.Workbench.Services;
@@ -19,7 +20,7 @@ public static class WorkbenchRemote
 
         if (IsAllInterfaces(bindHost))
         {
-            var advertised = advertisedHost ?? bindHost;
+            var advertised = NetworkAddressDefaults.ResolveAdvertisedHost(bindHost, advertisedHost);
             config = RemoteConfig.BindToAllInterfaces(advertised, port);
         }
         else if (IsLocalhost(bindHost))
@@ -53,12 +54,8 @@ public static class WorkbenchRemote
     }
 
     private static bool IsLocalhost(string host)
-        => host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-           || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
-           || host.Equals("::1", StringComparison.OrdinalIgnoreCase);
+        => NetworkAddressDefaults.IsLoopbackHost(host);
 
     private static bool IsAllInterfaces(string host)
-        => host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase)
-           || host.Equals("::", StringComparison.OrdinalIgnoreCase)
-           || host.Equals("*", StringComparison.OrdinalIgnoreCase);
+        => NetworkAddressDefaults.IsAllInterfaces(host);
 }

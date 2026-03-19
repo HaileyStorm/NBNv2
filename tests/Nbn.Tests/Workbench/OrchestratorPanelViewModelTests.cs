@@ -150,6 +150,47 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartSettingsMonitorCommand_UsesAllInterfacesBindByDefault()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsHost = "127.0.0.1",
+            SettingsPortText = "12010"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). settings");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartSettingsMonitorCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Build failed (code 1). settings", StringComparison.Ordinal));
+
+        Assert.Contains("--bind-host 0.0.0.0 --port 12010", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--advertise-host 127.0.0.1", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartIoCommand_UsesConfiguredNonLoopbackHostAsAdvertiseHost()
+    {
+        var connections = new ConnectionViewModel
+        {
+            IoHost = "10.20.30.41",
+            IoPortText = "12050",
+            SettingsPortText = "12010"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). io");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartIoCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.IoLaunchStatus, "Build failed (code 1). io", StringComparison.Ordinal));
+
+        Assert.Contains("--bind-host 0.0.0.0 --port 12050", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--advertise-host 10.20.30.41", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ApplyWorkerPolicyCommand_WritesSettingsBackedValues()
     {
         var connections = new ConnectionViewModel
@@ -270,6 +311,33 @@ public class OrchestratorPanelViewModelTests
             "Pulled 2 setting(s) from 10.20.30.50:12010/SettingsMonitorRemote. Skipped 1 endpoint setting(s).",
             vm.SettingsPullStatus);
         Assert.Equal(vm.SettingsPullStatus, vm.StatusMessage);
+    }
+
+    [Fact]
+    public async Task PullSettingsCommand_WhenSourceIsUnreachable_IncludesTcpAndFirewallGuidance()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true
+        };
+        var client = new FakeWorkbenchClient
+        {
+            RemoteSettingsResponse = null,
+            ProbeResult = new TcpEndpointProbeResult(false, "TCP connect to 192.168.0.103:12010 timed out.")
+        };
+
+        var vm = CreateViewModel(connections, client);
+        vm.PullSettingsHost = "192.168.0.103";
+        vm.PullSettingsPortText = "12010";
+        vm.PullSettingsName = "SettingsMonitor";
+
+        vm.PullSettingsCommand.Execute(null);
+
+        await WaitForAsync(() => vm.SettingsPullStatus.Contains("TCP connect to 192.168.0.103:12010 timed out.", StringComparison.Ordinal));
+
+        Assert.Contains("Using the same port number on another machine is fine.", vm.SettingsPullStatus, StringComparison.Ordinal);
+        Assert.Contains("bound to 127.0.0.1", vm.SettingsPullStatus, StringComparison.Ordinal);
+        Assert.Contains("firewall", vm.SettingsPullStatus, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -2033,7 +2101,8 @@ public class OrchestratorPanelViewModelTests
     private static OrchestratorPanelViewModel CreateViewModel(
         ConnectionViewModel connections,
         WorkbenchClient client,
-        ILocalProjectLaunchPreparer? launchPreparer = null)
+        ILocalProjectLaunchPreparer? launchPreparer = null,
+        ILocalFirewallManager? firewallManager = null)
     {
         return new OrchestratorPanelViewModel(
             new UiDispatcher(),
@@ -2041,7 +2110,8 @@ public class OrchestratorPanelViewModelTests
             client,
             connectAll: () => Task.CompletedTask,
             disconnectAll: () => { },
-            launchPreparer: launchPreparer);
+            launchPreparer: launchPreparer,
+            firewallManager: firewallManager ?? new FakeLocalFirewallManager());
     }
 
     private static async Task WaitForAsync(Func<bool> predicate, int timeoutMs = 2000)
@@ -2140,6 +2210,7 @@ public class OrchestratorPanelViewModelTests
         public SettingListResponse? SettingsResponse { get; init; }
         public SettingListResponse? RemoteSettingsResponse { get; set; }
         public Func<string, int, string, SettingListResponse?>? RemoteSettingsFactory { get; set; }
+        public TcpEndpointProbeResult ProbeResult { get; set; } = new(false, "TCP connect timed out.");
         public List<(string Key, string Value)> SettingCalls { get; } = new();
         public List<(string Host, int Port, string ActorName)> RemoteSettingsCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
@@ -2184,6 +2255,9 @@ public class OrchestratorPanelViewModelTests
             RemoteSettingsCalls.Add((host, port, actorName));
             return Task.FromResult(RemoteSettingsFactory?.Invoke(host, port, actorName) ?? RemoteSettingsResponse);
         }
+
+        public override Task<TcpEndpointProbeResult> ProbeTcpEndpointAsync(string host, int port, TimeSpan? timeout = null)
+            => Task.FromResult(ProbeResult);
 
         public override Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
             => Task.FromResult<PlacementWorkerInventory?>(PlacementWorkerInventoryResponse ?? new PlacementWorkerInventory
@@ -2287,5 +2361,13 @@ public class OrchestratorPanelViewModelTests
             LastRuntimeArgs = runtimeArgs;
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }
+    }
+
+    private sealed class FakeLocalFirewallManager(FirewallAccessResult? result = null) : ILocalFirewallManager
+    {
+        public FirewallAccessResult Result { get; set; } = result ?? new(FirewallAccessStatus.Unsupported, "No supported active Linux firewall manager was detected.");
+
+        public Task<FirewallAccessResult> EnsureInboundTcpAccessAsync(string label, string bindHost, int port)
+            => Task.FromResult(Result);
     }
 }

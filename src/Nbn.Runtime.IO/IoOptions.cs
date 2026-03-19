@@ -19,7 +19,7 @@ public sealed record IoOptions(
 {
     public static IoOptions FromArgs(string[] args)
     {
-        var bindHost = GetEnv("NBN_IO_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_IO_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_IO_PORT") ?? 12020;
         var advertisedHost = GetEnv("NBN_IO_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_IO_ADVERTISE_PORT");
@@ -274,7 +274,7 @@ public sealed record IoOptions(
     private static void PrintHelp()
     {
         Console.WriteLine("NBN IO Gateway options:");
-        Console.WriteLine("  --bind, --bind-host <host>       Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>       Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                    Port to bind (default 12020)");
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");

@@ -15,7 +15,7 @@ public sealed record ReproductionOptions(
 {
     public static ReproductionOptions FromArgs(string[] args)
     {
-        var bindHost = GetEnv("NBN_REPRO_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_REPRO_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_REPRO_PORT") ?? 12070;
         var advertisedHost = GetEnv("NBN_REPRO_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_REPRO_ADVERTISE_PORT");
@@ -221,7 +221,7 @@ public sealed record ReproductionOptions(
     private static void PrintHelp()
     {
         Console.WriteLine("NBN Reproduction options:");
-        Console.WriteLine("  --bind, --bind-host <host>       Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>       Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                    Port to bind (default 12070)");
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");

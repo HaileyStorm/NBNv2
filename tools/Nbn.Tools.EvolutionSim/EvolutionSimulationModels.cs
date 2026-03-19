@@ -1,4 +1,5 @@
 using Nbn.Proto;
+using Nbn.Shared;
 using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tools.EvolutionSim;
@@ -9,7 +10,7 @@ public sealed record EvolutionSimulationOptions
     public string IoId { get; init; } = "io-gateway";
     public string? SettingsAddress { get; init; }
     public string SettingsName { get; init; } = "SettingsMonitor";
-    public string BindHost { get; init; } = "127.0.0.1";
+    public string BindHost { get; init; } = NetworkAddressDefaults.DefaultBindHost;
     public int Port { get; init; } = 12074;
     public string? AdvertiseHost { get; init; }
     public int? AdvertisePort { get; init; }

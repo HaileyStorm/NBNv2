@@ -10,7 +10,7 @@ public sealed record SettingsMonitorOptions(
     public static SettingsMonitorOptions FromArgs(string[] args)
     {
         var dbPath = GetDefaultDatabasePath();
-        var bindHost = GetEnv("NBN_SETTINGS_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_SETTINGS_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var advertisedHost = GetEnv("NBN_SETTINGS_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_SETTINGS_ADVERTISE_PORT");
@@ -132,7 +132,7 @@ public sealed record SettingsMonitorOptions(
         var defaultPath = GetDefaultDatabasePath();
         Console.WriteLine("NBN SettingsMonitor options:");
         Console.WriteLine($"  --db <path>                         SQLite DB path (default {defaultPath})");
-        Console.WriteLine("  --bind, --bind-host <host>          Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>          Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                       Port to bind (default 12010)");
         Console.WriteLine("  --advertise, --advertise-host       Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>             Advertised port for remoting");

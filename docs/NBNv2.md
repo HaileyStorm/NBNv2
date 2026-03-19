@@ -81,6 +81,8 @@ Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned 
 * be a **worker-only** process that hosts only worker actors (RegionShards and/or IO coordinators), or
 * host everything on a single machine for local development (not a special case, still uses Proto.Actor for communications, etc.).
 
+Runtime service roots bind all interfaces by default unless the operator explicitly pins `--bind-host` to a narrower interface such as `127.0.0.1`. When a service binds all interfaces and no explicit advertise host is supplied, NBN resolves a non-loopback local advertised address so peer discovery does not publish `0.0.0.0`.
+
 NBN treats placement as a runtime concern:
 
 * RegionShards are expected to be distributed across worker processes.

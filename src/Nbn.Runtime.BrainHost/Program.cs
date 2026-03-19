@@ -21,7 +21,7 @@ if (HasFlag(args, "--help") || HasFlag(args, "-h"))
     return;
 }
 
-var bindHost = GetArg(args, "--bind-host") ?? GetArg(args, "--bind") ?? "127.0.0.1";
+var bindHost = GetArg(args, "--bind-host") ?? GetArg(args, "--bind") ?? NetworkAddressDefaults.DefaultBindHost;
 var port = GetIntArg(args, "--port") ?? 12011;
 var advertisedHost = GetArg(args, "--advertise-host") ?? GetArg(args, "--advertise");
 var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -181,7 +181,7 @@ static RemoteConfig BuildRemoteConfig(string bindHost, int port, string? adverti
     RemoteConfig config;
     if (IsAllInterfaces(bindHost))
     {
-        var advertiseHost = advertisedHost ?? bindHost;
+        var advertiseHost = NetworkAddressDefaults.ResolveAdvertisedHost(bindHost, advertisedHost);
         config = RemoteConfig.BindToAllInterfaces(advertiseHost, port);
     }
     else if (IsLocalhost(bindHost))
@@ -216,14 +216,10 @@ static RemoteConfig BuildRemoteConfig(string bindHost, int port, string? adverti
 }
 
 static bool IsLocalhost(string host)
-    => host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("::1", StringComparison.OrdinalIgnoreCase);
+    => NetworkAddressDefaults.IsLoopbackHost(host);
 
 static bool IsAllInterfaces(string host)
-    => host.Equals("0.0.0.0", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("::", StringComparison.OrdinalIgnoreCase)
-       || host.Equals("*", StringComparison.OrdinalIgnoreCase);
+    => NetworkAddressDefaults.IsAllInterfaces(host);
 
 static string? GetArg(string[] args, string name)
 {
@@ -337,7 +333,7 @@ static ArtifactRef? BuildArtifactRefOrNull(string? sha256Hex, long sizeBytes, st
 static void PrintHelp()
 {
     Console.WriteLine("NBN BrainHost usage:");
-    Console.WriteLine("  --bind-host <host> --port <port> --brain-id <guid>");
+    Console.WriteLine($"  --bind-host <host> --port <port> --brain-id <guid>   (default bind host {NetworkAddressDefaults.DefaultBindHost})");
     Console.WriteLine("  --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("  [--router-id <name>] [--brain-root-id <name>]");
     Console.WriteLine("  [--io-address <host:port>] [--io-id <name>] [--input-width <n>] [--output-width <n>]");

@@ -19,7 +19,7 @@ public sealed record ObservabilityOptions(
 {
     public static ObservabilityOptions FromArgs(string[] args)
     {
-        var bindHost = GetEnv("NBN_OBS_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_OBS_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_OBS_PORT") ?? 12040;
         var advertisedHost = GetEnv("NBN_OBS_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_OBS_ADVERTISE_PORT");
@@ -261,7 +261,7 @@ public sealed record ObservabilityOptions(
     private static void PrintHelp()
     {
         Console.WriteLine("NBN Observability options:");
-        Console.WriteLine("  --bind, --bind-host <host>       Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>       Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                    Port to bind (default 12040)");
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");

@@ -1,4 +1,5 @@
 using Nbn.Runtime.SettingsMonitor;
+using Nbn.Shared;
 
 namespace Nbn.Runtime.HiveMind;
 
@@ -56,7 +57,7 @@ public sealed record HiveMindOptions(
 
     public static HiveMindOptions FromArgs(string[] args)
     {
-        var bindHost = GetEnv("NBN_HIVE_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_HIVE_BIND_HOST") ?? NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_HIVE_PORT") ?? 12020;
         var advertisedHost = GetEnv("NBN_HIVE_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_HIVE_ADVERTISE_PORT");
@@ -802,7 +803,7 @@ public sealed record HiveMindOptions(
     private static void PrintHelp()
     {
         Console.WriteLine("NBN HiveMind options:");
-        Console.WriteLine("  --bind, --bind-host <host>          Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>          Host/interface to bind (default {NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                       Port to bind (default 12020)");
         Console.WriteLine("  --advertise, --advertise-host       Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>             Advertised port for remoting");

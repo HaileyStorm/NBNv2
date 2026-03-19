@@ -9,7 +9,7 @@
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="10">
             <TextBlock Text="Settings Discovery" Classes="card-title" />
-            <TextBlock Text="Use these coordinates when SettingsMonitor was launched externally. All other endpoint identities are discovered from SettingsMonitor." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Use these coordinates to connect to SettingsMonitor. Local Launch binds runtime services to all interfaces by default; all other endpoint identities are discovered from SettingsMonitor." Classes="muted" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
               <TextBox Text="{Binding Connections.SettingsHost}" Width="160" />
               <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
@@ -54,7 +54,7 @@
       <Border Classes="card">
         <StackPanel Spacing="8">
           <TextBlock Text="Local Launch" Classes="card-title" />
-          <TextBlock Text="Services start only from Start/Start All; connection attempts do not auto-launch runtimes." Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="Services start only from Start/Start All; connection attempts do not auto-launch runtimes. Workbench binds launched runtime services to all interfaces by default and best-effort opens local inbound firewall access when supported." Classes="muted" TextWrapping="Wrap" />
           <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="14" RowSpacing="6">
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button Content="Start All" Command="{Binding StartAllCommand}" Classes="accent" />
@@ -236,7 +236,7 @@
               <TextBlock Text="Settings" Classes="card-title" />
               <Button Grid.Column="1" Content="Apply" Command="{Binding ApplySettingsCommand}" Classes="accent" />
             </Grid>
-            <TextBlock Text="Includes policy keys exposed in Energy + Plasticity. Pull copies settings from another SettingsMonitor into the connected one while excluding discovery endpoint rows."
+            <TextBlock Text="Includes policy keys exposed in Energy + Plasticity. Pull copies settings from another SettingsMonitor into the connected one while excluding discovery endpoint rows. Same port numbers on different machines are fine; the source just has to be network-reachable."
                        Classes="muted"
                        TextWrapping="Wrap" />
             <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">

@@ -37,6 +37,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
     private readonly ILocalProjectLaunchPreparer _launchPreparer;
+    private readonly ILocalFirewallManager _firewallManager;
     private readonly LocalServiceRunner _settingsRunner = new();
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
@@ -122,12 +123,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null,
         Func<Task>? connectAll = null,
         Action? disconnectAll = null,
-        ILocalProjectLaunchPreparer? launchPreparer = null)
+        ILocalProjectLaunchPreparer? launchPreparer = null,
+        ILocalFirewallManager? firewallManager = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _client = client;
         _launchPreparer = launchPreparer ?? new LocalProjectLaunchPreparer();
+        _firewallManager = firewallManager ?? new LocalFirewallManager();
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
@@ -437,9 +440,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
+        var networkArgs = BuildLocalServiceNetworkArgs(Connections.SettingsHost, port);
         var args = includeDbArg
-            ? $"--db \"{resolvedDbPath}\" --bind-host {Connections.SettingsHost} --port {port}"
-            : $"--bind-host {Connections.SettingsHost} --port {port}";
+            ? $"--db \"{resolvedDbPath}\" {networkArgs}"
+            : networkArgs;
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.SettingsMonitor", args, "SettingsMonitor").ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
         {
@@ -449,7 +453,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var startInfo = launch.StartInfo;
         var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false, label: "SettingsMonitor");
-        SettingsLaunchStatus = result.Message;
+        SettingsLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("SettingsMonitor", port, result.Message).ConfigureAwait(false)
+            : result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -463,7 +469,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.HiveMind");
         var settingsDbPath = ResolveSettingsDbPath();
-        var args = $"--bind-host {Connections.HiveMindHost} --port {port} --settings-db \"{settingsDbPath}\""
+        var args = $"{BuildLocalServiceNetworkArgs(Connections.HiveMindHost, port)} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.HiveMind", args, "HiveMind").ConfigureAwait(false);
@@ -476,7 +482,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
-        HiveMindLaunchStatus = result.Message;
+        HiveMindLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("HiveMind", port, result.Message).ConfigureAwait(false)
+            : result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -489,7 +497,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.IO");
-        var args = $"--bind-host {Connections.IoHost} --port {port}"
+        var args = BuildLocalServiceNetworkArgs(Connections.IoHost, port)
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.IO", args, "IoGateway").ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
@@ -501,7 +509,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
-        IoLaunchStatus = result.Message;
+        IoLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("IoGateway", port, result.Message).ConfigureAwait(false)
+            : result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -514,7 +524,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Reproduction");
-        var args = $"--bind-host {Connections.ReproHost} --port {reproPort}"
+        var args = BuildLocalServiceNetworkArgs(Connections.ReproHost, reproPort)
                  + $" --manager-name {Connections.ReproManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Reproduction", args, "Reproduction").ConfigureAwait(false);
@@ -527,7 +537,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
-        ReproLaunchStatus = result.Message;
+        ReproLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("Reproduction", reproPort, result.Message).ConfigureAwait(false)
+            : result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -546,7 +558,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var args = $"--bind-host {Connections.SpeciationHost} --port {speciationPort}"
+        var args = BuildLocalServiceNetworkArgs(Connections.SpeciationHost, speciationPort)
                  + $" --manager-name {Connections.SpeciationManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Speciation", args, "Speciation").ConfigureAwait(false);
@@ -560,8 +572,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _speciationRunner.StartAsync(startInfo, waitForExit: false, label: "Speciation");
-        SpeciationLaunchStatus = result.Message;
-        StatusMessage = $"Speciation launch: {result.Message}";
+        SpeciationLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("Speciation", speciationPort, result.Message).ConfigureAwait(false)
+            : result.Message;
+        StatusMessage = $"Speciation launch: {SpeciationLaunchStatus}";
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -604,7 +618,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
-        var args = $"--bind-host {Connections.WorkerHost} --port {workerPort}"
+        var args = BuildLocalServiceNetworkArgs(Connections.WorkerHost, workerPort)
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
                  + $" --cpu-pct {workerCpuLimitPercent}"
@@ -624,7 +638,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         ApplyObservabilityEnvironment(startInfo);
         var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
-        WorkerLaunchStatus = result.Message;
+        WorkerLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("WorkerNode", workerPort, result.Message).ConfigureAwait(false)
+            : result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
@@ -637,7 +653,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Observability");
-        var args = $"--bind-host {Connections.ObsHost} --port {port}"
+        var args = BuildLocalServiceNetworkArgs(Connections.ObsHost, port)
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Observability", args, "Observability").ConfigureAwait(false);
@@ -650,8 +666,63 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         var result = await _obsRunner.StartAsync(startInfo, waitForExit: false, label: "Observability");
-        ObsLaunchStatus = result.Message;
+        ObsLaunchStatus = result.Success
+            ? await AppendFirewallAttentionAsync("Observability", port, result.Message).ConfigureAwait(false)
+            : result.Message;
         await TriggerReconnectAsync().ConfigureAwait(false);
+    }
+
+    private static string BuildLocalServiceNetworkArgs(string? configuredHost, int port)
+    {
+        var args = $"--bind-host {NetworkAddressDefaults.DefaultBindHost} --port {port}";
+        var advertisedHost = ResolveLocalServiceAdvertiseHost(configuredHost);
+        if (!string.IsNullOrWhiteSpace(advertisedHost))
+        {
+            args += $" --advertise-host {advertisedHost}";
+        }
+
+        return args;
+    }
+
+    private static string? ResolveLocalServiceAdvertiseHost(string? configuredHost)
+    {
+        if (string.IsNullOrWhiteSpace(configuredHost))
+        {
+            return null;
+        }
+
+        var trimmed = configuredHost.Trim();
+        if (NetworkAddressDefaults.IsLoopbackHost(trimmed)
+            || NetworkAddressDefaults.IsAllInterfaces(trimmed))
+        {
+            return null;
+        }
+
+        return trimmed;
+    }
+
+    private async Task<string> AppendFirewallAttentionAsync(string serviceLabel, int port, string launchMessage)
+    {
+        var firewall = await _firewallManager
+            .EnsureInboundTcpAccessAsync(serviceLabel, NetworkAddressDefaults.DefaultBindHost, port)
+            .ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(firewall.Message))
+        {
+            var logMessage = $"{serviceLabel} firewall: {firewall.Message}";
+            if (firewall.RequiresAttention)
+            {
+                WorkbenchLog.Warn(logMessage);
+            }
+            else
+            {
+                WorkbenchLog.Info(logMessage);
+            }
+        }
+
+        return firewall.RequiresAttention && !string.IsNullOrWhiteSpace(firewall.Message)
+            ? $"{launchMessage} {firewall.Message}"
+            : launchMessage;
     }
 
     private static async Task StopRunnerAsync(LocalServiceRunner runner, Action<string> setStatus)
@@ -1298,7 +1369,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var response = await _client.ListSettingsAsync(sourceHost, sourcePort, sourceName).ConfigureAwait(false);
         if (response is null)
         {
-            SettingsPullStatus = $"Pull failed: source {sourceDisplay} is unavailable.";
+            SettingsPullStatus = await BuildUnavailablePullSettingsStatusAsync(
+                sourceHost,
+                sourcePort,
+                sourceName,
+                sourceDisplay).ConfigureAwait(false);
             StatusMessage = SettingsPullStatus;
             return;
         }
@@ -1350,6 +1425,21 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         var failedCount = imported.Count - appliedCount;
         SettingsPullStatus = BuildPullSettingsStatus(sourceDisplay, appliedCount, imported.Count, failedCount, skippedEndpointCount);
         StatusMessage = SettingsPullStatus;
+    }
+
+    private async Task<string> BuildUnavailablePullSettingsStatusAsync(
+        string sourceHost,
+        int sourcePort,
+        string sourceName,
+        string sourceDisplay)
+    {
+        var probe = await _client.ProbeTcpEndpointAsync(sourceHost, sourcePort).ConfigureAwait(false);
+        if (!probe.Reachable)
+        {
+            return $"Pull failed: source {sourceDisplay} is unavailable. {probe.Detail} Using the same port number on another machine is fine. The remote SettingsMonitor is most likely still bound to 127.0.0.1 or blocked by a firewall. On the remote machine, launch SettingsMonitor with the default bind host (0.0.0.0) or pass --bind-host 0.0.0.0, then allow inbound TCP {sourcePort}.";
+        }
+
+        return $"Pull failed: source {sourceDisplay} is unavailable. {probe.Detail} The TCP endpoint is reachable, but actor {sourceName} did not answer as a SettingsMonitor. Verify the actor name and that the remote instance is running a compatible NBN remoting build.";
     }
 
     private static void ApplyWorkerPolicyServerValue(

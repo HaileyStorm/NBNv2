@@ -95,7 +95,7 @@ static async Task InitArtifactsAsync(string[] args)
 
 static async Task RunBrainAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12010;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -183,7 +183,7 @@ static async Task RunBrainAsync(string[] args)
 
 static async Task RunSpawnBrainAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12073;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -327,7 +327,7 @@ static async Task RunSpawnBrainAsync(string[] args)
 
 static async Task RunHiveStatusAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12074;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -482,7 +482,7 @@ static async Task RunHiveStatusAsync(string[] args)
 
 static async Task RunIoScenarioAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12070;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -604,7 +604,7 @@ static async Task RunIoScenarioAsync(string[] args)
 
 static async Task RunObserveActivityAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12075;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -703,7 +703,7 @@ static async Task RunObserveActivityAsync(string[] args)
 
 static async Task RunWorkerReconcileAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12076;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -774,7 +774,7 @@ static async Task RunWorkerReconcileAsync(string[] args)
 
 static async Task RunShardOutputSinkAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12077;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -828,7 +828,7 @@ static async Task RunShardOutputSinkAsync(string[] args)
 
 static async Task RunReproScenarioAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12071;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -945,7 +945,7 @@ static async Task RunReproScenarioAsync(string[] args)
 
 static async Task RunReproSuiteAsync(string[] args)
 {
-    var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+    var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
     var port = GetIntArg(args, "--port") ?? 12072;
     var advertisedHost = GetArg(args, "--advertise-host");
     var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -1896,7 +1896,7 @@ static void PrintHelp()
     Console.WriteLine("  observe-activity --hivemind-address <host:port> [--hivemind-id <name>]");
     Console.WriteLine("                   --io-address <host:port> [--io-id <name>] --obs-address <host:port> [--viz-id <name>]");
     Console.WriteLine("                   --brain-id <guid> [--focus-region <id>] [--seconds <int>] [--timeout-seconds <int>] [--json]");
-    Console.WriteLine("  run-brain --bind-host <host> --port <port> --brain-id <guid>");
+    Console.WriteLine($"  run-brain --bind-host <host> --port <port> --brain-id <guid>   (default bind host {NetworkAddressDefaults.DefaultBindHost})");
     Console.WriteLine("            --hivemind-address <host:port> --hivemind-id <name>");
     Console.WriteLine("            [--router-id <name>] [--brain-root-id <name>]");
     Console.WriteLine("            [--io-address <host:port>] [--io-id <name>]");

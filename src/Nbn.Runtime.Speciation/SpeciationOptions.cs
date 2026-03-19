@@ -35,7 +35,7 @@ public sealed record SpeciationOptions(
     public static SpeciationOptions FromArgs(string[] args)
     {
         var dbPath = GetEnv("NBN_SPECIATION_DB") ?? GetDefaultDatabasePath();
-        var bindHost = GetEnv("NBN_SPECIATION_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_SPECIATION_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_SPECIATION_PORT") ?? 12080;
         var advertisedHost = GetEnv("NBN_SPECIATION_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_SPECIATION_ADVERTISE_PORT");
@@ -302,7 +302,7 @@ public sealed record SpeciationOptions(
         var defaultPath = GetDefaultDatabasePath();
         Console.WriteLine("NBN Speciation options:");
         Console.WriteLine($"  --db <path>                          SQLite DB path (default {defaultPath})");
-        Console.WriteLine("  --bind, --bind-host <host>           Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>           Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                        Port to bind (default 12080)");
         Console.WriteLine("  --advertise, --advertise-host        Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>              Advertised port for remoting");

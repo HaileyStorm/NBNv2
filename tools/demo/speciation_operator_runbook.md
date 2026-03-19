@@ -16,7 +16,7 @@ Direct launch:
 
 ```powershell
 dotnet run --project src/Nbn.Runtime.Speciation -c Release --no-build -- `
-  --bind-host 127.0.0.1 --port 12080 `
+  --bind-host 0.0.0.0 --port 12080 `
   --settings-host 127.0.0.1 --settings-port 12010 --settings-name SettingsMonitor
 ```
 

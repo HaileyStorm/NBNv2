@@ -36,7 +36,7 @@ static async Task RunAsync(string[] args)
         var ioId = GetArg(args, "--io-id") ?? "io-gateway";
         var settingsAddress = GetArg(args, "--settings-address");
         var settingsName = GetArg(args, "--settings-name") ?? "SettingsMonitor";
-        var bindHost = GetArg(args, "--bind-host") ?? "127.0.0.1";
+        var bindHost = GetArg(args, "--bind-host") ?? NetworkAddressDefaults.DefaultBindHost;
         var port = GetIntArg(args, "--port") ?? 12074;
         var advertisedHost = GetArg(args, "--advertise-host");
         var advertisedPort = GetIntArg(args, "--advertise-port");
@@ -564,7 +564,7 @@ static EvolutionParentSelectionBias ParseParentSelectionBias(string? raw)
 static void PrintHelp()
 {
     Console.WriteLine("NBN EvolutionSim usage:");
-    Console.WriteLine("  run --io-address <host:port> [--io-id <name>] [--bind-host <host>] [--port <int>]");
+    Console.WriteLine($"  run --io-address <host:port> [--io-id <name>] [--bind-host <host>] [--port <int>]   (default bind host {NetworkAddressDefaults.DefaultBindHost})");
     Console.WriteLine("      [--settings-address <host:port>] [--settings-name <name>]");
     Console.WriteLine("      [--advertise-host <host>] [--advertise-port <int>] [--seed <uint64>]");
     Console.WriteLine("      [--interval-ms <int>] [--status-seconds <int>] [--timeout-seconds <int>]");

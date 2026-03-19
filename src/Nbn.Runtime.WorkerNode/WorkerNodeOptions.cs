@@ -18,7 +18,7 @@ public sealed record WorkerNodeOptions(
 {
     public static WorkerNodeOptions FromArgs(string[] args)
     {
-        var bindHost = GetEnv("NBN_WORKER_BIND_HOST") ?? "127.0.0.1";
+        var bindHost = GetEnv("NBN_WORKER_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
         var port = GetEnvInt("NBN_WORKER_PORT") ?? 12041;
         var advertisedHost = GetEnv("NBN_WORKER_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_WORKER_ADVERTISE_PORT");
@@ -468,7 +468,7 @@ public sealed record WorkerNodeOptions(
     public static void PrintHelp()
     {
         Console.WriteLine("NBN WorkerNode options:");
-        Console.WriteLine("  --bind, --bind-host <host>       Host/interface to bind (default 127.0.0.1)");
+        Console.WriteLine($"  --bind, --bind-host <host>       Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
         Console.WriteLine("  --port <port>                    Port to bind (default 12041)");
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");

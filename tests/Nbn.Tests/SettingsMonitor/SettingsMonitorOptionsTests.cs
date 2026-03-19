@@ -1,4 +1,5 @@
 using Nbn.Runtime.SettingsMonitor;
+using Nbn.Shared;
 
 namespace Nbn.Tests.SettingsMonitor;
 
@@ -20,5 +21,13 @@ public sealed class SettingsMonitorOptionsTests
         var options = SettingsMonitorOptions.FromArgs(new[] { "--db", explicitPath });
 
         Assert.Equal(explicitPath, options.DatabasePath);
+    }
+
+    [Fact]
+    public void FromArgs_DefaultsBindHost_ToAllInterfaces()
+    {
+        var options = SettingsMonitorOptions.FromArgs(Array.Empty<string>());
+
+        Assert.Equal(NetworkAddressDefaults.DefaultBindHost, options.BindHost);
     }
 }

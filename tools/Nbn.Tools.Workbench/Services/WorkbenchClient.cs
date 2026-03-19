@@ -546,6 +546,34 @@ public class WorkbenchClient : IAsyncDisposable
         }
     }
 
+    public virtual async Task<TcpEndpointProbeResult> ProbeTcpEndpointAsync(string host, int port, TimeSpan? timeout = null)
+    {
+        if (string.IsNullOrWhiteSpace(host) || port <= 0 || port >= 65536)
+        {
+            return new TcpEndpointProbeResult(false, $"TCP connect to {host}:{port} is invalid.");
+        }
+
+        using var client = new TcpClient();
+        using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(3));
+        try
+        {
+            await client.ConnectAsync(host.Trim(), port, cts.Token).ConfigureAwait(false);
+            return new TcpEndpointProbeResult(true, $"TCP connect to {host}:{port} succeeded.");
+        }
+        catch (OperationCanceledException)
+        {
+            return new TcpEndpointProbeResult(false, $"TCP connect to {host}:{port} timed out.");
+        }
+        catch (SocketException ex)
+        {
+            return new TcpEndpointProbeResult(false, $"TCP connect to {host}:{port} failed: {ex.SocketErrorCode}.");
+        }
+        catch (Exception ex)
+        {
+            return new TcpEndpointProbeResult(false, $"TCP connect to {host}:{port} failed: {ex.GetBaseException().Message}");
+        }
+    }
+
     public virtual async Task<SettingValue?> SetSettingAsync(string key, string value)
     {
         if (_root is null || _settingsPid is null || string.IsNullOrWhiteSpace(key))
@@ -1576,3 +1604,5 @@ public class WorkbenchClient : IAsyncDisposable
     private string? GetVisualizationSubscriberActor()
         => _receiverPid is null ? null : PidLabel(_receiverPid);
 }
+
+public sealed record TcpEndpointProbeResult(bool Reachable, string Detail);
