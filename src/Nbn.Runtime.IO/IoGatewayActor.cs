@@ -17,7 +17,7 @@ public sealed class IoGatewayActor : IActor
     private static readonly bool LogMetadataDiagnostics =
         IsEnvTrue("NBN_METADATA_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_IO_METADATA_DIAGNOSTICS_ENABLED");
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan BrainInfoResolveTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan BrainInfoResolveTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan SpeciationRequestTimeout = TimeSpan.FromSeconds(45);
@@ -2998,5 +2998,3 @@ public sealed class IoGatewayActor : IActor
 
     private sealed record ClientInfo(PID Pid, string Name);
 }
-
-

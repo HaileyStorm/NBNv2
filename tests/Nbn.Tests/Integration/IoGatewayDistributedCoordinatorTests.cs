@@ -111,6 +111,38 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task BrainInfoRequest_Tolerates_Slow_HiveMindMetadataBootstrap()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 4)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 2)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new IoGatewayRegistrationProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerPid,
+            inputWidth: 4,
+            outputWidth: 2,
+            inputMode: ProtoControl.InputCoordinatorMode.DirtyOnChange,
+            brainIoInfoDelay: TimeSpan.FromMilliseconds(1500))));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        var info = await root.RequestAsync<BrainInfo>(
+            gateway,
+            new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal((uint)4, info.InputWidth);
+        Assert.Equal((uint)2, info.OutputWidth);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterBrain_Skips_Placeholder_OutputSink_Until_RemoteCoordinator_Is_Known()
     {
         var system = new ActorSystem();
@@ -540,6 +572,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private readonly uint _inputWidth;
         private readonly uint _outputWidth;
         private readonly ProtoControl.InputCoordinatorMode _inputMode;
+        private readonly TimeSpan _brainIoInfoDelay;
         private int _registerOutputSinkCount;
         private string _lastOutputSinkPid = string.Empty;
 
@@ -550,7 +583,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
             PID routerPid,
             uint inputWidth,
             uint outputWidth,
-            ProtoControl.InputCoordinatorMode inputMode)
+            ProtoControl.InputCoordinatorMode inputMode,
+            TimeSpan? brainIoInfoDelay = null)
         {
             _brainId = brainId;
             _inputCoordinatorPid = inputCoordinatorPid;
@@ -559,6 +593,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
             _inputWidth = inputWidth;
             _outputWidth = outputWidth;
             _inputMode = inputMode;
+            _brainIoInfoDelay = brainIoInfoDelay ?? TimeSpan.Zero;
         }
 
         public sealed record GetSnapshot;
@@ -572,18 +607,12 @@ public sealed class IoGatewayDistributedCoordinatorTests
             switch (context.Message)
             {
                 case ProtoControl.GetBrainIoInfo request when request.BrainId.TryToGuid(out var requestBrainId) && requestBrainId == _brainId:
-                    context.Respond(new ProtoControl.BrainIoInfo
+                    if (_brainIoInfoDelay > TimeSpan.Zero)
                     {
-                        BrainId = request.BrainId,
-                        InputWidth = _inputWidth,
-                        OutputWidth = _outputWidth,
-                        InputCoordinatorMode = _inputMode,
-                        OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
-                        InputCoordinatorPid = PidLabel(_inputCoordinatorPid),
-                        OutputCoordinatorPid = PidLabel(_outputCoordinatorPid),
-                        IoGatewayOwnsInputCoordinator = false,
-                        IoGatewayOwnsOutputCoordinator = false
-                    });
+                        return RespondBrainIoInfoAsync(context, request);
+                    }
+
+                    context.Respond(BuildBrainIoInfo(request.BrainId));
                     break;
                 case ProtoControl.GetBrainRouting request when request.BrainId.TryToGuid(out var routingBrainId) && routingBrainId == _brainId:
                     context.Respond(new ProtoControl.BrainRoutingInfo
@@ -606,6 +635,26 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
             return Task.CompletedTask;
         }
+
+        private async Task RespondBrainIoInfoAsync(IContext context, ProtoControl.GetBrainIoInfo request)
+        {
+            await Task.Delay(_brainIoInfoDelay).ConfigureAwait(false);
+            context.Respond(BuildBrainIoInfo(request.BrainId));
+        }
+
+        private ProtoControl.BrainIoInfo BuildBrainIoInfo(Nbn.Proto.Uuid brainId)
+            => new()
+            {
+                BrainId = brainId,
+                InputWidth = _inputWidth,
+                OutputWidth = _outputWidth,
+                InputCoordinatorMode = _inputMode,
+                OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
+                InputCoordinatorPid = PidLabel(_inputCoordinatorPid),
+                OutputCoordinatorPid = PidLabel(_outputCoordinatorPid),
+                IoGatewayOwnsInputCoordinator = false,
+                IoGatewayOwnsOutputCoordinator = false
+            };
     }
 
     private sealed class InputRouterProbeActor : IActor
