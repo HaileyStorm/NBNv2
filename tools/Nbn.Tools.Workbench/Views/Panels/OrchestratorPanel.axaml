@@ -176,12 +176,20 @@
                     <DataTemplate>
                       <Border Classes="row">
                         <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                          <Border Classes="pill"
-                                  Background="{Binding StatusChipBackground}"
-                                  BorderBrush="{Binding StatusChipBorder}"
-                                  BorderThickness="1">
-                            <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
-                          </Border>
+                          <StackPanel Spacing="6">
+                            <Border Classes="pill"
+                                    Background="{Binding StatusChipBackground}"
+                                    BorderBrush="{Binding StatusChipBorder}"
+                                    BorderThickness="1">
+                              <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+                            </Border>
+                            <Border Classes="pill"
+                                    Background="{Binding GpuChipBackground}"
+                                    BorderBrush="{Binding GpuChipBorder}"
+                                    BorderThickness="1">
+                              <TextBlock Text="{Binding GpuSupport}" Foreground="{Binding GpuChipForeground}" />
+                            </Border>
+                          </StackPanel>
                           <StackPanel Grid.Column="1">
                             <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
                             <TextBlock Text="{Binding Address}" Classes="muted" />

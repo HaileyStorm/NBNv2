@@ -256,7 +256,7 @@ public sealed class WorkerNodeCapabilityProvider
         try
         {
             using var context = Context.CreateDefault();
-            var device = SelectPreferredGpuDevice(context.Devices);
+            var device = RegionShardGpuRuntime.SelectPreferredGpuDevice(context.Devices);
             if (device is null)
             {
                 return 0f;
@@ -316,7 +316,7 @@ public sealed class WorkerNodeCapabilityProvider
             var devices = context.Devices.ToArray();
             var cudaAvailable = devices.Any(static device => device.AcceleratorType == AcceleratorType.Cuda);
             var openclAvailable = devices.Any(static device => device.AcceleratorType == AcceleratorType.OpenCL);
-            var gpuDevice = SelectPreferredGpuDevice(devices);
+            var gpuDevice = RegionShardGpuRuntime.SelectPreferredGpuDevice(devices);
             if (gpuDevice is null)
             {
                 return new WorkerGpuInfo(false, string.Empty, 0, 0, cudaAvailable, openclAvailable);
@@ -336,13 +336,6 @@ public sealed class WorkerNodeCapabilityProvider
             return new WorkerGpuInfo(false, string.Empty, 0, 0, false, false);
         }
     }
-
-    private static Device? SelectPreferredGpuDevice(IEnumerable<Device> devices)
-        => devices
-            .Where(static device => device.AcceleratorType is AcceleratorType.Cuda or AcceleratorType.OpenCL)
-            .OrderByDescending(static device => device.AcceleratorType == AcceleratorType.Cuda ? 1 : 0)
-            .ThenByDescending(static device => device.MemorySize)
-            .FirstOrDefault();
 
     private static WorkerMemoryInfo ResolveGpuMemory(Context context, Device device)
     {

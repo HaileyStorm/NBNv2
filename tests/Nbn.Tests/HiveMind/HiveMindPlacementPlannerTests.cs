@@ -375,6 +375,149 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public void PlacementPlanner_Does_Not_Prefer_GpuWorkers_When_ComputeBackendPreference_Is_Cpu()
+    {
+        var cpuWorker = Guid.Parse("71000000-0000-0000-0000-000000000001");
+        var gpuWorker = Guid.Parse("71000000-0000-0000-0000-000000000002");
+
+        var workers = new[]
+        {
+            CreateWorkerCandidate(
+                gpuWorker,
+                "worker-gpu:12040",
+                cpuCores: 8,
+                cpuScore: 20f,
+                hasGpu: true,
+                gpuScore: 95f,
+                vramFreeBytes: 12L * 1024 * 1024 * 1024),
+            CreateWorkerCandidate(
+                cpuWorker,
+                "worker-cpu:12040",
+                cpuCores: 16,
+                cpuScore: 80f,
+                hasGpu: false,
+                gpuScore: 0f,
+                vramFreeBytes: 0,
+                vramTotalBytes: 0)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: Guid.NewGuid(),
+            PlacementEpoch: 7,
+            RequestId: "cpu-backend-preference",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 1
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 8192),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>(),
+            ComputeBackendPreference: RegionShardComputeBackendPreference.Cpu);
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+
+        var computeWorkers = plan.Assignments
+            .Where(static assignment =>
+                assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
+                && assignment.RegionId == 1)
+            .Select(AssignmentWorkerId)
+            .Distinct()
+            .ToArray();
+
+        Assert.Equal([cpuWorker], computeWorkers);
+    }
+
+    [Theory]
+    [InlineData(RegionShardComputeBackendPreference.Auto)]
+    [InlineData(RegionShardComputeBackendPreference.Gpu)]
+    public void PlacementPlanner_Prefers_Effective_GpuWorkers_When_BackendPreference_Allows_It(
+        RegionShardComputeBackendPreference computeBackendPreference)
+    {
+        var cpuWorker = Guid.Parse("72000000-0000-0000-0000-000000000001");
+        var gpuWorker = Guid.Parse("72000000-0000-0000-0000-000000000002");
+
+        var workers = new[]
+        {
+            CreateWorkerCandidate(
+                gpuWorker,
+                "worker-gpu:12040",
+                cpuCores: 8,
+                cpuScore: 20f,
+                hasGpu: true,
+                gpuScore: 95f,
+                vramFreeBytes: 12L * 1024 * 1024 * 1024),
+            CreateWorkerCandidate(
+                cpuWorker,
+                "worker-cpu:12040",
+                cpuCores: 16,
+                cpuScore: 80f,
+                hasGpu: false,
+                gpuScore: 0f,
+                vramFreeBytes: 0,
+                vramTotalBytes: 0)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: Guid.NewGuid(),
+            PlacementEpoch: 8,
+            RequestId: $"gpu-backend-preference-{computeBackendPreference}",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 1
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 8192),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>(),
+            ComputeBackendPreference: computeBackendPreference);
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+
+        var computeWorkers = plan.Assignments
+            .Where(static assignment =>
+                assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
+                && assignment.RegionId == 1)
+            .Select(AssignmentWorkerId)
+            .Distinct()
+            .ToArray();
+
+        Assert.Equal([gpuWorker], computeWorkers);
+    }
+
+    [Fact]
     public void PlacementPlanner_Prefers_LowLatency_CurrentLocality_Over_Freeer_Remote_Worker()
     {
         var workerA = Guid.Parse("10000000-0000-0000-0000-000000000001");

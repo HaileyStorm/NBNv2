@@ -1996,6 +1996,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 hasCapabilitySnapshot: true,
                 isReady: worker.IsReady,
                 hasCapabilities: worker.HasCapabilities,
+                hasGpu: worker.Capabilities?.HasGpu,
+                cpuScore: worker.Capabilities?.CpuScore,
+                gpuScore: worker.Capabilities?.GpuScore,
+                ilgpuCudaAvailable: worker.Capabilities?.IlgpuCudaAvailable,
+                ilgpuOpenclAvailable: worker.Capabilities?.IlgpuOpenclAvailable,
                 placementStatus: DescribeWorkerPlacementStatus(worker, out var placementDetail),
                 placementDetail: placementDetail);
         }
@@ -2061,7 +2066,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 FormatWorkerBrainHints(workerBrainHints, entry.NodeId),
                 FormatUpdated(entry.LastSeenMs),
                 status,
-                entry.PlacementDetail)));
+                entry.PlacementDetail,
+                DescribeWorkerGpuSupport(entry))));
         }
 
         foreach (var staleNodeId in staleNodeIds)
@@ -2149,6 +2155,11 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         bool? hasCapabilitySnapshot = null,
         bool? isReady = null,
         bool? hasCapabilities = null,
+        bool? hasGpu = null,
+        float? cpuScore = null,
+        float? gpuScore = null,
+        bool? ilgpuCudaAvailable = null,
+        bool? ilgpuOpenclAvailable = null,
         string? placementStatus = null,
         string? placementDetail = null)
     {
@@ -2196,6 +2207,31 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         if (hasCapabilities.HasValue)
         {
             snapshot.HasCapabilities = hasCapabilities.Value;
+        }
+
+        if (hasGpu.HasValue)
+        {
+            snapshot.HasGpu = hasGpu.Value;
+        }
+
+        if (cpuScore.HasValue)
+        {
+            snapshot.CpuScore = cpuScore.Value;
+        }
+
+        if (gpuScore.HasValue)
+        {
+            snapshot.GpuScore = gpuScore.Value;
+        }
+
+        if (ilgpuCudaAvailable.HasValue)
+        {
+            snapshot.IlgpuCudaAvailable = ilgpuCudaAvailable.Value;
+        }
+
+        if (ilgpuOpenclAvailable.HasValue)
+        {
+            snapshot.IlgpuOpenclAvailable = ilgpuOpenclAvailable.Value;
         }
 
         if (!string.IsNullOrWhiteSpace(placementStatus))
@@ -3003,8 +3039,68 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         public bool HasCapabilitySnapshot { get; set; }
         public bool IsReady { get; set; }
         public bool HasCapabilities { get; set; }
+        public bool HasGpu { get; set; }
+        public float CpuScore { get; set; }
+        public float GpuScore { get; set; }
+        public bool IlgpuCudaAvailable { get; set; }
+        public bool IlgpuOpenclAvailable { get; set; }
         public string PlacementStatus { get; set; } = string.Empty;
         public string PlacementDetail { get; set; } = string.Empty;
+    }
+
+    private static string DescribeWorkerGpuSupport(WorkerEndpointSnapshot snapshot)
+    {
+        if (!snapshot.HasCapabilitySnapshot || !snapshot.HasCapabilities)
+        {
+            return "Unknown";
+        }
+
+        var cpuScore = FormatCompactCapabilityScore(snapshot.CpuScore);
+        var gpuScore = FormatCompactCapabilityScore(snapshot.GpuScore);
+        if (snapshot.IlgpuCudaAvailable)
+        {
+            return string.IsNullOrWhiteSpace(gpuScore)
+                ? "CUDA"
+                : $"CUDA {gpuScore}";
+        }
+
+        if (snapshot.IlgpuOpenclAvailable)
+        {
+            return string.IsNullOrWhiteSpace(gpuScore)
+                ? "OpenCL"
+                : $"OpenCL {gpuScore}";
+        }
+
+        if (snapshot.HasGpu)
+        {
+            return string.IsNullOrWhiteSpace(gpuScore)
+                ? "GPU"
+                : $"GPU {gpuScore}";
+        }
+
+        return string.IsNullOrWhiteSpace(cpuScore)
+            ? "CPU"
+            : $"CPU {cpuScore}";
+    }
+
+    private static string FormatCompactCapabilityScore(float value)
+    {
+        if (!float.IsFinite(value) || value <= 0f)
+        {
+            return string.Empty;
+        }
+
+        if (value >= 100_000f)
+        {
+            return $"{MathF.Round(value / 1000f):0}k";
+        }
+
+        if (value >= 1_000f)
+        {
+            return $"{value / 1000f:0.#}k";
+        }
+
+        return $"{value:0.#}";
     }
 
     private void ApplyObservabilityEnvironment(ProcessStartInfo startInfo)

@@ -322,7 +322,8 @@ public static class PerfProbeRunner
                 new PlacementPlanner.RegionSpan(1, config.HiddenRegionNeurons),
                 new PlacementPlanner.RegionSpan(NbnConstants.OutputRegionId, DefaultOutputWidth)
             ],
-            CurrentWorkerNodeIds: Array.Empty<Guid>());
+            CurrentWorkerNodeIds: Array.Empty<Guid>(),
+            ComputeBackendPreference: RegionShardComputeBackendPreferenceResolver.Resolve());
 
         for (var i = 0; i < 5; i++)
         {

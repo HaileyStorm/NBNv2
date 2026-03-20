@@ -9,7 +9,7 @@ Owns global tick loop, scheduling barriers, timeout/lateness handling, and brain
 - Placement scoring prefers low-latency whole-brain locality using inter-worker RTT telemetry. Hosted-brain balancing and free-capacity spread are secondary tie-breakers behind locality and current-worker affinity.
 - HiveMind owns the settings-backed worker capability refresh cadence and sends refresh requests to workers, but refreshed values only enter placement after SettingsMonitor persists the next heartbeat snapshot.
 - Worker freshness and worker-loss recovery age SettingsMonitor worker snapshots against the SettingsMonitor snapshot clock domain, with local elapsed time only extending the last received snapshot, so mixed-machine placement does not evict healthy workers just because host clocks differ.
-- Placement and rebalance treat GPU compute score and VRAM fit as separate constraints, filter workers that are currently over their configured CPU/RAM/storage/VRAM pressure limits, and route pressure-triggered rebalances through the same queued reschedule path as other reschedule causes.
+- Placement and rebalance treat GPU compute score and VRAM fit as separate constraints, but only weight GPU placement when RegionShard GPU execution is enabled (`NBN_REGIONSHARD_BACKEND` not forced to `cpu`); `auto` backend selection still chooses the stronger scaled backend per shard on the worker rather than hard-coding GPU-first behavior. They still filter workers that are currently over their configured CPU/RAM/storage/VRAM pressure limits and route pressure-triggered rebalances through the same queued reschedule path as other reschedule causes.
 
 ## Maintenance guidance
 

@@ -538,7 +538,7 @@ Worker processes report capabilities periodically to SettingsMonitor:
 * explicit worker limit percentages for CPU, RAM, storage, GPU compute, and GPU VRAM
 * current worker load/pressure snapshots used for placement filtering and pressure-triggered rebalance (`process_cpu_load_percent`, process RAM use, and derived storage/VRAM pressure from free vs total bytes)
 
-For workers, these values are expected to come from real host probing or explicit operator configuration, not placeholder defaults. CPU scores can be derived from a representative RegionShard CPU microbenchmark; GPU score/report rows may exist before runtime GPU execution is enabled, but GPU runtime benchmark scenarios must skip cleanly until the RegionShard GPU backend is available. HiveMind owns the settings-backed worker capability rerun cadence (`worker.capability.benchmark_refresh_seconds`) by sending refresh requests to workers; workers publish the refreshed result back through the normal SettingsMonitor heartbeat path instead of bypassing the stored snapshot.
+For workers, these values are expected to come from real host probing or explicit operator configuration, not placeholder defaults. CPU scores can be derived from a representative RegionShard CPU microbenchmark; GPU score/report rows may exist even when operators force CPU execution through `NBN_REGIONSHARD_BACKEND=cpu`, but GPU runtime benchmark scenarios still remain a separate perf-probe follow-up until the dedicated runtime perf suite is wired in. HiveMind owns the settings-backed worker capability rerun cadence (`worker.capability.benchmark_refresh_seconds`) by sending refresh requests to workers; workers publish the refreshed result back through the normal SettingsMonitor heartbeat path instead of bypassing the stored snapshot.
 
 HiveMind also maintains placement telemetry in worker inventory snapshots:
 
@@ -568,7 +568,7 @@ Placement heuristics:
 * use average inter-worker RTT as the main placement signal; hosted-brain balancing and free-capacity spread are secondary tie-breakers
 * still fall back to higher-latency or cross-device/network placement when the lower-latency worker subset cannot satisfy the required shard plan
 * co-locate shards with heavy mutual traffic
-* prefer GPU-capable nodes for Tier A/B-heavy function mixes, but treat GPU compute score and VRAM fit as separate constraints
+* prefer GPU-capable nodes only when RegionShard GPU execution is enabled (`NBN_REGIONSHARD_BACKEND` not forced to `cpu`), while still comparing the worker’s effective GPU capability against its effective CPU capability and treating GPU compute score plus VRAM fit as separate constraints
 * reject workers whose reported pressure repeatedly exceeds their configured CPU/RAM/storage/VRAM limits, then use the normal queued reschedule path for pressure-triggered rebalance
 * avoid shard sizes that exceed memory limits
 
@@ -593,11 +593,19 @@ GPU compute uses ILGPU and the kernel-per-function model:
 * one kernel per activation function ID used in the shard
 * one kernel per reset function ID used in the shard
 * kernels for accumulation merges if beneficial
+* CUDA accelerators are preferred over OpenCL when both are available
 
 Kernel compilation:
 
 * kernels are compiled lazily per function ID used in active shards
 * kernel caching is per accelerator instance
+
+Runtime selection and fallback:
+
+* `NBN_REGIONSHARD_BACKEND=auto|cpu|gpu` selects the preferred backend
+* `auto` chooses the stronger backend for the shard on that worker using the scaled capability scores and shard size gate; `gpu` and `cpu` remain explicit overrides
+* the current ILGPU fast path preserves parity for the supported deterministic shard shape: no visualization, no plasticity/runtime axon mutation, supported activation/reset function IDs, and host-visible state synchronized before `TickComputeDone`
+* unsupported function IDs or runtime features fall back explicitly to CPU for that shard compute rather than changing simulation semantics
 
 ### 10.3 Function tiers
 
@@ -608,11 +616,11 @@ Each function ID has:
 
 Tier guidance:
 
-* Tier A: cheap, GPU-friendly (linear, clamp, relu, etc.)
+* Tier A: cheap, GPU-friendly (linear, clamp, relu, add/mult, etc.)
 * Tier B: moderate (tanh, sigmoid, exp/log variants)
 * Tier C: expensive or numerically tricky (pow, gauss, quad)
 
-Placement may weight shards toward GPU nodes if Tier A/B dominates and GPU is available.
+Placement may weight shards toward GPU-capable nodes when GPU execution is enabled and a worker reports better effective GPU capability plus VRAM fit, but `auto` execution still remains capability-first rather than blindly GPU-first.
 
 ---
 

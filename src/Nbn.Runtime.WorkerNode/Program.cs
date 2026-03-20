@@ -42,6 +42,7 @@ var workerPid = system.Root.SpawnNamed(
         nodeAddress,
         enabledRoles: options.ServiceRoles,
         capabilityProfileChanged: capabilityProvider.MarkDirty,
+        capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
         resourceAvailability: options.ResourceAvailability,
         observabilityDefaultHost: options.SettingsHost)),
     options.RootActorName);

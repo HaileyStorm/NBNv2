@@ -1,3 +1,4 @@
+using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Proto;
 using ProtoSeverity = Nbn.Proto.Severity;
@@ -15,7 +16,8 @@ public sealed record RegionShardActorConfig(
     PID? DebugHub = null,
     bool VizEnabled = false,
     bool DebugEnabled = false,
-    ProtoSeverity DebugMinSeverity = ProtoSeverity.SevDebug);
+    ProtoSeverity DebugMinSeverity = ProtoSeverity.SevDebug,
+    RegionShardComputeBackendPreference ComputeBackendPreference = RegionShardComputeBackendPreference.Auto);
 
 public sealed record RegionShardUpdateEndpoints(PID? Router, PID? OutputSink, PID? TickSink);
 

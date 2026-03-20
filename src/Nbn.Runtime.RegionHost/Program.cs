@@ -84,7 +84,8 @@ var config = new RegionShardActorConfig(
     obsTargets.VizHub,
     obsTargets.DebugHub,
     DebugEnabled: debugEnabled,
-    DebugMinSeverity: debugMinSeverity);
+    DebugMinSeverity: debugMinSeverity,
+    ComputeBackendPreference: RegionShardComputeBackendPreferenceResolver.Resolve());
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 var shardRemotePid = new PID(GetAdvertisedAddress(remoteConfig), shardPid.Id);

@@ -4383,7 +4383,8 @@ public sealed class HiveMindActor : IActor
             shardStride,
             brain.RequestedShardPlan,
             regions,
-            currentWorkerNodeIds);
+            currentWorkerNodeIds,
+            RegionShardComputeBackendPreferenceResolver.Resolve());
         var planned = PlacementPlanner.TryBuildPlan(
             plannerInputs,
             workers,

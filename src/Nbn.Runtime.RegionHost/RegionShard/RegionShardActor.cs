@@ -23,7 +23,7 @@ public sealed class RegionShardActor : IActor
     private static readonly bool LogInitDiagnostics = IsEnvTrue("NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED");
     private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
-    private readonly RegionShardCpuBackend _cpu;
+    private readonly RegionShardComputeBackendDispatcher _computeBackend;
     private readonly Guid _brainId;
     private readonly ShardId32 _shardId;
     private readonly Dictionary<ulong, TickComputeDone> _recentComputeDone = new();
@@ -73,7 +73,7 @@ public sealed class RegionShardActor : IActor
     public RegionShardActor(RegionShardState state, RegionShardActorConfig config)
     {
         _state = state ?? throw new ArgumentNullException(nameof(state));
-        _cpu = new RegionShardCpuBackend(_state);
+        _computeBackend = new RegionShardComputeBackendDispatcher(_state, config.ComputeBackendPreference);
         _brainId = config.BrainId;
         _shardId = config.ShardId;
         _router = config.Router;
@@ -99,6 +99,9 @@ public sealed class RegionShardActor : IActor
                 {
                     LogShardInitDiagnostics();
                 }
+                break;
+            case Stopping:
+                _computeBackend.Dispose();
                 break;
             case RegionShardUpdateEndpoints endpoints:
                 _router = endpoints.Router;
@@ -454,7 +457,7 @@ public sealed class RegionShardActor : IActor
         var vizScope = collectVisualization
             ? new RegionShardVisualizationComputeScope(true, _vizFocusRegionId)
             : RegionShardVisualizationComputeScope.Disabled;
-        var result = _cpu.Compute(
+        var result = _computeBackend.Compute(
             tick.TickId,
             _brainId,
             _shardId,
@@ -997,4 +1000,3 @@ public sealed class RegionShardActor : IActor
         return true;
     }
 }
-

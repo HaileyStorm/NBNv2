@@ -13,6 +13,7 @@ using Nbn.Shared.HiveMind;
 using Nbn.Shared.Quantization;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoSettings = Nbn.Proto.Settings;
 using SharedShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 namespace Nbn.Runtime.WorkerNode;
@@ -36,6 +37,7 @@ public sealed class WorkerNodeActor : IActor
     private PID? _hiveMindHintPid;
     private readonly WorkerServiceRole _enabledRoles;
     private readonly Action? _capabilityProfileChanged;
+    private readonly Func<ProtoSettings.NodeCapabilities>? _capabilitySnapshotProvider;
     private readonly WorkerResourceAvailability _resourceAvailability;
     private readonly string? _observabilityDefaultHost;
     private readonly Severity _debugMinSeverityDefault;
@@ -48,6 +50,7 @@ public sealed class WorkerNodeActor : IActor
         IArtifactStore? artifactStore = null,
         WorkerServiceRole enabledRoles = WorkerServiceRole.All,
         Action? capabilityProfileChanged = null,
+        Func<ProtoSettings.NodeCapabilities>? capabilitySnapshotProvider = null,
         WorkerResourceAvailability? resourceAvailability = null,
         string? observabilityDefaultHost = null)
     {
@@ -63,6 +66,7 @@ public sealed class WorkerNodeActor : IActor
         _artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(_defaultArtifactRootPath));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
         _capabilityProfileChanged = capabilityProfileChanged;
+        _capabilitySnapshotProvider = capabilitySnapshotProvider;
         _resourceAvailability = resourceAvailability ?? WorkerResourceAvailability.Default;
         _observabilityDefaultHost = string.IsNullOrWhiteSpace(observabilityDefaultHost)
             ? null
@@ -935,7 +939,8 @@ public sealed class WorkerNodeActor : IActor
             VizHub: observabilityTargets.VizHub,
             DebugHub: observabilityTargets.DebugHub,
             DebugEnabled: _debugStreamEnabledDefault,
-            DebugMinSeverity: _debugMinSeverityDefault);
+            DebugMinSeverity: _debugMinSeverityDefault,
+            ComputeBackendPreference: ResolveComputeBackendPreference(assignment));
 
         var props = await BuildRegionShardPropsAsync(brain, assignment, neuronStart, neuronCount, config).ConfigureAwait(false);
         var existingPid = brain.RegionShards.TryGetValue(shardId, out var existing) ? existing.Pid : null;
@@ -995,6 +1000,60 @@ public sealed class WorkerNodeActor : IActor
 
         var state = BuildSyntheticRegionState(brain, assignment, neuronStart, neuronCount);
         return Props.FromProducer(() => new RegionShardActor(state, config));
+    }
+
+    private RegionShardComputeBackendPreference ResolveComputeBackendPreference(PlacementAssignment assignment)
+    {
+        var configuredPreference = RegionShardComputeBackendPreferenceResolver.Resolve();
+        if (configuredPreference != RegionShardComputeBackendPreference.Auto)
+        {
+            return configuredPreference;
+        }
+
+        if (assignment.Target != PlacementAssignmentTarget.PlacementTargetRegionShard)
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var regionId = checked((int)assignment.RegionId);
+        if (regionId == NbnConstants.InputRegionId || regionId == NbnConstants.OutputRegionId)
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var neuronCount = checked((int)assignment.NeuronCount);
+        var gpuThreshold = Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
+        if (neuronCount < gpuThreshold)
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var capabilities = _capabilitySnapshotProvider?.Invoke() ?? new ProtoSettings.NodeCapabilities();
+        if (!capabilities.HasGpu || (!capabilities.IlgpuCudaAvailable && !capabilities.IlgpuOpenclAvailable))
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var effectiveGpuScore = WorkerCapabilityMath.EffectiveGpuScore(capabilities.GpuScore, capabilities.GpuComputeLimitPercent);
+        var effectiveVramFreeBytes = WorkerCapabilityMath.EffectiveVramFreeBytes(
+            capabilities.VramFreeBytes,
+            capabilities.VramTotalBytes,
+            capabilities.GpuVramLimitPercent);
+        if (effectiveGpuScore <= 0f || effectiveVramFreeBytes == 0)
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var effectiveCpuScore = WorkerCapabilityMath.EffectiveCpuScore(capabilities.CpuScore, capabilities.CpuLimitPercent);
+        if (effectiveCpuScore <= 0f)
+        {
+            var effectiveCpuCores = WorkerCapabilityMath.EffectiveCpuCores(capabilities.CpuCores, capabilities.CpuLimitPercent);
+            effectiveCpuScore = effectiveCpuCores > 0 ? effectiveCpuCores / 1000f : 0f;
+        }
+
+        return effectiveGpuScore > effectiveCpuScore
+            ? RegionShardComputeBackendPreference.Gpu
+            : RegionShardComputeBackendPreference.Cpu;
     }
 
     private RegionShardState BuildSyntheticRegionState(
@@ -2346,4 +2405,3 @@ internal static class WorkerNodeUuidExtensions
         return guid;
     }
 }
-

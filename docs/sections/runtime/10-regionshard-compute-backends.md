@@ -17,11 +17,19 @@ GPU compute uses ILGPU and the kernel-per-function model:
 * one kernel per activation function ID used in the shard
 * one kernel per reset function ID used in the shard
 * kernels for accumulation merges if beneficial
+* CUDA accelerators are preferred over OpenCL when both are available
 
 Kernel compilation:
 
 * kernels are compiled lazily per function ID used in active shards
 * kernel caching is per accelerator instance
+
+Runtime selection and fallback:
+
+* `NBN_REGIONSHARD_BACKEND=auto|cpu|gpu` selects the preferred backend
+* `auto` chooses the stronger backend for the shard on that worker using the scaled capability scores and shard size gate; `gpu` and `cpu` remain explicit overrides
+* the current ILGPU fast path preserves parity for the supported deterministic shard shape: no visualization, no plasticity/runtime axon mutation, supported activation/reset function IDs, and host-visible state synchronized before `TickComputeDone`
+* unsupported function IDs or runtime features fall back explicitly to CPU for that shard compute rather than changing simulation semantics
 
 ### 10.3 Function tiers
 
@@ -32,10 +40,10 @@ Each function ID has:
 
 Tier guidance:
 
-* Tier A: cheap, GPU-friendly (linear, clamp, relu, etc.)
+* Tier A: cheap, GPU-friendly (linear, clamp, relu, add/mult, etc.)
 * Tier B: moderate (tanh, sigmoid, exp/log variants)
 * Tier C: expensive or numerically tricky (pow, gauss, quad)
 
-Placement may weight shards toward GPU nodes if Tier A/B dominates and GPU is available.
+Placement may weight shards toward GPU-capable nodes when GPU execution is enabled and a worker reports better effective GPU capability plus VRAM fit, but `auto` execution still remains capability-first rather than blindly GPU-first.
 
 ---

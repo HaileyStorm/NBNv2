@@ -91,13 +91,18 @@ public sealed record WorkerEndpointItem(
     string BrainHints,
     string LastSeen,
     string Status,
-    string PlacementDetail = "")
+    string PlacementDetail = "",
+    string GpuSupport = "Unknown")
 {
     private string StatusKey => (Status ?? string.Empty).Trim().ToLowerInvariant();
+    private string GpuSupportKey => (GpuSupport ?? string.Empty).Trim().ToLowerInvariant();
     public bool IsActive => StatusKey is "active" or "online";
     private bool IsLimited => StatusKey is "limited" or "warning";
     private bool IsUnavailable => StatusKey is "degraded" or "failed" or "offline" or "stale";
     public bool HasPlacementDetail => !string.IsNullOrWhiteSpace(PlacementDetail) && !string.Equals(PlacementDetail, "none", StringComparison.OrdinalIgnoreCase);
+    private bool HasGpuAcceleration => GpuSupportKey.StartsWith("cuda", StringComparison.Ordinal)
+                                       || GpuSupportKey.StartsWith("opencl", StringComparison.Ordinal)
+                                       || GpuSupportKey.StartsWith("gpu", StringComparison.Ordinal);
     public string StatusChipBackground => IsActive
         ? "#DDF5E5"
         : IsLimited
@@ -119,6 +124,21 @@ public sealed record WorkerEndpointItem(
             : IsUnavailable
                 ? "#6B1F1F"
                 : "#183B7A";
+    public string GpuChipBackground => HasGpuAcceleration
+        ? "#E8EEFF"
+        : GpuSupportKey == "unknown"
+            ? "#F1F1F1"
+            : "#F4E8E0";
+    public string GpuChipBorder => HasGpuAcceleration
+        ? "#4D7FD6"
+        : GpuSupportKey == "unknown"
+            ? "#C9C9C9"
+            : "#E1C0AF";
+    public string GpuChipForeground => HasGpuAcceleration
+        ? "#183B7A"
+        : GpuSupportKey.StartsWith("unknown", StringComparison.Ordinal)
+            ? "#555555"
+            : "#6B4B2B";
 }
 
 public sealed record EndpointStatusItem(

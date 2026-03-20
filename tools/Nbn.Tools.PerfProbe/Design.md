@@ -10,7 +10,7 @@ Owns CPU-first NBN performance probing and report generation.
 - Expose a non-invasive `current-system` profile mode that attaches to the currently running runtime through SettingsMonitor discovery and captures service-discovery, worker-inventory, and HiveMind placement/tick snapshots without assuming localhost ownership.
 - Surface worker capability limits and pressure metadata in the human-readable reports so worker-node profiling can be used both for HiveMind placement validation and for deeper attached-system diagnostics.
 - Emit report artifacts as JSON, CSV, Markdown, and HTML, with both tabular summaries and chart output.
-- Keep GPU runtime benchmark rows present as explicit skips until the RegionShard GPU backend from `NBNv2-zwv.5` exists; do not fake GPU runtime execution.
+- Keep GPU runtime benchmark rows present as explicit skips until the dedicated runtime perf follow-up for the landed RegionShard GPU backend is wired in; do not fake GPU runtime execution.
 
 ## Maintenance guidance
 

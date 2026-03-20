@@ -52,7 +52,8 @@ public static class PlacementPlanner
         int ShardStride,
         ProtoControl.ShardPlan? RequestedShardPlan,
         IReadOnlyList<RegionSpan> Regions,
-        IReadOnlyList<Guid> CurrentWorkerNodeIds);
+        IReadOnlyList<Guid> CurrentWorkerNodeIds,
+        RegionShardComputeBackendPreference ComputeBackendPreference = RegionShardComputeBackendPreference.Auto);
 
     public sealed class PlacementPlanningResult
     {
@@ -163,7 +164,8 @@ public static class PlacementPlanner
                 stride,
                 eligibleWorkers,
                 shardPlan,
-                inputs.CurrentWorkerNodeIds);
+                inputs.CurrentWorkerNodeIds,
+                inputs.ComputeBackendPreference);
         }
         catch (InvalidOperationException ex)
         {
@@ -202,7 +204,8 @@ public static class PlacementPlanner
         int stride,
         IReadOnlyList<WorkerCandidate> eligibleWorkers,
         ShardPlanResult shardPlan,
-        IReadOnlyList<Guid> currentWorkerNodeIds)
+        IReadOnlyList<Guid> currentWorkerNodeIds,
+        RegionShardComputeBackendPreference computeBackendPreference)
     {
         var assignments = new List<ProtoControl.PlacementAssignment>();
         var currentWorkers = currentWorkerNodeIds?.Count > 0
@@ -213,7 +216,8 @@ public static class PlacementPlanner
             .SelectMany(static region => region.Value)
             .Where(static shard => shard.RegionId != NbnConstants.InputRegionId && shard.RegionId != NbnConstants.OutputRegionId)
             .ToArray();
-        var preferGpuWorkload = computeShards.Any(shard => shard.NeuronCount >= Math.Max(4096, stride * 2));
+        var preferGpuWorkload = RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
+                                && computeShards.Any(shard => shard.NeuronCount >= Math.Max(4096, stride * 2));
         var controlWorker = SelectPrimaryWorker(eligibleWorkers, currentWorkers, preferGpuWorkload);
         var computeWorkers = SelectComputeWorkers(eligibleWorkers, currentWorkers, computeShards, controlWorker, preferGpuWorkload);
         var assignedNeurons = computeWorkers.ToDictionary(static worker => worker.NodeId, static _ => 0);
@@ -227,7 +231,15 @@ public static class PlacementPlanner
         {
             foreach (var shard in region.Value.OrderBy(static span => span.ShardIndex))
             {
-                var worker = SelectShardWorker(shard, stride, eligibleWorkers, computeWorkers, controlWorker, assignedNeurons, currentWorkers);
+                var worker = SelectShardWorker(
+                    shard,
+                    stride,
+                    eligibleWorkers,
+                    computeWorkers,
+                    controlWorker,
+                    assignedNeurons,
+                    currentWorkers,
+                    computeBackendPreference);
                 assignments.Add(BuildShardAssignment(brainId, placementEpoch, requestId, worker, shard));
             }
         }
@@ -348,14 +360,17 @@ public static class PlacementPlanner
         IReadOnlyList<WorkerCandidate> computeWorkers,
         WorkerCandidate controlWorker,
         Dictionary<Guid, int> assignedNeurons,
-        IReadOnlySet<Guid> currentWorkers)
+        IReadOnlySet<Guid> currentWorkers,
+        RegionShardComputeBackendPreference computeBackendPreference)
     {
         if (shard.RegionId == NbnConstants.InputRegionId || shard.RegionId == NbnConstants.OutputRegionId)
         {
             return controlWorker;
         }
 
-        var preferGpu = shard.NeuronCount >= Math.Max(4096, stride * 2) && eligibleWorkers.Any(static worker => HasEffectiveGpu(worker));
+        var preferGpu = RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
+                        && shard.NeuronCount >= Math.Max(4096, stride * 2)
+                        && eligibleWorkers.Any(static worker => HasEffectiveGpu(worker));
         var candidatePool = computeWorkers
             .Where(worker => CanPlaceShardOnWorker(shard, worker, preferGpu))
             .ToArray();

@@ -859,6 +859,98 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_ReportGpuSupportChips()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var cudaWorker = Guid.NewGuid();
+        var cpuWorker = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = cudaWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.cuda",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-cuda",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    },
+                    new NodeStatus
+                    {
+                        NodeId = cpuWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.cpu",
+                        Address = "127.0.0.1:12042",
+                        RootActorName = "worker-node-cpu",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = cudaWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.cuda",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-cuda",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            HasGpu = true,
+                            IlgpuCudaAvailable = true,
+                            GpuScore = 90f
+                        }
+                    },
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = cpuWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.cpu",
+                        Address = "127.0.0.1:12042",
+                        RootActorName = "worker-node-cpu",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            HasGpu = false,
+                            IlgpuCudaAvailable = false,
+                            IlgpuOpenclAvailable = false,
+                            GpuScore = 0f
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var cudaEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == cudaWorker);
+        var cpuEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == cpuWorker);
+        Assert.Equal("CUDA 90", cudaEndpoint.GpuSupport);
+        Assert.Equal("CPU", cpuEndpoint.GpuSupport);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_WorkerEndpoints_ReportDegradedAndFailedStates()
     {
         var connections = new ConnectionViewModel();
