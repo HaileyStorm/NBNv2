@@ -34,7 +34,8 @@ public static class PerfProbeRunner
     private const int DefaultInputWidth = 8;
     private const int DefaultOutputWidth = 8;
     private const float SuccessThresholdRatio = 0.95f;
-    private const string RuntimeGpuSkipReason = "regionshard_gpu_backend_not_available";
+    private const string RuntimeExecutionGpuSkipReason = "regionshard_gpu_backend_not_available";
+    private const string GpuPlannerWorkloadBelowThresholdSkipReason = "gpu_planner_workload_below_threshold";
 
     public static async Task<PerfReport> RunAsync(
         string mode,
@@ -74,9 +75,15 @@ public static class PerfProbeRunner
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var results = new List<PerfScenarioResult>();
         var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
+        return Task.FromResult(BuildWorkerProfileScenarios(config, capabilities));
+    }
 
+    internal static IReadOnlyList<PerfScenarioResult> BuildWorkerProfileScenarios(
+        WorkerProfileConfig config,
+        ProtoSettings.NodeCapabilities capabilities)
+    {
+        var results = new List<PerfScenarioResult>();
         results.Add(TimeScenario(() => new PerfScenarioResult(
             Suite: "worker_profile",
             Scenario: "capability_probe",
@@ -103,7 +110,7 @@ public static class PerfProbeRunner
                 ["process_ram_used_bytes"] = capabilities.ProcessRamUsedBytes
             })));
 
-        if (capabilities.HasGpu && capabilities.GpuScore > 0f)
+        if (HasCompatibleGpuCapabilities(capabilities))
         {
             results.Add(TimeScenario(() => new PerfScenarioResult(
                 Suite: "worker_profile",
@@ -144,10 +151,35 @@ public static class PerfProbeRunner
                 SkipReason: ResolveGpuCapabilitySkipReason(capabilities))));
         }
 
-        results.Add(TimeScenario(() => RunPlacementPlannerScenario(config, capabilities)));
-        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("worker_profile", "placement_planner_profile")));
+        results.Add(TimeScenario(() => RunPlacementPlannerScenario(
+            config,
+            capabilities,
+            RegionShardComputeBackendPreference.Cpu,
+            backend: "cpu",
+            summary: "Profiled HiveMind placement planning throughput with CPU compute preference using real local worker capability telemetry as the baseline.")));
 
-        return Task.FromResult<IReadOnlyList<PerfScenarioResult>>(results);
+        if (HasCompatibleGpuCapabilities(capabilities))
+        {
+            if (CanExerciseGpuPlannerProfile(config))
+            {
+                results.Add(TimeScenario(() => RunPlacementPlannerScenario(
+                    config,
+                    capabilities,
+                    RegionShardComputeBackendPreference.Gpu,
+                    backend: "gpu",
+                    summary: "Profiled HiveMind placement planning throughput with GPU compute preference using real local worker capability telemetry as the baseline.")));
+            }
+            else
+            {
+                results.Add(TimeScenario(() => BuildGpuPlannerWorkloadSkipResult(config)));
+            }
+        }
+        else
+        {
+            results.Add(TimeScenario(() => BuildGpuPlacementPlannerSkipResult(capabilities)));
+        }
+
+        return results;
     }
 
     public static async Task<IReadOnlyList<PerfScenarioResult>> RunLocalhostStressScenariosAsync(
@@ -300,9 +332,15 @@ public static class PerfProbeRunner
         };
     }
 
-    private static PerfScenarioResult RunPlacementPlannerScenario(WorkerProfileConfig config, ProtoSettings.NodeCapabilities capabilities)
+    private static PerfScenarioResult RunPlacementPlannerScenario(
+        WorkerProfileConfig config,
+        ProtoSettings.NodeCapabilities capabilities,
+        RegionShardComputeBackendPreference computeBackendPreference,
+        string backend,
+        string summary)
     {
         var workers = BuildPlannerWorkers(config.PlannerWorkerCount, capabilities);
+        var maxNeuronsPerShard = ResolvePlannerMaxNeuronsPerShard();
         var inputs = new PlacementPlanner.PlannerInputs(
             BrainId: Guid.Parse("9B60F377-6DAE-4FD9-90C1-A0D10B08D978"),
             PlacementEpoch: 1,
@@ -314,7 +352,7 @@ public static class PerfProbeRunner
             RequestedShardPlan: new ProtoControl.ShardPlan
             {
                 Mode = ProtoControl.ShardPlanMode.ShardPlanMaxNeurons,
-                MaxNeuronsPerShard = 2_048
+                MaxNeuronsPerShard = (uint)maxNeuronsPerShard
             },
             Regions:
             [
@@ -323,7 +361,7 @@ public static class PerfProbeRunner
                 new PlacementPlanner.RegionSpan(NbnConstants.OutputRegionId, DefaultOutputWidth)
             ],
             CurrentWorkerNodeIds: Array.Empty<Guid>(),
-            ComputeBackendPreference: RegionShardComputeBackendPreferenceResolver.Resolve());
+            ComputeBackendPreference: computeBackendPreference);
 
         for (var i = 0; i < 5; i++)
         {
@@ -345,13 +383,16 @@ public static class PerfProbeRunner
                 return new PerfScenarioResult(
                     Suite: "worker_profile",
                     Scenario: "placement_planner_profile",
-                    Backend: "cpu",
+                    Backend: backend,
                     Status: PerfScenarioStatus.Failed,
                     Summary: "PlacementPlanner profiling failed before completing the requested iteration sweep.",
                     Parameters: new Dictionary<string, string>
                     {
                         ["planner_iterations"] = config.PlannerIterations.ToString(),
-                        ["planner_worker_count"] = config.PlannerWorkerCount.ToString()
+                        ["planner_worker_count"] = config.PlannerWorkerCount.ToString(),
+                        ["hidden_region_neurons"] = config.HiddenRegionNeurons.ToString(),
+                        ["max_neurons_per_shard"] = maxNeuronsPerShard.ToString(),
+                        ["compute_backend_preference"] = computeBackendPreference.ToString().ToLowerInvariant()
                     },
                     Metrics: new Dictionary<string, double>(),
                     Failure: $"{failureReason}: {failureMessage}");
@@ -365,14 +406,16 @@ public static class PerfProbeRunner
         return new PerfScenarioResult(
             Suite: "worker_profile",
             Scenario: "placement_planner_profile",
-            Backend: "cpu",
+            Backend: backend,
             Status: PerfScenarioStatus.Passed,
-            Summary: "Profiled HiveMind placement planning throughput using real local worker capability telemetry as the baseline.",
+            Summary: summary,
             Parameters: new Dictionary<string, string>
             {
                 ["planner_iterations"] = config.PlannerIterations.ToString(),
                 ["planner_worker_count"] = config.PlannerWorkerCount.ToString(),
-                ["hidden_region_neurons"] = config.HiddenRegionNeurons.ToString()
+                ["hidden_region_neurons"] = config.HiddenRegionNeurons.ToString(),
+                ["max_neurons_per_shard"] = maxNeuronsPerShard.ToString(),
+                ["compute_backend_preference"] = computeBackendPreference.ToString().ToLowerInvariant()
             },
             Metrics: new Dictionary<string, double>
             {
@@ -381,6 +424,48 @@ public static class PerfProbeRunner
                 ["eligible_workers"] = lastPlan?.EligibleWorkers.Count ?? 0
             });
     }
+
+    private static bool HasCompatibleGpuCapabilities(ProtoSettings.NodeCapabilities capabilities)
+        => capabilities.HasGpu
+           && capabilities.GpuScore > 0f
+           && (capabilities.IlgpuCudaAvailable || capabilities.IlgpuOpenclAvailable);
+
+    private static bool CanExerciseGpuPlannerProfile(WorkerProfileConfig config)
+        => config.HiddenRegionNeurons >= ResolvePlannerMaxNeuronsPerShard();
+
+    private static int ResolvePlannerMaxNeuronsPerShard()
+        => Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
+
+    private static PerfScenarioResult BuildGpuPlacementPlannerSkipResult(ProtoSettings.NodeCapabilities capabilities)
+        => new(
+            Suite: "worker_profile",
+            Scenario: "placement_planner_profile",
+            Backend: "gpu",
+            Status: PerfScenarioStatus.Skipped,
+            Summary: "GPU placement planner profiling is skipped because no compatible ILGPU worker capability snapshot was available on this host.",
+            Parameters: new Dictionary<string, string>
+            {
+                ["has_gpu"] = capabilities.HasGpu.ToString(),
+                ["ilgpu_cuda_available"] = capabilities.IlgpuCudaAvailable.ToString(),
+                ["ilgpu_opencl_available"] = capabilities.IlgpuOpenclAvailable.ToString()
+            },
+            Metrics: new Dictionary<string, double>(),
+            SkipReason: ResolveGpuCapabilitySkipReason(capabilities));
+
+    private static PerfScenarioResult BuildGpuPlannerWorkloadSkipResult(WorkerProfileConfig config)
+        => new(
+            Suite: "worker_profile",
+            Scenario: "placement_planner_profile",
+            Backend: "gpu",
+            Status: PerfScenarioStatus.Skipped,
+            Summary: "GPU placement planner profiling is skipped because the configured hidden-region workload never crosses the planner's GPU preference threshold.",
+            Parameters: new Dictionary<string, string>
+            {
+                ["hidden_region_neurons"] = config.HiddenRegionNeurons.ToString(),
+                ["gpu_planner_neuron_threshold"] = ResolvePlannerMaxNeuronsPerShard().ToString()
+            },
+            Metrics: new Dictionary<string, double>(),
+            SkipReason: GpuPlannerWorkloadBelowThresholdSkipReason);
 
     private static PlacementPlanner.WorkerCandidate[] BuildPlannerWorkers(int workerCount, ProtoSettings.NodeCapabilities capabilities)
     {
@@ -434,7 +519,7 @@ public static class PerfProbeRunner
             Summary: "GPU runtime execution is prepared in the harness but skipped until the RegionShard GPU backend is available.",
             Parameters: new Dictionary<string, string>(),
             Metrics: new Dictionary<string, double>(),
-            SkipReason: RuntimeGpuSkipReason);
+            SkipReason: RuntimeExecutionGpuSkipReason);
 
     private static string ResolveGpuCapabilitySkipReason(ProtoSettings.NodeCapabilities capabilities)
     {
