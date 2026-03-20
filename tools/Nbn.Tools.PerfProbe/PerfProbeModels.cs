@@ -139,6 +139,7 @@ public sealed record PerfScenarioResult(
             [
                 "ready_workers",
                 "active_workers",
+                "gpu_runtime_ready_workers",
                 "gpu_ready_workers",
                 "max_cpu_score",
                 "max_gpu_score"

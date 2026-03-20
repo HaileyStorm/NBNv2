@@ -1004,12 +1004,6 @@ public sealed class WorkerNodeActor : IActor
 
     private RegionShardComputeBackendPreference ResolveComputeBackendPreference(PlacementAssignment assignment)
     {
-        var configuredPreference = RegionShardComputeBackendPreferenceResolver.Resolve();
-        if (configuredPreference != RegionShardComputeBackendPreference.Auto)
-        {
-            return configuredPreference;
-        }
-
         if (assignment.Target != PlacementAssignmentTarget.PlacementTargetRegionShard)
         {
             return RegionShardComputeBackendPreference.Cpu;
@@ -1019,6 +1013,12 @@ public sealed class WorkerNodeActor : IActor
         if (regionId == NbnConstants.InputRegionId || regionId == NbnConstants.OutputRegionId)
         {
             return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var configuredPreference = RegionShardComputeBackendPreferenceResolver.Resolve();
+        if (configuredPreference != RegionShardComputeBackendPreference.Auto)
+        {
+            return configuredPreference;
         }
 
         var neuronCount = checked((int)assignment.NeuronCount);
@@ -2213,7 +2213,8 @@ public sealed class WorkerNodeActor : IActor
             return pid;
         }
 
-        if (string.IsNullOrWhiteSpace(systemAddress))
+        if (string.IsNullOrWhiteSpace(systemAddress)
+            || string.Equals(systemAddress, "nonhost", StringComparison.OrdinalIgnoreCase))
         {
             return pid;
         }

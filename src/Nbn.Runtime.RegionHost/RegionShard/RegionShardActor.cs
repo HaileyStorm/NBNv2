@@ -111,6 +111,9 @@ public sealed class RegionShardActor : IActor
             case RegionShardUpdateRouting routing:
                 _routing = routing.Routing;
                 break;
+            case GetRegionShardBackendExecutionInfo:
+                context.Respond(_computeBackend.LastExecution);
+                break;
             case SignalBatch batch:
                 HandleSignalBatch(context, batch);
                 break;

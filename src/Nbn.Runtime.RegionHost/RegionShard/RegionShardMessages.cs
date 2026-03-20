@@ -22,3 +22,5 @@ public sealed record RegionShardActorConfig(
 public sealed record RegionShardUpdateEndpoints(PID? Router, PID? OutputSink, PID? TickSink);
 
 public sealed record RegionShardUpdateRouting(RegionShardRoutingTable Routing);
+
+public sealed record GetRegionShardBackendExecutionInfo;

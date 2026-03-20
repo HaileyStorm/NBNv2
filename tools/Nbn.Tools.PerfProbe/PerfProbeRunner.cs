@@ -12,6 +12,7 @@ using Nbn.Proto.Viz;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.RegionHost;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -36,6 +37,7 @@ public static class PerfProbeRunner
     private const float SuccessThresholdRatio = 0.95f;
     private const string RuntimeExecutionGpuSkipReason = "regionshard_gpu_backend_not_available";
     private const string GpuPlannerWorkloadBelowThresholdSkipReason = "gpu_planner_workload_below_threshold";
+    private const string GpuRuntimeWorkloadBelowThresholdSkipReason = "gpu_runtime_workload_below_threshold";
 
     public static async Task<PerfReport> RunAsync(
         string mode,
@@ -188,25 +190,84 @@ public static class PerfProbeRunner
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
+        var canRunGpuRuntime = HasCompatibleGpuCapabilities(capabilities);
+        var gpuRuntimeConfig = BuildGpuLocalhostStressConfig(config);
         var results = new List<PerfScenarioResult>();
         foreach (var targetTickHz in config.TargetTickRates.OrderBy(static value => value))
         {
-            var cpuResult = await TimeScenarioAsync(() => MeasureBrainSizeLimitAsync(targetTickHz, config, cancellationToken)).ConfigureAwait(false);
+            var cpuResult = await TimeScenarioAsync(() => MeasureBrainSizeLimitAsync(
+                targetTickHz,
+                config,
+                cancellationToken,
+                backend: "cpu",
+                computeBackendPreference: RegionShardComputeBackendPreference.Cpu)).ConfigureAwait(false);
             results.Add(cpuResult);
-            results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", cpuResult.Scenario)));
+            if (canRunGpuRuntime && gpuRuntimeConfig.BrainSizes.Count > 0)
+            {
+                results.Add(await TimeScenarioAsync(() => MeasureBrainSizeLimitAsync(
+                    targetTickHz,
+                    gpuRuntimeConfig,
+                    cancellationToken,
+                    backend: "gpu",
+                    computeBackendPreference: RegionShardComputeBackendPreference.Gpu)).ConfigureAwait(false));
+            }
+            else
+            {
+                results.Add(TimeScenario(() => canRunGpuRuntime
+                    ? BuildGpuRuntimeWorkloadSkipResult(
+                        "localhost_stress",
+                        cpuResult.Scenario,
+                        new Dictionary<string, string>
+                        {
+                            ["brain_sizes"] = string.Join(",", config.BrainSizes),
+                            ["gpu_runtime_neuron_threshold"] = ResolveRuntimeGpuNeuronThreshold().ToString()
+                        })
+                    : BuildGpuRuntimeCapabilitySkipResult("localhost_stress", cpuResult.Scenario, capabilities)));
+            }
         }
 
-        var brainCountResult = await TimeScenarioAsync(() => MeasureBrainCountLimitAsync(config, cancellationToken)).ConfigureAwait(false);
+        var brainCountResult = await TimeScenarioAsync(() => MeasureBrainCountLimitAsync(
+            config,
+            cancellationToken,
+            backend: "cpu",
+            computeBackendPreference: RegionShardComputeBackendPreference.Cpu)).ConfigureAwait(false);
         results.Add(brainCountResult);
-        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", brainCountResult.Scenario)));
+        results.Add(canRunGpuRuntime
+            ? await TimeScenarioAsync(() => MeasureBrainCountLimitAsync(
+                gpuRuntimeConfig,
+                cancellationToken,
+                backend: "gpu",
+                computeBackendPreference: RegionShardComputeBackendPreference.Gpu)).ConfigureAwait(false)
+            : TimeScenario(() => BuildGpuRuntimeCapabilitySkipResult("localhost_stress", brainCountResult.Scenario, capabilities)));
 
-        var sustainableRateResult = await TimeScenarioAsync(() => MeasureSustainableTickRateAsync(config, cancellationToken)).ConfigureAwait(false);
+        var sustainableRateResult = await TimeScenarioAsync(() => MeasureSustainableTickRateAsync(
+            config,
+            cancellationToken,
+            backend: "cpu",
+            computeBackendPreference: RegionShardComputeBackendPreference.Cpu)).ConfigureAwait(false);
         results.Add(sustainableRateResult);
-        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", sustainableRateResult.Scenario)));
+        results.Add(canRunGpuRuntime
+            ? await TimeScenarioAsync(() => MeasureSustainableTickRateAsync(
+                gpuRuntimeConfig,
+                cancellationToken,
+                backend: "gpu",
+                computeBackendPreference: RegionShardComputeBackendPreference.Gpu)).ConfigureAwait(false)
+            : TimeScenario(() => BuildGpuRuntimeCapabilitySkipResult("localhost_stress", sustainableRateResult.Scenario, capabilities)));
 
-        var spawnChurnResult = await TimeScenarioAsync(() => MeasureSpawnChurnAsync(config, cancellationToken)).ConfigureAwait(false);
+        var spawnChurnResult = await TimeScenarioAsync(() => MeasureSpawnChurnAsync(
+            config,
+            cancellationToken,
+            backend: "cpu",
+            computeBackendPreference: RegionShardComputeBackendPreference.Cpu)).ConfigureAwait(false);
         results.Add(spawnChurnResult);
-        results.Add(TimeScenario(() => BuildGpuRuntimeSkipResult("localhost_stress", spawnChurnResult.Scenario)));
+        results.Add(canRunGpuRuntime
+            ? await TimeScenarioAsync(() => MeasureSpawnChurnAsync(
+                gpuRuntimeConfig,
+                cancellationToken,
+                backend: "gpu",
+                computeBackendPreference: RegionShardComputeBackendPreference.Gpu)).ConfigureAwait(false)
+            : TimeScenario(() => BuildGpuRuntimeCapabilitySkipResult("localhost_stress", spawnChurnResult.Scenario, capabilities)));
 
         return results;
     }
@@ -262,6 +323,7 @@ public static class PerfProbeRunner
                     ["active_workers"] = workers.Count(static worker => worker.IsAlive),
                     ["ready_workers"] = workers.Count(static worker => worker.IsReady),
                     ["gpu_ready_workers"] = workers.Count(worker => worker.Capabilities?.HasGpu == true && worker.Capabilities.GpuScore > 0f),
+                    ["gpu_runtime_ready_workers"] = workers.Count(IsGpuRuntimeReadyWorker),
                     ["max_cpu_score"] = workers.Length == 0 ? 0d : workers.Max(worker => worker.Capabilities?.CpuScore ?? 0f),
                     ["max_gpu_score"] = workers.Length == 0 ? 0d : workers.Max(worker => worker.Capabilities?.GpuScore ?? 0f),
                     ["total_ram_free_bytes"] = workers.Sum(worker => (double)(worker.Capabilities?.RamFreeBytes ?? 0)),
@@ -436,6 +498,23 @@ public static class PerfProbeRunner
     private static int ResolvePlannerMaxNeuronsPerShard()
         => Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
 
+    private static int ResolveRuntimeGpuNeuronThreshold()
+        => Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
+
+    private static LocalhostStressConfig BuildGpuLocalhostStressConfig(LocalhostStressConfig config)
+    {
+        var threshold = ResolveRuntimeGpuNeuronThreshold();
+        var filteredBrainSizes = config.BrainSizes
+            .Where(size => size >= threshold)
+            .OrderBy(static size => size)
+            .ToArray();
+        return config with
+        {
+            BrainSizes = filteredBrainSizes,
+            SustainableWorkloadNeurons = Math.Max(config.SustainableWorkloadNeurons, threshold)
+        };
+    }
+
     private static PerfScenarioResult BuildGpuPlacementPlannerSkipResult(ProtoSettings.NodeCapabilities capabilities)
         => new(
             Suite: "worker_profile",
@@ -466,6 +545,39 @@ public static class PerfProbeRunner
             },
             Metrics: new Dictionary<string, double>(),
             SkipReason: GpuPlannerWorkloadBelowThresholdSkipReason);
+
+    private static PerfScenarioResult BuildGpuRuntimeCapabilitySkipResult(
+        string suite,
+        string scenario,
+        ProtoSettings.NodeCapabilities capabilities)
+        => new(
+            Suite: suite,
+            Scenario: scenario,
+            Backend: "gpu",
+            Status: PerfScenarioStatus.Skipped,
+            Summary: "GPU runtime execution is skipped because no compatible ILGPU accelerator score was available on this host.",
+            Parameters: new Dictionary<string, string>
+            {
+                ["has_gpu"] = capabilities.HasGpu.ToString(),
+                ["ilgpu_cuda_available"] = capabilities.IlgpuCudaAvailable.ToString(),
+                ["ilgpu_opencl_available"] = capabilities.IlgpuOpenclAvailable.ToString()
+            },
+            Metrics: new Dictionary<string, double>(),
+            SkipReason: ResolveGpuCapabilitySkipReason(capabilities));
+
+    private static PerfScenarioResult BuildGpuRuntimeWorkloadSkipResult(
+        string suite,
+        string scenario,
+        IReadOnlyDictionary<string, string> parameters)
+        => new(
+            Suite: suite,
+            Scenario: scenario,
+            Backend: "gpu",
+            Status: PerfScenarioStatus.Skipped,
+            Summary: "GPU runtime execution is skipped because the configured workload never crosses the runtime GPU activation threshold.",
+            Parameters: parameters,
+            Metrics: new Dictionary<string, double>(),
+            SkipReason: GpuRuntimeWorkloadBelowThresholdSkipReason);
 
     private static PlacementPlanner.WorkerCandidate[] BuildPlannerWorkers(int workerCount, ProtoSettings.NodeCapabilities capabilities)
     {
@@ -510,17 +622,6 @@ public static class PerfProbeRunner
         return workers;
     }
 
-    private static PerfScenarioResult BuildGpuRuntimeSkipResult(string suite, string scenario)
-        => new(
-            Suite: suite,
-            Scenario: scenario,
-            Backend: "gpu",
-            Status: PerfScenarioStatus.Skipped,
-            Summary: "GPU runtime execution is prepared in the harness but skipped until the RegionShard GPU backend is available.",
-            Parameters: new Dictionary<string, string>(),
-            Metrics: new Dictionary<string, double>(),
-            SkipReason: RuntimeExecutionGpuSkipReason);
-
     private static string ResolveGpuCapabilitySkipReason(ProtoSettings.NodeCapabilities capabilities)
     {
         if (!capabilities.HasGpu)
@@ -536,16 +637,29 @@ public static class PerfProbeRunner
         return "gpu_score_not_available";
     }
 
+    private static bool IsGpuRuntimeReadyWorker(ProtoSettings.WorkerReadinessCapability worker)
+        => worker.IsAlive
+           && worker.IsReady
+           && worker.HasCapabilities
+           && worker.Capabilities is { } capabilities
+           && HasCompatibleGpuCapabilities(capabilities);
+
     private static async Task<PerfScenarioResult> MeasureBrainSizeLimitAsync(
         float targetTickHz,
         LocalhostStressConfig config,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string backend,
+        RegionShardComputeBackendPreference computeBackendPreference)
     {
         var maxSupported = 0;
         var bestObservedTickHz = 0d;
         foreach (var hiddenNeuronCount in config.BrainSizes.OrderBy(static value => value))
         {
-            await using var harness = await LocalRuntimeHarness.CreateAsync(hiddenNeuronCount, targetTickHz, cancellationToken).ConfigureAwait(false);
+            await using var harness = await LocalRuntimeHarness.CreateAsync(
+                hiddenNeuronCount,
+                targetTickHz,
+                computeBackendPreference,
+                cancellationToken).ConfigureAwait(false);
             var brainId = await harness.SpawnBrainAsync(cancellationToken).ConfigureAwait(false);
             var observedTickHz = await harness.MeasureTickRateAsync(
                     [brainId],
@@ -553,6 +667,25 @@ public static class PerfProbeRunner
                     TimeSpan.FromSeconds(config.RunSeconds),
                     cancellationToken)
                 .ConfigureAwait(false);
+            var backendFailure = await harness.VerifyBackendExecutionAsync([brainId], cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(backendFailure))
+            {
+                return new PerfScenarioResult(
+                    Suite: "localhost_stress",
+                    Scenario: $"brain_size_limit_{targetTickHz:0.###}hz",
+                    Backend: backend,
+                    Status: PerfScenarioStatus.Failed,
+                    Summary: "Runtime benchmark did not execute on the expected compute backend.",
+                    Parameters: new Dictionary<string, string>
+                    {
+                        ["target_tick_hz"] = targetTickHz.ToString("0.###"),
+                        ["hidden_neurons"] = hiddenNeuronCount.ToString(),
+                        ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
+                    },
+                    Metrics: new Dictionary<string, double>(),
+                    Failure: backendFailure);
+            }
+
             bestObservedTickHz = Math.Max(bestObservedTickHz, observedTickHz);
             if (observedTickHz >= targetTickHz * SuccessThresholdRatio)
             {
@@ -564,7 +697,7 @@ public static class PerfProbeRunner
         return new PerfScenarioResult(
             Suite: "localhost_stress",
             Scenario: $"brain_size_limit_{targetTickHz:0.###}hz",
-            Backend: "cpu",
+            Backend: backend,
             Status: status,
             Summary: status == PerfScenarioStatus.Passed
                 ? $"Measured the largest hidden-region size that sustained approximately {targetTickHz:0.###} Hz on localhost."
@@ -573,7 +706,8 @@ public static class PerfProbeRunner
             {
                 ["target_tick_hz"] = targetTickHz.ToString("0.###"),
                 ["brain_sizes"] = string.Join(",", config.BrainSizes),
-                ["run_seconds"] = config.RunSeconds.ToString()
+                ["run_seconds"] = config.RunSeconds.ToString(),
+                ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
             },
             Metrics: new Dictionary<string, double>
             {
@@ -585,14 +719,20 @@ public static class PerfProbeRunner
 
     private static async Task<PerfScenarioResult> MeasureBrainCountLimitAsync(
         LocalhostStressConfig config,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string backend,
+        RegionShardComputeBackendPreference computeBackendPreference)
     {
         var targetTickHz = config.TargetTickRates.Count > 1 ? config.TargetTickRates[1] : config.TargetTickRates[0];
         var maxSupported = 0;
         var bestObservedTickHz = 0d;
         foreach (var brainCount in config.BrainCounts.OrderBy(static value => value))
         {
-            await using var harness = await LocalRuntimeHarness.CreateAsync(config.SustainableWorkloadNeurons, targetTickHz, cancellationToken).ConfigureAwait(false);
+            await using var harness = await LocalRuntimeHarness.CreateAsync(
+                config.SustainableWorkloadNeurons,
+                targetTickHz,
+                computeBackendPreference,
+                cancellationToken).ConfigureAwait(false);
             var brainIds = new List<Guid>(brainCount);
             for (var i = 0; i < brainCount; i++)
             {
@@ -605,6 +745,26 @@ public static class PerfProbeRunner
                     TimeSpan.FromSeconds(config.RunSeconds),
                     cancellationToken)
                 .ConfigureAwait(false);
+            var backendFailure = await harness.VerifyBackendExecutionAsync(brainIds, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(backendFailure))
+            {
+                return new PerfScenarioResult(
+                    Suite: "localhost_stress",
+                    Scenario: "brain_count_limit",
+                    Backend: backend,
+                    Status: PerfScenarioStatus.Failed,
+                    Summary: "Runtime benchmark did not execute on the expected compute backend.",
+                    Parameters: new Dictionary<string, string>
+                    {
+                        ["target_tick_hz"] = targetTickHz.ToString("0.###"),
+                        ["brain_count"] = brainCount.ToString(),
+                        ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
+                        ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
+                    },
+                    Metrics: new Dictionary<string, double>(),
+                    Failure: backendFailure);
+            }
+
             bestObservedTickHz = Math.Max(bestObservedTickHz, observedTickHz);
             if (observedTickHz >= targetTickHz * SuccessThresholdRatio)
             {
@@ -616,7 +776,7 @@ public static class PerfProbeRunner
         return new PerfScenarioResult(
             Suite: "localhost_stress",
             Scenario: "brain_count_limit",
-            Backend: "cpu",
+            Backend: backend,
             Status: status,
             Summary: status == PerfScenarioStatus.Passed
                 ? $"Measured the largest localhost brain count that sustained approximately {targetTickHz:0.###} Hz."
@@ -626,7 +786,8 @@ public static class PerfProbeRunner
                 ["target_tick_hz"] = targetTickHz.ToString("0.###"),
                 ["brain_counts"] = string.Join(",", config.BrainCounts),
                 ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
-                ["run_seconds"] = config.RunSeconds.ToString()
+                ["run_seconds"] = config.RunSeconds.ToString(),
+                ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
             },
             Metrics: new Dictionary<string, double>
             {
@@ -638,13 +799,19 @@ public static class PerfProbeRunner
 
     private static async Task<PerfScenarioResult> MeasureSustainableTickRateAsync(
         LocalhostStressConfig config,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string backend,
+        RegionShardComputeBackendPreference computeBackendPreference)
     {
         var maxSupported = 0f;
         var bestObservedTickHz = 0d;
         foreach (var candidateTickHz in config.SustainableTickSweep.OrderBy(static value => value))
         {
-            await using var harness = await LocalRuntimeHarness.CreateAsync(config.SustainableWorkloadNeurons, candidateTickHz, cancellationToken).ConfigureAwait(false);
+            await using var harness = await LocalRuntimeHarness.CreateAsync(
+                config.SustainableWorkloadNeurons,
+                candidateTickHz,
+                computeBackendPreference,
+                cancellationToken).ConfigureAwait(false);
             var brainIds = new List<Guid>(config.SustainableBrainCount);
             for (var i = 0; i < config.SustainableBrainCount; i++)
             {
@@ -657,6 +824,26 @@ public static class PerfProbeRunner
                     TimeSpan.FromSeconds(config.RunSeconds),
                     cancellationToken)
                 .ConfigureAwait(false);
+            var backendFailure = await harness.VerifyBackendExecutionAsync(brainIds, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(backendFailure))
+            {
+                return new PerfScenarioResult(
+                    Suite: "localhost_stress",
+                    Scenario: "max_sustainable_tick_rate",
+                    Backend: backend,
+                    Status: PerfScenarioStatus.Failed,
+                    Summary: "Runtime benchmark did not execute on the expected compute backend.",
+                    Parameters: new Dictionary<string, string>
+                    {
+                        ["tick_hz"] = candidateTickHz.ToString("0.###"),
+                        ["brain_count"] = config.SustainableBrainCount.ToString(),
+                        ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
+                        ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
+                    },
+                    Metrics: new Dictionary<string, double>(),
+                    Failure: backendFailure);
+            }
+
             bestObservedTickHz = Math.Max(bestObservedTickHz, observedTickHz);
             if (observedTickHz >= candidateTickHz * SuccessThresholdRatio)
             {
@@ -668,7 +855,7 @@ public static class PerfProbeRunner
         return new PerfScenarioResult(
             Suite: "localhost_stress",
             Scenario: "max_sustainable_tick_rate",
-            Backend: "cpu",
+            Backend: backend,
             Status: status,
             Summary: status == PerfScenarioStatus.Passed
                 ? "Measured the highest requested tick rate that remained sustainable for a representative localhost workload."
@@ -678,7 +865,8 @@ public static class PerfProbeRunner
                 ["tick_sweep"] = string.Join(",", config.SustainableTickSweep.Select(static value => value.ToString("0.###"))),
                 ["brain_count"] = config.SustainableBrainCount.ToString(),
                 ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
-                ["run_seconds"] = config.RunSeconds.ToString()
+                ["run_seconds"] = config.RunSeconds.ToString(),
+                ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
             },
             Metrics: new Dictionary<string, double>
             {
@@ -689,10 +877,16 @@ public static class PerfProbeRunner
 
     private static async Task<PerfScenarioResult> MeasureSpawnChurnAsync(
         LocalhostStressConfig config,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string backend,
+        RegionShardComputeBackendPreference computeBackendPreference)
     {
         var targetTickHz = config.TargetTickRates.Count > 1 ? config.TargetTickRates[1] : config.TargetTickRates[0];
-        await using var harness = await LocalRuntimeHarness.CreateAsync(config.SustainableWorkloadNeurons, targetTickHz, cancellationToken).ConfigureAwait(false);
+        await using var harness = await LocalRuntimeHarness.CreateAsync(
+            config.SustainableWorkloadNeurons,
+            targetTickHz,
+            computeBackendPreference,
+            cancellationToken).ConfigureAwait(false);
         var baseBrains = new List<Guid>(config.SustainableBrainCount);
         for (var i = 0; i < config.SustainableBrainCount; i++)
         {
@@ -728,12 +922,32 @@ public static class PerfProbeRunner
             harness.StopTickLoop();
         }
 
+        var backendFailure = await harness.VerifyBackendExecutionAsync(baseBrains, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(backendFailure))
+        {
+            return new PerfScenarioResult(
+                Suite: "localhost_stress",
+                Scenario: "spawn_churn_under_load",
+                Backend: backend,
+                Status: PerfScenarioStatus.Failed,
+                Summary: "Runtime benchmark did not execute on the expected compute backend.",
+                Parameters: new Dictionary<string, string>
+                {
+                    ["target_tick_hz"] = targetTickHz.ToString("0.###"),
+                    ["base_brains"] = config.SustainableBrainCount.ToString(),
+                    ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
+                    ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
+                },
+                Metrics: new Dictionary<string, double>(),
+                Failure: backendFailure);
+        }
+
         var ordered = latencies.OrderBy(static value => value).ToArray();
         var median = ordered.Length == 0 ? 0d : ordered[ordered.Length / 2];
         return new PerfScenarioResult(
             Suite: "localhost_stress",
             Scenario: "spawn_churn_under_load",
-            Backend: "cpu",
+            Backend: backend,
             Status: PerfScenarioStatus.Passed,
             Summary: "Measured spawn latency while the local runtime was already ticking representative workloads.",
             Parameters: new Dictionary<string, string>
@@ -741,7 +955,8 @@ public static class PerfProbeRunner
                 ["target_tick_hz"] = targetTickHz.ToString("0.###"),
                 ["spawned_brains"] = config.SpawnChurnBrainCount.ToString(),
                 ["base_brains"] = config.SustainableBrainCount.ToString(),
-                ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString()
+                ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
+                ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
             },
             Metrics: new Dictionary<string, double>
             {
@@ -752,6 +967,8 @@ public static class PerfProbeRunner
 
     private sealed class LocalRuntimeHarness : IAsyncDisposable
     {
+        private static readonly SemaphoreSlim BackendPreferenceGate = new(1, 1);
+
         private LocalRuntimeHarness(
             ActorSystem system,
             PID hiveMind,
@@ -759,7 +976,8 @@ public static class PerfProbeRunner
             PID worker,
             string artifactRoot,
             uint inputWidth,
-            ArtifactRef brainDef)
+            ArtifactRef brainDef,
+            RegionShardComputeBackendPreference computeBackendPreference)
         {
             System = system;
             HiveMind = hiveMind;
@@ -768,6 +986,7 @@ public static class PerfProbeRunner
             ArtifactRoot = artifactRoot;
             InputWidth = inputWidth;
             BrainDef = brainDef;
+            ComputeBackendPreference = computeBackendPreference;
         }
 
         public ActorSystem System { get; }
@@ -778,12 +997,20 @@ public static class PerfProbeRunner
         public string ArtifactRoot { get; }
         public uint InputWidth { get; }
         public ArtifactRef BrainDef { get; }
+        public RegionShardComputeBackendPreference ComputeBackendPreference { get; }
 
         public static async Task<LocalRuntimeHarness> CreateAsync(
             int hiddenNeuronCount,
             float targetTickHz,
+            RegionShardComputeBackendPreference computeBackendPreference,
             CancellationToken cancellationToken)
         {
+            var benchmarkAvailability = new WorkerResourceAvailability(
+                cpuPercent: 100,
+                ramPercent: 100,
+                storagePercent: 100,
+                gpuComputePercent: 100,
+                gpuVramPercent: 100);
             var artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-perf-probe", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(artifactRoot);
 
@@ -793,6 +1020,17 @@ public static class PerfProbeRunner
             var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
 
             var system = new ActorSystem();
+            system.WithRemote(
+                RemoteConfig.BindToLocalhost(0).WithProtoMessages(
+                    NbnCommonReflection.Descriptor,
+                    NbnControlReflection.Descriptor,
+                    NbnIoReflection.Descriptor,
+                    NbnReproReflection.Descriptor,
+                    NbnSignalsReflection.Descriptor,
+                    NbnDebugReflection.Descriptor,
+                    NbnVizReflection.Descriptor,
+                    NbnSettingsReflection.Descriptor));
+            await system.Remote().StartAsync().ConfigureAwait(false);
             var root = system.Root;
             var workerId = Guid.NewGuid();
             var ioName = $"io-{Guid.NewGuid():N}";
@@ -806,11 +1044,16 @@ public static class PerfProbeRunner
             _ = root.SpawnNamed(
                 Props.FromProducer(() => new FixedBrainInfoActor(brainDef, DefaultInputWidth, DefaultOutputWidth)),
                 metadataName);
+            var capabilityProvider = new WorkerNodeCapabilityProvider(availability: benchmarkAvailability);
             var worker = root.Spawn(
-                Props.FromProducer(() => new WorkerNodeActor(workerId, "worker.local", artifactRootPath: artifactRoot)));
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerId,
+                    string.Empty,
+                    artifactRootPath: artifactRoot,
+                    resourceAvailability: benchmarkAvailability)));
 
             PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, metadataName);
-            PrimeWorkers(root, hiveMind, worker, workerId, new WorkerNodeCapabilityProvider().GetCapabilities());
+            PrimeWorkers(root, hiveMind, worker, workerId, capabilityProvider.GetCapabilities());
 
             await WaitForAsync(
                     async () =>
@@ -824,21 +1067,31 @@ public static class PerfProbeRunner
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            return new LocalRuntimeHarness(system, hiveMind, ioGateway, worker, artifactRoot, DefaultInputWidth, brainDef);
+            return new LocalRuntimeHarness(
+                system,
+                hiveMind,
+                ioGateway,
+                worker,
+                artifactRoot,
+                DefaultInputWidth,
+                brainDef,
+                computeBackendPreference);
         }
 
         public async Task<Guid> SpawnBrainAsync(CancellationToken cancellationToken)
         {
-            var response = await Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
-                    IoGateway,
-                    new ProtoIo.SpawnBrainViaIO
-                    {
-                        Request = new ProtoControl.SpawnBrain
+            var response = await WithScopedBackendPreferenceAsync(
+                    ComputeBackendPreference,
+                    () => Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                        IoGateway,
+                        new ProtoIo.SpawnBrainViaIO
                         {
-                            BrainDef = BrainDef
-                        }
-                    },
-                    TimeSpan.FromSeconds(70))
+                            Request = new ProtoControl.SpawnBrain
+                            {
+                                BrainDef = BrainDef
+                            }
+                        },
+                        TimeSpan.FromSeconds(70)))
                 .ConfigureAwait(false);
 
             if (response.Ack is null || !response.Ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
@@ -866,6 +1119,43 @@ public static class PerfProbeRunner
                 .ConfigureAwait(false);
 
             return brainId;
+        }
+
+        public async Task<string?> VerifyBackendExecutionAsync(
+            IReadOnlyCollection<Guid> brainIds,
+            CancellationToken cancellationToken)
+        {
+            if (ComputeBackendPreference == RegionShardComputeBackendPreference.Auto || brainIds.Count == 0)
+            {
+                return null;
+            }
+
+            foreach (var brainId in brainIds)
+            {
+                RegionShardBackendExecutionInfo info;
+                try
+                {
+                    info = await Root.RequestAsync<RegionShardBackendExecutionInfo>(
+                            new PID(string.Empty, BuildComputeShardActorName(brainId)),
+                            new GetRegionShardBackendExecutionInfo(),
+                            TimeSpan.FromSeconds(2))
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    return $"backend_execution_query_failed:{ex.GetBaseException().Message}";
+                }
+
+                var shouldUseGpu = ComputeBackendPreference == RegionShardComputeBackendPreference.Gpu;
+                if (info.UsedGpu != shouldUseGpu)
+                {
+                    var mode = shouldUseGpu ? "gpu" : "cpu";
+                    var reason = string.IsNullOrWhiteSpace(info.FallbackReason) ? "none" : info.FallbackReason;
+                    return $"expected_{mode}_backend_but_observed_{info.BackendName}:fallback={reason}";
+                }
+            }
+
+            return null;
         }
 
         public async Task<double> MeasureTickRateAsync(
@@ -939,6 +1229,7 @@ public static class PerfProbeRunner
 
         public async ValueTask DisposeAsync()
         {
+            await System.Remote().ShutdownAsync(true).ConfigureAwait(false);
             await System.ShutdownAsync().ConfigureAwait(false);
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(ArtifactRoot))
@@ -946,6 +1237,36 @@ public static class PerfProbeRunner
                 Directory.Delete(ArtifactRoot, recursive: true);
             }
         }
+
+        private static async Task<T> WithScopedBackendPreferenceAsync<T>(
+            RegionShardComputeBackendPreference preference,
+            Func<Task<T>> action)
+        {
+            if (preference == RegionShardComputeBackendPreference.Auto)
+            {
+                return await action().ConfigureAwait(false);
+            }
+
+            await BackendPreferenceGate.WaitAsync().ConfigureAwait(false);
+            var previous = Environment.GetEnvironmentVariable(RegionShardComputeBackendPreferenceResolver.EnvironmentVariableName);
+            try
+            {
+                Environment.SetEnvironmentVariable(
+                    RegionShardComputeBackendPreferenceResolver.EnvironmentVariableName,
+                    preference.ToString().ToLowerInvariant());
+                return await action().ConfigureAwait(false);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(
+                    RegionShardComputeBackendPreferenceResolver.EnvironmentVariableName,
+                    previous);
+                BackendPreferenceGate.Release();
+            }
+        }
+
+        private static string BuildComputeShardActorName(Guid brainId)
+            => $"brain-{brainId:N}-r1-s0";
     }
 
     private sealed class FixedBrainInfoActor : IActor
