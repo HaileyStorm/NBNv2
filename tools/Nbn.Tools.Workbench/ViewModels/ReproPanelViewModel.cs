@@ -22,6 +22,7 @@ public sealed class ReproPanelViewModel : ViewModelBase
 {
     private readonly WorkbenchClient _client;
     private readonly ConnectionViewModel? _connections;
+    private readonly IWorkbenchArtifactPublisher _artifactPublisher;
     private string _parentAGuidText = string.Empty;
     private string _parentBGuidText = string.Empty;
     private string _parentADefPath = string.Empty;
@@ -77,10 +78,14 @@ public sealed class ReproPanelViewModel : ViewModelBase
     private string _similaritySummary = "No result yet.";
     private string _mutationSummary = "No result yet.";
 
-    public ReproPanelViewModel(WorkbenchClient client, ConnectionViewModel? connections = null)
+    public ReproPanelViewModel(
+        WorkbenchClient client,
+        ConnectionViewModel? connections = null,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
     {
         _client = client;
         _connections = connections;
+        _artifactPublisher = artifactPublisher ?? new WorkbenchArtifactPublisher(logInfo: WorkbenchLog.Info, logWarn: WorkbenchLog.Warn);
         StrengthSources = new List<StrengthSourceOption>
         {
             new("Base only", StrengthSource.StrengthBaseOnly),
@@ -790,12 +795,21 @@ public sealed class ReproPanelViewModel : ViewModelBase
         var artifactRoot = string.IsNullOrWhiteSpace(ArtifactStoreRoot)
             ? BuildDefaultArtifactRoot()
             : ArtifactStoreRoot;
-        Directory.CreateDirectory(artifactRoot);
+        var bytes = await File.ReadAllBytesAsync(fullPath).ConfigureAwait(false);
+        var published = await _artifactPublisher
+            .PublishAsync(
+                bytes,
+                mediaType,
+                artifactRoot,
+                _connections?.LocalBindHost ?? NetworkAddressDefaults.DefaultBindHost,
+                label: "Workbench Reproduction")
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(published.AttentionMessage))
+        {
+            WorkbenchLog.Warn($"Workbench Reproduction: {published.AttentionMessage}");
+        }
 
-        var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
-        await using var stream = File.OpenRead(fullPath);
-        var manifest = await store.StoreAsync(stream, mediaType);
-        return manifest.ArtifactId.ToHex().ToArtifactRef((ulong)Math.Max(0, manifest.ByteLength), mediaType, artifactRoot);
+        return published.ArtifactRef;
     }
 
     private ReproduceConfig BuildConfig()

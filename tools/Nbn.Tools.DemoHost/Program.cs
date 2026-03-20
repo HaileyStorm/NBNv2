@@ -197,7 +197,16 @@ static async Task RunSpawnBrainAsync(string[] args)
     var waitSeconds = Math.Max(0, GetIntArg(args, "--wait-seconds") ?? 20);
     var jsonOnly = HasFlag(args, "--json");
     var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
-    var brainDef = nbnSha.ToArtifactRef(nbnSize, mediaType, storeUri);
+    var artifactRoot = ResolveArtifactRootForWrite(storeUri);
+    await using var artifactPublisher = new ReachableArtifactStorePublisher();
+    var brainDef = (await artifactPublisher
+            .PromoteAsync(
+                nbnSha.ToArtifactRef(nbnSize, mediaType, storeUri),
+                artifactRoot,
+                bindHost,
+                advertisedHost)
+            .ConfigureAwait(false))
+        .ArtifactRef;
 
     SpawnBrainViaIOAck? response = null;
     SpawnBrainAck? ack = null;
@@ -843,6 +852,8 @@ static async Task RunReproScenarioAsync(string[] args)
     var timeoutSeconds = GetIntArg(args, "--timeout-seconds") ?? 10;
     var jsonOnly = HasFlag(args, "--json");
     var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+    var artifactRoot = ResolveArtifactRootForWrite(storeUri);
+    await using var artifactPublisher = new ReachableArtifactStorePublisher();
 
     var spawnPolicy = ParseSpawnPolicy(GetArg(args, "--spawn-policy") ?? "never");
     var strengthSource = ParseStrengthSource(GetArg(args, "--strength-source"));
@@ -850,17 +861,23 @@ static async Task RunReproScenarioAsync(string[] args)
     var parentARef = parentASha.ToArtifactRef(parentASize, "application/x-nbn", storeUri);
     var parentBRef = parentBSha.ToArtifactRef(parentBSize, "application/x-nbn", storeUri);
 
-    var request = new Repro.ReproduceByArtifactsRequest
-    {
-        ParentADef = parentARef,
-        ParentBDef = parentBRef,
-        StrengthSource = strengthSource,
-        Config = new Repro.ReproduceConfig
-        {
-            SpawnChild = spawnPolicy
-        },
-        Seed = seed
-    };
+    var request = await PromoteReproduceRequestAsync(
+            new Repro.ReproduceByArtifactsRequest
+            {
+                ParentADef = parentARef,
+                ParentBDef = parentBRef,
+                StrengthSource = strengthSource,
+                Config = new Repro.ReproduceConfig
+                {
+                    SpawnChild = spawnPolicy
+                },
+                Seed = seed
+            },
+            artifactRoot,
+            artifactPublisher,
+            bindHost,
+            advertisedHost)
+        .ConfigureAwait(false);
 
     var system = new ActorSystem();
     var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedPort);
@@ -959,6 +976,7 @@ static async Task RunReproSuiteAsync(string[] args)
     var jsonOnly = HasFlag(args, "--json");
     var failOnCaseFailure = HasFlag(args, "--fail-on-case-failure");
     var timeout = TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds));
+    await using var artifactPublisher = new ReachableArtifactStorePublisher();
 
     var baseParent = parentASha.ToArtifactRef(parentASize, "application/x-nbn", storeUri);
     var missingParent = new string('0', 64).ToArtifactRef(parentASize, "application/x-nbn", storeUri);
@@ -1233,7 +1251,14 @@ static async Task RunReproSuiteAsync(string[] args)
         Exception? error = null;
         try
         {
-            result = await RequestReproduceByArtifactsAsync(system, ioPid, request, timeout);
+            var promotedRequest = await PromoteReproduceRequestAsync(
+                    request,
+                    variantRoot,
+                    artifactPublisher,
+                    bindHost,
+                    advertisedHost)
+                .ConfigureAwait(false);
+            result = await RequestReproduceByArtifactsAsync(system, ioPid, promotedRequest, timeout);
         }
         catch (Exception ex)
         {
@@ -1298,6 +1323,85 @@ static async Task<Repro.ReproduceResult?> RequestReproduceByArtifactsAsync(
     return response?.Result;
 }
 
+static async Task<Repro.ReproduceByArtifactsRequest> PromoteReproduceRequestAsync(
+    Repro.ReproduceByArtifactsRequest request,
+    string defaultLocalStoreRootPath,
+    ReachableArtifactStorePublisher artifactPublisher,
+    string bindHost,
+    string? advertisedHost)
+{
+    var promoted = request.Clone();
+    if (HasUsableArtifactRef(promoted.ParentADef))
+    {
+        promoted.ParentADef = await TryPromoteArtifactRefAsync(
+                promoted.ParentADef!,
+                defaultLocalStoreRootPath,
+                artifactPublisher,
+                bindHost,
+                advertisedHost)
+            .ConfigureAwait(false);
+    }
+
+    if (HasUsableArtifactRef(promoted.ParentBDef))
+    {
+        promoted.ParentBDef = await TryPromoteArtifactRefAsync(
+                promoted.ParentBDef!,
+                defaultLocalStoreRootPath,
+                artifactPublisher,
+                bindHost,
+                advertisedHost)
+            .ConfigureAwait(false);
+    }
+
+    if (HasUsableArtifactRef(promoted.ParentAState))
+    {
+        promoted.ParentAState = await TryPromoteArtifactRefAsync(
+                promoted.ParentAState!,
+                defaultLocalStoreRootPath,
+                artifactPublisher,
+                bindHost,
+                advertisedHost)
+            .ConfigureAwait(false);
+    }
+
+    if (HasUsableArtifactRef(promoted.ParentBState))
+    {
+        promoted.ParentBState = await TryPromoteArtifactRefAsync(
+                promoted.ParentBState!,
+                defaultLocalStoreRootPath,
+                artifactPublisher,
+                bindHost,
+                advertisedHost)
+            .ConfigureAwait(false);
+    }
+
+    return promoted;
+}
+
+static async Task<ArtifactRef> TryPromoteArtifactRefAsync(
+    ArtifactRef artifactRef,
+    string defaultLocalStoreRootPath,
+    ReachableArtifactStorePublisher artifactPublisher,
+    string bindHost,
+    string? advertisedHost)
+{
+    try
+    {
+        return (await artifactPublisher
+                .PromoteAsync(
+                    artifactRef,
+                    defaultLocalStoreRootPath,
+                    bindHost,
+                    advertisedHost)
+                .ConfigureAwait(false))
+            .ArtifactRef;
+    }
+    catch (FileNotFoundException)
+    {
+        return artifactRef;
+    }
+}
+
 static Repro.ReproduceByArtifactsRequest CreateArtifactsRequest(
     ArtifactRef parentA,
     ArtifactRef? parentB,
@@ -1316,6 +1420,13 @@ static Repro.ReproduceByArtifactsRequest CreateArtifactsRequest(
         Config = config,
         Seed = seed
     };
+}
+
+static bool HasUsableArtifactRef(ArtifactRef? artifactRef)
+{
+    return artifactRef is not null
+           && artifactRef.TryToSha256Hex(out _)
+           && !string.IsNullOrWhiteSpace(artifactRef.StoreUri);
 }
 
 static string NormalizeAbortReason(Repro.SimilarityReport? report)

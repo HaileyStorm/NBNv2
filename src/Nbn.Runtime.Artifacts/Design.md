@@ -21,6 +21,8 @@ The built-in HTTP(S) backend expects `{base}/v1/manifests/{sha256}`, `{base}/v1/
 
 Failure semantics are explicit: unresolved non-file URIs throw instead of falling back to local paths, unsupported env-map target types throw configuration errors, remote `404` responses mean the manifest/artifact is absent in that store, `405`/`501` range responses fall back to full reads, and other non-success transport responses bubble back to the runtime caller.
 
+First-party client tools may promote caller-local artifacts or caller-local non-HTTP `ArtifactRef`s into a temporary reachable HTTP store before sending remote runtime requests. That keeps control protocols artifact-ref-based while avoiding assumptions that the runtime shares the caller's filesystem roots or in-process store registrations. Callers must only auto-promote refs they can actually resolve locally; opaque runtime-exported refs that already point at remote runtime-owned storage stay pass-through.
+
 ## Bookkeeping and retention
 
 Chunk identity is always derived from the uncompressed chunk bytes. Optional chunk compression only changes how the payload is stored on disk; the SQLite metadata row records the storage-only details (`stored_length`, `compression`) that readers need to reconstruct the original bytes.

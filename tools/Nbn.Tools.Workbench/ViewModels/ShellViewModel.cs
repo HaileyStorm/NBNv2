@@ -46,7 +46,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             artifactPublisher: _artifactPublisher);
         Debug = new DebugPanelViewModel(_client, _dispatcher, Connections);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
-        Repro = new ReproPanelViewModel(_client, Connections);
+        Repro = new ReproPanelViewModel(_client, Connections, _artifactPublisher);
         Speciation = new SpeciationPanelViewModel(
             _dispatcher,
             Connections,

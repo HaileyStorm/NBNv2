@@ -197,8 +197,8 @@ public sealed class DesignerPanelArtifactStoreTests
         Assert.Equal(designBrainId, requestedBrainId);
         Assert.Equal(definitionRef!.ToSha256Hex(), client.LastPlacementRequest.BaseDef.ToSha256Hex());
         Assert.Equal(snapshotRef!.ToSha256Hex(), client.LastPlacementRequest.LastSnapshot.ToSha256Hex());
-        Assert.Equal(remoteScope.StoreUri, client.LastPlacementRequest.BaseDef.StoreUri);
-        Assert.Equal(remoteScope.StoreUri, client.LastPlacementRequest.LastSnapshot.StoreUri);
+        Assert.StartsWith("http://", client.LastPlacementRequest.BaseDef.StoreUri, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("http://", client.LastPlacementRequest.LastSnapshot.StoreUri, StringComparison.OrdinalIgnoreCase);
         Assert.True(client.LastPlacementRequest.IsRecovery);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains("Brain restored from artifact refs", vm.Status, StringComparison.Ordinal);

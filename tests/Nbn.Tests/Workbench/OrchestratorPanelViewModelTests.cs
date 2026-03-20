@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
+using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
@@ -2395,6 +2396,21 @@ public class OrchestratorPanelViewModelTests
             var artifactRef = SHA256.HashData(bytes)
                 .ToArtifactRef((ulong)Math.Max(0, bytes.Length), mediaType, BaseUri);
             return Task.FromResult(new PublishedArtifact(artifactRef, AttentionMessage));
+        }
+
+        public Task<PublishedArtifact> PromoteAsync(
+            ArtifactRef artifactRef,
+            string defaultLocalStoreRootPath,
+            string bindHost,
+            string? advertisedHost = null,
+            string? label = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PublishedArtifact(
+                string.IsNullOrWhiteSpace(artifactRef.StoreUri)
+                    ? artifactRef.ToSha256Hex().ToArtifactRef(artifactRef.SizeBytes, artifactRef.MediaType, BaseUri)
+                    : artifactRef.Clone(),
+                AttentionMessage));
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

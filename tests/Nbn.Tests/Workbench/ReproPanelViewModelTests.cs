@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using Nbn.Proto;
 using Nbn.Proto.Repro;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -347,9 +349,59 @@ public class ReproPanelViewModelTests
         Assert.Equal((uint)6, request.Config.Limits.MaxRegionsRemovedAbs);
     }
 
-    private static ReproPanelViewModel CreateViewModel(WorkbenchClient client, ConnectionViewModel? connections = null)
+    [Fact]
+    public async Task RunCommand_WithArtifactFiles_PublishesReachableArtifactRefs_BeforeRuntimeRequest()
     {
-        return new ReproPanelViewModel(client, connections);
+        var tempDir = Path.Combine(Path.GetTempPath(), "nbn-repro-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var parentAPath = Path.Combine(tempDir, "parent-a.nbn");
+            var parentBPath = Path.Combine(tempDir, "parent-b.nbn");
+            await File.WriteAllBytesAsync(parentAPath, new byte[] { 1, 2, 3, 4 });
+            await File.WriteAllBytesAsync(parentBPath, new byte[] { 5, 6, 7, 8 });
+
+            var publisher = new FakeWorkbenchArtifactPublisher();
+            var client = new FakeWorkbenchClient
+            {
+                ArtifactResult = new ReproduceResult
+                {
+                    Report = new SimilarityReport { Compatible = true }
+                }
+            };
+            var connections = new ConnectionViewModel
+            {
+                SettingsStatus = "Ready",
+                IoStatus = "Connected",
+                ReproStatus = "Online"
+            };
+            var vm = CreateViewModel(client, connections, publisher);
+            vm.ParentADefPath = parentAPath;
+            vm.ParentBDefPath = parentBPath;
+
+            vm.RunCommand.Execute(null);
+            await WaitForAsync(() => client.LastArtifactRequest is not null);
+
+            Assert.NotNull(client.LastArtifactRequest);
+            Assert.Equal(publisher.BaseUri, client.LastArtifactRequest!.ParentADef.StoreUri);
+            Assert.Equal(publisher.BaseUri, client.LastArtifactRequest.ParentBDef.StoreUri);
+            Assert.Equal(2, publisher.PublishCallCount);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
+    private static ReproPanelViewModel CreateViewModel(
+        WorkbenchClient client,
+        ConnectionViewModel? connections = null,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
+    {
+        return new ReproPanelViewModel(client, connections, artifactPublisher);
     }
 
     private static void SetActiveBrains(ReproPanelViewModel vm)
@@ -400,6 +452,38 @@ public class ReproPanelViewModelTests
             LastArtifactRequest = request;
             return Task.FromResult(ArtifactResult);
         }
+    }
+
+    private sealed class FakeWorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
+    {
+        public string BaseUri { get; set; } = "http://127.0.0.1:19092/";
+        public int PublishCallCount { get; private set; }
+
+        public Task<PublishedArtifact> PublishAsync(
+            byte[] bytes,
+            string mediaType,
+            string backingStoreRoot,
+            string bindHost,
+            string? advertisedHost = null,
+            string? label = null,
+            CancellationToken cancellationToken = default)
+        {
+            PublishCallCount++;
+            var artifactRef = SHA256.HashData(bytes)
+                .ToArtifactRef((ulong)Math.Max(0, bytes.Length), mediaType, BaseUri);
+            return Task.FromResult(new PublishedArtifact(artifactRef, null));
+        }
+
+        public Task<PublishedArtifact> PromoteAsync(
+            ArtifactRef artifactRef,
+            string defaultLocalStoreRootPath,
+            string bindHost,
+            string? advertisedHost = null,
+            string? label = null,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new PublishedArtifact(artifactRef.Clone(), null));
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

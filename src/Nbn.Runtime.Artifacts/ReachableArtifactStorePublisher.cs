@@ -1,75 +1,34 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Nbn.Proto;
-using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 
-namespace Nbn.Tools.Workbench.Services;
+namespace Nbn.Runtime.Artifacts;
 
-public interface IWorkbenchArtifactPublisher : IAsyncDisposable
-{
-    Task<PublishedArtifact> PublishAsync(
-        byte[] bytes,
-        string mediaType,
-        string backingStoreRoot,
-        string bindHost,
-        string? advertisedHost = null,
-        string? label = null,
-        CancellationToken cancellationToken = default);
+public sealed record ReachableArtifactPublication(ArtifactRef ArtifactRef, Uri BaseUri, bool HostedLocally);
 
-    Task<PublishedArtifact> PromoteAsync(
-        ArtifactRef artifactRef,
-        string defaultLocalStoreRootPath,
-        string bindHost,
-        string? advertisedHost = null,
-        string? label = null,
-        CancellationToken cancellationToken = default);
-}
-
-public sealed record PublishedArtifact(ArtifactRef ArtifactRef, string? AttentionMessage);
-
-public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
+public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, HostedStore> _stores = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ILocalFirewallManager _firewallManager;
-    private readonly Action<string>? _logInfo;
-    private readonly Action<string>? _logWarn;
 
-    public WorkbenchArtifactPublisher(
-        ILocalFirewallManager? firewallManager = null,
-        Action<string>? logInfo = null,
-        Action<string>? logWarn = null)
-    {
-        _firewallManager = firewallManager ?? new LocalFirewallManager();
-        _logInfo = logInfo;
-        _logWarn = logWarn;
-    }
-
-    public async Task<PublishedArtifact> PublishAsync(
+    public async Task<ReachableArtifactPublication> PublishAsync(
         byte[] bytes,
         string mediaType,
         string backingStoreRoot,
         string bindHost,
         string? advertisedHost = null,
-        string? label = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(bytes);
@@ -93,7 +52,6 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
                         normalizedRoot,
                         normalizedBindHost,
                         normalizedAdvertisedHost,
-                        label,
                         cancellationToken)
                     .ConfigureAwait(false);
                 _stores[key] = hosted;
@@ -109,15 +67,14 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
             .ConfigureAwait(false);
         var artifactRef = manifest.ArtifactId.ToHex()
             .ToArtifactRef((ulong)Math.Max(0L, manifest.ByteLength), mediaType, hosted.BaseUri.AbsoluteUri);
-        return new PublishedArtifact(artifactRef, hosted.AttentionMessage);
+        return new ReachableArtifactPublication(artifactRef, hosted.BaseUri, HostedLocally: true);
     }
 
-    public async Task<PublishedArtifact> PromoteAsync(
+    public async Task<ReachableArtifactPublication> PromoteAsync(
         ArtifactRef artifactRef,
         string defaultLocalStoreRootPath,
         string bindHost,
         string? advertisedHost = null,
-        string? label = null,
         CancellationToken cancellationToken = default)
     {
         if (artifactRef is null)
@@ -130,32 +87,30 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
             throw new InvalidOperationException("ArtifactRef is missing sha256.");
         }
 
-        if (ReachableArtifactStorePublisher.IsDirectHttpStoreUri(artifactRef.StoreUri))
+        if (IsDirectHttpStoreUri(artifactRef.StoreUri))
         {
-            return new PublishedArtifact(artifactRef.Clone(), null);
+            return new ReachableArtifactPublication(
+                artifactRef.Clone(),
+                new Uri(artifactRef.StoreUri, UriKind.Absolute),
+                HostedLocally: false);
         }
 
-        var fallbackRoot = string.IsNullOrWhiteSpace(defaultLocalStoreRootPath)
-            ? Path.Combine(Environment.CurrentDirectory, "artifacts")
-            : defaultLocalStoreRootPath;
-        var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(fallbackRoot));
-        var store = resolver.Resolve(artifactRef.StoreUri);
-        await using var stream = await store.TryOpenArtifactAsync(new Sha256Hash(hashBytes), cancellationToken).ConfigureAwait(false);
-        if (stream is null)
+        var payload = await ReadArtifactBytesAsync(artifactRef, defaultLocalStoreRootPath, cancellationToken).ConfigureAwait(false);
+        if (payload is null)
         {
             throw new FileNotFoundException(
-                $"Artifact {new Sha256Hash(hashBytes).ToHex()} was not found in {DescribeArtifactStore(artifactRef.StoreUri, fallbackRoot)}.");
+                $"Artifact {new Sha256Hash(hashBytes).ToHex()} was not found in {DescribeArtifactStore(artifactRef.StoreUri, defaultLocalStoreRootPath)}.");
         }
 
-        using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+        var backingRoot = string.IsNullOrWhiteSpace(defaultLocalStoreRootPath)
+            ? Path.Combine(Environment.CurrentDirectory, "artifacts")
+            : defaultLocalStoreRootPath;
         return await PublishAsync(
-                buffer.ToArray(),
+                payload,
                 NormalizeMediaType(artifactRef.MediaType),
-                fallbackRoot,
+                backingRoot,
                 bindHost,
                 advertisedHost,
-                label,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -180,11 +135,42 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         }
     }
 
+    public static bool IsDirectHttpStoreUri(string? storeUri)
+        => Uri.TryCreate(storeUri, UriKind.Absolute, out var uri)
+           && !uri.IsFile
+           && (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+               || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
+
+    private static async Task<byte[]?> ReadArtifactBytesAsync(
+        ArtifactRef artifactRef,
+        string defaultLocalStoreRootPath,
+        CancellationToken cancellationToken)
+    {
+        if (!artifactRef.TryToSha256Bytes(out var hashBytes))
+        {
+            throw new InvalidOperationException("ArtifactRef is missing sha256.");
+        }
+
+        var fallbackRoot = string.IsNullOrWhiteSpace(defaultLocalStoreRootPath)
+            ? Path.Combine(Environment.CurrentDirectory, "artifacts")
+            : defaultLocalStoreRootPath;
+        var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(fallbackRoot));
+        var store = resolver.Resolve(artifactRef.StoreUri);
+        await using var stream = await store.TryOpenArtifactAsync(new Sha256Hash(hashBytes), cancellationToken).ConfigureAwait(false);
+        if (stream is null)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+        return buffer.ToArray();
+    }
+
     private async Task<HostedStore> StartHostedStoreAsync(
         string rootPath,
         string bindHost,
         string advertisedHost,
-        string? label,
         CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(rootPath);
@@ -192,7 +178,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
             Args = Array.Empty<string>(),
-            ApplicationName = typeof(WorkbenchArtifactPublisher).Assembly.GetName().Name,
+            ApplicationName = typeof(ReachableArtifactStorePublisher).Assembly.GetName().Name,
             EnvironmentName = Environments.Production
         });
         builder.WebHost.UseKestrelCore();
@@ -204,27 +190,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
 
         var address = ResolveListeningAddress(app);
         var baseUri = new UriBuilder(Uri.UriSchemeHttp, advertisedHost, address.Port).Uri;
-        var firewall = await _firewallManager
-            .EnsureInboundTcpAccessAsync(string.IsNullOrWhiteSpace(label) ? "WorkbenchArtifactStore" : label!, bindHost, address.Port)
-            .ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(firewall.Message))
-        {
-            var logMessage = $"Workbench artifact store firewall: {firewall.Message}";
-            if (firewall.RequiresAttention)
-            {
-                _logWarn?.Invoke(logMessage);
-            }
-            else
-            {
-                _logInfo?.Invoke(logMessage);
-            }
-        }
-
-        return new HostedStore(
-            app,
-            store,
-            baseUri,
-            firewall.RequiresAttention ? firewall.Message : null);
+        return new HostedStore(app, store, baseUri);
     }
 
     private static void ConfigureListen(KestrelServerOptions options, string bindHost)
@@ -424,7 +390,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         var address = addresses?.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(address))
         {
-            throw new InvalidOperationException("Workbench artifact store did not publish a listening address.");
+            throw new InvalidOperationException("Reachable artifact store publisher did not publish a listening address.");
         }
 
         return new Uri(address, UriKind.Absolute);
@@ -464,9 +430,6 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         await response.Body.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }
 
-    private static string BuildStoreKey(string rootPath, string bindHost, string advertisedHost)
-        => $"{rootPath}|{bindHost}|{advertisedHost}";
-
     private static string DescribeArtifactStore(string? storeUri, string defaultLocalStoreRootPath)
     {
         if (string.IsNullOrWhiteSpace(storeUri))
@@ -481,6 +444,9 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
 
     private static string NormalizeMediaType(string? mediaType)
         => string.IsNullOrWhiteSpace(mediaType) ? "application/octet-stream" : mediaType.Trim();
+
+    private static string BuildStoreKey(string rootPath, string bindHost, string advertisedHost)
+        => $"{rootPath}|{bindHost}|{advertisedHost}";
 
     private static string NormalizeRoot(string rootPath)
     {
@@ -498,8 +464,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
     private sealed record HostedStore(
         WebApplication App,
         LocalArtifactStore Store,
-        Uri BaseUri,
-        string? AttentionMessage);
+        Uri BaseUri);
 
     private sealed class ManifestDto
     {

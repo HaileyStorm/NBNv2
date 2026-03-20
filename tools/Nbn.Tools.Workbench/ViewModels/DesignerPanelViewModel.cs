@@ -1436,13 +1436,24 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
         try
         {
+            var runtimeDefinitionRef = await PrepareRuntimeArtifactReferenceAsync(
+                    definitionRef,
+                    "Workbench Designer Restore Definition")
+                .ConfigureAwait(false);
+            var runtimeSnapshotRef = snapshotRef is null
+                ? null
+                : await PrepareRuntimeArtifactReferenceAsync(
+                        snapshotRef,
+                        "Workbench Designer Restore Snapshot")
+                    .ConfigureAwait(false);
+
             var placementAck = await _client.RequestPlacementAsync(new ProtoControl.RequestPlacement
             {
                 BrainId = brainId.ToProtoUuid(),
-                BaseDef = definitionRef,
-                LastSnapshot = snapshotRef,
+                BaseDef = runtimeDefinitionRef,
+                LastSnapshot = runtimeSnapshotRef,
                 RequestedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                IsRecovery = snapshotRef is not null
+                IsRecovery = runtimeSnapshotRef is not null
             }).ConfigureAwait(false);
 
             if (placementAck is null)
@@ -5165,6 +5176,25 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
     private bool CanRestoreArtifactBrain()
         => !string.IsNullOrWhiteSpace(DefinitionArtifactShaText);
+
+    private async Task<Nbn.Proto.ArtifactRef> PrepareRuntimeArtifactReferenceAsync(
+        Nbn.Proto.ArtifactRef artifactRef,
+        string label)
+    {
+        var published = await _artifactPublisher
+            .PromoteAsync(
+                artifactRef,
+                BuildDefaultArtifactRoot(),
+                _connections.LocalBindHost,
+                label: label)
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(published.AttentionMessage))
+        {
+            WorkbenchLog.Warn($"{label}: {published.AttentionMessage}");
+        }
+
+        return published.ArtifactRef;
+    }
 
     private bool TryResolveSnapshotBytesForArtifactStore(out byte[] snapshotBytes, out string? error)
     {
