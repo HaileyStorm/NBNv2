@@ -91,6 +91,24 @@ public sealed class PerfProbeRunnerTests
         Assert.Equal("2048", gpuPlanner.Parameters["hidden_region_neurons"]);
     }
 
+    [Fact]
+    public void ResolveCurrentSystemRemoteHost_UsesAdvertisedHost_WhenBindingToAllInterfaces()
+    {
+        var config = new CurrentSystemProfileConfig(
+            SettingsHost: "127.0.0.1",
+            SettingsPort: 12010,
+            SettingsName: "SettingsMonitor",
+            BindHost: NetworkAddressDefaults.DefaultBindHost,
+            BindPort: 12110);
+
+        var resolved = PerfProbeRunner.ResolveCurrentSystemRemoteHost(config);
+
+        Assert.Equal(
+            NetworkAddressDefaults.ResolveAdvertisedHost(NetworkAddressDefaults.DefaultBindHost, advertisedHost: null),
+            resolved);
+        Assert.NotEqual(NetworkAddressDefaults.DefaultBindHost, resolved);
+    }
+
     private static ProtoSettings.NodeCapabilities CreateCudaCapabilities()
         => new()
         {

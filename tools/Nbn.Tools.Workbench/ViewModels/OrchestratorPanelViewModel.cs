@@ -2058,6 +2058,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     break;
             }
 
+            var capabilityChips = DescribeWorkerCapabilityChips(entry);
             rows.Add((WorkerStatusRank(status), entry.LastSeenMs, new WorkerEndpointItem(
                 entry.NodeId,
                 entry.LogicalName,
@@ -2067,7 +2068,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 FormatUpdated(entry.LastSeenMs),
                 status,
                 entry.PlacementDetail,
-                DescribeWorkerGpuSupport(entry))));
+                capabilityChips.CpuCapability,
+                capabilityChips.GpuCapability)));
         }
 
         foreach (var staleNodeId in staleNodeIds)
@@ -3048,39 +3050,50 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         public string PlacementDetail { get; set; } = string.Empty;
     }
 
-    private static string DescribeWorkerGpuSupport(WorkerEndpointSnapshot snapshot)
+    private sealed record WorkerCapabilityChips(
+        string CpuCapability,
+        string GpuCapability);
+
+    private static WorkerCapabilityChips DescribeWorkerCapabilityChips(WorkerEndpointSnapshot snapshot)
     {
         if (!snapshot.HasCapabilitySnapshot || !snapshot.HasCapabilities)
         {
-            return "Unknown";
+            return new WorkerCapabilityChips(string.Empty, string.Empty);
         }
 
         var cpuScore = FormatCompactCapabilityScore(snapshot.CpuScore);
+        var cpuCapability = string.IsNullOrWhiteSpace(cpuScore)
+            ? "CPU"
+            : $"CPU {cpuScore}";
         var gpuScore = FormatCompactCapabilityScore(snapshot.GpuScore);
         if (snapshot.IlgpuCudaAvailable)
         {
-            return string.IsNullOrWhiteSpace(gpuScore)
-                ? "CUDA"
-                : $"CUDA {gpuScore}";
+            return new WorkerCapabilityChips(
+                cpuCapability,
+                string.IsNullOrWhiteSpace(gpuScore)
+                    ? "CUDA"
+                    : $"CUDA {gpuScore}");
         }
 
         if (snapshot.IlgpuOpenclAvailable)
         {
-            return string.IsNullOrWhiteSpace(gpuScore)
-                ? "OpenCL"
-                : $"OpenCL {gpuScore}";
+            return new WorkerCapabilityChips(
+                cpuCapability,
+                string.IsNullOrWhiteSpace(gpuScore)
+                    ? "OpenCL"
+                    : $"OpenCL {gpuScore}");
         }
 
         if (snapshot.HasGpu)
         {
-            return string.IsNullOrWhiteSpace(gpuScore)
-                ? "GPU"
-                : $"GPU {gpuScore}";
+            return new WorkerCapabilityChips(
+                cpuCapability,
+                string.IsNullOrWhiteSpace(gpuScore)
+                    ? "GPU"
+                    : $"GPU {gpuScore}");
         }
 
-        return string.IsNullOrWhiteSpace(cpuScore)
-            ? "CPU"
-            : $"CPU {cpuScore}";
+        return new WorkerCapabilityChips(cpuCapability, string.Empty);
     }
 
     private static string FormatCompactCapabilityScore(float value)

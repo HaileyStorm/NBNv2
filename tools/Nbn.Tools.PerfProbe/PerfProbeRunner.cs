@@ -1334,7 +1334,9 @@ public static class PerfProbeRunner
         }
         else if (IsAllInterfaces(config.BindHost))
         {
-            remoteConfig = RemoteConfig.BindToAllInterfaces(config.BindHost, config.BindPort);
+            remoteConfig = RemoteConfig.BindToAllInterfaces(
+                ResolveCurrentSystemRemoteHost(config),
+                config.BindPort);
         }
         else
         {
@@ -1350,6 +1352,16 @@ public static class PerfProbeRunner
             NbnDebugReflection.Descriptor,
             NbnVizReflection.Descriptor,
             NbnSettingsReflection.Descriptor);
+    }
+
+    internal static string ResolveCurrentSystemRemoteHost(CurrentSystemProfileConfig config)
+    {
+        if (IsAllInterfaces(config.BindHost))
+        {
+            return NetworkAddressDefaults.ResolveAdvertisedHost(config.BindHost, advertisedHost: null);
+        }
+
+        return config.BindHost;
     }
 
     private static bool IsLocalhost(string host)

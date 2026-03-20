@@ -184,10 +184,18 @@
                               <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
                             </Border>
                             <Border Classes="pill"
+                                    Background="{Binding CpuChipBackground}"
+                                    BorderBrush="{Binding CpuChipBorder}"
+                                    BorderThickness="1"
+                                    IsVisible="{Binding HasCpuCapability}">
+                              <TextBlock Text="{Binding CpuCapability}" Foreground="{Binding CpuChipForeground}" />
+                            </Border>
+                            <Border Classes="pill"
                                     Background="{Binding GpuChipBackground}"
                                     BorderBrush="{Binding GpuChipBorder}"
-                                    BorderThickness="1">
-                              <TextBlock Text="{Binding GpuSupport}" Foreground="{Binding GpuChipForeground}" />
+                                    BorderThickness="1"
+                                    IsVisible="{Binding HasGpuCapability}">
+                              <TextBlock Text="{Binding GpuCapability}" Foreground="{Binding GpuChipForeground}" />
                             </Border>
                           </StackPanel>
                           <StackPanel Grid.Column="1">

@@ -859,7 +859,7 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshSettingsAsync_WorkerEndpoints_ReportGpuSupportChips()
+    public async Task RefreshSettingsAsync_WorkerEndpoints_ReportCpuAndGpuCapabilityChips()
     {
         var connections = new ConnectionViewModel();
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -909,6 +909,7 @@ public class OrchestratorPanelViewModelTests
                         CapabilityTimeMs = (ulong)nowMs,
                         Capabilities = new Nbn.Proto.Settings.NodeCapabilities
                         {
+                            CpuScore = 82f,
                             HasGpu = true,
                             IlgpuCudaAvailable = true,
                             GpuScore = 90f
@@ -927,10 +928,7 @@ public class OrchestratorPanelViewModelTests
                         CapabilityTimeMs = (ulong)nowMs,
                         Capabilities = new Nbn.Proto.Settings.NodeCapabilities
                         {
-                            HasGpu = false,
-                            IlgpuCudaAvailable = false,
-                            IlgpuOpenclAvailable = false,
-                            GpuScore = 0f
+                            CpuScore = 82f
                         }
                     }
                 }
@@ -946,8 +944,73 @@ public class OrchestratorPanelViewModelTests
 
         var cudaEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == cudaWorker);
         var cpuEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == cpuWorker);
-        Assert.Equal("CUDA 90", cudaEndpoint.GpuSupport);
-        Assert.Equal("CPU", cpuEndpoint.GpuSupport);
+        Assert.Equal("CPU 82", cudaEndpoint.CpuCapability);
+        Assert.Equal("CUDA 90", cudaEndpoint.GpuCapability);
+        Assert.Equal("CPU 82", cpuEndpoint.CpuCapability);
+        Assert.Equal(string.Empty, cpuEndpoint.GpuCapability);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_ReportOpenClCapabilityChipText()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var openClWorker = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = openClWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.opencl",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-opencl",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = openClWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.opencl",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-opencl",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            CpuScore = 82f,
+                            HasGpu = true,
+                            IlgpuOpenclAvailable = true,
+                            GpuScore = 42_028f
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var endpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal("CPU 82", endpoint.CpuCapability);
+        Assert.Equal("OpenCL 42k", endpoint.GpuCapability);
     }
 
     [Fact]
