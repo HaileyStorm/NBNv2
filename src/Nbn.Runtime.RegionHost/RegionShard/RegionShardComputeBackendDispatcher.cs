@@ -8,7 +8,8 @@ public readonly record struct RegionShardBackendExecutionInfo(
     RegionShardComputeBackendPreference RequestedPreference,
     string BackendName,
     bool UsedGpu,
-    string FallbackReason);
+    string FallbackReason,
+    bool HasExecuted);
 
 public sealed class RegionShardComputeBackendDispatcher : IDisposable
 {
@@ -35,7 +36,8 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
             preference,
             BackendName: "cpu",
             UsedGpu: false,
-            FallbackReason: string.Empty);
+            FallbackReason: string.Empty,
+            HasExecuted: false);
     }
 
     public RegionShardBackendExecutionInfo LastExecution { get; private set; }
@@ -109,7 +111,8 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
                         _preference,
                         _gpu.BackendName,
                         UsedGpu: true,
-                        FallbackReason: string.Empty);
+                        FallbackReason: string.Empty,
+                        HasExecuted: true);
                     return result;
                 }
                 catch (Exception ex)
@@ -118,7 +121,8 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
                         _preference,
                         BackendName: "cpu",
                         UsedGpu: false,
-                        FallbackReason: $"gpu_compute_failed:{ex}");
+                        FallbackReason: $"gpu_compute_failed:{ex}",
+                        HasExecuted: true);
                 }
             }
             else if (_preference != RegionShardComputeBackendPreference.Cpu)
@@ -127,7 +131,8 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
                     _preference,
                     BackendName: "cpu",
                     UsedGpu: false,
-                    FallbackReason: support.Reason);
+                    FallbackReason: support.Reason,
+                    HasExecuted: true);
             }
         }
 
@@ -161,7 +166,8 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
                 _preference,
                 BackendName: "cpu",
                 UsedGpu: false,
-                FallbackReason: _gpuInitializationReason);
+                FallbackReason: _gpuInitializationReason,
+                HasExecuted: true);
         }
 
         return cpuResult;

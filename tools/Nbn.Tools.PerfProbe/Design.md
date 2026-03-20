@@ -11,7 +11,9 @@ Owns placement-facing and runtime-facing NBN performance probing and report gene
 - Surface worker capability limits and pressure metadata in the human-readable reports so worker-node profiling can be used both for HiveMind placement validation and for deeper attached-system diagnostics.
 - Emit report artifacts as JSON, CSV, Markdown, and HTML, with both tabular summaries and chart output.
 - Run real CPU and GPU placement-planner preference profiles in `worker-profile` when local capability telemetry and workload size qualify for the planner's GPU path.
-- Keep `localhost-stress` GPU runtime benchmark rows present as explicit skips until the dedicated runtime perf follow-up for the landed RegionShard GPU backend is wired in; do not fake GPU runtime execution.
+- Run real CPU and GPU runtime rows in `localhost-stress` when compatible ILGPU hardware is present; skip only when no compatible GPU/runtime path exists.
+- Host the localhost stress harness with stable named local `HiveMind` and worker actors so placement, routing, and tick-control PIDs stay valid inside the in-process probe runtime.
+- Apply benchmark-safe runtime config through the real IO/Hive control path before measuring localhost runtime rows: perf brains disable plasticity and homeostasis so explicit GPU runs benchmark the supported compute path instead of falling back to CPU on unsupported runtime features.
 
 ## Maintenance guidance
 

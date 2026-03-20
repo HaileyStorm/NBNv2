@@ -5855,7 +5855,7 @@ public sealed class HiveMindActor : IActor
             }
             _pendingDeliver.Add(brain.BrainId);
             _pendingDeliverSenders[brain.BrainId] = deliverTarget;
-            context.Send(deliverTarget, new ProtoControl.TickDeliver { TickId = _tick.TickId });
+            context.Request(deliverTarget, new ProtoControl.TickDeliver { TickId = _tick.TickId });
         }
 
         _tick.ExpectedDeliverCount = _pendingDeliver.Count;

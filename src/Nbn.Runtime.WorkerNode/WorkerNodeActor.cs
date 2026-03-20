@@ -115,6 +115,12 @@ public sealed class WorkerNodeActor : IActor
             case GetWorkerNodeSnapshot:
                 context.Respond(BuildSnapshot());
                 break;
+            case GetHostedBrainSnapshot request:
+                context.Respond(BuildHostedBrainSnapshot(request.BrainId));
+                break;
+            case GetHostedRegionShardBackendExecutionInfo request:
+                await HandleGetHostedRegionShardBackendExecutionInfoAsync(context, request).ConfigureAwait(false);
+                break;
             case Terminated terminated:
                 HandleTerminated(terminated);
                 break;
@@ -140,6 +146,10 @@ public sealed class WorkerNodeActor : IActor
 
     public sealed record GetWorkerNodeSnapshot;
 
+    public sealed record GetHostedBrainSnapshot(Guid BrainId);
+
+    public sealed record GetHostedRegionShardBackendExecutionInfo(Guid BrainId, int RegionId, int ShardIndex);
+
     public sealed record WorkerNodeSnapshot(
         Guid WorkerNodeId,
         string WorkerAddress,
@@ -148,6 +158,69 @@ public sealed class WorkerNodeActor : IActor
         WorkerServiceRole EnabledRoles,
         int TrackedAssignmentCount,
         WorkerResourceAvailability ResourceAvailability);
+
+    public sealed record HostedBrainSnapshot(
+        Guid BrainId,
+        PID? BrainRootPid,
+        PID? SignalRouterPid,
+        PID? InputCoordinatorPid,
+        PID? OutputCoordinatorPid,
+        PID? HiddenShardPid,
+        int RegionShardCount);
+
+    private HostedBrainSnapshot BuildHostedBrainSnapshot(Guid brainId)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return new HostedBrainSnapshot(brainId, null, null, null, null, null, 0);
+        }
+
+        return new HostedBrainSnapshot(
+            brain.BrainId,
+            brain.BrainRootPid,
+            brain.SignalRouterPid,
+            brain.InputCoordinatorPid,
+            brain.OutputCoordinatorPid,
+            brain.RegionShards.FirstOrDefault(static entry => entry.Key.RegionId == 1 && entry.Key.ShardIndex == 0).Value.Pid,
+            brain.RegionShards.Count);
+    }
+
+    private async Task HandleGetHostedRegionShardBackendExecutionInfoAsync(
+        IContext context,
+        GetHostedRegionShardBackendExecutionInfo request)
+    {
+        if (!_brains.TryGetValue(request.BrainId, out var brain)
+            || !SharedShardId32.TryFrom(request.RegionId, request.ShardIndex, out var shardId)
+            || !brain.RegionShards.TryGetValue(shardId, out var hostedShard))
+        {
+            context.Respond(new RegionShardBackendExecutionInfo(
+                RegionShardComputeBackendPreference.Auto,
+                BackendName: "unavailable",
+                UsedGpu: false,
+                FallbackReason: "hosted_region_shard_not_found",
+                HasExecuted: false));
+            return;
+        }
+
+        try
+        {
+            var info = await context.RequestAsync<RegionShardBackendExecutionInfo>(
+                    hostedShard.Pid,
+                    new GetRegionShardBackendExecutionInfo(),
+                    TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+            context.Respond(info);
+        }
+        catch (Exception ex)
+        {
+            context.Respond(new RegionShardBackendExecutionInfo(
+                RegionShardComputeBackendPreference.Auto,
+                BackendName: "unavailable",
+                UsedGpu: false,
+                FallbackReason: $"backend_execution_query_failed:{ex.GetBaseException().Message}",
+                HasExecuted: false));
+        }
+    }
 
     private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
     {
@@ -1126,7 +1199,7 @@ public sealed class WorkerNodeActor : IActor
             return;
         }
 
-        var remoteShardPid = ToRemotePid(context, shardPid);
+        var remoteShardPid = ToObservedRemotePid(context, shardPid);
         TryRequest(context, hiveMindPid, new ProtoControl.RegisterShard
         {
             BrainId = brain.BrainId.ToProtoUuid(),
@@ -1209,7 +1282,7 @@ public sealed class WorkerNodeActor : IActor
         var routes = brain.RegionShards.Values
             .OrderBy(static entry => entry.ShardId.RegionId)
             .ThenBy(static entry => entry.ShardId.ShardIndex)
-            .Select(entry => new ShardRoute(entry.ShardId.Value, ToRemotePid(context, entry.Pid)))
+            .Select(entry => new ShardRoute(entry.ShardId.Value, entry.Pid))
             .ToArray();
 
         var snapshot = routes.Length == 0 ? RoutingTableSnapshot.Empty : new RoutingTableSnapshot(routes);
@@ -1843,16 +1916,6 @@ public sealed class WorkerNodeActor : IActor
 
     private static void TryRequest(IContext context, PID target, object message)
     {
-        try
-        {
-            context.Request(target, message);
-            return;
-        }
-        catch
-        {
-            // Retry with local system address for address-less local endpoints.
-        }
-
         if (string.IsNullOrWhiteSpace(target.Address))
         {
             var systemAddress = context.System.Address;
@@ -1865,9 +1928,18 @@ public sealed class WorkerNodeActor : IActor
                 }
                 catch
                 {
-                    // Best-effort control-plane notifications should not crash placement hosting.
+                    // Fall through to the plain local PID for non-remote in-process cases.
                 }
             }
+        }
+
+        try
+        {
+            context.Request(target, message);
+        }
+        catch
+        {
+            // Best-effort control-plane notifications should not crash placement hosting.
         }
     }
 
@@ -2031,14 +2103,7 @@ public sealed class WorkerNodeActor : IActor
     {
         if (assignment.HostedPid is not null)
         {
-            var remotePid = ToRemotePid(context, assignment.HostedPid);
-            var normalizedId = NormalizeObservedActorId(remotePid.Id);
-            if (!string.Equals(normalizedId, remotePid.Id, StringComparison.Ordinal))
-            {
-                remotePid = new PID(remotePid.Address, normalizedId);
-            }
-
-            return PidLabel(remotePid);
+            return PidLabel(ToObservedRemotePid(context, assignment.HostedPid));
         }
 
         var configuredActorName = assignment.Assignment.ActorName?.Trim();
@@ -2064,6 +2129,9 @@ public sealed class WorkerNodeActor : IActor
 
         return string.IsNullOrWhiteSpace(_workerAddress) ? actor : $"{_workerAddress}/{actor}";
     }
+
+    private PID ToObservedRemotePid(IContext context, PID pid)
+        => ToRemotePid(context, pid);
 
     private void MaybeCaptureHiveMindHint(PID? sender)
     {

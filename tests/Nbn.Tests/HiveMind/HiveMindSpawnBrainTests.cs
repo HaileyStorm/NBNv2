@@ -122,8 +122,10 @@ public sealed class HiveMindSpawnBrainTests
                     BrainId = brainId.ToProtoUuid()
                 });
 
-            Assert.Equal($"worker.local/brain-{brainId:N}-root", routing.BrainRootPid);
-            Assert.Equal($"worker.local/brain-{brainId:N}-router", routing.SignalRouterPid);
+            Assert.StartsWith("worker.local/", routing.BrainRootPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-root", routing.BrainRootPid, StringComparison.Ordinal);
+            Assert.StartsWith("worker.local/", routing.SignalRouterPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-router", routing.SignalRouterPid, StringComparison.Ordinal);
 
             var ioInfo = await root.RequestAsync<ProtoControl.BrainIoInfo>(
                 hiveMind,
@@ -132,8 +134,10 @@ public sealed class HiveMindSpawnBrainTests
                     BrainId = brainId.ToProtoUuid()
                 });
 
-            Assert.Equal($"worker.local/brain-{brainId:N}-input", ioInfo.InputCoordinatorPid);
-            Assert.Equal($"worker.local/brain-{brainId:N}-output", ioInfo.OutputCoordinatorPid);
+            Assert.StartsWith("worker.local/", ioInfo.InputCoordinatorPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-input", ioInfo.InputCoordinatorPid, StringComparison.Ordinal);
+            Assert.StartsWith("worker.local/", ioInfo.OutputCoordinatorPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-output", ioInfo.OutputCoordinatorPid, StringComparison.Ordinal);
             Assert.False(ioInfo.IoGatewayOwnsInputCoordinator);
             Assert.False(ioInfo.IoGatewayOwnsOutputCoordinator);
 
@@ -214,8 +218,10 @@ public sealed class HiveMindSpawnBrainTests
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var register = await registerTcs.Task.WaitAsync(cts.Token);
 
-            Assert.Equal($"worker.local/brain-{brainId:N}-input", register.InputCoordinatorPid);
-            Assert.Equal($"worker.local/brain-{brainId:N}-output", register.OutputCoordinatorPid);
+            Assert.StartsWith("worker.local/", register.InputCoordinatorPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-input", register.InputCoordinatorPid, StringComparison.Ordinal);
+            Assert.StartsWith("worker.local/", register.OutputCoordinatorPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-output", register.OutputCoordinatorPid, StringComparison.Ordinal);
             Assert.False(register.IoGatewayOwnsInputCoordinator);
             Assert.False(register.IoGatewayOwnsOutputCoordinator);
 

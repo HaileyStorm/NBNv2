@@ -28,21 +28,16 @@ public class IoGatewayArtifactReferenceTests
 
             var workerNodeId = Guid.NewGuid();
             var ioName = $"io-{Guid.NewGuid():N}";
-            var metadataName = $"brain-info-{Guid.NewGuid():N}";
-
             var ioPid = new PID(string.Empty, ioName);
             var hiveMind = root.Spawn(
                 Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(), ioPid: ioPid)));
             var gateway = root.SpawnNamed(
                 Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveMind)),
                 ioName);
-            var metadata = root.SpawnNamed(
-                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
-                metadataName);
             var worker = root.Spawn(
                 Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "worker.local", artifactRootPath: artifactRoot)));
 
-            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, metadata.Id);
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, gateway.Id);
             PrimeWorkers(root, hiveMind, worker, workerNodeId);
 
             var response = await root.RequestAsync<SpawnBrainViaIOAck>(
@@ -87,8 +82,10 @@ public class IoGatewayArtifactReferenceTests
                 {
                     BrainId = brainId.ToProtoUuid()
                 });
-            Assert.Equal($"worker.local/brain-{brainId:N}-root", routing.BrainRootPid);
-            Assert.Equal($"worker.local/brain-{brainId:N}-router", routing.SignalRouterPid);
+            Assert.StartsWith("worker.local/", routing.BrainRootPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-root", routing.BrainRootPid, StringComparison.Ordinal);
+            Assert.StartsWith("worker.local/", routing.SignalRouterPid, StringComparison.Ordinal);
+            Assert.EndsWith($"brain-{brainId:N}-router", routing.SignalRouterPid, StringComparison.Ordinal);
 
             await system.ShutdownAsync();
         }
@@ -113,24 +110,19 @@ public class IoGatewayArtifactReferenceTests
 
             var workerNodeId = Guid.NewGuid();
             var ioName = $"io-{Guid.NewGuid():N}";
-            var metadataName = $"brain-info-{Guid.NewGuid():N}";
-
             var ioPid = new PID(string.Empty, ioName);
             var hiveMind = root.Spawn(
                 Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(), ioPid: ioPid)));
             var gateway = root.SpawnNamed(
                 Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveMind)),
                 ioName);
-            var metadata = root.SpawnNamed(
-                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
-                metadataName);
             var worker = root.Spawn(
                 Props.FromProducer(() => new WorkerNodeActor(
                     workerNodeId,
                     "worker.local",
                     artifactStore: new ThrowingArtifactStore("simulated artifact store load failure"))));
 
-            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, metadata.Id);
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, gateway.Id);
             PrimeWorkers(root, hiveMind, worker, workerNodeId);
 
             var response = await root.RequestAsync<SpawnBrainViaIOAck>(
@@ -2457,39 +2449,6 @@ public class IoGatewayArtifactReferenceTests
             HomeostasisEnergyTargetScale = 1.25f,
             HomeostasisEnergyProbabilityScale = 1.5f
         };
-    }
-
-    private sealed class FixedBrainInfoActor : IActor
-    {
-        private readonly ArtifactRef _baseDefinition;
-        private readonly uint _inputWidth;
-        private readonly uint _outputWidth;
-
-        public FixedBrainInfoActor(ArtifactRef baseDefinition, uint inputWidth, uint outputWidth)
-        {
-            _baseDefinition = baseDefinition.Clone();
-            _inputWidth = inputWidth;
-            _outputWidth = outputWidth;
-        }
-
-        public Task ReceiveAsync(IContext context)
-        {
-            if (context.Message is not BrainInfoRequest request)
-            {
-                return Task.CompletedTask;
-            }
-
-            context.Respond(new BrainInfo
-            {
-                BrainId = request.BrainId,
-                InputWidth = _inputWidth,
-                OutputWidth = _outputWidth,
-                BaseDefinition = _baseDefinition.Clone(),
-                LastSnapshot = new ArtifactRef()
-            });
-
-            return Task.CompletedTask;
-        }
     }
 
     private sealed class HiveSpawnProbe : IActor

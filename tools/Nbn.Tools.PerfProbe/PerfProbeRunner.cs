@@ -10,6 +10,7 @@ using Nbn.Proto.Settings;
 using Nbn.Proto.Signal;
 using Nbn.Proto.Viz;
 using Nbn.Runtime.Artifacts;
+using Nbn.Runtime.Brain;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
 using Nbn.Runtime.RegionHost;
@@ -25,8 +26,6 @@ using Proto.Remote.GrpcNet;
 using ProtoControl = Nbn.Proto.Control;
 using ProtoIo = Nbn.Proto.Io;
 using ProtoSettings = Nbn.Proto.Settings;
-using SharedGetHiveMindStatus = Nbn.Shared.HiveMind.GetHiveMindStatus;
-using SharedHiveMindStatus = Nbn.Shared.HiveMind.HiveMindStatus;
 
 namespace Nbn.Tools.PerfProbe;
 
@@ -34,6 +33,7 @@ public static class PerfProbeRunner
 {
     private const int DefaultInputWidth = 8;
     private const int DefaultOutputWidth = 8;
+    private const int MaxPackedAxonCount = 0x1FF;
     private const float SuccessThresholdRatio = 0.95f;
     private const string RuntimeExecutionGpuSkipReason = "regionshard_gpu_backend_not_available";
     private const string GpuPlannerWorkloadBelowThresholdSkipReason = "gpu_planner_workload_below_threshold";
@@ -965,7 +965,7 @@ public static class PerfProbeRunner
             });
     }
 
-    private sealed class LocalRuntimeHarness : IAsyncDisposable
+    internal sealed class LocalRuntimeHarness : IAsyncDisposable
     {
         private static readonly SemaphoreSlim BackendPreferenceGate = new(1, 1);
 
@@ -977,6 +977,7 @@ public static class PerfProbeRunner
             string artifactRoot,
             uint inputWidth,
             ArtifactRef brainDef,
+            string bootstrapIoEndpointActorName,
             RegionShardComputeBackendPreference computeBackendPreference)
         {
             System = system;
@@ -986,6 +987,7 @@ public static class PerfProbeRunner
             ArtifactRoot = artifactRoot;
             InputWidth = inputWidth;
             BrainDef = brainDef;
+            BootstrapIoEndpointActorName = bootstrapIoEndpointActorName;
             ComputeBackendPreference = computeBackendPreference;
         }
 
@@ -997,6 +999,7 @@ public static class PerfProbeRunner
         public string ArtifactRoot { get; }
         public uint InputWidth { get; }
         public ArtifactRef BrainDef { get; }
+        public string BootstrapIoEndpointActorName { get; }
         public RegionShardComputeBackendPreference ComputeBackendPreference { get; }
 
         public static async Task<LocalRuntimeHarness> CreateAsync(
@@ -1014,7 +1017,8 @@ public static class PerfProbeRunner
             var artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-perf-probe", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(artifactRoot);
 
-            var nbnBytes = BuildPerformanceNbn(hiddenNeuronCount, DefaultInputWidth, DefaultOutputWidth);
+            var inputWidth = ResolvePerformanceInputWidth(hiddenNeuronCount);
+            var nbnBytes = BuildPerformanceNbn(hiddenNeuronCount, inputWidth, DefaultOutputWidth);
             var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn").ConfigureAwait(false);
             var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
@@ -1033,11 +1037,15 @@ public static class PerfProbeRunner
             await system.Remote().StartAsync().ConfigureAwait(false);
             var root = system.Root;
             var workerId = Guid.NewGuid();
+            var hiveName = $"hive-{Guid.NewGuid():N}";
             var ioName = $"io-{Guid.NewGuid():N}";
             var metadataName = $"brain-info-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
             var ioPid = new PID(string.Empty, ioName);
 
-            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(targetTickHz), ioPid: ioPid)));
+            var hiveMind = root.SpawnNamed(
+                Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(targetTickHz), ioPid: ioPid)),
+                hiveName);
             var ioGateway = root.SpawnNamed(
                 Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(), hiveMindPid: hiveMind)),
                 ioName);
@@ -1045,14 +1053,15 @@ public static class PerfProbeRunner
                 Props.FromProducer(() => new FixedBrainInfoActor(brainDef, DefaultInputWidth, DefaultOutputWidth)),
                 metadataName);
             var capabilityProvider = new WorkerNodeCapabilityProvider(availability: benchmarkAvailability);
-            var worker = root.Spawn(
+            var worker = root.SpawnNamed(
                 Props.FromProducer(() => new WorkerNodeActor(
                     workerId,
                     string.Empty,
                     artifactRootPath: artifactRoot,
-                    resourceAvailability: benchmarkAvailability)));
+                    resourceAvailability: benchmarkAvailability)),
+                workerName);
 
-            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, metadataName);
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveName, metadataName);
             PrimeWorkers(root, hiveMind, worker, workerId, capabilityProvider.GetCapabilities());
 
             await WaitForAsync(
@@ -1073,13 +1082,16 @@ public static class PerfProbeRunner
                 ioGateway,
                 worker,
                 artifactRoot,
-                DefaultInputWidth,
+                (uint)inputWidth,
                 brainDef,
+                metadataName,
                 computeBackendPreference);
         }
 
         public async Task<Guid> SpawnBrainAsync(CancellationToken cancellationToken)
         {
+            PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, BootstrapIoEndpointActorName);
+
             var response = await WithScopedBackendPreferenceAsync(
                     ComputeBackendPreference,
                     () => Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
@@ -1118,6 +1130,173 @@ public static class PerfProbeRunner
                     cancellationToken)
                 .ConfigureAwait(false);
 
+            PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, IoGateway.Id);
+
+            Root.Send(IoGateway, new ProtoIo.RegisterBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = InputWidth,
+                OutputWidth = DefaultOutputWidth,
+                BaseDefinition = BrainDef,
+                InputCoordinatorMode = ProtoControl.InputCoordinatorMode.DirtyOnChange,
+                OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
+                IoGatewayOwnsInputCoordinator = true,
+                IoGatewayOwnsOutputCoordinator = true
+            });
+
+            await WaitForAsync(
+                    async () =>
+                    {
+                        var brainInfo = await Root.RequestAsync<ProtoIo.BrainInfo>(
+                                IoGateway,
+                                new ProtoIo.BrainInfoRequest
+                                {
+                                    BrainId = brainId.ToProtoUuid()
+                                })
+                            .ConfigureAwait(false);
+                        return brainInfo.InputWidth >= InputWidth && brainInfo.OutputWidth >= DefaultOutputWidth;
+                    },
+                    TimeSpan.FromSeconds(5),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            ProtoIo.IoCommandAck plasticityAck;
+            try
+            {
+                plasticityAck = await Root.RequestAsync<ProtoIo.IoCommandAck>(
+                        IoGateway,
+                        new ProtoIo.SetPlasticityEnabled
+                        {
+                            BrainId = brainId.ToProtoUuid(),
+                            PlasticityEnabled = false,
+                            PlasticityRate = 0f,
+                            ProbabilisticUpdates = false,
+                            PlasticityDelta = 0f,
+                            PlasticityRebaseThreshold = 0,
+                            PlasticityRebaseThresholdPct = 0f,
+                            PlasticityEnergyCostModulationEnabled = false,
+                            PlasticityEnergyCostReferenceTickCost = 0,
+                            PlasticityEnergyCostResponseStrength = 1f,
+                            PlasticityEnergyCostMinScale = 1f,
+                            PlasticityEnergyCostMaxScale = 1f
+                        },
+                        TimeSpan.FromSeconds(2))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Timed out applying perf plasticity config for brain {brainId:N}.",
+                    ex);
+            }
+            if (!plasticityAck.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to disable plasticity for perf brain {brainId:N}: {plasticityAck.Message}");
+            }
+
+            ProtoIo.IoCommandAck homeostasisAck;
+            try
+            {
+                homeostasisAck = await Root.RequestAsync<ProtoIo.IoCommandAck>(
+                        IoGateway,
+                        new ProtoIo.SetHomeostasisEnabled
+                        {
+                            BrainId = brainId.ToProtoUuid(),
+                            HomeostasisEnabled = false,
+                            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+                            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                            HomeostasisBaseProbability = 0f,
+                            HomeostasisMinStepCodes = 1,
+                            HomeostasisEnergyCouplingEnabled = false,
+                            HomeostasisEnergyTargetScale = 1f,
+                            HomeostasisEnergyProbabilityScale = 1f
+                        },
+                        TimeSpan.FromSeconds(2))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Timed out applying perf homeostasis config for brain {brainId:N}.",
+                    ex);
+            }
+            if (!homeostasisAck.Success)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to disable homeostasis for perf brain {brainId:N}: {homeostasisAck.Message}");
+            }
+
+            WorkerNodeActor.HostedBrainSnapshot? lastHosted = null;
+            ProtoControl.BrainRoutingInfo? lastHiveRouting = null;
+            var lastControlPid = "<none>";
+            var lastHiddenRoutePresent = false;
+            var lastControllerRouteCount = -1;
+            var routingReadyDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (DateTime.UtcNow >= routingReadyDeadline)
+                {
+                    throw new InvalidOperationException(
+                        $"Local runtime routing did not stabilize for brain {brainId:N}. " +
+                        $"hostedControl={lastControlPid} regionShards={lastHosted?.RegionShardCount ?? 0} hiddenShard={FormatPid(lastHosted?.HiddenShardPid)} " +
+                        $"hiveRoot={lastHiveRouting?.BrainRootPid ?? "<none>"} hiveRouter={lastHiveRouting?.SignalRouterPid ?? "<none>"} " +
+                        $"hiveShardCount={lastHiveRouting?.ShardCount ?? 0} hiveRoutingCount={lastHiveRouting?.RoutingCount ?? 0} " +
+                        $"controllerRouteCount={lastControllerRouteCount} hiddenRoutePresent={lastHiddenRoutePresent}");
+                }
+
+                lastHosted = await Root.RequestAsync<WorkerNodeActor.HostedBrainSnapshot>(
+                        Worker,
+                        new WorkerNodeActor.GetHostedBrainSnapshot(brainId),
+                        TimeSpan.FromSeconds(2))
+                    .ConfigureAwait(false);
+                if (lastHosted.RegionShardCount == 0 || lastHosted.HiddenShardPid is null)
+                {
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var controlPid = lastHosted.SignalRouterPid ?? lastHosted.BrainRootPid;
+                if (controlPid is null)
+                {
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                lastControlPid = FormatPid(controlPid);
+                lastHiveRouting = await Root.RequestAsync<ProtoControl.BrainRoutingInfo>(
+                        HiveMind,
+                        new ProtoControl.GetBrainRouting
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        },
+                        TimeSpan.FromSeconds(2))
+                    .ConfigureAwait(false);
+                var controlKnownByHiveMind =
+                    PidLabelRefersToActor(lastHiveRouting.SignalRouterPid, controlPid)
+                    || PidLabelRefersToActor(lastHiveRouting.BrainRootPid, controlPid);
+                if (!controlKnownByHiveMind || lastHiveRouting.ShardCount == 0 || lastHiveRouting.RoutingCount == 0)
+                {
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var routing = await Root.RequestAsync<RoutingTableSnapshot>(
+                        controlPid,
+                        new GetRoutingTable(),
+                        TimeSpan.FromSeconds(2))
+                    .ConfigureAwait(false);
+                lastControllerRouteCount = routing.Count;
+                lastHiddenRoutePresent = routing.Routes.Any(static route => route.ShardId.RegionId == 1 && route.ShardId.ShardIndex == 0);
+                if (lastHiddenRoutePresent)
+                {
+                    break;
+                }
+
+                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+            }
+
             return brainId;
         }
 
@@ -1132,18 +1311,33 @@ public static class PerfProbeRunner
 
             foreach (var brainId in brainIds)
             {
-                RegionShardBackendExecutionInfo info;
-                try
+                RegionShardBackendExecutionInfo info = default;
+                var observedExecution = false;
+                for (var attempt = 0; attempt < 20; attempt++)
                 {
                     info = await Root.RequestAsync<RegionShardBackendExecutionInfo>(
-                            new PID(string.Empty, BuildComputeShardActorName(brainId)),
-                            new GetRegionShardBackendExecutionInfo(),
+                            Worker,
+                            new WorkerNodeActor.GetHostedRegionShardBackendExecutionInfo(brainId, RegionId: 1, ShardIndex: 0),
                             TimeSpan.FromSeconds(2))
                         .ConfigureAwait(false);
+                    if (info.HasExecuted)
+                    {
+                        observedExecution = true;
+                        break;
+                    }
+
+                    await Task.Delay(50, cancellationToken).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+
+                if (string.Equals(info.BackendName, "unavailable", StringComparison.Ordinal))
                 {
-                    return $"backend_execution_query_failed:{ex.GetBaseException().Message}";
+                    return string.IsNullOrWhiteSpace(info.FallbackReason)
+                        ? $"backend_execution_query_failed:region_shard_unavailable:{brainId:N}"
+                        : info.FallbackReason;
+                }
+                if (!observedExecution)
+                {
+                    return $"backend_execution_query_failed:region_shard_never_executed:{brainId:N}";
                 }
 
                 var shouldUseGpu = ComputeBackendPreference == RegionShardComputeBackendPreference.Gpu;
@@ -1164,11 +1358,14 @@ public static class PerfProbeRunner
             TimeSpan duration,
             CancellationToken cancellationToken)
         {
+            var before = await Root.RequestAsync<ProtoControl.HiveMindStatus>(
+                    HiveMind,
+                    new ProtoControl.GetHiveMindStatus())
+                .ConfigureAwait(false);
+
             StartTickLoop();
             using var inputLoadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var inputLoadTask = RunInputLoadAsync(brainIds, targetTickHz, inputLoadCancellation.Token);
-
-            var before = await Root.RequestAsync<SharedHiveMindStatus>(HiveMind, new SharedGetHiveMindStatus()).ConfigureAwait(false);
             try
             {
                 await Task.Delay(duration, cancellationToken).ConfigureAwait(false);
@@ -1187,7 +1384,10 @@ public static class PerfProbeRunner
                 StopTickLoop();
             }
 
-            var after = await Root.RequestAsync<SharedHiveMindStatus>(HiveMind, new SharedGetHiveMindStatus()).ConfigureAwait(false);
+            var after = await Root.RequestAsync<ProtoControl.HiveMindStatus>(
+                    HiveMind,
+                    new ProtoControl.GetHiveMindStatus())
+                .ConfigureAwait(false);
             var completedTicks = after.LastCompletedTickId >= before.LastCompletedTickId
                 ? after.LastCompletedTickId - before.LastCompletedTickId
                 : 0UL;
@@ -1238,6 +1438,46 @@ public static class PerfProbeRunner
             }
         }
 
+        private static string FormatPid(PID? pid)
+            => pid is null
+                ? "<none>"
+                : string.IsNullOrWhiteSpace(pid.Address)
+                    ? pid.Id
+                    : $"{pid.Address}/{pid.Id}";
+
+        private static bool PidLabelRefersToActor(string? pidLabel, PID pid)
+            => string.Equals(
+                NormalizeObservedActorId(ExtractActorId(pidLabel)),
+                NormalizeObservedActorId(pid.Id),
+                StringComparison.Ordinal);
+
+        private static string ExtractActorId(string? pidLabel)
+        {
+            if (string.IsNullOrWhiteSpace(pidLabel))
+            {
+                return string.Empty;
+            }
+
+            var slash = pidLabel.IndexOf('/');
+            return slash >= 0 && slash < pidLabel.Length - 1
+                ? pidLabel[(slash + 1)..]
+                : pidLabel;
+        }
+
+        private static string NormalizeObservedActorId(string actorId)
+        {
+            if (string.IsNullOrWhiteSpace(actorId) || !actorId.Contains('/', StringComparison.Ordinal))
+            {
+                return actorId;
+            }
+
+            var parts = actorId
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Where(static part => !part.StartsWith("$", StringComparison.Ordinal))
+                .ToArray();
+            return parts.Length == 0 ? actorId : string.Join("/", parts);
+        }
+
         private static async Task<T> WithScopedBackendPreferenceAsync<T>(
             RegionShardComputeBackendPreference preference,
             Func<Task<T>> action)
@@ -1265,8 +1505,6 @@ public static class PerfProbeRunner
             }
         }
 
-        private static string BuildComputeShardActorName(Guid brainId)
-            => $"brain-{brainId:N}-r1-s0";
     }
 
     private sealed class FixedBrainInfoActor : IActor
@@ -1357,7 +1595,7 @@ public static class PerfProbeRunner
             PlacementAssignmentMaxRetries: 1,
             PlacementReconcileTimeoutMs: 1_000);
 
-    private static void PrimeWorkerDiscoveryEndpoints(IRootContext root, PID workerPid, string hiveName, string metadataName)
+    private static void PrimeWorkerDiscoveryEndpoints(IRootContext root, PID workerPid, string hiveName, string ioName)
     {
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
@@ -1368,7 +1606,7 @@ public static class PerfProbeRunner
                 nowMs),
             [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
                 ServiceEndpointSettings.IoGatewayKey,
-                new ServiceEndpoint(string.Empty, metadataName),
+                new ServiceEndpoint(string.Empty, ioName),
                 nowMs)
         };
 
@@ -1532,6 +1770,17 @@ public static class PerfProbeRunner
             regions: directory);
 
         return NbnBinary.WriteNbn(header, sections);
+    }
+
+    private static int ResolvePerformanceInputWidth(int hiddenNeuronCount)
+    {
+        if (hiddenNeuronCount <= 0)
+        {
+            return DefaultInputWidth;
+        }
+
+        var requiredWidth = (int)Math.Ceiling(hiddenNeuronCount / (double)MaxPackedAxonCount);
+        return Math.Max(DefaultInputWidth, requiredWidth);
     }
 
     private static ulong AddRegionSection(
