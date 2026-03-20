@@ -38,6 +38,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     private readonly WorkbenchClient _client;
     private readonly ILocalProjectLaunchPreparer _launchPreparer;
     private readonly ILocalFirewallManager _firewallManager;
+    private readonly IWorkbenchArtifactPublisher _artifactPublisher;
     private readonly LocalServiceRunner _settingsRunner = new();
     private readonly LocalServiceRunner _hiveMindRunner = new();
     private readonly LocalServiceRunner _ioRunner = new();
@@ -124,13 +125,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         Func<Task>? connectAll = null,
         Action? disconnectAll = null,
         ILocalProjectLaunchPreparer? launchPreparer = null,
-        ILocalFirewallManager? firewallManager = null)
+        ILocalFirewallManager? firewallManager = null,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _client = client;
         _launchPreparer = launchPreparer ?? new LocalProjectLaunchPreparer();
         _firewallManager = firewallManager ?? new LocalFirewallManager();
+        _artifactPublisher = artifactPublisher ?? new WorkbenchArtifactPublisher(_firewallManager, WorkbenchLog.Info, WorkbenchLog.Warn);
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;
@@ -1013,11 +1016,15 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return;
         }
 
-        var artifactPath = string.IsNullOrWhiteSpace(artifact.ArtifactRoot) ? artifactRoot : artifact.ArtifactRoot;
+        if (!string.IsNullOrWhiteSpace(artifact.AttentionMessage))
+        {
+            WorkbenchLog.Warn($"Sample spawn artifact access: {artifact.AttentionMessage}");
+        }
+
         SampleBrainStatus = "Spawning sample brain via IO/HiveMind worker placement...";
         var spawnAck = await _client.SpawnBrainViaIoAsync(new Nbn.Proto.Control.SpawnBrain
         {
-            BrainDef = artifact.Sha256.ToArtifactRef((ulong)Math.Max(0L, artifact.Size), "application/x-nbn", artifactPath)
+            BrainDef = artifact.ArtifactRef
         }).ConfigureAwait(false);
         if (spawnAck?.BrainId is null || !spawnAck.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
         {
@@ -3029,11 +3036,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
     {
         try
         {
-            Directory.CreateDirectory(artifactRoot);
-            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
             var nbnBytes = DemoNbnBuilder.BuildSampleNbn();
-            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn").ConfigureAwait(false);
-            return new SampleArtifact(manifest.ArtifactId.ToHex(), manifest.ByteLength, artifactRoot);
+            var publishedArtifact = await _artifactPublisher
+                .PublishAsync(
+                    nbnBytes,
+                    "application/x-nbn",
+                    artifactRoot,
+                    _connections.LocalBindHost,
+                    label: "Workbench Sample Spawn")
+                .ConfigureAwait(false);
+            return new SampleArtifact(publishedArtifact.ArtifactRef, publishedArtifact.AttentionMessage);
         }
         catch (Exception ex)
         {
@@ -3042,5 +3054,5 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         }
     }
 
-    private sealed record SampleArtifact(string Sha256, long Size, string ArtifactRoot);
+    private sealed record SampleArtifact(Nbn.Proto.ArtifactRef ArtifactRef, string? AttentionMessage);
 }

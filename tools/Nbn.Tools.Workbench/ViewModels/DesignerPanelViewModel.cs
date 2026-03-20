@@ -110,6 +110,7 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private static readonly double[] AccumulationFunctionWeights = BuildAccumulationFunctionWeights();
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
+    private readonly IWorkbenchArtifactPublisher _artifactPublisher;
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
     private string _status = "Designer ready.";
@@ -165,10 +166,15 @@ public sealed class DesignerPanelViewModel : ViewModelBase
     private string _spawnShardTargetNeuronsText = "0";
     private readonly RandomBrainOptionsViewModel _randomOptions;
 
-    public DesignerPanelViewModel(ConnectionViewModel connections, WorkbenchClient client, Action<Guid>? brainDiscovered = null)
+    public DesignerPanelViewModel(
+        ConnectionViewModel connections,
+        WorkbenchClient client,
+        Action<Guid>? brainDiscovered = null,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
     {
         _connections = connections;
         _client = client;
+        _artifactPublisher = artifactPublisher ?? new WorkbenchArtifactPublisher(logInfo: WorkbenchLog.Info, logWarn: WorkbenchLog.Warn);
         _brainDiscovered = brainDiscovered;
         _spawnArtifactRoot = BuildDefaultArtifactRoot();
         _randomOptions = new RandomBrainOptionsViewModel();
@@ -1567,22 +1573,28 @@ public sealed class DesignerPanelViewModel : ViewModelBase
 
             _ = await _client.GetPlacementWorkerInventoryAsync().ConfigureAwait(false);
 
-            var artifactRoot = string.IsNullOrWhiteSpace(SpawnArtifactRoot) ? BuildDefaultArtifactRoot() : SpawnArtifactRoot;
-            var brainArtifactRoot = Path.Combine(artifactRoot, designBrainId.ToString("N"));
-            Directory.CreateDirectory(brainArtifactRoot);
-
             var nbnBytes = NbnBinary.WriteNbn(header, sections);
-            var store = new LocalArtifactStore(new ArtifactStoreOptions(brainArtifactRoot));
-            var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn");
-            var artifactRef = manifest.ArtifactId.Bytes.ToArray()
-                .ToArtifactRef((ulong)Math.Max(0L, manifest.ByteLength), "application/x-nbn", brainArtifactRoot);
+            var artifactRoot = string.IsNullOrWhiteSpace(SpawnArtifactRoot) ? BuildDefaultArtifactRoot() : SpawnArtifactRoot;
+            var publishedArtifact = await _artifactPublisher
+                .PublishAsync(
+                    nbnBytes,
+                    "application/x-nbn",
+                    artifactRoot,
+                    _connections.LocalBindHost,
+                    label: "Workbench Designer")
+                .ConfigureAwait(false);
+            var artifactRef = publishedArtifact.ArtifactRef;
+            if (!string.IsNullOrWhiteSpace(publishedArtifact.AttentionMessage))
+            {
+                WorkbenchLog.Warn($"Designer spawn artifact access: {publishedArtifact.AttentionMessage}");
+            }
             if (LogSpawnDiagnostics && WorkbenchLog.Enabled)
             {
-                var artifactSha = manifest.ArtifactId.ToHex().ToLowerInvariant();
+                var artifactSha = artifactRef.ToSha256Hex().ToLowerInvariant();
                 var regionCount = sections.Count;
                 var neuronCount = sections.Sum(section => (long)section.NeuronSpan);
                 WorkbenchLog.Info(
-                    $"SpawnDiag designBrain={designBrainId:D} artifactSha={artifactSha} artifactRoot={brainArtifactRoot} regions={regionCount} neurons={neuronCount} shardPlan={sharedPlanMode} plannedShards={plannedShardCount}");
+                    $"SpawnDiag designBrain={designBrainId:D} artifactSha={artifactSha} artifactStore={artifactRef.StoreUri} backingRoot={artifactRoot} regions={regionCount} neurons={neuronCount} shardPlan={sharedPlanMode} plannedShards={plannedShardCount}");
             }
 
             Status = "Spawning brain via IO/HiveMind worker placement...";

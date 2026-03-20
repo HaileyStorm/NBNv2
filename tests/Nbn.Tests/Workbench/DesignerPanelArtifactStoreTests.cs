@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Nbn.Proto.Control;
 using Nbn.Proto.Settings;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Tests.TestSupport;
 using Nbn.Tools.Workbench.Models;
@@ -11,6 +12,55 @@ namespace Nbn.Tests.Workbench;
 
 public sealed class DesignerPanelArtifactStoreTests
 {
+    [Fact]
+    public async Task WorkbenchArtifactPublisher_PublishesHttpArtifactsReadableByHttpArtifactStore()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-workbench-publisher-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var payload = Enumerable.Range(0, 256).Select(static value => (byte)value).ToArray();
+            await using var publisher = new WorkbenchArtifactPublisher();
+
+            var published = await publisher.PublishAsync(
+                payload,
+                "application/x-nbn",
+                artifactRoot,
+                NetworkAddressDefaults.LoopbackHost);
+
+            Assert.StartsWith("http://127.0.0.1:", published.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(published.AttentionMessage);
+
+            var store = new HttpArtifactStore(published.ArtifactRef.StoreUri);
+            var hash = new Sha256Hash(published.ArtifactRef.ToSha256Bytes());
+            var manifest = await store.TryGetManifestAsync(hash);
+            Assert.NotNull(manifest);
+            Assert.Equal(payload.LongLength, manifest!.ByteLength);
+            Assert.Equal("application/x-nbn", manifest.MediaType);
+
+            await using var fullStream = await store.TryOpenArtifactAsync(hash);
+            Assert.NotNull(fullStream);
+            using var fullBuffer = new MemoryStream();
+            await fullStream!.CopyToAsync(fullBuffer);
+            Assert.Equal(payload, fullBuffer.ToArray());
+
+            await using var rangeStream = await store.TryOpenArtifactRangeAsync(hash, offset: 32, length: 40);
+            Assert.NotNull(rangeStream);
+            using var rangeBuffer = new MemoryStream();
+            await rangeStream!.CopyToAsync(rangeBuffer);
+            Assert.Equal(payload.Skip(32).Take(40).ToArray(), rangeBuffer.ToArray());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public async Task StoreCurrentDefinitionArtifactAsync_RegisteredNonFileStore_UsesResolver_AndReloadsFromArtifactRef()
     {

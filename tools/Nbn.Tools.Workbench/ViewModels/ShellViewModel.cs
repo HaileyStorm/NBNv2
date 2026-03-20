@@ -12,6 +12,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 {
     private readonly UiDispatcher _dispatcher = new();
     private readonly WorkbenchClient _client;
+    private readonly IWorkbenchArtifactPublisher _artifactPublisher;
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
     private CancellationTokenSource? _connectCts;
@@ -23,17 +24,26 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
     }
 
-    internal ShellViewModel(WorkbenchClient? client, bool autoConnect)
+    internal ShellViewModel(WorkbenchClient? client, bool autoConnect, IWorkbenchArtifactPublisher? artifactPublisher = null)
     {
         WorkbenchProcessRegistry.Default.CleanupStale();
 
         Connections = new ConnectionViewModel();
         _client = client ?? new WorkbenchClient(this);
+        _artifactPublisher = artifactPublisher ?? new WorkbenchArtifactPublisher(logInfo: WorkbenchLog.Info, logWarn: WorkbenchLog.Warn);
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
         Viz.VisualizationSelectionChanged += UpdateObservabilitySubscriptions;
-        Orchestrator = new OrchestratorPanelViewModel(_dispatcher, Connections, _client, OnBrainDiscovered, OnBrainsUpdated, ConnectAllAsync, DisconnectAll);
+        Orchestrator = new OrchestratorPanelViewModel(
+            _dispatcher,
+            Connections,
+            _client,
+            OnBrainDiscovered,
+            OnBrainsUpdated,
+            ConnectAllAsync,
+            DisconnectAll,
+            artifactPublisher: _artifactPublisher);
         Debug = new DebugPanelViewModel(_client, _dispatcher, Connections);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client, Connections);
@@ -44,7 +54,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Orchestrator.StartSpeciationServiceAsync,
             Orchestrator.StopSpeciationServiceAsync,
             Orchestrator.RefreshSettingsAsync);
-        Designer = new DesignerPanelViewModel(Connections, _client, OnSpawnedBrainDiscovered);
+        Designer = new DesignerPanelViewModel(Connections, _client, OnSpawnedBrainDiscovered, _artifactPublisher);
 
         Navigation = new ObservableCollection<NavItemViewModel>
         {
@@ -295,6 +305,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         _connectCts?.Cancel();
         _connectCts = null;
         SetDisconnectedStatuses();
+        await _artifactPublisher.DisposeAsync().ConfigureAwait(false);
         await _client.DisposeAsync().ConfigureAwait(false);
     }
 

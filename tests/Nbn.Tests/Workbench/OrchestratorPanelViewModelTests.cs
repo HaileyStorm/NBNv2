@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using Nbn.Proto.Control;
 using Nbn.Proto.Settings;
 using Nbn.Shared;
@@ -1633,6 +1634,7 @@ public class OrchestratorPanelViewModelTests
         var spawnedBrainId = Guid.NewGuid();
         var registrationPolls = 0;
         var lifecyclePolls = 0;
+        var artifactPublisher = new FakeWorkbenchArtifactPublisher();
         var client = new FakeWorkbenchClient
         {
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
@@ -1656,7 +1658,7 @@ public class OrchestratorPanelViewModelTests
                     : BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 4);
             }
         };
-        var vm = CreateViewModel(connections, client);
+        var vm = CreateViewModel(connections, client, artifactPublisher: artifactPublisher);
 
         vm.SpawnSampleBrainCommand.Execute(null);
         await WaitForAsync(() => vm.SampleBrainStatus.Contains("Sample brain running", StringComparison.Ordinal));
@@ -1667,6 +1669,8 @@ public class OrchestratorPanelViewModelTests
         Assert.True(client.GetPlacementLifecycleCallCount >= 2);
         Assert.NotNull(client.LastSpawnRequest);
         Assert.Equal("application/x-nbn", client.LastSpawnRequest!.BrainDef?.MediaType);
+        Assert.Equal(artifactPublisher.BaseUri, client.LastSpawnRequest.BrainDef?.StoreUri);
+        Assert.Equal(1, artifactPublisher.PublishCallCount);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.SampleBrainStatus, StringComparison.Ordinal);
 
@@ -1930,7 +1934,8 @@ public class OrchestratorPanelViewModelTests
                     : BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 8);
             }
         };
-        var vm = new DesignerPanelViewModel(connections, client);
+        var artifactPublisher = new FakeWorkbenchArtifactPublisher();
+        var vm = CreateDesignerViewModel(connections, client, artifactPublisher);
         vm.NewBrainCommand.Execute(null);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
@@ -1942,6 +1947,9 @@ public class OrchestratorPanelViewModelTests
         Assert.True(client.ListBrainsCallCount >= 2);
         Assert.True(client.GetPlacementLifecycleCallCount >= 2);
         Assert.Equal(0, client.KillBrainCallCount);
+        Assert.NotNull(client.LastSpawnRequest);
+        Assert.Equal(artifactPublisher.BaseUri, client.LastSpawnRequest!.BrainDef?.StoreUri);
+        Assert.Equal(1, artifactPublisher.PublishCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
     }
@@ -1969,7 +1977,7 @@ public class OrchestratorPanelViewModelTests
                 ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
                 : null
         };
-        var vm = new DesignerPanelViewModel(connections, client);
+        var vm = CreateDesignerViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
@@ -2008,7 +2016,7 @@ public class OrchestratorPanelViewModelTests
                 ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
                 : null
         };
-        var vm = new DesignerPanelViewModel(connections, client);
+        var vm = CreateDesignerViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
@@ -2043,7 +2051,7 @@ public class OrchestratorPanelViewModelTests
                 ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
                 : null
         };
-        var vm = new DesignerPanelViewModel(connections, client);
+        var vm = CreateDesignerViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
@@ -2077,7 +2085,7 @@ public class OrchestratorPanelViewModelTests
                 FailureMessage = "Spawn failed: placement assignment acknowledgements timed out and retry budget was exhausted."
             }
         };
-        var vm = new DesignerPanelViewModel(connections, client);
+        var vm = CreateDesignerViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
@@ -2108,7 +2116,7 @@ public class OrchestratorPanelViewModelTests
             SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
             BrainListFactory = static () => new BrainListResponse()
         };
-        var vm = new DesignerPanelViewModel(connections, client);
+        var vm = CreateDesignerViewModel(connections, client);
         vm.NewBrainCommand.Execute(null);
         vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
 
@@ -2128,7 +2136,8 @@ public class OrchestratorPanelViewModelTests
         ConnectionViewModel connections,
         WorkbenchClient client,
         ILocalProjectLaunchPreparer? launchPreparer = null,
-        ILocalFirewallManager? firewallManager = null)
+        ILocalFirewallManager? firewallManager = null,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
     {
         return new OrchestratorPanelViewModel(
             new UiDispatcher(),
@@ -2137,8 +2146,15 @@ public class OrchestratorPanelViewModelTests
             connectAll: () => Task.CompletedTask,
             disconnectAll: () => { },
             launchPreparer: launchPreparer,
-            firewallManager: firewallManager ?? new FakeLocalFirewallManager());
+            firewallManager: firewallManager ?? new FakeLocalFirewallManager(),
+            artifactPublisher: artifactPublisher ?? new FakeWorkbenchArtifactPublisher());
     }
+
+    private static DesignerPanelViewModel CreateDesignerViewModel(
+        ConnectionViewModel connections,
+        WorkbenchClient client,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
+        => new(connections, client, artifactPublisher: artifactPublisher ?? new FakeWorkbenchArtifactPublisher());
 
     private static async Task WaitForAsync(Func<bool> predicate, int timeoutMs = 2000)
     {
@@ -2352,6 +2368,36 @@ public class OrchestratorPanelViewModelTests
             LastKillReason = reason;
             return Task.FromResult(KillBrainResult);
         }
+    }
+
+    private sealed class FakeWorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
+    {
+        public string BaseUri { get; set; } = "http://127.0.0.1:19091/";
+        public string? AttentionMessage { get; set; }
+        public int PublishCallCount { get; private set; }
+        public string? LastMediaType { get; private set; }
+        public string? LastBackingStoreRoot { get; private set; }
+        public string? LastBindHost { get; private set; }
+
+        public Task<PublishedArtifact> PublishAsync(
+            byte[] bytes,
+            string mediaType,
+            string backingStoreRoot,
+            string bindHost,
+            string? advertisedHost = null,
+            string? label = null,
+            CancellationToken cancellationToken = default)
+        {
+            PublishCallCount++;
+            LastMediaType = mediaType;
+            LastBackingStoreRoot = backingStoreRoot;
+            LastBindHost = bindHost;
+            var artifactRef = SHA256.HashData(bytes)
+                .ToArtifactRef((ulong)Math.Max(0, bytes.Length), mediaType, BaseUri);
+            return Task.FromResult(new PublishedArtifact(artifactRef, AttentionMessage));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink
