@@ -43,7 +43,7 @@ static async Task RunAsync(string[] args)
         var seed = GetULongArg(args, "--seed") ?? 12345UL;
         var intervalMs = Math.Max(0, GetIntArg(args, "--interval-ms") ?? 100);
         var statusSeconds = Math.Max(1, GetIntArg(args, "--status-seconds") ?? 5);
-        var requestTimeoutSeconds = Math.Max(1, GetIntArg(args, "--timeout-seconds") ?? 10);
+        var requestTimeoutSeconds = Math.Max(1, GetIntArg(args, "--timeout-seconds") ?? 45);
         var maxIterations = Math.Max(0, GetIntArg(args, "--max-iterations") ?? 0);
         var maxPoolSize = Math.Max(2, GetIntArg(args, "--max-parent-pool") ?? 512);
         var commitToSpeciation = GetBoolArg(args, "--commit-to-speciation") ?? true;

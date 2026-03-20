@@ -626,6 +626,34 @@ public class SpeciationPanelViewModelTests
         Assert.Contains("--run-pressure-mode divergence", args, StringComparison.Ordinal);
         Assert.Contains("--parent-selection-bias stability", args, StringComparison.Ordinal);
         Assert.Contains("--interval-ms 100", args, StringComparison.Ordinal);
+        Assert.Contains("--timeout-seconds 45", args, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildEvolutionSimArgs_UsesReachableAdvertiseHost_ForLocalSimulatorClient()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "10.20.30.41"));
+
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.Connections.LocalBindHost = "10.20.30.41";
+        var parentIds = new List<Guid>
+        {
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222")
+        };
+
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "BuildEvolutionSimArgs",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
+            modifiers: null);
+        Assert.NotNull(method);
+
+        var args = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
+
+        Assert.NotNull(args);
+        Assert.Contains("--advertise-host 10.20.30.41", args!, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2853,6 +2881,28 @@ public class SpeciationPanelViewModelTests
         public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
+        }
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);
+
+        public EnvironmentVariableScope(params (string Key, string? Value)[] values)
+        {
+            foreach (var (key, value) in values)
+            {
+                _originals[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (key, value) in _originals)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+            }
         }
     }
 

@@ -18,7 +18,7 @@ public sealed record EvolutionSimulationOptions
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(1);
     public int MaxIterations { get; init; } // 0 = unbounded
     public int MaxParentPoolSize { get; init; } = 512;
-    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(45);
     public bool CommitToSpeciation { get; init; } = true;
     public bool SpawnChildren { get; init; }
     public EvolutionParentMode ParentMode { get; init; } = EvolutionParentMode.ArtifactRefs;

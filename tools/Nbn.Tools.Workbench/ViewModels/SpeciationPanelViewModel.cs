@@ -198,7 +198,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _simSeedText = "12345";
     private string _simIntervalMsText = "100";
     private string _simStatusSecondsText = "2";
-    private string _simTimeoutSecondsText = "10";
+    private string _simTimeoutSecondsText = "45";
     private string _simMaxIterationsText = "0";
     private string _simMaxParentPoolText = "512";
     private string _simMinRunsText = "2";
@@ -2849,7 +2849,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             $"--seed {ParseULong(SimSeedText, 12345UL)}",
             $"--interval-ms {Math.Max(0, ParseInt(SimIntervalMsText, 100))}",
             $"--status-seconds {Math.Max(1, ParseInt(SimStatusSecondsText, 2))}",
-            $"--timeout-seconds {Math.Max(1, ParseInt(SimTimeoutSecondsText, 10))}",
+            $"--timeout-seconds {Math.Max(1, ParseInt(SimTimeoutSecondsText, 45))}",
             $"--max-iterations {Math.Max(0, ParseInt(SimMaxIterationsText, 0))}",
             $"--max-parent-pool {Math.Max(2, ParseInt(SimMaxParentPoolText, 512))}",
             $"--min-runs {Math.Max(1, ParseInt(SimMinRunsText, 1))}",
@@ -2862,12 +2862,56 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
             "--json"
         };
 
+        var advertiseHost = ResolveEvolutionSimAdvertiseHost();
+        if (!string.IsNullOrWhiteSpace(advertiseHost))
+        {
+            args.Add($"--advertise-host {QuoteIfNeeded(advertiseHost)}");
+        }
+
         foreach (var parentBrainId in normalizedParentIds)
         {
             args.Add($"--parent-brain {parentBrainId:D}");
         }
 
         return string.Join(" ", args);
+    }
+
+    private string? ResolveEvolutionSimAdvertiseHost()
+    {
+        if (TryResolveExplicitLocalAdvertiseHost(Connections.LocalBindHost, out var configuredLocalHost))
+        {
+            return configuredLocalHost;
+        }
+
+        if (TryResolveExplicitLocalAdvertiseHost(SimBindHost, out var configuredSimHost))
+        {
+            return configuredSimHost;
+        }
+
+        var resolved = NetworkAddressDefaults.ResolveDefaultAdvertisedHost();
+        return TryResolveExplicitLocalAdvertiseHost(resolved, out var resolvedHost)
+            ? resolvedHost
+            : null;
+    }
+
+    private static bool TryResolveExplicitLocalAdvertiseHost(string? host, out string advertiseHost)
+    {
+        advertiseHost = string.Empty;
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        var trimmed = host.Trim();
+        if (NetworkAddressDefaults.IsLoopbackHost(trimmed)
+            || NetworkAddressDefaults.IsAllInterfaces(trimmed)
+            || !NetworkAddressDefaults.IsLocalHost(trimmed))
+        {
+            return false;
+        }
+
+        advertiseHost = trimmed;
+        return true;
     }
 
     private int ParseLiveChartIntervalSecondsOrDefault()
