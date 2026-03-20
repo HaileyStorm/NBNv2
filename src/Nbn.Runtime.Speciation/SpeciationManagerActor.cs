@@ -1642,7 +1642,7 @@ public sealed class SpeciationManagerActor : IActor
                 "Speciation candidate must be brain_id, artifact_ref, or artifact_uri.");
         }
 
-        resolved = await TryEnrichResolvedCandidateAsync(context, resolved).ConfigureAwait(false);
+        resolved = await TryEnrichResolvedCandidateAsync(context, resolved, decisionMetadataJson).ConfigureAwait(false);
 
         var inputOrderedParentBrainIds = ExtractParentBrainIdsByInputOrder(parents);
         var orderedParentBrainIds = ExtractParentBrainIds(parents);
@@ -1999,7 +1999,8 @@ public sealed class SpeciationManagerActor : IActor
 
     private async Task<ResolvedCandidate> TryEnrichResolvedCandidateAsync(
         IContext context,
-        ResolvedCandidate resolvedCandidate)
+        ResolvedCandidate resolvedCandidate,
+        string? decisionMetadataJson)
     {
         if (resolvedCandidate.CandidateMode != ProtoSpec.SpeciationCandidateMode.BrainId
             || resolvedCandidate.BrainId == Guid.Empty)
@@ -2012,7 +2013,22 @@ public sealed class SpeciationManagerActor : IActor
             resolvedCandidate.BrainId).ConfigureAwait(false);
         if (!HasUsableArtifactReference(provenance.BaseArtifactRef))
         {
-            return resolvedCandidate;
+            if (!TryExtractStoredCandidateBrainArtifactRefs(
+                    decisionMetadataJson,
+                    out var storedBaseArtifactRef,
+                    out var storedSnapshotArtifactRef))
+            {
+                return resolvedCandidate;
+            }
+
+            return resolvedCandidate with
+            {
+                SourceArtifactRef = resolvedCandidate.SourceArtifactRef ?? BuildArtifactLabel(storedBaseArtifactRef),
+                CandidateBrainBaseArtifactRef = storedBaseArtifactRef.Clone(),
+                CandidateBrainSnapshotArtifactRef = HasUsableArtifactReference(storedSnapshotArtifactRef)
+                    ? storedSnapshotArtifactRef!.Clone()
+                    : null
+            };
         }
 
         return resolvedCandidate with
@@ -6852,4 +6868,3 @@ public sealed class SpeciationManagerActor : IActor
         Console.WriteLine($"[SpeciationManager] {message}");
     }
 }
-

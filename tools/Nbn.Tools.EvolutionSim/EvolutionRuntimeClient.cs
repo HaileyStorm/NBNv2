@@ -754,12 +754,48 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         AddScore(lineage, "lineage_similarity_score", candidate.LineageSimilarityScore ?? candidate.SimilarityScore);
         AddScore(lineage, "parent_a_similarity_score", candidate.LineageParentASimilarityScore);
         AddScore(lineage, "parent_b_similarity_score", candidate.LineageParentBSimilarityScore);
+        if (candidate.ChildBrainId is Guid childBrainId
+            && childBrainId != Guid.Empty
+            && HasUsableArtifactRef(candidate.ChildDefinition))
+        {
+            lineage["candidate_brain_base_artifact_ref"] = BuildStoredArtifactRefNode(candidate.ChildDefinition!);
+        }
+        else if (HasUsableArtifactRef(candidate.ChildDefinition))
+        {
+            lineage["candidate_artifact_ref"] = BuildStoredArtifactRefNode(candidate.ChildDefinition!);
+        }
+
         if (lineage.Count > 0)
         {
             metadata["lineage"] = lineage;
         }
 
         return metadata.ToJsonString();
+    }
+
+    private static JsonObject BuildStoredArtifactRefNode(ArtifactRef artifactRef)
+    {
+        var node = new JsonObject
+        {
+            ["size_bytes"] = artifactRef.SizeBytes
+        };
+
+        if (artifactRef.TryToSha256Hex(out var sha256Hex))
+        {
+            node["sha256_hex"] = sha256Hex;
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifactRef.MediaType))
+        {
+            node["media_type"] = artifactRef.MediaType;
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifactRef.StoreUri))
+        {
+            node["store_uri"] = artifactRef.StoreUri;
+        }
+
+        return node;
     }
 
     private static string ExtractSourceSpeciesId(string? decisionMetadataJson)

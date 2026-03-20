@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Settings;
 using Nbn.Runtime.SettingsMonitor;
@@ -4303,6 +4305,114 @@ public sealed class SpeciationManagerActorTests
     }
 
     [Fact]
+    public async Task ProtoAssign_Commit_NewbornDerivedSpecies_UsesSourceMetadataBrainArtifactProvenanceWhenLiveBrainInfoIsUnavailable()
+    {
+        using var speciationDb = new TempDatabaseScope("speciation.db");
+        var runtimeConfig = CreateRuntimeConfig(CreateLineagePolicyConfigJson(
+            lineageMatchThreshold: 0.90d,
+            lineageSplitThreshold: 0.70d,
+            parentConsensusThreshold: 0.50d,
+            derivedSpeciesPrefix: "branch",
+            lineageHysteresisMargin: 0d,
+            lineageSplitGuardMargin: 0d,
+            lineageMinParentMembershipsBeforeSplit: 1,
+            lineageRealignParentMembershipWindow: 0,
+            lineageRealignMatchMargin: 0d,
+            lineageHindsightReassignCommitWindow: 0,
+            lineageHindsightSimilarityMargin: 0.02d));
+        var system = new ActorSystem();
+        try
+        {
+            var sourceParent = Guid.NewGuid();
+            var founder = Guid.NewGuid();
+            var secondChild = Guid.NewGuid();
+
+            var founderBase = new string('c', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+            var secondChildBase = new string('e', 64).ToArtifactRef(256, "application/x-nbn", "artifact-store");
+
+            var reproProbeActor = new ReproArtifactsOnlyCompatibilityProbe(CreateCompatibilityAssessmentResult(0.96f));
+            var reproPid = system.Root.Spawn(Props.FromProducer(() => reproProbeActor));
+            var managerPid = system.Root.Spawn(Props.FromProducer(
+                () => new SpeciationManagerActor(
+                    new SpeciationStore(speciationDb.DatabasePath),
+                    runtimeConfig,
+                    settingsPid: null,
+                    reproductionManagerPid: reproPid)));
+
+            await WaitForEpochAsync(system, managerPid);
+
+            var seedParent = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = sourceParent.ToProtoUuid()
+                    },
+                    SpeciesId = "species-alpha",
+                    SpeciesDisplayName = "Species Alpha",
+                    DecisionReason = "seed_parent_species",
+                    DecisionMetadataJson = "{\"source\":\"seed\"}"
+                });
+            Assert.True(seedParent.Decision.Success);
+
+            var founderDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = founder.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = sourceParent.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = BuildBrainCandidateMetadataJson(
+                        founderBase,
+                        "{\"lineage\":{\"lineage_similarity_score\":0.50,\"parent_a_similarity_score\":0.50}}")
+                });
+            Assert.True(founderDecision.Decision.Success);
+            Assert.Equal("lineage_diverged_new_species", founderDecision.Decision.DecisionReason);
+
+            var bootstrapDecision = await system.Root.RequestAsync<ProtoSpec.SpeciationAssignResponse>(
+                managerPid,
+                new ProtoSpec.SpeciationAssignRequest
+                {
+                    ApplyMode = ProtoSpec.SpeciationApplyMode.Commit,
+                    Candidate = new ProtoSpec.SpeciationCandidateRef
+                    {
+                        BrainId = secondChild.ToProtoUuid()
+                    },
+                    Parents =
+                    {
+                        new ProtoSpec.SpeciationParentRef { BrainId = founder.ToProtoUuid() }
+                    },
+                    DecisionMetadataJson = BuildBrainCandidateMetadataJson(
+                        secondChildBase,
+                        "{\"lineage\":{\"lineage_similarity_score\":0.92,\"parent_a_similarity_score\":0.92}}")
+                });
+
+            Assert.True(bootstrapDecision.Decision.Success);
+            Assert.Equal(founderDecision.Decision.SpeciesId, bootstrapDecision.Decision.SpeciesId);
+
+            using var bootstrapMetadata = JsonDocument.Parse(bootstrapDecision.Decision.DecisionMetadataJson);
+            var bootstrapLineage = bootstrapMetadata.RootElement.GetProperty("lineage");
+            Assert.Equal("artifacts", bootstrapLineage.GetProperty("assigned_species_compatibility_mode").GetString());
+            Assert.Equal("compatibility_assessment", bootstrapLineage.GetProperty("assigned_species_similarity_source").GetString());
+            Assert.Equal(0.96d, bootstrapLineage.GetProperty("intra_species_similarity_sample").GetDouble(), 3);
+            Assert.Equal(1, reproProbeActor.ArtifactCompatibilityRequestCount);
+            Assert.Equal(0, reproProbeActor.BrainIdCompatibilityRequestCount);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task ProtoAssign_Commit_NewbornDerivedSpecies_BootstrapFallbackPersistsTimeoutCompatibilityProvenance()
     {
         using var speciationDb = new TempDatabaseScope("speciation.db");
@@ -5993,5 +6103,21 @@ public sealed class SpeciationManagerActorTests
             {
             }
         }
+    }
+
+    private static string BuildBrainCandidateMetadataJson(ArtifactRef baseArtifactRef, string metadataJson)
+    {
+        using var document = JsonDocument.Parse(metadataJson);
+        var root = JsonNode.Parse(document.RootElement.GetRawText())?.AsObject() ?? new JsonObject();
+        var lineage = root["lineage"] as JsonObject ?? new JsonObject();
+        lineage["candidate_brain_base_artifact_ref"] = new JsonObject
+        {
+            ["sha256_hex"] = baseArtifactRef.ToSha256Hex(),
+            ["size_bytes"] = (long)baseArtifactRef.SizeBytes,
+            ["media_type"] = baseArtifactRef.MediaType,
+            ["store_uri"] = baseArtifactRef.StoreUri
+        };
+        root["lineage"] = lineage;
+        return root.ToJsonString();
     }
 }

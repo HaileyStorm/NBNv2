@@ -96,6 +96,28 @@ public sealed class EvolutionRuntimeClientMetadataTests
     }
 
     [Fact]
+    public void BuildSpeciationDecisionMetadataJson_IncludesCandidateBrainArtifactProvenance()
+    {
+        var childArtifact = BuildArtifact("child-brain-base", "store://artifact-root");
+        var candidate = new SpeciationCommitCandidate(
+            ChildBrainId: Guid.Parse("d533a7a7-7f01-4ec0-ae84-cdbe786b2e11"),
+            ChildDefinition: childArtifact,
+            SimilarityScore: 0.77f,
+            LineageSimilarityScore: 0.66f);
+
+        var json = InvokeBuildMetadataJson(candidate);
+        using var doc = JsonDocument.Parse(json);
+        var artifactNode = doc.RootElement
+            .GetProperty("lineage")
+            .GetProperty("candidate_brain_base_artifact_ref");
+
+        Assert.Equal(childArtifact.ToSha256Hex(), artifactNode.GetProperty("sha256_hex").GetString());
+        Assert.Equal((long)childArtifact.SizeBytes, artifactNode.GetProperty("size_bytes").GetInt64());
+        Assert.Equal(childArtifact.MediaType, artifactNode.GetProperty("media_type").GetString());
+        Assert.Equal(childArtifact.StoreUri, artifactNode.GetProperty("store_uri").GetString());
+    }
+
+    [Fact]
     public void ExtractReproductionData_ComputesMutationAndSimilarityDiagnostics()
     {
         var result = new Repro.ReproduceResult
