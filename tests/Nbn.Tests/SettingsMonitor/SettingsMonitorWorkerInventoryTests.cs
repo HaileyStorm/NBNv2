@@ -12,7 +12,8 @@ public sealed class SettingsMonitorWorkerInventoryTests
     public async Task StoreSnapshotQuery_ReturnsLatestCapabilityPerWorker()
     {
         using var db = new TempDatabaseScope();
-        var store = new SettingsMonitorStore(db.DatabasePath);
+        var timeProvider = new MutableTimeProvider(100);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
         await store.InitializeAsync();
 
         var workerA = Guid.NewGuid();
@@ -21,6 +22,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
         await store.UpsertNodeAsync(new NodeRegistration(workerA, "worker-a", "127.0.0.1:12040", "RegionHost"), timeMs: 100);
         await store.UpsertNodeAsync(new NodeRegistration(workerB, "worker-b", "127.0.0.1:12041", "RegionHost"), timeMs: 100);
 
+        timeProvider.SetUtcNowMs(200);
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             workerA,
             200,
@@ -36,6 +38,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
                 ilgpuCudaAvailable: true,
                 ilgpuOpenclAvailable: false)));
 
+        timeProvider.SetUtcNowMs(250);
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             workerA,
             250,
@@ -86,11 +89,13 @@ public sealed class SettingsMonitorWorkerInventoryTests
     public async Task ActorSnapshotRequest_MergesRuntimeNodeStateWithStoredCapabilities()
     {
         using var db = new TempDatabaseScope();
-        var store = new SettingsMonitorStore(db.DatabasePath);
+        var timeProvider = new MutableTimeProvider(100);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
         await store.InitializeAsync();
 
         var persistedWorker = Guid.NewGuid();
         await store.UpsertNodeAsync(new NodeRegistration(persistedWorker, "persisted-worker", "127.0.0.1:13040", "RegionHost"), timeMs: 100);
+        timeProvider.SetUtcNowMs(120);
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             persistedWorker,
             120,
@@ -100,6 +105,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
                 storageFreeBytes: 8_192,
                 cpuScore: 12.5f)));
 
+        timeProvider.SetUtcNowMs(200);
         var transientWorker = Guid.NewGuid();
         var system = new ActorSystem();
         var root = system.Root;
@@ -160,7 +166,8 @@ public sealed class SettingsMonitorWorkerInventoryTests
     public async Task StoreSnapshotQuery_PreservesScaledWorkerCapabilities()
     {
         using var db = new TempDatabaseScope();
-        var store = new SettingsMonitorStore(db.DatabasePath);
+        var timeProvider = new MutableTimeProvider(100);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
         await store.InitializeAsync();
 
         var worker = Guid.NewGuid();
@@ -185,6 +192,7 @@ public sealed class SettingsMonitorWorkerInventoryTests
             },
             new WorkerResourceAvailability(cpuPercent: 25, ramPercent: 50, storagePercent: 10, gpuComputePercent: 0, gpuVramPercent: 0));
 
+        timeProvider.SetUtcNowMs(200);
         await store.RecordHeartbeatAsync(new NodeHeartbeat(
             worker,
             200,
@@ -295,6 +303,23 @@ public sealed class SettingsMonitorWorkerInventoryTests
             catch
             {
             }
+        }
+    }
+
+    private sealed class MutableTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _utcNow;
+
+        public MutableTimeProvider(long utcNowMs)
+        {
+            _utcNow = DateTimeOffset.FromUnixTimeMilliseconds(utcNowMs);
+        }
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        public void SetUtcNowMs(long utcNowMs)
+        {
+            _utcNow = DateTimeOffset.FromUnixTimeMilliseconds(utcNowMs);
         }
     }
 }

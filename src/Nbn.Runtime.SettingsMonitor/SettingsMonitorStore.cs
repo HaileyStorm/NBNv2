@@ -660,6 +660,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
         }
 
         var capabilities = heartbeat.Capabilities ?? throw new ArgumentException("Capabilities are required.", nameof(heartbeat));
+        var observedMs = NowMs();
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -670,7 +671,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
                 new
                 {
                     node_id = heartbeat.NodeId.ToString("D"),
-                    last_seen_ms = heartbeat.TimeMs
+                    last_seen_ms = observedMs
                 },
                 transaction,
                 cancellationToken: cancellationToken));
@@ -684,7 +685,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
         var parameters = new
         {
             node_id = heartbeat.NodeId.ToString("D"),
-            time_ms = heartbeat.TimeMs,
+            time_ms = observedMs,
             cpu_cores = capabilities.CpuCores,
             ram_free_bytes = capabilities.RamFreeBytes,
             storage_free_bytes = capabilities.StorageFreeBytes,
@@ -761,6 +762,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
             throw new ArgumentException("BrainId is required.", nameof(heartbeat));
         }
 
+        var observedMs = NowMs();
         await using var connection = await OpenConnectionAsync(cancellationToken);
         var updateCount = await connection.ExecuteAsync(
             new CommandDefinition(
@@ -768,7 +770,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
                 new
                 {
                     brain_id = heartbeat.BrainId.ToString("D"),
-                    last_seen_ms = heartbeat.TimeMs
+                    last_seen_ms = observedMs
                 },
                 cancellationToken: cancellationToken));
 

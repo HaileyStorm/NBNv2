@@ -364,6 +364,46 @@ public sealed class HiveMindWorkerInventoryTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task PlacementWorkerInventory_UsesSettingsSnapshotClock_ForCrossMachineFreshness()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var actor = new HiveMindActor(CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 5_000));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+        var workerId = Guid.NewGuid();
+        const long snapshotMs = 10_000;
+
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)snapshotMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: snapshotMs,
+                    capabilityTimeMs: snapshotMs,
+                    address: "worker-skewed:12040",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker")
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+
+        var worker = Assert.Single(inventory.Workers);
+        Assert.Equal(workerId.ToProtoUuid().Value, worker.WorkerNodeId.Value);
+        Assert.True(worker.IsAlive);
+        Assert.Equal("worker-skewed:12040", worker.WorkerAddress);
+
+        await system.ShutdownAsync();
+    }
+
     private static ProtoSettings.WorkerReadinessCapability BuildWorker(
         Guid nodeId,
         bool isAlive,

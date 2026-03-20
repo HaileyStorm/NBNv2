@@ -1335,6 +1335,95 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_UsesSettingsClock_ForRemoteControllerFreshness()
+    {
+        var connections = new ConnectionViewModel();
+        var serverSeenMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 120_000;
+        var workerId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        var controllerActor = $"127.0.0.1:12041/worker-node/brain-{brainId:N}-root";
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)serverSeenMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)serverSeenMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)serverSeenMs,
+                        HasCapabilities = true,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            CpuCores = 8,
+                            RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                            RamTotalBytes = 16UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 64UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 128UL * 1024 * 1024 * 1024
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)serverSeenMs,
+                        LastTickId = 12,
+                        State = "Active"
+                    }
+                },
+                Controllers =
+                {
+                    new BrainControllerStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        NodeId = workerId.ToProtoUuid(),
+                        ActorName = controllerActor,
+                        LastSeenMs = (ulong)serverSeenMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var controllerRow = Assert.Single(vm.Actors, node => node.RootActor == controllerActor);
+        Assert.Equal("online", controllerRow.Status);
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerId);
+        Assert.Equal(ShortBrainId(brainId), workerEndpoint.BrainHints);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_WorkerEndpoints_BrainHints_IgnoreOfflineControllers()
     {
         var connections = new ConnectionViewModel();

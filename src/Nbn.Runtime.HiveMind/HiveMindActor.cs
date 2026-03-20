@@ -66,6 +66,7 @@ public sealed class HiveMindActor : IActor
     private ulong _lastVizTickEmittedTickId;
     private long _nextVisualizationShardSyncMs;
     private long _workerCatalogSnapshotMs;
+    private long _workerCatalogSnapshotReceivedLocalMs;
     private static readonly bool LogTickBarrier = IsEnvTrue("NBN_HIVEMIND_LOG_TICK_BARRIER");
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
     private static readonly bool LogMetadataDiagnostics =
@@ -4755,8 +4756,10 @@ public sealed class HiveMindActor : IActor
 
     private void HandleWorkerInventorySnapshotResponse(IContext context, ProtoSettings.WorkerInventorySnapshotResponse message)
     {
-        var snapshotMs = message.SnapshotMs > 0 ? (long)message.SnapshotMs : NowMs();
+        var receivedLocalMs = NowMs();
+        var snapshotMs = message.SnapshotMs > 0 ? (long)message.SnapshotMs : receivedLocalMs;
         _workerCatalogSnapshotMs = snapshotMs;
+        _workerCatalogSnapshotReceivedLocalMs = receivedLocalMs;
         var seenWorkerIds = new HashSet<Guid>();
 
         foreach (var worker in message.Workers)
@@ -4806,7 +4809,7 @@ public sealed class HiveMindActor : IActor
             entry.LastUpdatedMs = snapshotMs;
         }
 
-        RefreshWorkerCatalogFreshness(snapshotMs);
+        RefreshWorkerCatalogFreshness(receivedLocalMs);
         DetectWorkerLossRecoveries(context, snapshotMs, seenWorkerIds);
         MaybeRequestWorkerPressureReschedule(context, snapshotMs);
         MaybeRefreshPeerLatency(context, force: false);
@@ -5223,12 +5226,29 @@ public sealed class HiveMindActor : IActor
             worker.GpuVramLimitPercent);
         return effectiveGpuScore > 0f && effectiveVramFreeBytes > 0;
     }
-    private void RefreshWorkerCatalogFreshness(long nowMs)
+    private void RefreshWorkerCatalogFreshness(long localNowMs)
     {
+        var referenceMs = ResolveWorkerCatalogReferenceTimeMs(localNowMs);
         foreach (var worker in _workerCatalog.Values)
         {
-            worker.IsFresh = IsWorkerFresh(worker, nowMs);
+            worker.IsFresh = IsWorkerFresh(worker, referenceMs);
         }
+    }
+
+    private long ResolveWorkerCatalogReferenceTimeMs(long fallbackLocalNowMs)
+    {
+        if (_workerCatalogSnapshotMs <= 0)
+        {
+            return fallbackLocalNowMs;
+        }
+
+        if (_workerCatalogSnapshotReceivedLocalMs <= 0
+            || fallbackLocalNowMs <= _workerCatalogSnapshotReceivedLocalMs)
+        {
+            return _workerCatalogSnapshotMs;
+        }
+
+        return _workerCatalogSnapshotMs + (fallbackLocalNowMs - _workerCatalogSnapshotReceivedLocalMs);
     }
 
     private void MaybeRefreshPeerLatency(IContext context, bool force)

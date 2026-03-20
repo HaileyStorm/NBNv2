@@ -791,8 +791,14 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 .ToArray();
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var workerNowMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, nowMs);
-            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
+            var settingsNowMs = ResolveSettingsReferenceTimeMs(
+                workerInventoryResponse,
+                nodes,
+                controllers,
+                brains,
+                nowMs);
+            var workerNowMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, settingsNowMs);
+            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, settingsNowMs).ConfigureAwait(false);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
@@ -813,7 +819,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Actors.Clear();
                 foreach (var node in sortedNodes)
                 {
-                    var isFresh = IsFresh(node.LastSeenMs, nowMs);
+                    var isFresh = IsFresh(node.LastSeenMs, settingsNowMs);
                     var isAlive = node.IsAlive && isFresh;
                     var seen = DateTimeOffset.FromUnixTimeMilliseconds((long)node.LastSeenMs).ToLocalTime();
                     Nodes.Add(new NodeStatusItem(
@@ -852,7 +858,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(settings);
                 if (!hiveMindFromSettings)
                 {
-                    UpdateHiveMindEndpoint(nodes, nowMs);
+                    UpdateHiveMindEndpoint(nodes, settingsNowMs);
                 }
 
                 WorkerEndpointSummary = workerEndpointState.SummaryText;
@@ -862,7 +868,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 Trim(Settings);
             });
 
-            UpdateConnectionStatusesFromNodes(nodes, nowMs, workerEndpointState, discoveredServiceEndpoints);
+            UpdateConnectionStatusesFromNodes(nodes, settingsNowMs, workerEndpointState, discoveredServiceEndpoints);
 
             var controllerMap = controllers
                 .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
@@ -870,7 +876,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     entry => entry.BrainId!.ToGuid(),
                     entry =>
                     {
-                        var controllerAlive = entry.IsAlive && IsFresh(entry.LastSeenMs, nowMs);
+                        var controllerAlive = entry.IsAlive && IsFresh(entry.LastSeenMs, settingsNowMs);
                         return (entry, controllerAlive);
                     });
 
@@ -878,7 +884,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             {
                 var brainId = entry.BrainId?.ToGuid() ?? Guid.Empty;
                 var alive = controllerMap.TryGetValue(brainId, out var controller) && controller.Item2;
-                var spawnedRecently = IsSpawnRecent(entry.SpawnedMs, nowMs);
+                var spawnedRecently = IsSpawnRecent(entry.SpawnedMs, settingsNowMs);
                 var item = new BrainListItem(brainId, entry.State ?? string.Empty, alive);
                 return (item, spawnedRecently);
             }).Where(entry => entry.item.BrainId != Guid.Empty).ToList();
@@ -1085,7 +1091,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         {
             var response = await _client.ListBrainsAsync().ConfigureAwait(false);
             var lifecycle = await _client.GetPlacementLifecycleAsync(brainId).ConfigureAwait(false);
-            if (IsBrainRegistered(response, brainId) && IsPlacementVisualizationReady(lifecycle, brainId))
+            var nowMs = ResolveBrainsReferenceTimeMs(
+                response,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            if (IsBrainRegistered(response, brainId, nowMs) && IsPlacementVisualizationReady(lifecycle, brainId))
             {
                 return true;
             }
@@ -1096,7 +1105,10 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
         return false;
     }
 
-    private static bool IsBrainRegistered(Nbn.Proto.Settings.BrainListResponse? response, Guid brainId)
+    private static bool IsBrainRegistered(
+        Nbn.Proto.Settings.BrainListResponse? response,
+        Guid brainId,
+        long? referenceNowMs = null)
     {
         if (response?.Brains is null)
         {
@@ -1125,7 +1137,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return false;
         }
 
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var nowMs = referenceNowMs ?? ResolveBrainsReferenceTimeMs(
+            response,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         return HasLiveController(response.Controllers, brainId, nowMs);
     }
 
@@ -2074,6 +2088,55 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             ? (long)workerInventoryResponse.SnapshotMs
             : 0;
         return snapshotMs > 0 ? snapshotMs : fallbackNowMs;
+    }
+
+    private static long ResolveBrainsReferenceTimeMs(
+        Nbn.Proto.Settings.BrainListResponse? response,
+        long fallbackNowMs)
+    {
+        if (response is null)
+        {
+            return fallbackNowMs;
+        }
+
+        var referenceMs = 0L;
+        foreach (var controller in response.Controllers)
+        {
+            referenceMs = Math.Max(referenceMs, (long)controller.LastSeenMs);
+        }
+
+        foreach (var brain in response.Brains)
+        {
+            referenceMs = Math.Max(referenceMs, (long)brain.SpawnedMs);
+        }
+
+        return referenceMs > 0 ? referenceMs : fallbackNowMs;
+    }
+
+    private static long ResolveSettingsReferenceTimeMs(
+        Nbn.Proto.Settings.WorkerInventorySnapshotResponse? workerInventoryResponse,
+        IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
+        IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
+        IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
+        long fallbackNowMs)
+    {
+        var referenceMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, fallbackNowMs);
+        foreach (var node in nodes)
+        {
+            referenceMs = Math.Max(referenceMs, (long)node.LastSeenMs);
+        }
+
+        foreach (var controller in controllers)
+        {
+            referenceMs = Math.Max(referenceMs, (long)controller.LastSeenMs);
+        }
+
+        foreach (var brain in brains)
+        {
+            referenceMs = Math.Max(referenceMs, (long)brain.SpawnedMs);
+        }
+
+        return referenceMs > 0 ? referenceMs : fallbackNowMs;
     }
 
     private void UpdateWorkerEndpointSnapshot(
