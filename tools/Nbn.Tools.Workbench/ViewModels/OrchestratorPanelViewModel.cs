@@ -701,7 +701,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return null;
         }
 
-        return trimmed;
+        return NetworkAddressDefaults.IsLocalHost(trimmed) ? trimmed : null;
     }
 
     private async Task<string> AppendFirewallAttentionAsync(string serviceLabel, int port, string launchMessage)
@@ -791,12 +791,13 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                 .ToArray();
 
             var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var workerNowMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, nowMs);
             var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, nowMs).ConfigureAwait(false);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
                 actorRowsResult.WorkerBrainHints,
-                nowMs);
+                workerNowMs);
             var settings = settingsResponse?.Settings?
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
@@ -2063,6 +2064,16 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
 
         var summary = BuildWorkerEndpointSummary(activeCount, limitedCount, degradedCount, failedCount);
         return new WorkerEndpointState(orderedRows, activeCount, limitedCount, degradedCount, failedCount, summary);
+    }
+
+    private static long ResolveWorkerReferenceTimeMs(
+        Nbn.Proto.Settings.WorkerInventorySnapshotResponse? workerInventoryResponse,
+        long fallbackNowMs)
+    {
+        var snapshotMs = workerInventoryResponse is not null
+            ? (long)workerInventoryResponse.SnapshotMs
+            : 0;
+        return snapshotMs > 0 ? snapshotMs : fallbackNowMs;
     }
 
     private void UpdateWorkerEndpointSnapshot(

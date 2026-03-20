@@ -30,6 +30,15 @@ public sealed class NetworkAddressDefaultsTests
         Assert.Equal("10.9.8.7", host);
     }
 
+    [Fact]
+    public void IsLocalHost_MatchesDefaultAdvertiseOverride()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "10.9.8.7"));
+
+        Assert.True(NetworkAddressDefaults.IsLocalHost("10.9.8.7"));
+        Assert.False(NetworkAddressDefaults.IsLocalHost("10.9.8.8"));
+    }
+
     private sealed class EnvironmentVariableScope : IDisposable
     {
         private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);

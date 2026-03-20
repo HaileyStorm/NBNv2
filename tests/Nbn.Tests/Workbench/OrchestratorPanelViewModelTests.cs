@@ -174,6 +174,8 @@ public class OrchestratorPanelViewModelTests
     [Fact]
     public async Task StartIoCommand_UsesConfiguredNonLoopbackHostAsAdvertiseHost()
     {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "10.20.30.41"));
+
         var connections = new ConnectionViewModel
         {
             IoHost = "10.20.30.41",
@@ -190,6 +192,29 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Contains("--bind-host 0.0.0.0 --port 12050", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
         Assert.Contains("--advertise-host 10.20.30.41", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartWorkerCommand_DoesNotAdvertiseDiscoveredRemoteHost_ForLocalLaunch()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "192.168.0.14"));
+
+        var connections = new ConnectionViewModel
+        {
+            WorkerHost = "203.0.113.55",
+            WorkerPortText = "12041",
+            SettingsPortText = "12010"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). worker");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartWorkerCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.WorkerLaunchStatus, "Build failed (code 1). worker", StringComparison.Ordinal));
+
+        Assert.Contains("--bind-host 0.0.0.0 --port 12041", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--advertise-host 203.0.113.55", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -952,6 +977,83 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("limited", endpoint.Status);
         Assert.Contains("Storage used", endpoint.PlacementDetail, StringComparison.Ordinal);
         Assert.Equal("1 limited worker", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_UseSettingsSnapshotTime_ForCachedRemoteWorkerExpiry()
+    {
+        var connections = new ConnectionViewModel();
+        var serverSeenMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 120_000;
+        var workerId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)serverSeenMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)serverSeenMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)serverSeenMs,
+                        HasCapabilities = true,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            CpuCores = 8,
+                            RamFreeBytes = 8UL * 1024 * 1024 * 1024,
+                            RamTotalBytes = 16UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 96UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 128UL * 1024 * 1024 * 1024,
+                            CpuLimitPercent = 100,
+                            RamLimitPercent = 100,
+                            StorageLimitPercent = 100
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Equal("active", Assert.Single(vm.WorkerEndpoints).Status);
+
+        client.NodesResponse = new NodeListResponse();
+        client.WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)(serverSeenMs + 46_000)
+        };
+
+        await vm.RefreshSettingsAsync();
+
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal("failed", workerEndpoint.Status);
+        Assert.Equal("1 failed worker", vm.WorkerEndpointSummary);
+        Assert.False(connections.WorkerDiscoverable);
     }
 
     [Fact]
@@ -2246,8 +2348,8 @@ public class OrchestratorPanelViewModelTests
 
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
-        public NodeListResponse? NodesResponse { get; init; }
-        public WorkerInventorySnapshotResponse? WorkerInventoryResponse { get; init; }
+        public NodeListResponse? NodesResponse { get; set; }
+        public WorkerInventorySnapshotResponse? WorkerInventoryResponse { get; set; }
         public BrainListResponse? BrainsResponse { get; set; }
         public Func<BrainListResponse?>? BrainListFactory { get; set; }
         public SettingListResponse? SettingsResponse { get; init; }
@@ -2457,5 +2559,27 @@ public class OrchestratorPanelViewModelTests
 
         public Task<FirewallAccessResult> EnsureInboundTcpAccessAsync(string label, string bindHost, int port)
             => Task.FromResult(Result);
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);
+
+        public EnvironmentVariableScope(params (string Key, string? Value)[] values)
+        {
+            foreach (var (key, value) in values)
+            {
+                _originals[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (key, value) in _originals)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
     }
 }
