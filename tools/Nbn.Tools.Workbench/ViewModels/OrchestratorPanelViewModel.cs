@@ -3089,7 +3089,7 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             return new WorkerCapabilityChips(
                 cpuCapability,
                 string.IsNullOrWhiteSpace(gpuScore)
-                    ? "GPU"
+                    ? string.Empty
                     : $"GPU {gpuScore}");
         }
 

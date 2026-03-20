@@ -185,13 +185,21 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
         {
             _gpu = _gpuFactory(_state);
             _gpuInitializationReason = _gpu is null && _preference == RegionShardComputeBackendPreference.Gpu
-                ? "gpu_backend_unavailable"
+                ? ResolveGpuUnavailableReason()
                 : string.Empty;
         }
         catch (Exception ex)
         {
             _gpuInitializationReason = $"gpu_init_failed:{ex.GetBaseException().Message}";
         }
+    }
+
+    private static string ResolveGpuUnavailableReason()
+    {
+        var availability = RegionShardGpuRuntime.ProbeAvailability();
+        return string.IsNullOrWhiteSpace(availability.FailureReason)
+            ? "gpu_backend_unavailable"
+            : availability.FailureReason;
     }
 
     public void Dispose()

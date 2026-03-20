@@ -1014,6 +1014,67 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_HideGenericGpuChip_WhenIlgpuAcceleratorIsUnavailable()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var gpuWorker = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = gpuWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.gpu",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-gpu",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = gpuWorker.ToProtoUuid(),
+                        LogicalName = "nbn.worker.gpu",
+                        Address = "127.0.0.1:12041",
+                        RootActorName = "worker-node-gpu",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new Nbn.Proto.Settings.NodeCapabilities
+                        {
+                            CpuScore = 82f,
+                            HasGpu = true
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var endpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal("CPU 82", endpoint.CpuCapability);
+        Assert.Equal(string.Empty, endpoint.GpuCapability);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_WorkerEndpoints_ReportDegradedAndFailedStates()
     {
         var connections = new ConnectionViewModel();

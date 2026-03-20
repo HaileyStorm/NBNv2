@@ -23,7 +23,7 @@ Worker processes report capabilities periodically to SettingsMonitor:
 * free and total storage at the worker artifact/runtime root
 * GPU presence plus free and total VRAM (if any)
 * microbenchmark scores (CPU and GPU)
-* ILGPU accelerator availability (CUDA/OpenCL/CPU)
+* ILGPU accelerator availability (CUDA/OpenCL/CPU), with OpenCL reported as available only when the selected device satisfies the current RegionShard kernel requirements
 * explicit worker limit percentages for CPU, RAM, storage, GPU compute, and GPU VRAM
 * current worker load/pressure snapshots used for placement filtering and pressure-triggered rebalance (`process_cpu_load_percent`, process RAM use, and derived storage/VRAM pressure from free vs total bytes)
 

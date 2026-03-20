@@ -534,7 +534,7 @@ Worker processes report capabilities periodically to SettingsMonitor:
 * free and total storage at the worker artifact/runtime root
 * GPU presence plus free and total VRAM (if any)
 * microbenchmark scores (CPU and GPU)
-* ILGPU accelerator availability (CUDA/OpenCL/CPU)
+* ILGPU accelerator availability (CUDA/OpenCL/CPU), with OpenCL reported as available only when the selected device satisfies the current RegionShard kernel requirements
 * explicit worker limit percentages for CPU, RAM, storage, GPU compute, and GPU VRAM
 * current worker load/pressure snapshots used for placement filtering and pressure-triggered rebalance (`process_cpu_load_percent`, process RAM use, and derived storage/VRAM pressure from free vs total bytes)
 
@@ -594,6 +594,7 @@ GPU compute uses ILGPU and the kernel-per-function model:
 * one kernel per reset function ID used in the shard
 * kernels for accumulation merges if beneficial
 * CUDA accelerators are preferred over OpenCL when both are available
+* OpenCL is only considered compatible when the device supports the RegionShard kernel requirements, including float64 operations used by the current ILGPU path
 
 Kernel compilation:
 
@@ -605,6 +606,7 @@ Runtime selection and fallback:
 * `NBN_REGIONSHARD_BACKEND=auto|cpu|gpu` selects the preferred backend
 * `auto` chooses the stronger backend for the shard on that worker using the scaled capability scores and shard size gate; `gpu` and `cpu` remain explicit overrides
 * the current ILGPU fast path preserves parity for the supported deterministic shard shape: no visualization, no plasticity/runtime axon mutation, supported activation/reset function IDs, and host-visible state synchronized before `TickComputeDone`
+* incompatible ILGPU accelerators are filtered out during capability probing so worker telemetry, tests, perf probes, and runtime dispatch all agree before shard execution starts
 * unsupported function IDs or runtime features fall back explicitly to CPU for that shard compute rather than changing simulation semantics
 
 ### 10.3 Function tiers

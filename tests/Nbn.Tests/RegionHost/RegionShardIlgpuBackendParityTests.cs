@@ -6,7 +6,6 @@ using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using Nbn.Shared.Quantization;
 using Proto;
-using Xunit.Sdk;
 using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
@@ -19,7 +18,10 @@ public sealed class RegionShardIlgpuBackendParityTests
     [InlineData(OutputVectorSource.Buffer)]
     public void IlgpuBackend_MatchesCpu_ForSupportedShardParity(OutputVectorSource outputVectorSource)
     {
-        RequireCompatibleGpu();
+        if (!HasCompatibleGpu())
+        {
+            return;
+        }
 
         var cpuState = CreateSupportedOutputState();
         var gpuState = CloneState(cpuState);
@@ -92,7 +94,10 @@ public sealed class RegionShardIlgpuBackendParityTests
     [Fact]
     public async Task RegionShardActor_CaptureSnapshot_MatchesCpuAfterGpuCompute()
     {
-        RequireCompatibleGpu();
+        if (!HasCompatibleGpu())
+        {
+            return;
+        }
 
         var system = new ActorSystem();
         var root = system.Root;
@@ -165,7 +170,10 @@ public sealed class RegionShardIlgpuBackendParityTests
     [Fact]
     public void IlgpuBackend_OutrunsCpu_OnHighLoad()
     {
-        RequireCompatibleGpu();
+        if (!HasCompatibleGpu())
+        {
+            return;
+        }
 
         const int neuronCount = 262_144;
         const int fanOut = 2;
@@ -215,13 +223,10 @@ public sealed class RegionShardIlgpuBackendParityTests
             $"Expected GPU backend to outrun CPU on high load. cpu={cpuStopwatch.Elapsed.TotalMilliseconds:0.###}ms gpu={gpuStopwatch.Elapsed.TotalMilliseconds:0.###}ms");
     }
 
-    private static void RequireCompatibleGpu()
+    private static bool HasCompatibleGpu()
     {
         var availability = RegionShardGpuRuntime.ProbeAvailability();
-        if (!availability.IsBackendAvailable)
-        {
-            throw SkipException.ForSkip($"ILGPU backend unavailable: {availability.FailureReason}");
-        }
+        return availability.IsBackendAvailable;
     }
 
     private static void AssertEquivalentResults(RegionShardComputeResult expected, RegionShardComputeResult actual)

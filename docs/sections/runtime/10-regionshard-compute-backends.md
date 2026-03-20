@@ -18,6 +18,7 @@ GPU compute uses ILGPU and the kernel-per-function model:
 * one kernel per reset function ID used in the shard
 * kernels for accumulation merges if beneficial
 * CUDA accelerators are preferred over OpenCL when both are available
+* OpenCL is only considered compatible when the device supports the RegionShard kernel requirements, including float64 operations used by the current ILGPU path
 
 Kernel compilation:
 
@@ -29,6 +30,7 @@ Runtime selection and fallback:
 * `NBN_REGIONSHARD_BACKEND=auto|cpu|gpu` selects the preferred backend
 * `auto` chooses the stronger backend for the shard on that worker using the scaled capability scores and shard size gate; `gpu` and `cpu` remain explicit overrides
 * the current ILGPU fast path preserves parity for the supported deterministic shard shape: no visualization, no plasticity/runtime axon mutation, supported activation/reset function IDs, and host-visible state synchronized before `TickComputeDone`
+* incompatible ILGPU accelerators are filtered out during capability probing so worker telemetry, tests, perf probes, and runtime dispatch all agree before shard execution starts
 * unsupported function IDs or runtime features fall back explicitly to CPU for that shard compute rather than changing simulation semantics
 
 ### 10.3 Function tiers

@@ -221,7 +221,9 @@ public sealed class WorkerNodeCapabilityProvider
     private static WorkerCapabilityScores BenchmarkScores(WorkerCapabilityBaseline baseline)
     {
         var cpuScore = BenchmarkCpuScore();
-        var gpuScore = baseline.HasGpu ? BenchmarkGpuScore() : 0f;
+        var gpuScore = baseline.IlgpuCudaAvailable || baseline.IlgpuOpenclAvailable
+            ? BenchmarkGpuScore()
+            : 0f;
         return new WorkerCapabilityScores(cpuScore, gpuScore);
     }
 
@@ -256,7 +258,7 @@ public sealed class WorkerNodeCapabilityProvider
         try
         {
             using var context = Context.CreateDefault();
-            var device = RegionShardGpuRuntime.SelectPreferredGpuDevice(context.Devices);
+            var device = RegionShardGpuRuntime.SelectPreferredCompatibleGpuDevice(context.Devices);
             if (device is null)
             {
                 return 0f;
@@ -314,22 +316,21 @@ public sealed class WorkerNodeCapabilityProvider
         {
             using var context = Context.CreateDefault();
             var devices = context.Devices.ToArray();
-            var cudaAvailable = devices.Any(static device => device.AcceleratorType == AcceleratorType.Cuda);
-            var openclAvailable = devices.Any(static device => device.AcceleratorType == AcceleratorType.OpenCL);
             var gpuDevice = RegionShardGpuRuntime.SelectPreferredGpuDevice(devices);
             if (gpuDevice is null)
             {
-                return new WorkerGpuInfo(false, string.Empty, 0, 0, cudaAvailable, openclAvailable);
+                return new WorkerGpuInfo(false, string.Empty, 0, 0, false, false);
             }
 
+            var availability = RegionShardGpuRuntime.ProbeAvailability(devices);
             var gpuMemory = ResolveGpuMemory(context, gpuDevice);
             return new WorkerGpuInfo(
                 HasGpu: true,
                 GpuName: gpuDevice.Name ?? string.Empty,
                 VramFreeBytes: gpuMemory.FreeBytes,
                 VramTotalBytes: gpuMemory.TotalBytes,
-                IlgpuCudaAvailable: cudaAvailable,
-                IlgpuOpenclAvailable: openclAvailable);
+                IlgpuCudaAvailable: availability.CudaAvailable,
+                IlgpuOpenclAvailable: availability.OpenClAvailable);
         }
         catch
         {

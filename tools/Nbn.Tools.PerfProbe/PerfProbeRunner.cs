@@ -371,7 +371,7 @@ public static class PerfProbeRunner
                     Metrics: new Dictionary<string, double>
                     {
                         ["eligible_workers"] = placementInventory.Workers.Count,
-                        ["gpu_capable_workers"] = placementInventory.Workers.Count(static worker => worker.HasGpu),
+                        ["gpu_capable_workers"] = placementInventory.Workers.Count(static worker => worker.GpuScore > 0f),
                         ["max_cpu_score"] = placementInventory.Workers.Count == 0 ? 0d : placementInventory.Workers.Max(static worker => worker.CpuScore),
                         ["max_gpu_score"] = placementInventory.Workers.Count == 0 ? 0d : placementInventory.Workers.Max(static worker => worker.GpuScore)
                     })));
