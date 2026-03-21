@@ -372,6 +372,146 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task RegisterBrain_DoesNotReplay_RejectedNonFiniteInputVector_Across_CoordinatorMoves()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPidA = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 3)));
+        var outputPidA = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var inputPidB = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 3)));
+        var outputPidB = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 1,
+            InputCoordinatorMode = ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = PidLabel(inputPidA),
+            OutputCoordinatorPid = PidLabel(outputPidA),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.25f, 0.5f, 0.75f }
+        });
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 1f, float.NaN, 3f }
+        });
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 1,
+            InputCoordinatorMode = ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = PidLabel(inputPidB),
+            OutputCoordinatorPid = PidLabel(outputPidB),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        var drain = await root.RequestAsync<InputDrain>(
+            gateway,
+            new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 42
+            });
+
+        Assert.Equal([0.25f, 0.5f, 0.75f], drain.Contribs.Select(static contrib => contrib.Value).ToArray());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task QueuedOutputUnsubscribe_BeforeBrainRegistration_Prevents_ReplayedSubscription()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+        var subscriberPid = root.Spawn(Props.FromProducer(() => new OutputSubscriberProbeActor()));
+        var subscriberActor = PidLabel(subscriberPid);
+
+        root.Send(gateway, new SubscribeOutputs
+        {
+            BrainId = brainId.ToProtoUuid(),
+            SubscriberActor = subscriberActor
+        });
+        root.Send(gateway, new SubscribeOutputsVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            SubscriberActor = subscriberActor
+        });
+        root.Send(gateway, new UnsubscribeOutputs
+        {
+            BrainId = brainId.ToProtoUuid(),
+            SubscriberActor = subscriberActor
+        });
+        root.Send(gateway, new UnsubscribeOutputsVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            SubscriberActor = subscriberActor
+        });
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            InputCoordinatorPid = PidLabel(inputPid),
+            OutputCoordinatorPid = PidLabel(outputPid),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var info = await root.RequestAsync<BrainInfo>(
+                    gateway,
+                    new BrainInfoRequest { BrainId = brainId.ToProtoUuid() });
+                return info.OutputWidth == 1;
+            },
+            timeoutMs: 2_000);
+
+        root.Send(outputPid, new OutputEvent
+        {
+            BrainId = brainId.ToProtoUuid(),
+            OutputIndex = 0,
+            Value = 0.9f,
+            TickId = 1
+        });
+        root.Send(outputPid, new OutputVectorEvent
+        {
+            BrainId = brainId.ToProtoUuid(),
+            TickId = 1,
+            Values = { 0.9f }
+        });
+
+        await Task.Delay(150);
+
+        var snapshot = await root.RequestAsync<OutputSubscriberProbeActor.Snapshot>(
+            subscriberPid,
+            new OutputSubscriberProbeActor.GetSnapshot());
+        Assert.Equal(0, snapshot.SingleCount);
+        Assert.Equal(0, snapshot.VectorCount);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ForwardInput_Refreshes_RouterRegistration_When_BrainRouting_Changes()
     {
         var system = new ActorSystem();

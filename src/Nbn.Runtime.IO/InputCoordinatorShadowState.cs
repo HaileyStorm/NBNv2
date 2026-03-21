@@ -52,6 +52,11 @@ internal sealed class InputCoordinatorShadowState
 
     public void Apply(InputWrite message)
     {
+        if (!float.IsFinite(message.Value))
+        {
+            return;
+        }
+
         if (message.InputIndex >= (uint)_values.Length)
         {
             return;
@@ -67,6 +72,14 @@ internal sealed class InputCoordinatorShadowState
         if (message.Values.Count != _values.Length)
         {
             return;
+        }
+
+        for (var i = 0; i < _values.Length; i++)
+        {
+            if (!float.IsFinite(message.Values[i]))
+            {
+                return;
+            }
         }
 
         for (var i = 0; i < _values.Length; i++)

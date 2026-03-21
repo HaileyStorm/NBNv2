@@ -63,6 +63,11 @@ public sealed class InputCoordinatorActor : IActor
             return false;
         }
 
+        if (!float.IsFinite(message.Value))
+        {
+            return false;
+        }
+
         var index = message.InputIndex;
         if (index >= (uint)_inputWidth)
         {
@@ -84,6 +89,14 @@ public sealed class InputCoordinatorActor : IActor
         if (message.Values.Count != _inputWidth)
         {
             return false;
+        }
+
+        for (var i = 0; i < _inputWidth; i++)
+        {
+            if (!float.IsFinite(message.Values[i]))
+            {
+                return false;
+            }
         }
 
         for (var i = 0; i < _inputWidth; i++)
@@ -249,4 +262,3 @@ public sealed class InputCoordinatorActor : IActor
         });
     }
 }
-

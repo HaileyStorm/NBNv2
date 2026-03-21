@@ -464,6 +464,33 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_ConnectionAndLifecycleFields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var connect = descriptor.MessageTypes.Single(message => message.Name == "Connect");
+        AssertField(connect, "client_name", 1, FieldType.String);
+
+        var connectAck = descriptor.MessageTypes.Single(message => message.Name == "ConnectAck");
+        AssertField(connectAck, "server_name", 1, FieldType.String);
+        AssertField(connectAck, "server_time_ms", 2, FieldType.Fixed64);
+
+        var brainInfoRequest = descriptor.MessageTypes.Single(message => message.Name == "BrainInfoRequest");
+        AssertField(brainInfoRequest, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
+        var registerIoGateway = descriptor.MessageTypes.Single(message => message.Name == "RegisterIoGateway");
+        AssertField(registerIoGateway, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(registerIoGateway, "io_gateway_pid", 2, FieldType.String);
+
+        var spawnBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrainViaIO");
+        AssertField(spawnBrainViaIo, "request", 1, FieldType.Message, "nbn.control.SpawnBrain");
+
+        var unregisterBrain = descriptor.MessageTypes.Single(message => message.Name == "UnregisterBrain");
+        AssertField(unregisterBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(unregisterBrain, "reason", 2, FieldType.String);
+    }
+
+    [Fact]
     public void ProtoIo_OutputFields_AreStable()
     {
         var descriptor = NbnIoReflection.Descriptor;
@@ -667,6 +694,37 @@ public class ProtoCompatibilityTests
         AssertField(requestSnapshot, "cost_enabled", 4, FieldType.Bool);
         AssertField(requestSnapshot, "energy_enabled", 5, FieldType.Bool);
         AssertField(requestSnapshot, "plasticity_enabled", 6, FieldType.Bool);
+    }
+
+    [Fact]
+    public void ProtoIo_EnergyAndArtifactCommandFields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var energyCredit = descriptor.MessageTypes.Single(message => message.Name == "EnergyCredit");
+        AssertField(energyCredit, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(energyCredit, "amount", 2, FieldType.SInt64);
+
+        var energyRate = descriptor.MessageTypes.Single(message => message.Name == "EnergyRate");
+        AssertField(energyRate, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(energyRate, "units_per_second", 2, FieldType.SInt64);
+
+        var setCostEnergy = descriptor.MessageTypes.Single(message => message.Name == "SetCostEnergyEnabled");
+        AssertField(setCostEnergy, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(setCostEnergy, "cost_enabled", 2, FieldType.Bool);
+        AssertField(setCostEnergy, "energy_enabled", 3, FieldType.Bool);
+
+        var snapshotReady = descriptor.MessageTypes.Single(message => message.Name == "SnapshotReady");
+        AssertField(snapshotReady, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(snapshotReady, "snapshot", 2, FieldType.Message, "nbn.ArtifactRef");
+
+        var exportBrainDefinition = descriptor.MessageTypes.Single(message => message.Name == "ExportBrainDefinition");
+        AssertField(exportBrainDefinition, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(exportBrainDefinition, "rebase_overlays", 2, FieldType.Bool);
+
+        var brainDefinitionReady = descriptor.MessageTypes.Single(message => message.Name == "BrainDefinitionReady");
+        AssertField(brainDefinitionReady, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(brainDefinitionReady, "brain_def", 2, FieldType.Message, "nbn.ArtifactRef");
     }
 
     [Fact]

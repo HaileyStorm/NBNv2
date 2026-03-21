@@ -243,5 +243,54 @@ public sealed class InputCoordinatorActorTests
             await system.ShutdownAsync();
         }
     }
-}
 
+    [Fact]
+    public async Task NonFiniteInputs_AreRejected_And_DoNotMutate_State()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+                brainId,
+                inputWidth: 3,
+                InputCoordinatorMode.ReplayLatestVector)));
+
+            var initialVector = await root.RequestAsync<IoCommandAck>(coordinator, new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 1f, 2f, 3f }
+            });
+            Assert.True(initialVector.Success);
+
+            var nonFiniteWrite = await root.RequestAsync<IoCommandAck>(coordinator, new InputWrite
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputIndex = 1,
+                Value = float.NaN
+            });
+            Assert.False(nonFiniteWrite.Success);
+
+            var nonFiniteVector = await root.RequestAsync<IoCommandAck>(coordinator, new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 4f, float.PositiveInfinity, 6f }
+            });
+            Assert.False(nonFiniteVector.Success);
+
+            var drain = await root.RequestAsync<InputDrain>(coordinator, new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 5
+            });
+
+            Assert.Equal(new[] { 1f, 2f, 3f }, drain.Contribs.Select(static contrib => contrib.Value).ToArray());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+}

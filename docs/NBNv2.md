@@ -872,6 +872,7 @@ InputCoordinator supports two runtime modes:
 When multiple input writes arrive within one tick window, the most recent value for each index is the value emitted at the next tick boundary.
 
 External World may also send a vector of values for all inputs (length must == input width).
+Single-value and vector writes must contain finite real numbers; `NaN` and infinities are rejected by IO runtime validation.
 
 ### 13.4 Output mapping
 
