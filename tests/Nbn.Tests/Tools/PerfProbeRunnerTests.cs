@@ -315,6 +315,46 @@ public sealed class PerfProbeRunnerTests
     }
 
     [Fact]
+    public void BuildCompletedLocalhostStressResult_ReportsBelowTargetMeasurementsAsPassed()
+    {
+        var result = PerfProbeRunner.BuildCompletedLocalhostStressResult(
+            Scenario: "brain_size_limit_10hz",
+            Backend: "cpu",
+            MetConfiguredTarget: false,
+            SuccessSummary: "success",
+            BelowTargetSummary: "below target",
+            Parameters: new Dictionary<string, string>
+            {
+                ["target_tick_hz"] = "10"
+            },
+            Metrics: new Dictionary<string, double>
+            {
+                ["best_observed_tick_hz"] = 9.25
+            });
+
+        Assert.Equal(PerfScenarioStatus.Passed, result.Status);
+        Assert.Equal("below target", result.Summary);
+        Assert.Equal("localhost_stress", result.Suite);
+        Assert.Equal("cpu", result.Backend);
+    }
+
+    [Fact]
+    public void BuildCompletedLocalhostStressResult_ReportsMetTargetMeasurementsAsPassed()
+    {
+        var result = PerfProbeRunner.BuildCompletedLocalhostStressResult(
+            Scenario: "brain_count_limit",
+            Backend: "cpu",
+            MetConfiguredTarget: true,
+            SuccessSummary: "success",
+            BelowTargetSummary: "below target",
+            Parameters: new Dictionary<string, string>(),
+            Metrics: new Dictionary<string, double>());
+
+        Assert.Equal(PerfScenarioStatus.Passed, result.Status);
+        Assert.Equal("success", result.Summary);
+    }
+
+    [Fact]
     public async Task LocalRuntimeHarness_DirectTickCompute_ReachesHiddenShard()
     {
         await using var harness = await PerfProbeRunner.LocalRuntimeHarness.CreateAsync(

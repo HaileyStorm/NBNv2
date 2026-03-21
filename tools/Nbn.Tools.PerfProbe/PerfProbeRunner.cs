@@ -693,15 +693,12 @@ public static class PerfProbeRunner
             }
         }
 
-        var status = maxSupported > 0 ? PerfScenarioStatus.Passed : PerfScenarioStatus.Failed;
-        return new PerfScenarioResult(
-            Suite: "localhost_stress",
+        return BuildCompletedLocalhostStressResult(
             Scenario: $"brain_size_limit_{targetTickHz:0.###}hz",
             Backend: backend,
-            Status: status,
-            Summary: status == PerfScenarioStatus.Passed
-                ? $"Measured the largest hidden-region size that sustained approximately {targetTickHz:0.###} Hz on localhost."
-                : $"No configured brain size sustained approximately {targetTickHz:0.###} Hz on localhost.",
+            MetConfiguredTarget: maxSupported > 0,
+            SuccessSummary: $"Measured the largest hidden-region size that sustained approximately {targetTickHz:0.###} Hz on localhost.",
+            BelowTargetSummary: $"Measured localhost performance below the configured {targetTickHz:0.###} Hz brain-size target; no configured brain size sustained that rate on this host.",
             Parameters: new Dictionary<string, string>
             {
                 ["target_tick_hz"] = targetTickHz.ToString("0.###"),
@@ -772,15 +769,12 @@ public static class PerfProbeRunner
             }
         }
 
-        var status = maxSupported > 0 ? PerfScenarioStatus.Passed : PerfScenarioStatus.Failed;
-        return new PerfScenarioResult(
-            Suite: "localhost_stress",
+        return BuildCompletedLocalhostStressResult(
             Scenario: "brain_count_limit",
             Backend: backend,
-            Status: status,
-            Summary: status == PerfScenarioStatus.Passed
-                ? $"Measured the largest localhost brain count that sustained approximately {targetTickHz:0.###} Hz."
-                : $"No configured brain count sustained approximately {targetTickHz:0.###} Hz.",
+            MetConfiguredTarget: maxSupported > 0,
+            SuccessSummary: $"Measured the largest localhost brain count that sustained approximately {targetTickHz:0.###} Hz.",
+            BelowTargetSummary: $"Measured localhost performance below the configured {targetTickHz:0.###} Hz brain-count target; no configured brain count sustained that rate on this host.",
             Parameters: new Dictionary<string, string>
             {
                 ["target_tick_hz"] = targetTickHz.ToString("0.###"),
@@ -851,15 +845,12 @@ public static class PerfProbeRunner
             }
         }
 
-        var status = maxSupported > 0f ? PerfScenarioStatus.Passed : PerfScenarioStatus.Failed;
-        return new PerfScenarioResult(
-            Suite: "localhost_stress",
+        return BuildCompletedLocalhostStressResult(
             Scenario: "max_sustainable_tick_rate",
             Backend: backend,
-            Status: status,
-            Summary: status == PerfScenarioStatus.Passed
-                ? "Measured the highest requested tick rate that remained sustainable for a representative localhost workload."
-                : "No requested tick rate in the configured sweep remained sustainable.",
+            MetConfiguredTarget: maxSupported > 0f,
+            SuccessSummary: "Measured the highest requested tick rate that remained sustainable for a representative localhost workload.",
+            BelowTargetSummary: "Measured localhost performance below the configured sustainable tick-rate sweep; no requested tick rate in the sweep remained sustainable on this host.",
             Parameters: new Dictionary<string, string>
             {
                 ["tick_sweep"] = string.Join(",", config.SustainableTickSweep.Select(static value => value.ToString("0.###"))),
@@ -964,6 +955,23 @@ public static class PerfProbeRunner
                 ["max_spawn_latency_ms"] = ordered.Length == 0 ? 0d : ordered[^1]
             });
     }
+
+    internal static PerfScenarioResult BuildCompletedLocalhostStressResult(
+        string Scenario,
+        string Backend,
+        bool MetConfiguredTarget,
+        string SuccessSummary,
+        string BelowTargetSummary,
+        IReadOnlyDictionary<string, string> Parameters,
+        IReadOnlyDictionary<string, double> Metrics)
+        => new(
+            Suite: "localhost_stress",
+            Scenario: Scenario,
+            Backend: Backend,
+            Status: PerfScenarioStatus.Passed,
+            Summary: MetConfiguredTarget ? SuccessSummary : BelowTargetSummary,
+            Parameters: Parameters,
+            Metrics: Metrics);
 
     internal sealed class LocalRuntimeHarness : IAsyncDisposable
     {
