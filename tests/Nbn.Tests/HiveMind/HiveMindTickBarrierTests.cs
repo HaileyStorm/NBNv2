@@ -267,6 +267,67 @@ public class HiveMindTickBarrierTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public void BackpressureController_TimeoutStreak_RequestsReschedule_And_HealthyTick_Resets()
+    {
+        var controller = new BackpressureController(CreateOptions(
+            targetTickHz: 20f,
+            minTickHz: 5f,
+            backpressureDecay: 0.5f,
+            backpressureRecovery: 2f,
+            timeoutRescheduleThreshold: 3));
+
+        var first = controller.Evaluate(CreateTickOutcome(1, computeTimedOut: true));
+        Assert.False(first.RequestReschedule);
+        Assert.Equal(1, first.TimeoutStreak);
+        Assert.Equal(10f, first.TargetTickHz, 3);
+
+        var second = controller.Evaluate(CreateTickOutcome(2, deliverTimedOut: true));
+        Assert.False(second.RequestReschedule);
+        Assert.Equal(2, second.TimeoutStreak);
+        Assert.Equal(5f, second.TargetTickHz, 3);
+
+        var third = controller.Evaluate(CreateTickOutcome(3, computeTimedOut: true));
+        Assert.True(third.RequestReschedule);
+        Assert.Equal(3, third.TimeoutStreak);
+        Assert.Equal(5f, third.TargetTickHz, 3);
+
+        var healthy = controller.Evaluate(CreateTickOutcome(4));
+        Assert.False(healthy.RequestReschedule);
+        Assert.Equal(0, healthy.TimeoutStreak);
+        Assert.Equal(10f, healthy.TargetTickHz, 3);
+    }
+
+    [Fact]
+    public void BackpressureController_LateStreak_Decays_ToFloor_Then_HealthyTicks_Recover()
+    {
+        var controller = new BackpressureController(CreateOptions(
+            targetTickHz: 20f,
+            minTickHz: 5f,
+            backpressureDecay: 0.5f,
+            backpressureRecovery: 2f,
+            lateBackpressureThreshold: 2,
+            timeoutRescheduleThreshold: int.MaxValue));
+
+        var firstLate = controller.Evaluate(CreateTickOutcome(1, lateComputeCount: 1));
+        Assert.False(firstLate.RequestReschedule);
+        Assert.Equal(20f, firstLate.TargetTickHz, 3);
+
+        var secondLate = controller.Evaluate(CreateTickOutcome(2, lateDeliverCount: 1));
+        Assert.False(secondLate.RequestReschedule);
+        Assert.Equal(10f, secondLate.TargetTickHz, 3);
+
+        var thirdLate = controller.Evaluate(CreateTickOutcome(3, lateComputeCount: 1, lateDeliverCount: 1));
+        Assert.False(thirdLate.RequestReschedule);
+        Assert.Equal(5f, thirdLate.TargetTickHz, 3);
+
+        var firstHealthy = controller.Evaluate(CreateTickOutcome(4));
+        Assert.Equal(10f, firstHealthy.TargetTickHz, 3);
+
+        var secondHealthy = controller.Evaluate(CreateTickOutcome(5));
+        Assert.Equal(20f, secondHealthy.TargetTickHz, 3);
+    }
+
     public static IEnumerable<object[]> BackpressurePauseStrategyCases()
     {
         yield return [BackpressurePauseStrategy.OldestFirst, Array.Empty<int>(), 0];
@@ -1226,6 +1287,25 @@ public class HiveMindTickBarrierTests
 
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static TickOutcome CreateTickOutcome(
+        ulong tickId,
+        bool computeTimedOut = false,
+        bool deliverTimedOut = false,
+        int lateComputeCount = 0,
+        int lateDeliverCount = 0)
+        => new(
+            TickId: tickId,
+            ComputeDuration: TimeSpan.FromMilliseconds(5),
+            DeliverDuration: TimeSpan.FromMilliseconds(5),
+            ComputeTimedOut: computeTimedOut,
+            DeliverTimedOut: deliverTimedOut,
+            LateComputeCount: lateComputeCount,
+            LateDeliverCount: lateDeliverCount,
+            ExpectedComputeCount: 1,
+            CompletedComputeCount: computeTimedOut ? 0 : 1,
+            ExpectedDeliverCount: 1,
+            CompletedDeliverCount: deliverTimedOut ? 0 : 1);
 
     private static async Task<DebugProbeSnapshot> WaitForDebugSnapshotAsync(
         IRootContext root,

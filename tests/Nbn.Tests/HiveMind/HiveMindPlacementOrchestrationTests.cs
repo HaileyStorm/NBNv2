@@ -2168,6 +2168,162 @@ public sealed class HiveMindPlacementOrchestrationTests
     }
 
     [Fact]
+    public async Task OfflineWorker_Triggers_ArtifactBacked_Recovery_And_Preserves_Paused_State()
+    {
+        using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-recovery-paused-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+        ActorSystem? system = null;
+
+        try
+        {
+            var baseRef = await StoreRichBaseDefinitionAsync(artifactRoot);
+            system = new ActorSystem();
+            var root = system.Root;
+            var settingsProbePid = root.Spawn(Props.FromProducer(static () => new BrainStateProbeActor()));
+            var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+
+            var workerAId = Guid.NewGuid();
+            var workerBId = Guid.NewGuid();
+            var workerA = new PlacementWorkerProbe(workerAId, dropAcks: false, failFirstRetryable: false);
+            var workerB = new PlacementWorkerProbe(workerBId, dropAcks: false, failFirstRetryable: false);
+            var workerAPid = root.Spawn(Props.FromProducer(() => workerA));
+            var workerBPid = root.Spawn(Props.FromProducer(() => workerB));
+            var actor = new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 2_000,
+                    retryBackoffMs: 50,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 2_000,
+                    rescheduleMinMinutes: 0),
+                debugHubPid: debugProbePid,
+                settingsPid: settingsProbePid,
+                debugStreamEnabled: true);
+            var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+            PrimeWorkers(root, hiveMind, (workerAPid, workerAId, true, true), (workerBPid, workerBId, true, true));
+
+            var brainId = Guid.NewGuid();
+            var placement = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2,
+                    ShardPlan = new ShardPlan
+                    {
+                        Mode = ShardPlanMode.ShardPlanFixed,
+                        ShardCount = 2
+                    }
+                });
+            Assert.True(placement.Accepted);
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+
+            root.Send(hiveMind, new Nbn.Shared.HiveMind.PauseBrainRequest(brainId, "operator_pause"));
+            await WaitForBrainStateAsync(root, settingsProbePid, brainId, "Paused", timeoutMs: 5_000);
+
+            var initialShardProbes = await RegisterSnapshotShardsFromCurrentAssignmentsAsync(root, hiveMind, actor, brainId);
+            var snapshotReady = await root.RequestAsync<ProtoIo.SnapshotReady>(
+                hiveMind,
+                new ProtoIo.RequestSnapshot
+                {
+                    BrainId = brainId.ToProtoUuid()
+                });
+            Assert.NotNull(snapshotReady.Snapshot);
+            Assert.True(snapshotReady.Snapshot.TryToSha256Bytes(out _));
+
+            var failedWorkerId = initialShardProbes
+                .GroupBy(static probe => probe.WorkerId)
+                .OrderByDescending(static group => group.Count())
+                .First()
+                .Key;
+            var workerPidById = new Dictionary<Guid, PID>
+            {
+                [workerAId] = workerAPid,
+                [workerBId] = workerBPid
+            };
+
+            root.Stop(workerPidById[failedWorkerId]);
+            foreach (var shardProbe in initialShardProbes.Where(probe => probe.WorkerId == failedWorkerId))
+            {
+                root.Stop(shardProbe.Pid);
+            }
+
+            PrimeWorkers(
+                root,
+                hiveMind,
+                (workerAPid, workerAId, true, workerAId != failedWorkerId),
+                (workerBPid, workerBId, true, workerBId != failedWorkerId));
+
+            await WaitForBrainStateAsync(root, settingsProbePid, brainId, "Recovering", timeoutMs: 5_000);
+            await WaitForAsync(
+                async () =>
+                {
+                    var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                    return status.PlacementEpoch > placement.PlacementEpoch;
+                },
+                timeoutMs: 5_000);
+
+            var recoveryAssignments = GetCurrentRegionShardAssignments(actor, brainId);
+            Assert.NotEmpty(recoveryAssignments);
+            Assert.All(
+                recoveryAssignments,
+                assignment => Assert.NotEqual(failedWorkerId, ToGuidOrThrow(assignment.WorkerNodeId)));
+
+            await RegisterHostedShardsFromCurrentAssignmentsAsync(root, hiveMind, actor, brainId, workerPidById);
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+            await WaitForAsync(
+                async () =>
+                {
+                    var snapshot = await GetBrainStateSnapshotAsync(root, settingsProbePid, brainId);
+                    return snapshot.Events.Count >= 2
+                           && string.Equals(snapshot.Events[^1].State, "Paused", StringComparison.Ordinal)
+                           && string.Equals(snapshot.Events[^2].State, "Recovering", StringComparison.Ordinal);
+                },
+                timeoutMs: 5_000);
+
+            var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+            AssertPlacementStable(finalStatus);
+            Assert.True(finalStatus.PlacementEpoch > placement.PlacementEpoch);
+
+            var brainStates = await GetBrainStateSnapshotAsync(root, settingsProbePid, brainId);
+            AssertStateSequence(brainStates, "Paused", "Recovering", "Paused");
+            Assert.Equal("Paused", brainStates.Events[^1].State);
+            var recoveringIndex = brainStates.Events
+                .Select((entry, index) => (entry, index))
+                .First(pair => string.Equals(pair.entry.State, "Recovering", StringComparison.Ordinal))
+                .index;
+            Assert.DoesNotContain(
+                brainStates.Events.Skip(recoveringIndex + 1),
+                entry => string.Equals(entry.State, "Active", StringComparison.Ordinal));
+
+            var brainTag = brainId.ToString("D");
+            Assert.Equal(1, metrics.SumLong("nbn.hivemind.recovery.requested", "brain_id", brainTag));
+            Assert.Equal(1, metrics.SumLong("nbn.hivemind.recovery.completed", "brain_id", brainTag));
+            Assert.Equal(0, metrics.SumLong("nbn.hivemind.recovery.failed", "brain_id", brainTag));
+
+            var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+            Assert.True(debugSnapshot.Count("brain.recovering") >= 1);
+            Assert.True(debugSnapshot.Count("brain.recovered") >= 1);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (system is not null)
+            {
+                await system.ShutdownAsync();
+            }
+
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task OfflineOnlyWorker_Fails_Recovery_And_Emits_Recovering_To_Dead()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
