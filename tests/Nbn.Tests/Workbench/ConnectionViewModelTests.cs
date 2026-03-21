@@ -1,4 +1,5 @@
 using Nbn.Shared;
+using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tests.Workbench;
@@ -38,6 +39,25 @@ public sealed class ConnectionViewModelTests
         var vm = new ConnectionViewModel();
 
         Assert.Equal(NetworkAddressDefaults.DefaultBindHost, vm.LocalBindHost);
+    }
+
+    [Fact]
+    public void ResolveReachableArtifactPort_DefaultsAdjacentToLocalClientPort()
+    {
+        var vm = new ConnectionViewModel();
+
+        Assert.Equal(12091, vm.ResolveReachableArtifactPort());
+    }
+
+    [Fact]
+    public void ResolveReachableArtifactPort_FallsBackWhenLocalClientPortIsInvalid()
+    {
+        var vm = new ConnectionViewModel
+        {
+            LocalPortText = "invalid"
+        };
+
+        Assert.Equal(WorkbenchArtifactPublisher.DefaultReachableArtifactPort, vm.ResolveReachableArtifactPort());
     }
 
     [Fact]

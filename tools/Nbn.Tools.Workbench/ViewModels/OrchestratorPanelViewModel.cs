@@ -3226,7 +3226,8 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
                     "application/x-nbn",
                     artifactRoot,
                     _connections.LocalBindHost,
-                    label: "Workbench Sample Spawn")
+                    label: "Workbench Sample Spawn",
+                    preferredPort: _connections.ResolveReachableArtifactPort())
                 .ConfigureAwait(false);
             return new SampleArtifact(publishedArtifact.ArtifactRef, publishedArtifact.AttentionMessage);
         }

@@ -466,6 +466,7 @@ public class ReproPanelViewModelTests
             string bindHost,
             string? advertisedHost = null,
             string? label = null,
+            int? preferredPort = null,
             CancellationToken cancellationToken = default)
         {
             PublishCallCount++;
@@ -480,6 +481,7 @@ public class ReproPanelViewModelTests
             string bindHost,
             string? advertisedHost = null,
             string? label = null,
+            int? preferredPort = null,
             CancellationToken cancellationToken = default)
             => Task.FromResult(new PublishedArtifact(artifactRef.Clone(), null));
 

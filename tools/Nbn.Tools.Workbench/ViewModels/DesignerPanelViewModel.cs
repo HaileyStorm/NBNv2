@@ -1592,7 +1592,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     "application/x-nbn",
                     artifactRoot,
                     _connections.LocalBindHost,
-                    label: "Workbench Designer")
+                    label: "Workbench Designer",
+                    preferredPort: _connections.ResolveReachableArtifactPort())
                 .ConfigureAwait(false);
             var artifactRef = publishedArtifact.ArtifactRef;
             if (!string.IsNullOrWhiteSpace(publishedArtifact.AttentionMessage))
@@ -5186,7 +5187,8 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                 artifactRef,
                 BuildDefaultArtifactRoot(),
                 _connections.LocalBindHost,
-                label: label)
+                label: label,
+                preferredPort: _connections.ResolveReachableArtifactPort())
             .ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(published.AttentionMessage))
         {

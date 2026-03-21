@@ -31,6 +31,7 @@ public interface IWorkbenchArtifactPublisher : IAsyncDisposable
         string bindHost,
         string? advertisedHost = null,
         string? label = null,
+        int? preferredPort = null,
         CancellationToken cancellationToken = default);
 
     Task<PublishedArtifact> PromoteAsync(
@@ -39,6 +40,7 @@ public interface IWorkbenchArtifactPublisher : IAsyncDisposable
         string bindHost,
         string? advertisedHost = null,
         string? label = null,
+        int? preferredPort = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -46,6 +48,8 @@ public sealed record PublishedArtifact(ArtifactRef ArtifactRef, string? Attentio
 
 public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
 {
+    public const int DefaultReachableArtifactPort = 12091;
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, HostedStore> _stores = new(StringComparer.OrdinalIgnoreCase);
@@ -70,6 +74,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         string bindHost,
         string? advertisedHost = null,
         string? label = null,
+        int? preferredPort = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(bytes);
@@ -81,7 +86,11 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         var normalizedRoot = NormalizeRoot(backingStoreRoot);
         var normalizedBindHost = NormalizeBindHost(bindHost);
         var normalizedAdvertisedHost = NetworkAddressDefaults.ResolveAdvertisedHost(normalizedBindHost, advertisedHost);
-        var key = BuildStoreKey(normalizedRoot, normalizedBindHost, normalizedAdvertisedHost);
+        var normalizedPreferredPort = NormalizePreferredPort(preferredPort);
+
+        await PersistLocalCopyAsync(bytes, mediaType, normalizedRoot, cancellationToken).ConfigureAwait(false);
+
+        var key = BuildStoreKey(normalizedBindHost, normalizedAdvertisedHost, normalizedPreferredPort);
 
         HostedStore hosted;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -90,10 +99,10 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
             if (!_stores.TryGetValue(key, out hosted!))
             {
                 hosted = await StartHostedStoreAsync(
-                        normalizedRoot,
                         normalizedBindHost,
                         normalizedAdvertisedHost,
                         label,
+                        normalizedPreferredPort,
                         cancellationToken)
                     .ConfigureAwait(false);
                 _stores[key] = hosted;
@@ -118,6 +127,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         string bindHost,
         string? advertisedHost = null,
         string? label = null,
+        int? preferredPort = null,
         CancellationToken cancellationToken = default)
     {
         if (artifactRef is null)
@@ -156,6 +166,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
                 bindHost,
                 advertisedHost,
                 label,
+                preferredPort,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -181,12 +192,13 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
     }
 
     private async Task<HostedStore> StartHostedStoreAsync(
-        string rootPath,
         string bindHost,
         string advertisedHost,
         string? label,
+        int preferredPort,
         CancellationToken cancellationToken)
     {
+        var rootPath = ResolveHostedRootPath(bindHost, advertisedHost, preferredPort);
         Directory.CreateDirectory(rootPath);
         var store = new LocalArtifactStore(new ArtifactStoreOptions(rootPath));
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
@@ -196,7 +208,7 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
             EnvironmentName = Environments.Production
         });
         builder.WebHost.UseKestrelCore();
-        builder.WebHost.ConfigureKestrel(options => ConfigureListen(options, bindHost));
+        builder.WebHost.ConfigureKestrel(options => ConfigureListen(options, bindHost, preferredPort));
 
         var app = builder.Build();
         MapRoutes(app, store);
@@ -227,27 +239,27 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
             firewall.RequiresAttention ? firewall.Message : null);
     }
 
-    private static void ConfigureListen(KestrelServerOptions options, string bindHost)
+    private static void ConfigureListen(KestrelServerOptions options, string bindHost, int preferredPort)
     {
         if (NetworkAddressDefaults.IsAllInterfaces(bindHost))
         {
-            options.ListenAnyIP(0);
+            options.ListenAnyIP(preferredPort);
             return;
         }
 
         if (NetworkAddressDefaults.IsLoopbackHost(bindHost))
         {
-            options.Listen(IPAddress.Loopback, 0);
+            options.Listen(IPAddress.Loopback, preferredPort);
             return;
         }
 
         if (IPAddress.TryParse(bindHost, out var ip))
         {
-            options.Listen(ip, 0);
+            options.Listen(ip, preferredPort);
             return;
         }
 
-        options.ListenAnyIP(0);
+        options.ListenAnyIP(preferredPort);
     }
 
     private static void MapRoutes(WebApplication app, LocalArtifactStore store)
@@ -464,8 +476,8 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         await response.Body.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }
 
-    private static string BuildStoreKey(string rootPath, string bindHost, string advertisedHost)
-        => $"{rootPath}|{bindHost}|{advertisedHost}";
+    private static string BuildStoreKey(string bindHost, string advertisedHost, int preferredPort)
+        => $"{bindHost}|{advertisedHost}|{preferredPort}";
 
     private static string DescribeArtifactStore(string? storeUri, string defaultLocalStoreRootPath)
     {
@@ -494,6 +506,53 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
 
     private static string NormalizeBindHost(string bindHost)
         => string.IsNullOrWhiteSpace(bindHost) ? NetworkAddressDefaults.LoopbackHost : bindHost.Trim();
+
+    private static int NormalizePreferredPort(int? preferredPort)
+        => preferredPort is > 0 and < 65536
+            ? preferredPort.Value
+            : DefaultReachableArtifactPort;
+
+    private static async Task PersistLocalCopyAsync(
+        byte[] bytes,
+        string mediaType,
+        string rootPath,
+        CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(rootPath);
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(rootPath));
+        await store.StoreAsync(
+                new MemoryStream(bytes, writable: false),
+                mediaType,
+                cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static string ResolveHostedRootPath(string bindHost, string advertisedHost, int preferredPort)
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var baseRoot = string.IsNullOrWhiteSpace(localAppData)
+            ? Path.Combine(Environment.CurrentDirectory, ".artifacts-temp", "workbench-http-artifacts")
+            : Path.Combine(localAppData, "Nbn.Workbench", "http-artifacts");
+        var hostToken = SanitizePathSegment($"{bindHost}-{advertisedHost}");
+        return Path.Combine(baseRoot, $"{hostToken}-{preferredPort}");
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "default";
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value.Trim())
+        {
+            builder.Append(invalid.Contains(ch) ? '-' : ch);
+        }
+
+        return builder.Length == 0 ? "default" : builder.ToString();
+    }
 
     private sealed record HostedStore(
         WebApplication App,

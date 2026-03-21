@@ -2794,6 +2794,7 @@ public class OrchestratorPanelViewModelTests
             string bindHost,
             string? advertisedHost = null,
             string? label = null,
+            int? preferredPort = null,
             CancellationToken cancellationToken = default)
         {
             PublishCallCount++;
@@ -2811,6 +2812,7 @@ public class OrchestratorPanelViewModelTests
             string bindHost,
             string? advertisedHost = null,
             string? label = null,
+            int? preferredPort = null,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new PublishedArtifact(

@@ -76,6 +76,18 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _localPort, value);
     }
 
+    public int ResolveReachableArtifactPort()
+    {
+        if (int.TryParse(_localPort, out var localPort)
+            && localPort >= 1
+            && localPort < 65535)
+        {
+            return localPort + 1;
+        }
+
+        return WorkbenchArtifactPublisher.DefaultReachableArtifactPort;
+    }
+
     public string IoHost
     {
         get => _ioHost;

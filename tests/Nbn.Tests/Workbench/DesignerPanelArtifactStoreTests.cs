@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Settings;
 using Nbn.Runtime.Artifacts;
@@ -22,14 +23,23 @@ public sealed class DesignerPanelArtifactStoreTests
         {
             var payload = Enumerable.Range(0, 256).Select(static value => (byte)value).ToArray();
             await using var publisher = new WorkbenchArtifactPublisher();
+            Assert.True(
+                LocalPortAllocator.TryFindAvailablePort(
+                    NetworkAddressDefaults.LoopbackHost,
+                    preferredStartPort: 19100,
+                    reservedPorts: null,
+                    out var port,
+                    out var error),
+                error);
 
             var published = await publisher.PublishAsync(
                 payload,
                 "application/x-nbn",
                 artifactRoot,
-                NetworkAddressDefaults.LoopbackHost);
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
 
-            Assert.StartsWith("http://127.0.0.1:", published.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith($"http://127.0.0.1:{port}/", published.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
             Assert.Null(published.AttentionMessage);
 
             var store = new HttpArtifactStore(published.ArtifactRef.StoreUri);
@@ -62,6 +72,63 @@ public sealed class DesignerPanelArtifactStoreTests
     }
 
     [Fact]
+    public async Task WorkbenchArtifactPublisher_ReusesStablePreferredPortAcrossDifferentBackingRoots()
+    {
+        var firstRoot = Path.Combine(Path.GetTempPath(), $"nbn-workbench-publisher-a-{Guid.NewGuid():N}");
+        var secondRoot = Path.Combine(Path.GetTempPath(), $"nbn-workbench-publisher-b-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(firstRoot);
+        Directory.CreateDirectory(secondRoot);
+
+        Assert.True(
+            LocalPortAllocator.TryFindAvailablePort(
+                NetworkAddressDefaults.LoopbackHost,
+                preferredStartPort: 19150,
+                reservedPorts: null,
+                out var port,
+                out var error),
+            error);
+
+        try
+        {
+            var firstPayload = Enumerable.Range(0, 64).Select(static value => (byte)value).ToArray();
+            var secondPayload = Enumerable.Range(64, 64).Select(static value => (byte)value).ToArray();
+            await using var publisher = new WorkbenchArtifactPublisher();
+
+            var first = await publisher.PublishAsync(
+                firstPayload,
+                "application/x-nbn",
+                firstRoot,
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
+            var second = await publisher.PublishAsync(
+                secondPayload,
+                "application/x-nbn",
+                secondRoot,
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
+
+            Assert.StartsWith($"http://127.0.0.1:{port}/", first.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith($"http://127.0.0.1:{port}/", second.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+
+            await AssertHttpArtifactReadableAsync(first.ArtifactRef, firstPayload);
+            await AssertHttpArtifactReadableAsync(second.ArtifactRef, secondPayload);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(firstRoot))
+            {
+                Directory.Delete(firstRoot, recursive: true);
+            }
+
+            if (Directory.Exists(secondRoot))
+            {
+                Directory.Delete(secondRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task StoreCurrentDefinitionArtifactAsync_RegisteredNonFileStore_UsesResolver_AndReloadsFromArtifactRef()
     {
         using var remoteScope = new RegisteredArtifactStoreScope();
@@ -89,6 +156,17 @@ public sealed class DesignerPanelArtifactStoreTests
         Assert.NotNull(vm.Brain);
         Assert.Equal("NBN imported.", vm.Status);
         Assert.Equal(1, remoteScope.Store.OpenCalls);
+    }
+
+    private static async Task AssertHttpArtifactReadableAsync(ArtifactRef artifactRef, byte[] expectedPayload)
+    {
+        var store = new HttpArtifactStore(artifactRef.StoreUri);
+        var hash = new Sha256Hash(artifactRef.ToSha256Bytes());
+        await using var stream = await store.TryOpenArtifactAsync(hash);
+        Assert.NotNull(stream);
+        using var buffer = new MemoryStream();
+        await stream!.CopyToAsync(buffer);
+        Assert.Equal(expectedPayload, buffer.ToArray());
     }
 
     [Fact]

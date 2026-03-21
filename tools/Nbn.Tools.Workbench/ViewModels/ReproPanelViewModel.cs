@@ -802,7 +802,8 @@ public sealed class ReproPanelViewModel : ViewModelBase
                 mediaType,
                 artifactRoot,
                 _connections?.LocalBindHost ?? NetworkAddressDefaults.DefaultBindHost,
-                label: "Workbench Reproduction")
+                label: "Workbench Reproduction",
+                preferredPort: _connections?.ResolveReachableArtifactPort())
             .ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(published.AttentionMessage))
         {
