@@ -1609,7 +1609,9 @@ public sealed class DesignerPanelViewModel : ViewModelBase
                     $"SpawnDiag designBrain={designBrainId:D} artifactSha={artifactSha} artifactStore={artifactRef.StoreUri} backingRoot={artifactRoot} regions={regionCount} neurons={neuronCount} shardPlan={sharedPlanMode} plannedShards={plannedShardCount}");
             }
 
-            Status = "Spawning brain via IO/HiveMind worker placement...";
+            Status = string.IsNullOrWhiteSpace(publishedArtifact.AttentionMessage)
+                ? "Spawning brain via IO/HiveMind worker placement..."
+                : $"Spawning brain via IO/HiveMind worker placement... {publishedArtifact.AttentionMessage}";
             var spawnAck = await _client.SpawnBrainViaIoAsync(new ProtoControl.SpawnBrain
             {
                 BrainDef = artifactRef

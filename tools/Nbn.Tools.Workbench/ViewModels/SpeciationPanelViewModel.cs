@@ -133,6 +133,7 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
     private readonly ILocalProjectLaunchPreparer _launchPreparer;
+    private readonly ILocalFirewallManager _firewallManager;
     private readonly Func<Task>? _startSpeciationService;
     private readonly Func<Task>? _stopSpeciationService;
     private readonly Func<Task>? _refreshOrchestrator;
@@ -268,12 +269,14 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         Func<Task>? stopSpeciationService = null,
         Func<Task>? refreshOrchestrator = null,
         bool enableLiveChartsAutoRefresh = true,
-        ILocalProjectLaunchPreparer? launchPreparer = null)
+        ILocalProjectLaunchPreparer? launchPreparer = null,
+        ILocalFirewallManager? firewallManager = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _client = client;
         _launchPreparer = launchPreparer ?? new LocalProjectLaunchPreparer();
+        _firewallManager = firewallManager ?? new LocalFirewallManager();
         _startSpeciationService = startSpeciationService;
         _stopSpeciationService = stopSpeciationService;
         _refreshOrchestrator = refreshOrchestrator;
@@ -1950,8 +1953,9 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
 
         var startInfo = launch.StartInfo;
         var startResult = await _evolutionRunner.StartAsync(startInfo, waitForExit: false, label: "EvolutionSim").ConfigureAwait(false);
-        SimulatorStatus = startResult.Message;
-        Status = $"Evolution simulator: {startResult.Message}";
+        var startMessage = await AppendFirewallAttentionAsync("EvolutionSim", SimBindHost, simPort, startResult.Message).ConfigureAwait(false);
+        SimulatorStatus = startMessage;
+        Status = $"Evolution simulator: {startMessage}";
         SimulatorDetailedStats = startResult.Success
             ? "Starting simulator status polling..."
             : "No simulator statistics yet.";
@@ -2892,6 +2896,30 @@ public sealed class SpeciationPanelViewModel : ViewModelBase, IAsyncDisposable
         return TryResolveExplicitLocalAdvertiseHost(resolved, out var resolvedHost)
             ? resolvedHost
             : null;
+    }
+
+    private async Task<string> AppendFirewallAttentionAsync(string serviceLabel, string bindHost, int port, string launchMessage)
+    {
+        var firewall = await _firewallManager
+            .EnsureInboundTcpAccessAsync(serviceLabel, bindHost, port)
+            .ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(firewall.Message))
+        {
+            var logMessage = $"{serviceLabel} firewall: {firewall.Message}";
+            if (firewall.RequiresAttention)
+            {
+                WorkbenchLog.Warn(logMessage);
+            }
+            else
+            {
+                WorkbenchLog.Info(logMessage);
+            }
+        }
+
+        return firewall.RequiresAttention && !string.IsNullOrWhiteSpace(firewall.Message)
+            ? $"{launchMessage} {firewall.Message}"
+            : launchMessage;
     }
 
     private static bool TryResolveExplicitLocalAdvertiseHost(string? host, out string advertiseHost)

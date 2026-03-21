@@ -1028,7 +1028,9 @@ public sealed class OrchestratorPanelViewModel : ViewModelBase
             WorkbenchLog.Warn($"Sample spawn artifact access: {artifact.AttentionMessage}");
         }
 
-        SampleBrainStatus = "Spawning sample brain via IO/HiveMind worker placement...";
+        SampleBrainStatus = string.IsNullOrWhiteSpace(artifact.AttentionMessage)
+            ? "Spawning sample brain via IO/HiveMind worker placement..."
+            : $"Spawning sample brain via IO/HiveMind worker placement... {artifact.AttentionMessage}";
         var spawnAck = await _client.SpawnBrainViaIoAsync(new Nbn.Proto.Control.SpawnBrain
         {
             BrainDef = artifact.ArtifactRef

@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Net;
+using System.Net.Sockets;
 using Nbn.Runtime.HiveMind;
 using Proto;
 
@@ -50,6 +52,33 @@ public sealed class HiveMindPidMatchingTests
     {
         var sender = new PID(string.Empty, "worker-node");
         var expected = new PID(string.Empty, "worker-node");
+
+        var match = InvokeSenderMatchesPid(sender, expected);
+        Assert.True(match);
+    }
+
+    [Fact]
+    public void SenderMatchesPid_Uses_Dns_Resolution_For_Hostname_And_Ip_WhenAvailable()
+    {
+        IPAddress? resolvedAddress = null;
+        try
+        {
+            resolvedAddress = Dns.GetHostAddresses(Dns.GetHostName())
+                .FirstOrDefault(static address =>
+                    address.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6
+                    && !IPAddress.IsLoopback(address));
+        }
+        catch
+        {
+        }
+
+        if (resolvedAddress is null)
+        {
+            return;
+        }
+
+        var sender = new PID($"{Dns.GetHostName()}:12040", "worker-node");
+        var expected = new PID($"{resolvedAddress}:12040", "worker-node");
 
         var match = InvokeSenderMatchesPid(sender, expected);
         Assert.True(match);

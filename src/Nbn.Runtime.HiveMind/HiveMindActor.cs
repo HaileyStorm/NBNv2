@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -3390,8 +3391,13 @@ public sealed class HiveMindActor : IActor
             return true;
         }
 
-        return (senderClass == EndpointHostClass.Wildcard && expectedClass == EndpointHostClass.Loopback)
-               || (senderClass == EndpointHostClass.Loopback && expectedClass == EndpointHostClass.Wildcard);
+        if ((senderClass == EndpointHostClass.Wildcard && expectedClass == EndpointHostClass.Loopback)
+            || (senderClass == EndpointHostClass.Loopback && expectedClass == EndpointHostClass.Wildcard))
+        {
+            return true;
+        }
+
+        return HostsResolveToSameAddress(senderHost, expectedHost);
     }
 
     private static bool TryParseEndpoint(string? address, out string host, out int port)
@@ -3484,6 +3490,72 @@ public sealed class HiveMindActor : IActor
         }
 
         return address.Trim().ToLowerInvariant();
+    }
+
+    private static bool HostsResolveToSameAddress(string senderHost, string expectedHost)
+    {
+        var senderAddresses = ResolveEndpointHostAddresses(senderHost);
+        if (senderAddresses.Count == 0)
+        {
+            return false;
+        }
+
+        var expectedAddresses = ResolveEndpointHostAddresses(expectedHost);
+        if (expectedAddresses.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var senderAddress in senderAddresses)
+        {
+            if (expectedAddresses.Contains(senderAddress, StringComparer.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyList<string> ResolveEndpointHostAddresses(string host)
+    {
+        var normalized = host.Trim();
+        if (normalized.StartsWith("[", StringComparison.Ordinal) && normalized.EndsWith("]", StringComparison.Ordinal))
+        {
+            normalized = normalized[1..^1];
+        }
+
+        if (normalized.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (IPAddress.TryParse(normalized, out var parsed))
+        {
+            return [NormalizeComparableAddress(parsed)];
+        }
+
+        try
+        {
+            return Dns.GetHostAddresses(normalized)
+                .Select(NormalizeComparableAddress)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    private static string NormalizeComparableAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        return address.ToString();
     }
 
     private static bool IsLikelyLocalSubscriberPid(ActorSystem system, PID? pid)

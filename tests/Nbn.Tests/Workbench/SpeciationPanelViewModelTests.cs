@@ -417,6 +417,29 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task AppendFirewallAttentionAsync_AppendsGuidance_WhenAttentionIsRequired()
+    {
+        var vm = CreateViewModel(
+            new FakeWorkbenchClient(),
+            firewallManager: new FakeLocalFirewallManager(
+                new FirewallAccessResult(
+                    FirewallAccessStatus.PermissionRequired,
+                    "Linux firewall appears active (`ufw`), but TCP 12074 was not opened automatically because root privileges are required.")));
+
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            "AppendFirewallAttentionAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var task = Assert.IsType<Task<string>>(method!.Invoke(
+            vm,
+            new object?[] { "EvolutionSim", "0.0.0.0", 12074, "Started simulator." }));
+
+        var message = await task;
+
+        Assert.Contains("Started simulator.", message, StringComparison.Ordinal);
+        Assert.Contains("root privileges are required", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void UpdateActiveBrains_PopulatesSimulatorBrainDropdownDefaults()
     {
         var brainA = Guid.NewGuid();
@@ -2444,7 +2467,8 @@ public class SpeciationPanelViewModelTests
     private static SpeciationPanelViewModel CreateViewModel(
         FakeWorkbenchClient client,
         bool enableAutoRefresh = false,
-        ILocalProjectLaunchPreparer? launchPreparer = null)
+        ILocalProjectLaunchPreparer? launchPreparer = null,
+        ILocalFirewallManager? firewallManager = null)
     {
         var connections = new ConnectionViewModel
         {
@@ -2462,7 +2486,8 @@ public class SpeciationPanelViewModelTests
             stopSpeciationService: null,
             refreshOrchestrator: null,
             enableLiveChartsAutoRefresh: enableAutoRefresh,
-            launchPreparer: launchPreparer);
+            launchPreparer: launchPreparer,
+            firewallManager: firewallManager);
     }
 
     private static SpeciationRuntimeConfig InvokeBuildRuntimeConfigFromDraft(SpeciationPanelViewModel vm)
@@ -2882,6 +2907,12 @@ public class SpeciationPanelViewModelTests
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }
+    }
+
+    private sealed class FakeLocalFirewallManager(FirewallAccessResult result) : ILocalFirewallManager
+    {
+        public Task<FirewallAccessResult> EnsureInboundTcpAccessAsync(string label, string bindHost, int port)
+            => Task.FromResult(result);
     }
 
     private sealed class EnvironmentVariableScope : IDisposable
