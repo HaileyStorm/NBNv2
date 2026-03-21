@@ -10,7 +10,7 @@ Owns worker node inventory, placement execution endpoints, and lifecycle partici
 - Peer RTT probes use request/reply echo messages against the peer worker root actor. The echo request must respond directly to the caller so remoting preserves the real sender for round-trip measurement.
 - WorkerNode heartbeats publish raw capability snapshots derived from real host probing plus explicit CPU/GPU score calculation, then attach explicit NBN limit metadata (`--cpu-pct`, `--ram-pct`, `--storage-pct`, `--gpu-compute-pct`, `--gpu-vram-pct`; legacy `--gpu-pct` sets both GPU limits).
 - WorkerNode and RegionHost share the same CUDA-first ILGPU device-selection rules, so worker capability publication, test skip decisions, and runtime shard execution all agree on what counts as a compatible accelerator. OpenCL devices that lack required RegionShard kernel features, including float64 support, are reported as incompatible instead of being advertised as usable GPU accelerators.
-- Worker CPU/GPU score microbenchmarks run on initial publication, are rerun on the next heartbeat after placement changes invalidate the score cache, and are also rerun when HiveMind sends the settings-backed capability refresh request cadence. WorkerNode never bypasses SettingsMonitor with direct capability replies.
+- Worker CPU/GPU score microbenchmarks run on initial publication and on the settings-backed refresh cadence requested by HiveMind; routine placement churn does not invalidate the score cache. WorkerNode uses the live CPU/RAM/storage/GPU pressure fields already attached to each heartbeat for placement-pressure updates instead of re-benchmarking on every placement change, and it never bypasses SettingsMonitor with direct capability replies.
 
 ## Maintenance guidance
 

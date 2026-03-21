@@ -18,9 +18,15 @@ var outputDirectory = Path.GetFullPath(
     ?? Path.Combine(Environment.CurrentDirectory, $"perf-probe-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}"));
 var jsonOnly = HasFlag(remaining, "--json");
 var openReport = !HasFlag(remaining, "--no-open-report");
+var originalOut = Console.Out;
 
 try
 {
+    if (jsonOnly)
+    {
+        Console.SetOut(TextWriter.Null);
+    }
+
     PerfReport report = command switch
     {
         "all" or "worker-profile" or "localhost-stress" => await PerfProbeRunner.RunAsync(
@@ -35,6 +41,11 @@ try
                 BindPort: GetIntArg(remaining, "--bind-port") ?? 12110)),
         _ => throw new InvalidOperationException($"Unknown command '{command}'.")
     };
+
+    if (jsonOnly)
+    {
+        Console.SetOut(originalOut);
+    }
 
     await PerfReportWriter.WriteAsync(report, outputDirectory);
     var htmlReportPath = Path.Combine(outputDirectory, "perf-report.html");
@@ -62,6 +73,11 @@ try
 }
 catch (Exception ex)
 {
+    if (jsonOnly)
+    {
+        Console.SetOut(originalOut);
+    }
+
     Console.Error.WriteLine($"perf-probe failed: {ex.GetBaseException().Message}");
     Environment.ExitCode = 1;
 }

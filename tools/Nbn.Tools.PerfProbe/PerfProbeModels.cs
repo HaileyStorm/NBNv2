@@ -27,6 +27,13 @@ public sealed record LocalhostStressConfig(
     int SustainableWorkloadNeurons,
     int SustainableBrainCount,
     int SpawnChurnBrainCount,
+    int RunSeconds,
+    ComputeDominantStressConfig ComputeDominantWorkload);
+
+public sealed record ComputeDominantStressConfig(
+    float TargetTickHz,
+    int HiddenNeurons,
+    int BrainCount,
     int RunSeconds);
 
 public sealed record PerfReport(
@@ -197,5 +204,10 @@ public static class PerfProbeDefaults
                 SustainableWorkloadNeurons: 2_048,
                 SustainableBrainCount: 2,
                 SpawnChurnBrainCount: 4,
-                RunSeconds: 4));
+                RunSeconds: 4,
+                ComputeDominantWorkload: new ComputeDominantStressConfig(
+                    TargetTickHz: 120f,
+                    HiddenNeurons: 262_144,
+                    BrainCount: 1,
+                    RunSeconds: 4)));
 }

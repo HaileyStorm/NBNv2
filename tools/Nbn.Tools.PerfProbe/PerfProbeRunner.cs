@@ -255,6 +255,20 @@ public static class PerfProbeRunner
                 computeBackendPreference: RegionShardComputeBackendPreference.Gpu)).ConfigureAwait(false)
             : TimeScenario(() => BuildGpuRuntimeCapabilitySkipResult("localhost_stress", sustainableRateResult.Scenario, capabilities)));
 
+        var computeDominantResult = await TimeScenarioAsync(() => MeasureComputeDominantTickRateAsync(
+            config.ComputeDominantWorkload,
+            cancellationToken,
+            backend: "cpu",
+            computeBackendPreference: RegionShardComputeBackendPreference.Cpu)).ConfigureAwait(false);
+        results.Add(computeDominantResult);
+        results.Add(canRunGpuRuntime
+            ? await TimeScenarioAsync(() => MeasureComputeDominantTickRateAsync(
+                config.ComputeDominantWorkload,
+                cancellationToken,
+                backend: "gpu",
+                computeBackendPreference: RegionShardComputeBackendPreference.Gpu)).ConfigureAwait(false)
+            : TimeScenario(() => BuildGpuRuntimeCapabilitySkipResult("localhost_stress", computeDominantResult.Scenario, capabilities)));
+
         var spawnChurnResult = await TimeScenarioAsync(() => MeasureSpawnChurnAsync(
             config,
             cancellationToken,
@@ -866,6 +880,77 @@ public static class PerfProbeRunner
             });
     }
 
+    private static async Task<PerfScenarioResult> MeasureComputeDominantTickRateAsync(
+        ComputeDominantStressConfig config,
+        CancellationToken cancellationToken,
+        string backend,
+        RegionShardComputeBackendPreference computeBackendPreference)
+    {
+        await using var harness = await LocalRuntimeHarness.CreateAsync(
+            config.HiddenNeurons,
+            config.TargetTickHz,
+            computeBackendPreference,
+            cancellationToken,
+            workloadProfile: LocalRuntimeWorkloadProfile.ComputeDominantRecurrent).ConfigureAwait(false);
+        var brainCount = Math.Max(1, config.BrainCount);
+        var brainIds = new List<Guid>(brainCount);
+        for (var i = 0; i < brainCount; i++)
+        {
+            brainIds.Add(await harness.SpawnBrainAsync(cancellationToken).ConfigureAwait(false));
+        }
+
+        var observedTickHz = await harness.MeasureTickRateAsync(
+                brainIds,
+                config.TargetTickHz,
+                TimeSpan.FromSeconds(config.RunSeconds),
+                cancellationToken,
+                inputLoadProfile: LocalRuntimeInputLoadProfile.None)
+            .ConfigureAwait(false);
+        var backendFailure = await harness.VerifyBackendExecutionAsync(brainIds, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(backendFailure))
+        {
+            return new PerfScenarioResult(
+                Suite: "localhost_stress",
+                Scenario: "compute_dominant_tick_rate",
+                Backend: backend,
+                Status: PerfScenarioStatus.Failed,
+                Summary: "Compute-dominant runtime benchmark did not execute on the expected compute backend.",
+                Parameters: new Dictionary<string, string>
+                {
+                    ["target_tick_hz"] = config.TargetTickHz.ToString("0.###"),
+                    ["brain_count"] = brainCount.ToString(),
+                    ["hidden_neurons"] = config.HiddenNeurons.ToString(),
+                    ["run_seconds"] = config.RunSeconds.ToString(),
+                    ["input_mode"] = "runtime_hidden_seed",
+                    ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
+                },
+                Metrics: new Dictionary<string, double>(),
+                Failure: backendFailure);
+        }
+
+        return BuildCompletedLocalhostStressResult(
+            Scenario: "compute_dominant_tick_rate",
+            Backend: backend,
+            MetConfiguredTarget: observedTickHz >= config.TargetTickHz * SuccessThresholdRatio,
+            SuccessSummary: "Measured compute-dominant localhost throughput for a seeded high-load runtime workload.",
+            BelowTargetSummary: "Measured compute-dominant localhost throughput below the configured seeded target; see observed_tick_hz for the sustained rate on this host.",
+            Parameters: new Dictionary<string, string>
+            {
+                ["target_tick_hz"] = config.TargetTickHz.ToString("0.###"),
+                ["brain_count"] = brainCount.ToString(),
+                ["hidden_neurons"] = config.HiddenNeurons.ToString(),
+                ["run_seconds"] = config.RunSeconds.ToString(),
+                ["input_mode"] = "runtime_hidden_seed",
+                ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
+            },
+            Metrics: new Dictionary<string, double>
+            {
+                ["target_tick_hz"] = config.TargetTickHz,
+                ["observed_tick_hz"] = observedTickHz,
+                ["total_hidden_neurons"] = (double)config.HiddenNeurons * brainCount
+            });
+    }
+
     private static async Task<PerfScenarioResult> MeasureSpawnChurnAsync(
         LocalhostStressConfig config,
         CancellationToken cancellationToken,
@@ -973,6 +1058,19 @@ public static class PerfProbeRunner
             Parameters: Parameters,
             Metrics: Metrics);
 
+    internal enum LocalRuntimeInputLoadProfile
+    {
+        None = 0,
+        Continuous = 1,
+        SeedOnce = 2
+    }
+
+    internal enum LocalRuntimeWorkloadProfile
+    {
+        StandardInputDriven = 0,
+        ComputeDominantRecurrent = 1
+    }
+
     internal sealed class LocalRuntimeHarness : IAsyncDisposable
     {
         private static readonly SemaphoreSlim BackendPreferenceGate = new(1, 1);
@@ -983,20 +1081,24 @@ public static class PerfProbeRunner
             PID ioGateway,
             PID worker,
             string artifactRoot,
+            int hiddenNeuronCount,
             uint inputWidth,
             ArtifactRef brainDef,
             string bootstrapIoEndpointActorName,
-            RegionShardComputeBackendPreference computeBackendPreference)
+            RegionShardComputeBackendPreference computeBackendPreference,
+            LocalRuntimeWorkloadProfile workloadProfile)
         {
             System = system;
             HiveMind = hiveMind;
             IoGateway = ioGateway;
             Worker = worker;
             ArtifactRoot = artifactRoot;
+            HiddenNeuronCount = hiddenNeuronCount;
             InputWidth = inputWidth;
             BrainDef = brainDef;
             BootstrapIoEndpointActorName = bootstrapIoEndpointActorName;
             ComputeBackendPreference = computeBackendPreference;
+            WorkloadProfile = workloadProfile;
         }
 
         public ActorSystem System { get; }
@@ -1005,16 +1107,19 @@ public static class PerfProbeRunner
         public PID IoGateway { get; }
         public PID Worker { get; }
         public string ArtifactRoot { get; }
+        public int HiddenNeuronCount { get; }
         public uint InputWidth { get; }
         public ArtifactRef BrainDef { get; }
         public string BootstrapIoEndpointActorName { get; }
         public RegionShardComputeBackendPreference ComputeBackendPreference { get; }
+        public LocalRuntimeWorkloadProfile WorkloadProfile { get; }
 
         public static async Task<LocalRuntimeHarness> CreateAsync(
             int hiddenNeuronCount,
             float targetTickHz,
             RegionShardComputeBackendPreference computeBackendPreference,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            LocalRuntimeWorkloadProfile workloadProfile = LocalRuntimeWorkloadProfile.StandardInputDriven)
         {
             var benchmarkAvailability = new WorkerResourceAvailability(
                 cpuPercent: 100,
@@ -1025,8 +1130,14 @@ public static class PerfProbeRunner
             var artifactRoot = Path.Combine(Path.GetTempPath(), "nbn-perf-probe", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(artifactRoot);
 
-            var inputWidth = ResolvePerformanceInputWidth(hiddenNeuronCount);
-            var nbnBytes = BuildPerformanceNbn(hiddenNeuronCount, inputWidth, DefaultOutputWidth);
+            var inputWidth = workloadProfile == LocalRuntimeWorkloadProfile.ComputeDominantRecurrent
+                ? 0
+                : ResolvePerformanceInputWidth(hiddenNeuronCount);
+            var nbnBytes = BuildPerformanceNbn(
+                hiddenNeuronCount,
+                inputWidth,
+                DefaultOutputWidth,
+                includeInputAssignments: workloadProfile != LocalRuntimeWorkloadProfile.ComputeDominantRecurrent);
             var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
             var manifest = await store.StoreAsync(new MemoryStream(nbnBytes), "application/x-nbn").ConfigureAwait(false);
             var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
@@ -1058,7 +1169,7 @@ public static class PerfProbeRunner
                 Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(), hiveMindPid: hiveMind)),
                 ioName);
             _ = root.SpawnNamed(
-                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, DefaultInputWidth, DefaultOutputWidth)),
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, (uint)inputWidth, DefaultOutputWidth)),
                 metadataName);
             var capabilityProvider = new WorkerNodeCapabilityProvider(availability: benchmarkAvailability);
             var worker = root.SpawnNamed(
@@ -1090,10 +1201,12 @@ public static class PerfProbeRunner
                 ioGateway,
                 worker,
                 artifactRoot,
+                hiddenNeuronCount,
                 (uint)inputWidth,
                 brainDef,
                 metadataName,
-                computeBackendPreference);
+                computeBackendPreference,
+                workloadProfile);
         }
 
         public async Task<Guid> SpawnBrainAsync(CancellationToken cancellationToken)
@@ -1167,6 +1280,11 @@ public static class PerfProbeRunner
                     TimeSpan.FromSeconds(5),
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            if (WorkloadProfile == LocalRuntimeWorkloadProfile.ComputeDominantRecurrent)
+            {
+                await PrimeComputeDominantActivityAsync(brainId, cancellationToken).ConfigureAwait(false);
+            }
 
             ProtoIo.IoCommandAck plasticityAck;
             try
@@ -1308,6 +1426,40 @@ public static class PerfProbeRunner
             return brainId;
         }
 
+        private async Task PrimeComputeDominantActivityAsync(Guid brainId, CancellationToken cancellationToken)
+        {
+            if (HiddenNeuronCount <= 0)
+            {
+                return;
+            }
+
+            foreach (var neuronId in BuildComputeDominantSeedNeuronIds(HiddenNeuronCount))
+            {
+                Root.Send(IoGateway, new ProtoIo.RuntimeNeuronPulse
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TargetRegionId = 1,
+                    TargetNeuronId = (uint)neuronId,
+                    Value = 1f
+                });
+            }
+
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+        }
+
+        private static IReadOnlyList<int> BuildComputeDominantSeedNeuronIds(int hiddenNeuronCount)
+        {
+            var seedCount = Math.Min(16, Math.Max(1, hiddenNeuronCount));
+            var seeds = new int[seedCount];
+            var stride = Math.Max(1, hiddenNeuronCount / seedCount);
+            for (var i = 0; i < seedCount; i++)
+            {
+                seeds[i] = Math.Min(hiddenNeuronCount - 1, i * stride);
+            }
+
+            return seeds;
+        }
+
         public async Task<string?> VerifyBackendExecutionAsync(
             IReadOnlyCollection<Guid> brainIds,
             CancellationToken cancellationToken)
@@ -1364,7 +1516,8 @@ public static class PerfProbeRunner
             IReadOnlyCollection<Guid> brainIds,
             float targetTickHz,
             TimeSpan duration,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            LocalRuntimeInputLoadProfile inputLoadProfile = LocalRuntimeInputLoadProfile.Continuous)
         {
             var before = await Root.RequestAsync<ProtoControl.HiveMindStatus>(
                     HiveMind,
@@ -1373,7 +1526,7 @@ public static class PerfProbeRunner
 
             StartTickLoop();
             using var inputLoadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var inputLoadTask = RunInputLoadAsync(brainIds, targetTickHz, inputLoadCancellation.Token);
+            var inputLoadTask = RunInputLoadAsync(brainIds, targetTickHz, inputLoadCancellation.Token, inputLoadProfile);
             try
             {
                 await Task.Delay(duration, cancellationToken).ConfigureAwait(false);
@@ -1411,16 +1564,16 @@ public static class PerfProbeRunner
         public async Task RunInputLoadAsync(
             IReadOnlyCollection<Guid> brainIds,
             float targetTickHz,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            LocalRuntimeInputLoadProfile inputLoadProfile = LocalRuntimeInputLoadProfile.Continuous)
         {
-            if (brainIds.Count == 0)
+            if (brainIds.Count == 0 || inputLoadProfile == LocalRuntimeInputLoadProfile.None)
             {
                 return;
             }
 
             var values = Enumerable.Repeat(1f, (int)InputWidth).ToArray();
-            var delayMs = Math.Max(5, (int)Math.Round(1000d / Math.Max(targetTickHz * 2d, 1d)));
-            while (!cancellationToken.IsCancellationRequested)
+            void SendBurst()
             {
                 foreach (var brainId in brainIds)
                 {
@@ -1430,7 +1583,18 @@ public static class PerfProbeRunner
                         Values = { values }
                     });
                 }
+            }
 
+            SendBurst();
+            if (inputLoadProfile == LocalRuntimeInputLoadProfile.SeedOnce)
+            {
+                return;
+            }
+
+            var delayMs = Math.Max(5, (int)Math.Round(1000d / Math.Max(targetTickHz * 2d, 1d)));
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                SendBurst();
                 await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -1668,16 +1832,22 @@ public static class PerfProbeRunner
         }
     }
 
-    private static byte[] BuildPerformanceNbn(int hiddenNeuronCount, int inputWidth, int outputWidth)
+    private static byte[] BuildPerformanceNbn(
+        int hiddenNeuronCount,
+        int inputWidth,
+        int outputWidth,
+        bool includeInputAssignments = true)
     {
         const uint stride = 1_024;
         var sections = new List<NbnRegionSection>();
         var directory = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
         ulong offset = NbnBinary.NbnHeaderBytes;
 
-        var inputAssignments = Enumerable.Range(0, hiddenNeuronCount)
-            .GroupBy(index => index % inputWidth)
-            .ToDictionary(group => group.Key, group => group.ToArray());
+        var inputAssignments = includeInputAssignments && inputWidth > 0
+            ? Enumerable.Range(0, hiddenNeuronCount)
+                .GroupBy(index => index % inputWidth)
+                .ToDictionary(group => group.Key, group => group.ToArray())
+            : new Dictionary<int, int[]>();
         offset = AddRegionSection(
             regionId: NbnConstants.InputRegionId,
             neuronSpan: (uint)inputWidth,

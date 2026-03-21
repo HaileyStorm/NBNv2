@@ -15,6 +15,7 @@ Owns placement-facing and runtime-facing NBN performance probing and report gene
 - Treat completed localhost-stress measurements as report data, not hard pass/fail performance gates for a specific machine. Rows fail only when runtime execution or backend verification fails; sub-target results remain passed measurements with the observed ceiling in the metrics/summary.
 - Host the localhost stress harness with stable named local `HiveMind` and worker actors so placement, routing, and tick-control PIDs stay valid inside the in-process probe runtime.
 - Apply benchmark-safe runtime config through the real IO/Hive control path before measuring localhost runtime rows: perf brains disable plasticity and homeostasis so explicit GPU runs benchmark the supported compute path instead of falling back to CPU on unsupported runtime features.
+- Keep the original localhost rows as input/control-plane validations, but add a dedicated compute-dominant recurrent row that seeds hidden-region activity through runtime pulses and removes per-tick input routing so end-to-end CPU/GPU throughput differences remain visible in the runtime artifacts.
 
 ## Maintenance guidance
 

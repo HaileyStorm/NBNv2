@@ -207,6 +207,56 @@ public sealed class PerfProbeRunnerTests
     }
 
     [Fact]
+    public async Task LocalRuntimeHarness_MeasureTickRateAsync_CompletesForSingleBrain_WithSeedOnceInputLoad()
+    {
+        await using var harness = await PerfProbeRunner.LocalRuntimeHarness.CreateAsync(
+            hiddenNeuronCount: 8_192,
+            targetTickHz: 30f,
+            computeBackendPreference: RegionShardComputeBackendPreference.Cpu,
+            cancellationToken: CancellationToken.None);
+
+        var brainId = await harness.SpawnBrainAsync(CancellationToken.None);
+        var tickRate = await harness.MeasureTickRateAsync(
+            [brainId],
+            targetTickHz: 30f,
+            duration: TimeSpan.FromMilliseconds(250),
+            cancellationToken: CancellationToken.None,
+            inputLoadProfile: PerfProbeRunner.LocalRuntimeInputLoadProfile.SeedOnce);
+        var backendFailure = await harness.VerifyBackendExecutionAsync(
+            [brainId],
+            CancellationToken.None);
+
+        Assert.True(tickRate >= 0d);
+        Assert.True(string.IsNullOrWhiteSpace(backendFailure), backendFailure);
+    }
+
+    [Fact]
+    public async Task LocalRuntimeHarness_MeasureTickRateAsync_CompletesForComputeDominantRecurrentProfile()
+    {
+        await using var harness = await PerfProbeRunner.LocalRuntimeHarness.CreateAsync(
+            hiddenNeuronCount: 8_192,
+            targetTickHz: 30f,
+            computeBackendPreference: RegionShardComputeBackendPreference.Cpu,
+            cancellationToken: CancellationToken.None,
+            workloadProfile: PerfProbeRunner.LocalRuntimeWorkloadProfile.ComputeDominantRecurrent);
+
+        var brainId = await harness.SpawnBrainAsync(CancellationToken.None);
+        var tickRate = await harness.MeasureTickRateAsync(
+            [brainId],
+            targetTickHz: 30f,
+            duration: TimeSpan.FromMilliseconds(250),
+            cancellationToken: CancellationToken.None,
+            inputLoadProfile: PerfProbeRunner.LocalRuntimeInputLoadProfile.None);
+        var backendFailure = await harness.VerifyBackendExecutionAsync(
+            [brainId],
+            CancellationToken.None);
+
+        Assert.Equal((uint)0, harness.InputWidth);
+        Assert.True(tickRate >= 0d);
+        Assert.True(string.IsNullOrWhiteSpace(backendFailure), backendFailure);
+    }
+
+    [Fact]
     public async Task LocalRuntimeHarness_MeasureTickRateAsync_CompletesForTwoBrains()
     {
         await using var harness = await PerfProbeRunner.LocalRuntimeHarness.CreateAsync(
@@ -352,6 +402,63 @@ public sealed class PerfProbeRunnerTests
 
         Assert.Equal(PerfScenarioStatus.Passed, result.Status);
         Assert.Equal("success", result.Summary);
+    }
+
+    [Fact]
+    public void PerfProbeDefaults_Create_UsesComputeDominantWorkloadThatExceedsGpuRuntimeThreshold()
+    {
+        var config = PerfProbeDefaults.Create(outputDirectory: "ignored");
+        var computeDominant = config.LocalhostStress.ComputeDominantWorkload;
+
+        Assert.True(computeDominant.HiddenNeurons >= Math.Max(4096, NbnConstants.DefaultAxonStride * 2));
+        Assert.True(computeDominant.TargetTickHz > 0f);
+        Assert.True(computeDominant.BrainCount > 0);
+        Assert.True(computeDominant.RunSeconds > 0);
+    }
+
+    [Fact]
+    public async Task RunLocalhostStressScenariosAsync_EmitsComputeDominantRuntimeRows()
+    {
+        var config = new LocalhostStressConfig(
+            TargetTickRates: [5f],
+            BrainSizes: [512],
+            BrainCounts: [1],
+            SustainableTickSweep: [5f],
+            SustainableWorkloadNeurons: 512,
+            SustainableBrainCount: 1,
+            SpawnChurnBrainCount: 1,
+            RunSeconds: 1,
+            ComputeDominantWorkload: new ComputeDominantStressConfig(
+                TargetTickHz: 30f,
+                HiddenNeurons: 8_192,
+                BrainCount: 1,
+                RunSeconds: 1));
+
+        var results = await PerfProbeRunner.RunLocalhostStressScenariosAsync(config, CancellationToken.None);
+
+        var cpuRow = Assert.Single(results, static result =>
+            result.Suite == "localhost_stress"
+            && result.Scenario == "compute_dominant_tick_rate"
+            && result.Backend == "cpu");
+        Assert.Equal(PerfScenarioStatus.Passed, cpuRow.Status);
+
+        var gpuRow = Assert.Single(results, static result =>
+            result.Suite == "localhost_stress"
+            && result.Scenario == "compute_dominant_tick_rate"
+            && result.Backend == "gpu");
+
+        var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
+        if (capabilities.HasGpu
+            && capabilities.GpuScore > 0f
+            && (capabilities.IlgpuCudaAvailable || capabilities.IlgpuOpenclAvailable))
+        {
+            Assert.Equal(PerfScenarioStatus.Passed, gpuRow.Status);
+        }
+        else
+        {
+            Assert.Equal(PerfScenarioStatus.Skipped, gpuRow.Status);
+            Assert.False(string.IsNullOrWhiteSpace(gpuRow.SkipReason));
+        }
     }
 
     [Fact]

@@ -8,6 +8,7 @@ using Nbn.Proto;
 using Nbn.Runtime.RegionHost;
 using Nbn.Shared;
 using Nbn.Shared.Quantization;
+using ProtoControl = Nbn.Proto.Control;
 using ProtoSettings = Nbn.Proto.Settings;
 using SharedAddress32 = Nbn.Shared.Addressing.Address32;
 using SharedShardId32 = Nbn.Shared.Addressing.ShardId32;
@@ -16,16 +17,14 @@ namespace Nbn.Runtime.WorkerNode;
 
 public sealed class WorkerNodeCapabilityProvider
 {
-    private static readonly Guid CpuBenchmarkBrainId = Guid.Parse("4F20A095-A750-4AFE-99FD-3DE769078D0D");
+    private static readonly Guid ScoreBenchmarkBrainId = Guid.Parse("4F20A095-A750-4AFE-99FD-3DE769078D0D");
     private static readonly TimeSpan DefaultProbeRefreshInterval = TimeSpan.FromSeconds(15);
-    private const int CpuBenchmarkNeuronCount = 2_048;
-    private const int CpuBenchmarkFanOut = 4;
-    private const int CpuBenchmarkMinimumIterations = 8;
-    private static readonly TimeSpan CpuBenchmarkMinimumDuration = TimeSpan.FromMilliseconds(250);
-    private const int GpuBenchmarkLength = 1 << 18;
-    private const int GpuBenchmarkIterations = 24;
-    private static readonly float[] GpuBenchmarkInputA = BuildGpuInput(seedOffset: 0.125f);
-    private static readonly float[] GpuBenchmarkInputB = BuildGpuInput(seedOffset: 0.875f);
+    private const int ScoreBenchmarkNeuronCount = 262_144;
+    private const int ScoreBenchmarkFanOut = 2;
+    private const int ScoreBenchmarkOutputWidth = 8;
+    private const int ScoreBenchmarkWarmupIterations = 2;
+    private const int ScoreBenchmarkMinimumIterations = 2;
+    private static readonly TimeSpan ScoreBenchmarkMinimumDuration = TimeSpan.FromMilliseconds(250);
 
     private readonly object _sync = new();
     private readonly WorkerResourceAvailability _availability;
@@ -229,27 +228,27 @@ public sealed class WorkerNodeCapabilityProvider
 
     private static float BenchmarkCpuScore()
     {
-        var state = BuildCpuBenchmarkState(CpuBenchmarkNeuronCount, CpuBenchmarkFanOut);
+        var state = BuildScoreBenchmarkState(ScoreBenchmarkNeuronCount, ScoreBenchmarkFanOut);
         var backend = new RegionShardCpuBackend(state);
         var shardId = SharedShardId32.From(state.RegionId, shardIndex: 0);
         var routing = RegionShardRoutingTable.CreateSingleShard(state.RegionId, state.NeuronCount);
         var tickId = 1UL;
 
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < ScoreBenchmarkWarmupIterations; i++)
         {
-            backend.Compute(tickId++, CpuBenchmarkBrainId, shardId, routing);
+            backend.Compute(tickId++, ScoreBenchmarkBrainId, shardId, routing);
         }
 
         var iterations = 0;
         var stopwatch = Stopwatch.StartNew();
-        while (iterations < CpuBenchmarkMinimumIterations || stopwatch.Elapsed < CpuBenchmarkMinimumDuration)
+        while (iterations < ScoreBenchmarkMinimumIterations || stopwatch.Elapsed < ScoreBenchmarkMinimumDuration)
         {
-            backend.Compute(tickId++, CpuBenchmarkBrainId, shardId, routing);
+            backend.Compute(tickId++, ScoreBenchmarkBrainId, shardId, routing);
             iterations++;
         }
 
         stopwatch.Stop();
-        var weightedOperations = (double)iterations * state.NeuronCount * (1 + CpuBenchmarkFanOut);
+        var weightedOperations = (double)iterations * state.NeuronCount * (1 + ScoreBenchmarkFanOut);
         return NormalizeScore(weightedOperations / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001d) / 1_000_000d);
     }
 
@@ -257,57 +256,67 @@ public sealed class WorkerNodeCapabilityProvider
     {
         try
         {
-            using var context = Context.CreateDefault();
-            var device = RegionShardGpuRuntime.SelectPreferredCompatibleGpuDevice(context.Devices);
-            if (device is null)
+            var state = BuildScoreBenchmarkState(ScoreBenchmarkNeuronCount, ScoreBenchmarkFanOut);
+            using var backend = RegionShardIlgpuBackend.TryCreate(state);
+            if (backend is null)
             {
                 return 0f;
             }
 
-            using var accelerator = device.CreateAccelerator(context);
-            using var bufferA = accelerator.Allocate1D<float>(GpuBenchmarkLength);
-            using var bufferB = accelerator.Allocate1D<float>(GpuBenchmarkLength);
-            using var bufferC = accelerator.Allocate1D<float>(GpuBenchmarkLength);
-
-            bufferA.CopyFromCPU(GpuBenchmarkInputA);
-            bufferB.CopyFromCPU(GpuBenchmarkInputB);
-
-            var kernel = accelerator.LoadAutoGroupedStreamKernel<
-                Index1D,
-                ArrayView1D<float, Stride1D.Dense>,
-                ArrayView1D<float, Stride1D.Dense>,
-                ArrayView1D<float, Stride1D.Dense>>(GpuAddKernel);
-
-            kernel(GpuBenchmarkLength, bufferA.View, bufferB.View, bufferC.View);
-            accelerator.Synchronize();
-
-            var stopwatch = Stopwatch.StartNew();
-            for (var i = 0; i < GpuBenchmarkIterations; i++)
+            var support = backend.GetSupport(
+                RegionShardVisualizationComputeScope.Disabled,
+                plasticityEnabled: false,
+                probabilisticPlasticityUpdates: false,
+                plasticityDelta: 0f,
+                plasticityRebaseThreshold: 0,
+                plasticityRebaseThresholdPct: 0f,
+                homeostasisConfig: RegionShardHomeostasisConfig.Default with { Enabled = false },
+                costEnergyEnabled: false,
+                outputVectorSource: ProtoControl.OutputVectorSource.Potential);
+            if (!support.IsSupported)
             {
-                kernel(GpuBenchmarkLength, bufferA.View, bufferB.View, bufferC.View);
+                return 0f;
             }
 
-            accelerator.Synchronize();
+            var shardId = SharedShardId32.From(state.RegionId, shardIndex: 0);
+            var routing = RegionShardRoutingTable.CreateSingleShard(state.RegionId, state.NeuronCount);
+            var tickId = 1UL;
+
+            for (var i = 0; i < ScoreBenchmarkWarmupIterations; i++)
+            {
+                backend.Compute(
+                    tickId++,
+                    ScoreBenchmarkBrainId,
+                    shardId,
+                    routing,
+                    visualization: RegionShardVisualizationComputeScope.Disabled,
+                    plasticityEnabled: false,
+                    homeostasisConfig: RegionShardHomeostasisConfig.Default with { Enabled = false });
+            }
+
+            var stopwatch = Stopwatch.StartNew();
+            var iterations = 0;
+            while (iterations < ScoreBenchmarkMinimumIterations || stopwatch.Elapsed < ScoreBenchmarkMinimumDuration)
+            {
+                backend.Compute(
+                    tickId++,
+                    ScoreBenchmarkBrainId,
+                    shardId,
+                    routing,
+                    visualization: RegionShardVisualizationComputeScope.Disabled,
+                    plasticityEnabled: false,
+                    homeostasisConfig: RegionShardHomeostasisConfig.Default with { Enabled = false });
+                iterations++;
+            }
             stopwatch.Stop();
 
-            var throughput = (double)GpuBenchmarkLength * GpuBenchmarkIterations
-                             / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001d)
-                             / 1_000_000d;
-            return NormalizeScore(throughput);
+            var weightedOperations = (double)iterations * state.NeuronCount * (1 + ScoreBenchmarkFanOut);
+            return NormalizeScore(weightedOperations / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001d) / 1_000_000d);
         }
         catch
         {
             return 0f;
         }
-    }
-
-    private static void GpuAddKernel(
-        Index1D index,
-        ArrayView1D<float, Stride1D.Dense> inputA,
-        ArrayView1D<float, Stride1D.Dense> inputB,
-        ArrayView1D<float, Stride1D.Dense> output)
-    {
-        output[index] = inputA[index] + inputB[index];
     }
 
     private static WorkerGpuInfo ProbeGpuInfo()
@@ -510,23 +519,12 @@ public sealed class WorkerNodeCapabilityProvider
     private static ulong ToUnsignedBytes(long value)
         => value > 0 ? (ulong)value : 0UL;
 
-    private static float[] BuildGpuInput(float seedOffset)
+    private static RegionShardState BuildScoreBenchmarkState(int neuronCount, int fanOut)
     {
-        var values = new float[GpuBenchmarkLength];
-        for (var i = 0; i < values.Length; i++)
-        {
-            values[i] = (i % 97) * 0.01f + seedOffset;
-        }
-
-        return values;
-    }
-
-    private static RegionShardState BuildCpuBenchmarkState(int neuronCount, int fanOut)
-    {
-        const int regionId = 4;
+        const int regionId = 1;
         var regionSpans = new int[NbnConstants.RegionCount];
         regionSpans[regionId] = neuronCount;
-        regionSpans[NbnConstants.OutputRegionId] = 1;
+        regionSpans[NbnConstants.OutputRegionId] = ScoreBenchmarkOutputWidth;
 
         var totalAxons = neuronCount * fanOut;
         var targetRegionIds = new byte[totalAxons];
@@ -555,7 +553,7 @@ public sealed class WorkerNodeCapabilityProvider
                     : regionId;
                 var targetNeuronId = targetRegionId == regionId
                     ? (neuronId + fanOutIndex + 1) % neuronCount
-                    : 0;
+                    : neuronId % ScoreBenchmarkOutputWidth;
                 var strength = 0.55f + (fanOutIndex * 0.1f);
                 var strengthCode = (byte)QuantizationSchemas.DefaultNbn.Strength.Encode(strength, bits: 5);
 

@@ -524,8 +524,6 @@ public sealed class WorkerNodeActor : IActor
 
         _assignments[assignment.AssignmentId] = hostedState;
         brain.Assignments[assignment.AssignmentId] = hostedState;
-        NotifyCapabilityProfileChanged();
-
         UpdateRuntimeWidthsFromShards(brain);
         UpdateInputCoordinatorWidth(context, brain);
         UpdateOutputCoordinatorWidth(context, brain);
@@ -624,7 +622,6 @@ public sealed class WorkerNodeActor : IActor
         var outcome = UnassignHostedAssignment(context, brain, hostedState, notifyHiveMind: true)
             ? "unassigned"
             : "already_unassigned";
-        NotifyCapabilityProfileChanged();
         ReplyToSender(context, BuildUnassignmentAck(assignment, accepted: true, outcome));
     }
 
@@ -747,7 +744,6 @@ public sealed class WorkerNodeActor : IActor
             report.Assignments.Count > 0 ? "matched" : "empty",
             failureReason);
 
-        NotifyCapabilityProfileChanged();
         ReplyToSender(context, report);
     }
 
