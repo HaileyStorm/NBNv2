@@ -30,6 +30,8 @@
 - Operator runbooks:
   - `tools/demo/reproduction_operator_runbook.md`
   - `tools/demo/speciation_operator_runbook.md`
+- Proto/control drift guard:
+  - `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`
 - Documentation freshness:
   - Windows: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
   - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh --check`

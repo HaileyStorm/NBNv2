@@ -2,6 +2,13 @@
 
 The following `.proto` files define the canonical NBN wire schema. They are intended for Proto.Actor remote messaging and for External World integration.
 
+Canonical contract source and drift guard:
+
+- `src/Nbn.Shared/Protos/*.proto` is the source of truth for the wire contract.
+- This section mirrors those `.proto` files for spec readers and operator-facing design review; when a proto changes, update this section in the same change.
+- Validate contract drift with `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`.
+- Re-render and freshness-check the assembled spec so `docs/NBNv2.md` stays synchronized with this section.
+
 ### 19.1 `nbn_common.proto`
 
 ```proto
