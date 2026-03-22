@@ -2,6 +2,7 @@
 
 ## Scope
 This runbook covers reproduction requests sent through IO Gateway (`ReproduceByBrainIds` and `ReproduceByArtifacts`) and handled by `ReproductionManager`.
+The supported operator/client path is `Workbench or custom client -> IO Gateway -> ReproductionManager`; `Nbn.Runtime.Reproduction` is the service host, not the request entrypoint for operators.
 
 ## Quick Start (Workbench Artifact Flow)
 Open Workbench and use `Orchestrator` `Start All` to launch the local runtime services.
@@ -41,6 +42,7 @@ The automated path covers the fixed-case checks previously exercised by the old 
 
 ## Headless / API Clients
 For non-Workbench automation, send `ReproduceByBrainIds` or `ReproduceByArtifacts` through IO Gateway from your own client code. The supported request path remains IO Gateway -> ReproductionManager; removing the helper tool does not change the runtime API contract.
+Do not send operator requests to the `Nbn.Runtime.Reproduction` process directly; use it to host `ReproductionManager`, then route requests through IO Gateway.
 
 ## Request/Response Semantics
 - Input can be by brain IDs or artifact refs.

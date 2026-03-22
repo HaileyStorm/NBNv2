@@ -1,7 +1,8 @@
 # Speciation Operator Runbook
 
 ## Scope
-This runbook covers the dedicated Speciation service (`Nbn.Runtime.Speciation`) and the Workbench Speciation pane.
+This runbook covers speciation requests sent through IO Gateway (`SpeciationStatus`, `SpeciationSetConfig`, `SpeciationResetAll`, `SpeciationDeleteEpoch`, `SpeciationListMemberships`, and `SpeciationListHistory`) and handled by the dedicated Speciation service (`Nbn.Runtime.Speciation`).
+The supported operator/client path is `Workbench or custom client -> IO Gateway -> Speciation`; `Nbn.Runtime.Speciation` is the service host, not the request entrypoint for operators.
 
 ## Quick Start
 Open Workbench and use `Orchestrator` `Start All` so SettingsMonitor, HiveMind, IO, Reproduction, Speciation, and Observability share the same discovery/config path. Use `Designer` `Generate Random Brain` and `Spawn Brain` if you need a live brain for end-to-end placement or assignment checks.
@@ -9,6 +10,8 @@ Then use:
 
 - `Orchestrator` to confirm `Speciation` is online and discovery published `service.endpoint.speciation_manager`
 - `Speciation` pane for status, policy settings, history, `Start New Epoch`, `Reset All`, and epoch deletion controls
+
+All operator actions below are expected to flow through Workbench or another IO Gateway client. Starting `Nbn.Runtime.Speciation` brings the service online, but it is not itself the supported operator control surface.
 
 ## Service Bring-up
 Direct launch:
@@ -36,6 +39,9 @@ Default runtime policy comes from SettingsMonitor `workbench.speciation.*` keys,
 - `Reset All`: use `SpeciationResetAll` only when the full taxonomy/history should be cleared and epoch numbering reseeded from `1`.
 - `Delete Historical Epoch`: only delete non-current epochs. Current epoch deletion is intentionally rejected.
 - `Startup reconcile`: on service start, speciation reloads persisted state and fills missing memberships for brains registered in SettingsMonitor using `startup_reconcile_decision_reason`.
+
+## Headless / API Clients
+For non-Workbench automation, send speciation control/status requests through IO Gateway from your own client code. The supported request path is `client -> IO Gateway -> Speciation`; do not send operator control requests directly to the `Nbn.Runtime.Speciation` process.
 
 ## Telemetry
 Core metrics emitted by `Nbn.Runtime.Speciation`:
