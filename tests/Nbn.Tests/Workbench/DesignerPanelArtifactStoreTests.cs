@@ -129,6 +129,78 @@ public sealed class DesignerPanelArtifactStoreTests
     }
 
     [Fact]
+    public async Task WorkbenchArtifactPublisher_ReusesStablePreferredPortAcrossPublisherInstances()
+    {
+        var firstRoot = Path.Combine(Path.GetTempPath(), $"nbn-workbench-publisher-inst-a-{Guid.NewGuid():N}");
+        var secondRoot = Path.Combine(Path.GetTempPath(), $"nbn-workbench-publisher-inst-b-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(firstRoot);
+        Directory.CreateDirectory(secondRoot);
+
+        Assert.True(
+            LocalPortAllocator.TryFindAvailablePort(
+                NetworkAddressDefaults.LoopbackHost,
+                preferredStartPort: 19180,
+                reservedPorts: null,
+                out var port,
+                out var error),
+            error);
+
+        var firstPublisher = new WorkbenchArtifactPublisher();
+        var secondPublisher = new WorkbenchArtifactPublisher();
+        try
+        {
+            var firstPayload = Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
+            var secondPayload = Enumerable.Range(32, 32).Select(static value => (byte)value).ToArray();
+            var thirdPayload = Enumerable.Range(64, 32).Select(static value => (byte)value).ToArray();
+
+            var first = await firstPublisher.PublishAsync(
+                firstPayload,
+                "application/x-nbn",
+                firstRoot,
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
+            var second = await secondPublisher.PublishAsync(
+                secondPayload,
+                "application/x-nbn",
+                secondRoot,
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
+
+            Assert.StartsWith($"http://127.0.0.1:{port}/", first.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith($"http://127.0.0.1:{port}/", second.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            await AssertHttpArtifactReadableAsync(first.ArtifactRef, firstPayload);
+            await AssertHttpArtifactReadableAsync(second.ArtifactRef, secondPayload);
+
+            await firstPublisher.DisposeAsync();
+
+            var third = await secondPublisher.PublishAsync(
+                thirdPayload,
+                "application/x-nbn",
+                secondRoot,
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
+
+            Assert.StartsWith($"http://127.0.0.1:{port}/", third.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            await AssertHttpArtifactReadableAsync(third.ArtifactRef, thirdPayload);
+        }
+        finally
+        {
+            await secondPublisher.DisposeAsync();
+            await firstPublisher.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(firstRoot))
+            {
+                Directory.Delete(firstRoot, recursive: true);
+            }
+
+            if (Directory.Exists(secondRoot))
+            {
+                Directory.Delete(secondRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task StoreCurrentDefinitionArtifactAsync_RegisteredNonFileStore_UsesResolver_AndReloadsFromArtifactRef()
     {
         using var remoteScope = new RegisteredArtifactStoreScope();

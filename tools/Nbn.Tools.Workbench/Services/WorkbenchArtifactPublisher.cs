@@ -51,8 +51,10 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
     public const int DefaultReachableArtifactPort = 12091;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly SemaphoreSlim SharedGate = new(1, 1);
+    private static readonly Dictionary<string, SharedHostedStore> SharedStores = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<string, HostedStore> _stores = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SharedHostedStore> _stores = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILocalFirewallManager _firewallManager;
     private readonly Action<string>? _logInfo;
     private readonly Action<string>? _logWarn;
@@ -92,13 +94,14 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
 
         var key = BuildStoreKey(normalizedBindHost, normalizedAdvertisedHost, normalizedPreferredPort);
 
-        HostedStore hosted;
+        SharedHostedStore hosted;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (!_stores.TryGetValue(key, out hosted!))
             {
-                hosted = await StartHostedStoreAsync(
+                hosted = await AcquireSharedHostedStoreAsync(
+                        key,
                         normalizedBindHost,
                         normalizedAdvertisedHost,
                         label,
@@ -173,11 +176,11 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
 
     public async ValueTask DisposeAsync()
     {
-        HostedStore[] hostedStores;
+        string[] keys;
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            hostedStores = _stores.Values.ToArray();
+            keys = _stores.Keys.ToArray();
             _stores.Clear();
         }
         finally
@@ -185,7 +188,72 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
             _gate.Release();
         }
 
-        foreach (var hosted in hostedStores)
+        foreach (var key in keys)
+        {
+            await ReleaseSharedHostedStoreAsync(key).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<SharedHostedStore> AcquireSharedHostedStoreAsync(
+        string key,
+        string bindHost,
+        string advertisedHost,
+        string? label,
+        int preferredPort,
+        CancellationToken cancellationToken)
+    {
+        await SharedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (SharedStores.TryGetValue(key, out var existing))
+            {
+                existing.RefCount++;
+                return existing;
+            }
+
+            var hosted = await StartHostedStoreAsync(
+                    bindHost,
+                    advertisedHost,
+                    label,
+                    preferredPort,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var shared = new SharedHostedStore(hosted.App, hosted.Store, hosted.BaseUri, hosted.AttentionMessage);
+            SharedStores[key] = shared;
+            return shared;
+        }
+        finally
+        {
+            SharedGate.Release();
+        }
+    }
+
+    private static async Task ReleaseSharedHostedStoreAsync(string key)
+    {
+        SharedHostedStore? hosted = null;
+        await SharedGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (!SharedStores.TryGetValue(key, out var existing))
+            {
+                return;
+            }
+
+            existing.RefCount--;
+            if (existing.RefCount > 0)
+            {
+                return;
+            }
+
+            SharedStores.Remove(key);
+            hosted = existing;
+        }
+        finally
+        {
+            SharedGate.Release();
+        }
+
+        if (hosted is not null)
         {
             await hosted.App.DisposeAsync().ConfigureAwait(false);
         }
@@ -559,6 +627,19 @@ public sealed class WorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
         LocalArtifactStore Store,
         Uri BaseUri,
         string? AttentionMessage);
+
+    private sealed class SharedHostedStore(
+        WebApplication app,
+        LocalArtifactStore store,
+        Uri baseUri,
+        string? attentionMessage)
+    {
+        public WebApplication App { get; } = app;
+        public LocalArtifactStore Store { get; } = store;
+        public Uri BaseUri { get; } = baseUri;
+        public string? AttentionMessage { get; } = attentionMessage;
+        public int RefCount { get; set; } = 1;
+    }
 
     private sealed class ManifestDto
     {
