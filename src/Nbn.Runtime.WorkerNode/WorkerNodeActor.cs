@@ -2102,28 +2102,24 @@ public sealed class WorkerNodeActor : IActor
             return PidLabel(ToObservedRemotePid(context, assignment.HostedPid));
         }
 
-        var configuredActorName = assignment.Assignment.ActorName?.Trim();
-        if (!string.IsNullOrWhiteSpace(configuredActorName))
+        var actorId = assignment.Assignment.ActorName?.Trim();
+        if (string.IsNullOrWhiteSpace(actorId))
         {
-            if (configuredActorName.Contains('/', StringComparison.Ordinal))
+            actorId = context.Self.Id;
+        }
+
+        actorId = NormalizeObservedActorId(actorId);
+        if (!actorId.Contains('/', StringComparison.Ordinal))
+        {
+            var workerRootActorId = NormalizeObservedActorId(context.Self.Id);
+            if (!string.IsNullOrWhiteSpace(workerRootActorId)
+                && !string.Equals(actorId, workerRootActorId, StringComparison.Ordinal))
             {
-                return configuredActorName;
+                actorId = $"{workerRootActorId}/{actorId}";
             }
-
-            return string.IsNullOrWhiteSpace(_workerAddress)
-                ? configuredActorName
-                : $"{_workerAddress}/{configuredActorName}";
         }
 
-        var actor = string.IsNullOrWhiteSpace(assignment.Assignment.ActorName)
-            ? context.Self.Id
-            : assignment.Assignment.ActorName.Trim();
-        if (actor.Contains('/', StringComparison.Ordinal))
-        {
-            return actor;
-        }
-
-        return string.IsNullOrWhiteSpace(_workerAddress) ? actor : $"{_workerAddress}/{actor}";
+        return string.IsNullOrWhiteSpace(_workerAddress) ? actorId : $"{_workerAddress}/{actorId}";
     }
 
     private PID ToObservedRemotePid(IContext context, PID pid)

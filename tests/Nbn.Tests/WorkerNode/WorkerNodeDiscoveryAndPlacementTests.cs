@@ -1141,6 +1141,67 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementReconcileRequest_FallbackObservedPid_Preserves_WorkerRootPrefix_After_HostedPid_Loss()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerName = $"worker-node-{Guid.NewGuid():N}";
+        var workerPid = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")),
+            workerName);
+
+        var brainId = Guid.NewGuid();
+        var outputName = $"brain-{brainId:N}-output-test";
+
+        var outputAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-output-fallback",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 4,
+                    regionId: 31,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetOutputCoordinator,
+                    actorName: outputName,
+                    neuronStart: 0,
+                    neuronCount: 0)
+            });
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, outputAck.State);
+
+        var hostedBeforeStop = await harness.Root.RequestAsync<WorkerNodeActor.HostedBrainSnapshot>(
+            workerPid,
+            new WorkerNodeActor.GetHostedBrainSnapshot(brainId));
+        Assert.NotNull(hostedBeforeStop.OutputCoordinatorPid);
+
+        harness.Root.Stop(hostedBeforeStop.OutputCoordinatorPid!);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var hosted = await harness.Root.RequestAsync<WorkerNodeActor.HostedBrainSnapshot>(
+                    workerPid,
+                    new WorkerNodeActor.GetHostedBrainSnapshot(brainId));
+                return hosted.OutputCoordinatorPid is null;
+            },
+            timeoutMs: 5_000);
+
+        var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+            workerPid,
+            new PlacementReconcileRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 4
+            });
+
+        var outputObserved = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-output-fallback");
+        Assert.Equal($"127.0.0.1:12041/{workerName}/{outputName}", outputObserved.ActorPid);
+    }
+
+    [Fact]
     public async Task PlacementAssignments_DefaultWorkerRoles_AcceptFullPlacementSet()
     {
         await using var harness = await WorkerHarness.CreateAsync();
