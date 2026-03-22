@@ -4,6 +4,7 @@ Owns compatibility gates, child synthesis, mutation summaries, spawn policy beha
 
 ## Stable responsibilities
 
+- `ReproductionManagerActor` is intentionally split by responsibility: request/discovery handling, parent artifact/state loading, compatibility scoring, and child synthesis/mutation helpers live in separate partial files so maintenance work can stay file-bounded without changing runtime semantics.
 - Function mutation keeps full ID-space compatibility (no hard bans), while biasing activation/reset/accumulation mutation targets toward lower-volatility families so child brains trend toward stable buffer ranges over generations.
 - Compatibility assessment requests run the same similarity gates as reproduction but do not synthesize child artifacts or attempt spawn. Runtime handles reproduction and assessment requests re-entrantly so assessment-only speciation checks do not starve behind unrelated reproduction work in the same actor mailbox, and repeated artifact-based assessments reuse a bounded parsed-parent cache keyed by artifact SHA so newborn-species exemplar checks do not keep reparsing the same artifacts.
 - `run_count` is normalized per request (`0` => `1`, bounded max) and response `runs` are emitted in deterministic `run_index` order while top-level result fields mirror run `0` for compatibility with legacy callers.
