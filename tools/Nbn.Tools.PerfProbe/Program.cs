@@ -13,9 +13,10 @@ if (args.Length == 0 || IsHelpToken(args[0]))
 
 var command = args[0].Trim().ToLowerInvariant();
 var remaining = args.Skip(1).ToArray();
-var outputDirectory = Path.GetFullPath(
-    GetArg(remaining, "--output-dir")
-    ?? Path.Combine(Environment.CurrentDirectory, $"perf-probe-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}"));
+var outputDirectory = PerfProbePaths.ResolveOutputDirectory(
+    GetArg(remaining, "--output-dir"),
+    Environment.CurrentDirectory,
+    DateTimeOffset.UtcNow);
 var jsonOnly = HasFlag(remaining, "--json");
 var openReport = !HasFlag(remaining, "--no-open-report");
 var originalOut = Console.Out;
@@ -145,7 +146,7 @@ static void PrintHelp()
     Console.WriteLine("  current-system --settings-host <host> --settings-port <port> [--settings-name <actor>]");
     Console.WriteLine();
     Console.WriteLine("Options:");
-    Console.WriteLine("  --output-dir <path>   Write JSON/CSV/Markdown/HTML reports to this directory.");
+    Console.WriteLine("  --output-dir <path>   Write JSON/CSV/Markdown/HTML reports to this directory (default ./perf-probe/perf-probe-<timestamp>).");
     Console.WriteLine("  --bind-host <host>    Current-system mode: local bind host for the probe actor client (default 127.0.0.1).");
     Console.WriteLine("  --bind-port <port>    Current-system mode: local bind port for the probe actor client (default 12110).");
     Console.WriteLine("  --json                Emit only the JSON completion payload.");

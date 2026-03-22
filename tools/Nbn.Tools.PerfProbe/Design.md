@@ -10,6 +10,7 @@ Owns placement-facing and runtime-facing NBN performance probing and report gene
 - Expose a non-invasive `current-system` profile mode that attaches to the currently running runtime through SettingsMonitor discovery and captures service-discovery, worker-inventory, and HiveMind placement/tick snapshots without assuming localhost ownership.
 - Surface worker capability limits and pressure metadata in the human-readable reports so worker-node profiling can be used both for HiveMind placement validation and for deeper attached-system diagnostics.
 - Emit report artifacts as JSON, CSV, Markdown, and HTML, with both tabular summaries and chart output.
+- Place default CLI report output under `./perf-probe/perf-probe-<timestamp>` unless the caller overrides `--output-dir`, so probe runs do not scatter timestamped folders in the launch directory.
 - Run real CPU and GPU placement-planner preference profiles in `worker-profile` when local capability telemetry and workload size qualify for the planner's GPU path.
 - Run real CPU and GPU runtime rows in `localhost-stress` when compatible ILGPU hardware is present; skip only when no compatible GPU/runtime path exists.
 - Treat completed localhost-stress measurements as report data, not hard pass/fail performance gates for a specific machine. Rows fail only when runtime execution or backend verification fails; sub-target results remain passed measurements with the observed ceiling in the metrics/summary.
