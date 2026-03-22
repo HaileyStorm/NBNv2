@@ -1812,6 +1812,13 @@ Current artifact-store implementations use `stored_length` and `compression` as 
 
 The following `.proto` files define the canonical NBN wire schema. They are intended for Proto.Actor remote messaging and for External World integration.
 
+Canonical contract source and drift guard:
+
+- `src/Nbn.Shared/Protos/*.proto` is the source of truth for the wire contract.
+- This section mirrors those `.proto` files for spec readers and operator-facing design review; when a proto changes, update this section in the same change.
+- Validate contract drift with `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`.
+- Re-render and freshness-check the assembled spec so `docs/NBNv2.md` stays synchronized with this section.
+
 ### 19.1 `nbn_common.proto`
 
 ```proto
@@ -3417,6 +3424,8 @@ message SpeciationListHistoryResponse {
 - Operator runbooks:
   - `tools/demo/reproduction_operator_runbook.md`
   - `tools/demo/speciation_operator_runbook.md`
+- Proto/control drift guard:
+  - `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`
 - Documentation freshness:
   - Windows: `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check`
   - Linux/macOS: `bash tools/docs/render-nbnv2-docs.sh --check`
