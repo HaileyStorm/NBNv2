@@ -236,6 +236,48 @@ public sealed class SettingsMonitorWorkerInventoryTests
         Assert.Equal((uint)0, row.GpuVramLimitPercent);
     }
 
+    [Fact]
+    public async Task RecordHeartbeatAsync_DuplicateTimestampForSameWorker_UpdatesCapabilitiesInsteadOfFailing()
+    {
+        using var db = new TempDatabaseScope();
+        var timeProvider = new MutableTimeProvider(100);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
+        await store.InitializeAsync();
+
+        var worker = Guid.NewGuid();
+        await store.UpsertNodeAsync(new NodeRegistration(worker, "worker-a", "127.0.0.1:12040", "worker-node"), timeMs: 100);
+
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(
+            worker,
+            250,
+            CreateCapabilities(
+                cpuCores: 8,
+                ramFreeBytes: 1_024,
+                storageFreeBytes: 10_240,
+                cpuScore: 10f)));
+
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(
+            worker,
+            250,
+            CreateCapabilities(
+                cpuCores: 16,
+                ramFreeBytes: 4_096,
+                storageFreeBytes: 20_480,
+                cpuScore: 30f)));
+
+        var snapshot = await store.GetWorkerInventorySnapshotAsync();
+        var row = snapshot.Workers.Single(entry => entry.NodeId == worker);
+
+        Assert.True(row.IsAlive);
+        Assert.True(row.HasCapabilities);
+        Assert.True(row.IsReady);
+        Assert.Equal(250, row.CapabilityTimeMs);
+        Assert.Equal((uint)16, row.CpuCores);
+        Assert.Equal(4_096, row.RamFreeBytes);
+        Assert.Equal(20_480, row.StorageFreeBytes);
+        Assert.Equal(30f, row.CpuScore);
+    }
+
     private static NodeCapabilities CreateCapabilities(
         uint cpuCores,
         long ramFreeBytes,

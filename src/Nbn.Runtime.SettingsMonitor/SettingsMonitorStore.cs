@@ -154,7 +154,27 @@ INSERT INTO node_capabilities (
     @gpu_vram_limit_percent,
     @process_cpu_load_percent,
     @process_ram_used_bytes
-);
+) ON CONFLICT(node_id, time_ms) DO UPDATE SET
+    cpu_cores = excluded.cpu_cores,
+    ram_free_bytes = excluded.ram_free_bytes,
+    storage_free_bytes = excluded.storage_free_bytes,
+    has_gpu = excluded.has_gpu,
+    gpu_name = excluded.gpu_name,
+    vram_free_bytes = excluded.vram_free_bytes,
+    cpu_score = excluded.cpu_score,
+    gpu_score = excluded.gpu_score,
+    ilgpu_cuda_available = excluded.ilgpu_cuda_available,
+    ilgpu_opencl_available = excluded.ilgpu_opencl_available,
+    ram_total_bytes = excluded.ram_total_bytes,
+    storage_total_bytes = excluded.storage_total_bytes,
+    vram_total_bytes = excluded.vram_total_bytes,
+    cpu_limit_percent = excluded.cpu_limit_percent,
+    ram_limit_percent = excluded.ram_limit_percent,
+    storage_limit_percent = excluded.storage_limit_percent,
+    gpu_compute_limit_percent = excluded.gpu_compute_limit_percent,
+    gpu_vram_limit_percent = excluded.gpu_vram_limit_percent,
+    process_cpu_load_percent = excluded.process_cpu_load_percent,
+    process_ram_used_bytes = excluded.process_ram_used_bytes;
 """;
 
     private const string UpsertBrainControllerSql = """
@@ -660,7 +680,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
         }
 
         var capabilities = heartbeat.Capabilities ?? throw new ArgumentException("Capabilities are required.", nameof(heartbeat));
-        var observedMs = NowMs();
+        var observedMs = heartbeat.TimeMs > 0 ? heartbeat.TimeMs : NowMs();
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
