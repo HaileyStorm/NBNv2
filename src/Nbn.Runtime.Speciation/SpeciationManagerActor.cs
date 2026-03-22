@@ -16,7 +16,10 @@ using System.Text.Json.Nodes;
 
 namespace Nbn.Runtime.Speciation;
 
-public sealed class SpeciationManagerActor : IActor
+/// <summary>
+/// Owns speciation epoch state, membership assignment, and lineage reconciliation for running brains.
+/// </summary>
+public sealed partial class SpeciationManagerActor : IActor
 {
     private static readonly TimeSpan DefaultSettingsRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultCompatibilityRequestTimeout = TimeSpan.FromSeconds(5);
@@ -51,6 +54,9 @@ public sealed class SpeciationManagerActor : IActor
     private bool _initialized;
     private SpeciationEpochInfo? _currentEpoch;
 
+    /// <summary>
+    /// Initializes the single-writer speciation actor with persistence and optional runtime service endpoint hints.
+    /// </summary>
     public SpeciationManagerActor(
         SpeciationStore store,
         SpeciationRuntimeConfig runtimeConfig,
@@ -74,10 +80,6 @@ public sealed class SpeciationManagerActor : IActor
             ProtoRepro.SpawnChildPolicy.SpawnChildNever);
     }
 
-    public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
-
-    public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
-
     private sealed record ApplySplitHindsightReassignmentsRequest(
         SpeciationEpochInfo Epoch,
         SpeciationMembershipRecord SplitMembership,
@@ -86,6 +88,9 @@ public sealed class SpeciationManagerActor : IActor
         string PolicyVersion,
         long? DecisionTimeMs);
 
+    /// <summary>
+    /// Dispatches speciation control-plane, protobuf contract, startup, and discovery messages.
+    /// </summary>
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
@@ -159,73 +164,6 @@ public sealed class SpeciationManagerActor : IActor
         }
 
         return Task.CompletedTask;
-    }
-
-    private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
-    {
-        if (snapshot.Registrations is null)
-        {
-            return;
-        }
-
-        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.ReproductionManagerKey, out var reproductionRegistration))
-        {
-            _reproductionManagerPid = reproductionRegistration.Endpoint.ToPid();
-        }
-        else
-        {
-            _reproductionManagerPid = _configuredReproductionManagerPid;
-        }
-
-        if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var ioRegistration))
-        {
-            _ioGatewayPid = ioRegistration.Endpoint.ToPid();
-        }
-        else
-        {
-            _ioGatewayPid = _configuredIoGatewayPid;
-        }
-    }
-
-    private void ApplyObservedEndpoint(ServiceEndpointObservation observation)
-    {
-        if (string.Equals(observation.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
-        {
-            if (observation.Kind == ServiceEndpointObservationKind.Upserted
-                && observation.Registration is ServiceEndpointRegistration reproductionRegistration)
-            {
-                _reproductionManagerPid = reproductionRegistration.Endpoint.ToPid();
-                return;
-            }
-
-            if (observation.Kind == ServiceEndpointObservationKind.Removed
-                || observation.Kind == ServiceEndpointObservationKind.Invalid
-                || observation.Kind == ServiceEndpointObservationKind.Upserted)
-            {
-                _reproductionManagerPid = _configuredReproductionManagerPid;
-            }
-
-            return;
-        }
-
-        if (!string.Equals(observation.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        if (observation.Kind == ServiceEndpointObservationKind.Upserted
-            && observation.Registration is ServiceEndpointRegistration ioRegistration)
-        {
-            _ioGatewayPid = ioRegistration.Endpoint.ToPid();
-            return;
-        }
-
-        if (observation.Kind == ServiceEndpointObservationKind.Removed
-            || observation.Kind == ServiceEndpointObservationKind.Invalid
-            || observation.Kind == ServiceEndpointObservationKind.Upserted)
-        {
-            _ioGatewayPid = _configuredIoGatewayPid;
-        }
     }
 
     private void HandleStarted(IContext context)

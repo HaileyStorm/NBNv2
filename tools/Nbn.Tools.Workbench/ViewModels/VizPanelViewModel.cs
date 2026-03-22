@@ -3322,7 +3322,6 @@ public sealed class VizPanelViewModel : ViewModelBase
         AddCandidate(Directory.GetCurrentDirectory());
         AddCandidate(AppContext.BaseDirectory);
         AddCandidate(BuildWorkbenchArtifactRoot("designer-artifacts"));
-        AddCandidate(BuildWorkbenchArtifactRoot(Path.Combine("sample-brain", "artifacts")));
         AddCandidate(BuildWorkbenchArtifactRoot("repro-artifacts"));
         return roots;
     }

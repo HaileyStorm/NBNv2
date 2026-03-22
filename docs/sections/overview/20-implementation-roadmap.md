@@ -8,7 +8,7 @@
 - Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, and reproduction workflows are implemented and exercised by tests/tools.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
-- Workbench local launch plus sample-brain workflows provide repeatable operator validation paths.
+- Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.
 - Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.
 
 ### 20.2 Current priorities
@@ -26,7 +26,7 @@
   - `dotnet test -c Release --disable-build-servers`
 - Workbench operator path:
   - `dotnet run --project tools/Nbn.Tools.Workbench -c Release`
-  - In `Orchestrator`, use `Start All`, then `Spawn Sample Brain`
+  - In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain`
 - Operator runbooks:
   - `tools/demo/reproduction_operator_runbook.md`
   - `tools/demo/speciation_operator_runbook.md`

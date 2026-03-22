@@ -5,7 +5,7 @@ This runbook covers reproduction requests sent through IO Gateway (`ReproduceByB
 
 ## Quick Start (Deterministic Artifact Flow)
 Open Workbench and use `Orchestrator` `Start All` to launch the local runtime services.
-Use `Spawn Sample Brain` if you want a live IO/HiveMind placement sanity check before running reproduction commands.
+Use `Designer` `Generate Random Brain` and `Spawn Brain` if you want a live IO/HiveMind placement sanity check before running reproduction commands.
 
 Create deterministic sample artifacts with:
 

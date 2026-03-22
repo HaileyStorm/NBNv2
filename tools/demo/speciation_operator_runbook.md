@@ -4,8 +4,7 @@
 This runbook covers the dedicated Speciation service (`Nbn.Runtime.Speciation`) and the Workbench Speciation pane.
 
 ## Quick Start
-Open Workbench and use `Orchestrator` `Start All` so SettingsMonitor, HiveMind, IO, Reproduction, Speciation, and Observability share the same discovery/config path. Use `Spawn Sample Brain` if you need a live brain for end-to-end placement or assignment checks.
-
+Open Workbench and use `Orchestrator` `Start All` so SettingsMonitor, HiveMind, IO, Reproduction, Speciation, and Observability share the same discovery/config path. Use `Designer` `Generate Random Brain` and `Spawn Brain` if you need a live brain for end-to-end placement or assignment checks.
 Then use:
 
 - `Orchestrator` to confirm `Speciation` is online and discovery published `service.endpoint.speciation_manager`

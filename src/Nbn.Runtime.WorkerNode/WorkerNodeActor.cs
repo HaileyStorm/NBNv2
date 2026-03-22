@@ -18,7 +18,10 @@ using SharedShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 namespace Nbn.Runtime.WorkerNode;
 
-public sealed class WorkerNodeActor : IActor
+/// <summary>
+/// Hosts region shards and related per-brain runtime actors on a worker node.
+/// </summary>
+public sealed partial class WorkerNodeActor : IActor
 {
     private static readonly TimeSpan BrainInfoTimeout = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan BrainDefinitionTimeout = TimeSpan.FromMilliseconds(750);
@@ -43,6 +46,9 @@ public sealed class WorkerNodeActor : IActor
     private readonly Severity _debugMinSeverityDefault;
     private readonly bool _debugStreamEnabledDefault;
 
+    /// <summary>
+    /// Initializes a worker node actor with the local hosting, artifact, and observability dependencies.
+    /// </summary>
     public WorkerNodeActor(
         Guid workerNodeId,
         string workerAddress,
@@ -75,6 +81,9 @@ public sealed class WorkerNodeActor : IActor
         _debugMinSeverityDefault = ResolveDebugMinSeverity(Severity.SevDebug);
     }
 
+    /// <summary>
+    /// Processes worker-node control, discovery, and debug messages.
+    /// </summary>
     public async Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
@@ -138,225 +147,6 @@ public sealed class WorkerNodeActor : IActor
         TryRequest(context, hiveMindPid, completion);
     }
 
-    public sealed record DiscoverySnapshotApplied(IReadOnlyDictionary<string, ServiceEndpointRegistration> Registrations);
-
-    public sealed record EndpointStateObserved(ServiceEndpointObservation Observation);
-
-    public sealed record EndpointRegistrationObserved(ServiceEndpointRegistration Registration);
-
-    public sealed record GetWorkerNodeSnapshot;
-
-    public sealed record GetHostedBrainSnapshot(Guid BrainId);
-
-    public sealed record GetHostedRegionShardBackendExecutionInfo(Guid BrainId, int RegionId, int ShardIndex);
-
-    public sealed record WorkerNodeSnapshot(
-        Guid WorkerNodeId,
-        string WorkerAddress,
-        ServiceEndpointRegistration? HiveMindEndpoint,
-        ServiceEndpointRegistration? IoGatewayEndpoint,
-        WorkerServiceRole EnabledRoles,
-        int TrackedAssignmentCount,
-        WorkerResourceAvailability ResourceAvailability);
-
-    public sealed record HostedBrainSnapshot(
-        Guid BrainId,
-        PID? BrainRootPid,
-        PID? SignalRouterPid,
-        PID? InputCoordinatorPid,
-        PID? OutputCoordinatorPid,
-        PID? HiddenShardPid,
-        int RegionShardCount);
-
-    private HostedBrainSnapshot BuildHostedBrainSnapshot(Guid brainId)
-    {
-        if (!_brains.TryGetValue(brainId, out var brain))
-        {
-            return new HostedBrainSnapshot(brainId, null, null, null, null, null, 0);
-        }
-
-        return new HostedBrainSnapshot(
-            brain.BrainId,
-            brain.BrainRootPid,
-            brain.SignalRouterPid,
-            brain.InputCoordinatorPid,
-            brain.OutputCoordinatorPid,
-            brain.RegionShards.FirstOrDefault(static entry => entry.Key.RegionId == 1 && entry.Key.ShardIndex == 0).Value.Pid,
-            brain.RegionShards.Count);
-    }
-
-    private async Task HandleGetHostedRegionShardBackendExecutionInfoAsync(
-        IContext context,
-        GetHostedRegionShardBackendExecutionInfo request)
-    {
-        if (!_brains.TryGetValue(request.BrainId, out var brain)
-            || !SharedShardId32.TryFrom(request.RegionId, request.ShardIndex, out var shardId)
-            || !brain.RegionShards.TryGetValue(shardId, out var hostedShard))
-        {
-            context.Respond(new RegionShardBackendExecutionInfo(
-                RegionShardComputeBackendPreference.Auto,
-                BackendName: "unavailable",
-                UsedGpu: false,
-                FallbackReason: "hosted_region_shard_not_found",
-                HasExecuted: false));
-            return;
-        }
-
-        try
-        {
-            var info = await context.RequestAsync<RegionShardBackendExecutionInfo>(
-                    hostedShard.Pid,
-                    new GetRegionShardBackendExecutionInfo(),
-                    TimeSpan.FromSeconds(2))
-                .ConfigureAwait(false);
-            context.Respond(info);
-        }
-        catch (Exception ex)
-        {
-            context.Respond(new RegionShardBackendExecutionInfo(
-                RegionShardComputeBackendPreference.Auto,
-                BackendName: "unavailable",
-                UsedGpu: false,
-                FallbackReason: $"backend_execution_query_failed:{ex.GetBaseException().Message}",
-                HasExecuted: false));
-        }
-    }
-
-    private void ApplyDiscoverySnapshot(DiscoverySnapshotApplied snapshot)
-    {
-        if (snapshot.Registrations is null)
-        {
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                _workerNodeId,
-                DiscoveryTargetLabel,
-                "snapshot_ignored",
-                "snapshot_missing");
-            return;
-        }
-
-        if (snapshot.Registrations.Count == 0)
-        {
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                _workerNodeId,
-                DiscoveryTargetLabel,
-                "snapshot_empty",
-                "none");
-        }
-
-        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var entry in snapshot.Registrations)
-        {
-            ApplyEndpoint(entry.Value, source: "snapshot");
-            if (ServiceEndpointSettings.IsKnownKey(entry.Value.Key))
-            {
-                seenKeys.Add(entry.Value.Key);
-            }
-        }
-
-        foreach (var knownKey in ServiceEndpointSettings.AllKeys)
-        {
-            if (!seenKeys.Contains(knownKey))
-            {
-                RemoveEndpoint(
-                    knownKey,
-                    source: "snapshot",
-                    outcome: "missing",
-                    failureReason: "endpoint_missing");
-            }
-        }
-    }
-
-    private void ApplyObservedEndpoint(ServiceEndpointObservation observation, string source)
-    {
-        if (!ServiceEndpointSettings.IsKnownKey(observation.Key))
-        {
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                _workerNodeId,
-                string.IsNullOrWhiteSpace(observation.Key) ? DiscoveryTargetLabel : observation.Key,
-                $"{NormalizeSource(source)}_ignored",
-                "unknown_key");
-            return;
-        }
-
-        switch (observation.Kind)
-        {
-            case ServiceEndpointObservationKind.Upserted:
-                if (observation.Registration is ServiceEndpointRegistration registration)
-                {
-                    ApplyEndpoint(registration, source);
-                    return;
-                }
-
-                WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                    _workerNodeId,
-                    observation.Key,
-                    $"{NormalizeSource(source)}_ignored",
-                    "registration_missing");
-                return;
-            case ServiceEndpointObservationKind.Removed:
-                RemoveEndpoint(
-                    observation.Key,
-                    source,
-                    outcome: "removed",
-                    failureReason: NormalizeFailureReason(observation.FailureReason, "endpoint_removed"));
-                return;
-            case ServiceEndpointObservationKind.Invalid:
-                RemoveEndpoint(
-                    observation.Key,
-                    source,
-                    outcome: "invalidated",
-                    failureReason: NormalizeFailureReason(observation.FailureReason, "endpoint_parse_failed"));
-                return;
-            default:
-                WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                    _workerNodeId,
-                    observation.Key,
-                    $"{NormalizeSource(source)}_ignored",
-                    "unknown_update_kind");
-                return;
-        }
-    }
-
-    private void ApplyEndpoint(ServiceEndpointRegistration registration, string source)
-    {
-        if (!ServiceEndpointSettings.IsKnownKey(registration.Key))
-        {
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                _workerNodeId,
-                string.IsNullOrWhiteSpace(registration.Key) ? DiscoveryTargetLabel : registration.Key,
-                $"{NormalizeSource(source)}_ignored",
-                "unknown_key");
-            return;
-        }
-
-        var existed = _endpoints.ContainsKey(registration.Key);
-        _endpoints[registration.Key] = registration;
-        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-            _workerNodeId,
-            registration.Key,
-            existed ? $"{NormalizeSource(source)}_updated" : $"{NormalizeSource(source)}_registered",
-            "none");
-    }
-
-    private void RemoveEndpoint(string key, string source, string outcome, string failureReason)
-    {
-        if (!ServiceEndpointSettings.IsKnownKey(key))
-        {
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                _workerNodeId,
-                string.IsNullOrWhiteSpace(key) ? DiscoveryTargetLabel : key,
-                $"{NormalizeSource(source)}_ignored",
-                "unknown_key");
-            return;
-        }
-
-        _endpoints.Remove(key);
-        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-            _workerNodeId,
-            key,
-            $"{NormalizeSource(source)}_{outcome}",
-            NormalizeFailureReason(failureReason, "none"));
-    }
     private async Task HandlePlacementAssignmentAsync(IContext context, PlacementAssignmentRequest request)
     {
         var assignment = request.Assignment;
@@ -2379,90 +2169,4 @@ public sealed class WorkerNodeActor : IActor
         };
     }
 
-    private sealed class BrainHostingState
-    {
-        public BrainHostingState(Guid brainId)
-        {
-            BrainId = brainId;
-            BrainSeed = BitConverter.ToUInt64(brainId.ToByteArray(), 0);
-        }
-
-        public Guid BrainId { get; }
-        public ulong BrainSeed { get; }
-        public ulong PlacementEpoch { get; set; }
-        public PID? BrainRootPid { get; set; }
-        public PID? SignalRouterPid { get; set; }
-        public PID? InputCoordinatorPid { get; set; }
-        public PID? OutputCoordinatorPid { get; set; }
-        public BrainRuntimeInfo? RuntimeInfo { get; set; }
-        public Dictionary<SharedShardId32, HostedShard> RegionShards { get; } = new();
-        public Dictionary<string, HostedAssignmentState> Assignments { get; } = new(StringComparer.Ordinal);
-    }
-
-    private sealed class BrainRuntimeInfo
-    {
-        public int InputWidth { get; set; }
-        public int OutputWidth { get; set; }
-        public ArtifactRef? BaseDefinition { get; set; }
-        public ArtifactRef? LastSnapshot { get; set; }
-        public bool HasIoMetadata { get; set; }
-        public string LastIoError { get; set; } = string.Empty;
-        public string LastArtifactLoadError { get; set; } = string.Empty;
-    }
-
-    private sealed class HostedAssignmentState
-    {
-        public HostedAssignmentState(PlacementAssignment assignment, PID? hostedPid)
-        {
-            Assignment = assignment;
-            HostedPid = hostedPid;
-        }
-
-        public PlacementAssignment Assignment { get; }
-        public PID? HostedPid { get; set; }
-        public PlacementAssignmentState State { get; set; }
-        public string Message { get; set; } = string.Empty;
-    }
-
-    private readonly record struct HostedShard(
-        SharedShardId32 ShardId,
-        int NeuronStart,
-        int NeuronCount,
-        PID Pid,
-        string AssignmentId);
-
-    private sealed class HostingResult
-    {
-        private HostingResult(bool success, PlacementAssignment? assignment, PID? hostedPid, PlacementAssignmentAck? failedAck)
-        {
-            Success = success;
-            Assignment = assignment;
-            HostedPid = hostedPid;
-            FailedAck = failedAck;
-        }
-
-        public bool Success { get; }
-        public PlacementAssignment? Assignment { get; }
-        public PID? HostedPid { get; }
-        public PlacementAssignmentAck? FailedAck { get; }
-
-        public static HostingResult Succeeded(PlacementAssignment assignment, PID hostedPid)
-            => new(true, assignment, hostedPid, null);
-
-        public static HostingResult Failed(PlacementAssignmentAck failedAck)
-            => new(false, null, null, failedAck);
-    }
-}
-
-internal static class WorkerNodeUuidExtensions
-{
-    public static Guid ToGuidOrEmpty(this Uuid? value)
-    {
-        if (value is null || !value.TryToGuid(out var guid))
-        {
-            return Guid.Empty;
-        }
-
-        return guid;
-    }
 }

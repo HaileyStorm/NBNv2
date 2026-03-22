@@ -65,7 +65,7 @@ dotnet test NBNv2.sln -c Release --disable-build-servers --artifacts-path .artif
 dotnet run --project tools/Nbn.Tools.Workbench -c Release
 ```
 
-In `Orchestrator`, use `Start All`, then `Spawn Sample Brain` for the current end-to-end local validation path.
+In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain` for the current end-to-end local validation path.
 
 ## Status / Roadmap
 

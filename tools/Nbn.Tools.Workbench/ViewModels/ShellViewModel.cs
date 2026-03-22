@@ -42,8 +42,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             OnBrainDiscovered,
             OnBrainsUpdated,
             ConnectAllAsync,
-            DisconnectAll,
-            artifactPublisher: _artifactPublisher);
+            DisconnectAll);
         Debug = new DebugPanelViewModel(_client, _dispatcher, Connections);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client, Connections, _artifactPublisher);
