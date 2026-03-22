@@ -11,6 +11,7 @@ using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tests.Workbench;
 
+[Collection("ArtifactEnvSerial")]
 public sealed class DesignerPanelArtifactStoreTests
 {
     [Fact]
@@ -60,6 +61,53 @@ public sealed class DesignerPanelArtifactStoreTests
             using var rangeBuffer = new MemoryStream();
             await rangeStream!.CopyToAsync(rangeBuffer);
             Assert.Equal(payload.Skip(32).Take(40).ToArray(), rangeBuffer.ToArray());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task WorkbenchArtifactPublisher_PromotesRegisteredArtifactsToHttpArtifactRefs()
+    {
+        using var remoteScope = new RegisteredArtifactStoreScope();
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-workbench-promote-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        Assert.True(
+            LocalPortAllocator.TryFindAvailablePort(
+                NetworkAddressDefaults.LoopbackHost,
+                preferredStartPort: 19120,
+                reservedPorts: null,
+                out var port,
+                out var error),
+            error);
+
+        try
+        {
+            var payload = Enumerable.Range(0, 128).Select(static value => (byte)value).ToArray();
+            var manifest = await remoteScope.Store.StoreAsync(new MemoryStream(payload, writable: false), "application/x-nbn");
+            var storedRef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef(
+                (ulong)manifest.ByteLength,
+                "application/x-nbn",
+                remoteScope.StoreUri);
+
+            await using var publisher = new WorkbenchArtifactPublisher();
+            var promoted = await publisher.PromoteAsync(
+                storedRef,
+                artifactRoot,
+                NetworkAddressDefaults.LoopbackHost,
+                preferredPort: port);
+
+            Assert.Equal(storedRef.ToSha256Hex(), promoted.ArtifactRef.ToSha256Hex());
+            Assert.StartsWith($"http://127.0.0.1:{port}/", promoted.ArtifactRef.StoreUri, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(promoted.AttentionMessage);
+            await AssertHttpArtifactReadableAsync(promoted.ArtifactRef, payload);
         }
         finally
         {
@@ -303,11 +351,21 @@ public sealed class DesignerPanelArtifactStoreTests
     public async Task RestoreBrainFromCurrentArtifactReferencesAsync_ForwardsDefinitionAndSnapshotRefs_ToRuntime()
     {
         using var remoteScope = new RegisteredArtifactStoreScope();
+        Assert.True(
+            LocalPortAllocator.TryFindAvailablePort(
+                NetworkAddressDefaults.LoopbackHost,
+                preferredStartPort: 19210,
+                reservedPorts: null,
+                out var artifactPort,
+                out var error),
+            error);
         var connections = new ConnectionViewModel
         {
             SettingsConnected = true,
             HiveMindConnected = true,
             IoConnected = true,
+            LocalBindHost = NetworkAddressDefaults.LoopbackHost,
+            LocalPortText = (artifactPort - 1).ToString(),
             SettingsPortText = "bad",
             HiveMindPortText = "bad",
             IoPortText = "bad"
@@ -321,7 +379,8 @@ public sealed class DesignerPanelArtifactStoreTests
                 ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
                 : null
         };
-        var vm = CreateViewModel(connections, client);
+        var artifactPublisher = new FakeWorkbenchArtifactPublisher();
+        var vm = CreateViewModel(connections, client, artifactPublisher);
         Guid designBrainId = Guid.Empty;
 
         AvaloniaTestHost.RunOnUiThread(() =>
@@ -341,6 +400,7 @@ public sealed class DesignerPanelArtifactStoreTests
         var ack = await vm.RestoreBrainFromCurrentArtifactReferencesAsync();
 
         Assert.NotNull(ack);
+        Assert.Equal(2, artifactPublisher.PromoteCallCount);
         Assert.Equal(1, client.RequestPlacementCallCount);
         Assert.NotNull(client.LastPlacementRequest);
         Assert.True(client.LastPlacementRequest!.BrainId.TryToGuid(out var requestedBrainId));
@@ -382,13 +442,16 @@ public sealed class DesignerPanelArtifactStoreTests
         Assert.Contains("Artifact reference is invalid", vm.Status, StringComparison.Ordinal);
     }
 
-    private static DesignerPanelViewModel CreateViewModel(ConnectionViewModel? connections = null, WorkbenchClient? client = null)
+    private static DesignerPanelViewModel CreateViewModel(
+        ConnectionViewModel? connections = null,
+        WorkbenchClient? client = null,
+        IWorkbenchArtifactPublisher? artifactPublisher = null)
     {
         return AvaloniaTestHost.RunOnUiThread(() =>
         {
             var resolvedConnections = connections ?? new ConnectionViewModel();
             var resolvedClient = client ?? new FakeWorkbenchClient();
-            return new DesignerPanelViewModel(resolvedConnections, resolvedClient);
+            return new DesignerPanelViewModel(resolvedConnections, resolvedClient, artifactPublisher: artifactPublisher);
         });
     }
 
@@ -465,6 +528,44 @@ public sealed class DesignerPanelArtifactStoreTests
             KillBrainCallCount++;
             return Task.FromResult(true);
         }
+    }
+
+    private sealed class FakeWorkbenchArtifactPublisher : IWorkbenchArtifactPublisher
+    {
+        private readonly List<ArtifactRef> _promotedRefs = new();
+
+        public int PromoteCallCount => _promotedRefs.Count;
+
+        public Task<PublishedArtifact> PublishAsync(
+            byte[] bytes,
+            string mediaType,
+            string backingStoreRoot,
+            string bindHost,
+            string? advertisedHost = null,
+            string? label = null,
+            int? preferredPort = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException("PublishAsync is not used by this test double.");
+        }
+
+        public Task<PublishedArtifact> PromoteAsync(
+            ArtifactRef artifactRef,
+            string defaultLocalStoreRootPath,
+            string bindHost,
+            string? advertisedHost = null,
+            string? label = null,
+            int? preferredPort = null,
+            CancellationToken cancellationToken = default)
+        {
+            var promoted = artifactRef.Clone();
+            var port = preferredPort ?? WorkbenchArtifactPublisher.DefaultReachableArtifactPort;
+            promoted.StoreUri = $"http://127.0.0.1:{port}/";
+            _promotedRefs.Add(artifactRef.Clone());
+            return Task.FromResult(new PublishedArtifact(promoted, null));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class NullWorkbenchEventSink : IWorkbenchEventSink

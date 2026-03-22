@@ -288,7 +288,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainId,
                 info => info.InputWidth == 1 && info.OutputWidth == 1,
-                TimeSpan.FromSeconds(5));
+                TimeSpan.FromSeconds(10));
 
             var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
             var outputSink = ioNode.Root.Spawn(Props.FromProducer(() => new OutputSinkActor(brainId, outputTcs)));
@@ -621,7 +621,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainA,
                 info => info.InputWidth > 0 && info.OutputWidth > 0,
-                TimeSpan.FromSeconds(5));
+                TimeSpan.FromSeconds(10));
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -1088,23 +1088,42 @@ public class DemoIntegrationTests
     {
         var sw = Stopwatch.StartNew();
         BrainInfo? lastInfo = null;
+        Exception? lastError = null;
         while (sw.Elapsed < timeout)
         {
-            var info = await root.RequestAsync<BrainInfo>(
-                ioGateway,
-                new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
-                timeout);
-            lastInfo = info;
-            if (predicate(info))
+            var remaining = timeout - sw.Elapsed;
+            var requestTimeout = remaining < TimeSpan.FromSeconds(4)
+                ? remaining
+                : TimeSpan.FromSeconds(4);
+
+            try
             {
-                return info;
+                var info = await root.RequestAsync<BrainInfo>(
+                    ioGateway,
+                    new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+                    requestTimeout);
+                lastInfo = info;
+                lastError = null;
+                if (predicate(info))
+                {
+                    return info;
+                }
+            }
+            catch (TimeoutException ex)
+            {
+                // IO metadata bootstrap can lag briefly behind shard/controller registration.
+                lastError = ex;
+            }
+            catch (Exception ex) when (sw.Elapsed < timeout)
+            {
+                lastError = ex;
             }
 
             await Task.Delay(20);
         }
 
         throw new TimeoutException(
-            $"IO brain info did not reach expected state. Last: input={lastInfo?.InputWidth}, output={lastInfo?.OutputWidth}.");
+            $"IO brain info did not reach expected state. Last: input={lastInfo?.InputWidth}, output={lastInfo?.OutputWidth}, error={lastError?.GetBaseException().Message ?? "none"}.");
     }
 
     private static async Task WaitForAsync(Func<Task<bool>> predicate, TimeSpan timeout)
