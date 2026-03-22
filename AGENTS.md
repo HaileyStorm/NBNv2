@@ -21,6 +21,7 @@
 - Include/order manifest: `docs/manifest/NBNv2-DocumentMap.md`.
 - Canonical split-doc locations:
   - cross-cutting sections in repo-root `docs/sections/*`
+  - operator runbooks in repo-root `docs/runbooks/*`
   - project docs near code in `src/*/Design.md`, `tools/*/Design.md`, `tests/*/Design.md`
 - Do not create `Docs/` or `docs/` subfolders under `src/*`, `tools/*`, or `tests/*`; project docs must live at project root.
 
@@ -81,7 +82,7 @@ Keep docs concise and high-value:
 - Shared/contracts: `Nbn.Shared`
 - Runtime services: `Nbn.Runtime.SettingsMonitor`, `Nbn.Runtime.HiveMind`, `Nbn.Runtime.IO`, `Nbn.Runtime.Reproduction`, `Nbn.Runtime.Observability`, `Nbn.Runtime.Artifacts`
 - Runtime execution: `Nbn.Runtime.Brain`, `Nbn.Runtime.BrainHost`, `Nbn.Runtime.RegionHost`, `Nbn.Runtime.WorkerNode`
-- Tools: `Nbn.Tools.Workbench`, `Nbn.Tools.DemoHost`
+- Tools: `Nbn.Tools.Workbench`, `Nbn.Tools.EvolutionSim`, `Nbn.Tools.PerfProbe`
 - Tests: `Nbn.Tests`
 
 ## Runtime flow (how components connect)
@@ -91,7 +92,7 @@ Keep docs concise and high-value:
 3. HiveMind coordinates `Nbn.Runtime.Brain` actors (BrainRoot/SignalRouter) and placement onto `Nbn.Runtime.RegionHost` shards, typically via worker processes (`Nbn.Runtime.WorkerNode`).
 4. Each tick runs compute then deliver globally; region outputs from tick `N` are routed and become input to compute on tick `N+1`.
 5. Shared contracts, addressing, and format/proto helpers come from `Nbn.Shared`; artifacts/snapshots are managed through artifact/runtime services.
-6. Observability streams and metrics flow through `Nbn.Runtime.Observability`; Workbench and DemoHost are operator/tooling surfaces over these runtime APIs.
+6. Observability streams and metrics flow through `Nbn.Runtime.Observability`; Workbench and standalone tools are operator/tooling surfaces over these runtime APIs.
 
 ## Critical invariants (do not break)
 

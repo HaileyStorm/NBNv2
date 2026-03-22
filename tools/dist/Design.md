@@ -69,7 +69,6 @@ The full suite includes every current executable project:
 - `Nbn.Runtime.WorkerNode`
 - `Nbn.Runtime.BrainHost`
 - `Nbn.Runtime.RegionHost`
-- `Nbn.Tools.DemoHost`
 - `Nbn.Tools.EvolutionSim`
 - `Nbn.Tools.PerfProbe`
 
@@ -99,7 +98,6 @@ Full suite aliases:
 - `nbn-worker`
 - `nbn-brainhost`
 - `nbn-regionhost`
-- `nbn-demohost`
 - `nbn-evolution-sim`
 - `nbn-perf-probe`
 
@@ -127,7 +125,6 @@ Windows full suite root:
 - `services\worker\`
 - `services\brainhost\`
 - `services\regionhost\`
-- `tools\demohost\`
 - `tools\evolution-sim\`
 - `tools\perf-probe\`
 - `share\runbooks\`

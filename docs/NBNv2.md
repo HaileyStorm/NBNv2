@@ -3814,8 +3814,8 @@ message SpeciationListHistoryResponse {
   - `dotnet run --project tools/Nbn.Tools.Workbench -c Release`
   - In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain`
 - Operator runbooks:
-  - `tools/demo/reproduction_operator_runbook.md`
-  - `tools/demo/speciation_operator_runbook.md`
+  - `docs/runbooks/reproduction_operator_runbook.md`
+  - `docs/runbooks/speciation_operator_runbook.md`
 - Proto/control drift guard:
   - `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`
 - Documentation freshness:

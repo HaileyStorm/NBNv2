@@ -13,8 +13,9 @@ This template is the canonical assembly source for the full specification.
 Canonical documents live in two places:
 
 1. Cross-cutting sections in repo-root `docs/sections/*`.
-2. Project-specific design notes near code in `*/Design.md` (`src/*`, `tools/*`, `tests/*`).
-3. `Docs/` or `docs/` subfolders under project roots are not canonical.
+2. Operator runbooks in repo-root `docs/runbooks/*`.
+3. Project-specific design notes near code in `*/Design.md` (`src/*`, `tools/*`, `tests/*`).
+4. `Docs/` or `docs/` subfolders under project roots are not canonical.
 
 `docs/INDEX.md` remains the stable entrypoint for humans and agents.
 

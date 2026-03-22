@@ -3,74 +3,44 @@
 ## Scope
 This runbook covers reproduction requests sent through IO Gateway (`ReproduceByBrainIds` and `ReproduceByArtifacts`) and handled by `ReproductionManager`.
 
-## Quick Start (Deterministic Artifact Flow)
+## Quick Start (Workbench Artifact Flow)
 Open Workbench and use `Orchestrator` `Start All` to launch the local runtime services.
-Use `Designer` `Generate Random Brain` and `Spawn Brain` if you want a live IO/HiveMind placement sanity check before running reproduction commands.
+Use `Designer` `Generate Random Brain` and `Spawn Brain` if you want a live IO/HiveMind placement sanity check before running reproduction commands, or start from existing `.nbn` / `.nbs` files if you want fixed artifact inputs.
 
-Create deterministic sample artifacts with:
+To run artifact-based reproduction in the supported operator flow:
 
-```bash
-dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
-  init-artifacts --artifact-root <artifact_root_path> --json
-```
+1. Open the `Reproduction` pane.
+2. Select Parent A / Parent B `.nbn` files and optional `.nbs` state files.
+3. Set `Artifact store root` to the local path or `file://` store you want Workbench to publish through.
+4. Set a fixed `Seed`, choose `Strength source`, and choose `Spawn policy`.
+5. Click `Run` and inspect `Status`, `Similarity summary`, and `Mutation summary`.
 
-If you use the `--no-build` commands below, build the repo or the referenced project first.
+Workbench publishes local `.nbn` / `.nbs` inputs to a reachable artifact store automatically before it calls IO Gateway, so you do not need a separate helper CLI to precompute `sha256` / `size` values first.
 
-Use the emitted artifact root and `sha256`/`size` values with the `repro-scenario` and `repro-suite` commands below. Redirect stdout to a file if you want to keep a local log of the JSON output.
+Default happy-path expectations when `Spawn policy = Never`:
 
-Default repro scenario policy is `spawn-policy=never`, so the expected happy-path shape is:
+- compatibility is `true`
+- abort reason is empty
+- a child definition artifact is returned
+- no child brain is spawned
 
-- `result.compatible == true`
-- `result.abort_reason == ""`
-- `result.child_def.sha256` is populated
-- `result.spawned == false`
-- `result.child_brain_id == ""`
+For a spawn attempt, set `Spawn policy` to `Default (On)` or `Always`.
 
-For a spawn attempt, set `--spawn-policy default` or `--spawn-policy always`.
+## Deterministic Verification Options
+There is no separate repro-suite CLI anymore. Use one of these supported paths instead:
 
-## Repro Suite (Multi-Behavior Verification)
-`Nbn.Tools.DemoHost repro-suite` runs a deterministic set of behavior checks and emits per-case pass/fail output:
-
-- `compatible_spawn_never`
-- `missing_parent_b_def`
-- `parent_b_media_type_invalid`
-- `parent_a_artifact_not_found`
-- `region_span_mismatch`
-- `strength_live_without_state`
-- `spawn_always_attempt`
-
-Each case includes:
-- `expected` assertions
-- `actual` observed values
-- `failures` list (empty when passed)
-
-A passing suite has:
-- `all_passed == true`
-- `failed_cases == 0`
-
-Direct command:
+- Live operator smoke path: use the Workbench `Reproduction` pane with fixed parent files and a fixed `Seed`.
+- Automated semantic regression path:
 
 ```bash
-dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
-  repro-suite \
-  --io-address 127.0.0.1:12050 --io-id io-gateway \
-  --parent-a-sha256 <hex> --parent-a-size <bytes> \
-  --store-uri <artifact_root_or_file_uri> \
-  --seed 12345 --json
+dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers \
+  --filter "FullyQualifiedName~Nbn.Tests.Reproduction.ReproductionManagerActorTests|FullyQualifiedName~Nbn.Tests.Integration.IoGatewayArtifactReferenceTests"
 ```
 
-## Direct Command
-You can invoke the scenario command directly:
+The automated path covers the fixed-case checks previously exercised by the old helper workflow, including missing parent refs, media-type failures, artifact lookup failures, region-span mismatches, live-strength fallback, and spawn behavior.
 
-```bash
-dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
-  repro-scenario \
-  --io-address 127.0.0.1:12050 --io-id io-gateway \
-  --parent-a-sha256 <hex> --parent-a-size <bytes> \
-  --parent-b-sha256 <hex> --parent-b-size <bytes> \
-  --store-uri <artifact_root_or_file_uri> \
-  --seed 12345 --spawn-policy never --strength-source base --json
-```
+## Headless / API Clients
+For non-Workbench automation, send `ReproduceByBrainIds` or `ReproduceByArtifacts` through IO Gateway from your own client code. The supported request path remains IO Gateway -> ReproductionManager; removing the helper tool does not change the runtime API contract.
 
 ## Request/Response Semantics
 - Input can be by brain IDs or artifact refs.
@@ -110,5 +80,5 @@ dotnet run --project tools/Nbn.Tools.DemoHost -c Release --no-build -- \
   - IO launched with `--repro-address <host:port> --repro-name ReproductionManager`.
 - Confirm repro actor has IO routing:
   - Repro launched with `--io-address <host:port> --io-name io-gateway`.
-- Confirm parent artifacts are present in the referenced store root.
+- Confirm parent artifacts are present in the referenced store root, or let Workbench publish local files into the configured artifact store root.
 - Use fixed seeds for deterministic triage (`--seed`).

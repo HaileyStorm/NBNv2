@@ -5,6 +5,7 @@ Defines canonical ownership and include order used by the INDEX template and ren
 ## Canonical locations
 
 - Cross-cutting sections: `docs/sections/*`
+- Operator runbooks: `docs/runbooks/*`
 - Component notes near code: `src/*/Design.md`, `tools/*/Design.md`, `tests/*/Design.md` (canonical docs, not assembled into `docs/NBNv2.md`)
 - `Docs/` or `docs/` project subfolders are non-canonical.
 - Template entrypoint: `docs/INDEX.md`

@@ -15,8 +15,8 @@ NBN is not a gradient-descent/backprop training framework.
 - Spec assembly source template: [`docs/INDEX.md`](docs/INDEX.md)
 - Release / installer design: [`tools/dist/Design.md`](tools/dist/Design.md)
 - Workbench operator surface: [`tools/Nbn.Tools.Workbench`](tools/Nbn.Tools.Workbench)
-- Reproduction operator runbook: [`tools/demo/reproduction_operator_runbook.md`](tools/demo/reproduction_operator_runbook.md)
-- Speciation operator runbook: [`tools/demo/speciation_operator_runbook.md`](tools/demo/speciation_operator_runbook.md)
+- Reproduction operator runbook: [`docs/runbooks/reproduction_operator_runbook.md`](docs/runbooks/reproduction_operator_runbook.md)
+- Speciation operator runbook: [`docs/runbooks/speciation_operator_runbook.md`](docs/runbooks/speciation_operator_runbook.md)
 
 ## Goals
 
@@ -40,8 +40,8 @@ NBN is not a gradient-descent/backprop training framework.
   - shared contracts and helpers: `Nbn.Shared`
 - `tools/`
   - `Nbn.Tools.Workbench` (Avalonia UI)
-  - `Nbn.Tools.DemoHost` (targeted scenario CLI)
-  - `demo/` runbooks
+- `docs/runbooks/`
+  - operator runbooks
 - `tests/`
   - `Nbn.Tests`
 
@@ -75,6 +75,6 @@ In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brai
 ## Contributing Notes
 
 - Keep detailed behavior and contracts in [`docs/NBNv2.md`](docs/NBNv2.md); keep this README concise.
-- Cross-cutting docs live in repo-root `docs/sections/*`.
+- Cross-cutting docs live in repo-root `docs/sections/*`; operator runbooks live in `docs/runbooks/*`.
 - Project-specific docs belong next to code as `src/*/Design.md`, `tools/*/Design.md`, and `tests/*/Design.md`.
 - Do not create project-level `Docs/` or `docs/` subfolders under `src/*`, `tools/*`, or `tests/*`.

@@ -191,7 +191,6 @@ public sealed class LocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
             "Nbn.Runtime.WorkerNode" => "nbn-worker",
             "Nbn.Runtime.BrainHost" => "nbn-brainhost",
             "Nbn.Runtime.RegionHost" => "nbn-regionhost",
-            "Nbn.Tools.DemoHost" => "nbn-demohost",
             "Nbn.Tools.EvolutionSim" => "nbn-evolution-sim",
             "Nbn.Tools.PerfProbe" => "nbn-perf-probe",
             _ => exeName
