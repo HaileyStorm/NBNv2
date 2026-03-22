@@ -7,10 +7,12 @@ internal static class PerfProbePaths
         string currentDirectory,
         DateTimeOffset timestampUtc)
     {
+        var resolvedCurrentDirectory = Path.GetFullPath(currentDirectory);
+
         return string.IsNullOrWhiteSpace(configuredOutputDirectory)
             ? Path.GetFullPath(
                 Path.Combine("perf-probe", $"perf-probe-{timestampUtc:yyyyMMdd-HHmmss}"),
-                currentDirectory)
-            : Path.GetFullPath(configuredOutputDirectory, currentDirectory);
+                resolvedCurrentDirectory)
+            : Path.GetFullPath(configuredOutputDirectory, resolvedCurrentDirectory);
     }
 }

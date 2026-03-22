@@ -8,6 +8,7 @@ public sealed class PerfProbePathsTests
     public void ResolveOutputDirectory_NestsDefaultReportsUnderPerfProbeRoot()
     {
         var currentDirectory = Path.Combine(Path.DirectorySeparatorChar.ToString(), "repo-root");
+        var expectedCurrentDirectory = Path.GetFullPath(currentDirectory);
         var timestamp = new DateTimeOffset(2026, 03, 21, 14, 05, 06, TimeSpan.Zero);
 
         var outputDirectory = PerfProbePaths.ResolveOutputDirectory(
@@ -16,7 +17,7 @@ public sealed class PerfProbePathsTests
             timestamp);
 
         Assert.Equal(
-            Path.Combine(currentDirectory, "perf-probe", "perf-probe-20260321-140506"),
+            Path.Combine(expectedCurrentDirectory, "perf-probe", "perf-probe-20260321-140506"),
             outputDirectory);
     }
 
@@ -24,6 +25,7 @@ public sealed class PerfProbePathsTests
     public void ResolveOutputDirectory_ResolvesExplicitRelativeOutputPathAgainstCurrentDirectory()
     {
         var currentDirectory = Path.Combine(Path.DirectorySeparatorChar.ToString(), "repo-root");
+        var expectedCurrentDirectory = Path.GetFullPath(currentDirectory);
         var timestamp = new DateTimeOffset(2026, 03, 21, 14, 05, 06, TimeSpan.Zero);
 
         var outputDirectory = PerfProbePaths.ResolveOutputDirectory(
@@ -32,7 +34,7 @@ public sealed class PerfProbePathsTests
             timestamp);
 
         Assert.Equal(
-            Path.Combine(currentDirectory, "custom", "reports"),
+            Path.Combine(expectedCurrentDirectory, "custom", "reports"),
             outputDirectory);
     }
 }
