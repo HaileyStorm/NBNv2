@@ -1557,10 +1557,30 @@ public sealed class HiveMindActor : IActor
 
     private void HandleUnregisterBrain(IContext context, ProtoControl.UnregisterBrain message)
     {
-        if (TryGetGuid(message.BrainId, out var brainId))
+        if (!TryGetGuid(message.BrainId, out var brainId) || !_brains.TryGetValue(brainId, out var brain))
         {
-            UnregisterBrain(context, brainId);
+            return;
         }
+
+        if (context.Sender is not null)
+        {
+            if (!IsValidControllerBootstrapSender(context, brain.BrainRootPid, brain.SignalRouterPid))
+            {
+                EmitControlPlaneMutationIgnored(context, "control.unregister_brain", brainId, "sender_mismatch");
+                return;
+            }
+
+            if ((brain.PlacementExecution is not null && !brain.PlacementExecution.Completed) || brain.RecoveryInProgress)
+            {
+                // Hosted controller teardown from the old placement can race with replacement/recovery.
+                // External/system teardown remains senderless and should continue to remove the brain.
+                var reason = brain.RecoveryInProgress ? "recovery_in_progress" : "placement_in_flight";
+                EmitControlPlaneMutationIgnored(context, "control.unregister_brain", brainId, reason);
+                return;
+            }
+        }
+
+        UnregisterBrain(context, brainId);
     }
 
     private void KillBrain(IContext context, Guid brainId, string? reason)

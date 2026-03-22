@@ -203,6 +203,86 @@ public class HiveMindPlacementLifecycleTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task ActorDrivenUnregisterBrain_IsIgnored_While_PlacementReplacement_IsInFlight()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
+
+        var brainId = Guid.NewGuid();
+        var firstPlacement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 1,
+                OutputWidth = 1
+            });
+        Assert.True(firstPlacement.Accepted);
+
+        var controller = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(controller),
+            SignalRouterPid = PidLabel(controller)
+        }));
+
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(controller),
+            NeuronStart = 0,
+            NeuronCount = 8
+        }));
+
+        var replacement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 2
+            });
+        Assert.True(replacement.Accepted);
+        Assert.True(replacement.PlacementEpoch > firstPlacement.PlacementEpoch);
+
+        await root.RequestAsync<SendMessageAck>(controller, new SendMessage(hiveMind, new UnregisterBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        }));
+
+        var status = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+        Assert.Equal(replacement.PlacementEpoch, status.PlacementEpoch);
+        Assert.NotEqual(PlacementLifecycleState.PlacementLifecycleUnknown, status.LifecycleState);
+
+        root.Send(hiveMind, new UnregisterBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+
+        var finalStatus = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+        Assert.Equal(PlacementLifecycleState.PlacementLifecycleUnknown, finalStatus.LifecycleState);
+
+        await system.ShutdownAsync();
+    }
+
     private static void PrimeEligibleWorker(IRootContext root, PID hiveMind)
     {
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
