@@ -25,11 +25,11 @@ enum VizEventType {
 }
 
 message VizSubscribe {
-  string subscriber_actor = 1; // actor name/path
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message VizUnsubscribe {
-  string subscriber_actor = 1;
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message VizFlushAll { }

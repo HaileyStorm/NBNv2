@@ -974,32 +974,4 @@ public sealed class RegionShardActor : IActor
 
         return Math.Clamp(value, min, max);
     }
-
-    private static bool TryParsePid(string? value, out PID pid)
-    {
-        pid = new PID();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var trimmed = value.Trim();
-        var slashIndex = trimmed.IndexOf('/');
-        if (slashIndex <= 0)
-        {
-            pid.Id = trimmed;
-            return true;
-        }
-
-        var address = trimmed[..slashIndex];
-        var id = trimmed[(slashIndex + 1)..];
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return false;
-        }
-
-        pid.Address = address;
-        pid.Id = id;
-        return true;
-    }
 }

@@ -27,14 +27,14 @@ message ResumeBrain {
 
 message RegisterBrain {
   nbn.Uuid brain_id = 1;
-  string brain_root_pid = 2;
-  string signal_router_pid = 3;
+  string brain_root_pid = 2; // plain PID label or encoded routable actor reference
+  string signal_router_pid = 3; // plain PID label or encoded routable actor reference
   optional sint32 pause_priority = 4;
 }
 
 message UpdateBrainSignalRouter {
   nbn.Uuid brain_id = 1;
-  string signal_router_pid = 2;
+  string signal_router_pid = 2; // plain PID label or encoded routable actor reference
 }
 
 message UnregisterBrain {
@@ -45,7 +45,7 @@ message RegisterShard {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;
   uint32 shard_index = 3;
-  string shard_pid = 4;
+  string shard_pid = 4; // plain PID label or encoded routable actor reference
   uint32 neuron_start = 5;
   uint32 neuron_count = 6;
 }
@@ -58,7 +58,7 @@ message UnregisterShard {
 
 message RegisterOutputSink {
   nbn.Uuid brain_id = 1;
-  string output_pid = 2;
+  string output_pid = 2; // plain PID label or encoded routable actor reference
 }
 
 message SetBrainVisualization {
@@ -66,7 +66,7 @@ message SetBrainVisualization {
   bool enabled = 2;
   bool has_focus_region = 3;
   uint32 focus_region_id = 4;
-  string subscriber_actor = 5; // optional stable subscriber identity (actor path/id)
+  string subscriber_actor = 5; // optional plain PID label or encoded routable actor reference
 }
 
 message SetBrainCostEnergy {
@@ -125,7 +125,7 @@ message UpdateShardOutputSink {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;
   uint32 shard_index = 3;
-  string output_pid = 4; // empty clears
+  string output_pid = 4; // empty clears; otherwise plain PID label or encoded routable actor reference
 }
 
 message UpdateShardVisualization {
@@ -210,8 +210,8 @@ message BrainIoInfo {
   uint32 output_width = 3;
   InputCoordinatorMode input_coordinator_mode = 4;
   OutputVectorSource output_vector_source = 5;
-  string input_coordinator_pid = 6; // "address/id" or "id" if local
-  string output_coordinator_pid = 7; // "address/id" or "id" if local
+  string input_coordinator_pid = 6; // plain PID label or encoded routable actor reference
+  string output_coordinator_pid = 7; // plain PID label or encoded routable actor reference
   bool io_gateway_owns_input_coordinator = 8;
   bool io_gateway_owns_output_coordinator = 9;
 }
@@ -280,8 +280,8 @@ message PlacementWorkerInventoryRequest { }
 
 message PlacementWorkerInventoryEntry {
   nbn.Uuid worker_node_id = 1;
-  string worker_address = 2;
-  string worker_root_actor_name = 3;
+  string worker_address = 2; // compatibility address hint
+  string worker_root_actor_name = 3; // compatibility root actor hint
   bool is_alive = 4;
   fixed64 last_seen_ms = 5;
   uint32 cpu_cores = 6;
@@ -304,7 +304,7 @@ message PlacementWorkerInventoryEntry {
   uint32 gpu_vram_limit_percent = 23;
   float process_cpu_load_percent = 24;
   fixed64 process_ram_used_bytes = 25;
-  string worker_actor_reference = 26;
+  string worker_actor_reference = 26; // optional encoded routable worker root actor reference
 }
 
 message PlacementWorkerInventory {
@@ -314,9 +314,9 @@ message PlacementWorkerInventory {
 
 message PlacementPeerTarget {
   nbn.Uuid worker_node_id = 1;
-  string worker_address = 2;
-  string worker_root_actor_name = 3;
-  string worker_actor_reference = 4;
+  string worker_address = 2; // compatibility address hint
+  string worker_root_actor_name = 3; // compatibility root actor hint
+  string worker_actor_reference = 4; // optional encoded routable worker root actor reference
 }
 
 message PlacementPeerLatencyRequest {
@@ -400,7 +400,7 @@ message PlacementObservedAssignment {
   nbn.Uuid worker_node_id = 3;
   uint32 region_id = 4;
   uint32 shard_index = 5;
-  string actor_pid = 6;
+  string actor_pid = 6; // plain PID label or encoded routable actor reference
 }
 
 message PlacementReconcileReport {
@@ -537,8 +537,8 @@ message GetBrainRouting {
 
 message BrainRoutingInfo {
   nbn.Uuid brain_id = 1;
-  string brain_root_pid = 2;
-  string signal_router_pid = 3;
+  string brain_root_pid = 2; // plain PID label or encoded routable actor reference
+  string signal_router_pid = 3; // plain PID label or encoded routable actor reference
   uint32 shard_count = 4;
   uint32 routing_count = 5;
 }

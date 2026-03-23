@@ -4,7 +4,7 @@ The following `.proto` files define the canonical NBN wire schema. The source of
 
 ### 19.0 Control-surface notes
 
-- `subscriber_actor` fields in debug, IO output, and visualization subscriptions let callers supply a stable subscription identity instead of relying on the transient request sender PID.
+- `subscriber_actor` fields in debug, IO output, visualization, and settings subscriptions accept either a plain PID label or an encoded routable actor reference, so callbacks can keep a stable logical identity without relying on one globally-correct transport address.
 - `SetTickRateOverride` applies an operator override on top of the baseline target tick rate until explicitly cleared; `HiveMindStatus.has_tick_rate_override` and `tick_rate_override_hz` report the effective override state.
 - `BrainInfo`, IO `RegisterBrain`, and `BrainIoInfo` expose coordinator mode, output-vector source, coordinator PID labels, and IO-gateway ownership booleans so tools can distinguish gateway-owned coordinators from worker-hosted coordinators.
 - Placement lifecycle, worker inventory, peer-latency, and capability-refresh messages in `nbn_control.proto` are the canonical operator-facing control-plane telemetry for placement orchestration and worker readiness.
@@ -314,11 +314,11 @@ message SettingChanged {
 }
 
 message SettingSubscribe {
-  string subscriber_actor = 1; // actor name/path
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message SettingUnsubscribe {
-  string subscriber_actor = 1;
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message BrainRegistered {
@@ -389,14 +389,14 @@ message ResumeBrain {
 
 message RegisterBrain {
   nbn.Uuid brain_id = 1;
-  string brain_root_pid = 2;
-  string signal_router_pid = 3;
+  string brain_root_pid = 2; // plain PID label or encoded routable actor reference
+  string signal_router_pid = 3; // plain PID label or encoded routable actor reference
   optional sint32 pause_priority = 4;
 }
 
 message UpdateBrainSignalRouter {
   nbn.Uuid brain_id = 1;
-  string signal_router_pid = 2;
+  string signal_router_pid = 2; // plain PID label or encoded routable actor reference
 }
 
 message UnregisterBrain {
@@ -407,7 +407,7 @@ message RegisterShard {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;
   uint32 shard_index = 3;
-  string shard_pid = 4;
+  string shard_pid = 4; // plain PID label or encoded routable actor reference
   uint32 neuron_start = 5;
   uint32 neuron_count = 6;
 }
@@ -420,7 +420,7 @@ message UnregisterShard {
 
 message RegisterOutputSink {
   nbn.Uuid brain_id = 1;
-  string output_pid = 2;
+  string output_pid = 2; // plain PID label or encoded routable actor reference
 }
 
 message SetBrainVisualization {
@@ -428,7 +428,7 @@ message SetBrainVisualization {
   bool enabled = 2;
   bool has_focus_region = 3;
   uint32 focus_region_id = 4;
-  string subscriber_actor = 5; // optional stable subscriber identity (actor path/id)
+  string subscriber_actor = 5; // optional plain PID label or encoded routable actor reference
 }
 
 message SetBrainCostEnergy {
@@ -487,7 +487,7 @@ message UpdateShardOutputSink {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;
   uint32 shard_index = 3;
-  string output_pid = 4; // empty clears
+  string output_pid = 4; // empty clears; otherwise plain PID label or encoded routable actor reference
 }
 
 message UpdateShardVisualization {
@@ -572,8 +572,8 @@ message BrainIoInfo {
   uint32 output_width = 3;
   InputCoordinatorMode input_coordinator_mode = 4;
   OutputVectorSource output_vector_source = 5;
-  string input_coordinator_pid = 6; // "address/id" or "id" if local
-  string output_coordinator_pid = 7; // "address/id" or "id" if local
+  string input_coordinator_pid = 6; // plain PID label or encoded routable actor reference
+  string output_coordinator_pid = 7; // plain PID label or encoded routable actor reference
   bool io_gateway_owns_input_coordinator = 8;
   bool io_gateway_owns_output_coordinator = 9;
 }
@@ -642,8 +642,8 @@ message PlacementWorkerInventoryRequest { }
 
 message PlacementWorkerInventoryEntry {
   nbn.Uuid worker_node_id = 1;
-  string worker_address = 2;
-  string worker_root_actor_name = 3;
+  string worker_address = 2; // compatibility address hint
+  string worker_root_actor_name = 3; // compatibility root actor hint
   bool is_alive = 4;
   fixed64 last_seen_ms = 5;
   uint32 cpu_cores = 6;
@@ -666,6 +666,7 @@ message PlacementWorkerInventoryEntry {
   uint32 gpu_vram_limit_percent = 23;
   float process_cpu_load_percent = 24;
   fixed64 process_ram_used_bytes = 25;
+  string worker_actor_reference = 26; // optional encoded routable worker root actor reference
 }
 
 message PlacementWorkerInventory {
@@ -675,8 +676,9 @@ message PlacementWorkerInventory {
 
 message PlacementPeerTarget {
   nbn.Uuid worker_node_id = 1;
-  string worker_address = 2;
-  string worker_root_actor_name = 3;
+  string worker_address = 2; // compatibility address hint
+  string worker_root_actor_name = 3; // compatibility root actor hint
+  string worker_actor_reference = 4; // optional encoded routable worker root actor reference
 }
 
 message PlacementPeerLatencyRequest {
@@ -760,7 +762,7 @@ message PlacementObservedAssignment {
   nbn.Uuid worker_node_id = 3;
   uint32 region_id = 4;
   uint32 shard_index = 5;
-  string actor_pid = 6;
+  string actor_pid = 6; // plain PID label or encoded routable actor reference
 }
 
 message PlacementReconcileReport {
@@ -897,8 +899,8 @@ message GetBrainRouting {
 
 message BrainRoutingInfo {
   nbn.Uuid brain_id = 1;
-  string brain_root_pid = 2;
-  string signal_router_pid = 3;
+  string brain_root_pid = 2; // plain PID label or encoded routable actor reference
+  string signal_router_pid = 3; // plain PID label or encoded routable actor reference
   uint32 shard_count = 4;
   uint32 routing_count = 5;
 }
@@ -1067,8 +1069,8 @@ message RegisterBrain {
   float plasticity_energy_cost_max_scale = 29;
   nbn.control.InputCoordinatorMode input_coordinator_mode = 30;
   nbn.control.OutputVectorSource output_vector_source = 31;
-  string input_coordinator_pid = 32; // "address/id" or "id" if local
-  string output_coordinator_pid = 33; // "address/id" or "id" if local
+  string input_coordinator_pid = 32; // plain PID label or encoded routable actor reference
+  string output_coordinator_pid = 33; // plain PID label or encoded routable actor reference
   bool io_gateway_owns_input_coordinator = 34;
   bool io_gateway_owns_output_coordinator = 35;
 }
@@ -1080,7 +1082,7 @@ message UnregisterBrain {
 
 message RegisterIoGateway {
   nbn.Uuid brain_id = 1;
-  string io_gateway_pid = 2; // "address/id" or "id" if local
+  string io_gateway_pid = 2; // plain PID label or encoded routable actor reference
 }
 
 message SpawnBrainViaIO {
@@ -1134,12 +1136,12 @@ message InputDrain {
 
 message SubscribeOutputs {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message UnsubscribeOutputs {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message OutputEvent {
@@ -1151,12 +1153,12 @@ message OutputEvent {
 
 message SubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message UnsubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message OutputVectorEvent {
@@ -1395,7 +1397,7 @@ message DebugInbound {
 }
 
 message DebugSubscribe {
-  string subscriber_actor = 1; // actor name/path
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
   nbn.Severity min_severity = 2;
   string context_regex = 3;
   repeated string include_context_prefixes = 4;
@@ -1442,7 +1444,7 @@ enum VizEventType {
 }
 
 message VizSubscribe {
-  string subscriber_actor = 1; // actor name/path
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message VizUnsubscribe {

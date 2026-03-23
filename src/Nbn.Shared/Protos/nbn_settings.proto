@@ -134,11 +134,11 @@ message SettingChanged {
 }
 
 message SettingSubscribe {
-  string subscriber_actor = 1; // actor name/path
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message SettingUnsubscribe {
-  string subscriber_actor = 1;
+  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
 }
 
 message BrainRegistered {

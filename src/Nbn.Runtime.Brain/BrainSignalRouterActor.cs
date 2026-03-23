@@ -609,36 +609,6 @@ public sealed class BrainSignalRouterActor : IActor
 
         _ioGatewayPid = sender;
     }
-
-    private static bool TryParsePid(string? value, out PID pid)
-    {
-        pid = new PID();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var trimmed = value.Trim();
-        var slashIndex = trimmed.IndexOf('/');
-        if (slashIndex <= 0)
-        {
-            pid.Id = trimmed;
-            return true;
-        }
-
-        var address = trimmed[..slashIndex];
-        var id = trimmed[(slashIndex + 1)..];
-
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return false;
-        }
-
-        pid.Address = address;
-        pid.Id = id;
-        return true;
-    }
-
     private bool TryGetFallbackRoute(uint regionId, out ShardId32 shardId, out PID? pid)
     {
         shardId = default;

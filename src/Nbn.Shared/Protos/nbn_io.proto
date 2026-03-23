@@ -117,8 +117,8 @@ message RegisterBrain {
   float plasticity_energy_cost_max_scale = 29;
   nbn.control.InputCoordinatorMode input_coordinator_mode = 30;
   nbn.control.OutputVectorSource output_vector_source = 31;
-  string input_coordinator_pid = 32; // "address/id" or "id" if local
-  string output_coordinator_pid = 33; // "address/id" or "id" if local
+  string input_coordinator_pid = 32; // plain PID label or encoded routable actor reference
+  string output_coordinator_pid = 33; // plain PID label or encoded routable actor reference
   bool io_gateway_owns_input_coordinator = 34;
   bool io_gateway_owns_output_coordinator = 35;
 }
@@ -130,7 +130,7 @@ message UnregisterBrain {
 
 message RegisterIoGateway {
   nbn.Uuid brain_id = 1;
-  string io_gateway_pid = 2; // "address/id" or "id" if local
+  string io_gateway_pid = 2; // plain PID label or encoded routable actor reference
 }
 
 message SpawnBrainViaIO {
@@ -184,12 +184,12 @@ message InputDrain {
 
 message SubscribeOutputs {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message UnsubscribeOutputs {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message OutputEvent {
@@ -201,12 +201,12 @@ message OutputEvent {
 
 message SubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message UnsubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
-  string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  string subscriber_actor = 2; // optional plain PID label or encoded routable actor reference
 }
 
 message OutputVectorEvent {
