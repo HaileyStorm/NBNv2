@@ -44,7 +44,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServiceName,
-    rootActorName);
+    rootActorName,
+    nodeEndpointSet: endpointSet);
 
 var publishedObsEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,

@@ -31,7 +31,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServiceName,
-    options.ManagerName);
+    options.ManagerName,
+    nodeEndpointSet: endpointSet);
 
 var publishedSpeciationEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,

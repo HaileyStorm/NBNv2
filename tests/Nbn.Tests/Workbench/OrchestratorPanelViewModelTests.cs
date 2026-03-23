@@ -1855,6 +1855,119 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_PlacementReconcile_UsesResolvedNodeEndpointSetAddress()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerNodeId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        const ulong placementEpoch = 7;
+        var resolvedWorkerHostPort = "100.86.45.90:12041";
+        var nodeEndpointSetKey = NodeEndpointSetSettings.BuildKey(workerNodeId);
+        var shardActorPid = $"{resolvedWorkerHostPort}/worker-node/brain-{brainId:N}-r9-s0";
+
+        var client = new FakeWorkbenchClient
+        {
+            ProbeFactory = (host, port) =>
+                host == "100.86.45.90" && port == 12041
+                    ? new TcpEndpointProbeResult(true, "tailnet reachable")
+                    : new TcpEndpointProbeResult(false, "unreachable"),
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = "203.0.113.55:12041",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)nowMs,
+                        LastTickId = 3,
+                        State = "Active"
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = nodeEndpointSetKey,
+                        Value = ServiceEndpointSettings.EncodeSetValue(
+                            connections.WorkerRootName,
+                            [
+                                new ServiceEndpointCandidate("203.0.113.55:12041", connections.WorkerRootName, ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
+                                new ServiceEndpointCandidate(resolvedWorkerHostPort, connections.WorkerRootName, ServiceEndpointCandidateKind.Tailnet, Priority: 90)
+                            ]),
+                        UpdatedMs = 10
+                    }
+                }
+            },
+            PlacementLifecycleFactory = requestedBrainId =>
+                requestedBrainId == brainId
+                    ? new PlacementLifecycleInfo
+                    {
+                        BrainId = requestedBrainId.ToProtoUuid(),
+                        PlacementEpoch = placementEpoch,
+                        LifecycleState = PlacementLifecycleState.PlacementLifecycleRunning
+                    }
+                    : null,
+            PlacementReconcileFactory = (workerAddress, workerRoot, requestedBrainId, requestedEpoch) =>
+            {
+                if (requestedBrainId != brainId
+                    || requestedEpoch != placementEpoch
+                    || !string.Equals(workerAddress, resolvedWorkerHostPort, StringComparison.Ordinal)
+                    || !string.Equals(workerRoot, connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                return new PlacementReconcileReport
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = placementEpoch,
+                    ReconcileState = PlacementReconcileState.PlacementReconcileMatched,
+                    Assignments =
+                    {
+                        new PlacementObservedAssignment
+                        {
+                            AssignmentId = Guid.NewGuid().ToString("N"),
+                            Target = PlacementAssignmentTarget.PlacementTargetRegionShard,
+                            WorkerNodeId = workerNodeId.ToProtoUuid(),
+                            RegionId = 9,
+                            ShardIndex = 0,
+                            ActorPid = shardActorPid
+                        }
+                    }
+                };
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Equal(1, client.RequestPlacementReconcileCallCount);
+        var shardRow = Assert.Single(vm.Actors, row => row.RootActor == shardActorPid);
+        Assert.Equal(resolvedWorkerHostPort, shardRow.Address);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_HostedActors_PrioritizesOnlineWorkerHosts()
     {
         var connections = new ConnectionViewModel();

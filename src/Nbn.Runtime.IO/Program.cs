@@ -26,7 +26,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServerName,
-    options.GatewayName);
+    options.GatewayName,
+    nodeEndpointSet: endpointSet);
 
 var publishedIoEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,

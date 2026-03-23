@@ -139,6 +139,11 @@ if (!string.IsNullOrWhiteSpace(ioAddress) && !string.IsNullOrWhiteSpace(ioId))
 }
 
 var nodeAddress = $"{remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}";
+var endpointSet = NetworkAddressDefaults.BuildEndpointSet(
+    remoteConfig.Host,
+    remoteConfig.AdvertisedHost ?? remoteConfig.Host,
+    remoteConfig.AdvertisedPort ?? remoteConfig.Port,
+    brainRootId);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     settingsHost,
@@ -146,7 +151,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     settingsName,
     nodeAddress,
     "brain-host",
-    brainRootId);
+    brainRootId,
+    nodeEndpointSet: endpointSet);
 
 Console.WriteLine("NBN BrainHost online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");

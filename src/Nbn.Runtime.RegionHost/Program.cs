@@ -29,6 +29,7 @@ await system.Remote().StartAsync();
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.ShardName);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -36,7 +37,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ShardName,
-    options.ShardName);
+    options.ShardName,
+    nodeEndpointSet: endpointSet);
 
 var artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(options.ArtifactRootPath));
 var store = artifactStoreResolver.Resolve(options.StoreUri);

@@ -32,7 +32,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServiceName,
-    HiveMindNames.HiveMind);
+    HiveMindNames.HiveMind,
+    nodeEndpointSet: endpointSet);
 
 var publishedHiveEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,

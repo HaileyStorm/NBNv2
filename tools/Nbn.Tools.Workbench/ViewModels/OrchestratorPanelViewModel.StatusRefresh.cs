@@ -64,6 +64,7 @@ public sealed partial class OrchestratorPanelViewModel
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
             var workerInventory = workerInventoryResponse?.Workers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.WorkerReadinessCapability>();
+            var rawSettings = settingsResponse?.Settings?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.SettingValue>();
             var sortedNodes = nodes
                 .OrderByDescending(node => node.LastSeenMs)
                 .ThenBy(node => node.LogicalName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
@@ -77,13 +78,13 @@ public sealed partial class OrchestratorPanelViewModel
                 brains,
                 nowMs);
             var workerNowMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, settingsNowMs);
-            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, settingsNowMs).ConfigureAwait(false);
+            var nodeEndpoints = await BuildNodeEndpointLookupAsync(rawSettings).ConfigureAwait(false);
+            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, settingsNowMs, nodeEndpoints).ConfigureAwait(false);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
                 actorRowsResult.WorkerBrainHints,
                 workerNowMs);
-            var rawSettings = settingsResponse?.Settings?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.SettingValue>();
             var settings = rawSettings
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
@@ -500,6 +501,23 @@ public sealed partial class OrchestratorPanelViewModel
         foreach (var entry in endpointSets)
         {
             lookup[entry.Key] = await ResolveServiceEndpointAsync(entry.Value).ConfigureAwait(false);
+        }
+
+        return lookup;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, ServiceEndpoint>> BuildNodeEndpointLookupAsync(
+        IReadOnlyList<Nbn.Proto.Settings.SettingValue> settings)
+    {
+        var lookup = new Dictionary<Guid, ServiceEndpoint>();
+        foreach (var setting in settings)
+        {
+            if (!NodeEndpointSetSettings.TryParseSetting(setting.Key, setting.Value, setting.UpdatedMs, out var registration))
+            {
+                continue;
+            }
+
+            lookup[registration.NodeId] = await ResolveServiceEndpointAsync(registration.EndpointSet).ConfigureAwait(false);
         }
 
         return lookup;
@@ -986,7 +1004,8 @@ public sealed partial class OrchestratorPanelViewModel
         IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
-        long nowMs)
+        long nowMs,
+        IReadOnlyDictionary<Guid, ServiceEndpoint> resolvedNodeEndpoints)
     {
         var rows = new List<(bool IsOnlineWorkerHost, bool IsOnline, long LastSeenMs, NodeStatusItem Row)>();
         var workerBrainHints = new Dictionary<Guid, HashSet<Guid>>();
@@ -1063,7 +1082,9 @@ public sealed partial class OrchestratorPanelViewModel
                 && nodeById.TryGetValue(nodeId, out var node))
             {
                 hostLabel = string.IsNullOrWhiteSpace(node.LogicalName) ? "controller node" : node.LogicalName!;
-                address = node.Address ?? string.Empty;
+                address = resolvedNodeEndpoints.TryGetValue(nodeId, out var resolvedNodeEndpoint)
+                    ? resolvedNodeEndpoint.HostPort
+                    : node.Address ?? string.Empty;
                 hostSeenMs = (long)node.LastSeenMs;
                 hostIsWorker = IsWorkerHostCandidate(node);
                 if (hostIsWorker)
@@ -1178,7 +1199,9 @@ public sealed partial class OrchestratorPanelViewModel
                     && nodeById.TryGetValue(workerNodeId, out var workerNode))
                 {
                     hostLabel = string.IsNullOrWhiteSpace(workerNode.LogicalName) ? "host node" : workerNode.LogicalName!;
-                    address = workerNode.Address ?? address;
+                    address = resolvedNodeEndpoints.TryGetValue(workerNodeId, out var resolvedWorkerNodeEndpoint)
+                        ? resolvedWorkerNodeEndpoint.HostPort
+                        : workerNode.Address ?? address;
                     hostSeenMs = (long)workerNode.LastSeenMs;
                     isOnline = workerNode.IsAlive && IsFresh(workerNode.LastSeenMs, nowMs);
                     hostIsWorker = IsWorkerHostCandidate(workerNode);
@@ -1219,9 +1242,19 @@ public sealed partial class OrchestratorPanelViewModel
             Nbn.Proto.Settings.NodeStatus node,
             ulong placementEpoch)
         {
+            var resolvedWorkerAddress = node.NodeId is not null
+                                        && node.NodeId.TryToGuid(out var nodeId)
+                                        && resolvedNodeEndpoints.TryGetValue(nodeId, out var resolvedNodeEndpoint)
+                ? resolvedNodeEndpoint.HostPort
+                : node.Address ?? string.Empty;
+            var resolvedWorkerRoot = node.NodeId is not null
+                                     && node.NodeId.TryToGuid(out var rootNodeId)
+                                     && resolvedNodeEndpoints.TryGetValue(rootNodeId, out var resolvedRootEndpoint)
+                ? resolvedRootEndpoint.ActorName
+                : node.RootActorName ?? string.Empty;
             var report = await _client.RequestPlacementReconcileAsync(
-                    node.Address ?? string.Empty,
-                    node.RootActorName ?? string.Empty,
+                    resolvedWorkerAddress,
+                    resolvedWorkerRoot,
                     brainId,
                     placementEpoch)
                 .ConfigureAwait(false);

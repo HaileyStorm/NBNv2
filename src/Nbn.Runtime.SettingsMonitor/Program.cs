@@ -24,6 +24,7 @@ var monitorPid = system.Root.SpawnNamed(
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, SettingsMonitorNames.SettingsMonitor);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     advertisedHost,
@@ -31,7 +32,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     SettingsMonitorNames.SettingsMonitor,
     nodeAddress,
     "nbn.settings",
-    SettingsMonitorNames.SettingsMonitor);
+    SettingsMonitorNames.SettingsMonitor,
+    nodeEndpointSet: endpointSet);
 
 Console.WriteLine("NBN SettingsMonitor node online.");
 Console.WriteLine($"DB: {Path.GetFullPath(options.DatabasePath)}");

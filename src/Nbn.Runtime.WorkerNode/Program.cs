@@ -56,7 +56,8 @@ var settingsReporter = SettingsMonitorReporter.Start(
     nodeAddress,
     options.LogicalName,
     options.RootActorName,
-    capabilitiesProvider: capabilityProvider.GetCapabilities);
+    capabilitiesProvider: capabilityProvider.GetCapabilities,
+    nodeEndpointSet: endpointSet);
 
 var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,
