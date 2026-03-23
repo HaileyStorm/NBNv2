@@ -845,7 +845,7 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private void HandleSetBrainVisualization(IContext context, ProtoControl.SetBrainVisualization message)
+    private async Task HandleSetBrainVisualizationAsync(IContext context, ProtoControl.SetBrainVisualization message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
@@ -869,7 +869,7 @@ public sealed partial class HiveMindActor
         }
 
         var focusRegionId = message.HasFocusRegion ? (uint?)message.FocusRegionId : null;
-        var subscriber = ResolveVisualizationSubscriber(context, message);
+        var subscriber = await ResolveVisualizationSubscriberAsync(context, message).ConfigureAwait(false);
         SetBrainVisualization(context, brain, subscriber, message.Enabled, focusRegionId);
     }
 

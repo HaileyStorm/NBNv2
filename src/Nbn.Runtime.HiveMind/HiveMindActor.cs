@@ -184,8 +184,7 @@ public sealed partial class HiveMindActor : IActor
                     HandleRegisterOutputSink(context, message);
                     break;
                 case ProtoControl.SetBrainVisualization message:
-                    HandleSetBrainVisualization(context, message);
-                    break;
+                    return HandleSetBrainVisualizationAsync(context, message);
                 case ProtoControl.SetBrainCostEnergy message:
                     HandleSetBrainCostEnergy(context, message);
                     break;

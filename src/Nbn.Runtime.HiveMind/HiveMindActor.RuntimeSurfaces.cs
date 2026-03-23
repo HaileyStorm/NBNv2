@@ -131,9 +131,10 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private VisualizationSubscriber ResolveVisualizationSubscriber(IContext context, ProtoControl.SetBrainVisualization message)
+    private async Task<VisualizationSubscriber> ResolveVisualizationSubscriberAsync(IContext context, ProtoControl.SetBrainVisualization message)
     {
-        if (TryParsePid(message.SubscriberActor, out var parsedSubscriberPid))
+        var parsedSubscriberPid = await RoutablePidReference.ResolveAsync(message.SubscriberActor).ConfigureAwait(false);
+        if (parsedSubscriberPid is not null)
         {
             var normalizedSubscriberPid = NormalizePid(context, parsedSubscriberPid) ?? parsedSubscriberPid;
             normalizedSubscriberPid = ResolveSendTargetPid(context, normalizedSubscriberPid);
