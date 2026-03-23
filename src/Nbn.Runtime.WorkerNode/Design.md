@@ -4,6 +4,7 @@ Owns worker node inventory, placement execution endpoints, and lifecycle partici
 
 ## Stable behavior notes
 
+- `WorkerNodeActor` is intentionally split by responsibility: discovery/contracts/state remain separate from placement control flow, hosting/runtime-metadata logic, and shared endpoint/PID helpers so maintenance work can stay file-bounded without changing placement behavior.
 - Region-shard placement is artifact-backed. If base artifact metadata is unavailable at assignment time, WorkerNode returns a retryable `PlacementFailureWorkerUnavailable` ack instead of hosting a synthetic shard.
 - Artifact-backed placement resolves non-file `store_uri` values through the shared artifact resolver, including built-in HTTP(S) artifact services and env-mapped logical store URIs. Resolver-wrapped remote stores keep node-local cache behavior under `NBN_ARTIFACT_CACHE_ROOT`; transport/configuration failures remain retryable placement failures until metadata or artifact bytes become reachable.
 - WorkerNode answers targeted peer-latency probe requests for HiveMind placement decisions and reports average RTT plus sample count per requested peer.
