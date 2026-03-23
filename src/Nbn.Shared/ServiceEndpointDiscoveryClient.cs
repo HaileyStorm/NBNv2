@@ -91,6 +91,36 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             timeoutCts.Token).ConfigureAwait(false);
     }
 
+    public async Task PublishSetAsync(
+        string settingKey,
+        ServiceEndpointSet endpointSet,
+        bool publishLegacyEndpoint = true,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(settingKey))
+        {
+            throw new ArgumentException("Setting key is required.", nameof(settingKey));
+        }
+
+        var endpointSetKey = ServiceEndpointSettings.ToEndpointSetKey(settingKey);
+        using var timeoutCts = CreateTimeoutToken(cancellationToken);
+        await _system.Root.RequestAsync<SettingValue>(
+            _settingsPid,
+            new SettingSet
+            {
+                Key = endpointSetKey,
+                Value = ServiceEndpointSettings.EncodeSetValue(endpointSet.ActorName, endpointSet.Candidates)
+            },
+            timeoutCts.Token).ConfigureAwait(false);
+
+        if (!publishLegacyEndpoint)
+        {
+            return;
+        }
+
+        await PublishAsync(settingKey, endpointSet.GetPreferredCandidate().ToEndpoint(), cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<ServiceEndpointRegistration?> ResolveAsync(
         string settingKey,
         CancellationToken cancellationToken = default)
@@ -116,6 +146,46 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             out var registration)
             ? registration
             : null;
+    }
+
+    public async Task<ServiceEndpointSetRegistration?> ResolveSetAsync(
+        string settingKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(settingKey))
+        {
+            return null;
+        }
+
+        var endpointSetKey = ServiceEndpointSettings.ToEndpointSetKey(settingKey);
+        using var timeoutCts = CreateTimeoutToken(cancellationToken);
+        var settingValue = await _system.Root.RequestAsync<SettingValue>(
+            _settingsPid,
+            new SettingGet
+            {
+                Key = endpointSetKey
+            },
+            timeoutCts.Token).ConfigureAwait(false);
+
+        if (ServiceEndpointSettings.TryParseSetSetting(
+                settingValue.Key,
+                settingValue.Value,
+                settingValue.UpdatedMs,
+                out var registration))
+        {
+            return registration;
+        }
+
+        var legacy = await ResolveAsync(settingKey, cancellationToken).ConfigureAwait(false);
+        if (legacy is null)
+        {
+            return null;
+        }
+
+        return new ServiceEndpointSetRegistration(
+            endpointSetKey,
+            ServiceEndpointSettings.CreateLegacyFallbackSet(legacy.Value.Endpoint),
+            legacy.Value.UpdatedMs);
     }
 
     public async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> ResolveFromListAsync(
@@ -166,6 +236,22 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             if (registration is not null)
             {
                 resolved[key] = registration.Value;
+            }
+        }
+
+        return resolved;
+    }
+
+    public async Task<IReadOnlyDictionary<string, ServiceEndpointSetRegistration>> ResolveKnownSetsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var resolved = new Dictionary<string, ServiceEndpointSetRegistration>(StringComparer.Ordinal);
+        foreach (var key in ServiceEndpointSettings.AllKeys)
+        {
+            var registration = await ResolveSetAsync(key, cancellationToken).ConfigureAwait(false);
+            if (registration is not null)
+            {
+                resolved[registration.Value.Key] = registration.Value;
             }
         }
 
