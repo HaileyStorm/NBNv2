@@ -83,13 +83,14 @@ public sealed partial class OrchestratorPanelViewModel
                 workerInventory,
                 actorRowsResult.WorkerBrainHints,
                 workerNowMs);
-            var settings = settingsResponse?.Settings?
+            var rawSettings = settingsResponse?.Settings?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.SettingValue>();
+            var settings = rawSettings
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
                     entry.Value ?? string.Empty,
                     FormatUpdated(entry.UpdatedMs)))
-                .ToList() ?? new List<SettingItem>();
-            var discoveredServiceEndpoints = BuildServiceEndpointLookup(settings);
+                .ToList();
+            var discoveredServiceEndpoints = await BuildServiceEndpointLookupAsync(rawSettings).ConfigureAwait(false);
 
             _dispatcher.Post(() =>
             {
@@ -134,7 +135,7 @@ public sealed partial class OrchestratorPanelViewModel
                     TryApplyWorkerPolicySetting(entry);
                 }
 
-                var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(settings);
+                var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(discoveredServiceEndpoints);
                 if (!hiveMindFromSettings)
                 {
                     UpdateHiveMindEndpoint(nodes, settingsNowMs);
@@ -468,19 +469,37 @@ public sealed partial class OrchestratorPanelViewModel
         });
     }
 
-    private static IReadOnlyDictionary<string, ServiceEndpoint> BuildServiceEndpointLookup(IEnumerable<SettingItem> settings)
+    private async Task<IReadOnlyDictionary<string, ServiceEndpoint>> BuildServiceEndpointLookupAsync(
+        IReadOnlyList<Nbn.Proto.Settings.SettingValue> settings)
     {
         var lookup = new Dictionary<string, ServiceEndpoint>(StringComparer.OrdinalIgnoreCase);
+        var endpointSets = new Dictionary<string, ServiceEndpointSet>(StringComparer.OrdinalIgnoreCase);
         foreach (var setting in settings)
         {
-            if (string.IsNullOrWhiteSpace(setting.Key)
-                || !ServiceEndpointSettings.IsKnownKey(setting.Key)
-                || !ServiceEndpointSettings.TryParseValue(setting.Value, out var endpoint))
+            if (string.IsNullOrWhiteSpace(setting.Key))
             {
                 continue;
             }
 
-            lookup[setting.Key] = endpoint;
+            if (ServiceEndpointSettings.IsKnownKey(setting.Key)
+                && ServiceEndpointSettings.TryParseValue(setting.Value, out var endpoint))
+            {
+                lookup[setting.Key] = endpoint;
+                continue;
+            }
+
+            if (!ServiceEndpointSettings.TryGetEndpointKeyFromSetKey(setting.Key, out var endpointKey)
+                || !ServiceEndpointSettings.TryParseSetValue(setting.Value, out var endpointSet))
+            {
+                continue;
+            }
+
+            endpointSets[endpointKey] = endpointSet;
+        }
+
+        foreach (var entry in endpointSets)
+        {
+            lookup[entry.Key] = await ResolveServiceEndpointAsync(entry.Value).ConfigureAwait(false);
         }
 
         return lookup;
@@ -567,12 +586,12 @@ public sealed partial class OrchestratorPanelViewModel
         return $"{hostPortToken}/{actorToken}";
     }
 
-    private bool ApplyServiceEndpointSettingsToConnections(IEnumerable<SettingItem> settings)
+    private bool ApplyServiceEndpointSettingsToConnections(IReadOnlyDictionary<string, ServiceEndpoint> settings)
     {
         var hiveMindApplied = false;
         foreach (var setting in settings)
         {
-            if (!TryApplyServiceEndpointSetting(setting))
+            if (!TryApplyServiceEndpointSetting(setting.Key, setting.Value))
             {
                 continue;
             }
@@ -590,13 +609,24 @@ public sealed partial class OrchestratorPanelViewModel
     {
         if (string.IsNullOrWhiteSpace(item.Key)
             || !ServiceEndpointSettings.IsKnownKey(item.Key)
-            || !ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint)
+            || !ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint))
+        {
+            return false;
+        }
+
+        return TryApplyServiceEndpointSetting(item.Key, endpoint);
+    }
+
+    private bool TryApplyServiceEndpointSetting(string? key, ServiceEndpoint endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(key)
+            || !ServiceEndpointSettings.IsKnownKey(key)
             || !TryParseHostPort(endpoint.HostPort, out var host, out var port))
         {
             return false;
         }
 
-        if (string.Equals(item.Key, ServiceEndpointSettings.HiveMindKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.HiveMindHost = host;
             Connections.HiveMindPortText = port.ToString();
@@ -604,7 +634,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(item.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(key, ServiceEndpointSettings.IoGatewayKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.IoHost = host;
             Connections.IoPortText = port.ToString();
@@ -612,7 +642,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(item.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.ReproHost = host;
             Connections.ReproPortText = port.ToString();
@@ -620,7 +650,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(item.Key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.SpeciationHost = host;
             Connections.SpeciationPortText = port.ToString();
@@ -628,7 +658,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(item.Key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.WorkerHost = host;
             Connections.WorkerPortText = port.ToString();
@@ -636,7 +666,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(item.Key, ServiceEndpointSettings.ObservabilityKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(key, ServiceEndpointSettings.ObservabilityKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.ObsHost = host;
             Connections.ObsPortText = port.ToString();
@@ -645,6 +675,25 @@ public sealed partial class OrchestratorPanelViewModel
         }
 
         return false;
+    }
+
+    private async Task<ServiceEndpoint> ResolveServiceEndpointAsync(ServiceEndpointSet endpointSet)
+    {
+        return await ServiceEndpointResolver.ResolveAsync(
+            endpointSet,
+            async (candidate, cancellationToken) =>
+            {
+                if (!TryParseHostPort(candidate.HostPort, out var host, out var port))
+                {
+                    return false;
+                }
+
+                var probe = await _client
+                    .ProbeTcpEndpointAsync(host, port, timeout: TimeSpan.FromSeconds(1.5))
+                    .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                return probe.Reachable;
+            }).ConfigureAwait(false);
     }
 
     private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)

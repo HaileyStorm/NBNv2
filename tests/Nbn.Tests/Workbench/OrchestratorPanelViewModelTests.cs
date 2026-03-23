@@ -605,6 +605,55 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_PrefersReachableEndpointSetCandidate_OverLegacyEndpoint()
+    {
+        var connections = new ConnectionViewModel();
+        var setKey = ServiceEndpointSettings.ToEndpointSetKey(ServiceEndpointSettings.IoGatewayKey);
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse(),
+            BrainsResponse = new BrainListResponse(),
+            ProbeFactory = (host, port) =>
+                host == "100.86.45.90" && port == 12050
+                    ? new TcpEndpointProbeResult(true, "tailnet reachable")
+                    : new TcpEndpointProbeResult(false, "unreachable"),
+            SettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.IoGatewayKey,
+                        Value = "198.51.100.10:12050/io-legacy",
+                        UpdatedMs = 31
+                    },
+                    new SettingValue
+                    {
+                        Key = setKey,
+                        Value = ServiceEndpointSettings.EncodeSetValue(
+                            "io-gateway",
+                            [
+                                new ServiceEndpointCandidate("198.51.100.10:12050", "io-gateway", ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
+                                new ServiceEndpointCandidate("100.86.45.90:12050", "io-gateway", ServiceEndpointCandidateKind.Tailnet, Priority: 90)
+                            ]),
+                        UpdatedMs = 32
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.Equal("100.86.45.90", connections.IoHost);
+        Assert.Equal("12050", connections.IoPortText);
+        Assert.Equal("io-gateway", connections.IoGateway);
+        Assert.Equal("100.86.45.90:12050/io-gateway", connections.IoEndpointDisplay);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_InvalidServiceEndpointSettings_DoNotOverwriteConnectionInputs()
     {
         var connections = new ConnectionViewModel
@@ -2385,6 +2434,7 @@ public class OrchestratorPanelViewModelTests
         public SettingListResponse? RemoteSettingsResponse { get; set; }
         public Func<string, int, string, SettingListResponse?>? RemoteSettingsFactory { get; set; }
         public TcpEndpointProbeResult ProbeResult { get; set; } = new(false, "TCP connect timed out.");
+        public Func<string, int, TcpEndpointProbeResult>? ProbeFactory { get; set; }
         public List<(string Key, string Value)> SettingCalls { get; } = new();
         public List<(string Host, int Port, string ActorName)> RemoteSettingsCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
@@ -2431,7 +2481,7 @@ public class OrchestratorPanelViewModelTests
         }
 
         public override Task<TcpEndpointProbeResult> ProbeTcpEndpointAsync(string host, int port, TimeSpan? timeout = null)
-            => Task.FromResult(ProbeResult);
+            => Task.FromResult(ProbeFactory?.Invoke(host, port) ?? ProbeResult);
 
         public override Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
             => Task.FromResult<PlacementWorkerInventory?>(PlacementWorkerInventoryResponse ?? new PlacementWorkerInventory
