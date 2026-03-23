@@ -12,6 +12,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     private readonly PID _settingsPid;
     private readonly object _gate = new();
     private readonly Func<ServiceEndpointCandidate, CancellationToken, Task<bool>> _candidateProbeAsync;
+    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
 
     private PID? _subscriberPid;
     private HashSet<string>? _watchedKeys;
@@ -19,11 +20,13 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     public ServiceEndpointDiscoveryClient(
         ActorSystem system,
         PID settingsPid,
-        Func<ServiceEndpointCandidate, CancellationToken, Task<bool>>? candidateProbeAsync = null)
+        Func<ServiceEndpointCandidate, CancellationToken, Task<bool>>? candidateProbeAsync = null,
+        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
     {
         _system = system ?? throw new ArgumentNullException(nameof(system));
         _settingsPid = settingsPid ?? throw new ArgumentNullException(nameof(settingsPid));
         _candidateProbeAsync = candidateProbeAsync ?? ProbeCandidateAsync;
+        _localEndpointCandidates = localEndpointCandidates;
     }
 
     public event Action<ServiceEndpointRegistration>? EndpointChanged;
@@ -33,7 +36,8 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         ActorSystem? system,
         string? settingsHost,
         int settingsPort,
-        string settingsName)
+        string settingsName,
+        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
     {
         if (system is null)
         {
@@ -47,7 +51,8 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         return new ServiceEndpointDiscoveryClient(
             system,
-            new PID($"{settingsHost}:{settingsPort}", settingsName));
+            new PID($"{settingsHost}:{settingsPort}", settingsName),
+            localEndpointCandidates: localEndpointCandidates);
     }
 
     public static async Task<bool> TryPublishAsync(
@@ -339,7 +344,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         _system.Root.Send(_settingsPid, new SettingSubscribe
         {
-            SubscriberActor = PidLabel(subscriberPid)
+            SubscriberActor = BuildSubscriberActorReference(subscriberPid)
         });
     }
 
@@ -360,7 +365,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         _system.Root.Send(_settingsPid, new SettingUnsubscribe
         {
-            SubscriberActor = PidLabel(subscriberPid)
+            SubscriberActor = BuildSubscriberActorReference(subscriberPid)
         });
 
         _system.Root.Stop(subscriberPid);
@@ -387,6 +392,16 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
             return _subscriberPid;
         }
+    }
+
+    private string BuildSubscriberActorReference(PID subscriberPid)
+    {
+        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
+        {
+            return RoutablePidReference.Encode(subscriberPid, _localEndpointCandidates);
+        }
+
+        return PidLabel(subscriberPid);
     }
 
     private void HandleSettingChanged(SettingChanged changed)

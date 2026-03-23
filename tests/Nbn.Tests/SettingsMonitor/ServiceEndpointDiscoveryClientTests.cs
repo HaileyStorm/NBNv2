@@ -464,6 +464,37 @@ public sealed class ServiceEndpointDiscoveryClientTests
         }
     }
 
+    [Fact]
+    public async Task SubscribeAsync_UsesEncodedSubscriberActor_WhenLocalEndpointCandidatesAreProvided()
+    {
+        var subscribeLabel = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var system = new ActorSystem();
+        var settingsPid = system.Root.Spawn(Props.FromProducer(() => new CaptureSubscribeActor(subscribeLabel)));
+        var client = new ServiceEndpointDiscoveryClient(
+            system,
+            settingsPid,
+            localEndpointCandidates:
+            [
+                new ServiceEndpointCandidate("100.64.0.61:12020", "io-gateway", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true),
+                new ServiceEndpointCandidate("192.168.1.61:12020", "io-gateway", ServiceEndpointCandidateKind.Lan, 900, "lan")
+            ]);
+
+        try
+        {
+            await client.SubscribeAsync([ServiceEndpointSettings.HiveMindKey]);
+            var label = await subscribeLabel.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.StartsWith(RoutablePidReference.Prefix, label, StringComparison.Ordinal);
+            Assert.True(RoutablePidReference.TryDecode(label, out var endpointSet));
+            Assert.NotEmpty(endpointSet.Candidates);
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await system.ShutdownAsync();
+        }
+    }
+
     private static int GetFreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

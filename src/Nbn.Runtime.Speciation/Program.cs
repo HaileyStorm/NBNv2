@@ -55,7 +55,8 @@ try
         system,
         options.SettingsHost,
         options.SettingsPort,
-        options.SettingsName);
+        options.SettingsName,
+        endpointSet.Candidates);
 
     if (discoveryClient is null)
     {
