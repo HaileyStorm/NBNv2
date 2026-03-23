@@ -20,6 +20,7 @@ public sealed class WorkbenchReceiverActor : IActor
         IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED") || IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private readonly IWorkbenchEventSink _sink;
     private PID? _ioGateway;
+    private string? _subscriberActorReference;
 
     public WorkbenchReceiverActor(IWorkbenchEventSink sink)
     {
@@ -33,32 +34,35 @@ public sealed class WorkbenchReceiverActor : IActor
             case SetIoGatewayPid setIo:
                 _ioGateway = setIo.Pid;
                 return Task.CompletedTask;
+            case SetSubscriberActorReference setSubscriber:
+                _subscriberActorReference = setSubscriber.SubscriberActorReference;
+                return Task.CompletedTask;
             case SubscribeOutputsCommand subscribe:
                 SendToIoRequest(context, new SubscribeOutputs
                 {
                     BrainId = subscribe.BrainId.ToProtoUuid(),
-                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                    SubscriberActor = ResolveSubscriberActorReference(context, subscribe.SubscriberActorReference)
                 });
                 return Task.CompletedTask;
             case UnsubscribeOutputsCommand unsubscribe:
                 SendToIoRequest(context, new UnsubscribeOutputs
                 {
                     BrainId = unsubscribe.BrainId.ToProtoUuid(),
-                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                    SubscriberActor = ResolveSubscriberActorReference(context, unsubscribe.SubscriberActorReference)
                 });
                 return Task.CompletedTask;
             case SubscribeOutputsVectorCommand subscribeVector:
                 SendToIoRequest(context, new SubscribeOutputsVector
                 {
                     BrainId = subscribeVector.BrainId.ToProtoUuid(),
-                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                    SubscriberActor = ResolveSubscriberActorReference(context, subscribeVector.SubscriberActorReference)
                 });
                 return Task.CompletedTask;
             case UnsubscribeOutputsVectorCommand unsubscribeVector:
                 SendToIoRequest(context, new UnsubscribeOutputsVector
                 {
                     BrainId = unsubscribeVector.BrainId.ToProtoUuid(),
-                    SubscriberActor = PidLabel(context.Self, context.System.Address)
+                    SubscriberActor = ResolveSubscriberActorReference(context, unsubscribeVector.SubscriberActorReference)
                 });
                 return Task.CompletedTask;
             case InputWriteCommand input:
@@ -403,14 +407,30 @@ public sealed class WorkbenchReceiverActor : IActor
         var address = string.IsNullOrWhiteSpace(pid.Address) ? fallbackAddress : pid.Address;
         return string.IsNullOrWhiteSpace(address) ? pid.Id : $"{address}/{pid.Id}";
     }
+
+    private string ResolveSubscriberActorReference(IContext context, string? providedReference)
+    {
+        if (!string.IsNullOrWhiteSpace(providedReference))
+        {
+            return providedReference;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_subscriberActorReference))
+        {
+            return _subscriberActorReference;
+        }
+
+        return PidLabel(context.Self, context.System.Address);
+    }
 }
 
 public sealed record SetIoGatewayPid(PID? Pid);
+public sealed record SetSubscriberActorReference(string? SubscriberActorReference);
 
-public sealed record SubscribeOutputsCommand(Guid BrainId);
-public sealed record UnsubscribeOutputsCommand(Guid BrainId);
-public sealed record SubscribeOutputsVectorCommand(Guid BrainId);
-public sealed record UnsubscribeOutputsVectorCommand(Guid BrainId);
+public sealed record SubscribeOutputsCommand(Guid BrainId, string? SubscriberActorReference = null);
+public sealed record UnsubscribeOutputsCommand(Guid BrainId, string? SubscriberActorReference = null);
+public sealed record SubscribeOutputsVectorCommand(Guid BrainId, string? SubscriberActorReference = null);
+public sealed record UnsubscribeOutputsVectorCommand(Guid BrainId, string? SubscriberActorReference = null);
 
 public sealed record InputWriteCommand(Guid BrainId, uint InputIndex, float Value);
 public sealed record InputVectorCommand(Guid BrainId, IReadOnlyList<float> Values);

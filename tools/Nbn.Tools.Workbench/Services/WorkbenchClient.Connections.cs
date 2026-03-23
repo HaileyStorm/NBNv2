@@ -52,6 +52,12 @@ public partial class WorkbenchClient
                 Props.FromProducer(() => new WorkbenchReceiverActor(_sink)),
                 "workbench-receiver");
 
+            _subscriberActorReference = BuildSubscriberActorReference(receiverPid);
+            if (!string.IsNullOrWhiteSpace(_subscriberActorReference))
+            {
+                system.Root.Send(receiverPid, new SetSubscriberActorReference(_subscriberActorReference));
+            }
+
             _system = system;
             _root = system.Root;
             _receiverPid = receiverPid;
@@ -110,7 +116,7 @@ public partial class WorkbenchClient
         }
 
         _settingsPid = new PID($"{host}:{port}", actorName);
-        var subscriber = PidLabel(_receiverPid);
+        var subscriber = GetSubscriberActorReference() ?? PidLabel(_receiverPid);
         _root.Send(_settingsPid, new SettingSubscribe { SubscriberActor = subscriber });
 
         if (!verify)
@@ -210,7 +216,7 @@ public partial class WorkbenchClient
         }
 
         filter ??= DebugSubscriptionFilter.Default;
-        var subscriber = PidLabel(_receiverPid);
+        var subscriber = GetSubscriberActorReference() ?? PidLabel(_receiverPid);
         if (enabled)
         {
             _root.Send(_debugHubPid, BuildDebugSubscribe(subscriber, filter));
@@ -243,7 +249,7 @@ public partial class WorkbenchClient
             return;
         }
 
-        var subscriber = PidLabel(_receiverPid);
+        var subscriber = GetSubscriberActorReference() ?? PidLabel(_receiverPid);
         if (enabled)
         {
             if (_vizSubscribed)
@@ -315,7 +321,7 @@ public partial class WorkbenchClient
             return;
         }
 
-        var subscriber = PidLabel(_receiverPid);
+        var subscriber = GetSubscriberActorReference() ?? PidLabel(_receiverPid);
         if (_debugHubPid is not null)
         {
             _root.Send(_debugHubPid, new DebugUnsubscribe { SubscriberActor = subscriber });
@@ -339,7 +345,7 @@ public partial class WorkbenchClient
         }
 
         filter ??= DebugSubscriptionFilter.Default;
-        _root.Send(_debugHubPid, BuildDebugSubscribe(PidLabel(_receiverPid), filter));
+        _root.Send(_debugHubPid, BuildDebugSubscribe(GetSubscriberActorReference() ?? PidLabel(_receiverPid), filter));
 
         return Task.CompletedTask;
     }
@@ -383,6 +389,7 @@ public partial class WorkbenchClient
             _vizFocusRegionId = null;
             _advertisedHost = null;
             _advertisedPort = null;
+            _subscriberActorReference = null;
         }
     }
 
@@ -475,5 +482,26 @@ public partial class WorkbenchClient
     }
 
     private string? GetVisualizationSubscriberActor()
-        => _receiverPid is null ? null : PidLabel(_receiverPid);
+        => GetSubscriberActorReference() ?? (_receiverPid is null ? null : PidLabel(_receiverPid));
+
+    private string? GetSubscriberActorReference()
+        => string.IsNullOrWhiteSpace(_subscriberActorReference) ? null : _subscriberActorReference;
+
+    private string? BuildSubscriberActorReference(PID receiverPid)
+    {
+        if (_bindPort <= 0)
+        {
+            return null;
+        }
+
+        var bindHost = string.IsNullOrWhiteSpace(_bindHost)
+            ? NetworkAddressDefaults.DefaultBindHost
+            : _bindHost;
+        var endpointSet = NetworkAddressDefaults.BuildEndpointSet(
+            bindHost,
+            _advertisedHost,
+            _bindPort,
+            receiverPid.Id);
+        return RoutablePidReference.Encode(endpointSet);
+    }
 }

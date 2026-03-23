@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Nbn.Proto;
 using Nbn.Proto.Debug;
+using Nbn.Shared;
 using Proto;
 
 namespace Nbn.Runtime.Observability;
@@ -23,11 +24,9 @@ public sealed class DebugHubActor : IActor
             case Started:
                 return Task.CompletedTask;
             case DebugSubscribe subscribe:
-                HandleSubscribe(context, subscribe);
-                return Task.CompletedTask;
+                return HandleSubscribeAsync(context, subscribe);
             case DebugUnsubscribe unsubscribe:
-                HandleUnsubscribe(context, unsubscribe);
-                return Task.CompletedTask;
+                return HandleUnsubscribeAsync(context, unsubscribe);
             case DebugFlushAll:
                 FlushAll(context);
                 return Task.CompletedTask;
@@ -45,9 +44,10 @@ public sealed class DebugHubActor : IActor
         return Task.CompletedTask;
     }
 
-    private void HandleSubscribe(IContext context, DebugSubscribe subscribe)
+    private async Task HandleSubscribeAsync(IContext context, DebugSubscribe subscribe)
     {
-        if (!TryParsePid(subscribe.SubscriberActor, out var pid))
+        var pid = await RoutablePidReference.ResolveAsync(subscribe.SubscriberActor).ConfigureAwait(false);
+        if (pid is null)
         {
             return;
         }
@@ -74,9 +74,10 @@ public sealed class DebugHubActor : IActor
         }
     }
 
-    private void HandleUnsubscribe(IContext context, DebugUnsubscribe unsubscribe)
+    private async Task HandleUnsubscribeAsync(IContext context, DebugUnsubscribe unsubscribe)
     {
-        if (!TryParsePid(unsubscribe.SubscriberActor, out var pid))
+        var pid = await RoutablePidReference.ResolveAsync(unsubscribe.SubscriberActor).ConfigureAwait(false);
+        if (pid is null)
         {
             return;
         }
@@ -194,35 +195,6 @@ public sealed class DebugHubActor : IActor
         {
             return null;
         }
-    }
-
-    private static bool TryParsePid(string? value, out PID pid)
-    {
-        pid = new PID();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var trimmed = value.Trim();
-        var slashIndex = trimmed.IndexOf('/');
-        if (slashIndex <= 0)
-        {
-            pid.Id = trimmed;
-            return true;
-        }
-
-        var address = trimmed[..slashIndex];
-        var id = trimmed[(slashIndex + 1)..];
-
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return false;
-        }
-
-        pid.Address = address;
-        pid.Id = id;
-        return true;
     }
 
     private static string PidKey(PID pid)
