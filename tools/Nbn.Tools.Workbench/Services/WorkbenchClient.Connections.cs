@@ -24,7 +24,14 @@ public partial class WorkbenchClient
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_system is not null && string.Equals(_bindHost, bindHost, StringComparison.OrdinalIgnoreCase) && _bindPort == port)
+            var normalizedAdvertisedHost = string.IsNullOrWhiteSpace(advertisedHost)
+                ? null
+                : advertisedHost.Trim();
+            if (_system is not null
+                && string.Equals(_bindHost, bindHost, StringComparison.OrdinalIgnoreCase)
+                && _bindPort == port
+                && string.Equals(_advertisedHost, normalizedAdvertisedHost, StringComparison.OrdinalIgnoreCase)
+                && _advertisedPort == advertisedPort)
             {
                 return;
             }
@@ -33,9 +40,11 @@ public partial class WorkbenchClient
 
             _bindHost = bindHost;
             _bindPort = port;
+            _advertisedHost = normalizedAdvertisedHost;
+            _advertisedPort = advertisedPort;
 
             var system = new ActorSystem();
-            var remoteConfig = WorkbenchRemote.BuildConfig(bindHost, port, advertisedHost, advertisedPort);
+            var remoteConfig = WorkbenchRemote.BuildConfig(bindHost, port, normalizedAdvertisedHost, advertisedPort);
             system.WithRemote(remoteConfig);
             await system.Remote().StartAsync().ConfigureAwait(false);
 
@@ -372,6 +381,8 @@ public partial class WorkbenchClient
             _vizSubscribed = false;
             _vizBrainEnabled = null;
             _vizFocusRegionId = null;
+            _advertisedHost = null;
+            _advertisedPort = null;
         }
     }
 

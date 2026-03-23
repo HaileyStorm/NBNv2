@@ -55,6 +55,24 @@ public sealed class WorkbenchClientObservabilityTests
         Assert.Contains("Connected to", sink.LastObsStatus ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task EnsureStartedAsync_RestartsClient_WhenAdvertisedHostChanges()
+    {
+        var sink = new RecordingSink();
+        var clientPort = ReserveFreePort();
+
+        await using var client = new WorkbenchClient(sink);
+        await client.EnsureStartedAsync("0.0.0.0", clientPort, "198.51.100.10");
+        var initialLabel = client.ReceiverLabel;
+
+        await client.EnsureStartedAsync("0.0.0.0", clientPort, "203.0.113.25");
+        var updatedLabel = client.ReceiverLabel;
+
+        Assert.Contains("198.51.100.10", initialLabel, StringComparison.Ordinal);
+        Assert.Contains("203.0.113.25", updatedLabel, StringComparison.Ordinal);
+        Assert.NotEqual(initialLabel, updatedLabel);
+    }
+
     private static int ReserveFreePort()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);

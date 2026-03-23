@@ -42,6 +42,8 @@ public partial class WorkbenchClient : IAsyncDisposable
     private uint? _vizFocusRegionId;
     private string? _bindHost;
     private int _bindPort;
+    private string? _advertisedHost;
+    private int? _advertisedPort;
 
     public WorkbenchClient(IWorkbenchEventSink sink)
     {
