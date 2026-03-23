@@ -460,34 +460,32 @@ public sealed partial class IoGatewayActor
         return merged;
     }
 
-    private static void AddSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
+    private static void AddSubscriber(IContext context, string? subscriberActor, Dictionary<string, OutputSubscriberRegistration> set)
     {
-        var subscriber = ResolveSubscriberPid(context, subscriberActor);
-        if (subscriber is null)
+        if (!TryResolveSubscriberRegistration(context, subscriberActor, out var key, out var registration))
         {
             return;
         }
 
-        set[PidKey(subscriber)] = subscriber;
+        set[key] = registration;
     }
 
-    private static void RemoveSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
+    private static void RemoveSubscriber(IContext context, string? subscriberActor, Dictionary<string, OutputSubscriberRegistration> set)
     {
-        var subscriber = ResolveSubscriberPid(context, subscriberActor);
-        if (subscriber is null)
+        if (!TryResolveSubscriberKey(context, subscriberActor, out var key))
         {
             return;
         }
 
-        set.Remove(PidKey(subscriber));
+        set.Remove(key);
     }
 
-    private Dictionary<string, PID> GetPendingSubscriberSet(Guid brainId, bool vector)
+    private Dictionary<string, OutputSubscriberRegistration> GetPendingSubscriberSet(Guid brainId, bool vector)
     {
         var source = vector ? _pendingOutputVectorSubscribers : _pendingOutputSubscribers;
         if (!source.TryGetValue(brainId, out var set))
         {
-            set = new Dictionary<string, PID>(StringComparer.Ordinal);
+            set = new Dictionary<string, OutputSubscriberRegistration>(StringComparer.Ordinal);
             source.Add(brainId, set);
         }
 
@@ -507,6 +505,59 @@ public sealed partial class IoGatewayActor
         {
             source.Remove(brainId);
         }
+    }
+
+    private static bool TryResolveSubscriberRegistration(
+        IContext context,
+        string? subscriberActor,
+        out string key,
+        out OutputSubscriberRegistration registration)
+    {
+        key = string.Empty;
+        registration = default!;
+
+        var actorReference = subscriberActor?.Trim() ?? string.Empty;
+        if (RoutablePidReference.TryParsePlainPid(actorReference, out var parsed))
+        {
+            var resolvedPid = ToRemotePid(context, parsed);
+            key = actorReference;
+            registration = new OutputSubscriberRegistration(actorReference, resolvedPid);
+            return true;
+        }
+
+        if (context.Sender is null)
+        {
+            return false;
+        }
+
+        var senderPid = ToRemotePid(context, context.Sender);
+        if (string.IsNullOrWhiteSpace(actorReference))
+        {
+            actorReference = PidLabel(senderPid);
+        }
+
+        key = actorReference;
+        registration = new OutputSubscriberRegistration(actorReference, senderPid);
+        return true;
+    }
+
+    private static bool TryResolveSubscriberKey(IContext context, string? subscriberActor, out string key)
+    {
+        key = string.Empty;
+        var actorReference = subscriberActor?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(actorReference))
+        {
+            key = actorReference;
+            return true;
+        }
+
+        if (context.Sender is null)
+        {
+            return false;
+        }
+
+        key = PidLabel(ToRemotePid(context, context.Sender));
+        return true;
     }
 
     private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
@@ -603,7 +654,7 @@ public sealed partial class IoGatewayActor
             await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputs
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
-                SubscriberActor = PidLabel(subscriber)
+                SubscriberActor = subscriber.ActorReference
             }).ConfigureAwait(false);
         }
 
@@ -612,7 +663,7 @@ public sealed partial class IoGatewayActor
             await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputsVector
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
-                SubscriberActor = PidLabel(subscriber)
+                SubscriberActor = subscriber.ActorReference
             }).ConfigureAwait(false);
         }
     }

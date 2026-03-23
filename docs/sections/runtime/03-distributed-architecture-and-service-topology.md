@@ -46,6 +46,7 @@ NBN treats placement as a runtime concern:
 
 * Single well-known gateway for External World
 * Spawns per-brain input/output coordinators and routes external commands
+* When replaying output subscriptions after coordinator replacement or late brain registration, preserves the original subscriber actor reference so callback routing stays valid across mixed TailScale/LAN/public topologies
 * External World never needs to know RegionShard placement or actor PIDs
 
 **Observability hubs** (core service)

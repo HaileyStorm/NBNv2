@@ -42,8 +42,8 @@ public sealed partial class IoGatewayActor : IActor
     private readonly Dictionary<string, ClientInfo> _clients = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, PID> _routerCache = new();
     private readonly Dictionary<Guid, string> _routerRegistration = new();
-    private readonly Dictionary<Guid, Dictionary<string, PID>> _pendingOutputSubscribers = new();
-    private readonly Dictionary<Guid, Dictionary<string, PID>> _pendingOutputVectorSubscribers = new();
+    private readonly Dictionary<Guid, Dictionary<string, OutputSubscriberRegistration>> _pendingOutputSubscribers = new();
+    private readonly Dictionary<Guid, Dictionary<string, OutputSubscriberRegistration>> _pendingOutputVectorSubscribers = new();
     private readonly PID? _configuredHiveMindPid;
     private readonly PID? _configuredReproPid;
     private readonly PID? _configuredSpeciationPid;

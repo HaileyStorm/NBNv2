@@ -512,6 +512,76 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task OutputSubscriptionReplay_Preserves_RoutableSubscriberReference_When_OutputCoordinatorChanges()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var initialSubscribeTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replaySubscribeTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var outputPidA = root.Spawn(Props.FromProducer(() => new OutputSubscriptionCaptureActor(initialSubscribeTcs)));
+        var outputPidB = root.Spawn(Props.FromProducer(() => new OutputSubscriptionCaptureActor(replaySubscribeTcs)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+        var subscriberPid = root.Spawn(Props.FromProducer(() => new OutputSubscriberProbeActor()));
+        var encodedSubscriber = RoutablePidReference.Encode(
+            new ServiceEndpointSet(
+                subscriberPid.Id,
+                [
+                    new ServiceEndpointCandidate("198.51.100.10:12090", subscriberPid.Id, ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
+                    new ServiceEndpointCandidate("127.0.0.1:12090", subscriberPid.Id, ServiceEndpointCandidateKind.Loopback, Priority: 90)
+                ]));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            InputCoordinatorPid = PidLabel(inputPid),
+            OutputCoordinatorPid = PidLabel(outputPidA),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var info = await root.RequestAsync<BrainInfo>(
+                    gateway,
+                    new BrainInfoRequest { BrainId = brainId.ToProtoUuid() });
+                return info.OutputWidth == 1;
+            },
+            timeoutMs: 2_000);
+
+        root.Send(subscriberPid, new OutputSubscriberProbeActor.SubscribeGateway(
+            gateway,
+            brainId,
+            SubscribeSingles: true,
+            SubscribeVectors: false,
+            SubscriberActor: encodedSubscriber));
+
+        var initialSubscribe = await initialSubscribeTcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(encodedSubscriber, initialSubscribe);
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            InputCoordinatorPid = PidLabel(inputPid),
+            OutputCoordinatorPid = PidLabel(outputPidB),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        var replaySubscribe = await replaySubscribeTcs.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(encodedSubscriber, replaySubscribe);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ForwardInput_Refreshes_RouterRegistration_When_BrainRouting_Changes()
     {
         var system = new ActorSystem();
@@ -879,7 +949,12 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private OutputEvent? _lastSingle;
         private OutputVectorEvent? _lastVector;
 
-        public sealed record SubscribeGateway(PID GatewayPid, Guid BrainId, bool SubscribeSingles = true, bool SubscribeVectors = true);
+        public sealed record SubscribeGateway(
+            PID GatewayPid,
+            Guid BrainId,
+            bool SubscribeSingles = true,
+            bool SubscribeVectors = true,
+            string? SubscriberActor = null);
 
         public sealed record GetSnapshot;
 
@@ -890,10 +965,12 @@ public sealed class IoGatewayDistributedCoordinatorTests
             switch (context.Message)
             {
                 case SubscribeGateway subscribe:
-                    var subscriberActor = PidLabel(context.Self);
+                    var subscriberActor = string.IsNullOrWhiteSpace(subscribe.SubscriberActor)
+                        ? PidLabel(context.Self)
+                        : subscribe.SubscriberActor!;
                     if (subscribe.SubscribeSingles)
                     {
-                        context.Send(subscribe.GatewayPid, new SubscribeOutputs
+                        context.Request(subscribe.GatewayPid, new SubscribeOutputs
                         {
                             BrainId = subscribe.BrainId.ToProtoUuid(),
                             SubscriberActor = subscriberActor
@@ -902,7 +979,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
                     if (subscribe.SubscribeVectors)
                     {
-                        context.Send(subscribe.GatewayPid, new SubscribeOutputsVector
+                        context.Request(subscribe.GatewayPid, new SubscribeOutputsVector
                         {
                             BrainId = subscribe.BrainId.ToProtoUuid(),
                             SubscriberActor = subscriberActor
@@ -920,6 +997,31 @@ public sealed class IoGatewayDistributedCoordinatorTests
                     break;
                 case GetSnapshot:
                     context.Respond(new Snapshot(_singleCount, _vectorCount, _lastSingle?.Clone(), _lastVector?.Clone()));
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class OutputSubscriptionCaptureActor(TaskCompletionSource<string> subscribeTcs) : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SubscribeOutputs subscribe:
+                    subscribeTcs.TrySetResult(subscribe.SubscriberActor ?? string.Empty);
+                    context.Respond(new IoCommandAck { Success = true });
+                    break;
+                case SubscribeOutputsVector subscribeVector:
+                    subscribeTcs.TrySetResult(subscribeVector.SubscriberActor ?? string.Empty);
+                    context.Respond(new IoCommandAck { Success = true });
+                    break;
+                case UnsubscribeOutputs:
+                case UnsubscribeOutputsVector:
+                case UpdateOutputWidth:
+                    context.Respond(new IoCommandAck { Success = true });
                     break;
             }
 
