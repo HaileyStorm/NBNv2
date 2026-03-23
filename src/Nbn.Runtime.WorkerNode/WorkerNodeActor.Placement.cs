@@ -769,7 +769,7 @@ public sealed partial class WorkerNodeActor
     {
         if (assignment.HostedPid is not null)
         {
-            return PidLabel(ToObservedRemotePid(context, assignment.HostedPid));
+            return BuildLocalActorReference(ToObservedRemotePid(context, assignment.HostedPid));
         }
 
         var actorId = assignment.Assignment.ActorName?.Trim();

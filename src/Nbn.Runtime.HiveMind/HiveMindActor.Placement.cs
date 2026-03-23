@@ -597,7 +597,7 @@ public sealed partial class HiveMindActor
         TryCompletePendingSpawn(context, brain);
     }
 
-    private void HandlePlacementReconcileReport(IContext context, ProtoControl.PlacementReconcileReport message)
+    private async Task HandlePlacementReconcileReportAsync(IContext context, ProtoControl.PlacementReconcileReport message)
     {
         var reconcileTarget = ResolveReconcileTargetLabel(message);
         var observedWorkerId = TryResolveObservedWorkerNodeId(message, out var parsedWorkerId)
@@ -684,7 +684,7 @@ public sealed partial class HiveMindActor
                 return;
             }
 
-            HandleTrackedPlacementReconcileReport(context, brain, message);
+            await HandleTrackedPlacementReconcileReportAsync(context, brain, message).ConfigureAwait(false);
             return;
         }
 

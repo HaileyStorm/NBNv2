@@ -37,6 +37,7 @@ public sealed partial class WorkerNodeActor : IActor
     private readonly string? _observabilityDefaultHost;
     private readonly Severity _debugMinSeverityDefault;
     private readonly bool _debugStreamEnabledDefault;
+    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
 
     private PID? _hiveMindHintPid;
 
@@ -52,7 +53,8 @@ public sealed partial class WorkerNodeActor : IActor
         Action? capabilityProfileChanged = null,
         Func<ProtoSettings.NodeCapabilities>? capabilitySnapshotProvider = null,
         WorkerResourceAvailability? resourceAvailability = null,
-        string? observabilityDefaultHost = null)
+        string? observabilityDefaultHost = null,
+        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
     {
         if (workerNodeId == Guid.Empty)
         {
@@ -73,6 +75,7 @@ public sealed partial class WorkerNodeActor : IActor
             : observabilityDefaultHost.Trim();
         _debugStreamEnabledDefault = ResolveDebugStreamEnabled(defaultValue: false);
         _debugMinSeverityDefault = ResolveDebugMinSeverity(Severity.SevDebug);
+        _localEndpointCandidates = localEndpointCandidates;
     }
 
     /// <summary>

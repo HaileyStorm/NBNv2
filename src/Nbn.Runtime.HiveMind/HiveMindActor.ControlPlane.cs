@@ -11,7 +11,14 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
-    private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid, int? pausePriority = null)
+    private void RegisterBrainInternal(
+        IContext context,
+        Guid brainId,
+        PID? brainRootPid,
+        string? brainRootActorReference,
+        PID? routerPid,
+        string? routerActorReference,
+        int? pausePriority = null)
     {
         var isNew = !_brains.TryGetValue(brainId, out var brain) || brain is null;
         if (isNew)
@@ -53,11 +60,13 @@ public sealed partial class HiveMindActor
         if (brainRootPid is not null)
         {
             brainState.BrainRootPid = brainRootPid;
+            brainState.BrainRootActorReference = ResolveActorReference(brainRootActorReference, brainRootPid);
         }
 
         if (routerPid is not null)
         {
             brainState.SignalRouterPid = routerPid;
+            brainState.SignalRouterActorReference = ResolveActorReference(routerActorReference, routerPid);
         }
 
         if (brainState.PlacementEpoch > 0
@@ -89,7 +98,7 @@ public sealed partial class HiveMindActor
             brainId: brainState.BrainId);
     }
 
-    private void UpdateBrainSignalRouter(IContext context, Guid brainId, PID routerPid)
+    private void UpdateBrainSignalRouter(IContext context, Guid brainId, PID routerPid, string? routerActorReference = null)
     {
         if (!_brains.TryGetValue(brainId, out var brain))
         {
@@ -104,6 +113,7 @@ public sealed partial class HiveMindActor
         }
 
         brain.SignalRouterPid = routerPid;
+        brain.SignalRouterActorReference = ResolveActorReference(routerActorReference, routerPid);
         UpdateRoutingTable(context, brain);
     }
 
@@ -162,7 +172,15 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private void RegisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex, PID shardPid, int neuronStart, int neuronCount)
+    private void RegisterShardInternal(
+        IContext context,
+        Guid brainId,
+        int regionId,
+        int shardIndex,
+        PID shardPid,
+        string? shardActorReference,
+        int neuronStart,
+        int neuronCount)
     {
         if (!_brains.TryGetValue(brainId, out var brain))
         {
@@ -179,6 +197,7 @@ public sealed partial class HiveMindActor
         brain.Shards.TryGetValue(shardId, out var previousShardPid);
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
+        brain.ShardActorReferences[shardId] = ResolveActorReference(shardActorReference, normalized);
         brain.ShardRegistrationEpochs[shardId] = brain.PlacementEpoch;
         SendShardVisualizationUpdate(
             context,
@@ -260,7 +279,13 @@ public sealed partial class HiveMindActor
 
         if (regionId == NbnConstants.OutputRegionId && brain.OutputSinkPid is not null)
         {
-            SendOutputSinkUpdate(context, brainId, shardId, normalized, brain.OutputSinkPid);
+            SendOutputSinkUpdate(
+                context,
+                brainId,
+                shardId,
+                normalized,
+                brain.OutputSinkPid,
+                ResolveActorReference(brain.OutputSinkActorReference, brain.OutputSinkPid));
             Log($"Output shard registered; pushed sink for brain {brainId} shard {shardId}");
         }
 
@@ -317,6 +342,7 @@ public sealed partial class HiveMindActor
                 && (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
                     || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning);
             var removed = brain.Shards.Remove(shardId);
+            brain.ShardActorReferences.Remove(shardId);
             brain.ShardRegistrationEpochs.Remove(shardId);
             UpdateRoutingTable(context, brain);
             if (!removed)
@@ -360,15 +386,15 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private void HandleRegisterBrain(IContext context, ProtoControl.RegisterBrain message)
+    private async Task HandleRegisterBrainAsync(IContext context, ProtoControl.RegisterBrain message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
             return;
         }
 
-        var brainRootPid = ParsePid(message.BrainRootPid);
-        var routerPid = ParsePid(message.SignalRouterPid);
+        var brainRootPid = await ResolvePidAsync(message.BrainRootPid).ConfigureAwait(false);
+        var routerPid = await ResolvePidAsync(message.SignalRouterPid).ConfigureAwait(false);
 
         if (!IsRegisterBrainAuthorized(context, brainId, brainRootPid, routerPid, out var reason))
         {
@@ -380,18 +406,20 @@ public sealed partial class HiveMindActor
             context,
             brainId,
             brainRootPid,
+            message.BrainRootPid,
             routerPid,
+            message.SignalRouterPid,
             message.HasPausePriority ? message.PausePriority : null);
     }
 
-    private void HandleUpdateBrainSignalRouter(IContext context, ProtoControl.UpdateBrainSignalRouter message)
+    private async Task HandleUpdateBrainSignalRouterAsync(IContext context, ProtoControl.UpdateBrainSignalRouter message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
             return;
         }
 
-        var routerPid = ParsePid(message.SignalRouterPid);
+        var routerPid = await ResolvePidAsync(message.SignalRouterPid).ConfigureAwait(false);
         if (routerPid is null)
         {
             return;
@@ -403,7 +431,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        UpdateBrainSignalRouter(context, brainId, routerPid);
+        UpdateBrainSignalRouter(context, brainId, routerPid, message.SignalRouterPid);
     }
 
     private void HandleUnregisterBrain(IContext context, ProtoControl.UnregisterBrain message)
@@ -466,14 +494,14 @@ public sealed partial class HiveMindActor
         UnregisterBrain(context, brainId, terminationReason, notifyIoUnregister: false);
     }
 
-    private void HandleRegisterShard(IContext context, ProtoControl.RegisterShard message)
+    private async Task HandleRegisterShardAsync(IContext context, ProtoControl.RegisterShard message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
             return;
         }
 
-        var shardPid = ParsePid(message.ShardPid);
+        var shardPid = await ResolvePidAsync(message.ShardPid).ConfigureAwait(false);
         if (shardPid is null)
         {
             return;
@@ -500,6 +528,7 @@ public sealed partial class HiveMindActor
             regionId,
             shardIndex,
             normalizedShardPid,
+            message.ShardPid,
             (int)message.NeuronStart,
             (int)message.NeuronCount);
     }
@@ -808,7 +837,7 @@ public sealed partial class HiveMindActor
             $"Ignored {topic}. reason={reason} brain={brainId:D}{shardLabel} sender={senderLabel}.");
     }
 
-    private void HandleRegisterOutputSink(IContext context, ProtoControl.RegisterOutputSink message)
+    private async Task HandleRegisterOutputSinkAsync(IContext context, ProtoControl.RegisterOutputSink message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
@@ -825,15 +854,15 @@ public sealed partial class HiveMindActor
         PID? outputPid = null;
         if (!string.IsNullOrWhiteSpace(message.OutputPid))
         {
-            if (!TryParsePid(message.OutputPid, out var parsed))
+            outputPid = await ResolvePidAsync(message.OutputPid).ConfigureAwait(false);
+            if (outputPid is null)
             {
                 return;
             }
-
-            outputPid = parsed;
         }
 
         brain.OutputSinkPid = outputPid;
+        brain.OutputSinkActorReference = ResolveActorReference(message.OutputPid, outputPid);
         UpdateOutputSinks(context, brain);
         if (outputPid is null)
         {

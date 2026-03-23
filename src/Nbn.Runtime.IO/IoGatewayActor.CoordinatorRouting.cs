@@ -285,7 +285,7 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var outputLabel = PidLabel(ToRemotePid(context, outputPid));
+            var outputLabel = BuildLocalActorReference(ToRemotePid(context, outputPid));
             context.Request(_hiveMindPid, new ProtoControl.RegisterOutputSink
             {
                 BrainId = brainId.ToProtoUuid(),
@@ -511,7 +511,7 @@ public sealed partial class IoGatewayActor
 
     private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
     {
-        if (TryParsePid(subscriberActor, out var parsed) && parsed is not null)
+        if (RoutablePidReference.TryParsePlainPid(subscriberActor, out var parsed))
         {
             return ToRemotePid(context, parsed);
         }
@@ -667,7 +667,8 @@ public sealed partial class IoGatewayActor
                 return cached;
             }
 
-            if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
+            var routerPid = await RoutablePidReference.ResolveAsync(info.SignalRouterPid).ConfigureAwait(false);
+            if (routerPid is not null)
             {
                 if (LogInputTraceDiagnostics || !PidEquals(cached, routerPid))
                 {
@@ -685,7 +686,8 @@ public sealed partial class IoGatewayActor
                 return routerPid;
             }
 
-            if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
+            var rootPid = await RoutablePidReference.ResolveAsync(info.BrainRootPid).ConfigureAwait(false);
+            if (rootPid is not null)
             {
                 if (LogInputTraceDiagnostics || !PidEquals(cached, rootPid))
                 {
@@ -737,7 +739,7 @@ public sealed partial class IoGatewayActor
         context.Send(routerPid, new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
-            IoGatewayPid = PidLabel(selfPid)
+            IoGatewayPid = BuildLocalActorReference(selfPid)
         });
 
         _routerRegistration[brainId] = routerLabel;

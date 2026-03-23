@@ -176,7 +176,7 @@ public sealed partial class HiveMindActor
             $"Placement reconcile timed out for brain {brain.BrainId} epoch={brain.PlacementEpoch} pendingWorkers={brain.PlacementExecution.PendingReconcileWorkers.Count}.");
     }
 
-    private void HandleTrackedPlacementReconcileReport(IContext context, BrainState brain, ProtoControl.PlacementReconcileReport message)
+    private async Task HandleTrackedPlacementReconcileReportAsync(IContext context, BrainState brain, ProtoControl.PlacementReconcileReport message)
     {
         var execution = brain.PlacementExecution;
         if (execution is null)
@@ -303,7 +303,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        ApplyObservedControlAssignments(context, brain, execution);
+        await ApplyObservedControlAssignmentsAsync(context, brain, execution).ConfigureAwait(false);
         HiveMindTelemetry.RecordPlacementReconcileMatched(
             brain.BrainId,
             brain.PlacementEpoch,

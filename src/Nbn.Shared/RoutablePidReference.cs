@@ -7,6 +7,53 @@ public static class RoutablePidReference
 {
     public const string Prefix = "nbn+pidset:";
 
+    public static ServiceEndpointSet BuildActorSet(
+        IReadOnlyList<ServiceEndpointCandidate> candidateTemplate,
+        string actorName)
+    {
+        if (candidateTemplate is null)
+        {
+            throw new ArgumentNullException(nameof(candidateTemplate));
+        }
+
+        if (string.IsNullOrWhiteSpace(actorName))
+        {
+            throw new ArgumentException("Actor name is required.", nameof(actorName));
+        }
+
+        var normalizedActorName = actorName.Trim();
+        var candidates = candidateTemplate
+            .Where(static candidate => !string.IsNullOrWhiteSpace(candidate.HostPort))
+            .Select(candidate => new ServiceEndpointCandidate(
+                candidate.HostPort.Trim(),
+                normalizedActorName,
+                candidate.Kind,
+                candidate.Priority,
+                candidate.Label,
+                candidate.IsDefault))
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            throw new ArgumentException("At least one endpoint candidate is required.", nameof(candidateTemplate));
+        }
+
+        return new ServiceEndpointSet(normalizedActorName, candidates);
+    }
+
+    public static string Encode(IReadOnlyList<ServiceEndpointCandidate> candidateTemplate, string actorName)
+        => Encode(BuildActorSet(candidateTemplate, actorName));
+
+    public static string Encode(PID pid, IReadOnlyList<ServiceEndpointCandidate> candidateTemplate)
+    {
+        if (pid is null)
+        {
+            throw new ArgumentNullException(nameof(pid));
+        }
+
+        return Encode(candidateTemplate, pid.Id);
+    }
+
     public static string Encode(ServiceEndpointSet endpointSet)
         => Prefix + ServiceEndpointSettings.EncodeSetValue(endpointSet.ActorName, endpointSet.Candidates);
 

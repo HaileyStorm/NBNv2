@@ -35,8 +35,7 @@ public sealed class BrainSignalRouterActor : IActor
         switch (context.Message)
         {
             case SetRoutingTable setRouting:
-                ApplyRoutingTable(setRouting.Table);
-                break;
+                return HandleSetRoutingTableAsync(setRouting.Table);
             case GetRoutingTable:
                 context.Respond(_routingSnapshot);
                 break;
@@ -65,8 +64,7 @@ public sealed class BrainSignalRouterActor : IActor
                 HandleInputDrain(context, inputDrain);
                 break;
             case RegisterIoGateway registerIoGateway:
-                HandleRegisterIoGateway(context, registerIoGateway);
-                break;
+                return HandleRegisterIoGatewayAsync(context, registerIoGateway);
             case SignalBatchAck ack:
                 HandleSignalBatchAck(context, ack);
                 break;
@@ -76,6 +74,40 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private async Task HandleSetRoutingTableAsync(RoutingTableSnapshot? snapshot)
+    {
+        _routingSnapshot = snapshot ?? RoutingTableSnapshot.Empty;
+        if (_routingSnapshot.Count == 0)
+        {
+            _routingTable.Replace(_routingSnapshot.Routes);
+            return;
+        }
+
+        var resolvedRoutes = new List<ShardRoute>(_routingSnapshot.Routes.Count);
+        foreach (var route in _routingSnapshot.Routes)
+        {
+            var resolvedPid = route.Pid;
+            if (!string.IsNullOrWhiteSpace(route.ActorReference))
+            {
+                var resolved = await RoutablePidReference.ResolveAsync(route.ActorReference).ConfigureAwait(false);
+                if (resolved is not null)
+                {
+                    resolvedPid = resolved;
+                }
+            }
+
+            if (resolvedPid is null)
+            {
+                continue;
+            }
+
+            resolvedRoutes.Add(route with { Pid = resolvedPid });
+        }
+
+        _routingSnapshot = new RoutingTableSnapshot(resolvedRoutes);
+        _routingTable.Replace(_routingSnapshot.Routes);
     }
 
     private void ApplyRoutingTable(RoutingTableSnapshot? snapshot)
@@ -334,15 +366,15 @@ public sealed class BrainSignalRouterActor : IActor
         ProcessTickDeliver(context, message.TickId, pending.ReplyTo, message.Contribs, pending.Stopwatch);
     }
 
-    private void HandleRegisterIoGateway(IContext context, RegisterIoGateway message)
+    private async Task HandleRegisterIoGatewayAsync(IContext context, RegisterIoGateway message)
     {
         if (!IsForBrain(message.BrainId))
         {
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(message.IoGatewayPid)
-            && TryParsePid(message.IoGatewayPid, out var parsed))
+        var parsed = await RoutablePidReference.ResolveAsync(message.IoGatewayPid).ConfigureAwait(false);
+        if (parsed is not null)
         {
             _ioGatewayPid = parsed;
             if (LogInputDiagnostics)

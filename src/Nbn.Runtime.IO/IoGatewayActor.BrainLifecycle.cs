@@ -167,10 +167,10 @@ public sealed partial class IoGatewayActor
 
         var inputCoordinatorMode = NormalizeInputCoordinatorMode(message.InputCoordinatorMode);
         var outputVectorSource = NormalizeOutputVectorSource(message.OutputVectorSource);
-        var hasRegisteredInputPid = TryParsePid(message.InputCoordinatorPid, out var registeredInputPid)
-                                    && registeredInputPid is not null;
-        var hasRegisteredOutputPid = TryParsePid(message.OutputCoordinatorPid, out var registeredOutputPid)
-                                     && registeredOutputPid is not null;
+        var registeredInputPid = await RoutablePidReference.ResolveAsync(message.InputCoordinatorPid).ConfigureAwait(false);
+        var registeredOutputPid = await RoutablePidReference.ResolveAsync(message.OutputCoordinatorPid).ConfigureAwait(false);
+        var hasRegisteredInputPid = registeredInputPid is not null;
+        var hasRegisteredOutputPid = registeredOutputPid is not null;
         var registeredInputOwned = hasRegisteredInputPid && message.IoGatewayOwnsInputCoordinator;
         var registeredOutputOwned = hasRegisteredOutputPid && message.IoGatewayOwnsOutputCoordinator;
         var shouldRegisterOutputSink = hasRegisteredOutputPid || message.IoGatewayOwnsOutputCoordinator;

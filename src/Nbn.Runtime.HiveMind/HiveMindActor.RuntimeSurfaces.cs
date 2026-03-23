@@ -40,8 +40,8 @@ public sealed partial class HiveMindActor
         return new ProtoControl.BrainRoutingInfo
         {
             BrainId = brain.BrainId.ToProtoUuid(),
-            BrainRootPid = brain.BrainRootPid is null ? string.Empty : PidLabel(brain.BrainRootPid),
-            SignalRouterPid = brain.SignalRouterPid is null ? string.Empty : PidLabel(brain.SignalRouterPid),
+            BrainRootPid = ResolveActorReference(brain.BrainRootActorReference, brain.BrainRootPid),
+            SignalRouterPid = ResolveActorReference(brain.SignalRouterActorReference, brain.SignalRouterPid),
             ShardCount = (uint)brain.Shards.Count,
             RoutingCount = (uint)brain.RoutingSnapshot.Count
         };
@@ -74,8 +74,10 @@ public sealed partial class HiveMindActor
             OutputWidth = (uint)Math.Max(0, brain.OutputWidth),
             InputCoordinatorMode = _inputCoordinatorMode,
             OutputVectorSource = _outputVectorSource,
-            InputCoordinatorPid = brain.InputCoordinatorPid is null ? string.Empty : PidLabel(brain.InputCoordinatorPid),
-            OutputCoordinatorPid = outputCoordinatorPid is null ? string.Empty : PidLabel(outputCoordinatorPid),
+            InputCoordinatorPid = ResolveActorReference(brain.InputCoordinatorActorReference, brain.InputCoordinatorPid),
+            OutputCoordinatorPid = outputCoordinatorPid == brain.OutputSinkPid
+                ? ResolveActorReference(brain.OutputSinkActorReference, outputCoordinatorPid)
+                : ResolveActorReference(brain.OutputCoordinatorActorReference, outputCoordinatorPid),
             IoGatewayOwnsInputCoordinator = ioGatewayOwnsInputCoordinator,
             IoGatewayOwnsOutputCoordinator = ioGatewayOwnsOutputCoordinator
         };
@@ -89,7 +91,8 @@ public sealed partial class HiveMindActor
             var routes = new List<ShardRoute>(brain.Shards.Count);
             foreach (var entry in brain.Shards)
             {
-                routes.Add(new ShardRoute(entry.Key.Value, entry.Value));
+                brain.ShardActorReferences.TryGetValue(entry.Key, out var shardActorReference);
+                routes.Add(new ShardRoute(entry.Key.Value, entry.Value, ResolveActorReference(shardActorReference, entry.Value)));
             }
 
             snapshot = new RoutingTableSnapshot(routes);
@@ -122,7 +125,13 @@ public sealed partial class HiveMindActor
                 continue;
             }
 
-            SendOutputSinkUpdate(context, brain.BrainId, entry.Key, entry.Value, brain.OutputSinkPid);
+            SendOutputSinkUpdate(
+                context,
+                brain.BrainId,
+                entry.Key,
+                entry.Value,
+                brain.OutputSinkPid,
+                ResolveActorReference(brain.OutputSinkActorReference, brain.OutputSinkPid));
         }
 
         if (brain.OutputSinkPid is null)
@@ -424,13 +433,11 @@ public sealed partial class HiveMindActor
 
         var inputWidth = rawInputWidth == 0 ? 1u : rawInputWidth;
         var outputWidth = rawOutputWidth == 0 ? 1u : rawOutputWidth;
-        var inputCoordinatorPidLabel = brain.InputCoordinatorPid is null
-            ? string.Empty
-            : PidLabel(brain.InputCoordinatorPid);
+        var inputCoordinatorPidLabel = ResolveActorReference(brain.InputCoordinatorActorReference, brain.InputCoordinatorPid);
         var outputCoordinatorPid = brain.OutputCoordinatorPid ?? brain.OutputSinkPid;
-        var outputCoordinatorPidLabel = outputCoordinatorPid is null
-            ? string.Empty
-            : PidLabel(outputCoordinatorPid);
+        var outputCoordinatorPidLabel = outputCoordinatorPid == brain.OutputSinkPid
+            ? ResolveActorReference(brain.OutputSinkActorReference, outputCoordinatorPid)
+            : ResolveActorReference(brain.OutputCoordinatorActorReference, outputCoordinatorPid);
         var ioGatewayOwnsInputCoordinator = ResolveIoGatewayOwnsInputCoordinator(brain);
         var ioGatewayOwnsOutputCoordinator = ResolveIoGatewayOwnsOutputCoordinator(brain, outputCoordinatorPid);
 
@@ -551,7 +558,13 @@ public sealed partial class HiveMindActor
         return false;
     }
 
-    private static void SendOutputSinkUpdate(IContext context, Guid brainId, ShardId32 shardId, PID shardPid, PID? outputSink)
+    private static void SendOutputSinkUpdate(
+        IContext context,
+        Guid brainId,
+        ShardId32 shardId,
+        PID shardPid,
+        PID? outputSink,
+        string? outputSinkActorReference = null)
     {
         try
         {
@@ -560,7 +573,7 @@ public sealed partial class HiveMindActor
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = (uint)shardId.RegionId,
                 ShardIndex = (uint)shardId.ShardIndex,
-                OutputPid = outputSink is null ? string.Empty : PidLabel(outputSink)
+                OutputPid = outputSink is null ? string.Empty : ResolveActorReference(outputSinkActorReference, outputSink)
             });
         }
         catch (Exception ex)

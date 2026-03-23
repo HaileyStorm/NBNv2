@@ -97,7 +97,7 @@ system.Root.Send(shardPid, new ProtoControl.RegisterShard
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,
     ShardIndex = (uint)options.ShardIndex,
-    ShardPid = PidLabel(shardRemotePid),
+    ShardPid = RoutablePidReference.Encode(shardRemotePid, endpointSet.Candidates),
     NeuronStart = (uint)options.NeuronStart,
     NeuronCount = (uint)options.NeuronCount
 });

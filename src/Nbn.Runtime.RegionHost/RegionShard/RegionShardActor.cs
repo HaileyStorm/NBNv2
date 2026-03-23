@@ -133,8 +133,7 @@ public sealed class RegionShardActor : IActor
                 HandleRuntimeNeuronStateWrite(stateWrite);
                 break;
             case UpdateShardOutputSink message:
-                HandleUpdateOutputSink(message);
-                break;
+                return HandleUpdateOutputSinkAsync(message);
             case UpdateShardVisualization message:
                 HandleUpdateVisualization(message);
                 break;
@@ -165,7 +164,7 @@ public sealed class RegionShardActor : IActor
         }
     }
 
-    private void HandleUpdateOutputSink(UpdateShardOutputSink message)
+    private async Task HandleUpdateOutputSinkAsync(UpdateShardOutputSink message)
     {
         if (message.BrainId is null || !message.BrainId.TryToGuid(out var guid) || guid != _brainId)
         {
@@ -187,7 +186,8 @@ public sealed class RegionShardActor : IActor
             return;
         }
 
-        if (TryParsePid(message.OutputPid, out var pid))
+        var pid = await RoutablePidReference.ResolveAsync(message.OutputPid).ConfigureAwait(false);
+        if (pid is not null)
         {
             _outputSink = pid;
             if (LogOutput && _state.IsOutputRegion)

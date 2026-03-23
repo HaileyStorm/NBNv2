@@ -45,7 +45,8 @@ var workerPid = system.Root.SpawnNamed(
         capabilityProfileChanged: capabilityProvider.MarkDirty,
         capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
         resourceAvailability: options.ResourceAvailability,
-        observabilityDefaultHost: options.SettingsHost)),
+        observabilityDefaultHost: options.SettingsHost,
+        localEndpointCandidates: endpointSet.Candidates)),
     options.RootActorName);
 
 var settingsReporter = SettingsMonitorReporter.Start(

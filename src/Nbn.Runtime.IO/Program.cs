@@ -11,14 +11,14 @@ var remoteConfig = IoRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
-var gatewayPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new IoGatewayActor(options)),
-    options.GatewayName);
-
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
-var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.GatewayName);
+
+var gatewayPid = system.Root.SpawnNamed(
+    Props.FromProducer(() => new IoGatewayActor(options, localEndpointCandidates: endpointSet.Candidates)),
+    options.GatewayName);
+var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,

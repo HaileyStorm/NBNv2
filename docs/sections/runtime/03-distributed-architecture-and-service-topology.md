@@ -10,6 +10,8 @@ Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned 
 
 Runtime service roots bind all interfaces by default unless the operator explicitly pins `--bind-host` to a narrower interface such as `127.0.0.1`. When a service binds all interfaces and no explicit advertise host is supplied, NBN resolves a non-loopback local advertised address so peer discovery does not publish `0.0.0.0`.
 
+When a node can be reached through multiple networks (for example TailScale plus LAN/public IP), runtime control-plane messages may carry a routable actor reference instead of only a single concrete `address/id`. Those references preserve multiple endpoint candidates for the same actor so the receiving node can resolve the best route from its own network vantage point before it starts sending traffic back.
+
 NBN treats placement as a runtime concern:
 
 * RegionShards are expected to be distributed across worker processes.

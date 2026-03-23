@@ -1,4 +1,5 @@
 using Nbn.Proto.Io;
+using Nbn.Shared;
 using Proto;
 
 namespace Nbn.Runtime.IO;
@@ -77,6 +78,16 @@ public sealed partial class IoGatewayActor
 
     private static string PidLabel(PID? pid)
         => pid is null ? "unknown" : PidKey(pid);
+
+    private string BuildLocalActorReference(PID pid)
+    {
+        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
+        {
+            return RoutablePidReference.Encode(pid, _localEndpointCandidates);
+        }
+
+        return PidKey(pid);
+    }
 
     private static bool PidEquals(PID? left, PID right)
     {

@@ -66,7 +66,11 @@ public sealed partial class WorkerNodeActor
         var pid = SpawnOrResolveNamed(
             context,
             actorName,
-            Props.FromProducer(() => new BrainRootActor(brain.BrainId, hiveMindPid, autoSpawnSignalRouter: false)),
+            Props.FromProducer(() => new BrainRootActor(
+                brain.BrainId,
+                hiveMindPid,
+                autoSpawnSignalRouter: false,
+                localEndpointCandidates: _localEndpointCandidates)),
             brain.BrainRootPid);
 
         brain.BrainRootPid = pid;
@@ -375,7 +379,7 @@ public sealed partial class WorkerNodeActor
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(remoteShardPid),
+            ShardPid = BuildLocalActorReference(remoteShardPid),
             NeuronStart = (uint)Math.Max(0, neuronStart),
             NeuronCount = (uint)Math.Max(0, neuronCount)
         });
@@ -424,7 +428,7 @@ public sealed partial class WorkerNodeActor
             BrainId = brain.BrainId.ToProtoUuid(),
             OutputPid = brain.OutputCoordinatorPid is null
                 ? string.Empty
-                : PidLabel(ToRemotePid(context, brain.OutputCoordinatorPid))
+                : BuildLocalActorReference(ToRemotePid(context, brain.OutputCoordinatorPid))
         });
     }
 
@@ -452,7 +456,10 @@ public sealed partial class WorkerNodeActor
         var routes = brain.RegionShards.Values
             .OrderBy(static entry => entry.ShardId.RegionId)
             .ThenBy(static entry => entry.ShardId.ShardIndex)
-            .Select(entry => new ShardRoute(entry.ShardId.Value, entry.Pid))
+            .Select(entry => new ShardRoute(
+                entry.ShardId.Value,
+                entry.Pid,
+                BuildLocalActorReference(ToObservedRemotePid(context, entry.Pid))))
             .ToArray();
 
         var snapshot = routes.Length == 0 ? RoutingTableSnapshot.Empty : new RoutingTableSnapshot(routes);

@@ -164,6 +164,16 @@ public sealed partial class WorkerNodeActor
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+    private string BuildLocalActorReference(PID pid)
+    {
+        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
+        {
+            return RoutablePidReference.Encode(pid, _localEndpointCandidates);
+        }
+
+        return PidLabel(pid);
+    }
+
     private static string ArtifactLabel(ArtifactRef? reference)
     {
         if (!HasArtifactRef(reference))

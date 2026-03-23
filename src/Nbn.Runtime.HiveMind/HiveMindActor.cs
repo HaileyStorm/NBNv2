@@ -166,23 +166,19 @@ public sealed partial class HiveMindActor : IActor
                     }
                     break;
                 case ProtoControl.RegisterBrain message:
-                    HandleRegisterBrain(context, message);
-                    break;
+                    return HandleRegisterBrainAsync(context, message);
                 case ProtoControl.UpdateBrainSignalRouter message:
-                    HandleUpdateBrainSignalRouter(context, message);
-                    break;
+                    return HandleUpdateBrainSignalRouterAsync(context, message);
                 case ProtoControl.UnregisterBrain message:
                     HandleUnregisterBrain(context, message);
                     break;
                 case ProtoControl.RegisterShard message:
-                    HandleRegisterShard(context, message);
-                    break;
+                    return HandleRegisterShardAsync(context, message);
                 case ProtoControl.UnregisterShard message:
                     HandleUnregisterShard(context, message);
                     break;
                 case ProtoControl.RegisterOutputSink message:
-                    HandleRegisterOutputSink(context, message);
-                    break;
+                    return HandleRegisterOutputSinkAsync(context, message);
                 case ProtoControl.SetBrainVisualization message:
                     return HandleSetBrainVisualizationAsync(context, message);
                 case ProtoControl.SetBrainCostEnergy message:
@@ -236,8 +232,7 @@ public sealed partial class HiveMindActor : IActor
                     HandlePlacementUnassignmentAck(context, message);
                     break;
                 case ProtoControl.PlacementReconcileReport message:
-                    HandlePlacementReconcileReport(context, message);
-                    break;
+                    return HandlePlacementReconcileReportAsync(context, message);
                 case DispatchPlacementPlan message:
                     HandleDispatchPlacementPlan(context, message);
                     break;
@@ -488,10 +483,15 @@ public sealed partial class HiveMindActor : IActor
 
         public Guid BrainId { get; }
         public PID? BrainRootPid { get; set; }
+        public string BrainRootActorReference { get; set; } = string.Empty;
         public PID? SignalRouterPid { get; set; }
+        public string SignalRouterActorReference { get; set; } = string.Empty;
         public PID? InputCoordinatorPid { get; set; }
+        public string InputCoordinatorActorReference { get; set; } = string.Empty;
         public PID? OutputCoordinatorPid { get; set; }
+        public string OutputCoordinatorActorReference { get; set; } = string.Empty;
         public PID? OutputSinkPid { get; set; }
+        public string OutputSinkActorReference { get; set; } = string.Empty;
         public int InputWidth { get; set; }
         public int OutputWidth { get; set; }
         public uint IoRegisteredInputWidth { get; set; }
@@ -555,6 +555,7 @@ public sealed partial class HiveMindActor : IActor
         public ProtoControl.PlacementReconcileState PlacementReconcileState { get; set; }
             = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
+        public Dictionary<ShardId32, string> ShardActorReferences { get; } = new();
         public Dictionary<ShardId32, ulong> ShardRegistrationEpochs { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
     }
