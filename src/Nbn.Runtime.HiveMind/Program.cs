@@ -24,6 +24,7 @@ var hiveMindPid = system.Root.SpawnNamed(
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, HiveMindNames.HiveMind);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -33,13 +34,13 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ServiceName,
     HiveMindNames.HiveMind);
 
-var publishedHiveEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+var publishedHiveEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.HiveMindKey,
-    new ServiceEndpoint(nodeAddress, HiveMindNames.HiveMind));
+    endpointSet);
 if (!publishedHiveEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.HiveMindKey}'.");

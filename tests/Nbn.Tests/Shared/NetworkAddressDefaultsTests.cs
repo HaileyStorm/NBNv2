@@ -39,6 +39,21 @@ public sealed class NetworkAddressDefaultsTests
         Assert.False(NetworkAddressDefaults.IsLocalHost("10.9.8.8"));
     }
 
+    [Fact]
+    public void BuildEndpointSet_UsesExplicitAdvertiseHost_AsDefaultCandidate()
+    {
+        var endpointSet = NetworkAddressDefaults.BuildEndpointSet(
+            NetworkAddressDefaults.DefaultBindHost,
+            advertisedHost: "100.86.45.90",
+            port: 12050,
+            actorName: "io-gateway");
+
+        var preferred = endpointSet.GetPreferredCandidate();
+        Assert.Equal("io-gateway", endpointSet.ActorName);
+        Assert.Equal("100.86.45.90:12050", preferred.HostPort);
+        Assert.True(preferred.IsDefault);
+    }
+
     private sealed class EnvironmentVariableScope : IDisposable
     {
         private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);

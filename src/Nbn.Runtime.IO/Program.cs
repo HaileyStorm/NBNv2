@@ -18,6 +18,7 @@ var gatewayPid = system.Root.SpawnNamed(
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.GatewayName);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -27,13 +28,13 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.ServerName,
     options.GatewayName);
 
-var publishedIoEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+var publishedIoEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.IoGatewayKey,
-    new ServiceEndpoint(nodeAddress, options.GatewayName));
+    endpointSet);
 if (!publishedIoEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.IoGatewayKey}'.");

@@ -70,6 +70,33 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         }
     }
 
+    public static async Task<bool> TryPublishSetAsync(
+        ActorSystem? system,
+        string? settingsHost,
+        int settingsPort,
+        string settingsName,
+        string settingKey,
+        ServiceEndpointSet endpointSet,
+        bool publishLegacyEndpoint = true,
+        CancellationToken cancellationToken = default)
+    {
+        var client = Create(system, settingsHost, settingsPort, settingsName);
+        if (client is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            await client.PublishSetAsync(settingKey, endpointSet, publishLegacyEndpoint, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task PublishAsync(
         string settingKey,
         ServiceEndpoint endpoint,

@@ -28,6 +28,7 @@ await system.Remote().StartAsync();
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
+var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.RootActorName);
 var workerNodeId = options.WorkerNodeId ?? NodeIdentity.DeriveNodeId(nodeAddress);
 if (workerNodeId == Guid.Empty)
 {
@@ -57,13 +58,13 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.RootActorName,
     capabilitiesProvider: capabilityProvider.GetCapabilities);
 
-var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
+var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.WorkerNodeKey,
-    new ServiceEndpoint(nodeAddress, options.RootActorName));
+    endpointSet);
 if (!publishedWorkerEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.WorkerNodeKey}'.");
