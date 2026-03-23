@@ -446,7 +446,7 @@ public sealed partial class WorkerNodeActor
                 continue;
             }
 
-            var target = ResolvePeerLatencyProbePid(peer);
+            var target = await ResolvePeerLatencyProbePidAsync(peer).ConfigureAwait(false);
             if (target is null)
             {
                 continue;
@@ -795,11 +795,20 @@ public sealed partial class WorkerNodeActor
     private PID ToObservedRemotePid(IContext context, PID pid)
         => ToRemotePid(context, pid);
 
-    private static PID? ResolvePeerLatencyProbePid(PlacementPeerTarget peer)
+    private static async Task<PID?> ResolvePeerLatencyProbePidAsync(PlacementPeerTarget peer)
     {
         if (peer is null || string.IsNullOrWhiteSpace(peer.WorkerRootActorName))
         {
             return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(peer.WorkerActorReference))
+        {
+            var resolved = await RoutablePidReference.ResolveAsync(peer.WorkerActorReference).ConfigureAwait(false);
+            if (resolved is not null)
+            {
+                return resolved;
+            }
         }
 
         return new PID(peer.WorkerAddress ?? string.Empty, peer.WorkerRootActorName);

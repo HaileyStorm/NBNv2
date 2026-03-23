@@ -18,7 +18,7 @@ public sealed partial class HiveMindActor
 
         context.Send(_settingsPid, new ProtoSettings.SettingSubscribe
         {
-            SubscriberActor = PidLabel(context.Self)
+            SubscriberActor = BuildLocalActorReference(context.Self)
         });
         _debugSettingsSubscribed = true;
     }
@@ -76,6 +76,7 @@ public sealed partial class HiveMindActor
         }
 
         TryApplyWorkerEndpointSetting(message.Key, message.Value);
+        TryApplyNodeEndpointSetSetting(message.Key, message.Value);
 
         if (TryApplySystemCostEnergySetting(message.Key, message.Value))
         {
@@ -134,6 +135,7 @@ public sealed partial class HiveMindActor
         }
 
         TryApplyWorkerEndpointSetting(message.Key, message.Value);
+        TryApplyNodeEndpointSetSetting(message.Key, message.Value);
 
         if (TryApplySystemCostEnergySetting(message.Key, message.Value))
         {
@@ -221,6 +223,41 @@ public sealed partial class HiveMindActor
 
         _configuredWorkerRootActorName = nextRootActorName;
         return true;
+    }
+
+    private bool TryApplyNodeEndpointSetSetting(string? key, string? value)
+    {
+        if (!NodeEndpointSetSettings.TryParseKey(key, out var nodeId))
+        {
+            return false;
+        }
+
+        if (ServiceEndpointSettings.TryParseSetValue(value, out var endpointSet))
+        {
+            _nodeEndpointSets[nodeId] = endpointSet;
+        }
+        else
+        {
+            _nodeEndpointSets.Remove(nodeId);
+        }
+
+        if (!_workerCatalog.TryGetValue(nodeId, out var worker))
+        {
+            return true;
+        }
+
+        worker.WorkerActorReference = BuildWorkerActorReference(nodeId, worker.WorkerAddress, worker.WorkerRootActorName);
+        return true;
+    }
+
+    private string BuildLocalActorReference(PID pid)
+    {
+        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
+        {
+            return RoutablePidReference.Encode(pid, _localEndpointCandidates);
+        }
+
+        return PidLabel(pid);
     }
 
     private static bool SamePid(PID? left, PID? right)

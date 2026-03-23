@@ -17,14 +17,18 @@ system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
 var obsTargets = ObservabilityTargets.Resolve(options.SettingsHost);
-var hiveMindPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new HiveMindActor(options, obsTargets.DebugHub, obsTargets.VizHub)),
-    HiveMindNames.HiveMind);
-
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
-var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, HiveMindNames.HiveMind);
+var hiveMindPid = system.Root.SpawnNamed(
+    Props.FromProducer(() => new HiveMindActor(
+        options,
+        obsTargets.DebugHub,
+        obsTargets.VizHub,
+        localEndpointCandidates: endpointSet.Candidates)),
+    HiveMindNames.HiveMind);
+
+var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,

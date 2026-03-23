@@ -32,7 +32,7 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private void RefreshWorkerCapabilities(IContext context)
+    private async Task RefreshWorkerCapabilitiesAsync(IContext context)
     {
         try
         {
@@ -46,12 +46,15 @@ public sealed partial class HiveMindActor
                          .Where(entry =>
                              entry.IsAlive
                              && IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName)
-                             && !string.IsNullOrWhiteSpace(entry.WorkerAddress)
                              && !string.IsNullOrWhiteSpace(entry.WorkerRootActorName))
                          .OrderBy(static entry => entry.WorkerAddress, StringComparer.Ordinal)
                          .ThenBy(static entry => entry.NodeId))
             {
-                context.Send(new PID(worker.WorkerAddress, worker.WorkerRootActorName), request);
+                var target = await ResolveWorkerTargetPidAsync(context, worker).ConfigureAwait(false);
+                if (target is not null)
+                {
+                    context.Send(target, request);
+                }
             }
         }
         catch (Exception ex)
@@ -105,6 +108,7 @@ public sealed partial class HiveMindActor
             entry.WorkerAddress = worker.Address ?? string.Empty;
             entry.LogicalName = worker.LogicalName ?? string.Empty;
             entry.WorkerRootActorName = worker.RootActorName ?? string.Empty;
+            entry.WorkerActorReference = BuildWorkerActorReference(nodeId, entry.WorkerAddress, entry.WorkerRootActorName);
             entry.IsAlive = worker.IsAlive;
             entry.IsReady = worker.IsReady;
             entry.LastSeenMs = worker.LastSeenMs > 0 ? (long)worker.LastSeenMs : 0;
@@ -326,11 +330,21 @@ public sealed partial class HiveMindActor
            && (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
                || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning);
 
-    private void HandleNodeListResponse(ProtoSettings.NodeListResponse message)
+    private void HandleNodeListResponse(IContext context, ProtoSettings.NodeListResponse message)
     {
         _activeSettingsNodeAddresses.Clear();
         foreach (var node in message.Nodes)
         {
+            if (node.NodeId is not null
+                && node.NodeId.TryToGuid(out var nodeId)
+                && _settingsPid is not null)
+            {
+                context.Request(_settingsPid, new ProtoSettings.SettingGet
+                {
+                    Key = NodeEndpointSetSettings.BuildKey(nodeId)
+                });
+            }
+
             var normalizedAddress = NormalizeEndpointAddress(node.Address);
             if (string.IsNullOrWhiteSpace(normalizedAddress))
             {
@@ -478,6 +492,7 @@ public sealed partial class HiveMindActor
                 WorkerNodeId = entry.NodeId.ToProtoUuid(),
                 WorkerAddress = entry.WorkerAddress,
                 WorkerRootActorName = entry.WorkerRootActorName,
+                WorkerActorReference = entry.WorkerActorReference,
                 IsAlive = entry.IsAlive,
                 LastSeenMs = ToProtoMs(entry.LastSeenMs),
                 CpuCores = entry.CpuCores,
@@ -628,7 +643,8 @@ public sealed partial class HiveMindActor
             .Select(static entry => new PeerLatencyProbeTarget(
                 entry.NodeId,
                 entry.WorkerAddress,
-                entry.WorkerRootActorName))
+                entry.WorkerRootActorName,
+                entry.WorkerActorReference))
             .ToList();
     }
 
@@ -728,11 +744,17 @@ public sealed partial class HiveMindActor
                 {
                     WorkerNodeId = peer.NodeId.ToProtoUuid(),
                     WorkerAddress = peer.WorkerAddress,
-                    WorkerRootActorName = peer.WorkerRootActorName
+                    WorkerRootActorName = peer.WorkerRootActorName,
+                    WorkerActorReference = peer.WorkerActorReference
                 });
             }
 
-            var target = new PID(worker.WorkerAddress, worker.WorkerRootActorName);
+            var target = await ResolveWorkerActorReferenceAsync(worker.WorkerActorReference).ConfigureAwait(false);
+            if (target is null)
+            {
+                measurements.Add(new WorkerPeerLatencyMeasurement(worker.NodeId, 0f, 0));
+                continue;
+            }
             var timeoutMs = Math.Max(
                 250,
                 peerTargets.Length * (int)PlacementPeerLatencyProbeTimeout.TotalMilliseconds + 250);
@@ -808,5 +830,31 @@ public sealed partial class HiveMindActor
                || normalizedRoot.Equals("region-host", StringComparison.OrdinalIgnoreCase)
                || normalizedRoot.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase)
                || normalizedRoot.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string BuildWorkerActorReference(Guid nodeId, string workerAddress, string workerRootActorName)
+    {
+        if (string.IsNullOrWhiteSpace(workerRootActorName))
+        {
+            return string.Empty;
+        }
+
+        if (_nodeEndpointSets.TryGetValue(nodeId, out var endpointSet) && endpointSet.Candidates.Count > 0)
+        {
+            return RoutablePidReference.Encode(endpointSet.Candidates, workerRootActorName.Trim());
+        }
+
+        return string.IsNullOrWhiteSpace(workerAddress)
+            ? workerRootActorName.Trim()
+            : $"{workerAddress.Trim()}/{workerRootActorName.Trim()}";
+    }
+
+    private static async Task<PID?> ResolveWorkerActorReferenceAsync(string? workerActorReference)
+        => await RoutablePidReference.ResolveAsync(workerActorReference).ConfigureAwait(false);
+
+    private async Task<PID?> ResolveWorkerTargetPidAsync(IContext context, WorkerCatalogEntry worker)
+    {
+        var resolved = await ResolveWorkerActorReferenceAsync(worker.WorkerActorReference).ConfigureAwait(false);
+        return resolved is null ? null : ResolveSendTargetPid(context, resolved);
     }
 }

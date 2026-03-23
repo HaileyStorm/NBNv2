@@ -25,6 +25,7 @@ namespace Nbn.Runtime.HiveMind;
 public sealed partial class HiveMindActor : IActor
 {
     private readonly HiveMindOptions _options;
+    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
     private readonly BackpressureController _backpressure;
     private readonly PID? _settingsPid;
     private readonly PID? _configuredIoPid;
@@ -63,6 +64,7 @@ public sealed partial class HiveMindActor : IActor
     private readonly Dictionary<string, VisualizationSubscriberLease> _vizSubscriberLeases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<Guid, ServiceEndpointSet> _nodeEndpointSets = new();
     private ulong _vizSequence;
     private ulong _lastVizTickEmittedTickId;
     private long _nextVisualizationShardSyncMs;
@@ -114,9 +116,11 @@ public sealed partial class HiveMindActor : IActor
         PID? ioPid = null,
         PID? settingsPid = null,
         bool? debugStreamEnabled = null,
-        ProtoSeverity? debugMinSeverity = null)
+        ProtoSeverity? debugMinSeverity = null,
+        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
     {
         _options = options;
+        _localEndpointCandidates = localEndpointCandidates;
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
         _settingsPid = settingsPid ?? BuildSettingsPid(options);
@@ -210,8 +214,7 @@ public sealed partial class HiveMindActor : IActor
                     HandleSpawnBrain(context, message);
                     break;
                 case ProtoControl.RequestPlacement message:
-                    HandleRequestPlacement(context, message);
-                    break;
+                    return HandleRequestPlacementAsync(context, message);
                 case ProtoControl.GetPlacementLifecycle message:
                     if (message.BrainId is not null && message.BrainId.TryToGuid(out var placementBrainId))
                     {
@@ -252,7 +255,7 @@ public sealed partial class HiveMindActor : IActor
                     HandleWorkerInventorySnapshotResponse(context, message);
                     break;
                 case ProtoSettings.NodeListResponse message:
-                    HandleNodeListResponse(message);
+                    HandleNodeListResponse(context, message);
                     break;
                 case ProtoSettings.SettingValue message:
                     HandleSettingValue(context, message);
@@ -291,8 +294,7 @@ public sealed partial class HiveMindActor : IActor
                     RefreshWorkerInventory(context);
                     break;
                 case RefreshWorkerCapabilitiesTick:
-                    RefreshWorkerCapabilities(context);
-                    break;
+                    return RefreshWorkerCapabilitiesAsync(context);
                 case RescheduleNow message:
                     BeginReschedule(context, message);
                     break;
@@ -601,6 +603,7 @@ public sealed partial class HiveMindActor : IActor
         public string LogicalName { get; set; } = string.Empty;
         public string WorkerAddress { get; set; } = string.Empty;
         public string WorkerRootActorName { get; set; } = string.Empty;
+        public string WorkerActorReference { get; set; } = string.Empty;
         public bool IsAlive { get; set; }
         public bool IsReady { get; set; }
         public bool IsFresh { get; set; }
@@ -693,7 +696,8 @@ public sealed partial class HiveMindActor : IActor
     private readonly record struct PeerLatencyProbeTarget(
         Guid NodeId,
         string WorkerAddress,
-        string WorkerRootActorName);
+        string WorkerRootActorName,
+        string WorkerActorReference);
 
     private readonly record struct WorkerPeerLatencyMeasurement(
         Guid WorkerNodeId,

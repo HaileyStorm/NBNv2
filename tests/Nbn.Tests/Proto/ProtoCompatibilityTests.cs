@@ -309,6 +309,7 @@ public class ProtoCompatibilityTests
         AssertField(workerInventoryEntry, "gpu_vram_limit_percent", 23, FieldType.UInt32);
         AssertField(workerInventoryEntry, "process_cpu_load_percent", 24, FieldType.Float);
         AssertField(workerInventoryEntry, "process_ram_used_bytes", 25, FieldType.Fixed64);
+        AssertField(workerInventoryEntry, "worker_actor_reference", 26, FieldType.String);
 
         var workerInventory = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventory");
         AssertRepeatedField(workerInventory, "workers", 1, FieldType.Message, "nbn.control.PlacementWorkerInventoryEntry");
@@ -318,6 +319,7 @@ public class ProtoCompatibilityTests
         AssertField(peerTarget, "worker_node_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(peerTarget, "worker_address", 2, FieldType.String);
         AssertField(peerTarget, "worker_root_actor_name", 3, FieldType.String);
+        AssertField(peerTarget, "worker_actor_reference", 4, FieldType.String);
 
         var peerLatencyRequest = descriptor.MessageTypes.Single(message => message.Name == "PlacementPeerLatencyRequest");
         AssertRepeatedField(peerLatencyRequest, "peers", 1, FieldType.Message, "nbn.control.PlacementPeerTarget");

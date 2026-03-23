@@ -718,26 +718,37 @@ public sealed partial class HiveMindActor
         return true;
     }
 
-    private bool TryCreatePlacementExecution(
+    private async Task<bool> TryCreatePlacementExecutionAsync(
         IContext context,
         BrainState brain,
-        PlacementPlanner.PlacementPlanningResult plan,
-        out string failureMessage)
+        PlacementPlanner.PlacementPlanningResult plan)
     {
         var workerTargets = new Dictionary<Guid, PID>();
-        foreach (var worker in plan.EligibleWorkers)
+        var assignedWorkerIds = plan.Assignments
+            .Select(static assignment => TryGetGuid(assignment.WorkerNodeId, out var workerNodeId) ? workerNodeId : Guid.Empty)
+            .Where(static workerNodeId => workerNodeId != Guid.Empty)
+            .Distinct()
+            .ToArray();
+
+        foreach (var workerNodeId in assignedWorkerIds)
         {
-            if (string.IsNullOrWhiteSpace(worker.WorkerRootActorName))
+            if (!_workerCatalog.TryGetValue(workerNodeId, out var worker))
             {
-                failureMessage = $"Worker {worker.NodeId} has no root actor name for placement orchestration.";
                 return false;
             }
 
-            var workerPid = string.IsNullOrWhiteSpace(worker.WorkerAddress)
-                ? new PID(string.Empty, worker.WorkerRootActorName)
-                : new PID(worker.WorkerAddress, worker.WorkerRootActorName);
+            if (string.IsNullOrWhiteSpace(worker.WorkerRootActorName))
+            {
+                return false;
+            }
 
-            workerTargets[worker.NodeId] = ResolveSendTargetPid(context, workerPid);
+            var workerPid = await ResolveWorkerTargetPidAsync(context, worker).ConfigureAwait(false);
+            if (workerPid is null)
+            {
+                return false;
+            }
+
+            workerTargets[worker.NodeId] = workerPid;
         }
 
         var execution = new PlacementExecutionState(brain.PlacementEpoch, workerTargets);
@@ -753,12 +764,10 @@ public sealed partial class HiveMindActor
 
         if (execution.Assignments.Count == 0)
         {
-            failureMessage = "Placement plan produced no assignments.";
             return false;
         }
 
         brain.PlacementExecution = execution;
-        failureMessage = string.Empty;
         return true;
     }
 

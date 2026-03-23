@@ -28,15 +28,17 @@ public sealed partial class HiveMindActor
                 brainId = Guid.NewGuid();
             } while (_brains.ContainsKey(brainId) || _pendingSpawns.ContainsKey(brainId));
 
-            var placementAck = ProcessPlacementRequest(
-                context,
-                new ProtoControl.RequestPlacement
-                {
-                    BrainId = brainId.ToProtoUuid(),
-                    BaseDef = message.BrainDef.Clone(),
-                    RequestId = $"spawn:{brainId:N}",
-                    RequestedMs = (ulong)NowMs()
-                });
+            var placementAck = ProcessPlacementRequestAsync(
+                    context,
+                    new ProtoControl.RequestPlacement
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        BaseDef = message.BrainDef.Clone(),
+                        RequestId = $"spawn:{brainId:N}",
+                        RequestedMs = (ulong)NowMs()
+                    })
+                .GetAwaiter()
+                .GetResult();
 
             if (!placementAck.Accepted || !_brains.TryGetValue(brainId, out var brain))
             {
@@ -122,10 +124,10 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
-        => context.Respond(ProcessPlacementRequest(context, message));
+    private async Task HandleRequestPlacementAsync(IContext context, ProtoControl.RequestPlacement message)
+        => context.Respond(await ProcessPlacementRequestAsync(context, message).ConfigureAwait(false));
 
-    private ProtoControl.PlacementAck ProcessPlacementRequest(IContext context, ProtoControl.RequestPlacement message)
+    private async Task<ProtoControl.PlacementAck> ProcessPlacementRequestAsync(IContext context, ProtoControl.RequestPlacement message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
@@ -243,8 +245,9 @@ public sealed partial class HiveMindActor
             };
         }
 
-        if (!TryCreatePlacementExecution(context, brain, plannedPlacement, out var executionFailure))
+        if (!await TryCreatePlacementExecutionAsync(context, brain, plannedPlacement).ConfigureAwait(false))
         {
+            var executionFailure = "Unable to resolve worker placement targets.";
             if (previousExecution is not null)
             {
                 RestorePlacementState(brain, previousPlacementState);
