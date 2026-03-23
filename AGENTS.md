@@ -111,6 +111,9 @@ Keep docs concise and high-value:
 
 - `dotnet build -c Release --disable-build-servers`
 - `dotnet test -c Release --disable-build-servers`
+- Use filtered `dotnet test --filter ...` runs during development when they materially shorten iteration.
+- Before completing a turn, run the full suite with `dotnet test -c Release --disable-build-servers`.
+- Do not run a filtered set as a gate immediately before the full-suite run. If the next step is the full suite, run the full suite directly.
 - If binaries are locked:
   - `dotnet build -c Release --disable-build-servers --artifacts-path .artifacts-temp`
   - `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
