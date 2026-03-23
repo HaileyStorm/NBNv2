@@ -40,4 +40,46 @@ public sealed class ServiceEndpointResolverTests
         Assert.Equal("198.51.100.10:12020", resolved.HostPort);
         Assert.Equal("HiveMind", resolved.ActorName);
     }
+
+    [Fact]
+    public async Task ResolveAsync_PrefersLocalLanCandidate_OverReachablePublicDefault_WhenTargetLooksLocal()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "192.168.68.140"));
+
+        var endpointSet = new ServiceEndpointSet(
+            "VisualizationHub",
+            [
+                new ServiceEndpointCandidate("100.123.130.93:12060", "VisualizationHub", ServiceEndpointCandidateKind.Public, Priority: 1000, IsDefault: true),
+                new ServiceEndpointCandidate("192.168.68.140:12060", "VisualizationHub", ServiceEndpointCandidateKind.Lan, Priority: 600)
+            ]);
+
+        var resolved = await ServiceEndpointResolver.ResolveAsync(
+            endpointSet,
+            (_, _) => Task.FromResult(true));
+
+        Assert.Equal("192.168.68.140:12060", resolved.HostPort);
+        Assert.Equal("VisualizationHub", resolved.ActorName);
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);
+
+        public EnvironmentVariableScope(params (string Key, string? Value)[] values)
+        {
+            foreach (var (key, value) in values)
+            {
+                _originals[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (key, value) in _originals)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+    }
 }
