@@ -430,7 +430,14 @@ public sealed partial class HiveMindActor
                 return;
             }
 
-            if (!SenderMatchesPid(context.Sender, plannedWorkerPid))
+            var senderMatchesPlannedWorker = SenderMatchesPid(context.Sender, plannedWorkerPid);
+            if (!senderMatchesPlannedWorker
+                && _workerCatalog.TryGetValue(plannedWorkerId, out var plannedWorkerEntry))
+            {
+                senderMatchesPlannedWorker = SenderMatchesActorReference(context.Sender, plannedWorkerEntry.WorkerActorReference);
+            }
+
+            if (!senderMatchesPlannedWorker)
             {
                 var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
                 EmitDebug(

@@ -161,6 +161,40 @@ public sealed partial class HiveMindActor
                || PidHasEquivalentEndpoint(sender, expected);
     }
 
+    private static bool SenderMatchesActorReference(PID? sender, string? actorReference)
+    {
+        if (sender is null || string.IsNullOrWhiteSpace(actorReference))
+        {
+            return false;
+        }
+
+        if (RoutablePidReference.TryDecode(actorReference, out var endpointSet))
+        {
+            foreach (var candidate in endpointSet.Candidates)
+            {
+                if (SenderMatchesPid(sender, candidate.ToEndpoint().ToPid()))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return RoutablePidReference.TryParsePlainPid(actorReference, out var parsed)
+               && SenderMatchesPid(sender, parsed);
+    }
+
+    private static bool SenderMatchesActorReferenceOrPid(PID? sender, string? actorReference, PID? pid)
+    {
+        if (pid is not null && SenderMatchesPid(sender, pid))
+        {
+            return true;
+        }
+
+        return SenderMatchesActorReference(sender, actorReference);
+    }
+
     private static bool PidHasEquivalentEndpoint(PID sender, PID expected)
     {
         if (!string.Equals(sender.Id ?? string.Empty, expected.Id ?? string.Empty, StringComparison.Ordinal))

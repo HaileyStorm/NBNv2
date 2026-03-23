@@ -396,7 +396,14 @@ public sealed partial class HiveMindActor
         var brainRootPid = await ResolvePidAsync(message.BrainRootPid).ConfigureAwait(false);
         var routerPid = await ResolvePidAsync(message.SignalRouterPid).ConfigureAwait(false);
 
-        if (!IsRegisterBrainAuthorized(context, brainId, brainRootPid, routerPid, out var reason))
+        if (!IsRegisterBrainAuthorized(
+                context,
+                brainId,
+                brainRootPid,
+                message.BrainRootPid,
+                routerPid,
+                message.SignalRouterPid,
+                out var reason))
         {
             EmitControlPlaneMutationIgnored(context, "control.register_brain", brainId, reason);
             return;
@@ -425,7 +432,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (!IsUpdateBrainSignalRouterAuthorized(context, brainId, routerPid, out var reason))
+        if (!IsUpdateBrainSignalRouterAuthorized(context, brainId, routerPid, message.SignalRouterPid, out var reason))
         {
             EmitControlPlaneMutationIgnored(context, "control.update_brain_signal_router", brainId, reason);
             return;
@@ -443,7 +450,12 @@ public sealed partial class HiveMindActor
 
         if (context.Sender is not null)
         {
-            if (!IsValidControllerBootstrapSender(context, brain.BrainRootPid, brain.SignalRouterPid))
+            if (!IsValidControllerBootstrapSender(
+                    context,
+                    brain.BrainRootPid,
+                    brain.BrainRootActorReference,
+                    brain.SignalRouterPid,
+                    brain.SignalRouterActorReference))
             {
                 EmitControlPlaneMutationIgnored(context, "control.unregister_brain", brainId, "sender_mismatch");
                 return;
@@ -561,7 +573,9 @@ public sealed partial class HiveMindActor
         IContext context,
         Guid brainId,
         PID? brainRootPid,
+        string? brainRootActorReference,
         PID? routerPid,
+        string? routerActorReference,
         out string reason)
     {
         if (_brains.TryGetValue(brainId, out var brain) && HasTrustedController(brain))
@@ -584,7 +598,12 @@ public sealed partial class HiveMindActor
             return false;
         }
 
-        if (IsValidControllerBootstrapSender(context, brainRootPid, routerPid))
+        if (IsValidControllerBootstrapSender(
+                context,
+                brainRootPid,
+                brainRootActorReference,
+                routerPid,
+                routerActorReference))
         {
             reason = string.Empty;
             return true;
@@ -598,6 +617,7 @@ public sealed partial class HiveMindActor
         IContext context,
         Guid brainId,
         PID routerPid,
+        string? routerActorReference,
         out string reason)
     {
         if (_brains.TryGetValue(brainId, out var brain) && HasTrustedController(brain))
@@ -620,7 +640,7 @@ public sealed partial class HiveMindActor
             return false;
         }
 
-        if (IsValidControllerBootstrapSender(context, null, routerPid))
+        if (IsValidControllerBootstrapSender(context, null, null, routerPid, routerActorReference))
         {
             reason = string.Empty;
             return true;
@@ -759,8 +779,8 @@ public sealed partial class HiveMindActor
             return false;
         }
 
-        return (brain.BrainRootPid is not null && SenderMatchesPid(sender, brain.BrainRootPid))
-               || (brain.SignalRouterPid is not null && SenderMatchesPid(sender, brain.SignalRouterPid));
+        return SenderMatchesActorReferenceOrPid(sender, brain.BrainRootActorReference, brain.BrainRootPid)
+               || SenderMatchesActorReferenceOrPid(sender, brain.SignalRouterActorReference, brain.SignalRouterPid);
     }
 
     private bool IsPlacementAuthorizedWorkerSender(PID? sender, BrainState brain)
@@ -772,9 +792,15 @@ public sealed partial class HiveMindActor
 
         if (brain.PlacementExecution is not null)
         {
-            foreach (var workerPid in brain.PlacementExecution.WorkerTargets.Values)
+            foreach (var entry in brain.PlacementExecution.WorkerTargets)
             {
-                if (SenderMatchesPid(sender, workerPid))
+                if (SenderMatchesPid(sender, entry.Value))
+                {
+                    return true;
+                }
+
+                if (_workerCatalog.TryGetValue(entry.Key, out var plannedWorker)
+                    && SenderMatchesActorReference(sender, plannedWorker.WorkerActorReference))
                 {
                     return true;
                 }
@@ -791,7 +817,8 @@ public sealed partial class HiveMindActor
             var workerPid = string.IsNullOrWhiteSpace(worker.WorkerAddress)
                 ? new PID { Id = worker.WorkerRootActorName }
                 : new PID(worker.WorkerAddress, worker.WorkerRootActorName);
-            if (SenderMatchesPid(sender, workerPid))
+            if (SenderMatchesPid(sender, workerPid)
+                || SenderMatchesActorReference(sender, worker.WorkerActorReference))
             {
                 return true;
             }
@@ -809,16 +836,18 @@ public sealed partial class HiveMindActor
     private static bool IsValidControllerBootstrapSender(
         IContext context,
         PID? brainRootPid,
-        PID? routerPid)
+        string? brainRootActorReference,
+        PID? routerPid,
+        string? routerActorReference)
     {
         var normalizedBrainRoot = NormalizePid(context, brainRootPid);
-        if (normalizedBrainRoot is not null && SenderMatchesPid(context.Sender, normalizedBrainRoot))
+        if (SenderMatchesActorReferenceOrPid(context.Sender, brainRootActorReference, normalizedBrainRoot))
         {
             return true;
         }
 
         var normalizedRouter = NormalizePid(context, routerPid);
-        return normalizedRouter is not null && SenderMatchesPid(context.Sender, normalizedRouter);
+        return SenderMatchesActorReferenceOrPid(context.Sender, routerActorReference, normalizedRouter);
     }
 
     private void EmitControlPlaneMutationIgnored(
