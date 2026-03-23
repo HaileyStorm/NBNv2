@@ -80,6 +80,32 @@ public sealed class ServiceEndpointDiscoveryClientTests
     }
 
     [Fact]
+    public async Task ResolveKnownAsync_PrefersReachableEndpointSetCandidate_OverLegacyEndpoint()
+    {
+        await using var harness = await SettingsMonitorHarness.CreateAsync();
+        var client = new ServiceEndpointDiscoveryClient(
+            harness.System,
+            harness.SettingsPid,
+            candidateProbeAsync: (candidate, _) => Task.FromResult(candidate.HostPort.StartsWith("100.86.45.90", StringComparison.Ordinal)));
+
+        await client.PublishAsync(ServiceEndpointSettings.IoGatewayKey, new ServiceEndpoint("198.51.100.10:12050", "io-gateway"));
+        await client.PublishSetAsync(
+            ServiceEndpointSettings.IoGatewayKey,
+            new ServiceEndpointSet(
+                "io-gateway",
+                [
+                    new ServiceEndpointCandidate("198.51.100.10:12050", "io-gateway", ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
+                    new ServiceEndpointCandidate("100.86.45.90:12050", "io-gateway", ServiceEndpointCandidateKind.Tailnet, Priority: 90)
+                ]),
+            publishLegacyEndpoint: false);
+
+        var resolved = await client.ResolveKnownAsync();
+
+        Assert.Equal("100.86.45.90:12050", resolved[ServiceEndpointSettings.IoGatewayKey].Endpoint.HostPort);
+        Assert.Equal("io-gateway", resolved[ServiceEndpointSettings.IoGatewayKey].Endpoint.ActorName);
+    }
+
+    [Fact]
     public async Task SubscribeAsync_EmitsEndpointChangedWhenEndpointIsUpdated()
     {
         await using var harness = await SettingsMonitorHarness.CreateAsync();
@@ -255,6 +281,79 @@ public sealed class ServiceEndpointDiscoveryClientTests
             var changed = await changeTask.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(key, changed.Key);
             Assert.Equal(updatedEndpoint, changed.Endpoint);
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await subscriberSystem.Remote().ShutdownAsync(true);
+            await subscriberSystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_RemoteSettingsMonitor_DeliversEndpointChangedUpdates_FromEndpointSet()
+    {
+        using var databaseScope = new TempDatabaseScope();
+        var store = new SettingsMonitorStore(databaseScope.DatabasePath);
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var subscriberPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        var settingsConfig = RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
+        settingsSystem.WithRemote(settingsConfig);
+        await settingsSystem.Remote().StartAsync();
+        var settingsPid = settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store)),
+            "SettingsMonitor");
+
+        var subscriberSystem = new ActorSystem();
+        var subscriberConfig = RemoteConfig.BindToLocalhost(subscriberPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
+        subscriberSystem.WithRemote(subscriberConfig);
+        await subscriberSystem.Remote().StartAsync();
+
+        var client = new ServiceEndpointDiscoveryClient(
+            subscriberSystem,
+            new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"),
+            candidateProbeAsync: (candidate, _) => Task.FromResult(candidate.HostPort.StartsWith("100.86.45.90", StringComparison.Ordinal)));
+
+        try
+        {
+            var key = ServiceEndpointSettings.IoGatewayKey;
+            var changeTask = new TaskCompletionSource<ServiceEndpointRegistration>(TaskCreationOptions.RunContinuationsAsynchronously);
+            client.EndpointChanged += registration =>
+            {
+                if (registration.Key == key && registration.Endpoint.HostPort == "100.86.45.90:12050")
+                {
+                    changeTask.TrySetResult(registration);
+                }
+            };
+
+            await client.SubscribeAsync([key]);
+            await Task.Delay(50);
+
+            await settingsSystem.Root.RequestAsync<ProtoSettings.SettingValue>(
+                settingsPid,
+                new ProtoSettings.SettingSet
+                {
+                    Key = ServiceEndpointSettings.ToEndpointSetKey(key),
+                    Value = ServiceEndpointSettings.EncodeSetValue(
+                        "io-gateway",
+                        [
+                            new ServiceEndpointCandidate("198.51.100.10:12050", "io-gateway", ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
+                            new ServiceEndpointCandidate("100.86.45.90:12050", "io-gateway", ServiceEndpointCandidateKind.Tailnet, Priority: 90)
+                        ])
+                });
+
+            var changed = await changeTask.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(key, changed.Key);
+            Assert.Equal("100.86.45.90:12050", changed.Endpoint.HostPort);
         }
         finally
         {
