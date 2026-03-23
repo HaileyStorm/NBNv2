@@ -122,4 +122,65 @@ public sealed class ConnectionViewModelTests
 
         Assert.Equal("Connect HiveMind first.", vm.BuildSpawnReadinessGuidance());
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("127.0.0.1")]
+    [InlineData("localhost")]
+    [InlineData("0.0.0.0")]
+    [InlineData("::")]
+    public void ResolveExplicitLocalAdvertiseHost_ReturnsNull_ForBlankLoopbackOrWildcardHosts(string host)
+    {
+        var viewModel = new ConnectionViewModel
+        {
+            LocalAdvertiseHost = host
+        };
+
+        Assert.Null(viewModel.ResolveExplicitLocalAdvertiseHost());
+    }
+
+    [Fact]
+    public void ResolveExplicitLocalAdvertiseHost_ReturnsConfiguredHost_WhenExplicitHostProvided()
+    {
+        var viewModel = new ConnectionViewModel
+        {
+            LocalAdvertiseHost = "100.86.45.90"
+        };
+
+        Assert.Equal("100.86.45.90", viewModel.ResolveExplicitLocalAdvertiseHost());
+    }
+
+    [Fact]
+    public void Constructor_SeedsLocalAdvertiseHost_FromEnvironmentOverride()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "198.51.100.17"));
+
+        var viewModel = new ConnectionViewModel();
+
+        Assert.Equal("198.51.100.17", viewModel.LocalAdvertiseHost);
+        Assert.Equal("198.51.100.17", viewModel.ResolveExplicitLocalAdvertiseHost());
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly Dictionary<string, string?> _originals = new(StringComparer.Ordinal);
+
+        public EnvironmentVariableScope(params (string Key, string? Value)[] values)
+        {
+            foreach (var (key, value) in values)
+            {
+                _originals[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var (key, value) in _originals)
+            {
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+    }
 }

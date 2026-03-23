@@ -82,6 +82,7 @@ public sealed partial class ReproPanelViewModel
                 mediaType,
                 artifactRoot,
                 _connections?.LocalBindHost ?? NetworkAddressDefaults.DefaultBindHost,
+                advertisedHost: _connections?.ResolveExplicitLocalAdvertiseHost(),
                 label: "Workbench Reproduction",
                 preferredPort: _connections?.ResolveReachableArtifactPort())
             .ConfigureAwait(false);

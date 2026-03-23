@@ -713,6 +713,7 @@ public sealed partial class DesignerPanelViewModel
                     "application/x-nbn",
                     artifactRoot,
                     _connections.LocalBindHost,
+                    advertisedHost: _connections.ResolveExplicitLocalAdvertiseHost(),
                     label: "Workbench Designer",
                     preferredPort: _connections.ResolveReachableArtifactPort())
                 .ConfigureAwait(false);
@@ -931,6 +932,7 @@ public sealed partial class DesignerPanelViewModel
                 artifactRef,
                 BuildDefaultArtifactRoot(),
                 _connections.LocalBindHost,
+                advertisedHost: _connections.ResolveExplicitLocalAdvertiseHost(),
                 label: label,
                 preferredPort: _connections.ResolveReachableArtifactPort())
             .ConfigureAwait(false);

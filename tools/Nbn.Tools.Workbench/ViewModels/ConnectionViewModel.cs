@@ -7,6 +7,7 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class ConnectionViewModel : ViewModelBase
 {
     private string _localBindHost = NetworkAddressDefaults.DefaultBindHost;
+    private string _localAdvertiseHost = Environment.GetEnvironmentVariable("NBN_DEFAULT_ADVERTISE_HOST") ?? string.Empty;
     private string _localPort = "12090";
     private string _ioHost = "127.0.0.1";
     private string _ioPort = "12050";
@@ -76,6 +77,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _localPort, value);
     }
 
+    public string LocalAdvertiseHost
+    {
+        get => _localAdvertiseHost;
+        set => SetProperty(ref _localAdvertiseHost, value);
+    }
+
     public int ResolveReachableArtifactPort()
     {
         if (int.TryParse(_localPort, out var localPort)
@@ -86,6 +93,23 @@ public sealed class ConnectionViewModel : ViewModelBase
         }
 
         return WorkbenchArtifactPublisher.DefaultReachableArtifactPort;
+    }
+
+    public string? ResolveExplicitLocalAdvertiseHost()
+    {
+        if (string.IsNullOrWhiteSpace(_localAdvertiseHost))
+        {
+            return null;
+        }
+
+        var trimmed = _localAdvertiseHost.Trim();
+        if (NetworkAddressDefaults.IsLoopbackHost(trimmed)
+            || NetworkAddressDefaults.IsAllInterfaces(trimmed))
+        {
+            return null;
+        }
+
+        return trimmed;
     }
 
     public string IoHost

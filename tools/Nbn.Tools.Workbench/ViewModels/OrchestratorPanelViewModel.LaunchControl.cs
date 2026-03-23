@@ -41,7 +41,7 @@ public sealed partial class OrchestratorPanelViewModel
             return;
         }
 
-        var networkArgs = BuildLocalServiceNetworkArgs(Connections.SettingsHost, port);
+        var networkArgs = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.SettingsHost, port);
         var args = includeDbArg
             ? $"--db \"{resolvedDbPath}\" {networkArgs}"
             : networkArgs;
@@ -70,7 +70,7 @@ public sealed partial class OrchestratorPanelViewModel
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.HiveMind");
         var settingsDbPath = ResolveSettingsDbPath();
-        var args = $"{BuildLocalServiceNetworkArgs(Connections.HiveMindHost, port)} --settings-db \"{settingsDbPath}\""
+        var args = $"{BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.HiveMindHost, port)} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.HiveMind", args, "HiveMind").ConfigureAwait(false);
@@ -98,7 +98,7 @@ public sealed partial class OrchestratorPanelViewModel
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.IO");
-        var args = BuildLocalServiceNetworkArgs(Connections.IoHost, port)
+        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.IoHost, port)
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.IO", args, "IoGateway").ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
@@ -125,7 +125,7 @@ public sealed partial class OrchestratorPanelViewModel
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Reproduction");
-        var args = BuildLocalServiceNetworkArgs(Connections.ReproHost, reproPort)
+        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.ReproHost, reproPort)
                  + $" --manager-name {Connections.ReproManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Reproduction", args, "Reproduction").ConfigureAwait(false);
@@ -159,7 +159,7 @@ public sealed partial class OrchestratorPanelViewModel
             return;
         }
 
-        var args = BuildLocalServiceNetworkArgs(Connections.SpeciationHost, speciationPort)
+        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.SpeciationHost, speciationPort)
                  + $" --manager-name {Connections.SpeciationManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Speciation", args, "Speciation").ConfigureAwait(false);
@@ -219,7 +219,7 @@ public sealed partial class OrchestratorPanelViewModel
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
-        var args = BuildLocalServiceNetworkArgs(Connections.WorkerHost, workerPort)
+        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.WorkerHost, workerPort)
                  + $" --logical-name {Connections.WorkerLogicalName}"
                  + $" --root-name {Connections.WorkerRootName}"
                  + $" --cpu-pct {workerCpuLimitPercent}"
@@ -254,7 +254,7 @@ public sealed partial class OrchestratorPanelViewModel
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Observability");
-        var args = BuildLocalServiceNetworkArgs(Connections.ObsHost, port)
+        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.ObsHost, port)
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
         var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Observability", args, "Observability").ConfigureAwait(false);
@@ -273,16 +273,34 @@ public sealed partial class OrchestratorPanelViewModel
         await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
-    private static string BuildLocalServiceNetworkArgs(string? configuredHost, int port)
+    private static string BuildLocalServiceNetworkArgs(string? explicitAdvertiseHost, string? configuredHost, int port)
     {
         var args = $"--bind-host {NetworkAddressDefaults.DefaultBindHost} --port {port}";
-        var advertisedHost = ResolveLocalServiceAdvertiseHost(configuredHost);
+        var advertisedHost = ResolveExplicitAdvertiseHost(explicitAdvertiseHost)
+                             ?? ResolveLocalServiceAdvertiseHost(configuredHost);
         if (!string.IsNullOrWhiteSpace(advertisedHost))
         {
             args += $" --advertise-host {advertisedHost}";
         }
 
         return args;
+    }
+
+    private static string? ResolveExplicitAdvertiseHost(string? explicitAdvertiseHost)
+    {
+        if (string.IsNullOrWhiteSpace(explicitAdvertiseHost))
+        {
+            return null;
+        }
+
+        var trimmed = explicitAdvertiseHost.Trim();
+        if (NetworkAddressDefaults.IsLoopbackHost(trimmed)
+            || NetworkAddressDefaults.IsAllInterfaces(trimmed))
+        {
+            return null;
+        }
+
+        return trimmed;
     }
 
     private static string? ResolveLocalServiceAdvertiseHost(string? configuredHost)

@@ -151,7 +151,10 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Interlocked.Increment(ref _tickCadenceRefreshVersion);
             var token = _connectCts.Token;
 
-            await _client.EnsureStartedAsync(Connections.LocalBindHost, localPort);
+            await _client.EnsureStartedAsync(
+                Connections.LocalBindHost,
+                localPort,
+                Connections.ResolveExplicitLocalAdvertiseHost());
             ReceiverLabel = _client.ReceiverLabel;
 
             Connections.SettingsStatus = "Connecting...";

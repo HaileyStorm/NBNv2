@@ -777,6 +777,12 @@ public sealed partial class SpeciationPanelViewModel
 
     private string? ResolveEvolutionSimAdvertiseHost()
     {
+        var explicitHost = Connections.ResolveExplicitLocalAdvertiseHost();
+        if (!string.IsNullOrWhiteSpace(explicitHost))
+        {
+            return explicitHost;
+        }
+
         if (TryResolveExplicitLocalAdvertiseHost(Connections.LocalBindHost, out var configuredLocalHost))
         {
             return configuredLocalHost;

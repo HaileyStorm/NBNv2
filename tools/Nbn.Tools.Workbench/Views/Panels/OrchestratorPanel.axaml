@@ -15,6 +15,8 @@
               <TextBox Grid.Column="1" Text="{Binding Connections.SettingsPortText}" Width="90" />
               <TextBox Grid.Column="2" Text="{Binding Connections.SettingsName}" Width="140" />
             </Grid>
+            <TextBlock Text="Optional local advertise host. Leave blank to keep current auto-selection; set this when peers should reach this machine via Tailscale, a LAN IP, or a forwarded public IP." Classes="muted" TextWrapping="Wrap" />
+            <TextBox Text="{Binding Connections.LocalAdvertiseHost}" Width="220" />
           </StackPanel>
         </Border>
 
