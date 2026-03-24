@@ -172,15 +172,14 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task StartIoCommand_UsesConfiguredNonLoopbackHostAsAdvertiseHost()
+    public async Task StartIoCommand_DoesNotReuseConfiguredServiceHostAsImplicitAdvertiseHost()
     {
-        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "10.20.30.41"));
-
         var connections = new ConnectionViewModel
         {
             IoHost = "10.20.30.41",
             IoPortText = "12050",
-            SettingsPortText = "12010"
+            SettingsPortText = "12010",
+            LocalAdvertiseHost = string.Empty
         };
 
         var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). io");
@@ -191,7 +190,29 @@ public class OrchestratorPanelViewModelTests
         await WaitForAsync(() => string.Equals(vm.IoLaunchStatus, "Build failed (code 1). io", StringComparison.Ordinal));
 
         Assert.Contains("--bind-host 0.0.0.0 --port 12050", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
-        Assert.Contains("--advertise-host 10.20.30.41", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--advertise-host", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartIoCommand_UsesExplicitLocalAdvertiseHost_WhenProvided()
+    {
+        var connections = new ConnectionViewModel
+        {
+            IoHost = "10.20.30.41",
+            IoPortText = "12050",
+            SettingsPortText = "12010",
+            LocalAdvertiseHost = "100.64.0.41"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). io");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartIoCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.IoLaunchStatus, "Build failed (code 1). io", StringComparison.Ordinal));
+
+        Assert.Contains("--bind-host 0.0.0.0 --port 12050", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--advertise-host 100.64.0.41", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
     }
 
     [Fact]

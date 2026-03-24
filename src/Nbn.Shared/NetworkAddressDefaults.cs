@@ -216,6 +216,17 @@ public static class NetworkAddressDefaults
             return true;
         }
 
+        var preferredCandidate = EnumerateEndpointHostCandidates(includeTunnelInterfaces: true)
+            .OrderBy(candidate => DefaultAdvertisedHostRank(candidate.Kind))
+            .ThenBy(candidate => candidate.Host.Contains(':', StringComparison.Ordinal) ? 1 : 0)
+            .ThenByDescending(candidate => candidate.Priority)
+            .FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(preferredCandidate.Host))
+        {
+            host = preferredCandidate.Host;
+            return true;
+        }
+
         foreach (var address in EnumerateCandidateAddresses())
         {
             if (address.AddressFamily == AddressFamily.InterNetwork
@@ -451,6 +462,11 @@ public static class NetworkAddressDefaults
             return ServiceEndpointCandidateKind.Custom;
         }
 
+        if (IsTailnetAddress(address))
+        {
+            return ServiceEndpointCandidateKind.Tailnet;
+        }
+
         return IsPrivateAddress(address)
             ? ServiceEndpointCandidateKind.Lan
             : ServiceEndpointCandidateKind.Public;
@@ -489,6 +505,36 @@ public static class NetworkAddressDefaults
         }
 
         return false;
+    }
+
+    private static bool IsTailnetAddress(IPAddress address)
+    {
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            return bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127;
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            var normalized = address.ToString();
+            return normalized.StartsWith("fd7a:115c:a1e0:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static int DefaultAdvertisedHostRank(ServiceEndpointCandidateKind kind)
+    {
+        return kind switch
+        {
+            ServiceEndpointCandidateKind.Lan => 0,
+            ServiceEndpointCandidateKind.Custom => 1,
+            ServiceEndpointCandidateKind.Tailnet => 2,
+            ServiceEndpointCandidateKind.Public => 3,
+            ServiceEndpointCandidateKind.Loopback => 4,
+            _ => 5
+        };
     }
 
     private readonly record struct EndpointHostCandidate(

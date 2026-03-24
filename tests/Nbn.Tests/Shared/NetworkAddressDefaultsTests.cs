@@ -52,6 +52,7 @@ public sealed class NetworkAddressDefaultsTests
         Assert.Equal("io-gateway", endpointSet.ActorName);
         Assert.Equal("100.86.45.90:12050", preferred.HostPort);
         Assert.True(preferred.IsDefault);
+        Assert.Equal(ServiceEndpointCandidateKind.Tailnet, preferred.Kind);
     }
 
     private sealed class EnvironmentVariableScope : IDisposable

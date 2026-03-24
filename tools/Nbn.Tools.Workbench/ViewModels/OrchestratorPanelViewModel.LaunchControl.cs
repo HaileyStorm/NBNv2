@@ -275,9 +275,9 @@ public sealed partial class OrchestratorPanelViewModel
 
     private static string BuildLocalServiceNetworkArgs(string? explicitAdvertiseHost, string? configuredHost, int port)
     {
+        _ = configuredHost;
         var args = $"--bind-host {NetworkAddressDefaults.DefaultBindHost} --port {port}";
-        var advertisedHost = ResolveExplicitAdvertiseHost(explicitAdvertiseHost)
-                             ?? ResolveLocalServiceAdvertiseHost(configuredHost);
+        var advertisedHost = ResolveExplicitAdvertiseHost(explicitAdvertiseHost);
         if (!string.IsNullOrWhiteSpace(advertisedHost))
         {
             args += $" --advertise-host {advertisedHost}";
@@ -302,24 +302,6 @@ public sealed partial class OrchestratorPanelViewModel
 
         return trimmed;
     }
-
-    private static string? ResolveLocalServiceAdvertiseHost(string? configuredHost)
-    {
-        if (string.IsNullOrWhiteSpace(configuredHost))
-        {
-            return null;
-        }
-
-        var trimmed = configuredHost.Trim();
-        if (NetworkAddressDefaults.IsLoopbackHost(trimmed)
-            || NetworkAddressDefaults.IsAllInterfaces(trimmed))
-        {
-            return null;
-        }
-
-        return NetworkAddressDefaults.IsLocalHost(trimmed) ? trimmed : null;
-    }
-
     private async Task<string> AppendFirewallAttentionAsync(string serviceLabel, int port, string launchMessage)
     {
         var firewall = await _firewallManager
