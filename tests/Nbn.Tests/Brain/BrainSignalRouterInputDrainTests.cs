@@ -57,6 +57,48 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task SetRoutingTable_Preserves_LocalShardPid_When_RoutableReference_Targets_Same_Local_Shards()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var shardId = ShardId32.From(5, 0);
+
+        var shardPid = root.SpawnNamed(Props.FromProducer(() => new IgnoreActor()), "brain-r5-s0");
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardId.Value, shardPid)
+        })));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var initial = await root.RequestAsync<RoutingTableSnapshot>(router, new GetRoutingTable()).WaitAsync(timeoutCts.Token);
+        var initialRoute = Assert.Single(initial.Routes);
+        Assert.Equal(shardPid.Id, initialRoute.Pid.Id);
+        Assert.Equal(shardPid.Address ?? string.Empty, initialRoute.Pid.Address ?? string.Empty);
+
+        var actorReference = RoutablePidReference.Encode(
+            new[]
+            {
+                new ServiceEndpointCandidate("127.0.0.1:12041", "brain-r5-s0", ServiceEndpointCandidateKind.Loopback, 1000, "loopback", true),
+                new ServiceEndpointCandidate("100.123.130.93:12041", "brain-r5-s0", ServiceEndpointCandidateKind.Tailnet, 650, "tailnet")
+            },
+            "brain-r5-s0");
+
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardId.Value, new PID("127.0.0.1:12041", "brain-r5-s0"), actorReference)
+        })));
+
+        var updated = await root.RequestAsync<RoutingTableSnapshot>(router, new GetRoutingTable()).WaitAsync(timeoutCts.Token);
+        var updatedRoute = Assert.Single(updated.Routes);
+        Assert.Equal(shardPid.Id, updatedRoute.Pid.Id);
+        Assert.Equal(shardPid.Address ?? string.Empty, updatedRoute.Pid.Address ?? string.Empty);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task TickDeliver_MissingInputDrain_DoesNotWedge_SubsequentTicks()
     {
         var system = new ActorSystem();

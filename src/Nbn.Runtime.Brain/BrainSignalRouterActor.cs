@@ -88,26 +88,40 @@ public sealed class BrainSignalRouterActor : IActor
         var resolvedRoutes = new List<ShardRoute>(_routingSnapshot.Routes.Count);
         foreach (var route in _routingSnapshot.Routes)
         {
-            var resolvedPid = route.Pid;
-            if (!string.IsNullOrWhiteSpace(route.ActorReference))
-            {
-                var resolved = await RoutablePidReference.ResolveAsync(route.ActorReference).ConfigureAwait(false);
-                if (resolved is not null)
-                {
-                    resolvedPid = resolved;
-                }
-            }
-
-            if (resolvedPid is null)
+            var resolvedRoute = await ResolveRoutingRouteAsync(route).ConfigureAwait(false);
+            if (resolvedRoute is null)
             {
                 continue;
             }
 
-            resolvedRoutes.Add(route with { Pid = resolvedPid });
+            resolvedRoutes.Add(resolvedRoute);
         }
 
         _routingSnapshot = new RoutingTableSnapshot(resolvedRoutes);
         _routingTable.Replace(_routingSnapshot.Routes);
+    }
+
+    private async Task<ShardRoute?> ResolveRoutingRouteAsync(ShardRoute route)
+    {
+        var preferredLocalPid = TryGetPreferredLocalRoutePid(route);
+        if (preferredLocalPid is not null)
+        {
+            return route with { Pid = preferredLocalPid };
+        }
+
+        var resolvedPid = route.Pid;
+        if (!string.IsNullOrWhiteSpace(route.ActorReference))
+        {
+            var resolved = await RoutablePidReference.ResolveAsync(route.ActorReference).ConfigureAwait(false);
+            if (resolved is not null)
+            {
+                resolvedPid = resolved;
+            }
+        }
+
+        return resolvedPid is null
+            ? null
+            : route with { Pid = resolvedPid };
     }
 
     private void ApplyRoutingTable(RoutingTableSnapshot? snapshot)
@@ -639,6 +653,72 @@ public sealed class BrainSignalRouterActor : IActor
 
         route = candidate;
         return true;
+    }
+
+    private PID? TryGetPreferredLocalRoutePid(ShardRoute route)
+    {
+        if (IsLocalPid(route.Pid))
+        {
+            return route.Pid;
+        }
+
+        if (!_routingTable.TryGetRoute(route.ShardId, out var existingRoute)
+            || existingRoute is null
+            || !IsLocalPid(existingRoute.Pid))
+        {
+            return null;
+        }
+
+        return RouteTargetsSameLocalActor(route, existingRoute.Pid)
+            ? existingRoute.Pid
+            : null;
+    }
+
+    private static bool IsLocalPid(PID? pid)
+        => pid is not null
+           && (string.IsNullOrWhiteSpace(pid.Address)
+               || string.Equals(pid.Address, "nonhost", StringComparison.OrdinalIgnoreCase));
+
+    private static bool RouteTargetsSameLocalActor(ShardRoute route, PID localPid)
+    {
+        if (route.Pid is not null
+            && ActorIdsEquivalent(route.Pid.Id, localPid.Id)
+            && IsLocalAddress(route.Pid.Address))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(route.ActorReference))
+        {
+            return false;
+        }
+
+        if (RoutablePidReference.TryDecode(route.ActorReference, out var endpointSet))
+        {
+            if (!ActorIdsEquivalent(endpointSet.ActorName, localPid.Id))
+            {
+                return false;
+            }
+
+            return endpointSet.Candidates.Any(static candidate =>
+                TryParseEndpoint(candidate.HostPort, out var host, out _)
+                && NetworkAddressDefaults.IsLocalHost(host));
+        }
+
+        return RoutablePidReference.TryParsePlainPid(route.ActorReference, out var parsed)
+               && ActorIdsEquivalent(parsed.Id, localPid.Id)
+               && IsLocalAddress(parsed.Address);
+    }
+
+    private static bool IsLocalAddress(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return true;
+        }
+
+        return TryParseEndpoint(address, out var host, out _)
+               && NetworkAddressDefaults.IsLocalHost(host);
     }
 
     private string FormatRoutes()
