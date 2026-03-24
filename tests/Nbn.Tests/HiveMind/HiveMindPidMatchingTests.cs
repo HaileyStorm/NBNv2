@@ -90,6 +90,16 @@ public sealed class HiveMindPidMatchingTests
     }
 
     [Fact]
+    public void SenderMatchesPid_Accepts_WorkerRootPrefixed_And_Unprefixed_ActorIds()
+    {
+        var sender = new PID("192.168.68.140:12041", "worker-node/brain-router");
+        var expected = new PID("192.168.68.140:12041", "brain-router");
+
+        var match = InvokeSenderMatchesPid(sender, expected);
+        Assert.True(match);
+    }
+
+    [Fact]
     public void SenderMatchesActorReferenceOrPid_Accepts_Sender_On_Any_Routable_Candidate()
     {
         var sender = new PID("100.123.130.93:12041", "worker-node/brain-router");

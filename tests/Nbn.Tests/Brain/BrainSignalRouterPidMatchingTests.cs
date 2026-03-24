@@ -83,6 +83,16 @@ public sealed class BrainSignalRouterPidMatchingTests
         Assert.True(match);
     }
 
+    [Fact]
+    public void SenderMatchesPid_Accepts_WorkerRootPrefixed_And_Unprefixed_ActorIds()
+    {
+        var sender = new PID("192.168.68.140:12041", "worker-node/brain-r1-s0");
+        var expected = new PID("192.168.68.140:12041", "brain-r1-s0");
+
+        var match = InvokeSenderMatchesPid(sender, expected);
+        Assert.True(match);
+    }
+
     private static bool InvokeSenderMatchesPid(PID sender, PID expected)
         => (bool)(SenderMatchesPidMethod.Invoke(obj: null, new object?[] { sender, expected })
             ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesPid returned null."));

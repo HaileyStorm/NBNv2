@@ -197,7 +197,7 @@ public sealed partial class HiveMindActor
 
     private static bool PidHasEquivalentEndpoint(PID sender, PID expected)
     {
-        if (!string.Equals(sender.Id ?? string.Empty, expected.Id ?? string.Empty, StringComparison.Ordinal))
+        if (!ActorIdsEquivalent(sender.Id, expected.Id))
         {
             return false;
         }
@@ -443,6 +443,38 @@ public sealed partial class HiveMindActor
             process = null;
             return false;
         }
+    }
+
+    private static bool ActorIdsEquivalent(string? left, string? right)
+    {
+        var normalizedLeft = NormalizeActorId(left);
+        var normalizedRight = NormalizeActorId(right);
+        if (string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (normalizedLeft.Length == 0 || normalizedRight.Length == 0)
+        {
+            return false;
+        }
+
+        return normalizedLeft.EndsWith("/" + normalizedRight, StringComparison.Ordinal)
+               || normalizedRight.EndsWith("/" + normalizedLeft, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeActorId(string? actorId)
+    {
+        if (string.IsNullOrWhiteSpace(actorId))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            "/",
+            actorId
+                .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(static segment => !segment.StartsWith("$", StringComparison.Ordinal)));
     }
 
     private static MethodInfo? ResolveProcessRegistryLookupMethod()
