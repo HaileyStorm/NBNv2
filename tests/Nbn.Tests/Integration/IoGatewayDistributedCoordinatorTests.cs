@@ -257,6 +257,62 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task RegisterBrain_Preserves_OutputCoordinatorReference_When_GatewayHas_LocalEndpointCandidates()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new IoGatewayRegistrationProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerPid,
+            inputWidth: 1,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.DirtyOnChange)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(
+            CreateOptions(),
+            hiveMindPid: hivePid,
+            localEndpointCandidates:
+            [
+                new ServiceEndpointCandidate("100.123.130.93:12050", "io-gateway", ServiceEndpointCandidateKind.Public, 1000, "default_advertised", true),
+                new ServiceEndpointCandidate("192.168.68.140:12050", "io-gateway", ServiceEndpointCandidateKind.Lan, 900, "lan")
+            ])));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            InputCoordinatorPid = PidLabel(inputPid),
+            OutputCoordinatorPid = PidLabel(outputPid),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<BrainIoInfoHiveProbeActor.Snapshot>(
+                    hivePid,
+                    new BrainIoInfoHiveProbeActor.GetSnapshot());
+                return snapshot.RegisterOutputSinkCount > 0;
+            },
+            timeoutMs: 2_000);
+
+        var snapshot = await root.RequestAsync<BrainIoInfoHiveProbeActor.Snapshot>(
+            hivePid,
+            new BrainIoInfoHiveProbeActor.GetSnapshot());
+        Assert.Equal(PidLabel(outputPid), snapshot.LastOutputSinkPid);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterBrain_Replays_InputState_And_OutputSubscriptions_Across_CoordinatorMoves()
     {
         var system = new ActorSystem();

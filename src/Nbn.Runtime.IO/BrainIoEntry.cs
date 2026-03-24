@@ -13,6 +13,7 @@ internal sealed class BrainIoEntry
         Guid brainId,
         PID inputPid,
         PID outputPid,
+        string outputActorReference,
         bool ownsInputCoordinator,
         bool ownsOutputCoordinator,
         uint inputWidth,
@@ -24,6 +25,7 @@ internal sealed class BrainIoEntry
         BrainId = brainId;
         InputPid = inputPid;
         OutputPid = outputPid;
+        OutputActorReference = outputActorReference;
         OwnsInputCoordinator = ownsInputCoordinator;
         OwnsOutputCoordinator = ownsOutputCoordinator;
         InputWidth = inputWidth;
@@ -38,6 +40,7 @@ internal sealed class BrainIoEntry
     public Guid BrainId { get; }
     public PID InputPid { get; set; }
     public PID OutputPid { get; set; }
+    public string OutputActorReference { get; set; }
     public bool OwnsInputCoordinator { get; set; }
     public bool OwnsOutputCoordinator { get; set; }
     public uint InputWidth { get; set; }

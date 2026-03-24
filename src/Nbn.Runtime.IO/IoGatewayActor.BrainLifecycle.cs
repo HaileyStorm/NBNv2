@@ -278,6 +278,7 @@ public sealed partial class IoGatewayActor
                     out var updatedOwnsOutputCoordinator);
                 existing.OutputPid = updatedOutputPid;
                 existing.OwnsOutputCoordinator = updatedOwnsOutputCoordinator;
+                existing.OutputActorReference = NormalizeActorReference(message.OutputCoordinatorPid, updatedOutputPid);
             }
 
             if (inputWidthChanged || inputCoordinatorChanged)
@@ -329,7 +330,13 @@ public sealed partial class IoGatewayActor
             }
 
             await EnsureIoGatewayRegisteredAsync(context, brainId);
-            await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid, shouldRegisterOutputSink);
+            await EnsureOutputSinkRegisteredAsync(
+                    context,
+                    brainId,
+                    existing.OutputPid,
+                    existing.OutputActorReference,
+                    shouldRegisterOutputSink)
+                .ConfigureAwait(false);
             return;
         }
 
@@ -380,6 +387,7 @@ public sealed partial class IoGatewayActor
             brainId,
             inputPid,
             outputPid,
+            NormalizeActorReference(message.OutputCoordinatorPid, outputPid),
             ownsInputCoordinator,
             ownsOutputCoordinator,
             message.InputWidth,
@@ -422,7 +430,13 @@ public sealed partial class IoGatewayActor
         }
 
         await EnsureIoGatewayRegisteredAsync(context, brainId);
-        await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid, shouldRegisterOutputSink);
+        await EnsureOutputSinkRegisteredAsync(
+                context,
+                brainId,
+                outputPid,
+                entry.OutputActorReference,
+                shouldRegisterOutputSink)
+            .ConfigureAwait(false);
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)
@@ -718,6 +732,11 @@ public sealed partial class IoGatewayActor
             ? sha[..Math.Min(12, sha.Length)]
             : "present";
     }
+
+    private static string NormalizeActorReference(string? actorReference, PID pid)
+        => !string.IsNullOrWhiteSpace(actorReference)
+            ? actorReference.Trim()
+            : PidLabel(pid);
 
     private void StopAndRemoveBrain(IContext context, BrainIoEntry entry)
     {

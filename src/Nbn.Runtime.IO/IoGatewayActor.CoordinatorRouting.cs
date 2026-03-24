@@ -270,6 +270,7 @@ public sealed partial class IoGatewayActor
         IContext context,
         Guid brainId,
         PID outputPid,
+        string outputActorReference,
         bool shouldRegisterOutputSink)
     {
         if (!shouldRegisterOutputSink)
@@ -285,7 +286,9 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var outputLabel = BuildLocalActorReference(ToRemotePid(context, outputPid));
+            var outputLabel = string.IsNullOrWhiteSpace(outputActorReference)
+                ? PidLabel(ToRemotePid(context, outputPid))
+                : outputActorReference.Trim();
             context.Request(_hiveMindPid, new ProtoControl.RegisterOutputSink
             {
                 BrainId = brainId.ToProtoUuid(),
