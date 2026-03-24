@@ -163,11 +163,6 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.HiveMindStatus = "Connecting...";
 
             _ = ConnectSettingsWithRetryAsync(token);
-            _ = ConnectIoWithRetryAsync(token);
-
-            _ = ConnectObservabilityWithRetryAsync(token);
-
-            _ = ConnectHiveMindWithRetryAsync(token);
         }
         catch (Exception ex)
         {
@@ -402,6 +397,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 {
                     await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
                     await SyncWorkbenchSettingsFromSettingsMonitorAsync().ConfigureAwait(false);
+                    StartRuntimeServiceConnections(token);
                 }
 
                 WorkbenchLog.Info($"Settings connected to {Connections.SettingsHost}:{settingsPort}/{Connections.SettingsName}");
@@ -417,6 +413,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
         }
+    }
+
+    private void StartRuntimeServiceConnections(CancellationToken token)
+    {
+        if (token.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _ = ConnectIoWithRetryAsync(token);
+        _ = ConnectObservabilityWithRetryAsync(token);
+        _ = ConnectHiveMindWithRetryAsync(token);
     }
 
     private async Task ConnectHiveMindWithRetryAsync(CancellationToken token)
