@@ -163,12 +163,12 @@ public sealed class BrainSignalRouterPidMatchingTests
         var actorReference = RoutablePidReference.Encode(
             new[]
             {
-                new ServiceEndpointCandidate("100.123.130.93:12041", "worker-node/brain-r6-s0", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true)
+                new ServiceEndpointCandidate("203.0.113.7:12041", "worker-node/brain-r6-s0", ServiceEndpointCandidateKind.Public, 1000, "public", true)
             },
             "worker-node/brain-r6-s0");
         var route = new ShardRoute(
             ShardIdValue: 6,
-            new PID("100.123.130.93:12041", "worker-node/brain-r6-s0"),
+            new PID("203.0.113.7:12041", "worker-node/brain-r6-s0"),
             actorReference);
 
         var localized = InvokeTryBuildLocalizedLocalPid(route);

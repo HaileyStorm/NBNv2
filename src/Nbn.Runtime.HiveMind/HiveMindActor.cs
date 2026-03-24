@@ -834,6 +834,11 @@ public sealed partial class HiveMindActor : IActor
         }
 
         context.Send(_settingsPid, message);
+        context.Send(_settingsPid, new ProtoSettings.BrainControllerHeartbeat
+        {
+            BrainId = brain.BrainId.ToProtoUuid(),
+            TimeMs = (ulong)NowMs()
+        });
     }
 
     private void ReportBrainUnregistered(IContext context, Guid brainId)
