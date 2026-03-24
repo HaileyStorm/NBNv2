@@ -242,7 +242,8 @@ public sealed partial class HiveMindActor
 
     private static bool HasEquivalentProcessLocalEndpoint(string? address, string? otherAddress)
     {
-        if (!string.Equals(address, "nonhost", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(address)
+            && !string.Equals(address, "nonhost", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
