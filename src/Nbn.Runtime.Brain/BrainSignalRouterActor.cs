@@ -836,6 +836,12 @@ public sealed class BrainSignalRouterActor : IActor
             return false;
         }
 
+        if (HasEquivalentProcessLocalEndpoint(sender.Address, expected.Address)
+            || HasEquivalentProcessLocalEndpoint(expected.Address, sender.Address))
+        {
+            return true;
+        }
+
         if (!TryParseEndpoint(sender.Address, out var senderHost, out var senderPort)
             || !TryParseEndpoint(expected.Address, out var expectedHost, out var expectedPort))
         {
@@ -866,6 +872,17 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         return HostsResolveToSameAddress(senderHost, expectedHost);
+    }
+
+    private static bool HasEquivalentProcessLocalEndpoint(string? address, string? otherAddress)
+    {
+        if (!string.Equals(address, "nonhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return TryParseEndpoint(otherAddress, out var otherHost, out _)
+               && NetworkAddressDefaults.IsLocalHost(otherHost);
     }
 
     private static bool TryParseEndpoint(string? address, out string host, out int port)

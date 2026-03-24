@@ -103,6 +103,16 @@ public sealed class BrainSignalRouterPidMatchingTests
     }
 
     [Fact]
+    public void SenderMatchesPid_Accepts_ProcessLocal_Sender_For_Same_Local_Actor()
+    {
+        var sender = new PID("nonhost", "worker-node/brain-r1-s0");
+        var expected = new PID("127.0.0.1:12041", "worker-node/brain-r1-s0");
+
+        var match = InvokeSenderMatchesPid(sender, expected);
+        Assert.True(match);
+    }
+
+    [Fact]
     public void SenderMatchesActorReferenceOrPid_Accepts_Shard_Sender_On_Any_Routable_Candidate()
     {
         var sender = new PID("100.123.130.93:12041", "worker-node/brain-r1-s0");
