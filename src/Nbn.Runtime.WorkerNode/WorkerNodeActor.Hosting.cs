@@ -268,6 +268,11 @@ public sealed partial class WorkerNodeActor
             return configuredPreference;
         }
 
+        if (ShouldPreferCpuForAutoRegionShardBackend())
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
         var neuronCount = checked((int)assignment.NeuronCount);
         var gpuThreshold = Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
         if (neuronCount < gpuThreshold)
@@ -302,6 +307,9 @@ public sealed partial class WorkerNodeActor
             ? RegionShardComputeBackendPreference.Gpu
             : RegionShardComputeBackendPreference.Cpu;
     }
+
+    private static bool ShouldPreferCpuForAutoRegionShardBackend()
+        => OperatingSystem.IsWindows();
 
     private RegionShardState BuildSyntheticRegionState(
         BrainHostingState brain,
