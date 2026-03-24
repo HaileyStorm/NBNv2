@@ -115,9 +115,26 @@ catch (Exception ex)
         failureReason: ToDiscoveryFailureReason(ex));
 }
 
-var startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
-    workerPid,
-    new WorkerNodeActor.GetWorkerNodeSnapshot());
+WorkerNodeActor.WorkerNodeSnapshot startupState;
+try
+{
+    startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+        workerPid,
+        new WorkerNodeActor.GetWorkerNodeSnapshot(),
+        TimeSpan.FromSeconds(20));
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[WARN] WorkerNode startup snapshot unavailable: {ex.GetBaseException().Message}");
+    startupState = new WorkerNodeActor.WorkerNodeSnapshot(
+        workerNodeId,
+        nodeAddress,
+        HiveMindEndpoint: null,
+        IoGatewayEndpoint: null,
+        options.ServiceRoles,
+        TrackedAssignmentCount: 0,
+        options.ResourceAvailability);
+}
 
 Console.WriteLine("NBN WorkerNode online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
