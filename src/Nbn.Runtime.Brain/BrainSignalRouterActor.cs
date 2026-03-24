@@ -669,9 +669,12 @@ public sealed class BrainSignalRouterActor : IActor
             return null;
         }
 
-        return RouteTargetsSameLocalActor(route, existingRoute.Pid)
-            ? existingRoute.Pid
-            : null;
+        if (RouteTargetsSameLocalActor(route, existingRoute.Pid))
+        {
+            return existingRoute.Pid;
+        }
+
+        return TryBuildLocalizedLocalPid(route);
     }
 
     private static bool IsLocalPid(PID? pid)
@@ -708,6 +711,44 @@ public sealed class BrainSignalRouterActor : IActor
         return RoutablePidReference.TryParsePlainPid(route.ActorReference, out var parsed)
                && ActorIdsEquivalent(parsed.Id, localPid.Id)
                && IsLocalAddress(parsed.Address);
+    }
+
+    private static PID? TryBuildLocalizedLocalPid(ShardRoute route)
+    {
+        var actorId = ResolveLocalActorId(route);
+        if (string.IsNullOrWhiteSpace(actorId))
+        {
+            return null;
+        }
+
+        return new PID("nonhost", actorId);
+    }
+
+    private static string ResolveLocalActorId(ShardRoute route)
+    {
+        if (route.Pid is not null && IsLocalAddress(route.Pid.Address))
+        {
+            return route.Pid.Id;
+        }
+
+        if (string.IsNullOrWhiteSpace(route.ActorReference))
+        {
+            return string.Empty;
+        }
+
+        if (RoutablePidReference.TryDecode(route.ActorReference, out var endpointSet))
+        {
+            return endpointSet.Candidates.Any(static candidate =>
+                    TryParseEndpoint(candidate.HostPort, out var host, out _)
+                    && NetworkAddressDefaults.IsLocalHost(host))
+                ? endpointSet.ActorName
+                : string.Empty;
+        }
+
+        return RoutablePidReference.TryParsePlainPid(route.ActorReference, out var parsed)
+               && IsLocalAddress(parsed.Address)
+            ? parsed.Id
+            : string.Empty;
     }
 
     private static bool IsLocalAddress(string? address)

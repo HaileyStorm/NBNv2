@@ -17,6 +17,10 @@ public sealed class BrainSignalRouterPidMatchingTests
         "SenderMatchesActorReferenceOrPid",
         BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesActorReferenceOrPid was not found.");
+    private static readonly MethodInfo TryBuildLocalizedLocalPidMethod = typeof(BrainSignalRouterActor).GetMethod(
+        "TryBuildLocalizedLocalPid",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("BrainSignalRouterActor.TryBuildLocalizedLocalPid was not found.");
 
     [Theory]
     [InlineData("shard.local:12041", "shard.local:12041", true)]
@@ -132,6 +136,45 @@ public sealed class BrainSignalRouterPidMatchingTests
         Assert.False(match);
     }
 
+    [Fact]
+    public void TryBuildLocalizedLocalPid_Localizes_SameMachine_RemoteRoute()
+    {
+        var actorReference = RoutablePidReference.Encode(
+            new[]
+            {
+                new ServiceEndpointCandidate("127.0.0.1:12041", "worker-node/brain-r6-s0", ServiceEndpointCandidateKind.Loopback, 1000, "loopback", true),
+                new ServiceEndpointCandidate("100.123.130.93:12041", "worker-node/brain-r6-s0", ServiceEndpointCandidateKind.Tailnet, 650, "tailnet")
+            },
+            "worker-node/brain-r6-s0");
+        var route = new ShardRoute(
+            ShardIdValue: 6,
+            new PID("127.0.0.1:12041", "worker-node/brain-r6-s0"),
+            actorReference);
+
+        var localized = InvokeTryBuildLocalizedLocalPid(route);
+        Assert.NotNull(localized);
+        Assert.Equal("worker-node/brain-r6-s0", localized!.Id);
+        Assert.Equal("nonhost", localized.Address);
+    }
+
+    [Fact]
+    public void TryBuildLocalizedLocalPid_Returns_Null_For_NonLocal_Route()
+    {
+        var actorReference = RoutablePidReference.Encode(
+            new[]
+            {
+                new ServiceEndpointCandidate("100.123.130.93:12041", "worker-node/brain-r6-s0", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true)
+            },
+            "worker-node/brain-r6-s0");
+        var route = new ShardRoute(
+            ShardIdValue: 6,
+            new PID("100.123.130.93:12041", "worker-node/brain-r6-s0"),
+            actorReference);
+
+        var localized = InvokeTryBuildLocalizedLocalPid(route);
+        Assert.Null(localized);
+    }
+
     private static bool InvokeSenderMatchesPid(PID sender, PID expected)
         => (bool)(SenderMatchesPidMethod.Invoke(obj: null, new object?[] { sender, expected })
             ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesPid returned null."));
@@ -139,4 +182,7 @@ public sealed class BrainSignalRouterPidMatchingTests
     private static bool InvokeSenderMatchesActorReferenceOrPid(PID sender, string actorReference, PID expected)
         => (bool)(SenderMatchesActorReferenceOrPidMethod.Invoke(obj: null, new object?[] { sender, actorReference, expected })
             ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesActorReferenceOrPid returned null."));
+
+    private static PID? InvokeTryBuildLocalizedLocalPid(ShardRoute route)
+        => (PID?)TryBuildLocalizedLocalPidMethod.Invoke(obj: null, new object?[] { route });
 }
