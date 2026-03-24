@@ -213,22 +213,22 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         var key = new PendingAckKey(ack.RegionId, ack.ShardId.ToShardId32());
-        if (!pending.PendingAckSenders.TryGetValue(key, out var expectedSender))
+        if (!pending.PendingAckTargets.TryGetValue(key, out var expectedTarget))
         {
             var reason = pending.AckedKeys.Contains(key) ? "duplicate" : "untracked_payload";
             EmitSignalBatchAckIgnored(context, ack, reason);
             return;
         }
 
-        if (!SenderMatchesPid(context.Sender, expectedSender))
+        if (!SenderMatchesActorReferenceOrPid(context.Sender, expectedTarget.ActorReference, expectedTarget.SenderPid))
         {
-            EmitSignalBatchAckIgnored(context, ack, "sender_mismatch", expectedSender);
+            EmitSignalBatchAckIgnored(context, ack, "sender_mismatch", expectedTarget.SenderPid);
             return;
         }
 
-        pending.PendingAckSenders.Remove(key);
+        pending.PendingAckTargets.Remove(key);
         pending.AckedKeys.Add(key);
-        if (pending.PendingAckSenders.Count > 0)
+        if (pending.PendingAckTargets.Count > 0)
         {
             return;
         }
@@ -401,7 +401,7 @@ public sealed class BrainSignalRouterActor : IActor
     {
         var deliveredBatches = 0u;
         var deliveredContribs = 0u;
-        var expectedAckSenders = new Dictionary<PendingAckKey, PID>();
+        var expectedAckTargets = new Dictionary<PendingAckKey, PendingAckTarget>();
         var fallbackRoutes = 0;
         var missingRouteLogged = false;
         var inputRoutes = Array.Empty<ShardRoute>();
@@ -413,9 +413,9 @@ public sealed class BrainSignalRouterActor : IActor
             foreach (var entry in outbox.Destinations)
             {
                 var destinationShardId = entry.Key;
-                if (!_routingTable.TryGetPid(entry.Key, out var pid) || pid is null)
+                if (!_routingTable.TryGetRoute(entry.Key, out var route) || route is null || route.Pid is null)
                 {
-                    if (!TryGetFallbackRoute(entry.Value.RegionId, out var fallbackShardId, out pid))
+                    if (!TryGetFallbackRoute(entry.Value.RegionId, out var fallbackRoute))
                     {
                         if (LogDelivery && !missingRouteLogged)
                         {
@@ -426,10 +426,11 @@ public sealed class BrainSignalRouterActor : IActor
                     }
 
                     fallbackRoutes++;
-                    destinationShardId = fallbackShardId;
+                    route = fallbackRoute;
+                    destinationShardId = route.ShardId;
                 }
 
-                if (pid is null)
+                if (route?.Pid is null)
                 {
                     continue;
                 }
@@ -444,8 +445,8 @@ public sealed class BrainSignalRouterActor : IActor
 
                 signalBatch.Contribs.AddRange(entry.Value.Contribs);
                 // Use Request so RegionShard can reply with SignalBatchAck to this router.
-                context.Request(pid, signalBatch);
-                expectedAckSenders[new PendingAckKey(entry.Value.RegionId, destinationShardId)] = pid;
+                context.Request(route.Pid, signalBatch);
+                expectedAckTargets[new PendingAckKey(entry.Value.RegionId, destinationShardId)] = new PendingAckTarget(route.Pid, route.ActorReference);
 
                 deliveredBatches++;
                 deliveredContribs += (uint)entry.Value.Contribs.Count;
@@ -474,7 +475,7 @@ public sealed class BrainSignalRouterActor : IActor
 
                     signalBatch.Contribs.AddRange(inputContribs);
                     context.Request(route.Pid, signalBatch);
-                    expectedAckSenders[new PendingAckKey((uint)NbnConstants.InputRegionId, route.ShardId)] = route.Pid;
+                    expectedAckTargets[new PendingAckKey((uint)NbnConstants.InputRegionId, route.ShardId)] = new PendingAckTarget(route.Pid, route.ActorReference);
 
                     deliveredBatches++;
                     deliveredContribs += (uint)inputContribs.Count;
@@ -482,7 +483,7 @@ public sealed class BrainSignalRouterActor : IActor
             }
         }
 
-        var expectedAcks = expectedAckSenders.Count;
+        var expectedAcks = expectedAckTargets.Count;
 
         if (LogDelivery)
         {
@@ -518,7 +519,7 @@ public sealed class BrainSignalRouterActor : IActor
             stopwatch,
             deliveredBatches,
             deliveredContribs,
-            expectedAckSenders);
+            expectedAckTargets);
 
         _pendingDeliveries[tickId] = pending;
     }
@@ -609,12 +610,10 @@ public sealed class BrainSignalRouterActor : IActor
 
         _ioGatewayPid = sender;
     }
-    private bool TryGetFallbackRoute(uint regionId, out ShardId32 shardId, out PID? pid)
+    private bool TryGetFallbackRoute(uint regionId, out ShardRoute route)
     {
-        shardId = default;
-        pid = null;
-        ShardId32? candidateShardId = null;
-        PID? candidate = null;
+        route = null!;
+        ShardRoute? candidate = null;
 
         foreach (var entry in _routingTable.Entries)
         {
@@ -625,24 +624,20 @@ public sealed class BrainSignalRouterActor : IActor
 
             if (candidate is not null)
             {
-                shardId = default;
-                pid = null;
+                route = null!;
                 return false;
             }
 
-            candidateShardId = entry.ShardId;
-            candidate = entry.Pid;
+            candidate = entry;
         }
 
-        if (candidate is null || !candidateShardId.HasValue)
+        if (candidate is null)
         {
-            shardId = default;
-            pid = null;
+            route = null!;
             return false;
         }
 
-        shardId = candidateShardId.Value;
-        pid = candidate;
+        route = candidate;
         return true;
     }
 
@@ -672,6 +667,40 @@ public sealed class BrainSignalRouterActor : IActor
         return expected.Equals(sender)
                || PidEquals(sender, expected)
                || PidHasEquivalentEndpoint(sender, expected);
+    }
+
+    private static bool SenderMatchesActorReferenceOrPid(PID? sender, string? actorReference, PID expected)
+    {
+        if (SenderMatchesPid(sender, expected))
+        {
+            return true;
+        }
+
+        return SenderMatchesActorReference(sender, actorReference);
+    }
+
+    private static bool SenderMatchesActorReference(PID? sender, string? actorReference)
+    {
+        if (sender is null || string.IsNullOrWhiteSpace(actorReference))
+        {
+            return false;
+        }
+
+        if (RoutablePidReference.TryDecode(actorReference, out var endpointSet))
+        {
+            foreach (var candidate in endpointSet.Candidates)
+            {
+                if (SenderMatchesPid(sender, candidate.ToEndpoint().ToPid()))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return RoutablePidReference.TryParsePlainPid(actorReference, out var parsed)
+               && SenderMatchesPid(sender, parsed);
     }
 
     private static bool PidEquals(PID? left, PID right)
@@ -987,14 +1016,14 @@ public sealed class BrainSignalRouterActor : IActor
             Stopwatch stopwatch,
             uint deliveredBatches,
             uint deliveredContribs,
-            Dictionary<PendingAckKey, PID> pendingAckSenders)
+            Dictionary<PendingAckKey, PendingAckTarget> pendingAckTargets)
         {
             TickId = tickId;
             ReplyTo = replyTo;
             Stopwatch = stopwatch;
             DeliveredBatches = deliveredBatches;
             DeliveredContribs = deliveredContribs;
-            PendingAckSenders = pendingAckSenders;
+            PendingAckTargets = pendingAckTargets;
         }
 
         public ulong TickId { get; }
@@ -1002,11 +1031,12 @@ public sealed class BrainSignalRouterActor : IActor
         public Stopwatch Stopwatch { get; }
         public uint DeliveredBatches { get; }
         public uint DeliveredContribs { get; }
-        public Dictionary<PendingAckKey, PID> PendingAckSenders { get; }
+        public Dictionary<PendingAckKey, PendingAckTarget> PendingAckTargets { get; }
         public HashSet<PendingAckKey> AckedKeys { get; } = new();
     }
 
     private readonly record struct PendingAckKey(uint RegionId, ShardId32 ShardId);
+    private readonly record struct PendingAckTarget(PID SenderPid, string ActorReference);
 
     private sealed class PendingInputDrain
     {

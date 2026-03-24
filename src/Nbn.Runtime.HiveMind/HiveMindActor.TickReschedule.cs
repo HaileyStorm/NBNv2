@@ -182,10 +182,16 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        var senderMatchesExpected = SenderMatchesPid(context.Sender, expectedSender);
+        var senderMatchesExpected = SenderMatchesActorReferenceOrPid(
+            context.Sender,
+            _brains.TryGetValue(brainId, out var matchingBrain)
+                && matchingBrain.ShardActorReferences.TryGetValue(shardId, out var shardActorReference)
+                ? shardActorReference
+                : string.Empty,
+            expectedSender);
         var senderMatchesTrustedController = !senderMatchesExpected
-            && _brains.TryGetValue(brainId, out var brain)
-            && IsTrustedControllerSender(context.Sender, brain);
+            && matchingBrain is not null
+            && IsTrustedControllerSender(context.Sender, matchingBrain);
         if (!senderMatchesExpected && !senderMatchesTrustedController)
         {
             EmitTickComputeDoneIgnored(context, message, "sender_mismatch", expectedSender);

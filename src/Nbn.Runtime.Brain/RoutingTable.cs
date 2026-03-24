@@ -5,7 +5,7 @@ namespace Nbn.Runtime.Brain;
 
 internal sealed class RoutingTable
 {
-    private readonly Dictionary<ShardId32, PID> _routes = new();
+    private readonly Dictionary<ShardId32, ShardRoute> _routes = new();
     private ShardRoute[] _entries = Array.Empty<ShardRoute>();
 
     public IReadOnlyList<ShardRoute> Entries => _entries;
@@ -43,12 +43,33 @@ internal sealed class RoutingTable
                 list.Add(route);
             }
 
-            _routes[route.ShardId] = route.Pid;
+            _routes[route.ShardId] = route;
         }
 
         _entries = list.ToArray();
     }
 
     public bool TryGetPid(ShardId32 shardId, out PID? pid)
-        => _routes.TryGetValue(shardId, out pid);
+    {
+        if (_routes.TryGetValue(shardId, out var route))
+        {
+            pid = route.Pid;
+            return true;
+        }
+
+        pid = null;
+        return false;
+    }
+
+    public bool TryGetRoute(ShardId32 shardId, out ShardRoute? route)
+    {
+        if (_routes.TryGetValue(shardId, out var value))
+        {
+            route = value;
+            return true;
+        }
+
+        route = null;
+        return false;
+    }
 }

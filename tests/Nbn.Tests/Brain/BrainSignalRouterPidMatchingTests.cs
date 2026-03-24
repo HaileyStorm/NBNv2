@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using Nbn.Runtime.Brain;
+using Nbn.Shared;
 using Proto;
 
 namespace Nbn.Tests.Brain;
@@ -12,6 +13,10 @@ public sealed class BrainSignalRouterPidMatchingTests
         "SenderMatchesPid",
         BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesPid was not found.");
+    private static readonly MethodInfo SenderMatchesActorReferenceOrPidMethod = typeof(BrainSignalRouterActor).GetMethod(
+        "SenderMatchesActorReferenceOrPid",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesActorReferenceOrPid was not found.");
 
     [Theory]
     [InlineData("shard.local:12041", "shard.local:12041", true)]
@@ -93,7 +98,45 @@ public sealed class BrainSignalRouterPidMatchingTests
         Assert.True(match);
     }
 
+    [Fact]
+    public void SenderMatchesActorReferenceOrPid_Accepts_Shard_Sender_On_Any_Routable_Candidate()
+    {
+        var sender = new PID("100.123.130.93:12041", "worker-node/brain-r1-s0");
+        var resolvedPid = new PID("192.168.68.140:12041", "worker-node/brain-r1-s0");
+        var actorReference = RoutablePidReference.Encode(
+            new[]
+            {
+                new ServiceEndpointCandidate("100.123.130.93:12041", "worker-node/brain-r1-s0", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true),
+                new ServiceEndpointCandidate("192.168.68.140:12041", "worker-node/brain-r1-s0", ServiceEndpointCandidateKind.Lan, 900, "lan")
+            },
+            "worker-node/brain-r1-s0");
+
+        var match = InvokeSenderMatchesActorReferenceOrPid(sender, actorReference, resolvedPid);
+        Assert.True(match);
+    }
+
+    [Fact]
+    public void SenderMatchesActorReferenceOrPid_Rejects_Shard_Sender_When_ActorId_Differs()
+    {
+        var sender = new PID("100.123.130.93:12041", "worker-node/brain-r1-s1");
+        var resolvedPid = new PID("192.168.68.140:12041", "worker-node/brain-r1-s0");
+        var actorReference = RoutablePidReference.Encode(
+            new[]
+            {
+                new ServiceEndpointCandidate("100.123.130.93:12041", "worker-node/brain-r1-s0", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true),
+                new ServiceEndpointCandidate("192.168.68.140:12041", "worker-node/brain-r1-s0", ServiceEndpointCandidateKind.Lan, 900, "lan")
+            },
+            "worker-node/brain-r1-s0");
+
+        var match = InvokeSenderMatchesActorReferenceOrPid(sender, actorReference, resolvedPid);
+        Assert.False(match);
+    }
+
     private static bool InvokeSenderMatchesPid(PID sender, PID expected)
         => (bool)(SenderMatchesPidMethod.Invoke(obj: null, new object?[] { sender, expected })
             ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesPid returned null."));
+
+    private static bool InvokeSenderMatchesActorReferenceOrPid(PID sender, string actorReference, PID expected)
+        => (bool)(SenderMatchesActorReferenceOrPidMethod.Invoke(obj: null, new object?[] { sender, actorReference, expected })
+            ?? throw new InvalidOperationException("BrainSignalRouterActor.SenderMatchesActorReferenceOrPid returned null."));
 }
