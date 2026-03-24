@@ -912,7 +912,9 @@ public sealed partial class WorkerNodeActor
 
     private PID SpawnOrResolveNamed(IContext context, string actorName, Props props, PID? existingPid)
     {
-        if (existingPid is not null && string.Equals(existingPid.Id, actorName, StringComparison.Ordinal))
+        if (existingPid is not null
+            && (string.Equals(existingPid.Id, actorName, StringComparison.Ordinal)
+                || existingPid.Id.EndsWith("/" + actorName, StringComparison.Ordinal)))
         {
             return existingPid;
         }
@@ -923,7 +925,16 @@ public sealed partial class WorkerNodeActor
         }
         catch
         {
-            return new PID(string.Empty, actorName);
+            var normalizedActorName = NormalizeObservedActorId(actorName);
+            var normalizedSelfId = NormalizeObservedActorId(context.Self.Id);
+            if (!string.IsNullOrWhiteSpace(normalizedSelfId)
+                && !string.IsNullOrWhiteSpace(normalizedActorName)
+                && !normalizedActorName.Contains('/', StringComparison.Ordinal))
+            {
+                return new PID("nonhost", $"{normalizedSelfId}/{normalizedActorName}");
+            }
+
+            return new PID("nonhost", normalizedActorName);
         }
     }
 
