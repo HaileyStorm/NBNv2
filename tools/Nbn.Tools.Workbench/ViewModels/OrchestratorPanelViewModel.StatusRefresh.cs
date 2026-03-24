@@ -625,14 +625,56 @@ public sealed partial class OrchestratorPanelViewModel
 
     private bool TryApplyServiceEndpointSetting(SettingItem item)
     {
-        if (string.IsNullOrWhiteSpace(item.Key)
-            || !ServiceEndpointSettings.IsKnownKey(item.Key)
-            || !ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint))
+        if (string.IsNullOrWhiteSpace(item.Key))
         {
             return false;
         }
 
-        return TryApplyServiceEndpointSetting(item.Key, endpoint);
+        var trimmedKey = item.Key.Trim();
+        if (ServiceEndpointSettings.TryGetEndpointKeyFromSetKey(trimmedKey, out var endpointKey)
+            && ServiceEndpointSettings.TryParseSetValue(item.Value, out var endpointSet))
+        {
+            _ = ApplyResolvedServiceEndpointSettingAsync(endpointKey, endpointSet);
+            return true;
+        }
+
+        if (!ServiceEndpointSettings.IsKnownKey(trimmedKey))
+        {
+            return false;
+        }
+
+        if (TryGetPreferredEndpointSet(trimmedKey, out var preferredEndpointSet))
+        {
+            _ = ApplyResolvedServiceEndpointSettingAsync(trimmedKey, preferredEndpointSet);
+            return true;
+        }
+
+        if (!ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint))
+        {
+            return false;
+        }
+
+        return TryApplyServiceEndpointSetting(trimmedKey, endpoint);
+    }
+
+    private bool TryGetPreferredEndpointSet(string endpointKey, out ServiceEndpointSet endpointSet)
+    {
+        endpointSet = default;
+        if (string.IsNullOrWhiteSpace(endpointKey))
+        {
+            return false;
+        }
+
+        var setKey = ServiceEndpointSettings.ToEndpointSetKey(endpointKey.Trim());
+        var existing = Settings.FirstOrDefault(entry => string.Equals(entry.Key, setKey, StringComparison.OrdinalIgnoreCase));
+        return existing is not null
+               && ServiceEndpointSettings.TryParseSetValue(existing.Value, out endpointSet);
+    }
+
+    private async Task ApplyResolvedServiceEndpointSettingAsync(string endpointKey, ServiceEndpointSet endpointSet)
+    {
+        var resolved = await ResolveServiceEndpointAsync(endpointSet).ConfigureAwait(false);
+        _dispatcher.Post(() => TryApplyServiceEndpointSetting(endpointKey, resolved));
     }
 
     private bool TryApplyServiceEndpointSetting(string? key, ServiceEndpoint endpoint)

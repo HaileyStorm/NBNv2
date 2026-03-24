@@ -803,6 +803,39 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task UpdateSetting_ServiceEndpointSet_RemainsPreferred_OverSubsequentLegacyEndpointUpdate()
+    {
+        var connections = new ConnectionViewModel();
+        var client = new FakeWorkbenchClient
+        {
+            ProbeFactory = (host, port) =>
+                host == "100.86.45.90" && port == 12050
+                    ? new TcpEndpointProbeResult(true, "tailnet reachable")
+                    : new TcpEndpointProbeResult(false, "unreachable")
+        };
+        var vm = CreateViewModel(connections, client);
+
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.ToEndpointSetKey(ServiceEndpointSettings.IoGatewayKey),
+            ServiceEndpointSettings.EncodeSetValue(
+                "io-gateway",
+                [
+                    new ServiceEndpointCandidate("198.51.100.10:12050", "io-gateway", ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
+                    new ServiceEndpointCandidate("100.86.45.90:12050", "io-gateway", ServiceEndpointCandidateKind.Tailnet, Priority: 90)
+                ]),
+            "1"));
+        vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.IoGatewayKey,
+            "198.51.100.10:12050/io-legacy",
+            "2"));
+
+        await WaitForAsync(() =>
+            string.Equals(connections.IoHost, "100.86.45.90", StringComparison.Ordinal)
+            && string.Equals(connections.IoPortText, "12050", StringComparison.Ordinal)
+            && string.Equals(connections.IoGateway, "io-gateway", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task UpdateSetting_InvalidServiceEndpointValues_DoNotOverwriteConnectionInputs()
     {
         var connections = new ConnectionViewModel
