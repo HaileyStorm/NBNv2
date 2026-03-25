@@ -520,10 +520,16 @@ public sealed partial class OrchestratorPanelViewModel
             return;
         }
 
+        SetEnvIfMissing(startInfo, "NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED", "1");
         SetEnvIfMissing(startInfo, "NBN_RUNTIME_METADATA_DIAGNOSTICS_ENABLED", "1");
         SetEnvIfMissing(startInfo, "NBN_METADATA_DIAGNOSTICS_ENABLED", "1");
         SetEnvIfMissing(startInfo, "NBN_HIVEMIND_METADATA_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_HIVEMIND_LOG_TICK_BARRIER", "1");
         SetEnvIfMissing(startInfo, "NBN_IO_METADATA_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_INPUT_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED", "1");
+        SetEnvIfMissing(startInfo, "NBN_BRAIN_LOG_DELIVERY", "1");
+        SetEnvIfMissing(startInfo, "NBN_REGIONHOST_LOG_DELIVERY", "1");
         SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_ENABLED", "1");
         SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED", "1");
         SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", ActivityDiagnosticsPeriod);

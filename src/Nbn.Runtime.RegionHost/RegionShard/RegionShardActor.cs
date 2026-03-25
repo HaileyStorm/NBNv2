@@ -20,6 +20,7 @@ public sealed class RegionShardActor : IActor
     private static readonly bool LogOutput = IsEnvTrue("NBN_REGIONHOST_LOG_OUTPUT");
     private static readonly bool LogViz = IsEnvTrue("NBN_REGIONHOST_LOG_VIZ");
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogTickDiagnostics = IsEnvTrue("NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED");
     private static readonly bool LogInitDiagnostics = IsEnvTrue("NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED");
     private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
@@ -376,6 +377,15 @@ public sealed class RegionShardActor : IActor
             }
         }
 
+        if (LogTickDiagnostics)
+        {
+            var senderLabel = context.Sender is null
+                ? "<missing>"
+                : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
+            Console.WriteLine(
+                $"[RegionShard] SignalBatch accepted tick={batch.TickId} shard={_shardId} sender={senderLabel} contribs={batch.Contribs.Count} late={isLateBatch}.");
+        }
+
         SendSignalBatchAck(context, batch, preferBatchAddressing: false);
     }
 
@@ -421,6 +431,21 @@ public sealed class RegionShardActor : IActor
 
     private void HandleTickCompute(IContext context, TickCompute tick)
     {
+        if (LogTickDiagnostics)
+        {
+            var senderLabel = context.Sender is null
+                ? "<missing>"
+                : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
+            var routerLabel = _router is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(_router.Address) ? _router.Id : $"{_router.Address}/{_router.Id}");
+            var tickSinkLabel = _tickSink is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(_tickSink.Address) ? _tickSink.Id : $"{_tickSink.Address}/{_tickSink.Id}");
+            Console.WriteLine(
+                $"[RegionShard] TickCompute recv tick={tick.TickId} shard={_shardId} sender={senderLabel} router={routerLabel} tickSink={tickSinkLabel}.");
+        }
+
         if (_recentComputeDone.TryGetValue(tick.TickId, out var cachedDone))
         {
             RegionHostTelemetry.RecordComputeDuplicate();
@@ -694,7 +719,7 @@ public sealed class RegionShardActor : IActor
             context.Request(doneTarget, done);
         }
 
-        if (LogVizDiagnostics)
+        if (LogVizDiagnostics || LogTickDiagnostics)
         {
             var senderLabel = context.Sender is null
                 ? "<missing>"

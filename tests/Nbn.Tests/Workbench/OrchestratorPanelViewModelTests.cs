@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using Nbn.Proto;
 using Nbn.Proto.Control;
@@ -13,6 +14,11 @@ namespace Nbn.Tests.Workbench;
 
 public class OrchestratorPanelViewModelTests
 {
+    private static readonly MethodInfo ApplyRuntimeDiagnosticsEnvironmentMethod = typeof(OrchestratorPanelViewModel).GetMethod(
+        "ApplyRuntimeDiagnosticsEnvironment",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("OrchestratorPanelViewModel.ApplyRuntimeDiagnosticsEnvironment was not found.");
+
     [Fact]
     public async Task StartAllCommand_IncludesWorkerLaunch()
     {
@@ -236,6 +242,26 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Contains("--bind-host 0.0.0.0 --port 12041", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
         Assert.DoesNotContain("--advertise-host 203.0.113.55", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ApplyRuntimeDiagnosticsEnvironment_AddsTickBarrierAndDeliveryFlags()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED", "1"));
+
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false
+        };
+
+        InvokeApplyRuntimeDiagnosticsEnvironment(startInfo);
+
+        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED"]);
+        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_HIVEMIND_LOG_TICK_BARRIER"]);
+        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_BRAIN_LOG_DELIVERY"]);
+        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_REGIONHOST_LOG_DELIVERY"]);
+        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_INPUT_DIAGNOSTICS_ENABLED"]);
+        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED"]);
     }
 
     [Fact]
@@ -2830,4 +2856,7 @@ public class OrchestratorPanelViewModelTests
             }
         }
     }
+
+    private static void InvokeApplyRuntimeDiagnosticsEnvironment(ProcessStartInfo startInfo)
+        => ApplyRuntimeDiagnosticsEnvironmentMethod.Invoke(obj: null, new object?[] { startInfo });
 }

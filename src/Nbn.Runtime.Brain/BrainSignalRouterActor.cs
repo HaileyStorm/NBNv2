@@ -15,6 +15,7 @@ public sealed class BrainSignalRouterActor : IActor
     private static readonly bool LogDelivery = IsEnvTrue("NBN_BRAIN_LOG_DELIVERY");
     private static readonly bool LogInputDiagnostics = IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private static readonly bool LogInputTraceDiagnostics = IsEnvTrue("NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED");
+    private static readonly bool LogTickDiagnostics = IsEnvTrue("NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED");
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private readonly RoutingTable _routingTable = new();
@@ -69,7 +70,7 @@ public sealed class BrainSignalRouterActor : IActor
                 HandleSignalBatchAck(context, ack);
                 break;
             case TickComputeDone tickComputeDone:
-                ForwardToParent(context, tickComputeDone);
+                HandleTickComputeDone(context, tickComputeDone);
                 break;
         }
 
@@ -82,6 +83,10 @@ public sealed class BrainSignalRouterActor : IActor
         if (_routingSnapshot.Count == 0)
         {
             _routingTable.Replace(_routingSnapshot.Routes);
+            if (LogTickDiagnostics)
+            {
+                Log("SetRoutingTable applied empty snapshot.");
+            }
             return;
         }
 
@@ -99,6 +104,10 @@ public sealed class BrainSignalRouterActor : IActor
 
         _routingSnapshot = new RoutingTableSnapshot(resolvedRoutes);
         _routingTable.Replace(_routingSnapshot.Routes);
+        if (LogTickDiagnostics)
+        {
+            Log($"SetRoutingTable applied {_routingSnapshot.Count} route(s): {FormatRoutes()}");
+        }
     }
 
     private async Task<ShardRoute?> ResolveRoutingRouteAsync(ShardRoute route)
@@ -134,7 +143,17 @@ public sealed class BrainSignalRouterActor : IActor
     {
         if (_routingTable.Count == 0)
         {
+            if (LogTickDiagnostics)
+            {
+                Log($"TickCompute skipped tick={tickCompute.TickId} reason=no_routes");
+            }
             return;
+        }
+
+        if (LogTickDiagnostics)
+        {
+            Log(
+                $"TickCompute dispatch tick={tickCompute.TickId} routes={_routingTable.Count} targets={string.Join(", ", _routingTable.Entries.Select(static entry => PidLabel(entry.Pid)))}");
         }
 
         foreach (var route in _routingTable.Entries)
@@ -264,6 +283,17 @@ public sealed class BrainSignalRouterActor : IActor
         {
             context.Request(replyTo, deliverDone);
         }
+    }
+
+    private void HandleTickComputeDone(IContext context, TickComputeDone tickComputeDone)
+    {
+        if (LogTickDiagnostics)
+        {
+            Log(
+                $"TickComputeDone forward tick={tickComputeDone.TickId} brain={_brainId:D} shard={(tickComputeDone.ShardId is null ? "<missing>" : tickComputeDone.ShardId.ToShardId32().ToString())} sender={PidLabel(context.Sender)} parent={PidLabel(context.Parent)}");
+        }
+
+        ForwardToParent(context, tickComputeDone);
     }
 
     private void HandleInputWrite(IContext context, InputWrite message)
