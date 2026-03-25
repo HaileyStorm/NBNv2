@@ -91,6 +91,12 @@ git status --short --branch
 EOF
 )
 
+encoded_script=$(
+    printf '%s' "$remote_script" \
+        | iconv -f UTF-8 -t UTF-16LE \
+        | base64 -w0
+)
+
 ssh \
     -o PreferredAuthentications=publickey \
     -o PasswordAuthentication=no \
@@ -98,4 +104,4 @@ ssh \
     -i "${HOME}/.ssh/id_ed25519" \
     -o StrictHostKeyChecking=accept-new \
     "${user}@${host}" \
-    "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$remote_script\""
+    "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded_script"
