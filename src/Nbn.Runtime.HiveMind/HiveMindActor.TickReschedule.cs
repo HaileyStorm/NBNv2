@@ -69,7 +69,7 @@ public sealed partial class HiveMindActor
                 LogError($"Routing snapshot missing for brain {brain.BrainId} with {brain.Shards.Count} shard(s).");
             }
 
-            var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
+            var computeTarget = brain.SignalRouterPid ?? brain.BrainRootPid;
             if (computeTarget is null)
             {
                 LogError($"TickCompute skipped: missing BrainRoot/SignalRouter PID for brain {brain.BrainId}.");
@@ -372,7 +372,7 @@ public sealed partial class HiveMindActor
                 LogError($"Routing snapshot missing for brain {brain.BrainId} with {brain.Shards.Count} shard(s).");
             }
 
-            var deliverTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
+            var deliverTarget = brain.SignalRouterPid ?? brain.BrainRootPid;
             if (deliverTarget is null)
             {
                 LogError($"TickDeliver skipped: missing BrainRoot/SignalRouter PID for brain {brain.BrainId}.");
