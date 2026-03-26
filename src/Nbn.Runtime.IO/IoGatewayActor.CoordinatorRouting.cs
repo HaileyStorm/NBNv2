@@ -228,10 +228,11 @@ public sealed partial class IoGatewayActor
 
         try
         {
+            var timeout = requestTimeout ?? DefaultRequestTimeout;
             var info = await context.RequestAsync<ProtoControl.BrainIoInfo>(
                     _hiveMindPid,
                     new ProtoControl.GetBrainIoInfo { BrainId = brainId.ToProtoUuid() },
-                    requestTimeout ?? DefaultRequestTimeout)
+                    timeout)
                 .ConfigureAwait(false);
 
             if (info is null || info.InputWidth == 0)
@@ -251,6 +252,8 @@ public sealed partial class IoGatewayActor
                 IoGatewayOwnsInputCoordinator = info.IoGatewayOwnsInputCoordinator,
                 IoGatewayOwnsOutputCoordinator = info.IoGatewayOwnsOutputCoordinator
             };
+
+            await TryPopulateArtifactMetadataFromHiveMindAsync(context, brainId, register, timeout).ConfigureAwait(false);
             await RegisterBrainAsync(context, register);
 
             if (_brains.TryGetValue(brainId, out var entry))
@@ -264,6 +267,67 @@ public sealed partial class IoGatewayActor
         }
 
         return null;
+    }
+
+    private async Task TryPopulateArtifactMetadataFromHiveMindAsync(
+        IContext context,
+        Guid brainId,
+        RegisterBrain register,
+        TimeSpan requestTimeout)
+    {
+        if (_hiveMindPid is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var definition = await context.RequestAsync<BrainDefinitionReady>(
+                    _hiveMindPid,
+                    new ExportBrainDefinition
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        RebaseOverlays = false
+                    },
+                    requestTimeout)
+                .ConfigureAwait(false);
+            if (definition is not null && HasArtifactRef(definition.BrainDef))
+            {
+                register.BaseDefinition = definition.BrainDef;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] EnsureBrainEntry export bootstrap failed brain={brainId} detail={ex.GetBaseException().Message}");
+            }
+        }
+
+        try
+        {
+            var snapshot = await context.RequestAsync<SnapshotReady>(
+                    _hiveMindPid,
+                    new RequestSnapshot
+                    {
+                        BrainId = brainId.ToProtoUuid()
+                    },
+                    requestTimeout)
+                .ConfigureAwait(false);
+            if (snapshot is not null && HasArtifactRef(snapshot.Snapshot))
+            {
+                register.LastSnapshot = snapshot.Snapshot;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] EnsureBrainEntry snapshot bootstrap failed brain={brainId} detail={ex.GetBaseException().Message}");
+            }
+        }
     }
 
     private async Task EnsureOutputSinkRegisteredAsync(

@@ -1,3 +1,4 @@
+using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
@@ -138,6 +139,45 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
         Assert.Equal((uint)4, info.InputWidth);
         Assert.Equal((uint)2, info.OutputWidth);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task EnsureBrainEntry_Bootstraps_ArtifactMetadata_From_HiveMindExports()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 4)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 2)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new IoGatewayRegistrationProbeActor(brainId)));
+        var baseDefinition = new string('a', 64).ToArtifactRef(128, "application/x-nbn", "http://100.123.130.93:12091/");
+        var snapshot = new string('b', 64).ToArtifactRef(64, "application/x-nbs", "http://100.123.130.93:12091/");
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerPid,
+            inputWidth: 4,
+            outputWidth: 2,
+            inputMode: ProtoControl.InputCoordinatorMode.DirtyOnChange,
+            baseDefinition: baseDefinition,
+            snapshot: snapshot)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        var info = await root.RequestAsync<BrainInfo>(
+            gateway,
+            new BrainInfoRequest { BrainId = brainId.ToProtoUuid() },
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal((uint)4, info.InputWidth);
+        Assert.Equal((uint)2, info.OutputWidth);
+        Assert.Equal(baseDefinition.ToSha256Hex(), info.BaseDefinition.ToSha256Hex());
+        Assert.Equal(baseDefinition.StoreUri, info.BaseDefinition.StoreUri);
+        Assert.Equal(snapshot.ToSha256Hex(), info.LastSnapshot.ToSha256Hex());
+        Assert.Equal(snapshot.StoreUri, info.LastSnapshot.StoreUri);
 
         await system.ShutdownAsync();
     }
@@ -713,6 +753,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private readonly uint _outputWidth;
         private readonly ProtoControl.InputCoordinatorMode _inputMode;
         private readonly TimeSpan _brainIoInfoDelay;
+        private readonly ArtifactRef? _baseDefinition;
+        private readonly ArtifactRef? _snapshot;
         private int _registerOutputSinkCount;
         private string _lastOutputSinkPid = string.Empty;
 
@@ -724,7 +766,9 @@ public sealed class IoGatewayDistributedCoordinatorTests
             uint inputWidth,
             uint outputWidth,
             ProtoControl.InputCoordinatorMode inputMode,
-            TimeSpan? brainIoInfoDelay = null)
+            TimeSpan? brainIoInfoDelay = null,
+            ArtifactRef? baseDefinition = null,
+            ArtifactRef? snapshot = null)
         {
             _brainId = brainId;
             _inputCoordinatorPid = inputCoordinatorPid;
@@ -734,6 +778,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
             _outputWidth = outputWidth;
             _inputMode = inputMode;
             _brainIoInfoDelay = brainIoInfoDelay ?? TimeSpan.Zero;
+            _baseDefinition = baseDefinition?.Clone();
+            _snapshot = snapshot?.Clone();
         }
 
         public sealed record GetSnapshot;
@@ -767,6 +813,20 @@ public sealed class IoGatewayDistributedCoordinatorTests
                 case ProtoControl.RegisterOutputSink register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
                     _registerOutputSinkCount++;
                     _lastOutputSinkPid = register.OutputPid ?? string.Empty;
+                    break;
+                case ExportBrainDefinition export when export.BrainId.TryToGuid(out var exportBrainId) && exportBrainId == _brainId:
+                    context.Respond(new BrainDefinitionReady
+                    {
+                        BrainId = export.BrainId,
+                        BrainDef = _baseDefinition?.Clone() ?? new ArtifactRef()
+                    });
+                    break;
+                case RequestSnapshot snapshotRequest when snapshotRequest.BrainId.TryToGuid(out var snapshotBrainId) && snapshotBrainId == _brainId:
+                    context.Respond(new SnapshotReady
+                    {
+                        BrainId = snapshotRequest.BrainId,
+                        Snapshot = _snapshot?.Clone() ?? new ArtifactRef()
+                    });
                     break;
                 case GetSnapshot:
                     context.Respond(new Snapshot(_registerOutputSinkCount, _lastOutputSinkPid));
