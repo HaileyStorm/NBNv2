@@ -596,13 +596,9 @@ public sealed class BrainSignalRouterActor : IActor
             _pendingOutboxes.Remove(tickId);
         }
 
-        // If drain requests are expiring, the cached IO PID is likely stale/unreachable.
-        // Clear it so subsequent ticks can proceed without repeatedly waiting on drain responses.
-        _ioGatewayPid = null;
-
         if (LogDelivery)
         {
-            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)} ioGatewayCleared=true");
+            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)} ioGateway={PidLabel(_ioGatewayPid)}");
         }
     }
 

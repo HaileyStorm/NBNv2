@@ -99,7 +99,7 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
-    public async Task TickDeliver_MissingInputDrain_DoesNotWedge_SubsequentTicks()
+    public async Task TickDeliver_MissingInputDrain_Keeps_SubsequentTicksPending()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -122,17 +122,46 @@ public class BrainSignalRouterInputDrainTests
         });
 
         var tick1Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
-
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var tick2Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 2 })
-            .WaitAsync(timeoutCts.Token);
-        Assert.Equal((ulong)2, tick2Done.TickId);
-
-        var tick3Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 3 })
-            .WaitAsync(timeoutCts.Token);
-        Assert.Equal((ulong)3, tick3Done.TickId);
+        var tick2Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 2 });
+        var tick3Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 3 });
 
         await AssertTaskStillPending(tick1Task, TimeSpan.FromMilliseconds(150));
+        await AssertTaskStillPending(tick2Task, TimeSpan.FromMilliseconds(150));
+        await AssertTaskStillPending(tick3Task, TimeSpan.FromMilliseconds(150));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_ExpiredInputDrain_StillRequestsNextDrain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var drainRequests = new TaskCompletionSource<ulong[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ioPid = root.Spawn(Props.FromProducer(() => new RecordingSilentIoDrainActor(brainId, drainRequests)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new IgnoreActor()));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid)
+        });
+
+        _ = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+        _ = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 2 });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var requestedTicks = await drainRequests.Task.WaitAsync(timeoutCts.Token);
+        Assert.Equal(new ulong[] { 1, 2 }, requestedTicks);
 
         await system.ShutdownAsync();
     }
@@ -516,6 +545,36 @@ public class BrainSignalRouterInputDrainTests
             if (context.Message is DrainInputs request && Matches(request.BrainId))
             {
                 // Intentionally do not respond to simulate a missing drain acknowledgement.
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed class RecordingSilentIoDrainActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly TaskCompletionSource<ulong[]> _drainRequests;
+        private readonly List<ulong> _ticks = new();
+
+        public RecordingSilentIoDrainActor(Guid brainId, TaskCompletionSource<ulong[]> drainRequests)
+        {
+            _brainId = brainId;
+            _drainRequests = drainRequests;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is DrainInputs drain && Matches(drain.BrainId))
+            {
+                _ticks.Add(drain.TickId);
+                if (_ticks.Count >= 2)
+                {
+                    _drainRequests.TrySetResult(_ticks.ToArray());
+                }
             }
 
             return Task.CompletedTask;
