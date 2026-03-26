@@ -351,6 +351,43 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task TickDeliver_AmbiguousFallbackRoute_SkipsDeliveryAndCompletesWithoutAcks()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var routedShardAId = ShardId32.From(1, 0);
+        var routedShardBId = ShardId32.From(1, 1);
+        var staleOutboxShardId = ShardId32.From(1, 2);
+
+        var batchATcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var batchBTcs = new TaskCompletionSource<SignalBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardA = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, routedShardAId, batchATcs)));
+        var shardB = root.Spawn(Props.FromProducer(() => new ControlledAckShardActor(brainId, routedShardBId, batchBTcs)));
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(routedShardAId.Value, shardA),
+            new ShardRoute(routedShardBId.Value, shardB)
+        })));
+
+        root.Send(router, CreateOutboxBatch(brainId, 1, staleOutboxShardId, targetNeuronId: 0, value: 1f));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var deliverDone = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.Equal((ulong)1, deliverDone.TickId);
+        Assert.Equal((uint)0, deliverDone.DeliveredBatches);
+        Assert.Equal((uint)0, deliverDone.DeliveredContribs);
+
+        await AssertTaskStillPending(batchATcs.Task, TimeSpan.FromMilliseconds(150));
+        await AssertTaskStillPending(batchBTcs.Task, TimeSpan.FromMilliseconds(150));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task TickDeliver_Completes_WhenExpectedShardSendersAck()
     {
         var system = new ActorSystem();
