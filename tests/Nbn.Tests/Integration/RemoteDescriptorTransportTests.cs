@@ -10,6 +10,7 @@ using Nbn.Proto.Viz;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.RegionHost;
 using Nbn.Runtime.Reproduction;
 using Nbn.Runtime.Speciation;
 using Nbn.Runtime.WorkerNode;
@@ -705,6 +706,161 @@ public class RemoteDescriptorTransportTests
         Assert.Equal([0.9f], vector.Values.ToArray());
     }
 
+    [Fact]
+    public async Task WorkerNodeRemote_Transports_TickCompute_To_WorkerHosted_SignalRouter()
+    {
+        var receiverPort = GetFreePort();
+        var senderPort = GetFreePort();
+        var workerId = Guid.NewGuid();
+        var brainId = Guid.NewGuid();
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-remote-router-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var options = WorkerNodeOptions.FromArgs(new[]
+            {
+                "--bind-host", "127.0.0.1",
+                "--port", receiverPort.ToString(),
+                "--settings-host", "127.0.0.1",
+                "--settings-port", "12010",
+                "--settings-name", "SettingsMonitor"
+            });
+
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var minimalNbn = NbnTestVectors.CreateMinimalNbn();
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(minimalNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            await using var receiver = await RemoteTestNode.StartAsync(WorkerNodeRemote.BuildConfig(options));
+            var workerRoot = receiver.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerId,
+                    receiver.Address,
+                    artifactStore: artifactStore)),
+                options.RootActorName);
+
+            var computeDoneTcs = new TaskCompletionSource<TickComputeDone>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var hiveName = $"hive-{Guid.NewGuid():N}";
+            receiver.Root.SpawnNamed(
+                Props.FromProducer(() => new BrainMetadataProbeActor(brainId, brainDef)),
+                ioName);
+            receiver.Root.SpawnNamed(
+                Props.FromProducer(() => new TickComputeDoneProbeActor(computeDoneTcs)),
+                hiveName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            receiver.Root.Send(
+                workerRoot,
+                new WorkerNodeActor.DiscoverySnapshotApplied(new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+                {
+                    [ServiceEndpointSettings.IoGatewayKey] = new(
+                        ServiceEndpointSettings.IoGatewayKey,
+                        new ServiceEndpoint(string.Empty, ioName),
+                        nowMs),
+                    [ServiceEndpointSettings.HiveMindKey] = new(
+                        ServiceEndpointSettings.HiveMindKey,
+                        new ServiceEndpoint(string.Empty, hiveName),
+                        nowMs)
+                }));
+            await WaitForAsync(
+                async () =>
+                {
+                    var snapshot = await receiver.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                        workerRoot,
+                        new WorkerNodeActor.GetWorkerNodeSnapshot());
+                    return snapshot.HiveMindEndpoint is not null && snapshot.IoGatewayEndpoint is not null;
+                },
+                TimeSpan.FromSeconds(5));
+
+            var senderConfig = RemoteConfig.BindToLocalhost(senderPort).WithProtoMessages(
+                NbnCommonReflection.Descriptor,
+                NbnControlReflection.Descriptor,
+                NbnIoReflection.Descriptor,
+                NbnSignalsReflection.Descriptor);
+            await using var sender = await RemoteTestNode.StartAsync(senderConfig);
+
+            var workerTarget = new PID(receiver.Address, workerRoot.Id);
+            var routerAssignment = new PlacementAssignment
+            {
+                AssignmentId = $"assign-router-{brainId:N}",
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 1,
+                Target = PlacementAssignmentTarget.PlacementTargetSignalRouter,
+                WorkerNodeId = workerId.ToProtoUuid(),
+                ActorName = $"brain-{brainId:N}-router"
+            };
+            var routerAck = await sender.Root.RequestAsync<PlacementAssignmentAck>(
+                workerTarget,
+                new PlacementAssignmentRequest { Assignment = routerAssignment },
+                TimeSpan.FromSeconds(5));
+            Assert.True(
+                routerAck.State == PlacementAssignmentState.PlacementAssignmentReady,
+                $"router ack state={routerAck.State} reason={routerAck.FailureReason} message={routerAck.Message}");
+
+            var shardAssignment = new PlacementAssignment
+            {
+                AssignmentId = $"assign-shard-{brainId:N}",
+                BrainId = brainId.ToProtoUuid(),
+                PlacementEpoch = 1,
+                Target = PlacementAssignmentTarget.PlacementTargetRegionShard,
+                WorkerNodeId = workerId.ToProtoUuid(),
+                RegionId = 0,
+                ShardIndex = 0,
+                NeuronStart = 0,
+                NeuronCount = 2,
+                ActorName = $"brain-{brainId:N}-r0-s0"
+            };
+            var shardAck = await sender.Root.RequestAsync<PlacementAssignmentAck>(
+                workerTarget,
+                new PlacementAssignmentRequest { Assignment = shardAssignment },
+                TimeSpan.FromSeconds(5));
+            Assert.True(
+                shardAck.State == PlacementAssignmentState.PlacementAssignmentReady,
+                $"shard ack state={shardAck.State} reason={shardAck.FailureReason} message={shardAck.Message}");
+
+            var reconcile = await sender.Root.RequestAsync<PlacementReconcileReport>(
+                workerTarget,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                },
+                TimeSpan.FromSeconds(5));
+            var observedRouter = Assert.Single(
+                reconcile.Assignments,
+                assignment => assignment.Target == PlacementAssignmentTarget.PlacementTargetSignalRouter);
+            Assert.True(TryParsePid(observedRouter.ActorPid, out var routerPid));
+
+            sender.Root.Send(routerPid, new TickCompute
+            {
+                TickId = 1,
+                TargetTickHz = 8f
+            });
+
+            await Task.Delay(500);
+            var backendInfo = await receiver.Root.RequestAsync<RegionShardBackendExecutionInfo>(
+                workerRoot,
+                new WorkerNodeActor.GetHostedRegionShardBackendExecutionInfo(brainId, 0, 0));
+            Assert.True(backendInfo.HasExecuted, $"backend executed={backendInfo.HasExecuted} reason={backendInfo.FallbackReason}");
+            var done = await computeDoneTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal((ulong)1, done.TickId);
+            Assert.True(done.BrainId.TryToGuid(out var doneBrainId));
+            Assert.Equal(brainId, doneBrainId);
+            Assert.Equal((uint)0, done.RegionId);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
 
     [Fact]
     public async Task SpeciationRemote_Transports_Reproduction_AssessCompatibilityByArtifacts_Messages()
@@ -893,6 +1049,67 @@ public class RemoteDescriptorTransportTests
                 case OutputVectorEvent vector:
                     _vectorTcs.TrySetResult(vector.Clone());
                     break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BrainMetadataProbeActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ArtifactRef _brainDef;
+
+        public BrainMetadataProbeActor(Guid brainId, ArtifactRef brainDef)
+        {
+            _brainId = brainId;
+            _brainDef = brainDef.Clone();
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case BrainInfoRequest request when request.BrainId is not null
+                                                 && request.BrainId.TryToGuid(out var infoBrainId)
+                                                 && infoBrainId == _brainId:
+                    context.Respond(new BrainInfo
+                    {
+                        BrainId = request.BrainId,
+                        InputWidth = 1,
+                        OutputWidth = 1,
+                        BaseDefinition = _brainDef.Clone()
+                    });
+                    break;
+                case ExportBrainDefinition request when request.BrainId is not null
+                                                      && request.BrainId.TryToGuid(out var exportBrainId)
+                                                      && exportBrainId == _brainId:
+                    context.Respond(new BrainDefinitionReady
+                    {
+                        BrainId = request.BrainId,
+                        BrainDef = _brainDef.Clone()
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TickComputeDoneProbeActor : IActor
+    {
+        private readonly TaskCompletionSource<TickComputeDone> _doneTcs;
+
+        public TickComputeDoneProbeActor(TaskCompletionSource<TickComputeDone> doneTcs)
+        {
+            _doneTcs = doneTcs;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is TickComputeDone done)
+            {
+                _doneTcs.TrySetResult(done.Clone());
             }
 
             return Task.CompletedTask;

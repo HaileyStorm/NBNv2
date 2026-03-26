@@ -36,7 +36,7 @@ public sealed class BrainSignalRouterActor : IActor
         switch (context.Message)
         {
             case SetRoutingTable setRouting:
-                return HandleSetRoutingTableAsync(setRouting.Table);
+                return HandleSetRoutingTableAsync(context, setRouting.Table);
             case GetRoutingTable:
                 context.Respond(_routingSnapshot);
                 break;
@@ -77,7 +77,7 @@ public sealed class BrainSignalRouterActor : IActor
         return Task.CompletedTask;
     }
 
-    private async Task HandleSetRoutingTableAsync(RoutingTableSnapshot? snapshot)
+    private async Task HandleSetRoutingTableAsync(IContext context, RoutingTableSnapshot? snapshot)
     {
         _routingSnapshot = snapshot ?? RoutingTableSnapshot.Empty;
         if (_routingSnapshot.Count == 0)
@@ -93,7 +93,7 @@ public sealed class BrainSignalRouterActor : IActor
         var resolvedRoutes = new List<ShardRoute>(_routingSnapshot.Routes.Count);
         foreach (var route in _routingSnapshot.Routes)
         {
-            var resolvedRoute = await ResolveRoutingRouteAsync(route).ConfigureAwait(false);
+            var resolvedRoute = await ResolveRoutingRouteAsync(context, route).ConfigureAwait(false);
             if (resolvedRoute is null)
             {
                 continue;
@@ -110,9 +110,9 @@ public sealed class BrainSignalRouterActor : IActor
         }
     }
 
-    private async Task<ShardRoute?> ResolveRoutingRouteAsync(ShardRoute route)
+    private async Task<ShardRoute?> ResolveRoutingRouteAsync(IContext context, ShardRoute route)
     {
-        var preferredLocalPid = TryGetPreferredLocalRoutePid(route);
+        var preferredLocalPid = TryGetPreferredLocalRoutePid(context, route);
         if (preferredLocalPid is not null)
         {
             return route with { Pid = preferredLocalPid };
@@ -681,7 +681,7 @@ public sealed class BrainSignalRouterActor : IActor
         return true;
     }
 
-    private PID? TryGetPreferredLocalRoutePid(ShardRoute route)
+    private PID? TryGetPreferredLocalRoutePid(IContext context, ShardRoute route)
     {
         if (IsLocalPid(route.Pid))
         {
@@ -692,7 +692,7 @@ public sealed class BrainSignalRouterActor : IActor
             || existingRoute is null
             || !IsLocalPid(existingRoute.Pid))
         {
-            return null;
+            return TryBuildLocalizedLocalPidForLocalSystem(context.System.Address, route);
         }
 
         if (RouteTargetsSameLocalActor(route, existingRoute.Pid))
@@ -700,7 +700,7 @@ public sealed class BrainSignalRouterActor : IActor
             return existingRoute.Pid;
         }
 
-        return TryBuildLocalizedLocalPid(route);
+        return TryBuildLocalizedLocalPidForLocalSystem(context.System.Address, route);
     }
 
     private static bool IsLocalPid(PID? pid)
@@ -740,8 +740,11 @@ public sealed class BrainSignalRouterActor : IActor
     }
 
     private static PID? TryBuildLocalizedLocalPid(ShardRoute route)
+        => TryBuildLocalizedLocalPidForLocalSystem(localSystemAddress: null, route);
+
+    private static PID? TryBuildLocalizedLocalPidForLocalSystem(string? localSystemAddress, ShardRoute route)
     {
-        var actorId = ResolveLocalActorId(route);
+        var actorId = ResolveLocalActorId(localSystemAddress, route);
         if (string.IsNullOrWhiteSpace(actorId))
         {
             return null;
@@ -750,9 +753,9 @@ public sealed class BrainSignalRouterActor : IActor
         return new PID("nonhost", actorId);
     }
 
-    private static string ResolveLocalActorId(ShardRoute route)
+    private static string ResolveLocalActorId(string? localSystemAddress, ShardRoute route)
     {
-        if (route.Pid is not null && IsLocalAddress(route.Pid.Address))
+        if (route.Pid is not null && IsSameProcessLocalAddress(localSystemAddress, route.Pid.Address))
         {
             return route.Pid.Id;
         }
@@ -764,17 +767,54 @@ public sealed class BrainSignalRouterActor : IActor
 
         if (RoutablePidReference.TryDecode(route.ActorReference, out var endpointSet))
         {
-            return endpointSet.Candidates.Any(static candidate =>
-                    TryParseEndpoint(candidate.HostPort, out var host, out _)
-                    && NetworkAddressDefaults.IsLocalHost(host))
+            return endpointSet.Candidates.Any(candidate =>
+                    IsSameProcessLocalHostPort(localSystemAddress, candidate.HostPort))
                 ? endpointSet.ActorName
                 : string.Empty;
         }
 
         return RoutablePidReference.TryParsePlainPid(route.ActorReference, out var parsed)
-               && IsLocalAddress(parsed.Address)
+               && IsSameProcessLocalAddress(localSystemAddress, parsed.Address)
             ? parsed.Id
             : string.Empty;
+    }
+
+    private static bool IsSameProcessLocalHostPort(string? localSystemAddress, string? hostPort)
+    {
+        if (string.IsNullOrWhiteSpace(hostPort))
+        {
+            return false;
+        }
+
+        var normalizedHostPort = hostPort.Trim();
+        var slashIndex = normalizedHostPort.IndexOf('/');
+        if (slashIndex >= 0)
+        {
+            normalizedHostPort = normalizedHostPort[..slashIndex];
+        }
+
+        return IsSameProcessLocalAddress(localSystemAddress, normalizedHostPort);
+    }
+
+    private static bool IsSameProcessLocalAddress(string? localSystemAddress, string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(localSystemAddress))
+        {
+            return IsLocalAddress(address);
+        }
+
+        if (!TryParseEndpoint(localSystemAddress, out _, out var localPort)
+            || !TryParseEndpoint(address, out var host, out var routePort))
+        {
+            return false;
+        }
+
+        return localPort == routePort && NetworkAddressDefaults.IsLocalHost(host);
     }
 
     private static bool IsLocalAddress(string? address)

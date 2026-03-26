@@ -713,10 +713,17 @@ public sealed class RegionShardActor : IActor
 
     private void SendComputeDone(IContext context, TickComputeDone done)
     {
-        var doneTarget = _tickSink ?? context.Sender ?? _router;
-        if (doneTarget is not null)
+        var primaryTarget = _tickSink;
+        var fallbackTarget = context.Sender ?? _router;
+        if (primaryTarget is not null)
         {
-            context.Request(doneTarget, done);
+            context.Request(primaryTarget, done);
+        }
+
+        if (fallbackTarget is not null
+            && (primaryTarget is null || !PidTargetsEqual(primaryTarget, fallbackTarget)))
+        {
+            context.Request(fallbackTarget, done);
         }
 
         if (LogVizDiagnostics || LogTickDiagnostics)
@@ -724,13 +731,27 @@ public sealed class RegionShardActor : IActor
             var senderLabel = context.Sender is null
                 ? "<missing>"
                 : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
-            var targetLabel = doneTarget is null
-                ? "(null)"
-                : (string.IsNullOrWhiteSpace(doneTarget.Address) ? doneTarget.Id : $"{doneTarget.Address}/{doneTarget.Id}");
+            var targetParts = new List<string>(capacity: 2);
+            if (primaryTarget is not null)
+            {
+                targetParts.Add(string.IsNullOrWhiteSpace(primaryTarget.Address) ? primaryTarget.Id : $"{primaryTarget.Address}/{primaryTarget.Id}");
+            }
+
+            if (fallbackTarget is not null
+                && (primaryTarget is null || !PidTargetsEqual(primaryTarget, fallbackTarget)))
+            {
+                targetParts.Add(string.IsNullOrWhiteSpace(fallbackTarget.Address) ? fallbackTarget.Id : $"{fallbackTarget.Address}/{fallbackTarget.Id}");
+            }
+
+            var targetLabel = targetParts.Count == 0 ? "(null)" : string.Join(",", targetParts);
             Console.WriteLine(
                 $"[RegionShard] TickComputeDone sent tick={done.TickId} shard={_shardId} sender={senderLabel} target={targetLabel} vizEnabled={_vizEnabled} fired={done.FiredCount} outBatches={done.OutBatches}.");
         }
     }
+
+    private static bool PidTargetsEqual(PID left, PID right)
+        => string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
 
     private bool IsBatchForShard(SignalBatch batch, out string reason)
     {
