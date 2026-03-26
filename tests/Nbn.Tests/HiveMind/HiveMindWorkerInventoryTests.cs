@@ -251,96 +251,6 @@ public sealed class HiveMindWorkerInventoryTests
     }
 
     [Fact]
-    public async Task HiveMind_SettingsSubscription_Uses_RoutableReference_When_LocalCandidates_AreProvided()
-    {
-        var system = new ActorSystem();
-        var root = system.Root;
-
-        var subscribeTcs = new TaskCompletionSource<ProtoSettings.SettingSubscribe>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var settingsProbe = root.Spawn(Props.FromProducer(() => new SettingsSubscriptionProbe(subscribeTcs)));
-
-        var localCandidates = new[]
-        {
-            new ServiceEndpointCandidate("100.64.0.41:12020", "HiveMind", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true),
-            new ServiceEndpointCandidate("192.168.1.41:12020", "HiveMind", ServiceEndpointCandidateKind.Lan, 900, "lan")
-        };
-
-        _ = root.SpawnNamed(
-            Props.FromProducer(() => new HiveMindActor(
-                CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 15_000),
-                settingsPid: settingsProbe,
-                localEndpointCandidates: localCandidates)),
-            HiveMindNames.HiveMind);
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var subscribe = await subscribeTcs.Task.WaitAsync(cts.Token);
-
-        Assert.StartsWith(RoutablePidReference.Prefix, subscribe.SubscriberActor, StringComparison.Ordinal);
-        Assert.True(RoutablePidReference.TryDecode(subscribe.SubscriberActor, out var endpointSet));
-        Assert.Equal("HiveMind", endpointSet.ActorName);
-
-        await system.ShutdownAsync();
-    }
-
-    [Fact]
-    public async Task PlacementWorkerInventory_Includes_WorkerActorReference_From_NodeEndpointSet()
-    {
-        var system = new ActorSystem();
-        var root = system.Root;
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
-            CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 15_000))));
-
-        var workerId = Guid.NewGuid();
-        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
-        {
-            SnapshotMs = (ulong)nowMs,
-            Workers =
-            {
-                BuildWorker(
-                    workerId,
-                    isAlive: true,
-                    isReady: true,
-                    lastSeenMs: nowMs,
-                    capabilityTimeMs: nowMs,
-                    address: "worker-a:12040",
-                    rootActorName: "worker-node",
-                    logicalName: "nbn.worker")
-            }
-        });
-
-        var encodedWorkerRef = RoutablePidReference.Encode(
-            new[]
-            {
-                new ServiceEndpointCandidate("100.64.0.51:12040", "worker-node", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true),
-                new ServiceEndpointCandidate("192.168.1.51:12040", "worker-node", ServiceEndpointCandidateKind.Lan, 900, "lan")
-            },
-            "worker-node");
-
-        root.Send(hiveMind, new ProtoSettings.SettingValue
-        {
-            Key = NodeEndpointSetSettings.BuildKey(workerId),
-            Value = ServiceEndpointSettings.EncodeSetValue(
-                "worker-node",
-                new[]
-                {
-                    new ServiceEndpointCandidate("100.64.0.51:12040", "worker-node", ServiceEndpointCandidateKind.Tailnet, 1000, "tailnet", true),
-                    new ServiceEndpointCandidate("192.168.1.51:12040", "worker-node", ServiceEndpointCandidateKind.Lan, 900, "lan")
-                }),
-            UpdatedMs = (ulong)nowMs
-        });
-
-        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
-            hiveMind,
-            new PlacementWorkerInventoryRequest());
-
-        Assert.Single(inventory.Workers);
-        Assert.Equal(encodedWorkerRef, inventory.Workers[0].WorkerActorReference);
-
-        await system.ShutdownAsync();
-    }
-
-    [Fact]
     public async Task PlacementWorkerInventory_Excludes_NonWorker_ServiceNodes_Even_When_Ready()
     {
         var system = new ActorSystem();
@@ -633,24 +543,6 @@ public sealed class HiveMindWorkerInventoryTests
                             rootActorName: "probe-root")
                     }
                 });
-            }
-
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class SettingsSubscriptionProbe(TaskCompletionSource<ProtoSettings.SettingSubscribe> subscribeTcs) : IActor
-    {
-        public Task ReceiveAsync(IContext context)
-        {
-            switch (context.Message)
-            {
-                case ProtoSettings.SettingSubscribe subscribe:
-                    subscribeTcs.TrySetResult(subscribe);
-                    break;
-                case ProtoSettings.SettingGet:
-                    context.Respond(new ProtoSettings.SettingValue());
-                    break;
             }
 
             return Task.CompletedTask;

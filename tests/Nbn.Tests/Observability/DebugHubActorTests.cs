@@ -1,10 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Debug;
 using Nbn.Runtime.Observability;
-using Nbn.Shared;
 using Proto;
-using Proto.Remote;
-using Proto.Remote.GrpcNet;
 
 namespace Nbn.Tests.Observability;
 
@@ -97,56 +94,6 @@ public sealed class DebugHubActorTests
         await Task.Delay(150);
         var finalSnapshot = await root.RequestAsync<DebugProbeSnapshot>(probe, new GetDebugProbeSnapshot(), TimeSpan.FromSeconds(2));
         Assert.Single(finalSnapshot.Events);
-    }
-
-    [Fact]
-    public async Task Subscribe_WithRoutablePidReference_DeliversEvents()
-    {
-        var port = GetFreePort();
-        var system = new ActorSystem();
-        var remoteConfig = RemoteConfig.BindToLocalhost(port).WithProtoMessages(
-            NbnCommonReflection.Descriptor,
-            NbnDebugReflection.Descriptor);
-        system.WithRemote(remoteConfig);
-        await system.Remote().StartAsync();
-        var root = system.Root;
-
-        try
-        {
-            var hub = root.Spawn(Props.FromProducer(() => new DebugHubActor()));
-            var probe = root.Spawn(Props.FromProducer(static () => new DebugInboundProbeActor()));
-            var encodedSubscriber = RoutablePidReference.Encode(
-                new ServiceEndpointSet(
-                    probe.Id,
-                    [
-                        new ServiceEndpointCandidate("198.51.100.10:12090", probe.Id, ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
-                        new ServiceEndpointCandidate(system.Address, probe.Id, ServiceEndpointCandidateKind.Lan, Priority: 90)
-                    ]));
-
-            root.Send(hub, new DebugSubscribe
-            {
-                SubscriberActor = encodedSubscriber,
-                MinSeverity = Severity.SevInfo
-            });
-            await Task.Delay(100);
-
-            root.Send(hub, NewOutbound(Severity.SevInfo, "hivemind.brain.spawned", "brain.spawned"));
-
-            var snapshot = await WaitForEventsAsync(root, probe, minEventCount: 1, TimeSpan.FromSeconds(2));
-            Assert.Single(snapshot.Events);
-        }
-        finally
-        {
-            await system.Remote().ShutdownAsync(true);
-            await system.ShutdownAsync();
-        }
-    }
-
-    private static int GetFreePort()
-    {
-        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private static DebugOutbound NewOutbound(Severity severity, string context, string summary)

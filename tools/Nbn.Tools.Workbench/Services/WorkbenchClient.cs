@@ -44,7 +44,6 @@ public partial class WorkbenchClient : IAsyncDisposable
     private int _bindPort;
     private string? _advertisedHost;
     private int? _advertisedPort;
-    private string? _subscriberActorReference;
 
     public WorkbenchClient(IWorkbenchEventSink sink)
     {

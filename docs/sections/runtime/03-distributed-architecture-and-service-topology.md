@@ -10,8 +10,6 @@ Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned 
 
 Runtime service roots bind all interfaces by default unless the operator explicitly pins `--bind-host` to a narrower interface such as `127.0.0.1`. When a service binds all interfaces and no explicit advertise host is supplied, NBN resolves a non-loopback local advertised address so peer discovery does not publish `0.0.0.0`.
 
-When a node can be reached through multiple networks (for example TailScale plus LAN/public IP), runtime control-plane messages may carry a routable actor reference instead of only a single concrete `address/id`. Those references preserve multiple endpoint candidates for the same actor so the receiving node can resolve the best route from its own network vantage point before it starts sending traffic back.
-
 NBN treats placement as a runtime concern:
 
 * RegionShards are expected to be distributed across worker processes.
@@ -25,9 +23,6 @@ NBN treats placement as a runtime concern:
 * Registry: nodes, addresses, root actor names, leases/heartbeats
 * Settings store: global configuration and mutable runtime settings
 * Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
-* Multi-endpoint discovery groundwork also publishes adjacent `service.endpoint_set.*` values containing repeated endpoint candidates for the same logical service; legacy single-endpoint keys remain the compatibility fallback until callers migrate to caller-side route selection.
-* Long-lived SettingsMonitor subscriptions for discovery/settings fan-out may use the same routable actor-reference encoding so live `SettingChanged` callbacks can find a subscriber through TailScale, LAN, or public routes without needing one globally-correct advertise address.
-* Placement-facing worker inventory and peer-latency payloads may also carry a worker actor reference derived from `node.endpoint_set.<node-id>` so HiveMind and workers can resolve the same worker root through different reachable networks without rewriting the logical worker identity.
 * Capability store: node CPU/GPU characteristics and benchmark scores
   * Worker nodes publish real probed CPU cores, raw free/total RAM and storage, GPU/VRAM visibility, ILGPU accelerator availability, explicit CPU/GPU scores, explicit NBN limit percentages, and current load/pressure snapshots when the host/runtime can resolve them.
   * SettingsMonitor is the canonical persisted snapshot for those worker capability rows; HiveMind still owns freshness filtering, rerun requests, and placement/rebalance policy on top of the stored snapshot.
@@ -46,7 +41,6 @@ NBN treats placement as a runtime concern:
 
 * Single well-known gateway for External World
 * Spawns per-brain input/output coordinators and routes external commands
-* When replaying output subscriptions after coordinator replacement or late brain registration, preserves the original subscriber actor reference so callback routing stays valid across mixed TailScale/LAN/public topologies
 * External World never needs to know RegionShard placement or actor PIDs
 
 **Observability hubs** (core service)

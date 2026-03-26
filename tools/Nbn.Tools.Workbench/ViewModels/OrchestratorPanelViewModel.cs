@@ -25,8 +25,8 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private const float LocalDefaultTickHz = 8f;
     private const float LocalDefaultMinTickHz = 2f;
     private const int LocalDefaultWorkerStorageLimitPercent = 95;
-    private static bool EnableRuntimeDiagnostics => IsEnvTrue("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED");
-    private static string ActivityDiagnosticsPeriod =>
+    private static readonly bool EnableRuntimeDiagnostics = IsEnvTrue("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED");
+    private static readonly string ActivityDiagnosticsPeriod =
         ResolveEnvOrDefault("NBN_WORKBENCH_ACTIVITY_DIAGNOSTICS_PERIOD", "64");
     private readonly UiDispatcher _dispatcher;
     private readonly ConnectionViewModel _connections;

@@ -36,7 +36,6 @@ var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var rootActorName = options.EnableDebugHub
     ? ObservabilityNames.DebugHub
     : options.EnableVizHub ? ObservabilityNames.VizHub : "Observability";
-var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, rootActorName);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -44,16 +43,15 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServiceName,
-    rootActorName,
-    nodeEndpointSet: endpointSet);
+    rootActorName);
 
-var publishedObsEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
+var publishedObsEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.ObservabilityKey,
-    endpointSet);
+    new ServiceEndpoint(nodeAddress, rootActorName));
 if (!publishedObsEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.ObservabilityKey}'.");

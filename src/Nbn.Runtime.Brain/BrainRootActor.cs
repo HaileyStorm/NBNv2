@@ -12,17 +12,11 @@ public sealed class BrainRootActor : IActor
     private readonly Props? _signalRouterProps;
     private readonly PID? _hiveMindPid;
     private readonly bool _autoSpawnSignalRouter;
-    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
     private PID? _signalRouterPid;
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
     private RegisterIoGateway? _pendingIoGateway;
 
-    public BrainRootActor(
-        Guid brainId,
-        PID? hiveMindPid = null,
-        Props? signalRouterProps = null,
-        bool autoSpawnSignalRouter = true,
-        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
+    public BrainRootActor(Guid brainId, PID? hiveMindPid = null, Props? signalRouterProps = null, bool autoSpawnSignalRouter = true)
     {
         _brainId = brainId;
         _hiveMindPid = hiveMindPid;
@@ -30,7 +24,6 @@ public sealed class BrainRootActor : IActor
         _signalRouterProps = signalRouterProps ?? (autoSpawnSignalRouter
             ? Props.FromProducer(() => new BrainSignalRouterActor(brainId))
             : null);
-        _localEndpointCandidates = localEndpointCandidates;
     }
 
     public Task ReceiveAsync(IContext context)
@@ -151,16 +144,14 @@ public sealed class BrainRootActor : IActor
 
         var brainRootPid = ToRemotePid(context, context.Self);
         var routerPid = _signalRouterPid is null ? null : ToRemotePid(context, _signalRouterPid);
-        var brainRootReference = BuildActorReference(brainRootPid);
-        var routerReference = routerPid is null ? string.Empty : BuildActorReference(routerPid);
 
         if (forceRegister)
         {
             context.Request(_hiveMindPid, new ProtoControl.RegisterBrain
             {
                 BrainId = _brainId.ToProtoUuid(),
-                BrainRootPid = brainRootReference,
-                SignalRouterPid = routerReference
+                BrainRootPid = PidToString(brainRootPid),
+                SignalRouterPid = routerPid is null ? string.Empty : PidToString(routerPid)
             });
             return;
         }
@@ -170,19 +161,9 @@ public sealed class BrainRootActor : IActor
             context.Request(_hiveMindPid, new ProtoControl.UpdateBrainSignalRouter
             {
                 BrainId = _brainId.ToProtoUuid(),
-                SignalRouterPid = routerReference
+                SignalRouterPid = PidToString(routerPid)
             });
         }
-    }
-
-    private string BuildActorReference(PID pid)
-    {
-        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
-        {
-            return RoutablePidReference.Encode(pid, _localEndpointCandidates);
-        }
-
-        return PidToString(pid);
     }
 
     private static PID ToRemotePid(IContext context, PID pid)

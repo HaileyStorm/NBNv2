@@ -383,56 +383,6 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
-    public async Task PlacementPeerLatencyRequest_Prefers_WorkerActorReference_Over_LegacyAddress()
-    {
-        var system = new ActorSystem();
-        var root = system.Root;
-
-        var workerAId = Guid.NewGuid();
-        var workerBId = Guid.NewGuid();
-        var workerAPid = root.SpawnNamed(
-            Props.FromProducer(() => new WorkerNodeActor(workerAId, string.Empty)),
-            $"worker-a-{Guid.NewGuid():N}");
-        var workerBPid = root.SpawnNamed(
-            Props.FromProducer(() => new WorkerNodeActor(workerBId, string.Empty)),
-            $"worker-b-{Guid.NewGuid():N}");
-
-        PlacementPeerLatencyResponse? response = null;
-        await WaitForAsync(
-            async () =>
-            {
-                response = await root.RequestAsync<PlacementPeerLatencyResponse>(
-                    workerAPid,
-                    new PlacementPeerLatencyRequest
-                    {
-                        TimeoutMs = 250,
-                        Peers =
-                        {
-                            new PlacementPeerTarget
-                            {
-                                WorkerNodeId = workerBId.ToProtoUuid(),
-                                WorkerAddress = "wrong-host:9999",
-                                WorkerRootActorName = workerBPid.Id,
-                                WorkerActorReference = string.IsNullOrWhiteSpace(workerBPid.Address)
-                                    ? workerBPid.Id
-                                    : $"{workerBPid.Address}/{workerBPid.Id}"
-                            }
-                        }
-                    });
-
-                return response.SampleCount == 1;
-            },
-            timeoutMs: 5_000);
-
-        Assert.NotNull(response);
-        Assert.Equal(workerAId.ToProtoUuid().Value, response.WorkerNodeId.Value);
-        Assert.Equal((uint)1, response.SampleCount);
-        Assert.True(response.AveragePeerLatencyMs >= 0f);
-
-        await system.ShutdownAsync();
-    }
-
-    [Fact]
     public async Task PlacementLatencyEchoRequest_Returns_Ack()
     {
         var system = new ActorSystem();
@@ -1249,68 +1199,6 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
 
         var outputObserved = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-output-fallback");
         Assert.Equal($"127.0.0.1:12041/{workerName}/{outputName}", outputObserved.ActorPid);
-    }
-
-    [Fact]
-    public async Task PlacementAssignmentRequest_NewerEpoch_Rehost_Preserves_WorkerRootPrefix_When_Actor_Already_Exists()
-    {
-        await using var harness = await WorkerHarness.CreateAsync();
-
-        var workerNodeId = Guid.NewGuid();
-        var workerName = $"worker-node-{Guid.NewGuid():N}";
-        var workerPid = harness.Root.SpawnNamed(
-            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")),
-            workerName);
-
-        var brainId = Guid.NewGuid();
-        var outputName = $"brain-{brainId:N}-output-test";
-
-        var firstAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
-            workerPid,
-            new PlacementAssignmentRequest
-            {
-                Assignment = BuildAssignment(
-                    assignmentId: "assign-output-epoch-1",
-                    brainId: brainId,
-                    workerNodeId: workerNodeId,
-                    placementEpoch: 4,
-                    regionId: 31,
-                    shardIndex: 0,
-                    target: PlacementAssignmentTarget.PlacementTargetOutputCoordinator,
-                    actorName: outputName,
-                    neuronStart: 0,
-                    neuronCount: 0)
-            });
-        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, firstAck.State);
-
-        var secondAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
-            workerPid,
-            new PlacementAssignmentRequest
-            {
-                Assignment = BuildAssignment(
-                    assignmentId: "assign-output-epoch-2",
-                    brainId: brainId,
-                    workerNodeId: workerNodeId,
-                    placementEpoch: 5,
-                    regionId: 31,
-                    shardIndex: 0,
-                    target: PlacementAssignmentTarget.PlacementTargetOutputCoordinator,
-                    actorName: outputName,
-                    neuronStart: 0,
-                    neuronCount: 0)
-            });
-        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, secondAck.State);
-
-        var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
-            workerPid,
-            new PlacementReconcileRequest
-            {
-                BrainId = brainId.ToProtoUuid(),
-                PlacementEpoch = 5
-            });
-
-        var observed = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-output-epoch-2");
-        Assert.Equal($"127.0.0.1:12041/{workerName}/{outputName}", observed.ActorPid);
     }
 
     [Fact]

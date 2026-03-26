@@ -108,56 +108,6 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
-    public async Task RegisterOutputSink_EncodedReference_IsForwarded_To_OutputShard()
-    {
-        var system = new ActorSystem();
-        var root = system.Root;
-        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
-
-        var brainId = Guid.NewGuid();
-        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
-        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
-        {
-            BrainId = brainId.ToProtoUuid(),
-            BrainRootPid = PidLabel(brainRoot)
-        }));
-
-        var encodedOutputReference = RoutablePidReference.Encode(
-            new[]
-            {
-                new ServiceEndpointCandidate("127.0.0.1:1", "output-sink", ServiceEndpointCandidateKind.Loopback, 1000, "loopback", true)
-            },
-            "output-sink");
-
-        var tcs = new TaskCompletionSource<UpdateShardOutputSink>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var shardId = ShardId32.From(NbnConstants.OutputRegionId, 0);
-        var shardPid = root.Spawn(Props.FromProducer(() => new OutputSinkProbe(shardId, tcs)));
-
-        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
-        {
-            BrainId = brainId.ToProtoUuid(),
-            RegionId = (uint)shardId.RegionId,
-            ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = PidLabel(shardPid),
-            NeuronStart = 0,
-            NeuronCount = 1
-        }));
-
-        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterOutputSink
-        {
-            BrainId = brainId.ToProtoUuid(),
-            OutputPid = encodedOutputReference
-        }));
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var update = await tcs.Task.WaitAsync(cts.Token);
-
-        Assert.Equal(encodedOutputReference, update.OutputPid);
-
-        await system.ShutdownAsync();
-    }
-
-    [Fact]
     public async Task RegisterOutputSink_Senderless_Overwrite_Is_Ignored()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);

@@ -66,11 +66,7 @@ public sealed partial class WorkerNodeActor
         var pid = SpawnOrResolveNamed(
             context,
             actorName,
-            Props.FromProducer(() => new BrainRootActor(
-                brain.BrainId,
-                hiveMindPid,
-                autoSpawnSignalRouter: false,
-                localEndpointCandidates: _localEndpointCandidates)),
+            Props.FromProducer(() => new BrainRootActor(brain.BrainId, hiveMindPid, autoSpawnSignalRouter: false)),
             brain.BrainRootPid);
 
         brain.BrainRootPid = pid;
@@ -268,11 +264,6 @@ public sealed partial class WorkerNodeActor
             return configuredPreference;
         }
 
-        if (ShouldPreferCpuForAutoRegionShardBackend())
-        {
-            return RegionShardComputeBackendPreference.Cpu;
-        }
-
         var neuronCount = checked((int)assignment.NeuronCount);
         var gpuThreshold = Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
         if (neuronCount < gpuThreshold)
@@ -307,9 +298,6 @@ public sealed partial class WorkerNodeActor
             ? RegionShardComputeBackendPreference.Gpu
             : RegionShardComputeBackendPreference.Cpu;
     }
-
-    private static bool ShouldPreferCpuForAutoRegionShardBackend()
-        => OperatingSystem.IsWindows();
 
     private RegionShardState BuildSyntheticRegionState(
         BrainHostingState brain,
@@ -387,7 +375,7 @@ public sealed partial class WorkerNodeActor
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            ShardPid = BuildLocalActorReference(remoteShardPid),
+            ShardPid = PidLabel(remoteShardPid),
             NeuronStart = (uint)Math.Max(0, neuronStart),
             NeuronCount = (uint)Math.Max(0, neuronCount)
         });
@@ -436,7 +424,7 @@ public sealed partial class WorkerNodeActor
             BrainId = brain.BrainId.ToProtoUuid(),
             OutputPid = brain.OutputCoordinatorPid is null
                 ? string.Empty
-                : BuildLocalActorReference(ToRemotePid(context, brain.OutputCoordinatorPid))
+                : PidLabel(ToRemotePid(context, brain.OutputCoordinatorPid))
         });
     }
 
@@ -464,10 +452,7 @@ public sealed partial class WorkerNodeActor
         var routes = brain.RegionShards.Values
             .OrderBy(static entry => entry.ShardId.RegionId)
             .ThenBy(static entry => entry.ShardId.ShardIndex)
-            .Select(entry => new ShardRoute(
-                entry.ShardId.Value,
-                entry.Pid,
-                BuildLocalActorReference(ToObservedRemotePid(context, entry.Pid))))
+            .Select(entry => new ShardRoute(entry.ShardId.Value, entry.Pid))
             .ToArray();
 
         var snapshot = routes.Length == 0 ? RoutingTableSnapshot.Empty : new RoutingTableSnapshot(routes);
@@ -912,9 +897,7 @@ public sealed partial class WorkerNodeActor
 
     private PID SpawnOrResolveNamed(IContext context, string actorName, Props props, PID? existingPid)
     {
-        if (existingPid is not null
-            && (string.Equals(existingPid.Id, actorName, StringComparison.Ordinal)
-                || existingPid.Id.EndsWith("/" + actorName, StringComparison.Ordinal)))
+        if (existingPid is not null && string.Equals(existingPid.Id, actorName, StringComparison.Ordinal))
         {
             return existingPid;
         }
@@ -925,16 +908,7 @@ public sealed partial class WorkerNodeActor
         }
         catch
         {
-            var normalizedActorName = NormalizeObservedActorId(actorName);
-            var normalizedSelfId = NormalizeObservedActorId(context.Self.Id);
-            if (!string.IsNullOrWhiteSpace(normalizedSelfId)
-                && !string.IsNullOrWhiteSpace(normalizedActorName)
-                && !normalizedActorName.Contains('/', StringComparison.Ordinal))
-            {
-                return new PID("nonhost", $"{normalizedSelfId}/{normalizedActorName}");
-            }
-
-            return new PID("nonhost", normalizedActorName);
+            return new PID(string.Empty, actorName);
         }
     }
 

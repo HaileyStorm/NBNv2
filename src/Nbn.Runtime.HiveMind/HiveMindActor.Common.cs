@@ -211,13 +211,36 @@ public sealed partial class HiveMindActor
             : brain.PlasticityEnabled;
         return _systemPlasticityEnabled && requestedPlasticityEnabled;
     }
-    private static async Task<PID?> ResolvePidAsync(string? value)
-        => await RoutablePidReference.ResolveAsync(value).ConfigureAwait(false);
 
-    private static string ResolveActorReference(string? actorReference, PID? pid)
-        => !string.IsNullOrWhiteSpace(actorReference)
-            ? actorReference.Trim()
-            : pid is null
-                ? string.Empty
-                : PidLabel(pid);
+    private static PID? ParsePid(string? value)
+        => TryParsePid(value, out var pid) ? pid : null;
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
+    }
 }

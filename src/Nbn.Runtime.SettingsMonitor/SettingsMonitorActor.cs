@@ -76,9 +76,11 @@ public sealed class SettingsMonitorActor : IActor
                 HandleBrainUnregistered(context, message);
                 break;
             case ProtoSettings.SettingSubscribe subscribe:
-                return HandleSettingSubscribeAsync(context, subscribe);
+                HandleSettingSubscribe(context, subscribe);
+                break;
             case ProtoSettings.SettingUnsubscribe unsubscribe:
-                return HandleSettingUnsubscribeAsync(context, unsubscribe);
+                HandleSettingUnsubscribe(context, unsubscribe);
+                break;
             case Terminated terminated:
                 HandleTerminated(terminated);
                 break;
@@ -720,10 +722,9 @@ public sealed class SettingsMonitorActor : IActor
         });
     }
 
-    private async Task HandleSettingSubscribeAsync(IContext context, ProtoSettings.SettingSubscribe subscribe)
+    private void HandleSettingSubscribe(IContext context, ProtoSettings.SettingSubscribe subscribe)
     {
-        var pid = await RoutablePidReference.ResolveAsync(subscribe.SubscriberActor).ConfigureAwait(false);
-        if (pid is null)
+        if (!TryParsePid(subscribe.SubscriberActor, out var pid))
         {
             return;
         }
@@ -739,10 +740,9 @@ public sealed class SettingsMonitorActor : IActor
         }
     }
 
-    private async Task HandleSettingUnsubscribeAsync(IContext context, ProtoSettings.SettingUnsubscribe unsubscribe)
+    private void HandleSettingUnsubscribe(IContext context, ProtoSettings.SettingUnsubscribe unsubscribe)
     {
-        var pid = await RoutablePidReference.ResolveAsync(unsubscribe.SubscriberActor).ConfigureAwait(false);
-        if (pid is null)
+        if (!TryParsePid(unsubscribe.SubscriberActor, out var pid))
         {
             return;
         }
@@ -919,6 +919,35 @@ public sealed class SettingsMonitorActor : IActor
 
         snapshot.LastSeenMs = Math.Max(snapshot.LastSeenMs, timeMs);
         snapshot.IsAlive = isAlive;
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
     }
 
     private static string PidKey(PID pid)

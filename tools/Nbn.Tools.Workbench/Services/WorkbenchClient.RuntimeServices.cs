@@ -295,10 +295,7 @@ public partial class WorkbenchClient
 
         if (_settingsPid is not null)
         {
-            _root.Send(_settingsPid, new SettingUnsubscribe
-            {
-                SubscriberActor = GetSubscriberActorReference() ?? PidLabel(_receiverPid)
-            });
+            _root.Send(_settingsPid, new SettingUnsubscribe { SubscriberActor = PidLabel(_receiverPid) });
         }
 
         _settingsPid = null;
@@ -543,8 +540,8 @@ public partial class WorkbenchClient
         }
 
         _root.Send(_receiverPid, vector
-            ? new SubscribeOutputsVectorCommand(brainId, GetSubscriberActorReference())
-            : new SubscribeOutputsCommand(brainId, GetSubscriberActorReference()));
+            ? new SubscribeOutputsVectorCommand(brainId)
+            : new SubscribeOutputsCommand(brainId));
     }
 
     public void UnsubscribeOutputs(Guid brainId, bool vector)
@@ -555,8 +552,8 @@ public partial class WorkbenchClient
         }
 
         _root.Send(_receiverPid, vector
-            ? new UnsubscribeOutputsVectorCommand(brainId, GetSubscriberActorReference())
-            : new UnsubscribeOutputsCommand(brainId, GetSubscriberActorReference()));
+            ? new UnsubscribeOutputsVectorCommand(brainId)
+            : new UnsubscribeOutputsCommand(brainId));
     }
 
     public void SendInput(Guid brainId, uint index, float value)

@@ -32,13 +32,41 @@ public sealed class OutputCoordinatorActor : IActor
         switch (context.Message)
         {
             case SubscribeOutputs subscribe:
-                return HandleSubscribeAsync(context, subscribe.SubscriberActor, vector: false, "subscribe_outputs");
+                var singleSubscriber = ResolveSubscriberPid(context, subscribe.SubscriberActor);
+                AddSubscriber(singleSubscriber, _outputSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleSubscriber)} total={_outputSubscribers.Count}.");
+                }
+                Respond(context, "subscribe_outputs", success: singleSubscriber is not null);
+                break;
             case UnsubscribeOutputs unsubscribe:
-                return HandleUnsubscribeAsync(context, unsubscribe.SubscriberActor, vector: false, "unsubscribe_outputs");
+                var singleUnsubscriber = ResolveSubscriberPid(context, unsubscribe.SubscriberActor);
+                RemoveSubscriber(singleUnsubscriber, _outputSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleUnsubscriber)} total={_outputSubscribers.Count}.");
+                }
+                Respond(context, "unsubscribe_outputs", success: singleUnsubscriber is not null);
+                break;
             case SubscribeOutputsVector subscribeVector:
-                return HandleSubscribeAsync(context, subscribeVector.SubscriberActor, vector: true, "subscribe_outputs_vector");
+                var vectorSubscriber = ResolveSubscriberPid(context, subscribeVector.SubscriberActor);
+                AddSubscriber(vectorSubscriber, _vectorSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorSubscriber)} total={_vectorSubscribers.Count}.");
+                }
+                Respond(context, "subscribe_outputs_vector", success: vectorSubscriber is not null);
+                break;
             case UnsubscribeOutputsVector unsubscribeVector:
-                return HandleUnsubscribeAsync(context, unsubscribeVector.SubscriberActor, vector: true, "unsubscribe_outputs_vector");
+                var vectorUnsubscriber = ResolveSubscriberPid(context, unsubscribeVector.SubscriberActor);
+                RemoveSubscriber(vectorUnsubscriber, _vectorSubscribers);
+                if (LogOutput)
+                {
+                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorUnsubscriber)} total={_vectorSubscribers.Count}.");
+                }
+                Respond(context, "unsubscribe_outputs_vector", success: vectorUnsubscriber is not null);
+                break;
             case OutputEvent outputEvent:
                 EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
                 break;
@@ -61,32 +89,6 @@ public sealed class OutputCoordinatorActor : IActor
         }
 
         return Task.CompletedTask;
-    }
-
-    private async Task HandleSubscribeAsync(IContext context, string? subscriberActor, bool vector, string command)
-    {
-        var subscriber = await ResolveSubscriberPidAsync(context, subscriberActor).ConfigureAwait(false);
-        AddSubscriber(subscriber, vector ? _vectorSubscribers : _outputSubscribers);
-        if (LogOutput)
-        {
-            Console.WriteLine(
-                $"OutputCoordinator[{_brainId:D}] subscribe {(vector ? "vector" : "single")} sender={PidLabel(context.Sender)} resolved={PidLabel(subscriber)} total={(vector ? _vectorSubscribers.Count : _outputSubscribers.Count)}.");
-        }
-
-        Respond(context, command, success: subscriber is not null);
-    }
-
-    private async Task HandleUnsubscribeAsync(IContext context, string? subscriberActor, bool vector, string command)
-    {
-        var subscriber = await ResolveSubscriberPidAsync(context, subscriberActor).ConfigureAwait(false);
-        RemoveSubscriber(subscriber, vector ? _vectorSubscribers : _outputSubscribers);
-        if (LogOutput)
-        {
-            Console.WriteLine(
-                $"OutputCoordinator[{_brainId:D}] unsubscribe {(vector ? "vector" : "single")} sender={PidLabel(context.Sender)} resolved={PidLabel(subscriber)} total={(vector ? _vectorSubscribers.Count : _outputSubscribers.Count)}.");
-        }
-
-        Respond(context, command, success: subscriber is not null);
     }
 
     private void ApplyOutputWidthUpdate(UpdateOutputWidth message)
@@ -343,10 +345,9 @@ public sealed class OutputCoordinatorActor : IActor
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
-    private static async Task<PID?> ResolveSubscriberPidAsync(IContext context, string? subscriberActor)
+    private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
     {
-        var parsed = await RoutablePidReference.ResolveAsync(subscriberActor).ConfigureAwait(false);
-        if (parsed is not null)
+        if (TryParsePid(subscriberActor, out var parsed))
         {
             return parsed;
         }
@@ -393,6 +394,33 @@ public sealed class OutputCoordinatorActor : IActor
             "1" or "true" or "yes" or "on" => true,
             _ => false
         };
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID(string.Empty, string.Empty);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slash = trimmed.IndexOf('/');
+        if (slash <= 0)
+        {
+            pid = new PID(string.Empty, trimmed);
+            return true;
+        }
+
+        var address = trimmed[..slash];
+        var id = trimmed[(slash + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid = new PID(address, id);
+        return true;
     }
 
     private sealed class PendingVectorTick

@@ -23,7 +23,6 @@ var managerPid = system.Root.SpawnNamed(
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
-var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.ManagerName);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -31,16 +30,15 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServiceName,
-    options.ManagerName,
-    nodeEndpointSet: endpointSet);
+    options.ManagerName);
 
-var publishedSpeciationEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
+var publishedSpeciationEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.SpeciationManagerKey,
-    endpointSet);
+    new ServiceEndpoint(nodeAddress, options.ManagerName));
 if (!publishedSpeciationEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.SpeciationManagerKey}'.");
@@ -55,8 +53,7 @@ try
         system,
         options.SettingsHost,
         options.SettingsPort,
-        options.SettingsName,
-        endpointSet.Candidates);
+        options.SettingsName);
 
     if (discoveryClient is null)
     {

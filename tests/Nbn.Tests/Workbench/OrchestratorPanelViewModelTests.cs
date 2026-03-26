@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
 using System.Security.Cryptography;
 using Nbn.Proto;
 using Nbn.Proto.Control;
@@ -14,15 +13,6 @@ namespace Nbn.Tests.Workbench;
 
 public class OrchestratorPanelViewModelTests
 {
-    private static readonly MethodInfo ApplyRuntimeDiagnosticsEnvironmentMethod = typeof(OrchestratorPanelViewModel).GetMethod(
-        "ApplyRuntimeDiagnosticsEnvironment",
-        BindingFlags.NonPublic | BindingFlags.Static)
-        ?? throw new InvalidOperationException("OrchestratorPanelViewModel.ApplyRuntimeDiagnosticsEnvironment was not found.");
-    private static readonly MethodInfo ApplyWorkerSeedEndpointsEnvironmentMethod = typeof(OrchestratorPanelViewModel).GetMethod(
-        "ApplyWorkerSeedEndpointsEnvironment",
-        BindingFlags.NonPublic | BindingFlags.Static)
-        ?? throw new InvalidOperationException("OrchestratorPanelViewModel.ApplyWorkerSeedEndpointsEnvironment was not found.");
-
     [Fact]
     public async Task StartAllCommand_IncludesWorkerLaunch()
     {
@@ -182,14 +172,15 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task StartIoCommand_DoesNotReuseConfiguredServiceHostAsImplicitAdvertiseHost()
+    public async Task StartIoCommand_UsesConfiguredNonLoopbackHostAsAdvertiseHost()
     {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "10.20.30.41"));
+
         var connections = new ConnectionViewModel
         {
             IoHost = "10.20.30.41",
             IoPortText = "12050",
-            SettingsPortText = "12010",
-            LocalAdvertiseHost = string.Empty
+            SettingsPortText = "12010"
         };
 
         var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). io");
@@ -200,29 +191,7 @@ public class OrchestratorPanelViewModelTests
         await WaitForAsync(() => string.Equals(vm.IoLaunchStatus, "Build failed (code 1). io", StringComparison.Ordinal));
 
         Assert.Contains("--bind-host 0.0.0.0 --port 12050", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
-        Assert.DoesNotContain("--advertise-host", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task StartIoCommand_UsesExplicitLocalAdvertiseHost_WhenProvided()
-    {
-        var connections = new ConnectionViewModel
-        {
-            IoHost = "10.20.30.41",
-            IoPortText = "12050",
-            SettingsPortText = "12010",
-            LocalAdvertiseHost = "100.64.0.41"
-        };
-
-        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). io");
-        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
-
-        vm.StartIoCommand.Execute(null);
-
-        await WaitForAsync(() => string.Equals(vm.IoLaunchStatus, "Build failed (code 1). io", StringComparison.Ordinal));
-
-        Assert.Contains("--bind-host 0.0.0.0 --port 12050", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
-        Assert.Contains("--advertise-host 100.64.0.41", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--advertise-host 10.20.30.41", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -246,50 +215,6 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Contains("--bind-host 0.0.0.0 --port 12041", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
         Assert.DoesNotContain("--advertise-host 203.0.113.55", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void ApplyRuntimeDiagnosticsEnvironment_AddsTickBarrierAndDeliveryFlags()
-    {
-        using var _ = new EnvironmentVariableScope(("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED", "1"));
-
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            UseShellExecute = false
-        };
-
-        InvokeApplyRuntimeDiagnosticsEnvironment(startInfo);
-
-        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED"]);
-        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_HIVEMIND_LOG_TICK_BARRIER"]);
-        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_BRAIN_LOG_DELIVERY"]);
-        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_REGIONHOST_LOG_DELIVERY"]);
-        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_INPUT_DIAGNOSTICS_ENABLED"]);
-        Assert.Equal("1", startInfo.EnvironmentVariables["NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED"]);
-    }
-
-    [Fact]
-    public void ApplyWorkerSeedEndpointsEnvironment_AddsHiveMindAndIoSeeds()
-    {
-        var connections = new ConnectionViewModel
-        {
-            HiveMindHost = "192.168.0.103",
-            HiveMindPortText = "12020",
-            HiveMindName = "HiveMind",
-            IoHost = "192.168.0.103",
-            IoPortText = "12050",
-            IoGateway = "io-gateway"
-        };
-
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            UseShellExecute = false
-        };
-
-        InvokeApplyWorkerSeedEndpointsEnvironment(startInfo, connections);
-
-        Assert.Equal("192.168.0.103:12020/HiveMind", startInfo.EnvironmentVariables["NBN_WORKER_SEEDED_HIVEMIND_PID"]);
-        Assert.Equal("192.168.0.103:12050/io-gateway", startInfo.EnvironmentVariables["NBN_WORKER_SEEDED_IO_PID"]);
     }
 
     [Fact]
@@ -680,55 +605,6 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshSettingsAsync_PrefersReachableEndpointSetCandidate_OverLegacyEndpoint()
-    {
-        var connections = new ConnectionViewModel();
-        var setKey = ServiceEndpointSettings.ToEndpointSetKey(ServiceEndpointSettings.IoGatewayKey);
-        var client = new FakeWorkbenchClient
-        {
-            NodesResponse = new NodeListResponse(),
-            BrainsResponse = new BrainListResponse(),
-            ProbeFactory = (host, port) =>
-                host == "100.86.45.90" && port == 12050
-                    ? new TcpEndpointProbeResult(true, "tailnet reachable")
-                    : new TcpEndpointProbeResult(false, "unreachable"),
-            SettingsResponse = new SettingListResponse
-            {
-                Settings =
-                {
-                    new SettingValue
-                    {
-                        Key = ServiceEndpointSettings.IoGatewayKey,
-                        Value = "198.51.100.10:12050/io-legacy",
-                        UpdatedMs = 31
-                    },
-                    new SettingValue
-                    {
-                        Key = setKey,
-                        Value = ServiceEndpointSettings.EncodeSetValue(
-                            "io-gateway",
-                            [
-                                new ServiceEndpointCandidate("198.51.100.10:12050", "io-gateway", ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
-                                new ServiceEndpointCandidate("100.86.45.90:12050", "io-gateway", ServiceEndpointCandidateKind.Tailnet, Priority: 90)
-                            ]),
-                        UpdatedMs = 32
-                    }
-                }
-            }
-        };
-
-        var vm = CreateViewModel(connections, client);
-        connections.SettingsConnected = true;
-
-        await vm.RefreshSettingsAsync();
-
-        Assert.Equal("100.86.45.90", connections.IoHost);
-        Assert.Equal("12050", connections.IoPortText);
-        Assert.Equal("io-gateway", connections.IoGateway);
-        Assert.Equal("100.86.45.90:12050/io-gateway", connections.IoEndpointDisplay);
-    }
-
-    [Fact]
     public async Task RefreshSettingsAsync_InvalidServiceEndpointSettings_DoNotOverwriteConnectionInputs()
     {
         var connections = new ConnectionViewModel
@@ -875,39 +751,6 @@ public class OrchestratorPanelViewModelTests
             && string.Equals(connections.ObsHost, "192.168.100.13", StringComparison.Ordinal)
             && string.Equals(connections.ObsPortText, "13060", StringComparison.Ordinal)
             && string.Equals(connections.DebugHub, "DebugProd", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task UpdateSetting_ServiceEndpointSet_RemainsPreferred_OverSubsequentLegacyEndpointUpdate()
-    {
-        var connections = new ConnectionViewModel();
-        var client = new FakeWorkbenchClient
-        {
-            ProbeFactory = (host, port) =>
-                host == "100.86.45.90" && port == 12050
-                    ? new TcpEndpointProbeResult(true, "tailnet reachable")
-                    : new TcpEndpointProbeResult(false, "unreachable")
-        };
-        var vm = CreateViewModel(connections, client);
-
-        vm.UpdateSetting(new SettingItem(
-            ServiceEndpointSettings.ToEndpointSetKey(ServiceEndpointSettings.IoGatewayKey),
-            ServiceEndpointSettings.EncodeSetValue(
-                "io-gateway",
-                [
-                    new ServiceEndpointCandidate("198.51.100.10:12050", "io-gateway", ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
-                    new ServiceEndpointCandidate("100.86.45.90:12050", "io-gateway", ServiceEndpointCandidateKind.Tailnet, Priority: 90)
-                ]),
-            "1"));
-        vm.UpdateSetting(new SettingItem(
-            ServiceEndpointSettings.IoGatewayKey,
-            "198.51.100.10:12050/io-legacy",
-            "2"));
-
-        await WaitForAsync(() =>
-            string.Equals(connections.IoHost, "100.86.45.90", StringComparison.Ordinal)
-            && string.Equals(connections.IoPortText, "12050", StringComparison.Ordinal)
-            && string.Equals(connections.IoGateway, "io-gateway", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1963,119 +1806,6 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshSettingsAsync_PlacementReconcile_UsesResolvedNodeEndpointSetAddress()
-    {
-        var connections = new ConnectionViewModel();
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var workerNodeId = Guid.NewGuid();
-        var brainId = Guid.NewGuid();
-        const ulong placementEpoch = 7;
-        var resolvedWorkerHostPort = "100.86.45.90:12041";
-        var nodeEndpointSetKey = NodeEndpointSetSettings.BuildKey(workerNodeId);
-        var shardActorPid = $"{resolvedWorkerHostPort}/worker-node/brain-{brainId:N}-r9-s0";
-
-        var client = new FakeWorkbenchClient
-        {
-            ProbeFactory = (host, port) =>
-                host == "100.86.45.90" && port == 12041
-                    ? new TcpEndpointProbeResult(true, "tailnet reachable")
-                    : new TcpEndpointProbeResult(false, "unreachable"),
-            NodesResponse = new NodeListResponse
-            {
-                Nodes =
-                {
-                    new NodeStatus
-                    {
-                        NodeId = workerNodeId.ToProtoUuid(),
-                        LogicalName = connections.WorkerLogicalName,
-                        Address = "203.0.113.55:12041",
-                        RootActorName = connections.WorkerRootName,
-                        LastSeenMs = (ulong)nowMs,
-                        IsAlive = true
-                    }
-                }
-            },
-            BrainsResponse = new BrainListResponse
-            {
-                Brains =
-                {
-                    new BrainStatus
-                    {
-                        BrainId = brainId.ToProtoUuid(),
-                        SpawnedMs = (ulong)nowMs,
-                        LastTickId = 3,
-                        State = "Active"
-                    }
-                }
-            },
-            SettingsResponse = new SettingListResponse
-            {
-                Settings =
-                {
-                    new SettingValue
-                    {
-                        Key = nodeEndpointSetKey,
-                        Value = ServiceEndpointSettings.EncodeSetValue(
-                            connections.WorkerRootName,
-                            [
-                                new ServiceEndpointCandidate("203.0.113.55:12041", connections.WorkerRootName, ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
-                                new ServiceEndpointCandidate(resolvedWorkerHostPort, connections.WorkerRootName, ServiceEndpointCandidateKind.Tailnet, Priority: 90)
-                            ]),
-                        UpdatedMs = 10
-                    }
-                }
-            },
-            PlacementLifecycleFactory = requestedBrainId =>
-                requestedBrainId == brainId
-                    ? new PlacementLifecycleInfo
-                    {
-                        BrainId = requestedBrainId.ToProtoUuid(),
-                        PlacementEpoch = placementEpoch,
-                        LifecycleState = PlacementLifecycleState.PlacementLifecycleRunning
-                    }
-                    : null,
-            PlacementReconcileFactory = (workerAddress, workerRoot, requestedBrainId, requestedEpoch) =>
-            {
-                if (requestedBrainId != brainId
-                    || requestedEpoch != placementEpoch
-                    || !string.Equals(workerAddress, resolvedWorkerHostPort, StringComparison.Ordinal)
-                    || !string.Equals(workerRoot, connections.WorkerRootName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return null;
-                }
-
-                return new PlacementReconcileReport
-                {
-                    BrainId = brainId.ToProtoUuid(),
-                    PlacementEpoch = placementEpoch,
-                    ReconcileState = PlacementReconcileState.PlacementReconcileMatched,
-                    Assignments =
-                    {
-                        new PlacementObservedAssignment
-                        {
-                            AssignmentId = Guid.NewGuid().ToString("N"),
-                            Target = PlacementAssignmentTarget.PlacementTargetRegionShard,
-                            WorkerNodeId = workerNodeId.ToProtoUuid(),
-                            RegionId = 9,
-                            ShardIndex = 0,
-                            ActorPid = shardActorPid
-                        }
-                    }
-                };
-            }
-        };
-
-        var vm = CreateViewModel(connections, client);
-        connections.SettingsConnected = true;
-
-        await vm.RefreshSettingsAsync();
-
-        Assert.Equal(1, client.RequestPlacementReconcileCallCount);
-        var shardRow = Assert.Single(vm.Actors, row => row.RootActor == shardActorPid);
-        Assert.Equal(resolvedWorkerHostPort, shardRow.Address);
-    }
-
-    [Fact]
     public async Task RefreshSettingsAsync_HostedActors_PrioritizesOnlineWorkerHosts()
     {
         var connections = new ConnectionViewModel();
@@ -2655,7 +2385,6 @@ public class OrchestratorPanelViewModelTests
         public SettingListResponse? RemoteSettingsResponse { get; set; }
         public Func<string, int, string, SettingListResponse?>? RemoteSettingsFactory { get; set; }
         public TcpEndpointProbeResult ProbeResult { get; set; } = new(false, "TCP connect timed out.");
-        public Func<string, int, TcpEndpointProbeResult>? ProbeFactory { get; set; }
         public List<(string Key, string Value)> SettingCalls { get; } = new();
         public List<(string Host, int Port, string ActorName)> RemoteSettingsCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
@@ -2702,7 +2431,7 @@ public class OrchestratorPanelViewModelTests
         }
 
         public override Task<TcpEndpointProbeResult> ProbeTcpEndpointAsync(string host, int port, TimeSpan? timeout = null)
-            => Task.FromResult(ProbeFactory?.Invoke(host, port) ?? ProbeResult);
+            => Task.FromResult(ProbeResult);
 
         public override Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
             => Task.FromResult<PlacementWorkerInventory?>(PlacementWorkerInventoryResponse ?? new PlacementWorkerInventory
@@ -2884,10 +2613,4 @@ public class OrchestratorPanelViewModelTests
             }
         }
     }
-
-    private static void InvokeApplyRuntimeDiagnosticsEnvironment(ProcessStartInfo startInfo)
-        => ApplyRuntimeDiagnosticsEnvironmentMethod.Invoke(obj: null, new object?[] { startInfo });
-
-    private static void InvokeApplyWorkerSeedEndpointsEnvironment(ProcessStartInfo startInfo, ConnectionViewModel connections)
-        => ApplyWorkerSeedEndpointsEnvironmentMethod.Invoke(obj: null, new object?[] { startInfo, connections });
 }

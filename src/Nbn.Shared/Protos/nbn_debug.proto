@@ -22,7 +22,7 @@ message DebugInbound {
 }
 
 message DebugSubscribe {
-  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
+  string subscriber_actor = 1; // actor name/path
   nbn.Severity min_severity = 2;
   string context_regex = 3;
   repeated string include_context_prefixes = 4;
@@ -32,7 +32,7 @@ message DebugSubscribe {
 }
 
 message DebugUnsubscribe {
-  string subscriber_actor = 1; // plain PID label or encoded routable actor reference
+  string subscriber_actor = 1;
 }
 
 message DebugFlushAll { }

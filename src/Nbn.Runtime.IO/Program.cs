@@ -11,13 +11,12 @@ var remoteConfig = IoRemote.BuildConfig(options);
 system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
+var gatewayPid = system.Root.SpawnNamed(
+    Props.FromProducer(() => new IoGatewayActor(options)),
+    options.GatewayName);
+
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
-var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.GatewayName);
-
-var gatewayPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new IoGatewayActor(options, localEndpointCandidates: endpointSet.Candidates)),
-    options.GatewayName);
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
@@ -26,16 +25,15 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServerName,
-    options.GatewayName,
-    nodeEndpointSet: endpointSet);
+    options.GatewayName);
 
-var publishedIoEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
+var publishedIoEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.IoGatewayKey,
-    endpointSet);
+    new ServiceEndpoint(nodeAddress, options.GatewayName));
 if (!publishedIoEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.IoGatewayKey}'.");
@@ -50,8 +48,7 @@ try
         system,
         options.SettingsHost,
         options.SettingsPort,
-        options.SettingsName,
-        endpointSet.Candidates);
+        options.SettingsName);
 
     if (discoveryClient is null)
     {

@@ -596,9 +596,7 @@ public sealed partial class HiveMindActor
 
         foreach (var request in prepared.Requests)
         {
-            var ack = ProcessPlacementRequestAsync(context, request.Request)
-                .GetAwaiter()
-                .GetResult();
+            var ack = ProcessPlacementRequest(context, request.Request);
             if (!_brains.TryGetValue(request.BrainId, out var brain))
             {
                 _pendingReschedule.Failures[request.BrainId] = "brain_not_tracked";

@@ -18,44 +18,6 @@ namespace Nbn.Tests.HiveMind;
 public sealed class HiveMindSpawnBrainTests
 {
     [Fact]
-    public async Task RegisterBrain_Reports_Immediate_Controller_Heartbeat_To_SettingsMonitor()
-    {
-        var system = new ActorSystem();
-        var root = system.Root;
-
-        var registerTcs = new TaskCompletionSource<ProtoSettings.BrainRegistered>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var heartbeatTcs = new TaskCompletionSource<ProtoSettings.BrainControllerHeartbeat>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var settingsPid = root.Spawn(Props.FromProducer(() => new SettingsProbeActor(registerTcs, heartbeatTcs)));
-        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
-            CreateOptions(
-                assignmentTimeoutMs: 1_000,
-                retryBackoffMs: 10,
-                maxRetries: 1,
-                reconcileTimeoutMs: 1_000),
-            settingsPid: settingsPid)));
-
-        var brainId = Guid.NewGuid();
-        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
-        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
-        {
-            BrainId = brainId.ToProtoUuid(),
-            BrainRootPid = PidLabel(brainRoot)
-        }));
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var registered = await registerTcs.Task.WaitAsync(cts.Token);
-        var heartbeat = await heartbeatTcs.Task.WaitAsync(cts.Token);
-
-        Assert.True(registered.BrainId.TryToGuid(out var registeredBrainId));
-        Assert.Equal(brainId, registeredBrainId);
-        Assert.True(heartbeat.BrainId.TryToGuid(out var heartbeatBrainId));
-        Assert.Equal(brainId, heartbeatBrainId);
-        Assert.True(heartbeat.TimeMs > 0);
-
-        await system.ShutdownAsync();
-    }
-
-    [Fact]
     public async Task SpawnBrain_Returns_BrainId_After_Placement_Completes_And_Registers_ControllerPids()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
@@ -763,43 +725,6 @@ public sealed class HiveMindSpawnBrainTests
         Drop
     }
 
-    private sealed record SendMessage(PID Target, object Message);
-    private sealed record SendMessageAck;
-
-    private sealed class EmptyActor : IActor
-    {
-        public Task ReceiveAsync(IContext context)
-        {
-            if (context.Message is SendMessage send)
-            {
-                context.Request(send.Target, send.Message);
-                context.Respond(new SendMessageAck());
-            }
-
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class SettingsProbeActor(
-        TaskCompletionSource<ProtoSettings.BrainRegistered> registerTcs,
-        TaskCompletionSource<ProtoSettings.BrainControllerHeartbeat> heartbeatTcs) : IActor
-    {
-        public Task ReceiveAsync(IContext context)
-        {
-            switch (context.Message)
-            {
-                case ProtoSettings.BrainRegistered registered:
-                    registerTcs.TrySetResult(registered);
-                    break;
-                case ProtoSettings.BrainControllerHeartbeat heartbeat:
-                    heartbeatTcs.TrySetResult(heartbeat);
-                    break;
-            }
-
-            return Task.CompletedTask;
-        }
-    }
-
     private sealed class SpawnPlacementWorkerProbe : IActor
     {
         private readonly Guid _workerId;
@@ -944,7 +869,4 @@ public sealed class HiveMindSpawnBrainTests
             return Task.CompletedTask;
         }
     }
-
-    private static string PidLabel(PID pid)
-        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 }

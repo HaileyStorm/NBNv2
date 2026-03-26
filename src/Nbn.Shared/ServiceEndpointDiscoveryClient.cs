@@ -1,6 +1,5 @@
 using Nbn.Proto.Settings;
 using Proto;
-using System.Net.Sockets;
 
 namespace Nbn.Shared;
 
@@ -11,22 +10,14 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     private readonly ActorSystem _system;
     private readonly PID _settingsPid;
     private readonly object _gate = new();
-    private readonly Func<ServiceEndpointCandidate, CancellationToken, Task<bool>> _candidateProbeAsync;
-    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
 
     private PID? _subscriberPid;
     private HashSet<string>? _watchedKeys;
 
-    public ServiceEndpointDiscoveryClient(
-        ActorSystem system,
-        PID settingsPid,
-        Func<ServiceEndpointCandidate, CancellationToken, Task<bool>>? candidateProbeAsync = null,
-        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
+    public ServiceEndpointDiscoveryClient(ActorSystem system, PID settingsPid)
     {
         _system = system ?? throw new ArgumentNullException(nameof(system));
         _settingsPid = settingsPid ?? throw new ArgumentNullException(nameof(settingsPid));
-        _candidateProbeAsync = candidateProbeAsync ?? ProbeCandidateAsync;
-        _localEndpointCandidates = localEndpointCandidates;
     }
 
     public event Action<ServiceEndpointRegistration>? EndpointChanged;
@@ -36,8 +27,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         ActorSystem? system,
         string? settingsHost,
         int settingsPort,
-        string settingsName,
-        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
+        string settingsName)
     {
         if (system is null)
         {
@@ -51,8 +41,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         return new ServiceEndpointDiscoveryClient(
             system,
-            new PID($"{settingsHost}:{settingsPort}", settingsName),
-            localEndpointCandidates: localEndpointCandidates);
+            new PID($"{settingsHost}:{settingsPort}", settingsName));
     }
 
     public static async Task<bool> TryPublishAsync(
@@ -73,33 +62,6 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         try
         {
             await client.PublishAsync(settingKey, endpoint, cancellationToken).ConfigureAwait(false);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    public static async Task<bool> TryPublishSetAsync(
-        ActorSystem? system,
-        string? settingsHost,
-        int settingsPort,
-        string settingsName,
-        string settingKey,
-        ServiceEndpointSet endpointSet,
-        bool publishLegacyEndpoint = true,
-        CancellationToken cancellationToken = default)
-    {
-        var client = Create(system, settingsHost, settingsPort, settingsName);
-        if (client is null)
-        {
-            return false;
-        }
-
-        try
-        {
-            await client.PublishSetAsync(settingKey, endpointSet, publishLegacyEndpoint, cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch
@@ -129,61 +91,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             timeoutCts.Token).ConfigureAwait(false);
     }
 
-    public async Task PublishSetAsync(
-        string settingKey,
-        ServiceEndpointSet endpointSet,
-        bool publishLegacyEndpoint = true,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(settingKey))
-        {
-            throw new ArgumentException("Setting key is required.", nameof(settingKey));
-        }
-
-        var endpointSetKey = ServiceEndpointSettings.ToEndpointSetKey(settingKey);
-        using var timeoutCts = CreateTimeoutToken(cancellationToken);
-        await _system.Root.RequestAsync<SettingValue>(
-            _settingsPid,
-            new SettingSet
-            {
-                Key = endpointSetKey,
-                Value = ServiceEndpointSettings.EncodeSetValue(endpointSet.ActorName, endpointSet.Candidates)
-            },
-            timeoutCts.Token).ConfigureAwait(false);
-
-        if (!publishLegacyEndpoint)
-        {
-            return;
-        }
-
-        await PublishAsync(settingKey, endpointSet.GetPreferredCandidate().ToEndpoint(), cancellationToken).ConfigureAwait(false);
-    }
-
     public async Task<ServiceEndpointRegistration?> ResolveAsync(
-        string settingKey,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(settingKey))
-        {
-            return null;
-        }
-
-        var resolvedSet = await ResolveSetAsync(settingKey, cancellationToken).ConfigureAwait(false);
-        if (resolvedSet is not null)
-        {
-            return new ServiceEndpointRegistration(
-                settingKey.Trim(),
-                await ServiceEndpointResolver.ResolveAsync(
-                    resolvedSet.Value.EndpointSet,
-                    _candidateProbeAsync,
-                    cancellationToken).ConfigureAwait(false),
-                resolvedSet.Value.UpdatedMs);
-        }
-
-        return null;
-    }
-
-    public async Task<ServiceEndpointRegistration?> ResolveLegacyAsync(
         string settingKey,
         CancellationToken cancellationToken = default)
     {
@@ -210,46 +118,6 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             : null;
     }
 
-    public async Task<ServiceEndpointSetRegistration?> ResolveSetAsync(
-        string settingKey,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(settingKey))
-        {
-            return null;
-        }
-
-        var endpointSetKey = ServiceEndpointSettings.ToEndpointSetKey(settingKey);
-        using var timeoutCts = CreateTimeoutToken(cancellationToken);
-        var settingValue = await _system.Root.RequestAsync<SettingValue>(
-            _settingsPid,
-            new SettingGet
-            {
-                Key = endpointSetKey
-            },
-            timeoutCts.Token).ConfigureAwait(false);
-
-        if (ServiceEndpointSettings.TryParseSetSetting(
-                settingValue.Key,
-                settingValue.Value,
-                settingValue.UpdatedMs,
-                out var registration))
-        {
-            return registration;
-        }
-
-        var legacy = await ResolveLegacyAsync(settingKey, cancellationToken).ConfigureAwait(false);
-        if (legacy is null)
-        {
-            return null;
-        }
-
-        return new ServiceEndpointSetRegistration(
-            endpointSetKey,
-            ServiceEndpointSettings.CreateLegacyFallbackSet(legacy.Value.Endpoint),
-            legacy.Value.UpdatedMs);
-    }
-
     public async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> ResolveFromListAsync(
         CancellationToken cancellationToken = default)
     {
@@ -259,27 +127,23 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             new SettingListRequest(),
             timeoutCts.Token).ConfigureAwait(false);
 
-        var legacy = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal);
-        var sets = new Dictionary<string, ServiceEndpointSetRegistration>(StringComparer.Ordinal);
+        var resolved = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal);
         foreach (var setting in response.Settings)
         {
-            if (ServiceEndpointSettings.IsKnownKey(setting.Key)
-                && ServiceEndpointSettings.TryParseSetting(setting.Key, setting.Value, setting.UpdatedMs, out var legacyRegistration))
-            {
-                legacy[legacyRegistration.Key] = legacyRegistration;
-                continue;
-            }
-
-            if (!ServiceEndpointSettings.TryGetEndpointKeyFromSetKey(setting.Key, out _)
-                || !ServiceEndpointSettings.TryParseSetSetting(setting.Key, setting.Value, setting.UpdatedMs, out var setRegistration))
+            if (!ServiceEndpointSettings.IsKnownKey(setting.Key))
             {
                 continue;
             }
 
-            sets[setRegistration.Key] = setRegistration;
+            if (!ServiceEndpointSettings.TryParseSetting(setting.Key, setting.Value, setting.UpdatedMs, out var registration))
+            {
+                continue;
+            }
+
+            resolved[registration.Key] = registration;
         }
 
-        return await MergeResolvedEndpointsAsync(legacy, sets, cancellationToken).ConfigureAwait(false);
+        return resolved;
     }
 
     public async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> ResolveKnownAsync(
@@ -308,22 +172,6 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         return resolved;
     }
 
-    public async Task<IReadOnlyDictionary<string, ServiceEndpointSetRegistration>> ResolveKnownSetsAsync(
-        CancellationToken cancellationToken = default)
-    {
-        var resolved = new Dictionary<string, ServiceEndpointSetRegistration>(StringComparer.Ordinal);
-        foreach (var key in ServiceEndpointSettings.AllKeys)
-        {
-            var registration = await ResolveSetAsync(key, cancellationToken).ConfigureAwait(false);
-            if (registration is not null)
-            {
-                resolved[registration.Value.Key] = registration.Value;
-            }
-        }
-
-        return resolved;
-    }
-
     public async Task SubscribeAsync(
         IEnumerable<string>? keys = null,
         CancellationToken cancellationToken = default)
@@ -344,7 +192,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         _system.Root.Send(_settingsPid, new SettingSubscribe
         {
-            SubscriberActor = BuildSubscriberActorReference(subscriberPid)
+            SubscriberActor = PidLabel(subscriberPid)
         });
     }
 
@@ -365,7 +213,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
         _system.Root.Send(_settingsPid, new SettingUnsubscribe
         {
-            SubscriberActor = BuildSubscriberActorReference(subscriberPid)
+            SubscriberActor = PidLabel(subscriberPid)
         });
 
         _system.Root.Stop(subscriberPid);
@@ -392,16 +240,6 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 
             return _subscriberPid;
         }
-    }
-
-    private string BuildSubscriberActorReference(PID subscriberPid)
-    {
-        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
-        {
-            return RoutablePidReference.Encode(subscriberPid, _localEndpointCandidates);
-        }
-
-        return PidLabel(subscriberPid);
     }
 
     private void HandleSettingChanged(SettingChanged changed)
@@ -439,39 +277,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             return;
         }
 
-        _ = HandleObservedChangeAsync(changed, callback, observationCallback);
-    }
-
-    private async Task HandleObservedChangeAsync(
-        SettingChanged changed,
-        Action<ServiceEndpointRegistration>? callback,
-        Action<ServiceEndpointObservation>? observationCallback)
-    {
-        if (string.IsNullOrWhiteSpace(changed.Key))
-        {
-            NotifyEndpointObserved(
-                observationCallback,
-                new ServiceEndpointObservation(
-                    string.Empty,
-                    ServiceEndpointObservationKind.Invalid,
-                    null,
-                    "unknown_key",
-                    changed.UpdatedMs));
-            return;
-        }
-
-        var changedKey = changed.Key.Trim();
-        var endpointKey = ServiceEndpointSettings.TryGetEndpointKeyFromSetKey(changedKey, out var mappedEndpointKey)
-            ? mappedEndpointKey
-            : changedKey;
-
-        if (!ServiceEndpointSettings.IsKnownKey(endpointKey))
-        {
-            return;
-        }
-
-        var registration = await ResolveAsync(endpointKey).ConfigureAwait(false);
-        if (registration is null)
+        if (!ServiceEndpointSettings.TryParseSetting(changed.Key, changed.Value, changed.UpdatedMs, out var registration))
         {
             var kind = string.IsNullOrWhiteSpace(changed.Value)
                 ? ServiceEndpointObservationKind.Removed
@@ -482,7 +288,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             NotifyEndpointObserved(
                 observationCallback,
                 new ServiceEndpointObservation(
-                    endpointKey,
+                    changed.Key.Trim(),
                     kind,
                     null,
                     failureReason,
@@ -494,7 +300,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         {
             try
             {
-                callback(registration.Value);
+                callback(registration);
             }
             catch
             {
@@ -504,7 +310,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         NotifyEndpointObserved(
             observationCallback,
             new ServiceEndpointObservation(
-                endpointKey,
+                registration.Key,
                 ServiceEndpointObservationKind.Upserted,
                 registration,
                 "none",
@@ -523,12 +329,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
                     continue;
                 }
 
-                var normalizedKey = key.Trim();
-                keyFilter.Add(normalizedKey);
-                if (ServiceEndpointSettings.IsKnownKey(normalizedKey))
-                {
-                    keyFilter.Add(ServiceEndpointSettings.ToEndpointSetKey(normalizedKey));
-                }
+                keyFilter.Add(key.Trim());
             }
         }
 
@@ -537,76 +338,10 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             foreach (var key in ServiceEndpointSettings.AllKeys)
             {
                 keyFilter.Add(key);
-                keyFilter.Add(ServiceEndpointSettings.ToEndpointSetKey(key));
             }
         }
 
         return keyFilter;
-    }
-
-    private async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> MergeResolvedEndpointsAsync(
-        IReadOnlyDictionary<string, ServiceEndpointRegistration> legacy,
-        IReadOnlyDictionary<string, ServiceEndpointSetRegistration> sets,
-        CancellationToken cancellationToken)
-    {
-        var resolved = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal);
-        foreach (var key in ServiceEndpointSettings.AllKeys)
-        {
-            if (sets.TryGetValue(ServiceEndpointSettings.ToEndpointSetKey(key), out var setRegistration))
-            {
-                resolved[key] = new ServiceEndpointRegistration(
-                    key,
-                    await ServiceEndpointResolver.ResolveAsync(
-                        setRegistration.EndpointSet,
-                        _candidateProbeAsync,
-                        cancellationToken).ConfigureAwait(false),
-                    setRegistration.UpdatedMs);
-                continue;
-            }
-
-            if (legacy.TryGetValue(key, out var legacyRegistration))
-            {
-                resolved[key] = legacyRegistration;
-            }
-        }
-
-        return resolved;
-    }
-
-    private static async Task<bool> ProbeCandidateAsync(ServiceEndpointCandidate candidate, CancellationToken cancellationToken)
-    {
-        var endpoint = candidate.ToEndpoint();
-        var hostPort = endpoint.HostPort;
-        var colonIndex = hostPort.LastIndexOf(':');
-        if (colonIndex <= 0 || colonIndex >= hostPort.Length - 1)
-        {
-            return false;
-        }
-
-        var host = hostPort[..colonIndex];
-        var portToken = hostPort[(colonIndex + 1)..];
-        if (!int.TryParse(portToken, out var port) || port <= 0 || port >= 65536)
-        {
-            return false;
-        }
-
-        if (host.StartsWith("[", StringComparison.Ordinal) && host.EndsWith("]", StringComparison.Ordinal))
-        {
-            host = host[1..^1];
-        }
-
-        try
-        {
-            using var client = new TcpClient();
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(2));
-            await client.ConnectAsync(host.Trim(), port, timeoutCts.Token).ConfigureAwait(false);
-            return client.Connected;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private string PidLabel(PID pid)

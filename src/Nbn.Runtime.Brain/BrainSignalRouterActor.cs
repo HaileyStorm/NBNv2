@@ -15,7 +15,6 @@ public sealed class BrainSignalRouterActor : IActor
     private static readonly bool LogDelivery = IsEnvTrue("NBN_BRAIN_LOG_DELIVERY");
     private static readonly bool LogInputDiagnostics = IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private static readonly bool LogInputTraceDiagnostics = IsEnvTrue("NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED");
-    private static readonly bool LogTickDiagnostics = IsEnvTrue("NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED");
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private readonly RoutingTable _routingTable = new();
@@ -36,7 +35,8 @@ public sealed class BrainSignalRouterActor : IActor
         switch (context.Message)
         {
             case SetRoutingTable setRouting:
-                return HandleSetRoutingTableAsync(context, setRouting.Table);
+                ApplyRoutingTable(setRouting.Table);
+                break;
             case GetRoutingTable:
                 context.Respond(_routingSnapshot);
                 break;
@@ -65,72 +65,17 @@ public sealed class BrainSignalRouterActor : IActor
                 HandleInputDrain(context, inputDrain);
                 break;
             case RegisterIoGateway registerIoGateway:
-                return HandleRegisterIoGatewayAsync(context, registerIoGateway);
+                HandleRegisterIoGateway(context, registerIoGateway);
+                break;
             case SignalBatchAck ack:
                 HandleSignalBatchAck(context, ack);
                 break;
             case TickComputeDone tickComputeDone:
-                HandleTickComputeDone(context, tickComputeDone);
+                ForwardToParent(context, tickComputeDone);
                 break;
         }
 
         return Task.CompletedTask;
-    }
-
-    private async Task HandleSetRoutingTableAsync(IContext context, RoutingTableSnapshot? snapshot)
-    {
-        _routingSnapshot = snapshot ?? RoutingTableSnapshot.Empty;
-        if (_routingSnapshot.Count == 0)
-        {
-            _routingTable.Replace(_routingSnapshot.Routes);
-            if (LogTickDiagnostics)
-            {
-                Log("SetRoutingTable applied empty snapshot.");
-            }
-            return;
-        }
-
-        var resolvedRoutes = new List<ShardRoute>(_routingSnapshot.Routes.Count);
-        foreach (var route in _routingSnapshot.Routes)
-        {
-            var resolvedRoute = await ResolveRoutingRouteAsync(context, route).ConfigureAwait(false);
-            if (resolvedRoute is null)
-            {
-                continue;
-            }
-
-            resolvedRoutes.Add(resolvedRoute);
-        }
-
-        _routingSnapshot = new RoutingTableSnapshot(resolvedRoutes);
-        _routingTable.Replace(_routingSnapshot.Routes);
-        if (LogTickDiagnostics)
-        {
-            Log($"SetRoutingTable applied {_routingSnapshot.Count} route(s): {FormatRoutes()}");
-        }
-    }
-
-    private async Task<ShardRoute?> ResolveRoutingRouteAsync(IContext context, ShardRoute route)
-    {
-        var preferredLocalPid = TryGetPreferredLocalRoutePid(context, route);
-        if (preferredLocalPid is not null)
-        {
-            return route with { Pid = preferredLocalPid };
-        }
-
-        var resolvedPid = route.Pid;
-        if (!string.IsNullOrWhiteSpace(route.ActorReference))
-        {
-            var resolved = await RoutablePidReference.ResolveAsync(route.ActorReference).ConfigureAwait(false);
-            if (resolved is not null)
-            {
-                resolvedPid = resolved;
-            }
-        }
-
-        return resolvedPid is null
-            ? null
-            : route with { Pid = resolvedPid };
     }
 
     private void ApplyRoutingTable(RoutingTableSnapshot? snapshot)
@@ -143,17 +88,7 @@ public sealed class BrainSignalRouterActor : IActor
     {
         if (_routingTable.Count == 0)
         {
-            if (LogTickDiagnostics)
-            {
-                Log($"TickCompute skipped tick={tickCompute.TickId} reason=no_routes");
-            }
             return;
-        }
-
-        if (LogTickDiagnostics)
-        {
-            Log(
-                $"TickCompute dispatch tick={tickCompute.TickId} routes={_routingTable.Count} targets={string.Join(", ", _routingTable.Entries.Select(static entry => PidLabel(entry.Pid)))}");
         }
 
         foreach (var route in _routingTable.Entries)
@@ -246,22 +181,22 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         var key = new PendingAckKey(ack.RegionId, ack.ShardId.ToShardId32());
-        if (!pending.PendingAckTargets.TryGetValue(key, out var expectedTarget))
+        if (!pending.PendingAckSenders.TryGetValue(key, out var expectedSender))
         {
             var reason = pending.AckedKeys.Contains(key) ? "duplicate" : "untracked_payload";
             EmitSignalBatchAckIgnored(context, ack, reason);
             return;
         }
 
-        if (!SenderMatchesActorReferenceOrPid(context.Sender, expectedTarget.ActorReference, expectedTarget.SenderPid))
+        if (!SenderMatchesPid(context.Sender, expectedSender))
         {
-            EmitSignalBatchAckIgnored(context, ack, "sender_mismatch", expectedTarget.SenderPid);
+            EmitSignalBatchAckIgnored(context, ack, "sender_mismatch", expectedSender);
             return;
         }
 
-        pending.PendingAckTargets.Remove(key);
+        pending.PendingAckSenders.Remove(key);
         pending.AckedKeys.Add(key);
-        if (pending.PendingAckTargets.Count > 0)
+        if (pending.PendingAckSenders.Count > 0)
         {
             return;
         }
@@ -283,17 +218,6 @@ public sealed class BrainSignalRouterActor : IActor
         {
             context.Request(replyTo, deliverDone);
         }
-    }
-
-    private void HandleTickComputeDone(IContext context, TickComputeDone tickComputeDone)
-    {
-        if (LogTickDiagnostics)
-        {
-            Log(
-                $"TickComputeDone forward tick={tickComputeDone.TickId} brain={_brainId:D} shard={(tickComputeDone.ShardId is null ? "<missing>" : tickComputeDone.ShardId.ToShardId32().ToString())} sender={PidLabel(context.Sender)} parent={PidLabel(context.Parent)}");
-        }
-
-        ForwardToParent(context, tickComputeDone);
     }
 
     private void HandleInputWrite(IContext context, InputWrite message)
@@ -410,15 +334,15 @@ public sealed class BrainSignalRouterActor : IActor
         ProcessTickDeliver(context, message.TickId, pending.ReplyTo, message.Contribs, pending.Stopwatch);
     }
 
-    private async Task HandleRegisterIoGatewayAsync(IContext context, RegisterIoGateway message)
+    private void HandleRegisterIoGateway(IContext context, RegisterIoGateway message)
     {
         if (!IsForBrain(message.BrainId))
         {
             return;
         }
 
-        var parsed = await RoutablePidReference.ResolveAsync(message.IoGatewayPid).ConfigureAwait(false);
-        if (parsed is not null)
+        if (!string.IsNullOrWhiteSpace(message.IoGatewayPid)
+            && TryParsePid(message.IoGatewayPid, out var parsed))
         {
             _ioGatewayPid = parsed;
             if (LogInputDiagnostics)
@@ -445,7 +369,7 @@ public sealed class BrainSignalRouterActor : IActor
     {
         var deliveredBatches = 0u;
         var deliveredContribs = 0u;
-        var expectedAckTargets = new Dictionary<PendingAckKey, PendingAckTarget>();
+        var expectedAckSenders = new Dictionary<PendingAckKey, PID>();
         var fallbackRoutes = 0;
         var missingRouteLogged = false;
         var inputRoutes = Array.Empty<ShardRoute>();
@@ -457,9 +381,9 @@ public sealed class BrainSignalRouterActor : IActor
             foreach (var entry in outbox.Destinations)
             {
                 var destinationShardId = entry.Key;
-                if (!_routingTable.TryGetRoute(entry.Key, out var route) || route is null || route.Pid is null)
+                if (!_routingTable.TryGetPid(entry.Key, out var pid) || pid is null)
                 {
-                    if (!TryGetFallbackRoute(entry.Value.RegionId, out var fallbackRoute))
+                    if (!TryGetFallbackRoute(entry.Value.RegionId, out var fallbackShardId, out pid))
                     {
                         if (LogDelivery && !missingRouteLogged)
                         {
@@ -470,11 +394,10 @@ public sealed class BrainSignalRouterActor : IActor
                     }
 
                     fallbackRoutes++;
-                    route = fallbackRoute;
-                    destinationShardId = route.ShardId;
+                    destinationShardId = fallbackShardId;
                 }
 
-                if (route?.Pid is null)
+                if (pid is null)
                 {
                     continue;
                 }
@@ -489,8 +412,8 @@ public sealed class BrainSignalRouterActor : IActor
 
                 signalBatch.Contribs.AddRange(entry.Value.Contribs);
                 // Use Request so RegionShard can reply with SignalBatchAck to this router.
-                context.Request(route.Pid, signalBatch);
-                expectedAckTargets[new PendingAckKey(entry.Value.RegionId, destinationShardId)] = new PendingAckTarget(route.Pid, route.ActorReference);
+                context.Request(pid, signalBatch);
+                expectedAckSenders[new PendingAckKey(entry.Value.RegionId, destinationShardId)] = pid;
 
                 deliveredBatches++;
                 deliveredContribs += (uint)entry.Value.Contribs.Count;
@@ -519,7 +442,7 @@ public sealed class BrainSignalRouterActor : IActor
 
                     signalBatch.Contribs.AddRange(inputContribs);
                     context.Request(route.Pid, signalBatch);
-                    expectedAckTargets[new PendingAckKey((uint)NbnConstants.InputRegionId, route.ShardId)] = new PendingAckTarget(route.Pid, route.ActorReference);
+                    expectedAckSenders[new PendingAckKey((uint)NbnConstants.InputRegionId, route.ShardId)] = route.Pid;
 
                     deliveredBatches++;
                     deliveredContribs += (uint)inputContribs.Count;
@@ -527,7 +450,7 @@ public sealed class BrainSignalRouterActor : IActor
             }
         }
 
-        var expectedAcks = expectedAckTargets.Count;
+        var expectedAcks = expectedAckSenders.Count;
 
         if (LogDelivery)
         {
@@ -563,7 +486,7 @@ public sealed class BrainSignalRouterActor : IActor
             stopwatch,
             deliveredBatches,
             deliveredContribs,
-            expectedAckTargets);
+            expectedAckSenders);
 
         _pendingDeliveries[tickId] = pending;
     }
@@ -596,9 +519,13 @@ public sealed class BrainSignalRouterActor : IActor
             _pendingOutboxes.Remove(tickId);
         }
 
+        // If drain requests are expiring, the cached IO PID is likely stale/unreachable.
+        // Clear it so subsequent ticks can proceed without repeatedly waiting on drain responses.
+        _ioGatewayPid = null;
+
         if (LogDelivery)
         {
-            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)} ioGateway={PidLabel(_ioGatewayPid)}");
+            Log($"Pending input drains expired before tick={currentTickId}. expired={string.Join(",", expired)} ioGatewayCleared=true");
         }
     }
 
@@ -650,10 +577,42 @@ public sealed class BrainSignalRouterActor : IActor
 
         _ioGatewayPid = sender;
     }
-    private bool TryGetFallbackRoute(uint regionId, out ShardRoute route)
+
+    private static bool TryParsePid(string? value, out PID pid)
     {
-        route = null!;
-        ShardRoute? candidate = null;
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
+    }
+
+    private bool TryGetFallbackRoute(uint regionId, out ShardId32 shardId, out PID? pid)
+    {
+        shardId = default;
+        pid = null;
+        ShardId32? candidateShardId = null;
+        PID? candidate = null;
 
         foreach (var entry in _routingTable.Entries)
         {
@@ -664,168 +623,25 @@ public sealed class BrainSignalRouterActor : IActor
 
             if (candidate is not null)
             {
-                route = null!;
+                shardId = default;
+                pid = null;
                 return false;
             }
 
-            candidate = entry;
+            candidateShardId = entry.ShardId;
+            candidate = entry.Pid;
         }
 
-        if (candidate is null)
+        if (candidate is null || !candidateShardId.HasValue)
         {
-            route = null!;
+            shardId = default;
+            pid = null;
             return false;
         }
 
-        route = candidate;
+        shardId = candidateShardId.Value;
+        pid = candidate;
         return true;
-    }
-
-    private PID? TryGetPreferredLocalRoutePid(IContext context, ShardRoute route)
-    {
-        if (IsLocalPid(route.Pid))
-        {
-            return route.Pid;
-        }
-
-        if (!_routingTable.TryGetRoute(route.ShardId, out var existingRoute)
-            || existingRoute is null
-            || !IsLocalPid(existingRoute.Pid))
-        {
-            return TryBuildLocalizedLocalPidForLocalSystem(context.System.Address, route);
-        }
-
-        if (RouteTargetsSameLocalActor(route, existingRoute.Pid))
-        {
-            return existingRoute.Pid;
-        }
-
-        return TryBuildLocalizedLocalPidForLocalSystem(context.System.Address, route);
-    }
-
-    private static bool IsLocalPid(PID? pid)
-        => pid is not null
-           && (string.IsNullOrWhiteSpace(pid.Address)
-               || string.Equals(pid.Address, "nonhost", StringComparison.OrdinalIgnoreCase));
-
-    private static bool RouteTargetsSameLocalActor(ShardRoute route, PID localPid)
-    {
-        if (route.Pid is not null
-            && ActorIdsEquivalent(route.Pid.Id, localPid.Id)
-            && IsLocalAddress(route.Pid.Address))
-        {
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(route.ActorReference))
-        {
-            return false;
-        }
-
-        if (RoutablePidReference.TryDecode(route.ActorReference, out var endpointSet))
-        {
-            if (!ActorIdsEquivalent(endpointSet.ActorName, localPid.Id))
-            {
-                return false;
-            }
-
-            return endpointSet.Candidates.Any(static candidate =>
-                TryParseEndpoint(candidate.HostPort, out var host, out _)
-                && NetworkAddressDefaults.IsLocalHost(host));
-        }
-
-        return RoutablePidReference.TryParsePlainPid(route.ActorReference, out var parsed)
-               && ActorIdsEquivalent(parsed.Id, localPid.Id)
-               && IsLocalAddress(parsed.Address);
-    }
-
-    private static PID? TryBuildLocalizedLocalPid(ShardRoute route)
-        => TryBuildLocalizedLocalPidForLocalSystem(localSystemAddress: null, route);
-
-    private static PID? TryBuildLocalizedLocalPidForLocalSystem(string? localSystemAddress, ShardRoute route)
-    {
-        var actorId = ResolveLocalActorId(localSystemAddress, route);
-        if (string.IsNullOrWhiteSpace(actorId))
-        {
-            return null;
-        }
-
-        return new PID("nonhost", actorId);
-    }
-
-    private static string ResolveLocalActorId(string? localSystemAddress, ShardRoute route)
-    {
-        if (route.Pid is not null && IsSameProcessLocalAddress(localSystemAddress, route.Pid.Address))
-        {
-            return route.Pid.Id;
-        }
-
-        if (string.IsNullOrWhiteSpace(route.ActorReference))
-        {
-            return string.Empty;
-        }
-
-        if (RoutablePidReference.TryDecode(route.ActorReference, out var endpointSet))
-        {
-            return endpointSet.Candidates.Any(candidate =>
-                    IsSameProcessLocalHostPort(localSystemAddress, candidate.HostPort))
-                ? endpointSet.ActorName
-                : string.Empty;
-        }
-
-        return RoutablePidReference.TryParsePlainPid(route.ActorReference, out var parsed)
-               && IsSameProcessLocalAddress(localSystemAddress, parsed.Address)
-            ? parsed.Id
-            : string.Empty;
-    }
-
-    private static bool IsSameProcessLocalHostPort(string? localSystemAddress, string? hostPort)
-    {
-        if (string.IsNullOrWhiteSpace(hostPort))
-        {
-            return false;
-        }
-
-        var normalizedHostPort = hostPort.Trim();
-        var slashIndex = normalizedHostPort.IndexOf('/');
-        if (slashIndex >= 0)
-        {
-            normalizedHostPort = normalizedHostPort[..slashIndex];
-        }
-
-        return IsSameProcessLocalAddress(localSystemAddress, normalizedHostPort);
-    }
-
-    private static bool IsSameProcessLocalAddress(string? localSystemAddress, string? address)
-    {
-        if (string.IsNullOrWhiteSpace(address))
-        {
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(localSystemAddress))
-        {
-            return IsLocalAddress(address);
-        }
-
-        if (!TryParseEndpoint(localSystemAddress, out _, out var localPort)
-            || !TryParseEndpoint(address, out var host, out var routePort))
-        {
-            return false;
-        }
-
-        return localPort == routePort && NetworkAddressDefaults.IsLocalHost(host);
-    }
-
-    private static bool IsLocalAddress(string? address)
-    {
-        if (string.IsNullOrWhiteSpace(address))
-        {
-            return true;
-        }
-
-        return TryParseEndpoint(address, out var host, out _)
-               && NetworkAddressDefaults.IsLocalHost(host);
     }
 
     private string FormatRoutes()
@@ -856,40 +672,6 @@ public sealed class BrainSignalRouterActor : IActor
                || PidHasEquivalentEndpoint(sender, expected);
     }
 
-    private static bool SenderMatchesActorReferenceOrPid(PID? sender, string? actorReference, PID expected)
-    {
-        if (SenderMatchesPid(sender, expected))
-        {
-            return true;
-        }
-
-        return SenderMatchesActorReference(sender, actorReference);
-    }
-
-    private static bool SenderMatchesActorReference(PID? sender, string? actorReference)
-    {
-        if (sender is null || string.IsNullOrWhiteSpace(actorReference))
-        {
-            return false;
-        }
-
-        if (RoutablePidReference.TryDecode(actorReference, out var endpointSet))
-        {
-            foreach (var candidate in endpointSet.Candidates)
-            {
-                if (SenderMatchesPid(sender, candidate.ToEndpoint().ToPid()))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        return RoutablePidReference.TryParsePlainPid(actorReference, out var parsed)
-               && SenderMatchesPid(sender, parsed);
-    }
-
     private static bool PidEquals(PID? left, PID right)
         => left is not null
            && string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.OrdinalIgnoreCase)
@@ -897,15 +679,9 @@ public sealed class BrainSignalRouterActor : IActor
     
     private static bool PidHasEquivalentEndpoint(PID sender, PID expected)
     {
-        if (!ActorIdsEquivalent(sender.Id, expected.Id))
+        if (!string.Equals(sender.Id ?? string.Empty, expected.Id ?? string.Empty, StringComparison.Ordinal))
         {
             return false;
-        }
-
-        if (HasEquivalentProcessLocalEndpoint(sender.Address, expected.Address)
-            || HasEquivalentProcessLocalEndpoint(expected.Address, sender.Address))
-        {
-            return true;
         }
 
         if (!TryParseEndpoint(sender.Address, out var senderHost, out var senderPort)
@@ -938,18 +714,6 @@ public sealed class BrainSignalRouterActor : IActor
         }
 
         return HostsResolveToSameAddress(senderHost, expectedHost);
-    }
-
-    private static bool HasEquivalentProcessLocalEndpoint(string? address, string? otherAddress)
-    {
-        if (!string.IsNullOrWhiteSpace(address)
-            && !string.Equals(address, "nonhost", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return TryParseEndpoint(otherAddress, out var otherHost, out _)
-               && NetworkAddressDefaults.IsLocalHost(otherHost);
     }
 
     private static bool TryParseEndpoint(string? address, out string host, out int port)
@@ -1095,38 +859,6 @@ public sealed class BrainSignalRouterActor : IActor
         return address.ToString();
     }
 
-    private static bool ActorIdsEquivalent(string? left, string? right)
-    {
-        var normalizedLeft = NormalizeActorId(left);
-        var normalizedRight = NormalizeActorId(right);
-        if (string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (normalizedLeft.Length == 0 || normalizedRight.Length == 0)
-        {
-            return false;
-        }
-
-        return normalizedLeft.EndsWith("/" + normalizedRight, StringComparison.Ordinal)
-               || normalizedRight.EndsWith("/" + normalizedLeft, StringComparison.Ordinal);
-    }
-
-    private static string NormalizeActorId(string? actorId)
-    {
-        if (string.IsNullOrWhiteSpace(actorId))
-        {
-            return string.Empty;
-        }
-
-        return string.Join(
-            "/",
-            actorId
-                .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(static segment => !segment.StartsWith("$", StringComparison.Ordinal)));
-    }
-
     private void EmitSignalBatchAckIgnored(
         IContext context,
         SignalBatchAck ack,
@@ -1221,14 +953,14 @@ public sealed class BrainSignalRouterActor : IActor
             Stopwatch stopwatch,
             uint deliveredBatches,
             uint deliveredContribs,
-            Dictionary<PendingAckKey, PendingAckTarget> pendingAckTargets)
+            Dictionary<PendingAckKey, PID> pendingAckSenders)
         {
             TickId = tickId;
             ReplyTo = replyTo;
             Stopwatch = stopwatch;
             DeliveredBatches = deliveredBatches;
             DeliveredContribs = deliveredContribs;
-            PendingAckTargets = pendingAckTargets;
+            PendingAckSenders = pendingAckSenders;
         }
 
         public ulong TickId { get; }
@@ -1236,12 +968,11 @@ public sealed class BrainSignalRouterActor : IActor
         public Stopwatch Stopwatch { get; }
         public uint DeliveredBatches { get; }
         public uint DeliveredContribs { get; }
-        public Dictionary<PendingAckKey, PendingAckTarget> PendingAckTargets { get; }
+        public Dictionary<PendingAckKey, PID> PendingAckSenders { get; }
         public HashSet<PendingAckKey> AckedKeys { get; } = new();
     }
 
     private readonly record struct PendingAckKey(uint RegionId, ShardId32 ShardId);
-    private readonly record struct PendingAckTarget(PID SenderPid, string ActorReference);
 
     private sealed class PendingInputDrain
     {

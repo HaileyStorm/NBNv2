@@ -1,7 +1,6 @@
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
-using Nbn.Shared;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -42,12 +41,11 @@ public sealed partial class IoGatewayActor : IActor
     private readonly Dictionary<string, ClientInfo> _clients = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, PID> _routerCache = new();
     private readonly Dictionary<Guid, string> _routerRegistration = new();
-    private readonly Dictionary<Guid, Dictionary<string, OutputSubscriberRegistration>> _pendingOutputSubscribers = new();
-    private readonly Dictionary<Guid, Dictionary<string, OutputSubscriberRegistration>> _pendingOutputVectorSubscribers = new();
+    private readonly Dictionary<Guid, Dictionary<string, PID>> _pendingOutputSubscribers = new();
+    private readonly Dictionary<Guid, Dictionary<string, PID>> _pendingOutputVectorSubscribers = new();
     private readonly PID? _configuredHiveMindPid;
     private readonly PID? _configuredReproPid;
     private readonly PID? _configuredSpeciationPid;
-    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
 
     private PID? _hiveMindPid;
     private PID? _reproPid;
@@ -56,12 +54,7 @@ public sealed partial class IoGatewayActor : IActor
     /// <summary>
     /// Initializes an IO gateway actor with optional preconfigured service endpoints.
     /// </summary>
-    public IoGatewayActor(
-        IoOptions options,
-        PID? hiveMindPid = null,
-        PID? reproPid = null,
-        PID? speciationPid = null,
-        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
+    public IoGatewayActor(IoOptions options, PID? hiveMindPid = null, PID? reproPid = null, PID? speciationPid = null)
     {
         _options = options;
         _configuredHiveMindPid = hiveMindPid ?? TryCreatePid(options.HiveMindAddress, options.HiveMindName);
@@ -70,7 +63,6 @@ public sealed partial class IoGatewayActor : IActor
         _hiveMindPid = _configuredHiveMindPid;
         _reproPid = _configuredReproPid;
         _speciationPid = _configuredSpeciationPid;
-        _localEndpointCandidates = localEndpointCandidates;
     }
 
     /// <summary>

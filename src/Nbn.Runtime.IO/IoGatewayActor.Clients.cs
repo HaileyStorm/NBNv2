@@ -1,5 +1,4 @@
 using Nbn.Proto.Io;
-using Nbn.Shared;
 using Proto;
 
 namespace Nbn.Runtime.IO;
@@ -79,16 +78,6 @@ public sealed partial class IoGatewayActor
     private static string PidLabel(PID? pid)
         => pid is null ? "unknown" : PidKey(pid);
 
-    private string BuildLocalActorReference(PID pid)
-    {
-        if (_localEndpointCandidates is not null && _localEndpointCandidates.Count > 0)
-        {
-            return RoutablePidReference.Encode(pid, _localEndpointCandidates);
-        }
-
-        return PidKey(pid);
-    }
-
     private static bool PidEquals(PID? left, PID right)
     {
         return left is not null
@@ -110,6 +99,34 @@ public sealed partial class IoGatewayActor
             _ => false
         };
     }
+
+    private static bool TryParsePid(string? value, out PID? pid)
+    {
+        pid = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid = new PID(string.Empty, trimmed);
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid = new PID(address, id);
+        return true;
+    }
+
     private static PID ToRemotePid(IContext context, PID pid)
     {
         if (!string.IsNullOrWhiteSpace(pid.Address))

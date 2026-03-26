@@ -167,10 +167,10 @@ public sealed partial class IoGatewayActor
 
         var inputCoordinatorMode = NormalizeInputCoordinatorMode(message.InputCoordinatorMode);
         var outputVectorSource = NormalizeOutputVectorSource(message.OutputVectorSource);
-        var registeredInputPid = await RoutablePidReference.ResolveAsync(message.InputCoordinatorPid).ConfigureAwait(false);
-        var registeredOutputPid = await RoutablePidReference.ResolveAsync(message.OutputCoordinatorPid).ConfigureAwait(false);
-        var hasRegisteredInputPid = registeredInputPid is not null;
-        var hasRegisteredOutputPid = registeredOutputPid is not null;
+        var hasRegisteredInputPid = TryParsePid(message.InputCoordinatorPid, out var registeredInputPid)
+                                    && registeredInputPid is not null;
+        var hasRegisteredOutputPid = TryParsePid(message.OutputCoordinatorPid, out var registeredOutputPid)
+                                     && registeredOutputPid is not null;
         var registeredInputOwned = hasRegisteredInputPid && message.IoGatewayOwnsInputCoordinator;
         var registeredOutputOwned = hasRegisteredOutputPid && message.IoGatewayOwnsOutputCoordinator;
         var shouldRegisterOutputSink = hasRegisteredOutputPid || message.IoGatewayOwnsOutputCoordinator;
@@ -278,7 +278,6 @@ public sealed partial class IoGatewayActor
                     out var updatedOwnsOutputCoordinator);
                 existing.OutputPid = updatedOutputPid;
                 existing.OwnsOutputCoordinator = updatedOwnsOutputCoordinator;
-                existing.OutputActorReference = NormalizeActorReference(message.OutputCoordinatorPid, updatedOutputPid);
             }
 
             if (inputWidthChanged || inputCoordinatorChanged)
@@ -330,13 +329,7 @@ public sealed partial class IoGatewayActor
             }
 
             await EnsureIoGatewayRegisteredAsync(context, brainId);
-            await EnsureOutputSinkRegisteredAsync(
-                    context,
-                    brainId,
-                    existing.OutputPid,
-                    existing.OutputActorReference,
-                    shouldRegisterOutputSink)
-                .ConfigureAwait(false);
+            await EnsureOutputSinkRegisteredAsync(context, brainId, existing.OutputPid, shouldRegisterOutputSink);
             return;
         }
 
@@ -387,7 +380,6 @@ public sealed partial class IoGatewayActor
             brainId,
             inputPid,
             outputPid,
-            NormalizeActorReference(message.OutputCoordinatorPid, outputPid),
             ownsInputCoordinator,
             ownsOutputCoordinator,
             message.InputWidth,
@@ -430,13 +422,7 @@ public sealed partial class IoGatewayActor
         }
 
         await EnsureIoGatewayRegisteredAsync(context, brainId);
-        await EnsureOutputSinkRegisteredAsync(
-                context,
-                brainId,
-                outputPid,
-                entry.OutputActorReference,
-                shouldRegisterOutputSink)
-            .ConfigureAwait(false);
+        await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid, shouldRegisterOutputSink);
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)
@@ -732,11 +718,6 @@ public sealed partial class IoGatewayActor
             ? sha[..Math.Min(12, sha.Length)]
             : "present";
     }
-
-    private static string NormalizeActorReference(string? actorReference, PID pid)
-        => !string.IsNullOrWhiteSpace(actorReference)
-            ? actorReference.Trim()
-            : PidLabel(pid);
 
     private void StopAndRemoveBrain(IContext context, BrainIoEntry entry)
     {

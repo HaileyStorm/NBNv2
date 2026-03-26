@@ -9,60 +9,36 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
-    private async Task ApplyObservedControlAssignmentsAsync(IContext context, BrainState brain, PlacementExecutionState execution)
+    private void ApplyObservedControlAssignments(IContext context, BrainState brain, PlacementExecutionState execution)
     {
         var routingUpdated = false;
         var ioUpdated = false;
-        if (TryGetObservedControlAssignment(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot, out var observedRootReference))
+        if (TryGetObservedControlPid(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot, out var observedRoot)
+            && !PidEquals(brain.BrainRootPid, observedRoot))
         {
-            var observedRoot = await ResolvePidAsync(observedRootReference).ConfigureAwait(false);
-            if (observedRoot is not null
-                && (!PidEquals(brain.BrainRootPid, observedRoot)
-                    || !string.Equals(brain.BrainRootActorReference, observedRootReference, StringComparison.Ordinal)))
-            {
-                brain.BrainRootPid = NormalizePid(context, observedRoot) ?? observedRoot;
-                brain.BrainRootActorReference = ResolveActorReference(observedRootReference, brain.BrainRootPid);
-                routingUpdated = true;
-            }
+            brain.BrainRootPid = NormalizePid(context, observedRoot) ?? observedRoot;
+            routingUpdated = true;
         }
 
-        if (TryGetObservedControlAssignment(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetSignalRouter, out var observedRouterReference))
+        if (TryGetObservedControlPid(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetSignalRouter, out var observedRouter)
+            && !PidEquals(brain.SignalRouterPid, observedRouter))
         {
-            var observedRouter = await ResolvePidAsync(observedRouterReference).ConfigureAwait(false);
-            if (observedRouter is not null
-                && (!PidEquals(brain.SignalRouterPid, observedRouter)
-                    || !string.Equals(brain.SignalRouterActorReference, observedRouterReference, StringComparison.Ordinal)))
-            {
-                brain.SignalRouterPid = NormalizePid(context, observedRouter) ?? observedRouter;
-                brain.SignalRouterActorReference = ResolveActorReference(observedRouterReference, brain.SignalRouterPid);
-                routingUpdated = true;
-            }
+            brain.SignalRouterPid = NormalizePid(context, observedRouter) ?? observedRouter;
+            routingUpdated = true;
         }
 
-        if (TryGetObservedControlAssignment(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetInputCoordinator, out var observedInputCoordinatorReference))
+        if (TryGetObservedControlPid(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetInputCoordinator, out var observedInputCoordinator)
+            && !PidEquals(brain.InputCoordinatorPid, observedInputCoordinator))
         {
-            var observedInputCoordinator = await ResolvePidAsync(observedInputCoordinatorReference).ConfigureAwait(false);
-            if (observedInputCoordinator is not null
-                && (!PidEquals(brain.InputCoordinatorPid, observedInputCoordinator)
-                    || !string.Equals(brain.InputCoordinatorActorReference, observedInputCoordinatorReference, StringComparison.Ordinal)))
-            {
-                brain.InputCoordinatorPid = NormalizePid(context, observedInputCoordinator) ?? observedInputCoordinator;
-                brain.InputCoordinatorActorReference = ResolveActorReference(observedInputCoordinatorReference, brain.InputCoordinatorPid);
-                ioUpdated = true;
-            }
+            brain.InputCoordinatorPid = NormalizePid(context, observedInputCoordinator) ?? observedInputCoordinator;
+            ioUpdated = true;
         }
 
-        if (TryGetObservedControlAssignment(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetOutputCoordinator, out var observedOutputCoordinatorReference))
+        if (TryGetObservedControlPid(execution, ProtoControl.PlacementAssignmentTarget.PlacementTargetOutputCoordinator, out var observedOutputCoordinator)
+            && !PidEquals(brain.OutputCoordinatorPid, observedOutputCoordinator))
         {
-            var observedOutputCoordinator = await ResolvePidAsync(observedOutputCoordinatorReference).ConfigureAwait(false);
-            if (observedOutputCoordinator is not null
-                && (!PidEquals(brain.OutputCoordinatorPid, observedOutputCoordinator)
-                    || !string.Equals(brain.OutputCoordinatorActorReference, observedOutputCoordinatorReference, StringComparison.Ordinal)))
-            {
-                brain.OutputCoordinatorPid = NormalizePid(context, observedOutputCoordinator) ?? observedOutputCoordinator;
-                brain.OutputCoordinatorActorReference = ResolveActorReference(observedOutputCoordinatorReference, brain.OutputCoordinatorPid);
-                ioUpdated = true;
-            }
+            brain.OutputCoordinatorPid = NormalizePid(context, observedOutputCoordinator) ?? observedOutputCoordinator;
+            ioUpdated = true;
         }
 
         if (brain.SignalRouterPid is not null && string.IsNullOrWhiteSpace(brain.SignalRouterPid.Address))
@@ -124,23 +100,23 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private static bool TryGetObservedControlAssignment(
+    private static bool TryGetObservedControlPid(
         PlacementExecutionState execution,
         ProtoControl.PlacementAssignmentTarget target,
-        out string actorReference)
+        out PID pid)
     {
         foreach (var observed in execution.ObservedAssignments.Values.OrderBy(static value => value.AssignmentId, StringComparer.Ordinal))
         {
-            if (observed.Target != target || string.IsNullOrWhiteSpace(observed.ActorPid))
+            if (observed.Target != target || !TryParsePid(observed.ActorPid, out var observedPid))
             {
                 continue;
             }
 
-            actorReference = observed.ActorPid;
+            pid = observedPid;
             return true;
         }
 
-        actorReference = string.Empty;
+        pid = new PID();
         return false;
     }
 
@@ -161,51 +137,11 @@ public sealed partial class HiveMindActor
                || PidHasEquivalentEndpoint(sender, expected);
     }
 
-    private static bool SenderMatchesActorReference(PID? sender, string? actorReference)
-    {
-        if (sender is null || string.IsNullOrWhiteSpace(actorReference))
-        {
-            return false;
-        }
-
-        if (RoutablePidReference.TryDecode(actorReference, out var endpointSet))
-        {
-            foreach (var candidate in endpointSet.Candidates)
-            {
-                if (SenderMatchesPid(sender, candidate.ToEndpoint().ToPid()))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        return RoutablePidReference.TryParsePlainPid(actorReference, out var parsed)
-               && SenderMatchesPid(sender, parsed);
-    }
-
-    private static bool SenderMatchesActorReferenceOrPid(PID? sender, string? actorReference, PID? pid)
-    {
-        if (pid is not null && SenderMatchesPid(sender, pid))
-        {
-            return true;
-        }
-
-        return SenderMatchesActorReference(sender, actorReference);
-    }
-
     private static bool PidHasEquivalentEndpoint(PID sender, PID expected)
     {
-        if (!ActorIdsEquivalent(sender.Id, expected.Id))
+        if (!string.Equals(sender.Id ?? string.Empty, expected.Id ?? string.Empty, StringComparison.Ordinal))
         {
             return false;
-        }
-
-        if (HasEquivalentProcessLocalEndpoint(sender.Address, expected.Address)
-            || HasEquivalentProcessLocalEndpoint(expected.Address, sender.Address))
-        {
-            return true;
         }
 
         if (!TryParseEndpoint(sender.Address, out var senderHost, out var senderPort)
@@ -238,18 +174,6 @@ public sealed partial class HiveMindActor
         }
 
         return HostsResolveToSameAddress(senderHost, expectedHost);
-    }
-
-    private static bool HasEquivalentProcessLocalEndpoint(string? address, string? otherAddress)
-    {
-        if (!string.IsNullOrWhiteSpace(address)
-            && !string.Equals(address, "nonhost", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return TryParseEndpoint(otherAddress, out var otherHost, out _)
-               && NetworkAddressDefaults.IsLocalHost(otherHost);
     }
 
     private static bool TryParseEndpoint(string? address, out string host, out int port)
@@ -461,38 +385,6 @@ public sealed partial class HiveMindActor
             process = null;
             return false;
         }
-    }
-
-    private static bool ActorIdsEquivalent(string? left, string? right)
-    {
-        var normalizedLeft = NormalizeActorId(left);
-        var normalizedRight = NormalizeActorId(right);
-        if (string.Equals(normalizedLeft, normalizedRight, StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        if (normalizedLeft.Length == 0 || normalizedRight.Length == 0)
-        {
-            return false;
-        }
-
-        return normalizedLeft.EndsWith("/" + normalizedRight, StringComparison.Ordinal)
-               || normalizedRight.EndsWith("/" + normalizedLeft, StringComparison.Ordinal);
-    }
-
-    private static string NormalizeActorId(string? actorId)
-    {
-        if (string.IsNullOrWhiteSpace(actorId))
-        {
-            return string.Empty;
-        }
-
-        return string.Join(
-            "/",
-            actorId
-                .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(static segment => !segment.StartsWith("$", StringComparison.Ordinal)));
     }
 
     private static MethodInfo? ResolveProcessRegistryLookupMethod()

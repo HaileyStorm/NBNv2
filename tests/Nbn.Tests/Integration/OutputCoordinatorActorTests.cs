@@ -1,13 +1,10 @@
 using System.Threading.Channels;
-using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.IO;
 using Nbn.Tests.TestSupport;
 using Proto;
-using Proto.Remote;
-using Proto.Remote.GrpcNet;
 
 namespace Nbn.Tests.Integration;
 
@@ -293,54 +290,6 @@ public sealed class OutputCoordinatorActorTests
         }
     }
 
-    [Fact]
-    public async Task SubscribeOutputsVector_WithRoutablePidReference_DeliversVector()
-    {
-        var port = GetFreePort();
-        var system = new ActorSystem();
-        var remoteConfig = RemoteConfig.BindToLocalhost(port).WithProtoMessages(
-            NbnCommonReflection.Descriptor,
-            NbnIoReflection.Descriptor);
-        system.WithRemote(remoteConfig);
-        await system.Remote().StartAsync();
-        var brainId = Guid.NewGuid();
-        var root = system.Root;
-
-        try
-        {
-            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
-            var vectors = Channel.CreateUnbounded<OutputVectorEvent>();
-            var probe = root.Spawn(Props.FromProducer(() => new VectorCaptureProbe(vectors.Writer)));
-            var encodedSubscriber = RoutablePidReference.Encode(
-                new ServiceEndpointSet(
-                    probe.Id,
-                    [
-                        new ServiceEndpointCandidate("198.51.100.10:12090", probe.Id, ServiceEndpointCandidateKind.Public, Priority: 100, IsDefault: true),
-                        new ServiceEndpointCandidate(system.Address, probe.Id, ServiceEndpointCandidateKind.Lan, Priority: 90)
-                    ]));
-
-            var ack = await root.RequestAsync<IoCommandAck>(
-                coordinator,
-                new SubscribeOutputsVector
-                {
-                    BrainId = brainId.ToProtoUuid(),
-                    SubscriberActor = encodedSubscriber
-                },
-                TimeSpan.FromSeconds(3));
-            Assert.True(ack.Success);
-
-            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 1f, 2f }, 1));
-
-            var vector = await ReadVectorAsync(vectors.Reader, TimeSpan.FromSeconds(2));
-            Assert.Equal(new[] { 1f, 2f }, vector.Values);
-        }
-        finally
-        {
-            await system.Remote().ShutdownAsync(true);
-            await system.ShutdownAsync();
-        }
-    }
-
     private static async Task<OutputVectorEvent> ReadVectorAsync(ChannelReader<OutputVectorEvent> reader, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
@@ -376,13 +325,6 @@ public sealed class OutputCoordinatorActorTests
         Assert.Fail($"Timed out waiting for metric sum to reach {minValue}.");
     }
 
-    private static int GetFreePort()
-    {
-        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-    }
-
     private sealed class VectorSubscriberProbe : IActor
     {
         private readonly Guid _brainId;
@@ -412,26 +354,6 @@ public sealed class OutputCoordinatorActorTests
                          && brain == _brainId:
                     _writer.TryWrite(output);
                     break;
-            }
-
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class VectorCaptureProbe : IActor
-    {
-        private readonly ChannelWriter<OutputVectorEvent> _writer;
-
-        public VectorCaptureProbe(ChannelWriter<OutputVectorEvent> writer)
-        {
-            _writer = writer;
-        }
-
-        public Task ReceiveAsync(IContext context)
-        {
-            if (context.Message is OutputVectorEvent output)
-            {
-                _writer.TryWrite(output);
             }
 
             return Task.CompletedTask;

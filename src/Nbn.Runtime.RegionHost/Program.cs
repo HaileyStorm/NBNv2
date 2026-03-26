@@ -29,7 +29,6 @@ await system.Remote().StartAsync();
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
-var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.ShardName);
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -37,8 +36,7 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ShardName,
-    options.ShardName,
-    nodeEndpointSet: endpointSet);
+    options.ShardName);
 
 var artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(options.ArtifactRootPath));
 var store = artifactStoreResolver.Resolve(options.StoreUri);
@@ -97,7 +95,7 @@ system.Root.Send(shardPid, new ProtoControl.RegisterShard
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,
     ShardIndex = (uint)options.ShardIndex,
-    ShardPid = RoutablePidReference.Encode(shardRemotePid, endpointSet.Candidates),
+    ShardPid = PidLabel(shardRemotePid),
     NeuronStart = (uint)options.NeuronStart,
     NeuronCount = (uint)options.NeuronCount
 });

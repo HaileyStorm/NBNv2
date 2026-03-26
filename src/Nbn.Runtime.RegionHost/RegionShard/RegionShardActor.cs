@@ -20,7 +20,6 @@ public sealed class RegionShardActor : IActor
     private static readonly bool LogOutput = IsEnvTrue("NBN_REGIONHOST_LOG_OUTPUT");
     private static readonly bool LogViz = IsEnvTrue("NBN_REGIONHOST_LOG_VIZ");
     private static readonly bool LogVizDiagnostics = IsEnvTrue("NBN_VIZ_DIAGNOSTICS_ENABLED");
-    private static readonly bool LogTickDiagnostics = IsEnvTrue("NBN_RUNTIME_TICK_DIAGNOSTICS_ENABLED");
     private static readonly bool LogInitDiagnostics = IsEnvTrue("NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED");
     private const int RecentComputeCacheSize = 2;
     private readonly RegionShardState _state;
@@ -134,7 +133,8 @@ public sealed class RegionShardActor : IActor
                 HandleRuntimeNeuronStateWrite(stateWrite);
                 break;
             case UpdateShardOutputSink message:
-                return HandleUpdateOutputSinkAsync(message);
+                HandleUpdateOutputSink(message);
+                break;
             case UpdateShardVisualization message:
                 HandleUpdateVisualization(message);
                 break;
@@ -165,7 +165,7 @@ public sealed class RegionShardActor : IActor
         }
     }
 
-    private async Task HandleUpdateOutputSinkAsync(UpdateShardOutputSink message)
+    private void HandleUpdateOutputSink(UpdateShardOutputSink message)
     {
         if (message.BrainId is null || !message.BrainId.TryToGuid(out var guid) || guid != _brainId)
         {
@@ -187,8 +187,7 @@ public sealed class RegionShardActor : IActor
             return;
         }
 
-        var pid = await RoutablePidReference.ResolveAsync(message.OutputPid).ConfigureAwait(false);
-        if (pid is not null)
+        if (TryParsePid(message.OutputPid, out var pid))
         {
             _outputSink = pid;
             if (LogOutput && _state.IsOutputRegion)
@@ -377,15 +376,6 @@ public sealed class RegionShardActor : IActor
             }
         }
 
-        if (LogTickDiagnostics)
-        {
-            var senderLabel = context.Sender is null
-                ? "<missing>"
-                : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
-            Console.WriteLine(
-                $"[RegionShard] SignalBatch accepted tick={batch.TickId} shard={_shardId} sender={senderLabel} contribs={batch.Contribs.Count} late={isLateBatch}.");
-        }
-
         SendSignalBatchAck(context, batch, preferBatchAddressing: false);
     }
 
@@ -431,21 +421,6 @@ public sealed class RegionShardActor : IActor
 
     private void HandleTickCompute(IContext context, TickCompute tick)
     {
-        if (LogTickDiagnostics)
-        {
-            var senderLabel = context.Sender is null
-                ? "<missing>"
-                : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
-            var routerLabel = _router is null
-                ? "(null)"
-                : (string.IsNullOrWhiteSpace(_router.Address) ? _router.Id : $"{_router.Address}/{_router.Id}");
-            var tickSinkLabel = _tickSink is null
-                ? "(null)"
-                : (string.IsNullOrWhiteSpace(_tickSink.Address) ? _tickSink.Id : $"{_tickSink.Address}/{_tickSink.Id}");
-            Console.WriteLine(
-                $"[RegionShard] TickCompute recv tick={tick.TickId} shard={_shardId} sender={senderLabel} router={routerLabel} tickSink={tickSinkLabel}.");
-        }
-
         if (_recentComputeDone.TryGetValue(tick.TickId, out var cachedDone))
         {
             RegionHostTelemetry.RecordComputeDuplicate();
@@ -455,7 +430,7 @@ public sealed class RegionShardActor : IActor
                 Console.WriteLine($"[RegionShard] TickCompute duplicate. tick={tick.TickId}");
             }
 
-            SendComputeDone(context, cachedDone, includeFallback: false);
+            SendComputeDone(context, cachedDone);
             return;
         }
 
@@ -650,12 +625,11 @@ public sealed class RegionShardActor : IActor
                 $"[RegionShard] Output compute tick={tick.TickId} shard={_shardId} sink={sinkLabel} vectorCount={result.OutputVector.Count} singleCount={result.OutputEvents.Count}");
         }
 
-        var includeFallback = !_hasComputed;
         _hasComputed = true;
         _lastComputeTickId = tick.TickId;
         _lastTickCostTotal = result.Cost.Total;
         CacheComputeDone(done);
-        SendComputeDone(context, done, includeFallback);
+        SendComputeDone(context, done);
     }
 
     private void HandleRuntimeNeuronPulse(RuntimeNeuronPulse message)
@@ -712,47 +686,26 @@ public sealed class RegionShardActor : IActor
         }
     }
 
-    private void SendComputeDone(IContext context, TickComputeDone done, bool includeFallback)
+    private void SendComputeDone(IContext context, TickComputeDone done)
     {
-        var primaryTarget = _tickSink;
-        var fallbackTarget = context.Sender ?? (includeFallback ? _router : null);
-        if (primaryTarget is not null)
+        var doneTarget = _tickSink ?? context.Sender ?? _router;
+        if (doneTarget is not null)
         {
-            context.Request(primaryTarget, done);
+            context.Request(doneTarget, done);
         }
 
-        if (fallbackTarget is not null
-            && (primaryTarget is null || !PidTargetsEqual(primaryTarget, fallbackTarget)))
-        {
-            context.Request(fallbackTarget, done);
-        }
-
-        if (LogVizDiagnostics || LogTickDiagnostics)
+        if (LogVizDiagnostics)
         {
             var senderLabel = context.Sender is null
                 ? "<missing>"
                 : (string.IsNullOrWhiteSpace(context.Sender.Address) ? context.Sender.Id : $"{context.Sender.Address}/{context.Sender.Id}");
-            var targetParts = new List<string>(capacity: 2);
-            if (primaryTarget is not null)
-            {
-                targetParts.Add(string.IsNullOrWhiteSpace(primaryTarget.Address) ? primaryTarget.Id : $"{primaryTarget.Address}/{primaryTarget.Id}");
-            }
-
-            if (fallbackTarget is not null
-                && (primaryTarget is null || !PidTargetsEqual(primaryTarget, fallbackTarget)))
-            {
-                targetParts.Add(string.IsNullOrWhiteSpace(fallbackTarget.Address) ? fallbackTarget.Id : $"{fallbackTarget.Address}/{fallbackTarget.Id}");
-            }
-
-            var targetLabel = targetParts.Count == 0 ? "(null)" : string.Join(",", targetParts);
+            var targetLabel = doneTarget is null
+                ? "(null)"
+                : (string.IsNullOrWhiteSpace(doneTarget.Address) ? doneTarget.Id : $"{doneTarget.Address}/{doneTarget.Id}");
             Console.WriteLine(
                 $"[RegionShard] TickComputeDone sent tick={done.TickId} shard={_shardId} sender={senderLabel} target={targetLabel} vizEnabled={_vizEnabled} fired={done.FiredCount} outBatches={done.OutBatches}.");
         }
     }
-
-    private static bool PidTargetsEqual(PID left, PID right)
-        => string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-           && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
 
     private bool IsBatchForShard(SignalBatch batch, out string reason)
     {
@@ -1020,5 +973,33 @@ public sealed class RegionShardActor : IActor
         }
 
         return Math.Clamp(value, min, max);
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
     }
 }

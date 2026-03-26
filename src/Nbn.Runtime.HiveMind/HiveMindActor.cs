@@ -25,7 +25,6 @@ namespace Nbn.Runtime.HiveMind;
 public sealed partial class HiveMindActor : IActor
 {
     private readonly HiveMindOptions _options;
-    private readonly IReadOnlyList<ServiceEndpointCandidate>? _localEndpointCandidates;
     private readonly BackpressureController _backpressure;
     private readonly PID? _settingsPid;
     private readonly PID? _configuredIoPid;
@@ -64,7 +63,6 @@ public sealed partial class HiveMindActor : IActor
     private readonly Dictionary<string, VisualizationSubscriberLease> _vizSubscriberLeases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<Guid, ServiceEndpointSet> _nodeEndpointSets = new();
     private ulong _vizSequence;
     private ulong _lastVizTickEmittedTickId;
     private long _nextVisualizationShardSyncMs;
@@ -116,11 +114,9 @@ public sealed partial class HiveMindActor : IActor
         PID? ioPid = null,
         PID? settingsPid = null,
         bool? debugStreamEnabled = null,
-        ProtoSeverity? debugMinSeverity = null,
-        IReadOnlyList<ServiceEndpointCandidate>? localEndpointCandidates = null)
+        ProtoSeverity? debugMinSeverity = null)
     {
         _options = options;
-        _localEndpointCandidates = localEndpointCandidates;
         _backpressure = new BackpressureController(options);
         _tickLoopEnabled = options.AutoStart;
         _settingsPid = settingsPid ?? BuildSettingsPid(options);
@@ -170,21 +166,26 @@ public sealed partial class HiveMindActor : IActor
                     }
                     break;
                 case ProtoControl.RegisterBrain message:
-                    return HandleRegisterBrainAsync(context, message);
+                    HandleRegisterBrain(context, message);
+                    break;
                 case ProtoControl.UpdateBrainSignalRouter message:
-                    return HandleUpdateBrainSignalRouterAsync(context, message);
+                    HandleUpdateBrainSignalRouter(context, message);
+                    break;
                 case ProtoControl.UnregisterBrain message:
                     HandleUnregisterBrain(context, message);
                     break;
                 case ProtoControl.RegisterShard message:
-                    return HandleRegisterShardAsync(context, message);
+                    HandleRegisterShard(context, message);
+                    break;
                 case ProtoControl.UnregisterShard message:
                     HandleUnregisterShard(context, message);
                     break;
                 case ProtoControl.RegisterOutputSink message:
-                    return HandleRegisterOutputSinkAsync(context, message);
+                    HandleRegisterOutputSink(context, message);
+                    break;
                 case ProtoControl.SetBrainVisualization message:
-                    return HandleSetBrainVisualizationAsync(context, message);
+                    HandleSetBrainVisualization(context, message);
+                    break;
                 case ProtoControl.SetBrainCostEnergy message:
                     HandleSetBrainCostEnergy(context, message);
                     break;
@@ -214,7 +215,8 @@ public sealed partial class HiveMindActor : IActor
                     HandleSpawnBrain(context, message);
                     break;
                 case ProtoControl.RequestPlacement message:
-                    return HandleRequestPlacementAsync(context, message);
+                    HandleRequestPlacement(context, message);
+                    break;
                 case ProtoControl.GetPlacementLifecycle message:
                     if (message.BrainId is not null && message.BrainId.TryToGuid(out var placementBrainId))
                     {
@@ -235,7 +237,8 @@ public sealed partial class HiveMindActor : IActor
                     HandlePlacementUnassignmentAck(context, message);
                     break;
                 case ProtoControl.PlacementReconcileReport message:
-                    return HandlePlacementReconcileReportAsync(context, message);
+                    HandlePlacementReconcileReport(context, message);
+                    break;
                 case DispatchPlacementPlan message:
                     HandleDispatchPlacementPlan(context, message);
                     break;
@@ -255,7 +258,7 @@ public sealed partial class HiveMindActor : IActor
                     HandleWorkerInventorySnapshotResponse(context, message);
                     break;
                 case ProtoSettings.NodeListResponse message:
-                    HandleNodeListResponse(context, message);
+                    HandleNodeListResponse(message);
                     break;
                 case ProtoSettings.SettingValue message:
                     HandleSettingValue(context, message);
@@ -294,7 +297,8 @@ public sealed partial class HiveMindActor : IActor
                     RefreshWorkerInventory(context);
                     break;
                 case RefreshWorkerCapabilitiesTick:
-                    return RefreshWorkerCapabilitiesAsync(context);
+                    RefreshWorkerCapabilities(context);
+                    break;
                 case RescheduleNow message:
                     BeginReschedule(context, message);
                     break;
@@ -485,15 +489,10 @@ public sealed partial class HiveMindActor : IActor
 
         public Guid BrainId { get; }
         public PID? BrainRootPid { get; set; }
-        public string BrainRootActorReference { get; set; } = string.Empty;
         public PID? SignalRouterPid { get; set; }
-        public string SignalRouterActorReference { get; set; } = string.Empty;
         public PID? InputCoordinatorPid { get; set; }
-        public string InputCoordinatorActorReference { get; set; } = string.Empty;
         public PID? OutputCoordinatorPid { get; set; }
-        public string OutputCoordinatorActorReference { get; set; } = string.Empty;
         public PID? OutputSinkPid { get; set; }
-        public string OutputSinkActorReference { get; set; } = string.Empty;
         public int InputWidth { get; set; }
         public int OutputWidth { get; set; }
         public uint IoRegisteredInputWidth { get; set; }
@@ -557,7 +556,6 @@ public sealed partial class HiveMindActor : IActor
         public ProtoControl.PlacementReconcileState PlacementReconcileState { get; set; }
             = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
-        public Dictionary<ShardId32, string> ShardActorReferences { get; } = new();
         public Dictionary<ShardId32, ulong> ShardRegistrationEpochs { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
     }
@@ -603,7 +601,6 @@ public sealed partial class HiveMindActor : IActor
         public string LogicalName { get; set; } = string.Empty;
         public string WorkerAddress { get; set; } = string.Empty;
         public string WorkerRootActorName { get; set; } = string.Empty;
-        public string WorkerActorReference { get; set; } = string.Empty;
         public bool IsAlive { get; set; }
         public bool IsReady { get; set; }
         public bool IsFresh { get; set; }
@@ -696,8 +693,7 @@ public sealed partial class HiveMindActor : IActor
     private readonly record struct PeerLatencyProbeTarget(
         Guid NodeId,
         string WorkerAddress,
-        string WorkerRootActorName,
-        string WorkerActorReference);
+        string WorkerRootActorName);
 
     private readonly record struct WorkerPeerLatencyMeasurement(
         Guid WorkerNodeId,
@@ -834,11 +830,6 @@ public sealed partial class HiveMindActor : IActor
         }
 
         context.Send(_settingsPid, message);
-        context.Send(_settingsPid, new ProtoSettings.BrainControllerHeartbeat
-        {
-            BrainId = brain.BrainId.ToProtoUuid(),
-            TimeMs = (ulong)NowMs()
-        });
     }
 
     private void ReportBrainUnregistered(IContext context, Guid brainId)

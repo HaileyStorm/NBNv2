@@ -28,7 +28,6 @@ await system.Remote().StartAsync();
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
-var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, options.RootActorName);
 var workerNodeId = options.WorkerNodeId ?? NodeIdentity.DeriveNodeId(nodeAddress);
 if (workerNodeId == Guid.Empty)
 {
@@ -45,12 +44,8 @@ var workerPid = system.Root.SpawnNamed(
         capabilityProfileChanged: capabilityProvider.MarkDirty,
         capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
         resourceAvailability: options.ResourceAvailability,
-        observabilityDefaultHost: options.SettingsHost,
-        localEndpointCandidates: endpointSet.Candidates)),
+        observabilityDefaultHost: options.SettingsHost)),
     options.RootActorName);
-
-ApplySeededEndpointFromEnvironment(system, workerPid, ServiceEndpointSettings.HiveMindKey, "NBN_WORKER_SEEDED_HIVEMIND_PID");
-ApplySeededEndpointFromEnvironment(system, workerPid, ServiceEndpointSettings.IoGatewayKey, "NBN_WORKER_SEEDED_IO_PID");
 
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
@@ -60,16 +55,15 @@ var settingsReporter = SettingsMonitorReporter.Start(
     nodeAddress,
     options.LogicalName,
     options.RootActorName,
-    capabilitiesProvider: capabilityProvider.GetCapabilities,
-    nodeEndpointSet: endpointSet);
+    capabilitiesProvider: capabilityProvider.GetCapabilities);
 
-var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
+var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.WorkerNodeKey,
-    endpointSet);
+    new ServiceEndpoint(nodeAddress, options.RootActorName));
 if (!publishedWorkerEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.WorkerNodeKey}'.");
@@ -84,8 +78,7 @@ try
         system,
         options.SettingsHost,
         options.SettingsPort,
-        options.SettingsName,
-        endpointSet.Candidates);
+        options.SettingsName);
 
     if (discoveryClient is null)
     {
@@ -118,26 +111,9 @@ catch (Exception ex)
         failureReason: ToDiscoveryFailureReason(ex));
 }
 
-WorkerNodeActor.WorkerNodeSnapshot startupState;
-try
-{
-    startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
-        workerPid,
-        new WorkerNodeActor.GetWorkerNodeSnapshot(),
-        TimeSpan.FromSeconds(20));
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"[WARN] WorkerNode startup snapshot unavailable: {ex.GetBaseException().Message}");
-    startupState = new WorkerNodeActor.WorkerNodeSnapshot(
-        workerNodeId,
-        nodeAddress,
-        HiveMindEndpoint: null,
-        IoGatewayEndpoint: null,
-        options.ServiceRoles,
-        TrackedAssignmentCount: 0,
-        options.ResourceAvailability);
-}
+var startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+    workerPid,
+    new WorkerNodeActor.GetWorkerNodeSnapshot());
 
 Console.WriteLine("NBN WorkerNode online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
@@ -282,23 +258,4 @@ static string ToDiscoveryFailureReason(Exception exception)
         OperationCanceledException => "operation_canceled",
         _ => "settings_request_failed"
     };
-}
-
-static void ApplySeededEndpointFromEnvironment(ActorSystem system, PID workerPid, string key, string envVar)
-{
-    var value = Environment.GetEnvironmentVariable(envVar);
-    if (!RoutablePidReference.TryParsePlainPid(value, out var pid)
-        || string.IsNullOrWhiteSpace(pid.Address)
-        || string.IsNullOrWhiteSpace(pid.Id))
-    {
-        return;
-    }
-
-    system.Root.Send(
-        workerPid,
-        new WorkerNodeActor.EndpointRegistrationObserved(
-            new ServiceEndpointRegistration(
-                key,
-                new ServiceEndpoint(pid.Address, pid.Id),
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 }

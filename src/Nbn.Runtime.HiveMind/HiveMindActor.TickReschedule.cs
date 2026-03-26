@@ -69,7 +69,7 @@ public sealed partial class HiveMindActor
                 LogError($"Routing snapshot missing for brain {brain.BrainId} with {brain.Shards.Count} shard(s).");
             }
 
-            var computeTarget = brain.SignalRouterPid ?? brain.BrainRootPid;
+            var computeTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
             if (computeTarget is null)
             {
                 LogError($"TickCompute skipped: missing BrainRoot/SignalRouter PID for brain {brain.BrainId}.");
@@ -182,16 +182,10 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        var senderMatchesExpected = SenderMatchesActorReferenceOrPid(
-            context.Sender,
-            _brains.TryGetValue(brainId, out var matchingBrain)
-                && matchingBrain.ShardActorReferences.TryGetValue(shardId, out var shardActorReference)
-                ? shardActorReference
-                : string.Empty,
-            expectedSender);
+        var senderMatchesExpected = SenderMatchesPid(context.Sender, expectedSender);
         var senderMatchesTrustedController = !senderMatchesExpected
-            && matchingBrain is not null
-            && IsTrustedControllerSender(context.Sender, matchingBrain);
+            && _brains.TryGetValue(brainId, out var brain)
+            && IsTrustedControllerSender(context.Sender, brain);
         if (!senderMatchesExpected && !senderMatchesTrustedController)
         {
             EmitTickComputeDoneIgnored(context, message, "sender_mismatch", expectedSender);
@@ -372,7 +366,7 @@ public sealed partial class HiveMindActor
                 LogError($"Routing snapshot missing for brain {brain.BrainId} with {brain.Shards.Count} shard(s).");
             }
 
-            var deliverTarget = brain.SignalRouterPid ?? brain.BrainRootPid;
+            var deliverTarget = brain.BrainRootPid ?? brain.SignalRouterPid;
             if (deliverTarget is null)
             {
                 LogError($"TickDeliver skipped: missing BrainRoot/SignalRouter PID for brain {brain.BrainId}.");

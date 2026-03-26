@@ -176,7 +176,7 @@ public sealed partial class HiveMindActor
             $"Placement reconcile timed out for brain {brain.BrainId} epoch={brain.PlacementEpoch} pendingWorkers={brain.PlacementExecution.PendingReconcileWorkers.Count}.");
     }
 
-    private async Task HandleTrackedPlacementReconcileReportAsync(IContext context, BrainState brain, ProtoControl.PlacementReconcileReport message)
+    private void HandleTrackedPlacementReconcileReport(IContext context, BrainState brain, ProtoControl.PlacementReconcileReport message)
     {
         var execution = brain.PlacementExecution;
         if (execution is null)
@@ -303,7 +303,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        await ApplyObservedControlAssignmentsAsync(context, brain, execution).ConfigureAwait(false);
+        ApplyObservedControlAssignments(context, brain, execution);
         HiveMindTelemetry.RecordPlacementReconcileMatched(
             brain.BrainId,
             brain.PlacementEpoch,
@@ -718,37 +718,26 @@ public sealed partial class HiveMindActor
         return true;
     }
 
-    private async Task<bool> TryCreatePlacementExecutionAsync(
+    private bool TryCreatePlacementExecution(
         IContext context,
         BrainState brain,
-        PlacementPlanner.PlacementPlanningResult plan)
+        PlacementPlanner.PlacementPlanningResult plan,
+        out string failureMessage)
     {
         var workerTargets = new Dictionary<Guid, PID>();
-        var assignedWorkerIds = plan.Assignments
-            .Select(static assignment => TryGetGuid(assignment.WorkerNodeId, out var workerNodeId) ? workerNodeId : Guid.Empty)
-            .Where(static workerNodeId => workerNodeId != Guid.Empty)
-            .Distinct()
-            .ToArray();
-
-        foreach (var workerNodeId in assignedWorkerIds)
+        foreach (var worker in plan.EligibleWorkers)
         {
-            if (!_workerCatalog.TryGetValue(workerNodeId, out var worker))
-            {
-                return false;
-            }
-
             if (string.IsNullOrWhiteSpace(worker.WorkerRootActorName))
             {
+                failureMessage = $"Worker {worker.NodeId} has no root actor name for placement orchestration.";
                 return false;
             }
 
-            var workerPid = await ResolveWorkerTargetPidAsync(context, worker).ConfigureAwait(false);
-            if (workerPid is null)
-            {
-                return false;
-            }
+            var workerPid = string.IsNullOrWhiteSpace(worker.WorkerAddress)
+                ? new PID(string.Empty, worker.WorkerRootActorName)
+                : new PID(worker.WorkerAddress, worker.WorkerRootActorName);
 
-            workerTargets[worker.NodeId] = workerPid;
+            workerTargets[worker.NodeId] = ResolveSendTargetPid(context, workerPid);
         }
 
         var execution = new PlacementExecutionState(brain.PlacementEpoch, workerTargets);
@@ -764,10 +753,12 @@ public sealed partial class HiveMindActor
 
         if (execution.Assignments.Count == 0)
         {
+            failureMessage = "Placement plan produced no assignments.";
             return false;
         }
 
         brain.PlacementExecution = execution;
+        failureMessage = string.Empty;
         return true;
     }
 

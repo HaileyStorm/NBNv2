@@ -64,7 +64,6 @@ public sealed partial class OrchestratorPanelViewModel
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
             var controllers = brainsResponse?.Controllers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainControllerStatus>();
             var workerInventory = workerInventoryResponse?.Workers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.WorkerReadinessCapability>();
-            var rawSettings = settingsResponse?.Settings?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.SettingValue>();
             var sortedNodes = nodes
                 .OrderByDescending(node => node.LastSeenMs)
                 .ThenBy(node => node.LogicalName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
@@ -78,20 +77,19 @@ public sealed partial class OrchestratorPanelViewModel
                 brains,
                 nowMs);
             var workerNowMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, settingsNowMs);
-            var nodeEndpoints = await BuildNodeEndpointLookupAsync(rawSettings).ConfigureAwait(false);
-            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, settingsNowMs, nodeEndpoints).ConfigureAwait(false);
+            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, settingsNowMs).ConfigureAwait(false);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
                 actorRowsResult.WorkerBrainHints,
                 workerNowMs);
-            var settings = rawSettings
+            var settings = settingsResponse?.Settings?
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
                     entry.Value ?? string.Empty,
                     FormatUpdated(entry.UpdatedMs)))
-                .ToList();
-            var discoveredServiceEndpoints = await BuildServiceEndpointLookupAsync(rawSettings).ConfigureAwait(false);
+                .ToList() ?? new List<SettingItem>();
+            var discoveredServiceEndpoints = BuildServiceEndpointLookup(settings);
 
             _dispatcher.Post(() =>
             {
@@ -136,7 +134,7 @@ public sealed partial class OrchestratorPanelViewModel
                     TryApplyWorkerPolicySetting(entry);
                 }
 
-                var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(discoveredServiceEndpoints);
+                var hiveMindFromSettings = ApplyServiceEndpointSettingsToConnections(settings);
                 if (!hiveMindFromSettings)
                 {
                     UpdateHiveMindEndpoint(nodes, settingsNowMs);
@@ -470,54 +468,19 @@ public sealed partial class OrchestratorPanelViewModel
         });
     }
 
-    private async Task<IReadOnlyDictionary<string, ServiceEndpoint>> BuildServiceEndpointLookupAsync(
-        IReadOnlyList<Nbn.Proto.Settings.SettingValue> settings)
+    private static IReadOnlyDictionary<string, ServiceEndpoint> BuildServiceEndpointLookup(IEnumerable<SettingItem> settings)
     {
         var lookup = new Dictionary<string, ServiceEndpoint>(StringComparer.OrdinalIgnoreCase);
-        var endpointSets = new Dictionary<string, ServiceEndpointSet>(StringComparer.OrdinalIgnoreCase);
         foreach (var setting in settings)
         {
-            if (string.IsNullOrWhiteSpace(setting.Key))
+            if (string.IsNullOrWhiteSpace(setting.Key)
+                || !ServiceEndpointSettings.IsKnownKey(setting.Key)
+                || !ServiceEndpointSettings.TryParseValue(setting.Value, out var endpoint))
             {
                 continue;
             }
 
-            if (ServiceEndpointSettings.IsKnownKey(setting.Key)
-                && ServiceEndpointSettings.TryParseValue(setting.Value, out var endpoint))
-            {
-                lookup[setting.Key] = endpoint;
-                continue;
-            }
-
-            if (!ServiceEndpointSettings.TryGetEndpointKeyFromSetKey(setting.Key, out var endpointKey)
-                || !ServiceEndpointSettings.TryParseSetValue(setting.Value, out var endpointSet))
-            {
-                continue;
-            }
-
-            endpointSets[endpointKey] = endpointSet;
-        }
-
-        foreach (var entry in endpointSets)
-        {
-            lookup[entry.Key] = await ResolveServiceEndpointAsync(entry.Value).ConfigureAwait(false);
-        }
-
-        return lookup;
-    }
-
-    private async Task<IReadOnlyDictionary<Guid, ServiceEndpoint>> BuildNodeEndpointLookupAsync(
-        IReadOnlyList<Nbn.Proto.Settings.SettingValue> settings)
-    {
-        var lookup = new Dictionary<Guid, ServiceEndpoint>();
-        foreach (var setting in settings)
-        {
-            if (!NodeEndpointSetSettings.TryParseSetting(setting.Key, setting.Value, setting.UpdatedMs, out var registration))
-            {
-                continue;
-            }
-
-            lookup[registration.NodeId] = await ResolveServiceEndpointAsync(registration.EndpointSet).ConfigureAwait(false);
+            lookup[setting.Key] = endpoint;
         }
 
         return lookup;
@@ -604,12 +567,12 @@ public sealed partial class OrchestratorPanelViewModel
         return $"{hostPortToken}/{actorToken}";
     }
 
-    private bool ApplyServiceEndpointSettingsToConnections(IReadOnlyDictionary<string, ServiceEndpoint> settings)
+    private bool ApplyServiceEndpointSettingsToConnections(IEnumerable<SettingItem> settings)
     {
         var hiveMindApplied = false;
         foreach (var setting in settings)
         {
-            if (!TryApplyServiceEndpointSetting(setting.Key, setting.Value))
+            if (!TryApplyServiceEndpointSetting(setting))
             {
                 continue;
             }
@@ -625,68 +588,15 @@ public sealed partial class OrchestratorPanelViewModel
 
     private bool TryApplyServiceEndpointSetting(SettingItem item)
     {
-        if (string.IsNullOrWhiteSpace(item.Key))
-        {
-            return false;
-        }
-
-        var trimmedKey = item.Key.Trim();
-        if (ServiceEndpointSettings.TryGetEndpointKeyFromSetKey(trimmedKey, out var endpointKey)
-            && ServiceEndpointSettings.TryParseSetValue(item.Value, out var endpointSet))
-        {
-            _ = ApplyResolvedServiceEndpointSettingAsync(endpointKey, endpointSet);
-            return true;
-        }
-
-        if (!ServiceEndpointSettings.IsKnownKey(trimmedKey))
-        {
-            return false;
-        }
-
-        if (TryGetPreferredEndpointSet(trimmedKey, out var preferredEndpointSet))
-        {
-            _ = ApplyResolvedServiceEndpointSettingAsync(trimmedKey, preferredEndpointSet);
-            return true;
-        }
-
-        if (!ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint))
-        {
-            return false;
-        }
-
-        return TryApplyServiceEndpointSetting(trimmedKey, endpoint);
-    }
-
-    private bool TryGetPreferredEndpointSet(string endpointKey, out ServiceEndpointSet endpointSet)
-    {
-        endpointSet = default;
-        if (string.IsNullOrWhiteSpace(endpointKey))
-        {
-            return false;
-        }
-
-        var setKey = ServiceEndpointSettings.ToEndpointSetKey(endpointKey.Trim());
-        var existing = Settings.FirstOrDefault(entry => string.Equals(entry.Key, setKey, StringComparison.OrdinalIgnoreCase));
-        return existing is not null
-               && ServiceEndpointSettings.TryParseSetValue(existing.Value, out endpointSet);
-    }
-
-    private async Task ApplyResolvedServiceEndpointSettingAsync(string endpointKey, ServiceEndpointSet endpointSet)
-    {
-        var resolved = await ResolveServiceEndpointAsync(endpointSet).ConfigureAwait(false);
-        _dispatcher.Post(() => TryApplyServiceEndpointSetting(endpointKey, resolved));
-    }
-
-    private bool TryApplyServiceEndpointSetting(string? key, ServiceEndpoint endpoint)
-    {
-        if (string.IsNullOrWhiteSpace(key)
-            || !ServiceEndpointSettings.IsKnownKey(key)
+        if (string.IsNullOrWhiteSpace(item.Key)
+            || !ServiceEndpointSettings.IsKnownKey(item.Key)
+            || !ServiceEndpointSettings.TryParseValue(item.Value, out var endpoint)
             || !TryParseHostPort(endpoint.HostPort, out var host, out var port))
         {
             return false;
         }
 
-        if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, ServiceEndpointSettings.HiveMindKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.HiveMindHost = host;
             Connections.HiveMindPortText = port.ToString();
@@ -694,7 +604,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(key, ServiceEndpointSettings.IoGatewayKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.IoHost = host;
             Connections.IoPortText = port.ToString();
@@ -702,7 +612,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.ReproHost = host;
             Connections.ReproPortText = port.ToString();
@@ -710,7 +620,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.SpeciationHost = host;
             Connections.SpeciationPortText = port.ToString();
@@ -718,7 +628,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.WorkerHost = host;
             Connections.WorkerPortText = port.ToString();
@@ -726,7 +636,7 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
-        if (string.Equals(key, ServiceEndpointSettings.ObservabilityKey, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(item.Key, ServiceEndpointSettings.ObservabilityKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.ObsHost = host;
             Connections.ObsPortText = port.ToString();
@@ -735,25 +645,6 @@ public sealed partial class OrchestratorPanelViewModel
         }
 
         return false;
-    }
-
-    private async Task<ServiceEndpoint> ResolveServiceEndpointAsync(ServiceEndpointSet endpointSet)
-    {
-        return await ServiceEndpointResolver.ResolveAsync(
-            endpointSet,
-            async (candidate, cancellationToken) =>
-            {
-                if (!TryParseHostPort(candidate.HostPort, out var host, out var port))
-                {
-                    return false;
-                }
-
-                var probe = await _client
-                    .ProbeTcpEndpointAsync(host, port, timeout: TimeSpan.FromSeconds(1.5))
-                    .ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                return probe.Reachable;
-            }).ConfigureAwait(false);
     }
 
     private void UpdateHiveMindEndpoint(IEnumerable<Nbn.Proto.Settings.NodeStatus> nodes, long nowMs)
@@ -1046,8 +937,7 @@ public sealed partial class OrchestratorPanelViewModel
         IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
-        long nowMs,
-        IReadOnlyDictionary<Guid, ServiceEndpoint> resolvedNodeEndpoints)
+        long nowMs)
     {
         var rows = new List<(bool IsOnlineWorkerHost, bool IsOnline, long LastSeenMs, NodeStatusItem Row)>();
         var workerBrainHints = new Dictionary<Guid, HashSet<Guid>>();
@@ -1124,9 +1014,7 @@ public sealed partial class OrchestratorPanelViewModel
                 && nodeById.TryGetValue(nodeId, out var node))
             {
                 hostLabel = string.IsNullOrWhiteSpace(node.LogicalName) ? "controller node" : node.LogicalName!;
-                address = resolvedNodeEndpoints.TryGetValue(nodeId, out var resolvedNodeEndpoint)
-                    ? resolvedNodeEndpoint.HostPort
-                    : node.Address ?? string.Empty;
+                address = node.Address ?? string.Empty;
                 hostSeenMs = (long)node.LastSeenMs;
                 hostIsWorker = IsWorkerHostCandidate(node);
                 if (hostIsWorker)
@@ -1241,9 +1129,7 @@ public sealed partial class OrchestratorPanelViewModel
                     && nodeById.TryGetValue(workerNodeId, out var workerNode))
                 {
                     hostLabel = string.IsNullOrWhiteSpace(workerNode.LogicalName) ? "host node" : workerNode.LogicalName!;
-                    address = resolvedNodeEndpoints.TryGetValue(workerNodeId, out var resolvedWorkerNodeEndpoint)
-                        ? resolvedWorkerNodeEndpoint.HostPort
-                        : workerNode.Address ?? address;
+                    address = workerNode.Address ?? address;
                     hostSeenMs = (long)workerNode.LastSeenMs;
                     isOnline = workerNode.IsAlive && IsFresh(workerNode.LastSeenMs, nowMs);
                     hostIsWorker = IsWorkerHostCandidate(workerNode);
@@ -1284,19 +1170,9 @@ public sealed partial class OrchestratorPanelViewModel
             Nbn.Proto.Settings.NodeStatus node,
             ulong placementEpoch)
         {
-            var resolvedWorkerAddress = node.NodeId is not null
-                                        && node.NodeId.TryToGuid(out var nodeId)
-                                        && resolvedNodeEndpoints.TryGetValue(nodeId, out var resolvedNodeEndpoint)
-                ? resolvedNodeEndpoint.HostPort
-                : node.Address ?? string.Empty;
-            var resolvedWorkerRoot = node.NodeId is not null
-                                     && node.NodeId.TryToGuid(out var rootNodeId)
-                                     && resolvedNodeEndpoints.TryGetValue(rootNodeId, out var resolvedRootEndpoint)
-                ? resolvedRootEndpoint.ActorName
-                : node.RootActorName ?? string.Empty;
             var report = await _client.RequestPlacementReconcileAsync(
-                    resolvedWorkerAddress,
-                    resolvedWorkerRoot,
+                    node.Address ?? string.Empty,
+                    node.RootActorName ?? string.Empty,
                     brainId,
                     placementEpoch)
                 .ConfigureAwait(false);

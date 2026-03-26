@@ -28,17 +28,15 @@ public sealed partial class HiveMindActor
                 brainId = Guid.NewGuid();
             } while (_brains.ContainsKey(brainId) || _pendingSpawns.ContainsKey(brainId));
 
-            var placementAck = ProcessPlacementRequestAsync(
-                    context,
-                    new ProtoControl.RequestPlacement
-                    {
-                        BrainId = brainId.ToProtoUuid(),
-                        BaseDef = message.BrainDef.Clone(),
-                        RequestId = $"spawn:{brainId:N}",
-                        RequestedMs = (ulong)NowMs()
-                    })
-                .GetAwaiter()
-                .GetResult();
+            var placementAck = ProcessPlacementRequest(
+                context,
+                new ProtoControl.RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = message.BrainDef.Clone(),
+                    RequestId = $"spawn:{brainId:N}",
+                    RequestedMs = (ulong)NowMs()
+                });
 
             if (!placementAck.Accepted || !_brains.TryGetValue(brainId, out var brain))
             {
@@ -124,10 +122,10 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private async Task HandleRequestPlacementAsync(IContext context, ProtoControl.RequestPlacement message)
-        => context.Respond(await ProcessPlacementRequestAsync(context, message).ConfigureAwait(false));
+    private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
+        => context.Respond(ProcessPlacementRequest(context, message));
 
-    private async Task<ProtoControl.PlacementAck> ProcessPlacementRequestAsync(IContext context, ProtoControl.RequestPlacement message)
+    private ProtoControl.PlacementAck ProcessPlacementRequest(IContext context, ProtoControl.RequestPlacement message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
@@ -245,9 +243,8 @@ public sealed partial class HiveMindActor
             };
         }
 
-        if (!await TryCreatePlacementExecutionAsync(context, brain, plannedPlacement).ConfigureAwait(false))
+        if (!TryCreatePlacementExecution(context, brain, plannedPlacement, out var executionFailure))
         {
-            var executionFailure = "Unable to resolve worker placement targets.";
             if (previousExecution is not null)
             {
                 RestorePlacementState(brain, previousPlacementState);
@@ -430,14 +427,7 @@ public sealed partial class HiveMindActor
                 return;
             }
 
-            var senderMatchesPlannedWorker = SenderMatchesPid(context.Sender, plannedWorkerPid);
-            if (!senderMatchesPlannedWorker
-                && _workerCatalog.TryGetValue(plannedWorkerId, out var plannedWorkerEntry))
-            {
-                senderMatchesPlannedWorker = SenderMatchesActorReference(context.Sender, plannedWorkerEntry.WorkerActorReference);
-            }
-
-            if (!senderMatchesPlannedWorker)
+            if (!SenderMatchesPid(context.Sender, plannedWorkerPid))
             {
                 var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
                 EmitDebug(
@@ -607,7 +597,7 @@ public sealed partial class HiveMindActor
         TryCompletePendingSpawn(context, brain);
     }
 
-    private async Task HandlePlacementReconcileReportAsync(IContext context, ProtoControl.PlacementReconcileReport message)
+    private void HandlePlacementReconcileReport(IContext context, ProtoControl.PlacementReconcileReport message)
     {
         var reconcileTarget = ResolveReconcileTargetLabel(message);
         var observedWorkerId = TryResolveObservedWorkerNodeId(message, out var parsedWorkerId)
@@ -694,7 +684,7 @@ public sealed partial class HiveMindActor
                 return;
             }
 
-            await HandleTrackedPlacementReconcileReportAsync(context, brain, message).ConfigureAwait(false);
+            HandleTrackedPlacementReconcileReport(context, brain, message);
             return;
         }
 

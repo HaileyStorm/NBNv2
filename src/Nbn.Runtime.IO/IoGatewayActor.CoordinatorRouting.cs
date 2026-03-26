@@ -270,7 +270,6 @@ public sealed partial class IoGatewayActor
         IContext context,
         Guid brainId,
         PID outputPid,
-        string outputActorReference,
         bool shouldRegisterOutputSink)
     {
         if (!shouldRegisterOutputSink)
@@ -286,9 +285,7 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var outputLabel = string.IsNullOrWhiteSpace(outputActorReference)
-                ? PidLabel(ToRemotePid(context, outputPid))
-                : outputActorReference.Trim();
+            var outputLabel = PidLabel(ToRemotePid(context, outputPid));
             context.Request(_hiveMindPid, new ProtoControl.RegisterOutputSink
             {
                 BrainId = brainId.ToProtoUuid(),
@@ -463,32 +460,34 @@ public sealed partial class IoGatewayActor
         return merged;
     }
 
-    private static void AddSubscriber(IContext context, string? subscriberActor, Dictionary<string, OutputSubscriberRegistration> set)
+    private static void AddSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
     {
-        if (!TryResolveSubscriberRegistration(context, subscriberActor, out var key, out var registration))
+        var subscriber = ResolveSubscriberPid(context, subscriberActor);
+        if (subscriber is null)
         {
             return;
         }
 
-        set[key] = registration;
+        set[PidKey(subscriber)] = subscriber;
     }
 
-    private static void RemoveSubscriber(IContext context, string? subscriberActor, Dictionary<string, OutputSubscriberRegistration> set)
+    private static void RemoveSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
     {
-        if (!TryResolveSubscriberKey(context, subscriberActor, out var key))
+        var subscriber = ResolveSubscriberPid(context, subscriberActor);
+        if (subscriber is null)
         {
             return;
         }
 
-        set.Remove(key);
+        set.Remove(PidKey(subscriber));
     }
 
-    private Dictionary<string, OutputSubscriberRegistration> GetPendingSubscriberSet(Guid brainId, bool vector)
+    private Dictionary<string, PID> GetPendingSubscriberSet(Guid brainId, bool vector)
     {
         var source = vector ? _pendingOutputVectorSubscribers : _pendingOutputSubscribers;
         if (!source.TryGetValue(brainId, out var set))
         {
-            set = new Dictionary<string, OutputSubscriberRegistration>(StringComparer.Ordinal);
+            set = new Dictionary<string, PID>(StringComparer.Ordinal);
             source.Add(brainId, set);
         }
 
@@ -510,62 +509,9 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private static bool TryResolveSubscriberRegistration(
-        IContext context,
-        string? subscriberActor,
-        out string key,
-        out OutputSubscriberRegistration registration)
-    {
-        key = string.Empty;
-        registration = default!;
-
-        var actorReference = subscriberActor?.Trim() ?? string.Empty;
-        if (RoutablePidReference.TryParsePlainPid(actorReference, out var parsed))
-        {
-            var resolvedPid = ToRemotePid(context, parsed);
-            key = actorReference;
-            registration = new OutputSubscriberRegistration(actorReference, resolvedPid);
-            return true;
-        }
-
-        if (context.Sender is null)
-        {
-            return false;
-        }
-
-        var senderPid = ToRemotePid(context, context.Sender);
-        if (string.IsNullOrWhiteSpace(actorReference))
-        {
-            actorReference = PidLabel(senderPid);
-        }
-
-        key = actorReference;
-        registration = new OutputSubscriberRegistration(actorReference, senderPid);
-        return true;
-    }
-
-    private static bool TryResolveSubscriberKey(IContext context, string? subscriberActor, out string key)
-    {
-        key = string.Empty;
-        var actorReference = subscriberActor?.Trim() ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(actorReference))
-        {
-            key = actorReference;
-            return true;
-        }
-
-        if (context.Sender is null)
-        {
-            return false;
-        }
-
-        key = PidLabel(ToRemotePid(context, context.Sender));
-        return true;
-    }
-
     private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
     {
-        if (RoutablePidReference.TryParsePlainPid(subscriberActor, out var parsed))
+        if (TryParsePid(subscriberActor, out var parsed) && parsed is not null)
         {
             return ToRemotePid(context, parsed);
         }
@@ -657,7 +603,7 @@ public sealed partial class IoGatewayActor
             await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputs
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
-                SubscriberActor = subscriber.ActorReference
+                SubscriberActor = PidLabel(subscriber)
             }).ConfigureAwait(false);
         }
 
@@ -666,7 +612,7 @@ public sealed partial class IoGatewayActor
             await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputsVector
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
-                SubscriberActor = subscriber.ActorReference
+                SubscriberActor = PidLabel(subscriber)
             }).ConfigureAwait(false);
         }
     }
@@ -721,8 +667,7 @@ public sealed partial class IoGatewayActor
                 return cached;
             }
 
-            var routerPid = await RoutablePidReference.ResolveAsync(info.SignalRouterPid).ConfigureAwait(false);
-            if (routerPid is not null)
+            if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
             {
                 if (LogInputTraceDiagnostics || !PidEquals(cached, routerPid))
                 {
@@ -740,8 +685,7 @@ public sealed partial class IoGatewayActor
                 return routerPid;
             }
 
-            var rootPid = await RoutablePidReference.ResolveAsync(info.BrainRootPid).ConfigureAwait(false);
-            if (rootPid is not null)
+            if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
             {
                 if (LogInputTraceDiagnostics || !PidEquals(cached, rootPid))
                 {
@@ -793,7 +737,7 @@ public sealed partial class IoGatewayActor
         context.Send(routerPid, new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
-            IoGatewayPid = BuildLocalActorReference(selfPid)
+            IoGatewayPid = PidLabel(selfPid)
         });
 
         _routerRegistration[brainId] = routerLabel;

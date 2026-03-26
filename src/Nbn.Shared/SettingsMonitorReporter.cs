@@ -14,11 +14,8 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     private readonly Func<NodeCapabilities>? _capabilitiesProvider;
     private readonly TimeSpan _heartbeatInterval;
     private readonly CancellationTokenSource _cts = new();
-    private readonly string? _nodeEndpointSetKey;
-    private readonly ServiceEndpointSet? _nodeEndpointSet;
     private Task? _loop;
     private NodeCapabilities? _lastGoodCapabilities;
-    private bool _nodeEndpointSetPublished;
 
     private SettingsMonitorReporter(
         ActorSystem system,
@@ -27,9 +24,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         NodeOffline offline,
         NodeCapabilities fallbackCapabilities,
         Func<NodeCapabilities>? capabilitiesProvider,
-        TimeSpan heartbeatInterval,
-        string? nodeEndpointSetKey,
-        ServiceEndpointSet? nodeEndpointSet)
+        TimeSpan heartbeatInterval)
     {
         _system = system;
         _settingsPid = settingsPid;
@@ -38,8 +33,6 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         _fallbackCapabilities = fallbackCapabilities;
         _capabilitiesProvider = capabilitiesProvider;
         _heartbeatInterval = heartbeatInterval;
-        _nodeEndpointSetKey = nodeEndpointSetKey;
-        _nodeEndpointSet = nodeEndpointSet;
         _lastGoodCapabilities = CloneCapabilities(fallbackCapabilities);
     }
 
@@ -53,8 +46,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         string rootActorName,
         NodeCapabilities? capabilities = null,
         Func<NodeCapabilities>? capabilitiesProvider = null,
-        TimeSpan? heartbeatInterval = null,
-        ServiceEndpointSet? nodeEndpointSet = null)
+        TimeSpan? heartbeatInterval = null)
     {
         if (system is null)
         {
@@ -93,9 +85,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             offline,
             capabilities ?? BuildDefaultCapabilities(),
             capabilitiesProvider,
-            heartbeatInterval ?? TimeSpan.FromSeconds(5),
-            nodeEndpointSet.HasValue ? NodeEndpointSetSettings.BuildKey(nodeId) : null,
-            nodeEndpointSet);
+            heartbeatInterval ?? TimeSpan.FromSeconds(5));
 
         reporter.StartInternal();
         return reporter;
@@ -104,7 +94,6 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     private void StartInternal()
     {
         _system.Root.Send(_settingsPid, _online);
-        _ = TryPublishNodeEndpointSetAsync();
         _loop = RunHeartbeatAsync(_cts.Token);
     }
 
@@ -137,33 +126,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         };
 
         _system.Root.Send(_settingsPid, heartbeat);
-        return TryPublishNodeEndpointSetAsync();
-    }
-
-    private async Task TryPublishNodeEndpointSetAsync()
-    {
-        if (_nodeEndpointSetPublished
-            || string.IsNullOrWhiteSpace(_nodeEndpointSetKey)
-            || !_nodeEndpointSet.HasValue)
-        {
-            return;
-        }
-
-        try
-        {
-            await _system.Root.RequestAsync<SettingValue>(
-                _settingsPid,
-                new SettingSet
-                {
-                    Key = _nodeEndpointSetKey,
-                    Value = ServiceEndpointSettings.EncodeSetValue(_nodeEndpointSet.Value.ActorName, _nodeEndpointSet.Value.Candidates)
-                },
-                cancellationToken: _cts.Token).ConfigureAwait(false);
-            _nodeEndpointSetPublished = true;
-        }
-        catch
-        {
-        }
+        return Task.CompletedTask;
     }
 
     private NodeCapabilities ResolveCapabilities()

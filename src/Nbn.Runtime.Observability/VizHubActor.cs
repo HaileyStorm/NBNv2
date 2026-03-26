@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Nbn.Proto.Viz;
-using Nbn.Shared;
 using Proto;
 
 namespace Nbn.Runtime.Observability;
@@ -16,9 +15,11 @@ public sealed class VizHubActor : IActor
             case Started:
                 return Task.CompletedTask;
             case Nbn.Proto.Viz.VizSubscribe subscribe:
-                return HandleSubscribeAsync(context, subscribe.SubscriberActor);
+                HandleSubscribe(context, subscribe.SubscriberActor);
+                return Task.CompletedTask;
             case Nbn.Proto.Viz.VizUnsubscribe unsubscribe:
-                return HandleUnsubscribeAsync(context, unsubscribe.SubscriberActor);
+                HandleUnsubscribe(context, unsubscribe.SubscriberActor);
+                return Task.CompletedTask;
             case Nbn.Proto.Viz.VizFlushAll:
                 FlushAll(context);
                 return Task.CompletedTask;
@@ -36,10 +37,9 @@ public sealed class VizHubActor : IActor
         return Task.CompletedTask;
     }
 
-    private async Task HandleSubscribeAsync(IContext context, string? subscriberActor)
+    private void HandleSubscribe(IContext context, string? subscriberActor)
     {
-        var pid = await RoutablePidReference.ResolveAsync(subscriberActor).ConfigureAwait(false);
-        if (pid is null)
+        if (!TryParsePid(subscriberActor, out var pid))
         {
             return;
         }
@@ -61,10 +61,9 @@ public sealed class VizHubActor : IActor
         }
     }
 
-    private async Task HandleUnsubscribeAsync(IContext context, string? subscriberActor)
+    private void HandleUnsubscribe(IContext context, string? subscriberActor)
     {
-        var pid = await RoutablePidReference.ResolveAsync(subscriberActor).ConfigureAwait(false);
-        if (pid is null)
+        if (!TryParsePid(subscriberActor, out var pid))
         {
             return;
         }
@@ -141,4 +140,32 @@ public sealed class VizHubActor : IActor
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
+    }
 }

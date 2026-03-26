@@ -17,17 +17,12 @@ system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
 var obsTargets = ObservabilityTargets.Resolve(options.SettingsHost);
-var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
-var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
-var endpointSet = NetworkAddressDefaults.BuildEndpointSet(remoteConfig.Host, advertisedHost, advertisedPort, HiveMindNames.HiveMind);
 var hiveMindPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new HiveMindActor(
-        options,
-        obsTargets.DebugHub,
-        obsTargets.VizHub,
-        localEndpointCandidates: endpointSet.Candidates)),
+    Props.FromProducer(() => new HiveMindActor(options, obsTargets.DebugHub, obsTargets.VizHub)),
     HiveMindNames.HiveMind);
 
+var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
+var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
@@ -36,16 +31,15 @@ var settingsReporter = SettingsMonitorReporter.Start(
     options.SettingsName,
     nodeAddress,
     options.ServiceName,
-    HiveMindNames.HiveMind,
-    nodeEndpointSet: endpointSet);
+    HiveMindNames.HiveMind);
 
-var publishedHiveEndpoint = await ServiceEndpointDiscoveryClient.TryPublishSetAsync(
+var publishedHiveEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,
     options.SettingsHost,
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.HiveMindKey,
-    endpointSet);
+    new ServiceEndpoint(nodeAddress, HiveMindNames.HiveMind));
 if (!publishedHiveEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.HiveMindKey}'.");

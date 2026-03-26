@@ -102,22 +102,12 @@ var remoteConfig = BuildRemoteConfig(bindHost, port, advertisedHost, advertisedP
 system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
-var localEndpointSet = NetworkAddressDefaults.BuildEndpointSet(
-    remoteConfig.Host,
-    remoteConfig.AdvertisedHost ?? remoteConfig.Host,
-    remoteConfig.AdvertisedPort ?? remoteConfig.Port,
-    brainRootId);
-
 var routerPid = system.Root.SpawnNamed(
     Props.FromProducer(() => new BrainSignalRouterActor(brainId)),
     routerId);
 
 var brainRootPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new BrainRootActor(
-        brainId,
-        hivePid,
-        autoSpawnSignalRouter: false,
-        localEndpointCandidates: localEndpointSet.Candidates)),
+    Props.FromProducer(() => new BrainRootActor(brainId, hivePid, autoSpawnSignalRouter: false)),
     brainRootId);
 
 system.Root.Send(brainRootPid, new SetSignalRouter(routerPid));
@@ -149,7 +139,6 @@ if (!string.IsNullOrWhiteSpace(ioAddress) && !string.IsNullOrWhiteSpace(ioId))
 }
 
 var nodeAddress = $"{remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}";
-var endpointSet = localEndpointSet;
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     settingsHost,
@@ -157,8 +146,7 @@ var settingsReporter = SettingsMonitorReporter.Start(
     settingsName,
     nodeAddress,
     "brain-host",
-    brainRootId,
-    nodeEndpointSet: endpointSet);
+    brainRootId);
 
 Console.WriteLine("NBN BrainHost online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
