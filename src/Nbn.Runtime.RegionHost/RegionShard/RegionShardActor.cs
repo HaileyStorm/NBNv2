@@ -455,7 +455,7 @@ public sealed class RegionShardActor : IActor
                 Console.WriteLine($"[RegionShard] TickCompute duplicate. tick={tick.TickId}");
             }
 
-            SendComputeDone(context, cachedDone);
+            SendComputeDone(context, cachedDone, includeFallback: false);
             return;
         }
 
@@ -650,11 +650,12 @@ public sealed class RegionShardActor : IActor
                 $"[RegionShard] Output compute tick={tick.TickId} shard={_shardId} sink={sinkLabel} vectorCount={result.OutputVector.Count} singleCount={result.OutputEvents.Count}");
         }
 
+        var includeFallback = !_hasComputed;
         _hasComputed = true;
         _lastComputeTickId = tick.TickId;
         _lastTickCostTotal = result.Cost.Total;
         CacheComputeDone(done);
-        SendComputeDone(context, done);
+        SendComputeDone(context, done, includeFallback);
     }
 
     private void HandleRuntimeNeuronPulse(RuntimeNeuronPulse message)
@@ -711,10 +712,10 @@ public sealed class RegionShardActor : IActor
         }
     }
 
-    private void SendComputeDone(IContext context, TickComputeDone done)
+    private void SendComputeDone(IContext context, TickComputeDone done, bool includeFallback)
     {
         var primaryTarget = _tickSink;
-        var fallbackTarget = context.Sender ?? _router;
+        var fallbackTarget = context.Sender ?? (includeFallback ? _router : null);
         if (primaryTarget is not null)
         {
             context.Request(primaryTarget, done);
