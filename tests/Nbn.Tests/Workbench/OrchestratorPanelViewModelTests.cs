@@ -18,6 +18,10 @@ public class OrchestratorPanelViewModelTests
         "ApplyRuntimeDiagnosticsEnvironment",
         BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new InvalidOperationException("OrchestratorPanelViewModel.ApplyRuntimeDiagnosticsEnvironment was not found.");
+    private static readonly MethodInfo ApplyWorkerSeedEndpointsEnvironmentMethod = typeof(OrchestratorPanelViewModel).GetMethod(
+        "ApplyWorkerSeedEndpointsEnvironment",
+        BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("OrchestratorPanelViewModel.ApplyWorkerSeedEndpointsEnvironment was not found.");
 
     [Fact]
     public async Task StartAllCommand_IncludesWorkerLaunch()
@@ -262,6 +266,30 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("1", startInfo.EnvironmentVariables["NBN_REGIONHOST_LOG_DELIVERY"]);
         Assert.Equal("1", startInfo.EnvironmentVariables["NBN_INPUT_DIAGNOSTICS_ENABLED"]);
         Assert.Equal("1", startInfo.EnvironmentVariables["NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED"]);
+    }
+
+    [Fact]
+    public void ApplyWorkerSeedEndpointsEnvironment_AddsHiveMindAndIoSeeds()
+    {
+        var connections = new ConnectionViewModel
+        {
+            HiveMindHost = "192.168.0.103",
+            HiveMindPortText = "12020",
+            HiveMindName = "HiveMind",
+            IoHost = "192.168.0.103",
+            IoPortText = "12050",
+            IoGateway = "io-gateway"
+        };
+
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false
+        };
+
+        InvokeApplyWorkerSeedEndpointsEnvironment(startInfo, connections);
+
+        Assert.Equal("192.168.0.103:12020/HiveMind", startInfo.EnvironmentVariables["NBN_WORKER_SEEDED_HIVEMIND_PID"]);
+        Assert.Equal("192.168.0.103:12050/io-gateway", startInfo.EnvironmentVariables["NBN_WORKER_SEEDED_IO_PID"]);
     }
 
     [Fact]
@@ -2859,4 +2887,7 @@ public class OrchestratorPanelViewModelTests
 
     private static void InvokeApplyRuntimeDiagnosticsEnvironment(ProcessStartInfo startInfo)
         => ApplyRuntimeDiagnosticsEnvironmentMethod.Invoke(obj: null, new object?[] { startInfo });
+
+    private static void InvokeApplyWorkerSeedEndpointsEnvironment(ProcessStartInfo startInfo, ConnectionViewModel connections)
+        => ApplyWorkerSeedEndpointsEnvironmentMethod.Invoke(obj: null, new object?[] { startInfo, connections });
 }

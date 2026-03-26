@@ -49,6 +49,9 @@ var workerPid = system.Root.SpawnNamed(
         localEndpointCandidates: endpointSet.Candidates)),
     options.RootActorName);
 
+ApplySeededEndpointFromEnvironment(system, workerPid, ServiceEndpointSettings.HiveMindKey, "NBN_WORKER_SEEDED_HIVEMIND_PID");
+ApplySeededEndpointFromEnvironment(system, workerPid, ServiceEndpointSettings.IoGatewayKey, "NBN_WORKER_SEEDED_IO_PID");
+
 var settingsReporter = SettingsMonitorReporter.Start(
     system,
     options.SettingsHost,
@@ -279,4 +282,23 @@ static string ToDiscoveryFailureReason(Exception exception)
         OperationCanceledException => "operation_canceled",
         _ => "settings_request_failed"
     };
+}
+
+static void ApplySeededEndpointFromEnvironment(ActorSystem system, PID workerPid, string key, string envVar)
+{
+    var value = Environment.GetEnvironmentVariable(envVar);
+    if (!RoutablePidReference.TryParsePlainPid(value, out var pid)
+        || string.IsNullOrWhiteSpace(pid.Address)
+        || string.IsNullOrWhiteSpace(pid.Id))
+    {
+        return;
+    }
+
+    system.Root.Send(
+        workerPid,
+        new WorkerNodeActor.EndpointRegistrationObserved(
+            new ServiceEndpointRegistration(
+                key,
+                new ServiceEndpoint(pid.Address, pid.Id),
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 }

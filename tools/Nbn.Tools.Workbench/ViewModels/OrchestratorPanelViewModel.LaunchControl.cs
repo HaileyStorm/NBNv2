@@ -238,6 +238,7 @@ public sealed partial class OrchestratorPanelViewModel
         var startInfo = launch.StartInfo;
         ApplyRuntimeDiagnosticsEnvironment(startInfo);
         ApplyObservabilityEnvironment(startInfo);
+        ApplyWorkerSeedEndpointsEnvironment(startInfo, Connections);
         var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
         WorkerLaunchStatus = result.Success
             ? await AppendFirewallAttentionAsync("WorkerNode", workerPort, result.Message).ConfigureAwait(false)
@@ -347,11 +348,11 @@ public sealed partial class OrchestratorPanelViewModel
     {
         await StartSettingsMonitorAsync().ConfigureAwait(false);
         await StartHiveMindAsync().ConfigureAwait(false);
-        await StartWorkerAsync().ConfigureAwait(false);
+        await StartIoAsync().ConfigureAwait(false);
         await StartReproAsync().ConfigureAwait(false);
         await StartSpeciationAsync().ConfigureAwait(false);
-        await StartIoAsync().ConfigureAwait(false);
         await StartObsAsync().ConfigureAwait(false);
+        await StartWorkerAsync().ConfigureAwait(false);
     }
 
     private async Task StopAllAsync()
@@ -534,6 +535,51 @@ public sealed partial class OrchestratorPanelViewModel
         SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_INIT_DIAGNOSTICS_ENABLED", "1");
         SetEnvIfMissing(startInfo, "NBN_REGIONSHARD_ACTIVITY_DIAGNOSTICS_PERIOD", ActivityDiagnosticsPeriod);
         SetEnvIfMissing(startInfo, "NBN_VIZ_DIAGNOSTICS_ENABLED", "1");
+    }
+
+    private static void ApplyWorkerSeedEndpointsEnvironment(ProcessStartInfo startInfo, ConnectionViewModel connections)
+    {
+        if (startInfo.UseShellExecute)
+        {
+            return;
+        }
+
+        if (connections is null)
+        {
+            return;
+        }
+
+        if (TryBuildSeedEndpointPid(connections.HiveMindHost, connections.HiveMindPortText, connections.HiveMindName, out var hiveMindPid))
+        {
+            startInfo.EnvironmentVariables["NBN_WORKER_SEEDED_HIVEMIND_PID"] = hiveMindPid;
+        }
+
+        if (TryBuildSeedEndpointPid(connections.IoHost, connections.IoPortText, connections.IoGateway, out var ioPid))
+        {
+            startInfo.EnvironmentVariables["NBN_WORKER_SEEDED_IO_PID"] = ioPid;
+        }
+    }
+
+    private static bool TryBuildSeedEndpointPid(string? host, string? portText, string? actorName, out string pid)
+    {
+        pid = string.Empty;
+        if (string.IsNullOrWhiteSpace(host)
+            || string.IsNullOrWhiteSpace(portText)
+            || string.IsNullOrWhiteSpace(actorName)
+            || !TryParsePort(portText, out var port))
+        {
+            return false;
+        }
+
+        var trimmedHost = host.Trim();
+        var trimmedActorName = actorName.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedHost) || string.IsNullOrWhiteSpace(trimmedActorName))
+        {
+            return false;
+        }
+
+        pid = $"{trimmedHost}:{port}/{trimmedActorName}";
+        return true;
     }
 
     private static void SetEnvIfMissing(ProcessStartInfo startInfo, string key, string value)
