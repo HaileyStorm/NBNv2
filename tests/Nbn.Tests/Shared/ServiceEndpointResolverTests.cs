@@ -42,22 +42,22 @@ public sealed class ServiceEndpointResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_PrefersLocalLanCandidate_OverReachablePublicDefault_WhenTargetLooksLocal()
+    public async Task ResolveAsync_PrefersLocalCandidate_OverReachablePublicDefault_WhenTargetLooksLocal()
     {
-        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "192.168.68.140"));
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "127.0.0.1"));
 
         var endpointSet = new ServiceEndpointSet(
             "VisualizationHub",
             [
                 new ServiceEndpointCandidate("100.123.130.93:12060", "VisualizationHub", ServiceEndpointCandidateKind.Public, Priority: 1000, IsDefault: true),
-                new ServiceEndpointCandidate("192.168.68.140:12060", "VisualizationHub", ServiceEndpointCandidateKind.Lan, Priority: 600)
+                new ServiceEndpointCandidate("127.0.0.1:12060", "VisualizationHub", ServiceEndpointCandidateKind.Loopback, Priority: 600)
             ]);
 
         var resolved = await ServiceEndpointResolver.ResolveAsync(
             endpointSet,
             (_, _) => Task.FromResult(true));
 
-        Assert.Equal("192.168.68.140:12060", resolved.HostPort);
+        Assert.Equal("127.0.0.1:12060", resolved.HostPort);
         Assert.Equal("VisualizationHub", resolved.ActorName);
     }
 
