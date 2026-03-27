@@ -1214,6 +1214,38 @@ public class VizActivityCanvasLayoutBuilderTests
     }
 
     [Fact]
+    public void Build_RegionModeProjected3D_WithOutOfRangeRegionCountFallsBackTo2D()
+    {
+        var topology = new VizActivityCanvasTopology(
+            Enumerable.Range(0, NbnConstants.RegionCount + 1)
+                .Select(static value => (uint)value)
+                .ToHashSet(),
+            new HashSet<VizActivityCanvasRegionRoute>(),
+            new HashSet<uint>(),
+            new HashSet<VizActivityCanvasNeuronRoute>());
+        var projection = VizActivityProjectionBuilder.Build(
+            Array.Empty<VizEventItem>(),
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null));
+
+        var layout = VizActivityCanvasLayoutBuilder.Build(
+            projection,
+            new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: true, FocusRegionId: null),
+            VizActivityCanvasInteractionState.Empty,
+            topology,
+            VizActivityCanvasColorMode.StateValue,
+            new VizActivityCanvasRenderOptions(
+                VizActivityCanvasLayoutMode.Axial3DExperimental,
+                1.0,
+                new VizActivityCanvasLodOptions(Enabled: false, LowZoomRouteBudget: 120, MediumZoomRouteBudget: 220, HighZoomRouteBudget: 360)));
+
+        Assert.Contains("Layout 3D->2D fallback", layout.Legend, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Layout 3D-projected", layout.Legend, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(layout.Nodes, node => node.RegionId == 0);
+        Assert.Contains(layout.Nodes, node => node.RegionId == 31);
+        Assert.NotEmpty(layout.Nodes);
+    }
+
+    [Fact]
     public void Build_EnergyReserveMode_SeparatesPositiveAndNegativeReserveSignals()
     {
         const uint positiveRegionId = 9;

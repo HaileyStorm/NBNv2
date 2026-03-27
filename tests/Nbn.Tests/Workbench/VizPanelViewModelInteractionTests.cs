@@ -1222,6 +1222,87 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void TryResolveCanvasHit_AfterNormalizeAndRebuild_UsesNormalizedNodeCoordinates()
+    {
+        var vm = CreateViewModel();
+        var originalNode = CreateNode("region:9", "R9", left: -120, top: -80, regionId: 9, neuronId: null, navigateRegionId: 9);
+        var originalCanvas = new VizActivityCanvasLayout(
+            200,
+            100,
+            "test",
+            new List<VizActivityCanvasNode> { originalNode },
+            new List<VizActivityCanvasEdge>());
+        var normalized = (VizActivityCanvasLayout)NormalizeCanvasLayoutMethod.Invoke(vm, new object[] { originalCanvas })!;
+
+        RebuildHitIndexMethod.Invoke(vm, new object[] { normalized.Nodes, normalized.Edges });
+
+        var originalCenterX = originalNode.Left + (originalNode.Diameter / 2.0);
+        var originalCenterY = originalNode.Top + (originalNode.Diameter / 2.0);
+        Assert.False(vm.TryResolveCanvasHit(originalCenterX, originalCenterY, out _, out _));
+
+        var normalizedNode = Assert.Single(normalized.Nodes);
+        var normalizedCenterX = normalizedNode.Left + (normalizedNode.Diameter / 2.0);
+        var normalizedCenterY = normalizedNode.Top + (normalizedNode.Diameter / 2.0);
+        var hit = vm.TryResolveCanvasHit(normalizedCenterX, normalizedCenterY, out var hitNode, out var hitEdge);
+
+        Assert.True(hit);
+        Assert.NotNull(hitNode);
+        Assert.Null(hitEdge);
+        Assert.Equal(normalizedNode.NodeKey, hitNode!.NodeKey);
+    }
+
+    [Fact]
+    public void TryResolveCanvasHit_AfterNormalizeAndRebuild_UsesNormalizedEdgeCoordinates()
+    {
+        var vm = CreateViewModel();
+        var originalEdge = new VizActivityCanvasEdge(
+            RouteLabel: "R9 -> R10",
+            Detail: "edge detail",
+            PathData: "M -200 -40 Q -100 -40 0 -40",
+            SourceX: -200,
+            SourceY: -40,
+            ControlX: -100,
+            ControlY: -40,
+            TargetX: 0,
+            TargetY: -40,
+            Stroke: "#7A838A",
+            DirectionDashArray: string.Empty,
+            ActivityStroke: "#2ECC71",
+            StrokeThickness: 2.0,
+            ActivityStrokeThickness: 1.2,
+            HitTestThickness: 12.0,
+            Opacity: 0.9,
+            ActivityOpacity: 0.7,
+            IsFocused: false,
+            LastTick: 100,
+            EventCount: 5,
+            SourceRegionId: 9,
+            TargetRegionId: 10,
+            IsSelected: false,
+            IsHovered: false,
+            IsPinned: false);
+        var originalCanvas = new VizActivityCanvasLayout(
+            200,
+            100,
+            "test",
+            new List<VizActivityCanvasNode>(),
+            new List<VizActivityCanvasEdge> { originalEdge });
+        var normalized = (VizActivityCanvasLayout)NormalizeCanvasLayoutMethod.Invoke(vm, new object[] { originalCanvas })!;
+
+        RebuildHitIndexMethod.Invoke(vm, new object[] { normalized.Nodes, normalized.Edges });
+
+        Assert.False(vm.TryResolveCanvasHit(originalEdge.ControlX, originalEdge.ControlY, out _, out _));
+
+        var normalizedEdge = Assert.Single(normalized.Edges);
+        var hit = vm.TryResolveCanvasHit(normalizedEdge.ControlX, normalizedEdge.ControlY, out var hitNode, out var hitEdge);
+
+        Assert.True(hit);
+        Assert.Null(hitNode);
+        Assert.NotNull(hitEdge);
+        Assert.Equal(normalizedEdge.RouteLabel, hitEdge!.RouteLabel);
+    }
+
+    [Fact]
     public void ApplyKeyedDiff_ReordersAndRetainsUnchangedItems()
     {
         var first = CreateNode("region:9", "R9", left: 20, top: 30);

@@ -180,44 +180,16 @@ public sealed partial class VizPanelViewModel
         var startedAt = Stopwatch.GetTimestamp();
         try
         {
-            // Keep hover locked to the current target while still inside sticky tolerance.
-            if (TryResolveStickyHoverHit(
-                    pointerX,
-                    pointerY,
-                    stickyNodePadding: StickyNodeHitPadding,
-                    stickyEdgePadding: StickyEdgeHitPadding,
-                    edgeHitThresholdScale: 0.5,
-                    edgeHitThresholdMin: 4.0,
-                    out node,
-                    out edge))
-            {
-                if (edge is not null)
-                {
-                    var nodeInsideCircle = HitTestCanvasNodeInsideCircle(pointerX, pointerY);
-                    if (nodeInsideCircle is not null)
-                    {
-                        node = nodeInsideCircle;
-                        edge = null;
-                    }
-                }
-
-                return true;
-            }
-
-            node = HitTestCanvasNode(pointerX, pointerY, NodeHitPadding);
-            if (node is not null)
-            {
-                edge = null;
-                return true;
-            }
-
-            edge = HitTestCanvasEdge(pointerX, pointerY, edgeHitThresholdScale: 0.5, edgeHitThresholdMin: 4.0);
-            if (edge is not null)
-            {
-                return true;
-            }
-
-            return false;
+            return TryResolveCanvasHitCore(
+                pointerX,
+                pointerY,
+                stickyNodePadding: StickyNodeHitPadding,
+                stickyEdgePadding: StickyEdgeHitPadding,
+                nodeHitPadding: NodeHitPadding,
+                edgeHitThresholdScale: 0.5,
+                edgeHitThresholdMin: 4.0,
+                out node,
+                out edge);
         }
         finally
         {
@@ -230,47 +202,16 @@ public sealed partial class VizPanelViewModel
         var startedAt = Stopwatch.GetTimestamp();
         try
         {
-            if (TryResolveStickyHoverHit(
-                    pointerX,
-                    pointerY,
-                    stickyNodePadding: HoverStickyNodeHitPadding,
-                    stickyEdgePadding: HoverStickyEdgeHitPadding,
-                    edgeHitThresholdScale: HoverEdgeHitThresholdScale,
-                    edgeHitThresholdMin: HoverEdgeHitThresholdMin,
-                    out node,
-                    out edge))
-            {
-                if (edge is not null)
-                {
-                    var nodeInsideCircle = HitTestCanvasNodeInsideCircle(pointerX, pointerY);
-                    if (nodeInsideCircle is not null)
-                    {
-                        node = nodeInsideCircle;
-                        edge = null;
-                    }
-                }
-
-                return true;
-            }
-
-            node = HitTestCanvasNode(pointerX, pointerY, HoverNodeHitPadding);
-            if (node is not null)
-            {
-                edge = null;
-                return true;
-            }
-
-            edge = HitTestCanvasEdge(
+            return TryResolveCanvasHitCore(
                 pointerX,
                 pointerY,
+                stickyNodePadding: HoverStickyNodeHitPadding,
+                stickyEdgePadding: HoverStickyEdgeHitPadding,
+                nodeHitPadding: HoverNodeHitPadding,
                 edgeHitThresholdScale: HoverEdgeHitThresholdScale,
-                edgeHitThresholdMin: HoverEdgeHitThresholdMin);
-            if (edge is not null)
-            {
-                return true;
-            }
-
-            return false;
+                edgeHitThresholdMin: HoverEdgeHitThresholdMin,
+                out node,
+                out edge);
         }
         finally
         {
@@ -1277,6 +1218,63 @@ public sealed partial class VizPanelViewModel
 
     private VizActivityCanvasNode? HitTestCanvasNodeInsideCircle(double pointerX, double pointerY)
         => HitTestCanvasNode(pointerX, pointerY, nodeHitPadding: 0);
+
+    private bool TryResolveCanvasHitCore(
+        double pointerX,
+        double pointerY,
+        double stickyNodePadding,
+        double stickyEdgePadding,
+        double nodeHitPadding,
+        double edgeHitThresholdScale,
+        double edgeHitThresholdMin,
+        out VizActivityCanvasNode? node,
+        out VizActivityCanvasEdge? edge)
+    {
+        if (TryResolveStickyHoverHit(
+                pointerX,
+                pointerY,
+                stickyNodePadding,
+                stickyEdgePadding,
+                edgeHitThresholdScale,
+                edgeHitThresholdMin,
+                out node,
+                out edge))
+        {
+            return PreferNodeHitOverEdge(pointerX, pointerY, ref node, ref edge);
+        }
+
+        node = HitTestCanvasNode(pointerX, pointerY, nodeHitPadding);
+        if (node is not null)
+        {
+            edge = null;
+            return true;
+        }
+
+        edge = HitTestCanvasEdge(pointerX, pointerY, edgeHitThresholdScale, edgeHitThresholdMin);
+        return edge is not null;
+    }
+
+    private bool PreferNodeHitOverEdge(
+        double pointerX,
+        double pointerY,
+        ref VizActivityCanvasNode? node,
+        ref VizActivityCanvasEdge? edge)
+    {
+        if (edge is null)
+        {
+            return true;
+        }
+
+        var nodeInsideCircle = HitTestCanvasNodeInsideCircle(pointerX, pointerY);
+        if (nodeInsideCircle is null)
+        {
+            return true;
+        }
+
+        node = nodeInsideCircle;
+        edge = null;
+        return true;
+    }
 
     private bool TryResolveStickyHoverHit(
         double pointerX,
