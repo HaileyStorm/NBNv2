@@ -134,6 +134,88 @@ public class VizActivityProjectionBuilderTests
     }
 
     [Fact]
+    public void Build_OrdersRegionRows_ByEventCountThenLastTickThenRegionId()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizNeuronFired", tick: 110, region: 1, source: Address(1, 1), target: Address(2, 1), value: 0.4f, strength: 0f),
+            CreateEvent("VizAxonSent", tick: 120, region: 1, source: Address(1, 2), target: Address(2, 2), value: 0.6f, strength: 0.1f),
+            CreateEvent("VizNeuronFired", tick: 111, region: 2, source: Address(2, 1), target: Address(3, 1), value: 0.4f, strength: 0f),
+            CreateEvent("VizAxonSent", tick: 120, region: 2, source: Address(2, 2), target: Address(3, 2), value: 0.6f, strength: 0.1f),
+            CreateEvent("VizNeuronFired", tick: 118, region: 3, source: Address(3, 1), target: Address(4, 1), value: 0.4f, strength: 0f),
+            CreateEvent("VizAxonSent", tick: 119, region: 3, source: Address(3, 2), target: Address(4, 2), value: 0.6f, strength: 0.1f),
+            CreateEvent("VizNeuronBuffer", tick: 120, region: 3, source: Address(3, 3), target: Address(3, 3), value: 0.2f, strength: 0f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 32,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null));
+
+        Assert.Equal(new uint[] { 3, 1, 2 }, projection.Regions.Select(item => item.RegionId).Take(3).ToArray());
+    }
+
+    [Fact]
+    public void Build_OrdersEdgeRows_ByEventCountThenLastTickThenRouteLabel()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 118, region: 1, source: Address(1, 1), target: Address(4, 1), value: 0.4f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 119, region: 1, source: Address(1, 1), target: Address(4, 1), value: 0.4f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 120, region: 1, source: Address(1, 1), target: Address(4, 1), value: 0.4f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 117, region: 1, source: Address(1, 2), target: Address(2, 2), value: 0.5f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 120, region: 1, source: Address(1, 2), target: Address(2, 2), value: 0.5f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 116, region: 1, source: Address(1, 3), target: Address(3, 3), value: 0.5f, strength: 0.2f),
+            CreateEvent("VizAxonSent", tick: 120, region: 1, source: Address(1, 3), target: Address(3, 3), value: 0.5f, strength: 0.2f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 32,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null));
+
+        Assert.Equal(
+            new[]
+            {
+                "R1N1 -> R4N1",
+                "R1N2 -> R2N2",
+                "R1N3 -> R3N3"
+            },
+            projection.Edges.Select(item => item.RouteLabel).Take(3).ToArray());
+    }
+
+    [Fact]
+    public void Build_OrdersTickRows_DescendingByTickAndCapsToMaxRows()
+    {
+        var events = Enumerable.Range(0, 25)
+            .Select(index => CreateEvent(
+                "VizAxonSent",
+                tick: (ulong)(100 + index),
+                region: (uint)(index % 4),
+                source: Address((uint)(index % 4), 1),
+                target: Address((uint)((index + 1) % 4), 2),
+                value: 0.5f,
+                strength: 0.1f))
+            .ToList();
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 128,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null));
+
+        Assert.Equal(20, projection.Ticks.Count);
+        Assert.True(projection.Ticks.SequenceEqual(projection.Ticks.OrderByDescending(item => item.TickId)));
+        Assert.Equal((ulong)124, projection.Ticks[0].TickId);
+        Assert.Equal((ulong)105, projection.Ticks[^1].TickId);
+    }
+
+    [Fact]
     public void Build_MiniChart_FullBrainTracksTopRegionsByDeterministicScore()
     {
         var events = new List<VizEventItem>
