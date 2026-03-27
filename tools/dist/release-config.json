@@ -1,0 +1,147 @@
+{
+  "version_file": "release/version.json",
+  "tag_prefix": "v",
+  "runbooks": [
+    "docs/runbooks/reproduction_operator_runbook.md",
+    "docs/runbooks/speciation_operator_runbook.md"
+  ],
+  "bundles": {
+    "suite": {
+      "artifact_prefix": "nbn-suite",
+      "display_name": "NBN",
+      "linux_install_root": "/opt/nbn",
+      "windows_install_dir_name": "NBN",
+      "include_runbooks": true
+    },
+    "worker": {
+      "artifact_prefix": "nbn-worker",
+      "display_name": "NBN Worker",
+      "linux_install_root": "/opt/nbn-worker",
+      "windows_install_dir_name": "NBN Worker",
+      "include_runbooks": false
+    }
+  },
+  "applications": [
+    {
+      "id": "workbench",
+      "project": "tools/Nbn.Tools.Workbench/Nbn.Tools.Workbench.csproj",
+      "executable": "Nbn.Tools.Workbench",
+      "alias": "nbn-workbench",
+      "install_subdir": "apps/workbench",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "settings",
+      "project": "src/Nbn.Runtime.SettingsMonitor/Nbn.Runtime.SettingsMonitor.csproj",
+      "executable": "Nbn.Runtime.SettingsMonitor",
+      "alias": "nbn-settings",
+      "install_subdir": "services/settings",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "hivemind",
+      "project": "src/Nbn.Runtime.HiveMind/Nbn.Runtime.HiveMind.csproj",
+      "executable": "Nbn.Runtime.HiveMind",
+      "alias": "nbn-hivemind",
+      "install_subdir": "services/hivemind",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "io",
+      "project": "src/Nbn.Runtime.IO/Nbn.Runtime.IO.csproj",
+      "executable": "Nbn.Runtime.IO",
+      "alias": "nbn-io",
+      "install_subdir": "services/io",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "reproduction",
+      "project": "src/Nbn.Runtime.Reproduction/Nbn.Runtime.Reproduction.csproj",
+      "executable": "Nbn.Runtime.Reproduction",
+      "alias": "nbn-repro",
+      "install_subdir": "services/reproduction",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "speciation",
+      "project": "src/Nbn.Runtime.Speciation/Nbn.Runtime.Speciation.csproj",
+      "executable": "Nbn.Runtime.Speciation",
+      "alias": "nbn-speciation",
+      "install_subdir": "services/speciation",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "observability",
+      "project": "src/Nbn.Runtime.Observability/Nbn.Runtime.Observability.csproj",
+      "executable": "Nbn.Runtime.Observability",
+      "alias": "nbn-observability",
+      "install_subdir": "services/observability",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "worker",
+      "project": "src/Nbn.Runtime.WorkerNode/Nbn.Runtime.WorkerNode.csproj",
+      "executable": "Nbn.Runtime.WorkerNode",
+      "alias": "nbn-worker",
+      "install_subdir": "services/worker",
+      "bundles": [
+        "suite",
+        "worker"
+      ]
+    },
+    {
+      "id": "brainhost",
+      "project": "src/Nbn.Runtime.BrainHost/Nbn.Runtime.BrainHost.csproj",
+      "executable": "Nbn.Runtime.BrainHost",
+      "alias": "nbn-brainhost",
+      "install_subdir": "services/brainhost",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "regionhost",
+      "project": "src/Nbn.Runtime.RegionHost/Nbn.Runtime.RegionHost.csproj",
+      "executable": "Nbn.Runtime.RegionHost",
+      "alias": "nbn-regionhost",
+      "install_subdir": "services/regionhost",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "evolution-sim",
+      "project": "tools/Nbn.Tools.EvolutionSim/Nbn.Tools.EvolutionSim.csproj",
+      "executable": "Nbn.Tools.EvolutionSim",
+      "alias": "nbn-evolution-sim",
+      "install_subdir": "tools/evolution-sim",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
+      "id": "perf-probe",
+      "project": "tools/Nbn.Tools.PerfProbe/Nbn.Tools.PerfProbe.csproj",
+      "executable": "Nbn.Tools.PerfProbe",
+      "alias": "nbn-perf-probe",
+      "install_subdir": "tools/perf-probe",
+      "bundles": [
+        "suite"
+      ]
+    }
+  ]
+}

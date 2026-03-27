@@ -138,6 +138,15 @@ Keep docs concise and high-value:
 - Beads/BV lifecycle rules are defined in `~/.codex/AGENTS.md`.
 - This repo does not add Beads-specific overrides.
 
+## Release automation
+
+- The release flow is manual and tag-triggered; do not add or run an every-push release path.
+- Canonical local entrypoints are `tools/dist/release.sh --confirm` and `tools/dist/release.ps1 -ConfirmRelease`.
+- Those scripts validate docs freshness, build/test, compute the next version from `release/version.json`, create the tag, and push it.
+- The pushed tag triggers `.github/workflows/release.yml`, which builds installers/packages and publishes the GitHub Release.
+- Agents must not run the release scripts, create release tags, or push release tags without explicit human confirmation in the active session.
+- Package/install contract details live in `tools/dist/Design.md`; keep release automation, alias names, and Workbench installed-mode behavior aligned with that file.
+
 ## Landing the Plane (Session Completion)
 
 When ending a work session, complete the full landing flow. Work is not complete until changes are committed and pushed.

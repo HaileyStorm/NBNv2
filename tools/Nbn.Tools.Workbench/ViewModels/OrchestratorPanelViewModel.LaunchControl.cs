@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
@@ -359,13 +360,86 @@ public sealed partial class OrchestratorPanelViewModel
 
     private async Task StartAllAsync()
     {
-        await StartSettingsMonitorAsync().ConfigureAwait(false);
-        await StartHiveMindAsync().ConfigureAwait(false);
-        await StartWorkerAsync().ConfigureAwait(false);
-        await StartReproAsync().ConfigureAwait(false);
-        await StartSpeciationAsync().ConfigureAwait(false);
-        await StartIoAsync().ConfigureAwait(false);
-        await StartObsAsync().ConfigureAwait(false);
+        var rollbackActions = new List<Func<Task>>();
+
+        if (!await StartAllStepAsync(
+                StartSettingsMonitorAsync,
+                _settingsRunner,
+                () => SettingsLaunchStatus,
+                value => SettingsLaunchStatus = value,
+                "SettingsMonitor",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await StartAllStepAsync(
+                StartHiveMindAsync,
+                _hiveMindRunner,
+                () => HiveMindLaunchStatus,
+                value => HiveMindLaunchStatus = value,
+                "HiveMind",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await StartAllStepAsync(
+                StartWorkerAsync,
+                _workerRunner,
+                () => WorkerLaunchStatus,
+                value => WorkerLaunchStatus = value,
+                "WorkerNode",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await StartAllStepAsync(
+                StartReproAsync,
+                _reproRunner,
+                () => ReproLaunchStatus,
+                value => ReproLaunchStatus = value,
+                "Reproduction",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await StartAllStepAsync(
+                StartSpeciationAsync,
+                _speciationRunner,
+                () => SpeciationLaunchStatus,
+                value => SpeciationLaunchStatus = value,
+                "Speciation",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await StartAllStepAsync(
+                StartIoAsync,
+                _ioRunner,
+                () => IoLaunchStatus,
+                value => IoLaunchStatus = value,
+                "IoGateway",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!await StartAllStepAsync(
+                StartObsAsync,
+                _obsRunner,
+                () => ObsLaunchStatus,
+                value => ObsLaunchStatus = value,
+                "Observability",
+                rollbackActions).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        StatusMessage = "Start All completed.";
     }
 
     private async Task StopAllAsync()
@@ -566,5 +640,57 @@ public sealed partial class OrchestratorPanelViewModel
     {
         var value = Environment.GetEnvironmentVariable(key);
         return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    }
+
+    private async Task<bool> StartAllStepAsync(
+        Func<Task> startAsync,
+        LocalServiceRunner runner,
+        Func<string> statusAccessor,
+        Action<string> statusSetter,
+        string serviceLabel,
+        List<Func<Task>> rollbackActions)
+    {
+        var wasRunning = runner.IsRunning;
+        await startAsync().ConfigureAwait(false);
+
+        var status = statusAccessor();
+        if (IsSuccessfulLaunchStatus(status))
+        {
+            if (!wasRunning)
+            {
+                rollbackActions.Add(async () =>
+                {
+                    var stopStatus = await runner.StopAsync().ConfigureAwait(false);
+                    statusSetter($"{stopStatus} Rolled back after Start All failure.");
+                });
+            }
+
+            return true;
+        }
+
+        if (rollbackActions.Count == 0)
+        {
+            return true;
+        }
+
+        await RollBackStartAllAsync(rollbackActions).ConfigureAwait(false);
+        StatusMessage = $"Start All failed while starting {serviceLabel}: {status}";
+        return false;
+    }
+
+    private async Task RollBackStartAllAsync(IReadOnlyList<Func<Task>> rollbackActions)
+    {
+        _disconnectAll?.Invoke();
+        for (var i = rollbackActions.Count - 1; i >= 0; i--)
+        {
+            await rollbackActions[i]().ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsSuccessfulLaunchStatus(string? status)
+    {
+        return !string.IsNullOrWhiteSpace(status)
+               && (status.StartsWith("Running", StringComparison.Ordinal)
+                   || string.Equals(status, "Already running.", StringComparison.Ordinal));
     }
 }

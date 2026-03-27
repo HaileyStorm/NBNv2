@@ -194,15 +194,17 @@ public sealed class LocalServiceRunner
             process = _process;
         }
 
-        if (process is null || process.HasExited)
+        if (process is null || HasProcessExited(process))
         {
             _process = null;
             return Task.FromResult("Not running.");
         }
 
+        var processLabel = FormatProcessLabel(process);
+
         try
         {
-            if (!process.HasExited)
+            if (!HasProcessExited(process))
             {
                 process.CloseMainWindow();
             }
@@ -213,7 +215,7 @@ public sealed class LocalServiceRunner
 
         try
         {
-            if (!process.HasExited)
+            if (!HasProcessExited(process))
             {
                 process.Kill(true);
             }
@@ -231,16 +233,52 @@ public sealed class LocalServiceRunner
         {
         }
 
-        if (!exited && !process.HasExited)
+        if (!exited && !HasProcessExited(process))
         {
-            WorkbenchLog.Warn($"Local launch stop requested but process still running: {process.ProcessName} (pid {process.Id})");
+            WorkbenchLog.Warn($"Local launch stop requested but process still running: {processLabel}");
             return Task.FromResult("Stop requested; process still running.");
         }
 
         _process = null;
-        WorkbenchProcessRegistry.Default.Remove(process.Id);
-        WorkbenchLog.Info($"Local launch stopped: {process.ProcessName} (pid {process.Id})");
+        var processId = TryGetProcessId(process);
+        if (processId.HasValue)
+        {
+            WorkbenchProcessRegistry.Default.Remove(processId.Value);
+        }
+
+        WorkbenchLog.Info($"Local launch stopped: {processLabel}");
         return Task.FromResult("Stopped.");
+    }
+
+    private static int? TryGetProcessId(Process process)
+    {
+        try
+        {
+            return process.Id;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatProcessLabel(Process process)
+    {
+        var name = TryGetProcessName(process);
+        var id = TryGetProcessId(process);
+        return id.HasValue ? $"{name} (pid {id.Value})" : name;
+    }
+
+    private static string TryGetProcessName(Process process)
+    {
+        try
+        {
+            return process.ProcessName;
+        }
+        catch
+        {
+            return "process";
+        }
     }
 }
 

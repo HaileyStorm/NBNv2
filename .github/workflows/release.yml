@@ -1,0 +1,143 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows_release:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - id: version
+        shell: pwsh
+        run: |
+          $version = python tools/dist/build-release.py validate-tag --tag "${env:GITHUB_REF_NAME}"
+          "version=$($version.Trim())" >> $env:GITHUB_OUTPUT
+
+      - shell: pwsh
+        run: python tools/dist/build-release.py validate-config
+
+      - shell: pwsh
+        run: powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check
+
+      - shell: pwsh
+        run: dotnet build NBNv2.sln -c Release --disable-build-servers
+
+      - shell: pwsh
+        run: dotnet test NBNv2.sln -c Release --disable-build-servers
+
+      - shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          python tools/dist/build-release.py build-platform `
+            --platform windows `
+            --version "${{ steps.version.outputs.version }}" `
+            --output-root .artifacts-temp/release `
+            --bundle suite `
+            --bundle worker `
+            --iscc $iscc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-assets
+          path: .artifacts-temp/release/artifacts/windows/*
+          if-no-files-found: error
+
+  linux_release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - id: version
+        run: |
+          version="$(python3 tools/dist/build-release.py validate-tag --tag "${GITHUB_REF_NAME}")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - run: python3 tools/dist/build-release.py validate-config
+
+      - run: bash tools/docs/render-nbnv2-docs.sh --check
+
+      - run: dotnet build NBNv2.sln -c Release --disable-build-servers
+
+      - run: dotnet test NBNv2.sln -c Release --disable-build-servers
+
+      - run: |
+          python3 tools/dist/build-release.py build-platform \
+            --platform linux \
+            --version "${{ steps.version.outputs.version }}" \
+            --output-root .artifacts-temp/release \
+            --bundle suite \
+            --bundle worker
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-assets
+          path: .artifacts-temp/release/artifacts/linux/*
+          if-no-files-found: error
+
+  publish_release:
+    needs:
+      - windows_release
+      - linux_release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release-assets
+          path: release-assets/windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release-assets
+          path: release-assets/linux
+
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mapfile -t assets < <(find release-assets -type f | sort)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No release assets were produced." >&2
+            exit 1
+          fi
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --title "NBN ${version}" \
+              --notes "Manual tag-triggered release for ${version}."
+          fi

@@ -23,6 +23,9 @@ mono_crash.*
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
+!/release/
+/release/*
+!/release/version.json
 [Rr]eleases/
 x64/
 x86/
@@ -67,6 +70,10 @@ artifacts/
 .artifacts-temp/
 perf-probe/
 perf-probe-*/
+
+!release/
+release/*
+!release/version.json
 
 # Tye
 .tye/

@@ -13,7 +13,9 @@ NBN is not a gradient-descent/backprop training framework.
 
 - Full specification: [`docs/NBNv2.md`](docs/NBNv2.md)
 - Spec assembly source template: [`docs/INDEX.md`](docs/INDEX.md)
-- Release / installer design: [`tools/dist/Design.md`](tools/dist/Design.md)
+- Release / installer guide: [`tools/dist/Design.md`](tools/dist/Design.md)
+- Release version line: [`release/version.json`](release/version.json)
+- Local release entrypoints: [`tools/dist/release.sh`](tools/dist/release.sh) and [`tools/dist/release.ps1`](tools/dist/release.ps1)
 - Workbench operator surface: [`tools/Nbn.Tools.Workbench`](tools/Nbn.Tools.Workbench)
 - Reproduction operator runbook: [`docs/runbooks/reproduction_operator_runbook.md`](docs/runbooks/reproduction_operator_runbook.md)
 - Speciation operator runbook: [`docs/runbooks/speciation_operator_runbook.md`](docs/runbooks/speciation_operator_runbook.md)
@@ -66,6 +68,32 @@ dotnet run --project tools/Nbn.Tools.Workbench -c Release
 ```
 
 In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain` for the current end-to-end local validation path.
+
+## Installed Releases
+
+- Full-suite release artifacts are:
+  - Windows installer: `nbn-suite-<version>-win-x64-setup.exe`
+  - Linux `.deb`: `nbn-suite_<version>_amd64.deb`
+  - Linux `.run`: `nbn-suite-<version>-linux-x64-installer.run`
+- Worker-only release artifacts are:
+  - Windows installer: `nbn-worker-<version>-win-x64-setup.exe`
+  - Linux `.deb`: `nbn-worker_<version>_amd64.deb`
+  - Linux `.run`: `nbn-worker-<version>-linux-x64-installer.run`
+  - Windows portable zip: `nbn-worker-<version>-win-x64-portable.zip`
+  - Linux portable tarball: `nbn-worker-<version>-linux-x64-portable.tar.gz`
+- Full-suite installers/package artifacts install Workbench plus the managed runtime/tool aliases: `nbn-workbench`, `nbn-settings`, `nbn-hivemind`, `nbn-io`, `nbn-repro`, `nbn-speciation`, `nbn-observability`, `nbn-worker`, `nbn-brainhost`, `nbn-regionhost`, `nbn-evolution-sim`, and `nbn-perf-probe`.
+- Full-suite install roots are `C:\Program Files\NBN\` on Windows and `/opt/nbn/` on Linux.
+- Worker-only install roots are `C:\Program Files\NBN Worker\` on Windows and `/opt/nbn-worker/` on Linux.
+- Worker-only artifacts expose `nbn-worker`. The portable worker archives do not modify `PATH`; run `bin/nbn-worker` from the extracted directory.
+- Installed Workbench uses `runtime-manifest.json` plus PATH aliases and does not require a source checkout or the .NET SDK for `Start` / `Start All`.
+
+## Manual Release Flow
+
+- Releases are manual and tag-triggered; there is no every-push release path.
+- Linux/macOS: `bash tools/dist/release.sh --confirm`
+- Windows: `powershell -NoProfile -File tools/dist/release.ps1 -ConfirmRelease`
+- The release scripts validate docs freshness, build/test in `Release`, compute the next `2.<minor>.<patch>` tag from `release/version.json`, create the tag, and push it so GitHub Actions can publish the eight release artifacts.
+- The pushed tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Status / Roadmap
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using Nbn.Proto;
 using Nbn.Proto.Control;
@@ -37,6 +38,124 @@ public class OrchestratorPanelViewModelTests
 
             Assert.Equal("Invalid worker port.", vm.WorkerLaunchStatus);
             Assert.Equal("Invalid Settings port.", vm.SpeciationLaunchStatus);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
+    }
+
+    [Fact]
+    public async Task StartAllCommand_WhenLaunchFails_RollsBackEarlierStarts_AndStopsLaterAttempts()
+    {
+        var launchPreparer = new SequencedLocalProjectLaunchPreparer(
+            new LocalProjectLaunchPreparation(true, CreateLongRunningProcessStartInfo(), "Prepared."),
+            new LocalProjectLaunchPreparation(false, null, "HiveMind installed command not found."));
+
+        var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient(), launchPreparer);
+
+        try
+        {
+            vm.StartAllCommand.Execute(null);
+
+            await WaitForAsync(() => string.Equals(vm.HiveMindLaunchStatus, "HiveMind installed command not found.", StringComparison.Ordinal));
+            await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Stopped. Rolled back after Start All failure.", StringComparison.Ordinal));
+
+            Assert.Equal(2, launchPreparer.CallCount);
+            Assert.Collection(
+                launchPreparer.ExecutableNames,
+                name => Assert.Equal("Nbn.Runtime.SettingsMonitor", name),
+                name => Assert.Equal("Nbn.Runtime.HiveMind", name));
+            Assert.Equal("Start All failed while starting HiveMind: HiveMind installed command not found.", vm.StatusMessage);
+            Assert.Equal("Stopped. Rolled back after Start All failure.", vm.SettingsLaunchStatus);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
+    }
+
+    [Fact]
+    public async Task StartAllCommand_RollsBackEarlierServices_WhenLaterLaunchFails()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsPortText = "12010",
+            HiveMindPortText = "12020",
+            WorkerPortText = "12041",
+            ReproPortText = "12070",
+            SpeciationPortText = "12080",
+            IoPortText = "12050",
+            ObsPortText = "12060",
+            WorkerCpuLimitPercentText = "80",
+            WorkerRamLimitPercentText = "70",
+            WorkerGpuLimitPercentText = "60",
+            WorkerVramLimitPercentText = "50"
+        };
+        var launchPreparer = new SequencedLocalProjectLaunchPreparer(
+            new LocalProjectLaunchPreparation(true, CreateLongRunningProcessStartInfo(), "Prepared."),
+            new LocalProjectLaunchPreparation(false, null, "Missing installed command."));
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        try
+        {
+            vm.StartAllCommand.Execute(null);
+
+            await WaitForAsync(
+                () => string.Equals(
+                    vm.SettingsLaunchStatus,
+                    "Stopped. Rolled back after Start All failure.",
+                    StringComparison.Ordinal));
+            await WaitForAsync(
+                () => string.Equals(vm.HiveMindLaunchStatus, "Missing installed command.", StringComparison.Ordinal));
+
+            Assert.Equal(
+                ["Nbn.Runtime.SettingsMonitor", "Nbn.Runtime.HiveMind"],
+                launchPreparer.ExecutableNames);
+            Assert.Equal("Stopped. Rolled back after Start All failure.", vm.SettingsLaunchStatus);
+            Assert.Equal("Missing installed command.", vm.HiveMindLaunchStatus);
+            Assert.Equal(
+                "Start All failed while starting HiveMind: Missing installed command.",
+                vm.StatusMessage);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
+    }
+
+    [Fact]
+    public async Task StartAllCommand_RollsBackEarlierStarts_WhenLaterLaunchFails()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsPortText = "12010",
+            HiveMindPortText = "12020",
+            WorkerPortText = "12041",
+            ReproPortText = "12070",
+            SpeciationPortText = "12080",
+            IoPortText = "12050",
+            ObsPortText = "12060"
+        };
+
+        var launchPreparer = new SequencedLocalProjectLaunchPreparer(
+            new LocalProjectLaunchPreparation(true, CreateLongRunningProcessStartInfo(), "Prepared."),
+            new LocalProjectLaunchPreparation(false, null, "HiveMind installed command not found."));
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        try
+        {
+            vm.StartAllCommand.Execute(null);
+
+            await WaitForAsync(() => launchPreparer.CallCount == 2, timeoutMs: 5000);
+            await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Stopped. Rolled back after Start All failure.", StringComparison.Ordinal), timeoutMs: 5000);
+
+            Assert.Equal(2, launchPreparer.CallCount);
+            Assert.Equal("HiveMind installed command not found.", vm.HiveMindLaunchStatus);
+            Assert.Equal("Stopped. Rolled back after Start All failure.", vm.SettingsLaunchStatus);
+            Assert.Equal(
+                "Start All failed while starting HiveMind: HiveMind installed command not found.",
+                vm.StatusMessage);
         }
         finally
         {
@@ -225,6 +344,7 @@ public class OrchestratorPanelViewModelTests
             SettingsPortText = "12010"
         };
         var reconnectCount = 0;
+        Process? process = null;
         var vm = CreateViewModel(
             connections,
             new FakeWorkbenchClient(),
@@ -237,19 +357,28 @@ public class OrchestratorPanelViewModelTests
 
         try
         {
-            vm.StartSettingsMonitorCommand.Execute(null);
-            await WaitForAsync(() => vm.SettingsLaunchStatus.StartsWith("Running", StringComparison.Ordinal));
-            await WaitForAsync(() => reconnectCount == 1);
+            var runnerField = typeof(OrchestratorPanelViewModel)
+                .GetField("_settingsRunner", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(runnerField);
+            var runner = Assert.IsType<LocalServiceRunner>(runnerField!.GetValue(vm));
+            var processField = typeof(LocalServiceRunner)
+                .GetField("_process", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.NotNull(processField);
+
+            process = Process.Start(CreateLongRunningProcessStartInfo());
+            Assert.NotNull(process);
+            processField!.SetValue(runner, process);
 
             vm.StartSettingsMonitorCommand.Execute(null);
-            await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Already running.", StringComparison.Ordinal));
-            await WaitForAsync(() => reconnectCount == 2);
+            await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Already running.", StringComparison.Ordinal), timeoutMs: 5000);
+            await WaitForAsync(() => reconnectCount == 1, timeoutMs: 10000);
 
             Assert.Equal("Already running.", vm.SettingsLaunchStatus);
         }
         finally
         {
             await vm.StopAllAsyncForShutdown();
+            process?.Dispose();
         }
     }
 
@@ -2648,6 +2777,26 @@ public class OrchestratorPanelViewModelTests
         public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(true, startInfo, "Prepared."));
+        }
+    }
+
+    private sealed class SequencedLocalProjectLaunchPreparer(params LocalProjectLaunchPreparation[] results) : ILocalProjectLaunchPreparer
+    {
+        private readonly Queue<LocalProjectLaunchPreparation> _results = new(results);
+
+        public List<string> ExecutableNames { get; } = new();
+
+        public int CallCount => ExecutableNames.Count;
+
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
+        {
+            ExecutableNames.Add(exeName);
+            if (_results.Count == 0)
+            {
+                return Task.FromResult(new LocalProjectLaunchPreparation(false, null, "Unexpected launch request."));
+            }
+
+            return Task.FromResult(_results.Dequeue());
         }
     }
 
