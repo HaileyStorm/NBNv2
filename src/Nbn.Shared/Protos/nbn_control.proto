@@ -8,6 +8,8 @@ import "nbn_common.proto";
 message SpawnBrain {
   nbn.ArtifactRef brain_def = 1; // .nbn
   optional sint32 pause_priority = 2;
+  uint32 input_width = 3;
+  uint32 output_width = 4;
 }
 
 message SpawnBrainAck {

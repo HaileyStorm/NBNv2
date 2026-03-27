@@ -668,6 +668,12 @@ public sealed partial class DesignerPanelViewModel
                     preferredPort: _connections.ResolveReachableArtifactPort())
                 .ConfigureAwait(false);
             var artifactRef = publishedArtifact.ArtifactRef;
+            var inputWidth = header.Regions.Length > NbnConstants.InputRegionId
+                ? checked((int)header.Regions[NbnConstants.InputRegionId].NeuronSpan)
+                : 0;
+            var outputWidth = header.Regions.Length > NbnConstants.OutputRegionId
+                ? checked((int)header.Regions[NbnConstants.OutputRegionId].NeuronSpan)
+                : 0;
             if (!string.IsNullOrWhiteSpace(publishedArtifact.AttentionMessage))
             {
                 WorkbenchLog.Warn($"Designer spawn artifact access: {publishedArtifact.AttentionMessage}");
@@ -686,7 +692,9 @@ public sealed partial class DesignerPanelViewModel
                 : $"Spawning brain via IO/HiveMind worker placement... {publishedArtifact.AttentionMessage}";
             var spawnAck = await _client.SpawnBrainViaIoAsync(new ProtoControl.SpawnBrain
             {
-                BrainDef = artifactRef
+                BrainDef = artifactRef,
+                InputWidth = (uint)Math.Max(0, inputWidth),
+                OutputWidth = (uint)Math.Max(0, outputWidth)
             }).ConfigureAwait(false);
 
             if (spawnAck?.BrainId is null

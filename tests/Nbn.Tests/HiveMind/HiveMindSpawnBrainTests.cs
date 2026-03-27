@@ -366,6 +366,36 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
+    public async Task SpawnBrain_Uses_ExplicitIoWidths_When_BaseDefinitionMetadata_Cannot_Be_Resolved()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 250,
+                retryBackoffMs: 10,
+                maxRetries: 1,
+                reconcileTimeoutMs: 250))));
+
+        var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+            hiveMind,
+            new SpawnBrain
+            {
+                BrainDef = new string('e', 64).ToArtifactRef(128, "application/x-nbn", "memory+missing://placement/base"),
+                InputWidth = 3,
+                OutputWidth = 2
+            });
+
+        Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+        Assert.Equal(Guid.Empty, brainId);
+        Assert.Equal("spawn_worker_unavailable", spawnAck.FailureReasonCode);
+        Assert.Contains("No eligible workers are available for placement", spawnAck.FailureMessage, StringComparison.Ordinal);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpawnBrain_Returns_Empty_BrainId_When_Assignment_Lifecycle_Fails()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();

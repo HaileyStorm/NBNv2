@@ -87,6 +87,8 @@ public sealed partial class HiveMindActor
                 {
                     BrainId = brainId.ToProtoUuid(),
                     BaseDef = message.BrainDef.Clone(),
+                    InputWidth = message.InputWidth,
+                    OutputWidth = message.OutputWidth,
                     RequestId = $"spawn:{brainId:N}",
                     RequestedMs = (ulong)NowMs()
                 });

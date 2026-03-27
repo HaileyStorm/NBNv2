@@ -191,6 +191,48 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SpawnBrainViaIO_Forwards_ExplicitIoWidths_To_HiveMind()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSpawnProbe(
+            forwarded,
+            new ProtoControl.SpawnBrainAck
+            {
+                BrainId = Guid.Empty.ToProtoUuid(),
+                FailureReasonCode = "spawn_worker_unavailable",
+                FailureMessage = "Spawn failed: no eligible worker was available for the placement plan."
+            })));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var brainDef = new string('5', 64).ToArtifactRef(95, "application/x-nbn", "test-store");
+        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+            gateway,
+            new SpawnBrainViaIO
+            {
+                Request = new ProtoControl.SpawnBrain
+                {
+                    BrainDef = brainDef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                }
+            });
+
+        Assert.NotNull(response.Ack);
+        Assert.Equal("spawn_worker_unavailable", response.Ack.FailureReasonCode);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.NotNull(forwardedRequest.BrainDef);
+        Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+        Assert.Equal((uint)3, forwardedRequest.InputWidth);
+        Assert.Equal((uint)2, forwardedRequest.OutputWidth);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Waits_For_Slow_HiveMind_Ack_Within_SpawnTimeout()
     {
         var system = new ActorSystem();

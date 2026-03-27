@@ -65,6 +65,8 @@ public class ProtoCompatibilityTests
 
         AssertField(spawnBrain, "brain_def", 1, FieldType.Message, "nbn.ArtifactRef");
         AssertField(spawnBrain, "pause_priority", 2, FieldType.SInt32);
+        AssertField(spawnBrain, "input_width", 3, FieldType.UInt32);
+        AssertField(spawnBrain, "output_width", 4, FieldType.UInt32);
     }
 
     [Fact]

@@ -2248,6 +2248,8 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.NotNull(client.LastSpawnRequest);
         Assert.Equal(artifactPublisher.BaseUri, client.LastSpawnRequest!.BrainDef?.StoreUri);
+        Assert.True(client.LastSpawnRequest.InputWidth > 0);
+        Assert.True(client.LastSpawnRequest.OutputWidth > 0);
         Assert.Equal(1, artifactPublisher.PublishCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Spawned via IO; worker placement managed by HiveMind.", vm.Status, StringComparison.Ordinal);
