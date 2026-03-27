@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -9,6 +8,7 @@ using Nbn.Proto;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Speciation;
 using Nbn.Shared;
+using Nbn.Tests.TestSupport;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
@@ -17,6 +17,21 @@ namespace Nbn.Tests.Workbench;
 
 public class SpeciationPanelViewModelTests
 {
+    private static readonly MethodInfo AppendFirewallAttentionAsyncMethod = GetRequiredInstanceMethod(
+        "AppendFirewallAttentionAsync",
+        typeof(string),
+        typeof(string),
+        typeof(int),
+        typeof(string));
+    private static readonly MethodInfo BuildEvolutionSimArgsMethod = GetRequiredInstanceMethod(
+        "BuildEvolutionSimArgs",
+        typeof(int),
+        typeof(int),
+        typeof(IReadOnlyList<Guid>));
+    private static readonly MethodInfo BuildRuntimeConfigFromDraftMethod = GetRequiredInstanceMethod("BuildRuntimeConfigFromDraft");
+    private static readonly MethodInfo PersistSpeciationSettingsAsyncMethod = GetRequiredInstanceMethod("PersistSpeciationSettingsAsync");
+    private static readonly FieldInfo SimStdoutLogPathField = GetRequiredInstanceField("_simStdoutLogPath");
+
     [Fact]
     public void SimulatorBindHost_DefaultsToAllInterfaces()
     {
@@ -401,7 +416,8 @@ public class SpeciationPanelViewModelTests
             new BrainListItem(brainA, "Active", true),
             new BrainListItem(brainB, "Active", true)
         ]);
-        vm.SimParentAOverrideFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
+        using var overridePath = TempFileScope.Create(".txt");
+        vm.SimParentAOverrideFilePath = overridePath;
 
         vm.StartSimulatorCommand.Execute(null);
         await WaitForAsync(() => vm.SimulatorStatus.StartsWith("Parent A override file not found", StringComparison.Ordinal));
@@ -441,14 +457,7 @@ public class SpeciationPanelViewModelTests
                     FirewallAccessStatus.PermissionRequired,
                     "Linux firewall appears active (`ufw`), but TCP 12074 was not opened automatically because root privileges are required.")));
 
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "AppendFirewallAttentionAsync",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        var task = Assert.IsType<Task<string>>(method!.Invoke(
-            vm,
-            new object?[] { "EvolutionSim", "0.0.0.0", 12074, "Started simulator." }));
-
-        var message = await task;
+        var message = await InvokeAppendFirewallAttentionAsync(vm, "EvolutionSim", "0.0.0.0", 12074, "Started simulator.");
 
         Assert.Contains("Started simulator.", message, StringComparison.Ordinal);
         Assert.Contains("root privileges are required", message, StringComparison.OrdinalIgnoreCase);
@@ -499,32 +508,21 @@ public class SpeciationPanelViewModelTests
         var brainA = Guid.NewGuid();
         var brainB = Guid.NewGuid();
         var overrideBrain = Guid.NewGuid();
-        var overridePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
-        await File.WriteAllTextAsync(overridePath, overrideBrain.ToString("D"));
+        using var overridePath = await TempFileScope.WriteAllTextAsync(overrideBrain.ToString("D"), ".txt");
 
-        try
-        {
-            var vm = CreateViewModel(new FakeWorkbenchClient());
-            vm.UpdateActiveBrains(
-            [
-                new BrainListItem(brainA, "Alpha", true),
-                new BrainListItem(brainB, "Beta", true)
-            ]);
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Alpha", true),
+            new BrainListItem(brainB, "Beta", true)
+        ]);
 
-            vm.SimParentBOverrideFilePath = overridePath;
+        vm.SimParentBOverrideFilePath = overridePath;
 
-            Assert.Equal(2, vm.SimSeedParents.Count);
-            Assert.Contains(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentABrain!.BrainId && item.Source == "Parent A");
-            Assert.Contains(vm.SimSeedParents, item => item.BrainId == overrideBrain && item.Source == "Parent B override");
-            Assert.DoesNotContain(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentBBrain!.BrainId);
-        }
-        finally
-        {
-            if (File.Exists(overridePath))
-            {
-                File.Delete(overridePath);
-            }
-        }
+        Assert.Equal(2, vm.SimSeedParents.Count);
+        Assert.Contains(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentABrain!.BrainId && item.Source == "Parent A");
+        Assert.Contains(vm.SimSeedParents, item => item.BrainId == overrideBrain && item.Source == "Parent B override");
+        Assert.DoesNotContain(vm.SimSeedParents, item => item.BrainId == vm.SimSelectedParentBBrain!.BrainId);
     }
 
     [Fact]
@@ -610,30 +608,19 @@ public class SpeciationPanelViewModelTests
     {
         var brainA = Guid.NewGuid();
         var brainB = Guid.NewGuid();
-        var overridePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".txt");
-        await File.WriteAllTextAsync(overridePath, "not-a-guid");
+        using var overridePath = await TempFileScope.WriteAllTextAsync("not-a-guid", ".txt");
 
-        try
-        {
-            var vm = CreateViewModel(new FakeWorkbenchClient());
-            vm.UpdateActiveBrains(
-            [
-                new BrainListItem(brainA, "Active", true),
-                new BrainListItem(brainB, "Active", true)
-            ]);
-            vm.SimParentBOverrideFilePath = overridePath;
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.UpdateActiveBrains(
+        [
+            new BrainListItem(brainA, "Active", true),
+            new BrainListItem(brainB, "Active", true)
+        ]);
+        vm.SimParentBOverrideFilePath = overridePath;
 
-            vm.StartSimulatorCommand.Execute(null);
-            await WaitForAsync(() => vm.SimulatorStatus.StartsWith("Parent B override file must contain a brain GUID", StringComparison.Ordinal));
-            Assert.Contains("Parent B override file must contain a brain GUID", vm.SimulatorStatus, StringComparison.Ordinal);
-        }
-        finally
-        {
-            if (File.Exists(overridePath))
-            {
-                File.Delete(overridePath);
-            }
-        }
+        vm.StartSimulatorCommand.Execute(null);
+        await WaitForAsync(() => vm.SimulatorStatus.StartsWith("Parent B override file must contain a brain GUID", StringComparison.Ordinal));
+        Assert.Contains("Parent B override file must contain a brain GUID", vm.SimulatorStatus, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -646,17 +633,8 @@ public class SpeciationPanelViewModelTests
             Guid.Parse("22222222-2222-2222-2222-222222222222")
         };
 
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "BuildEvolutionSimArgs",
-            BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
-            modifiers: null);
-        Assert.NotNull(method);
-
-        var args = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(args);
-        Assert.Contains("--parent-brain 11111111-1111-1111-1111-111111111111", args!, StringComparison.Ordinal);
+        var args = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--parent-brain 11111111-1111-1111-1111-111111111111", args, StringComparison.Ordinal);
         Assert.Contains("--parent-brain 22222222-2222-2222-2222-222222222222", args, StringComparison.Ordinal);
         Assert.DoesNotContain("--parent ", args, StringComparison.Ordinal);
         Assert.Contains("--min-runs 2", args, StringComparison.Ordinal);
@@ -680,18 +658,8 @@ public class SpeciationPanelViewModelTests
             Guid.Parse("22222222-2222-2222-2222-222222222222")
         };
 
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "BuildEvolutionSimArgs",
-            BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
-            modifiers: null);
-        Assert.NotNull(method);
-
-        var args = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-
-        Assert.NotNull(args);
-        Assert.Contains("--advertise-host 10.20.30.41", args!, StringComparison.Ordinal);
+        var args = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--advertise-host 10.20.30.41", args, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -704,28 +672,17 @@ public class SpeciationPanelViewModelTests
             Guid.Parse("22222222-2222-2222-2222-222222222222")
         };
 
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "BuildEvolutionSimArgs",
-            BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
-            modifiers: null);
-        Assert.NotNull(method);
-
         vm.SimRunPressureMode = "stable";
-        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(stableArgs);
-        Assert.Contains("--run-pressure-mode stability", stableArgs!, StringComparison.Ordinal);
+        var stableArgs = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--run-pressure-mode stability", stableArgs, StringComparison.Ordinal);
 
         vm.SimRunPressureMode = "exploratory";
-        var exploratoryArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(exploratoryArgs);
-        Assert.Contains("--run-pressure-mode divergence", exploratoryArgs!, StringComparison.Ordinal);
+        var exploratoryArgs = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--run-pressure-mode divergence", exploratoryArgs, StringComparison.Ordinal);
 
         vm.SimRunPressureMode = "unexpected-token";
-        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(fallbackArgs);
-        Assert.Contains("--run-pressure-mode neutral", fallbackArgs!, StringComparison.Ordinal);
+        var fallbackArgs = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--run-pressure-mode neutral", fallbackArgs, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -738,28 +695,17 @@ public class SpeciationPanelViewModelTests
             Guid.Parse("22222222-2222-2222-2222-222222222222")
         };
 
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "BuildEvolutionSimArgs",
-            BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null,
-            types: [typeof(int), typeof(int), typeof(IReadOnlyList<Guid>)],
-            modifiers: null);
-        Assert.NotNull(method);
-
         vm.SimParentSelectionBias = "stable";
-        var stableArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(stableArgs);
-        Assert.Contains("--parent-selection-bias stability", stableArgs!, StringComparison.Ordinal);
+        var stableArgs = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--parent-selection-bias stability", stableArgs, StringComparison.Ordinal);
 
         vm.SimParentSelectionBias = "exploratory";
-        var divergenceArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(divergenceArgs);
-        Assert.Contains("--parent-selection-bias divergence", divergenceArgs!, StringComparison.Ordinal);
+        var divergenceArgs = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--parent-selection-bias divergence", divergenceArgs, StringComparison.Ordinal);
 
         vm.SimParentSelectionBias = "unexpected-token";
-        var fallbackArgs = (string?)method!.Invoke(vm, [12050, 12074, parentIds]);
-        Assert.NotNull(fallbackArgs);
-        Assert.Contains("--parent-selection-bias neutral", fallbackArgs!, StringComparison.Ordinal);
+        var fallbackArgs = InvokeBuildEvolutionSimArgs(vm, parentIds);
+        Assert.Contains("--parent-selection-bias neutral", fallbackArgs, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2422,40 +2368,27 @@ public class SpeciationPanelViewModelTests
     public async Task RefreshSimulatorStatusCommand_ParsesExtendedJsonStats()
     {
         var vm = CreateViewModel(new FakeWorkbenchClient());
-        var logPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.sim.log");
         var statusLine = "{\"type\":\"evolution_sim_status\",\"final\":true,\"session_id\":\"sess-123\",\"running\":false,\"iterations\":22,\"parent_pool_size\":14,\"compatibility_checks\":100,\"compatible_pairs\":4,\"reproduction_calls\":7,\"reproduction_failures\":3,\"reproduction_runs_observed\":11,\"reproduction_runs_with_mutations\":9,\"reproduction_mutation_events\":23,\"similarity_samples\":11,\"min_similarity_observed\":0.61,\"max_similarity_observed\":0.97,\"assessment_similarity_samples\":9,\"min_assessment_similarity_observed\":0.5,\"max_assessment_similarity_observed\":0.97,\"reproduction_similarity_samples\":7,\"min_reproduction_similarity_observed\":0.72,\"max_reproduction_similarity_observed\":0.96,\"speciation_commit_similarity_samples\":6,\"min_speciation_commit_similarity_observed\":0.73,\"max_speciation_commit_similarity_observed\":0.95,\"children_added_to_pool\":5,\"speciation_commit_attempts\":6,\"speciation_commit_successes\":2,\"last_failure\":\"example_failure\",\"last_seed\":42}";
-        await File.WriteAllTextAsync(logPath, statusLine);
+        using var logPath = await TempFileScope.WriteAllTextAsync(statusLine, ".sim.log");
 
-        try
-        {
-            var field = typeof(SpeciationPanelViewModel).GetField("_simStdoutLogPath", BindingFlags.NonPublic | BindingFlags.Instance);
-            Assert.NotNull(field);
-            field!.SetValue(vm, logPath);
+        SetSimStdoutLogPath(vm, logPath);
 
-            vm.RefreshSimulatorStatusCommand.Execute(null);
-            await WaitForAsync(() => vm.SimulatorSessionId == "sess-123");
+        vm.RefreshSimulatorStatusCommand.Execute(null);
+        await WaitForAsync(() => vm.SimulatorSessionId == "sess-123");
 
-            Assert.Contains("final=True", vm.SimulatorProgress, StringComparison.Ordinal);
-            Assert.Contains("parent_pool_size=14", vm.SimulatorProgress, StringComparison.Ordinal);
-            Assert.Contains("repro_calls=7", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("children_added_to_pool=5", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("runs=11", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("runs_mutated=9", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("mutation_events=23", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("sim_overall=0.61..0.97 (11)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("sim_assess=0.5..0.97 (9)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("sim_repro=0.72..0.96 (7)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("sim_commit=0.73..0.95 (6)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Contains("seed=42", vm.SimulatorDetailedStats, StringComparison.Ordinal);
-            Assert.Equal("example_failure", vm.SimulatorLastFailure);
-        }
-        finally
-        {
-            if (File.Exists(logPath))
-            {
-                File.Delete(logPath);
-            }
-        }
+        Assert.Contains("final=True", vm.SimulatorProgress, StringComparison.Ordinal);
+        Assert.Contains("parent_pool_size=14", vm.SimulatorProgress, StringComparison.Ordinal);
+        Assert.Contains("repro_calls=7", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("children_added_to_pool=5", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("runs=11", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("runs_mutated=9", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("mutation_events=23", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("sim_overall=0.61..0.97 (11)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("sim_assess=0.5..0.97 (9)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("sim_repro=0.72..0.96 (7)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("sim_commit=0.73..0.95 (6)", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Contains("seed=42", vm.SimulatorDetailedStats, StringComparison.Ordinal);
+        Assert.Equal("example_failure", vm.SimulatorLastFailure);
     }
 
     [Fact]
@@ -2506,36 +2439,53 @@ public class SpeciationPanelViewModelTests
     }
 
     private static SpeciationRuntimeConfig InvokeBuildRuntimeConfigFromDraft(SpeciationPanelViewModel vm)
-    {
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "BuildRuntimeConfigFromDraft",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        return Assert.IsType<SpeciationRuntimeConfig>(method!.Invoke(vm, null));
-    }
+        => Assert.IsType<SpeciationRuntimeConfig>(BuildRuntimeConfigFromDraftMethod.Invoke(vm, null));
 
     private static async Task InvokePersistSpeciationSettingsAsync(SpeciationPanelViewModel vm)
     {
-        var method = typeof(SpeciationPanelViewModel).GetMethod(
-            "PersistSpeciationSettingsAsync",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        var task = Assert.IsAssignableFrom<Task>(method!.Invoke(vm, null));
+        var task = Assert.IsAssignableFrom<Task>(PersistSpeciationSettingsAsyncMethod.Invoke(vm, null));
         await task;
     }
 
-    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)
+    private static Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)
+        => AsyncTestHelpers.WaitForAsync(condition, timeoutMs, failureMessage: "Condition was not met within timeout.");
+
+    private static async Task<string> InvokeAppendFirewallAttentionAsync(
+        SpeciationPanelViewModel vm,
+        string processName,
+        string bindHost,
+        int port,
+        string status)
     {
-        var sw = Stopwatch.StartNew();
-        while (sw.ElapsedMilliseconds < timeoutMs)
-        {
-            if (condition())
-            {
-                return;
-            }
+        var task = Assert.IsType<Task<string>>(AppendFirewallAttentionAsyncMethod.Invoke(vm, [processName, bindHost, port, status]));
+        return await task;
+    }
 
-            await Task.Delay(20);
-        }
+    private static string InvokeBuildEvolutionSimArgs(
+        SpeciationPanelViewModel vm,
+        IReadOnlyList<Guid> parentIds,
+        int ioPort = 12050,
+        int simulatorPort = 12074)
+        => Assert.IsType<string>(BuildEvolutionSimArgsMethod.Invoke(vm, [ioPort, simulatorPort, parentIds]));
 
-        Assert.True(condition(), "Condition was not met within timeout.");
+    private static void SetSimStdoutLogPath(SpeciationPanelViewModel vm, string logPath)
+        => SimStdoutLogPathField.SetValue(vm, logPath);
+
+    private static MethodInfo GetRequiredInstanceMethod(string methodName, params Type[] parameterTypes)
+    {
+        var method = typeof(SpeciationPanelViewModel).GetMethod(
+            methodName,
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: parameterTypes,
+            modifiers: null);
+        return method ?? throw new InvalidOperationException($"Expected private method '{methodName}' on {nameof(SpeciationPanelViewModel)}.");
+    }
+
+    private static FieldInfo GetRequiredInstanceField(string fieldName)
+    {
+        var field = typeof(SpeciationPanelViewModel).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+        return field ?? throw new InvalidOperationException($"Expected private field '{fieldName}' on {nameof(SpeciationPanelViewModel)}.");
     }
 
     private static string BuildSplitDecisionMetadata(

@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Nbn.Proto;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.Reproduction;
@@ -144,8 +143,7 @@ public class ReproductionManagerActorTests
     [Fact]
     public async Task ReproduceByBrainIds_Resolves_Parents_FromIoGateway()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-brainid-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-brainid", clearSqlitePools: true);
 
         try
         {
@@ -209,19 +207,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByBrainIds_StrengthLiveCodes_Uses_ResolvedParentSnapshots()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-brainid-live-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-brainid-live", clearSqlitePools: true);
 
         try
         {
@@ -305,19 +298,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_StrengthLiveCodes_Applies_StateOverlays()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-live-overlay-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-live-overlay", clearSqlitePools: true);
 
         try
         {
@@ -403,19 +391,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_StrengthLiveCodes_InvalidState_FallsBack_To_BaseStrengths()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-live-invalid-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-live-invalid", clearSqlitePools: true);
 
         try
         {
@@ -501,19 +484,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_ValueAndFunctionKnobs_AreAppliedToChildTemplate()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-value-func-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-value-func", clearSqlitePools: true);
 
         try
         {
@@ -600,19 +578,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_StrengthTransformAverage_ChangesStrengthCode_AndSummary()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-strength-transform-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-strength-transform", clearSqlitePools: true);
 
         try
         {
@@ -676,19 +649,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_FunctionMutation_BiasesTowardStableFamilies()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-function-bias-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-function-bias", clearSqlitePools: true);
 
         try
         {
@@ -783,19 +751,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_DisableNeuron_ReroutesInbound_WhenConfigured()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-inbound-reroute-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-inbound-reroute", clearSqlitePools: true);
 
         try
         {
@@ -884,19 +847,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_DisableNeuron_RemovesInbound_WhenRerouteDistanceExceeded()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-inbound-reroute-maxdist-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-inbound-reroute-maxdist", clearSqlitePools: true);
 
         try
         {
@@ -989,11 +947,7 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -1019,8 +973,7 @@ public class ReproductionManagerActorTests
     [Fact]
     public async Task ReproduceByArtifacts_Missing_ParentB_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-missing-parent-b-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-missing-parent-b", clearSqlitePools: true);
 
         try
         {
@@ -1049,19 +1002,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_Invalid_ReferenceMediaType_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-media-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-media", clearSqlitePools: true);
 
         try
         {
@@ -1097,19 +1045,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_RegionPresenceMismatch_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-presence-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-presence", clearSqlitePools: true);
 
         try
         {
@@ -1147,19 +1090,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_SuccessReport_UsesActualChildRegionCount()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-child-regions-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-child-regions", clearSqlitePools: true);
 
         try
         {
@@ -1216,19 +1154,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_ZeroRegionLimits_BlockRegionPresenceChanges()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-region-limits-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-region-limits", clearSqlitePools: true);
 
         try
         {
@@ -1291,19 +1224,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_RegionSpanMismatch_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-span-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-span", clearSqlitePools: true);
 
         try
         {
@@ -1369,19 +1297,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_FunctionHistogramMismatch_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-func-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-func", clearSqlitePools: true);
 
         try
         {
@@ -1443,19 +1366,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_ConnectivityHistogramMismatch_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-connect-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-connect", clearSqlitePools: true);
 
         try
         {
@@ -1524,19 +1442,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_SpotCheckMismatch_Returns_AbortReport()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-spot-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-spot", clearSqlitePools: true);
 
         try
         {
@@ -1599,19 +1512,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_Uses_FileUri_And_Persists_ChildArtifact_When_Gates_Pass()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-stagea-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-stagea", clearSqlitePools: true);
 
         try
         {
@@ -1665,11 +1573,7 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -1771,8 +1675,7 @@ public class ReproductionManagerActorTests
     [Fact]
     public async Task ReproduceByArtifacts_Uses_EnvironmentFallback_When_StoreUri_Missing()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-env-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-env", clearSqlitePools: true);
 
         var original = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
         Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", artifactRoot);
@@ -1817,19 +1720,14 @@ public class ReproductionManagerActorTests
         finally
         {
             Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", original);
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_WithSameSeed_ProducesSameChildArtifact()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-seed-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-seed", clearSqlitePools: true);
 
         try
         {
@@ -1904,19 +1802,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_WithDifferentSeeds_ProducesDivergentChildArtifacts_WhileRemainingDeterministicPerSeed()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-seed-variation-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-seed-variation", clearSqlitePools: true);
 
         try
         {
@@ -2009,11 +1902,7 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -2048,8 +1937,7 @@ public class ReproductionManagerActorTests
     [Fact]
     public async Task AssessCompatibilityByArtifacts_Returns_ReportWithoutChildArtifact_OrSpawn()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-artifacts-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-assess-artifacts", clearSqlitePools: true);
 
         try
         {
@@ -2095,19 +1983,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task AssessCompatibilityByBrainIds_ResolvesParents_AndReturnsAssessmentOnlyResult()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-brainids-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-assess-brainids", clearSqlitePools: true);
 
         try
         {
@@ -2172,19 +2055,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task AssessCompatibilityByArtifacts_CompletesWhileBrainIdResolutionIsBlocked()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-concurrent-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-assess-concurrent", clearSqlitePools: true);
 
         try
         {
@@ -2274,19 +2152,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task AssessCompatibilityByArtifacts_ReusesCachedParsedParentsAcrossRepeatedRequests()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-assess-cache-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-assess-cache", clearSqlitePools: true);
 
         try
         {
@@ -2318,8 +2191,7 @@ public class ReproductionManagerActorTests
             Assert.NotNull(firstResponse.Report);
             Assert.True(firstResponse.Report.Compatible);
 
-            SqliteConnection.ClearAllPools();
-            Directory.Delete(artifactRoot, recursive: true);
+            artifactRoot.Dispose();
 
             var secondResponse = await root.RequestAsync<Repro.ReproduceResult>(
                 manager,
@@ -2341,19 +2213,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_RunCountZero_DefaultsToSingleRun()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-zero-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-runcount-zero", clearSqlitePools: true);
 
         try
         {
@@ -2397,19 +2264,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_RunCountMultiple_ReturnsDeterministicOrderedOutcomes()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-many-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-runcount-many", clearSqlitePools: true);
 
         try
         {
@@ -2467,19 +2329,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_RunCountAboveLimit_ReturnsAbort()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-runcount-invalid-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-runcount-invalid", clearSqlitePools: true);
 
         try
         {
@@ -2519,19 +2376,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_DefaultSpawnPolicy_SpawnsChild_WhenIoGatewayAvailable()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-spawn-default-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-spawn-default", clearSqlitePools: true);
 
         try
         {
@@ -2574,19 +2426,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_SpawnAlways_WithoutIoGateway_Returns_SpawnAbort_And_ChildArtifact()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-spawn-always-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-spawn-always", clearSqlitePools: true);
 
         try
         {
@@ -2626,19 +2473,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_MutationLimits_Are_Respected_And_Child_Remains_Valid()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-limits-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-limits", clearSqlitePools: true);
 
         try
         {
@@ -2711,19 +2553,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_AdditionLimits_Use_Smaller_Of_Absolute_And_Percentage()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-limit-effective-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-limit-effective", clearSqlitePools: true);
 
         try
         {
@@ -2787,19 +2624,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_PerRegionOutDegreeCaps_PruneTargetRegionOnly()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-region-cap-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-region-cap", clearSqlitePools: true);
 
         try
         {
@@ -2894,19 +2726,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_MutationAcrossSeeds_Preserves_IoAndDuplicateInvariants()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-invariants-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-invariants", clearSqlitePools: true);
 
         try
         {
@@ -2972,19 +2799,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_ManualIoNeuronOps_RejectsWhenProtectionEnabledByDefault()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-io-protect-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-io-protect", clearSqlitePools: true);
 
         try
         {
@@ -3035,19 +2857,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_ManualIoNeuronOps_ApplyWhenProtectionDisabled()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-io-manual-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-io-manual", clearSqlitePools: true);
 
         try
         {
@@ -3147,19 +2964,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_ManualIoNeuronOps_RejectsInvalidRequests()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-io-invalid-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-io-invalid", clearSqlitePools: true);
 
         try
         {
@@ -3211,19 +3023,14 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     [Fact]
     public async Task ReproduceByArtifacts_WorkbenchDefaultLineage_PreservesExpectedCompatibilityBands()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-lineage-defaults-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-lineage-defaults", clearSqlitePools: true);
 
         try
         {
@@ -3335,11 +3142,7 @@ public class ReproductionManagerActorTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 

@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Nbn.Runtime.Artifacts;
 
 namespace Nbn.Tests.TestSupport;
@@ -33,7 +32,7 @@ public sealed class RegisteredArtifactStoreScope : IDisposable
 
 public sealed class CountingArtifactStore : IArtifactStore, IDisposable
 {
-    private readonly string _rootPath;
+    private readonly TempDirectoryScope _rootPath;
     private readonly LocalArtifactStore _store;
     private int _containsCalls;
     private int _manifestCalls;
@@ -44,8 +43,7 @@ public sealed class CountingArtifactStore : IArtifactStore, IDisposable
 
     public CountingArtifactStore()
     {
-        _rootPath = Path.Combine(Path.GetTempPath(), "nbn-remote-artifacts", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_rootPath);
+        _rootPath = TempDirectoryScope.Create("nbn-remote-artifacts", clearSqlitePools: true);
         _store = new LocalArtifactStore(new ArtifactStoreOptions(_rootPath));
     }
 
@@ -98,10 +96,6 @@ public sealed class CountingArtifactStore : IArtifactStore, IDisposable
         }
 
         _disposed = true;
-        SqliteConnection.ClearAllPools();
-        if (Directory.Exists(_rootPath))
-        {
-            Directory.Delete(_rootPath, recursive: true);
-        }
+        _rootPath.Dispose();
     }
 }

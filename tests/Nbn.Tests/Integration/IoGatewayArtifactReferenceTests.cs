@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
@@ -7,9 +6,9 @@ using Nbn.Runtime.IO;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Nbn.Tests.Format;
+using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
-using ProtoSettings = Nbn.Proto.Settings;
 using Repro = Nbn.Proto.Repro;
 using ProtoSpec = Nbn.Proto.Speciation;
 
@@ -91,11 +90,7 @@ public class IoGatewayArtifactReferenceTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -148,11 +143,7 @@ public class IoGatewayArtifactReferenceTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -2219,10 +2210,9 @@ public class IoGatewayArtifactReferenceTests
         await system.ShutdownAsync();
     }
 
-    private static async Task<(string ArtifactRoot, ArtifactRef BrainDef)> StoreBrainDefinitionAsync()
+    private static async Task<(TempDirectoryScope ArtifactRoot, ArtifactRef BrainDef)> StoreBrainDefinitionAsync()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-io-spawn-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-io-spawn", clearSqlitePools: true);
 
         var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
         var minimalNbn = NbnTestVectors.CreateMinimalNbn();
@@ -2236,43 +2226,11 @@ public class IoGatewayArtifactReferenceTests
         int retryBackoffMs = 10,
         int maxRetries = 1,
         int reconcileTimeoutMs = 1_000)
-        => new(
-            BindHost: "127.0.0.1",
-            Port: 0,
-            AdvertisedHost: null,
-            AdvertisedPort: null,
-            TargetTickHz: 50f,
-            MinTickHz: 10f,
-            ComputeTimeoutMs: 500,
-            DeliverTimeoutMs: 500,
-            BackpressureDecay: 0.9f,
-            BackpressureRecovery: 1.1f,
-            LateBackpressureThreshold: 2,
-            TimeoutRescheduleThreshold: 3,
-            TimeoutPauseThreshold: 6,
-            RescheduleMinTicks: 10,
-            RescheduleMinMinutes: 1,
-            RescheduleQuietMs: 50,
-            RescheduleSimulatedMs: 50,
-            AutoStart: false,
-            EnableOpenTelemetry: false,
-            EnableOtelMetrics: false,
-            EnableOtelTraces: false,
-            EnableOtelConsoleExporter: false,
-            OtlpEndpoint: null,
-            ServiceName: "nbn.hivemind.tests",
-            SettingsDbPath: null,
-            SettingsHost: null,
-            SettingsPort: 0,
-            SettingsName: "SettingsMonitor",
-            IoAddress: null,
-            IoName: null,
-            WorkerInventoryRefreshMs: 2_000,
-            WorkerInventoryStaleAfterMs: 10_000,
-            PlacementAssignmentTimeoutMs: assignmentTimeoutMs,
-            PlacementAssignmentRetryBackoffMs: retryBackoffMs,
-            PlacementAssignmentMaxRetries: maxRetries,
-            PlacementReconcileTimeoutMs: reconcileTimeoutMs);
+        => HiveMindTestSupport.CreateHiveMindOptions(
+            assignmentTimeoutMs: assignmentTimeoutMs,
+            retryBackoffMs: retryBackoffMs,
+            maxRetries: maxRetries,
+            reconcileTimeoutMs: reconcileTimeoutMs);
 
     private static void PrimeWorkerDiscoveryEndpoints(IRootContext root, PID workerPid, string hiveName, string ioName)
     {
@@ -2293,76 +2251,10 @@ public class IoGatewayArtifactReferenceTests
     }
 
     private static void PrimeWorkers(IRootContext root, PID hiveMind, PID workerPid, Guid workerId)
-    {
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
-        {
-            SnapshotMs = (ulong)nowMs,
-            Workers =
-            {
-                BuildWorker(
-                    workerId,
-                    isAlive: true,
-                    isReady: true,
-                    lastSeenMs: nowMs,
-                    capabilityTimeMs: nowMs,
-                    address: string.Empty,
-                    rootActorName: workerPid.Id)
-            }
-        });
-    }
+        => HiveMindTestSupport.PrimeWorkers(root, hiveMind, workerPid, workerId);
 
-    private static ProtoSettings.WorkerReadinessCapability BuildWorker(
-        Guid nodeId,
-        bool isAlive,
-        bool isReady,
-        long lastSeenMs,
-        long capabilityTimeMs,
-        string address,
-        string rootActorName)
-        => new()
-        {
-            NodeId = nodeId.ToProtoUuid(),
-            Address = address,
-            RootActorName = rootActorName,
-            IsAlive = isAlive,
-            IsReady = isReady,
-            LastSeenMs = lastSeenMs > 0 ? (ulong)lastSeenMs : 0,
-            HasCapabilities = capabilityTimeMs > 0,
-            CapabilityTimeMs = capabilityTimeMs > 0 ? (ulong)capabilityTimeMs : 0,
-            Capabilities = new ProtoSettings.NodeCapabilities
-            {
-                CpuCores = 8,
-                RamFreeBytes = 8UL * 1024 * 1024 * 1024,
-                HasGpu = true,
-                VramFreeBytes = 8UL * 1024 * 1024 * 1024,
-                CpuScore = 40f,
-                GpuScore = 80f
-            }
-        };
-
-    private static async Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
-    {
-        using var cts = new CancellationTokenSource(timeoutMs);
-        while (true)
-        {
-            if (await predicate().ConfigureAwait(false))
-            {
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(20, cts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
-
-        throw new TimeoutException($"Condition was not met within {timeoutMs} ms.");
-    }
+    private static Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
+        => AsyncTestHelpers.WaitForAsync(predicate, timeoutMs);
 
     private static IoOptions CreateOptions()
         => new(

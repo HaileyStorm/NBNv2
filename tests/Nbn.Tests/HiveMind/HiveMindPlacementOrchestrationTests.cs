@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Reflection;
-using Microsoft.Data.Sqlite;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Runtime.Artifacts;
@@ -12,7 +11,6 @@ using Nbn.Tests.TestSupport;
 using Proto;
 using ProtoIo = Nbn.Proto.Io;
 using ProtoSettings = Nbn.Proto.Settings;
-using Xunit.Sdk;
 using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 namespace Nbn.Tests.HiveMind;
@@ -226,8 +224,7 @@ public sealed class HiveMindPlacementOrchestrationTests
     [Fact]
     public async Task PendingReschedule_Waits_For_New_Shards_And_OutputSinkRefresh_Before_Completion()
     {
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-reschedule-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-reschedule", clearSqlitePools: true);
         ActorSystem? system = null;
 
         try
@@ -418,16 +415,11 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
             if (system is not null)
             {
                 await system.ShutdownAsync();
             }
-
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -2034,8 +2026,7 @@ public sealed class HiveMindPlacementOrchestrationTests
     public async Task OfflineWorker_Triggers_ArtifactBacked_Recovery_And_Emits_Recovering_To_Active()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-recovery-success-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-recovery-success", clearSqlitePools: true);
         ActorSystem? system = null;
 
         try
@@ -2154,16 +2145,11 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
             if (system is not null)
             {
                 await system.ShutdownAsync();
             }
-
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -2171,8 +2157,7 @@ public sealed class HiveMindPlacementOrchestrationTests
     public async Task OfflineWorker_Triggers_ArtifactBacked_Recovery_And_Preserves_Paused_State()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-recovery-paused-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-recovery-paused", clearSqlitePools: true);
         ActorSystem? system = null;
 
         try
@@ -2310,16 +2295,11 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
             if (system is not null)
             {
                 await system.ShutdownAsync();
             }
-
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -2327,8 +2307,7 @@ public sealed class HiveMindPlacementOrchestrationTests
     public async Task OfflineOnlyWorker_Fails_Recovery_And_Emits_Recovering_To_Dead()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-recovery-failure-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-recovery-failure", clearSqlitePools: true);
         ActorSystem? system = null;
 
         try
@@ -2405,16 +2384,11 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
             if (system is not null)
             {
                 await system.ShutdownAsync();
             }
-
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
@@ -2422,8 +2396,7 @@ public sealed class HiveMindPlacementOrchestrationTests
     public async Task Unexpected_Shard_Unregister_Triggers_FullBrainRecovery_And_Emits_Recovering_To_Active()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
-        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-hivemind-shard-recovery-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(artifactRoot);
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-shard-recovery", clearSqlitePools: true);
         ActorSystem? system = null;
 
         try
@@ -2531,64 +2504,25 @@ public sealed class HiveMindPlacementOrchestrationTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
             if (system is not null)
             {
                 await system.ShutdownAsync();
             }
-
-            if (Directory.Exists(artifactRoot))
-            {
-                Directory.Delete(artifactRoot, recursive: true);
-            }
+            artifactRoot.Dispose();
         }
     }
 
     private static void PrimeWorkers(IRootContext root, PID hiveMind, PID workerPid, Guid workerId)
-        => PrimeWorkers(root, hiveMind, (workerPid, workerId, true, true));
+        => HiveMindTestSupport.PrimeWorkers(root, hiveMind, workerPid, workerId);
 
     private static void PrimeWorkers(
         IRootContext root,
         PID hiveMind,
         params (PID WorkerPid, Guid WorkerId, bool IsReady, bool IsAlive)[] workers)
-    {
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
-        {
-            SnapshotMs = (ulong)nowMs,
-            Workers = { workers.Select(worker => BuildWorker(
-                worker.WorkerId,
-                isAlive: worker.IsAlive,
-                isReady: worker.IsReady,
-                lastSeenMs: nowMs,
-                capabilityTimeMs: nowMs,
-                address: string.Empty,
-                rootActorName: worker.WorkerPid.Id)) }
-        });
-    }
+        => HiveMindTestSupport.PrimeWorkers(root, hiveMind, workers);
 
-    private static async Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
-    {
-        using var cts = new CancellationTokenSource(timeoutMs);
-        while (true)
-        {
-            if (await predicate().ConfigureAwait(false))
-            {
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(20, cts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
-
-        throw new XunitException($"Condition was not met within {timeoutMs} ms.");
-    }
+    private static Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
+        => AsyncTestHelpers.WaitForAsync(predicate, timeoutMs);
 
     private static async Task WaitForPlacementMatchedAsync(IRootContext root, PID hiveMind, Guid brainId, int timeoutMs)
     {
@@ -2898,44 +2832,6 @@ public sealed class HiveMindPlacementOrchestrationTests
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
-    private static ProtoSettings.WorkerReadinessCapability BuildWorker(
-        Guid nodeId,
-        bool isAlive,
-        bool isReady,
-        long lastSeenMs,
-        long capabilityTimeMs,
-        string address,
-        string rootActorName)
-        => new()
-        {
-            NodeId = nodeId.ToProtoUuid(),
-            Address = address,
-            RootActorName = rootActorName,
-            IsAlive = isAlive,
-            IsReady = isReady,
-            LastSeenMs = lastSeenMs > 0 ? (ulong)lastSeenMs : 0,
-            HasCapabilities = capabilityTimeMs > 0,
-            CapabilityTimeMs = capabilityTimeMs > 0 ? (ulong)capabilityTimeMs : 0,
-            Capabilities = new ProtoSettings.NodeCapabilities
-            {
-                CpuCores = 8,
-                RamFreeBytes = 8UL * 1024 * 1024 * 1024,
-                RamTotalBytes = 16UL * 1024 * 1024 * 1024,
-                StorageFreeBytes = 64UL * 1024 * 1024 * 1024,
-                StorageTotalBytes = 128UL * 1024 * 1024 * 1024,
-                HasGpu = true,
-                VramFreeBytes = 8UL * 1024 * 1024 * 1024,
-                VramTotalBytes = 16UL * 1024 * 1024 * 1024,
-                CpuScore = 40f,
-                GpuScore = 80f,
-                CpuLimitPercent = 100,
-                RamLimitPercent = 100,
-                StorageLimitPercent = 100,
-                GpuComputeLimitPercent = 100,
-                GpuVramLimitPercent = 100
-            }
-        };
-
     private static HiveMindOptions CreateOptions(
         int assignmentTimeoutMs,
         int retryBackoffMs,
@@ -2944,43 +2840,14 @@ public sealed class HiveMindPlacementOrchestrationTests
         int rescheduleMinTicks = 10,
         int rescheduleMinMinutes = 1,
         int rescheduleQuietMs = 50)
-        => new(
-            BindHost: "127.0.0.1",
-            Port: 0,
-            AdvertisedHost: null,
-            AdvertisedPort: null,
-            TargetTickHz: 50f,
-            MinTickHz: 10f,
-            ComputeTimeoutMs: 500,
-            DeliverTimeoutMs: 500,
-            BackpressureDecay: 0.9f,
-            BackpressureRecovery: 1.1f,
-            LateBackpressureThreshold: 2,
-            TimeoutRescheduleThreshold: 3,
-            TimeoutPauseThreshold: 6,
-            RescheduleMinTicks: rescheduleMinTicks,
-            RescheduleMinMinutes: rescheduleMinMinutes,
-            RescheduleQuietMs: rescheduleQuietMs,
-            RescheduleSimulatedMs: 50,
-            AutoStart: false,
-            EnableOpenTelemetry: false,
-            EnableOtelMetrics: false,
-            EnableOtelTraces: false,
-            EnableOtelConsoleExporter: false,
-            OtlpEndpoint: null,
-            ServiceName: "nbn.hivemind.tests",
-            SettingsDbPath: null,
-            SettingsHost: null,
-            SettingsPort: 0,
-            SettingsName: "SettingsMonitor",
-            IoAddress: null,
-            IoName: null,
-            WorkerInventoryRefreshMs: 2_000,
-            WorkerInventoryStaleAfterMs: 10_000,
-            PlacementAssignmentTimeoutMs: assignmentTimeoutMs,
-            PlacementAssignmentRetryBackoffMs: retryBackoffMs,
-            PlacementAssignmentMaxRetries: maxRetries,
-            PlacementReconcileTimeoutMs: reconcileTimeoutMs);
+        => HiveMindTestSupport.CreateHiveMindOptions(
+            assignmentTimeoutMs: assignmentTimeoutMs,
+            retryBackoffMs: retryBackoffMs,
+            maxRetries: maxRetries,
+            reconcileTimeoutMs: reconcileTimeoutMs,
+            rescheduleMinTicks: rescheduleMinTicks,
+            rescheduleMinMinutes: rescheduleMinMinutes,
+            rescheduleQuietMs: rescheduleQuietMs);
 
     private sealed record GetDebugProbeSnapshot;
     private sealed record SendMessage(PID Target, object Message);

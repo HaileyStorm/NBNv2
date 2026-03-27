@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -5811,23 +5810,10 @@ public sealed class SpeciationManagerActorTests
         return epoch!;
     }
 
-    private static async Task WaitForConditionAsync(
+    private static Task WaitForConditionAsync(
         Func<Task<bool>> predicate,
         TimeSpan timeout)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        while (stopwatch.Elapsed < timeout)
-        {
-            if (await predicate())
-            {
-                return;
-            }
-
-            await Task.Delay(25);
-        }
-
-        throw new TimeoutException($"Condition was not satisfied within {timeout}.");
-    }
+        => AsyncTestHelpers.WaitForAsync(predicate, timeout, pollIntervalMs: 25);
 
     private static Repro.ReproduceResult CreateCompatibilityAssessmentResult(float similarityScore)
     {
@@ -6074,34 +6060,6 @@ public sealed class SpeciationManagerActorTests
             }
 
             return Task.CompletedTask;
-        }
-    }
-
-    private sealed class TempDatabaseScope : IDisposable
-    {
-        private readonly string _directoryPath;
-
-        public TempDatabaseScope(string databaseFileName)
-        {
-            _directoryPath = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(_directoryPath);
-            DatabasePath = Path.Combine(_directoryPath, databaseFileName);
-        }
-
-        public string DatabasePath { get; }
-
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(_directoryPath))
-                {
-                    Directory.Delete(_directoryPath, recursive: true);
-                }
-            }
-            catch
-            {
-            }
         }
     }
 

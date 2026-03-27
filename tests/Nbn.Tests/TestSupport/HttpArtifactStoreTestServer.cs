@@ -2,7 +2,6 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
 using Nbn.Runtime.Artifacts;
 
 namespace Nbn.Tests.TestSupport;
@@ -10,7 +9,7 @@ namespace Nbn.Tests.TestSupport;
 public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly string _rootPath;
+    private readonly TempDirectoryScope _rootPath;
     private readonly LocalArtifactStore _store;
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _cts = new();
@@ -19,8 +18,7 @@ public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
     public HttpArtifactStoreTestServer(bool supportsRangeRequests = true)
     {
         SupportsRangeRequests = supportsRangeRequests;
-        _rootPath = Path.Combine(Path.GetTempPath(), "nbn-http-artifact-store", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_rootPath);
+        _rootPath = TempDirectoryScope.Create("nbn-http-artifact-store", clearSqlitePools: true);
         _store = new LocalArtifactStore(new ArtifactStoreOptions(_rootPath));
 
         var port = ReservePort();
@@ -61,12 +59,7 @@ public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
         {
             _cts.Dispose();
         }
-
-        SqliteConnection.ClearAllPools();
-        if (Directory.Exists(_rootPath))
-        {
-            Directory.Delete(_rootPath, recursive: true);
-        }
+        _rootPath.Dispose();
     }
 
     private async Task RunAsync(CancellationToken cancellationToken)
