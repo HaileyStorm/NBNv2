@@ -345,9 +345,11 @@ public sealed class HiveMindPlacementPlannerTests
             out var firstPlan,
             out var firstFailureReason,
             out _);
+        var reversedWorkers = workers.ToArray();
+        Array.Reverse(reversedWorkers);
         var builtSecond = PlacementPlanner.TryBuildPlan(
             plannerInputs,
-            workers.Reverse().ToArray(),
+            reversedWorkers,
             out var secondPlan,
             out var secondFailureReason,
             out _);
