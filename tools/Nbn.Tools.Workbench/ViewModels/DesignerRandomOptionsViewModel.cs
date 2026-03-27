@@ -7,6 +7,9 @@ using Nbn.Shared;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
+/// <summary>
+/// Holds operator-editable random brain generation settings for the Designer panel.
+/// </summary>
 public sealed class RandomBrainOptionsViewModel : ViewModelBase
 {
     private string _regionCountText = "3";
@@ -49,6 +52,9 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     private string _paramBMinText = "13";
     private string _paramBMaxText = "50";
 
+    /// <summary>
+    /// Initializes random-generation options with the default Designer presets.
+    /// </summary>
     public RandomBrainOptionsViewModel()
     {
         SeedModes = new ObservableCollection<RandomOptionChoice<RandomSeedMode>>(BuildSeedModes());
@@ -120,13 +126,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomSeedMode> SelectedSeedMode
     {
         get => _selectedSeedMode;
-        set
-        {
-            if (SetProperty(ref _selectedSeedMode, value))
-            {
-                OnPropertyChanged(nameof(IsSeedTextEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedSeedMode, value, nameof(IsSeedTextEnabled));
     }
 
     public string SeedText
@@ -138,13 +138,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomRegionSelectionMode> SelectedRegionSelectionMode
     {
         get => _selectedRegionSelectionMode;
-        set
-        {
-            if (SetProperty(ref _selectedRegionSelectionMode, value))
-            {
-                OnPropertyChanged(nameof(IsRegionListEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedRegionSelectionMode, value, nameof(IsRegionListEnabled));
     }
 
     public string RegionListText
@@ -156,13 +150,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomCountMode> SelectedNeuronCountMode
     {
         get => _selectedNeuronCountMode;
-        set
-        {
-            if (SetProperty(ref _selectedNeuronCountMode, value))
-            {
-                OnPropertyChanged(nameof(IsNeuronRangeEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedNeuronCountMode, value, nameof(IsNeuronRangeEnabled));
     }
 
     public string NeuronCountMinText
@@ -180,13 +168,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomCountMode> SelectedAxonCountMode
     {
         get => _selectedAxonCountMode;
-        set
-        {
-            if (SetProperty(ref _selectedAxonCountMode, value))
-            {
-                OnPropertyChanged(nameof(IsAxonRangeEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedAxonCountMode, value, nameof(IsAxonRangeEnabled));
     }
 
     public string AxonCountMinText
@@ -252,13 +234,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomFunctionSelectionMode> SelectedActivationMode
     {
         get => _selectedActivationMode;
-        set
-        {
-            if (SetProperty(ref _selectedActivationMode, value))
-            {
-                OnPropertyChanged(nameof(IsActivationFixedEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedActivationMode, value, nameof(IsActivationFixedEnabled));
     }
 
     public string ActivationFixedIdText
@@ -270,13 +246,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomFunctionSelectionMode> SelectedResetMode
     {
         get => _selectedResetMode;
-        set
-        {
-            if (SetProperty(ref _selectedResetMode, value))
-            {
-                OnPropertyChanged(nameof(IsResetFixedEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedResetMode, value, nameof(IsResetFixedEnabled));
     }
 
     public string ResetFixedIdText
@@ -288,13 +258,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomFunctionSelectionMode> SelectedAccumulationMode
     {
         get => _selectedAccumulationMode;
-        set
-        {
-            if (SetProperty(ref _selectedAccumulationMode, value))
-            {
-                OnPropertyChanged(nameof(IsAccumulationFixedEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedAccumulationMode, value, nameof(IsAccumulationFixedEnabled));
     }
 
     public string AccumulationFixedIdText
@@ -306,13 +270,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomRangeMode> SelectedThresholdMode
     {
         get => _selectedThresholdMode;
-        set
-        {
-            if (SetProperty(ref _selectedThresholdMode, value))
-            {
-                OnPropertyChanged(nameof(IsThresholdRangeEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedThresholdMode, value, nameof(IsThresholdRangeEnabled));
     }
 
     public string PreActivationMinText
@@ -342,13 +300,7 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public RandomOptionChoice<RandomRangeMode> SelectedParamMode
     {
         get => _selectedParamMode;
-        set
-        {
-            if (SetProperty(ref _selectedParamMode, value))
-            {
-                OnPropertyChanged(nameof(IsParamRangeEnabled));
-            }
-        }
+        set => SetChoicePropertyAndNotify(ref _selectedParamMode, value, nameof(IsParamRangeEnabled));
     }
 
     public string ParamAMinText
@@ -385,6 +337,9 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
     public bool IsThresholdRangeEnabled => SelectedThresholdMode.Value == RandomRangeMode.Range;
     public bool IsParamRangeEnabled => SelectedParamMode.Value == RandomRangeMode.Range;
 
+    /// <summary>
+    /// Validates the current UI selections and materializes immutable generation options.
+    /// </summary>
     public bool TryBuildOptions(Func<ulong> seedFactory, out RandomBrainGenerationOptions options, out string? error)
     {
         options = default;
@@ -556,46 +511,19 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
             return false;
         }
 
-        var activationFixedId = 0;
-        if (SelectedActivationMode.Value == RandomFunctionSelectionMode.Fixed)
+        if (!TryResolveFunctionId(SelectedActivationMode.Value, ActivationFixedIdText, "Activation", 29, out var activationFixedId, out error))
         {
-            if (!TryParseInt(ActivationFixedIdText, out activationFixedId) || activationFixedId < 0 || activationFixedId > 29)
-            {
-                error = "Activation function id must be between 0 and 29.";
-                return false;
-            }
-        }
-        else
-        {
-            _ = TryParseInt(ActivationFixedIdText, out activationFixedId);
+            return false;
         }
 
-        var resetFixedId = 0;
-        if (SelectedResetMode.Value == RandomFunctionSelectionMode.Fixed)
+        if (!TryResolveFunctionId(SelectedResetMode.Value, ResetFixedIdText, "Reset", 60, out var resetFixedId, out error))
         {
-            if (!TryParseInt(ResetFixedIdText, out resetFixedId) || resetFixedId < 0 || resetFixedId > 60)
-            {
-                error = "Reset function id must be between 0 and 60.";
-                return false;
-            }
-        }
-        else
-        {
-            _ = TryParseInt(ResetFixedIdText, out resetFixedId);
+            return false;
         }
 
-        var accumulationFixedId = 0;
-        if (SelectedAccumulationMode.Value == RandomFunctionSelectionMode.Fixed)
+        if (!TryResolveFunctionId(SelectedAccumulationMode.Value, AccumulationFixedIdText, "Accumulation", 3, out var accumulationFixedId, out error))
         {
-            if (!TryParseInt(AccumulationFixedIdText, out accumulationFixedId) || accumulationFixedId < 0 || accumulationFixedId > 3)
-            {
-                error = "Accumulation function id must be between 0 and 3.";
-                return false;
-            }
-        }
-        else
-        {
-            _ = TryParseInt(AccumulationFixedIdText, out accumulationFixedId);
+            return false;
         }
 
         var thresholdMode = SelectedThresholdMode.Value;
@@ -737,6 +665,20 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         return true;
     }
 
+    private bool SetChoicePropertyAndNotify<T>(
+        ref RandomOptionChoice<T> storage,
+        RandomOptionChoice<T> value,
+        string dependentPropertyName)
+    {
+        if (!SetProperty(ref storage, value))
+        {
+            return false;
+        }
+
+        OnPropertyChanged(dependentPropertyName);
+        return true;
+    }
+
     private static bool TryParseSeed(string value, out ulong seed)
     {
         if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
@@ -749,6 +691,30 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
 
     private static bool TryParseInt(string value, out int parsed)
         => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed);
+
+    private static bool TryResolveFunctionId(
+        RandomFunctionSelectionMode mode,
+        string value,
+        string label,
+        int maxId,
+        out int resolvedId,
+        out string? error)
+    {
+        error = null;
+        if (mode != RandomFunctionSelectionMode.Fixed)
+        {
+            _ = TryParseInt(value, out resolvedId);
+            return true;
+        }
+
+        if (!TryParseInt(value, out resolvedId) || resolvedId < 0 || resolvedId > maxId)
+        {
+            error = $"{label} function id must be between 0 and {maxId}.";
+            return false;
+        }
+
+        return true;
+    }
 
     private static bool TryParseCountRange(string value, int minAllowed, int maxAllowed, string label, out int min, out int max, out string? error)
     {
@@ -997,6 +963,9 @@ public sealed class RandomBrainOptionsViewModel : ViewModelBase
         };
 }
 
+/// <summary>
+/// Immutable random-brain generation settings derived from the Designer UI.
+/// </summary>
 public readonly record struct RandomBrainGenerationOptions(
     int RegionCount,
     IReadOnlyList<int> ExplicitRegions,
@@ -1039,14 +1008,23 @@ public readonly record struct RandomBrainGenerationOptions(
     int ParamBMax,
     bool SeedBaselineActivityPath);
 
+/// <summary>
+/// UI label/value pair for a Designer random-option selector.
+/// </summary>
 public sealed record RandomOptionChoice<T>(string Label, T Value);
 
+/// <summary>
+/// Controls whether the generator uses a fresh seed or a caller-provided one.
+/// </summary>
 public enum RandomSeedMode
 {
     Random,
     Fixed
 }
 
+/// <summary>
+/// Controls how non-IO regions are chosen before neurons and axons are generated.
+/// </summary>
 public enum RandomRegionSelectionMode
 {
     Random,
@@ -1054,12 +1032,18 @@ public enum RandomRegionSelectionMode
     ExplicitList
 }
 
+/// <summary>
+/// Controls whether a count is fixed or chosen from an inclusive range.
+/// </summary>
 public enum RandomCountMode
 {
     Fixed,
     Range
 }
 
+/// <summary>
+/// Controls how random target regions are weighted during axon generation.
+/// </summary>
 public enum RandomTargetBiasMode
 {
     Uniform,
@@ -1067,6 +1051,9 @@ public enum RandomTargetBiasMode
     RegionWeighted
 }
 
+/// <summary>
+/// Controls how random strength codes are sampled within the selected bounds.
+/// </summary>
 public enum RandomStrengthDistribution
 {
     Uniform,
@@ -1074,6 +1061,9 @@ public enum RandomStrengthDistribution
     Normal
 }
 
+/// <summary>
+/// Controls whether function ids are fixed, uniformly random, or weight-biased.
+/// </summary>
 public enum RandomFunctionSelectionMode
 {
     Fixed,
@@ -1081,6 +1071,9 @@ public enum RandomFunctionSelectionMode
     Weighted
 }
 
+/// <summary>
+/// Controls whether a code-based parameter uses a fixed value or an inclusive range.
+/// </summary>
 public enum RandomRangeMode
 {
     Fixed,

@@ -8,6 +8,9 @@ using Avalonia.Media.Immutable;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
+/// <summary>
+/// Editable brain metadata and region collection surfaced by the Designer.
+/// </summary>
 public sealed class DesignerBrainViewModel : ViewModelBase
 {
     private string _name;
@@ -20,6 +23,9 @@ public sealed class DesignerBrainViewModel : ViewModelBase
     private int _totalNeurons;
     private int _totalAxons;
 
+    /// <summary>
+    /// Initializes a Designer brain shell with text-backed mirrors for key identifiers.
+    /// </summary>
     public DesignerBrainViewModel(string name, Guid brainId, ulong brainSeed, uint axonStride)
     {
         _name = name;
@@ -106,24 +112,36 @@ public sealed class DesignerBrainViewModel : ViewModelBase
         private set => SetProperty(ref _totalAxons, value);
     }
 
+    /// <summary>
+    /// Updates the seed and its display text together.
+    /// </summary>
     public void SetSeed(ulong seed)
     {
         BrainSeed = seed;
         BrainSeedText = seed.ToString();
     }
 
+    /// <summary>
+    /// Updates the brain identifier and its display text together.
+    /// </summary>
     public void SetBrainId(Guid brainId)
     {
         BrainId = brainId;
         BrainIdText = brainId.ToString();
     }
 
+    /// <summary>
+    /// Updates the axon stride and its display text together.
+    /// </summary>
     public void SetStride(uint stride)
     {
         AxonStride = stride;
         AxonStrideText = stride.ToString();
     }
 
+    /// <summary>
+    /// Recomputes total neuron and axon counts across all regions.
+    /// </summary>
     public void UpdateTotals()
     {
         TotalNeurons = Regions.Sum(region => region.NeuronCount);
@@ -131,12 +149,18 @@ public sealed class DesignerBrainViewModel : ViewModelBase
     }
 }
 
+/// <summary>
+/// Editable view-model for one region tile and its neuron collection.
+/// </summary>
 public sealed class DesignerRegionViewModel : ViewModelBase
 {
     private bool _isSelected;
     private int _neuronCount;
     private int _axonCount;
 
+    /// <summary>
+    /// Initializes a region entry with the canonical Designer label for that region id.
+    /// </summary>
     public DesignerRegionViewModel(int regionId)
     {
         RegionId = regionId;
@@ -201,6 +225,9 @@ public sealed class DesignerRegionViewModel : ViewModelBase
 
     public double TileOpacity => HasNeurons ? 1 : 0.75;
 
+    /// <summary>
+    /// Recomputes cached neuron and axon counts for the region.
+    /// </summary>
     public void UpdateCounts()
     {
         NeuronCount = Neurons.Count;
@@ -211,6 +238,9 @@ public sealed class DesignerRegionViewModel : ViewModelBase
     }
 }
 
+/// <summary>
+/// Editable view-model for one neuron and its outbound axons.
+/// </summary>
 public sealed class DesignerNeuronViewModel : ViewModelBase
 {
     private bool _isSelected;
@@ -228,6 +258,9 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
     private double _canvasX;
     private double _canvasY;
 
+    /// <summary>
+    /// Initializes a neuron entry with Designer-specific existence and requirement flags.
+    /// </summary>
     public DesignerNeuronViewModel(int regionId, int neuronId, bool exists, bool isRequired)
     {
         RegionId = regionId;
@@ -419,6 +452,9 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
 
     public double TileOpacity => Exists ? 1 : 0.6;
 
+    /// <summary>
+    /// Recomputes the cached outbound axon count for display.
+    /// </summary>
     public void UpdateAxonCount()
     {
         AxonCount = Axons.Count;
@@ -429,11 +465,17 @@ public sealed class DesignerNeuronViewModel : ViewModelBase
         => value < min ? min : value > max ? max : value;
 }
 
+/// <summary>
+/// Editable view-model for a single outbound axon row.
+/// </summary>
 public sealed class DesignerAxonViewModel : ViewModelBase
 {
     private bool _isSelected;
     private int _strengthCode;
 
+    /// <summary>
+    /// Initializes an axon row targeting a specific region/neuron pair.
+    /// </summary>
     public DesignerAxonViewModel(int targetRegionId, int targetNeuronId, int strengthCode)
     {
         TargetRegionId = targetRegionId;
@@ -479,6 +521,9 @@ public sealed class DesignerAxonViewModel : ViewModelBase
         => value < min ? min : value > max ? max : value;
 }
 
+/// <summary>
+/// Canvas edge geometry and styling metadata derived from Designer selections.
+/// </summary>
 public sealed class DesignerEdgeViewModel : ViewModelBase
 {
     private const double InternalBundleBase = 12;
@@ -504,6 +549,9 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
     private readonly int? _navigationRegionId;
     private readonly int? _navigationNeuronId;
 
+    /// <summary>
+    /// Initializes a canvas edge with geometry, styling, and optional navigation metadata.
+    /// </summary>
     public DesignerEdgeViewModel(
         Point start,
         Point end,
@@ -781,6 +829,9 @@ public sealed class DesignerEdgeViewModel : ViewModelBase
         => value.ToString("0.###", CultureInfo.InvariantCulture);
 }
 
+/// <summary>
+/// Classifies how a canvas edge should be styled and grouped in the Designer.
+/// </summary>
 public enum DesignerEdgeKind
 {
     OutboundInternal,
@@ -789,8 +840,14 @@ public enum DesignerEdgeKind
     InboundExternal
 }
 
+/// <summary>
+/// Labels a function id and its parameter usage for Designer pickers.
+/// </summary>
 public sealed class DesignerFunctionOption
 {
+    /// <summary>
+    /// Initializes a function picker option.
+    /// </summary>
     public DesignerFunctionOption(int id, string label, string description = "", bool usesParamA = false, bool usesParamB = false)
     {
         Id = id;
@@ -806,6 +863,9 @@ public sealed class DesignerFunctionOption
     public bool UsesParamA { get; }
     public bool UsesParamB { get; }
 
+    /// <summary>
+    /// Returns the display label used by Designer selectors.
+    /// </summary>
     public override string ToString() => Label;
 }
 

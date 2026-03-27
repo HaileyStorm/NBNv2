@@ -49,26 +49,13 @@ public sealed partial class DesignerPanelViewModel
 
         brain.UpdateTotals();
 
-        SetDocumentType(DesignerDocumentType.Nbn);
-        Brain = brain;
-        _snapshotBytes = null;
-        _documentPath = null;
-        _nbsHeader = null;
-        _nbsRegions = null;
-        _nbsOverlay = null;
-
-        SelectRegion(inputRegion);
-        SelectNeuron(inputRegion.Neurons.FirstOrDefault());
-        SetDesignDirty(true);
-        ResetValidation();
-        UpdateLoadedSummary();
-        Status = "New brain created.";
-        RefreshRegionView();
-        ExportCommand.RaiseCanExecuteChanged();
-        ValidateCommand.RaiseCanExecuteChanged();
-        SpawnBrainCommand.RaiseCanExecuteChanged();
-        ResetBrainCommand.RaiseCanExecuteChanged();
+        ApplyLoadedBrainDocument(
+            brain,
+            loadedLabel: brain.Name,
+            status: "New brain created.",
+            isDirty: true);
     }
+
     private void ResetBrain()
     {
         if (Brain is null)
@@ -102,8 +89,7 @@ public sealed partial class DesignerPanelViewModel
         }
 
         Brain.UpdateTotals();
-        SelectRegion(Brain.Regions[NbnConstants.InputRegionId]);
-        SelectNeuron(Brain.Regions[NbnConstants.InputRegionId].Neurons.FirstOrDefault());
+        SelectHomeNeuron(Brain);
         SetDesignDirty(true);
         ResetValidation();
         UpdateLoadedSummary();
@@ -131,6 +117,9 @@ public sealed partial class DesignerPanelViewModel
         }
     }
 
+    /// <summary>
+    /// Imports validated <c>.nbn</c> bytes into the designer surface.
+    /// </summary>
     internal bool TryImportNbnFromBytes(byte[] bytes, string fileName, string? documentPath = null)
     {
         if (bytes is null)
@@ -157,29 +146,14 @@ public sealed partial class DesignerPanelViewModel
             var brain = BuildDesignerBrainFromNbn(header, regions, Path.GetFileNameWithoutExtension(fileName));
             var normalizedFunctions = NormalizeBrainFunctionConstraints(brain);
 
-            SetDocumentType(DesignerDocumentType.Nbn);
-            Brain = brain;
-            _snapshotBytes = null;
-            _documentPath = documentPath ?? fileName;
-            _nbsHeader = null;
-            _nbsRegions = null;
-            _nbsOverlay = null;
-
-            var region0 = brain.Regions[NbnConstants.InputRegionId];
-            SelectRegion(region0);
-            SelectNeuron(region0.Neurons.FirstOrDefault());
-
-            LoadedSummary = BuildDesignSummary(brain, fileName);
-            Status = normalizedFunctions == 0
-                ? "NBN imported."
-                : $"NBN imported. Normalized {normalizedFunctions} neuron function setting(s) for IO constraints.";
-            SetDesignDirty(normalizedFunctions > 0);
-            ResetValidation();
-            RefreshRegionView();
-            ExportCommand.RaiseCanExecuteChanged();
-            ValidateCommand.RaiseCanExecuteChanged();
-            SpawnBrainCommand.RaiseCanExecuteChanged();
-            ResetBrainCommand.RaiseCanExecuteChanged();
+            ApplyLoadedBrainDocument(
+                brain,
+                loadedLabel: fileName,
+                status: normalizedFunctions == 0
+                    ? "NBN imported."
+                    : $"NBN imported. Normalized {normalizedFunctions} neuron function setting(s) for IO constraints.",
+                isDirty: normalizedFunctions > 0,
+                documentPath: documentPath ?? fileName);
             return true;
         }
         catch (Exception ex)
@@ -209,6 +183,9 @@ public sealed partial class DesignerPanelViewModel
         }
     }
 
+    /// <summary>
+    /// Imports <c>.nbs</c> bytes so the snapshot can be inspected, exported, or restored.
+    /// </summary>
     internal bool TryImportNbsFromBytes(
         byte[] bytes,
         string fileName,
@@ -230,24 +207,14 @@ public sealed partial class DesignerPanelViewModel
             var header = NbnBinary.ReadNbsHeader(bytes);
             ReadNbsSections(bytes, header, out var regions, out var overlay);
 
-            SetDocumentType(DesignerDocumentType.Nbs);
-            _snapshotBytes = bytes;
-            _documentPath = documentPath ?? fileName;
-            _nbsHeader = header;
-            _nbsRegions = regions;
-            _nbsOverlay = overlay;
-            Brain = null;
-            SelectRegion(null);
-            ClearSelection();
-
-            LoadedSummary = BuildNbsSummary(fileName, header, regions, overlay);
-            Status = successStatus;
-            SetDesignDirty(false);
-            ResetValidation();
-            ExportCommand.RaiseCanExecuteChanged();
-            ValidateCommand.RaiseCanExecuteChanged();
-            SpawnBrainCommand.RaiseCanExecuteChanged();
-            ResetBrainCommand.RaiseCanExecuteChanged();
+            ApplyLoadedSnapshotDocument(
+                bytes,
+                loadedLabel: fileName,
+                header,
+                regions,
+                overlay,
+                status: successStatus,
+                documentPath: documentPath ?? fileName);
             return true;
         }
         catch (Exception ex)
@@ -357,6 +324,9 @@ public sealed partial class DesignerPanelViewModel
         await StoreCurrentDefinitionArtifactAsync().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Stores the current definition into the configured artifact store and updates the bound reference fields.
+    /// </summary>
     internal async Task<Nbn.Proto.ArtifactRef?> StoreCurrentDefinitionArtifactAsync()
     {
         if (!IsDesignLoaded)
@@ -372,21 +342,14 @@ public sealed partial class DesignerPanelViewModel
         }
 
         var bytes = NbnBinary.WriteNbn(header, sections);
-        try
-        {
-            var artifactRef = await StoreArtifactAsync(bytes, "application/x-nbn", ArtifactStoreUri).ConfigureAwait(false);
-            DefinitionArtifactShaText = artifactRef.ToSha256Hex();
-            DefinitionArtifactStoreUriText = artifactRef.StoreUri ?? string.Empty;
-            DefinitionArtifactSummary = BuildArtifactReferenceSummary("Definition", artifactRef);
-            SetDesignDirty(false);
-            Status = $"Definition stored in artifact store ({DefinitionArtifactShaText[..8]}).";
-            return artifactRef;
-        }
-        catch (Exception ex)
-        {
-            Status = $"Artifact save failed: {ex.Message}";
-            return null;
-        }
+        return await StoreArtifactDocumentAsync(
+                bytes,
+                "application/x-nbn",
+                ArtifactReferenceSlot.Definition,
+                "Definition stored in artifact store",
+                clearDesignDirty: true,
+                failureStatusPrefix: "Artifact save failed")
+            .ConfigureAwait(false);
     }
 
     private async Task SaveSnapshotArtifactAsync()
@@ -394,6 +357,9 @@ public sealed partial class DesignerPanelViewModel
         await StoreCurrentSnapshotArtifactAsync().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Stores the current or derived snapshot into the configured artifact store and updates the bound reference fields.
+    /// </summary>
     internal async Task<Nbn.Proto.ArtifactRef?> StoreCurrentSnapshotArtifactAsync()
     {
         if (!TryResolveSnapshotBytesForArtifactStore(out var snapshotBytes, out var error))
@@ -402,20 +368,14 @@ public sealed partial class DesignerPanelViewModel
             return null;
         }
 
-        try
-        {
-            var artifactRef = await StoreArtifactAsync(snapshotBytes, "application/x-nbs", ArtifactStoreUri).ConfigureAwait(false);
-            SnapshotArtifactShaText = artifactRef.ToSha256Hex();
-            SnapshotArtifactStoreUriText = artifactRef.StoreUri ?? string.Empty;
-            SnapshotArtifactSummary = BuildArtifactReferenceSummary("Snapshot", artifactRef);
-            Status = $"Snapshot stored in artifact store ({SnapshotArtifactShaText[..8]}).";
-            return artifactRef;
-        }
-        catch (Exception ex)
-        {
-            Status = $"Snapshot artifact save failed: {ex.Message}";
-            return null;
-        }
+        return await StoreArtifactDocumentAsync(
+                snapshotBytes,
+                "application/x-nbs",
+                ArtifactReferenceSlot.Snapshot,
+                "Snapshot stored in artifact store",
+                clearDesignDirty: false,
+                failureStatusPrefix: "Snapshot artifact save failed")
+            .ConfigureAwait(false);
     }
 
     private async Task LoadDefinitionArtifactAsync()
@@ -423,6 +383,9 @@ public sealed partial class DesignerPanelViewModel
         await LoadDefinitionArtifactFromCurrentReferenceAsync().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Loads the current definition artifact reference back into the designer.
+    /// </summary>
     internal async Task<bool> LoadDefinitionArtifactFromCurrentReferenceAsync()
     {
         if (!TryBuildDefinitionArtifactReference(out var artifactRef, out var error))
@@ -431,25 +394,14 @@ public sealed partial class DesignerPanelViewModel
             return false;
         }
 
-        try
-        {
-            var definitionBytes = await LoadArtifactBytesAsync(artifactRef).ConfigureAwait(false);
-            if (definitionBytes is null)
-            {
-                Status = $"Definition artifact {artifactRef.ToSha256Hex()[..8]} was not found in {DescribeArtifactStore(artifactRef.StoreUri)}.";
-                return false;
-            }
-
-            return TryImportNbnFromBytes(
-                definitionBytes,
-                BuildArtifactDisplayName("definition", artifactRef, "nbn"),
-                BuildArtifactDocumentPath(artifactRef));
-        }
-        catch (Exception ex)
-        {
-            Status = $"Definition artifact load failed: {ex.Message}";
-            return false;
-        }
+        return await LoadArtifactDocumentAsync(
+                artifactRef,
+                "Definition",
+                "definition",
+                "nbn",
+                "Definition artifact load failed",
+                (artifactBytes, displayName, artifactPath) => TryImportNbnFromBytes(artifactBytes, displayName, artifactPath))
+            .ConfigureAwait(false);
     }
 
     private async Task LoadSnapshotArtifactAsync()
@@ -457,6 +409,9 @@ public sealed partial class DesignerPanelViewModel
         await LoadSnapshotArtifactFromCurrentReferenceAsync().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Loads the current snapshot artifact reference back into the designer.
+    /// </summary>
     internal async Task<bool> LoadSnapshotArtifactFromCurrentReferenceAsync()
     {
         if (!TryBuildSnapshotArtifactReference(out var artifactRef, out var error))
@@ -465,26 +420,18 @@ public sealed partial class DesignerPanelViewModel
             return false;
         }
 
-        try
-        {
-            var snapshotBytes = await LoadArtifactBytesAsync(artifactRef).ConfigureAwait(false);
-            if (snapshotBytes is null)
-            {
-                Status = $"Snapshot artifact {artifactRef.ToSha256Hex()[..8]} was not found in {DescribeArtifactStore(artifactRef.StoreUri)}.";
-                return false;
-            }
-
-            return TryImportNbsFromBytes(
-                snapshotBytes,
-                BuildArtifactDisplayName("snapshot", artifactRef, "nbs"),
-                BuildArtifactDocumentPath(artifactRef),
-                "NBS imported from artifact reference.");
-        }
-        catch (Exception ex)
-        {
-            Status = $"Snapshot artifact load failed: {ex.Message}";
-            return false;
-        }
+        return await LoadArtifactDocumentAsync(
+                artifactRef,
+                "Snapshot",
+                "snapshot",
+                "nbs",
+                "Snapshot artifact load failed",
+                (artifactBytes, displayName, artifactPath) => TryImportNbsFromBytes(
+                    artifactBytes,
+                    displayName,
+                    artifactPath,
+                    "NBS imported from artifact reference."))
+            .ConfigureAwait(false);
     }
 
     private async Task RestoreArtifactBrainAsync()
@@ -492,6 +439,9 @@ public sealed partial class DesignerPanelViewModel
         await RestoreBrainFromCurrentArtifactReferencesAsync().ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Promotes the currently selected definition and optional snapshot references for runtime restore.
+    /// </summary>
     internal async Task<ProtoControl.PlacementAck?> RestoreBrainFromCurrentArtifactReferencesAsync()
     {
         if (!TryBuildDefinitionArtifactReference(out var definitionRef, out var definitionError))
@@ -526,7 +476,7 @@ public sealed partial class DesignerPanelViewModel
                 var snapshotBytes = await LoadArtifactBytesAsync(snapshotRef).ConfigureAwait(false);
                 if (snapshotBytes is null)
                 {
-                    Status = $"Snapshot artifact {snapshotRef.ToSha256Hex()[..8]} was not found in {DescribeArtifactStore(snapshotRef.StoreUri)}.";
+                    Status = BuildArtifactNotFoundStatus("Snapshot", snapshotRef);
                     return null;
                 }
 
@@ -963,6 +913,34 @@ public sealed partial class DesignerPanelViewModel
         return TryBuildSnapshot(out snapshotBytes, out error);
     }
 
+    private async Task<Nbn.Proto.ArtifactRef?> StoreArtifactDocumentAsync(
+        byte[] bytes,
+        string mediaType,
+        ArtifactReferenceSlot slot,
+        string successStatusPrefix,
+        bool clearDesignDirty,
+        string failureStatusPrefix)
+    {
+        try
+        {
+            var artifactRef = await StoreArtifactAsync(bytes, mediaType, ArtifactStoreUri).ConfigureAwait(false);
+            ApplyStoredArtifactReference(slot, artifactRef);
+            if (clearDesignDirty)
+            {
+                SetDesignDirty(false);
+            }
+
+            var artifactSha = artifactRef.ToSha256Hex();
+            Status = $"{successStatusPrefix} ({artifactSha[..8]}).";
+            return artifactRef;
+        }
+        catch (Exception ex)
+        {
+            Status = $"{failureStatusPrefix}: {ex.Message}";
+            return null;
+        }
+    }
+
     private async Task<Nbn.Proto.ArtifactRef> StoreArtifactAsync(byte[] bytes, string mediaType, string? storeUri)
     {
         if (bytes is null)
@@ -989,6 +967,35 @@ public sealed partial class DesignerPanelViewModel
         var store = resolver.Resolve(resolvedStoreUri);
         var hash = new Sha256Hash(hashBytes);
         return await TryReadArtifactBytesAsync(store, hash).ConfigureAwait(false);
+    }
+
+    private async Task<bool> LoadArtifactDocumentAsync(
+        Nbn.Proto.ArtifactRef artifactRef,
+        string artifactLabel,
+        string displayLabel,
+        string extension,
+        string failureStatusPrefix,
+        Func<byte[], string, string?, bool> importDocument)
+    {
+        try
+        {
+            var artifactBytes = await LoadArtifactBytesAsync(artifactRef).ConfigureAwait(false);
+            if (artifactBytes is null)
+            {
+                Status = BuildArtifactNotFoundStatus(artifactLabel, artifactRef);
+                return false;
+            }
+
+            return importDocument(
+                artifactBytes,
+                BuildArtifactDisplayName(displayLabel, artifactRef, extension),
+                BuildArtifactDocumentPath(artifactRef));
+        }
+        catch (Exception ex)
+        {
+            Status = $"{failureStatusPrefix}: {ex.Message}";
+            return false;
+        }
     }
 
     private bool TryBuildDefinitionArtifactReference(out Nbn.Proto.ArtifactRef artifactRef, out string? error)
@@ -1075,6 +1082,37 @@ public sealed partial class DesignerPanelViewModel
         var store = DescribeArtifactStore(artifactRef.StoreUri);
         return $"{label}: sha={sha} media={mediaType} size={artifactRef.SizeBytes} store={store}";
     }
+
+    private void ApplyStoredArtifactReference(ArtifactReferenceSlot slot, Nbn.Proto.ArtifactRef artifactRef)
+    {
+        var sha = artifactRef.ToSha256Hex();
+        var storeUri = artifactRef.StoreUri ?? string.Empty;
+        var summaryLabel = slot switch
+        {
+            ArtifactReferenceSlot.Definition => "Definition",
+            ArtifactReferenceSlot.Snapshot => "Snapshot",
+            _ => throw new ArgumentOutOfRangeException(nameof(slot), slot, "Unknown artifact reference slot.")
+        };
+        var summary = BuildArtifactReferenceSummary(summaryLabel, artifactRef);
+        switch (slot)
+        {
+            case ArtifactReferenceSlot.Definition:
+                DefinitionArtifactShaText = sha;
+                DefinitionArtifactStoreUriText = storeUri;
+                DefinitionArtifactSummary = summary;
+                break;
+            case ArtifactReferenceSlot.Snapshot:
+                SnapshotArtifactShaText = sha;
+                SnapshotArtifactStoreUriText = storeUri;
+                SnapshotArtifactSummary = summary;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(slot), slot, "Unknown artifact reference slot.");
+        }
+    }
+
+    private static string BuildArtifactNotFoundStatus(string artifactLabel, Nbn.Proto.ArtifactRef artifactRef)
+        => $"{artifactLabel} artifact {artifactRef.ToSha256Hex()[..8]} was not found in {DescribeArtifactStore(artifactRef.StoreUri)}.";
 
     private static string BuildArtifactDocumentPath(Nbn.Proto.ArtifactRef artifactRef)
     {
@@ -1376,5 +1414,11 @@ public sealed partial class DesignerPanelViewModel
                    || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
                    || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
                    || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private enum ArtifactReferenceSlot
+    {
+        Definition,
+        Snapshot
     }
 }

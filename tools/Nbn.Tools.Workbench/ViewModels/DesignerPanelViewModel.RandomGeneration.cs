@@ -210,28 +210,13 @@ public sealed partial class DesignerPanelViewModel
         var normalizedFunctions = NormalizeBrainFunctionConstraints(brain);
         brain.UpdateTotals();
 
-        SetDocumentType(DesignerDocumentType.Nbn);
-        Brain = brain;
-        _snapshotBytes = null;
-        _documentPath = null;
-        _nbsHeader = null;
-        _nbsRegions = null;
-        _nbsOverlay = null;
-
-        var inputRegion = brain.Regions[NbnConstants.InputRegionId];
-        SelectRegion(inputRegion);
-        SelectNeuron(inputRegion.Neurons.FirstOrDefault());
-        SetDesignDirty(true);
-        ResetValidation();
-        UpdateLoadedSummary();
-        Status = normalizedFunctions == 0
-            ? "Random brain created."
-            : $"Random brain created. Normalized {normalizedFunctions} neuron function setting(s) for IO constraints.";
-        RefreshRegionView();
-        ExportCommand.RaiseCanExecuteChanged();
-        ValidateCommand.RaiseCanExecuteChanged();
-        SpawnBrainCommand.RaiseCanExecuteChanged();
-        ResetBrainCommand.RaiseCanExecuteChanged();
+        ApplyLoadedBrainDocument(
+            brain,
+            loadedLabel: brain.Name,
+            status: normalizedFunctions == 0
+                ? "Random brain created."
+                : $"Random brain created. Normalized {normalizedFunctions} neuron function setting(s) for IO constraints.",
+            isDirty: true);
     }
     private static void ApplyRandomNeuronActivityGuardrails(DesignerNeuronViewModel neuron, RandomBrainGenerationOptions options)
     {

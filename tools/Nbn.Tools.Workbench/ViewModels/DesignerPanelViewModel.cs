@@ -28,6 +28,9 @@ using SharedShardPlanMode = Nbn.Shared.Sharding.ShardPlanMode;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
+/// <summary>
+/// Coordinates Workbench Designer document editing, artifact workflows, and spawn preparation.
+/// </summary>
 public sealed partial class DesignerPanelViewModel : ViewModelBase
 {
     private const string NoDocumentStatus = "No file loaded.";
@@ -166,6 +169,9 @@ public sealed partial class DesignerPanelViewModel : ViewModelBase
     private string _spawnShardTargetNeuronsText = "0";
     private readonly RandomBrainOptionsViewModel _randomOptions;
 
+    /// <summary>
+    /// Initializes the Designer panel state and commands.
+    /// </summary>
     public DesignerPanelViewModel(
         ConnectionViewModel connections,
         WorkbenchClient client,
@@ -704,6 +710,71 @@ public sealed partial class DesignerPanelViewModel : ViewModelBase
     public RelayCommand AddAxonByIdCommand { get; }
     public RelayCommand<DesignerEdgeViewModel> FocusEdgeEndpointCommand { get; }
 
+    private void SelectHomeNeuron(DesignerBrainViewModel brain)
+    {
+        var inputRegion = brain.Regions[NbnConstants.InputRegionId];
+        SelectRegion(inputRegion);
+        SelectNeuron(inputRegion.Neurons.FirstOrDefault());
+    }
+
+    private void ApplyLoadedBrainDocument(
+        DesignerBrainViewModel brain,
+        string loadedLabel,
+        string status,
+        bool isDirty,
+        string? documentPath = null)
+    {
+        SetDocumentType(DesignerDocumentType.Nbn);
+        Brain = brain;
+        _snapshotBytes = null;
+        _documentPath = documentPath;
+        _nbsHeader = null;
+        _nbsRegions = null;
+        _nbsOverlay = null;
+
+        SelectHomeNeuron(brain);
+        LoadedSummary = BuildDesignSummary(brain, loadedLabel);
+        Status = status;
+        SetDesignDirty(isDirty);
+        ResetValidation();
+        RefreshRegionView();
+        RaiseDocumentWorkflowCommandStates();
+    }
+
+    private void ApplyLoadedSnapshotDocument(
+        byte[] snapshotBytes,
+        string loadedLabel,
+        NbsHeaderV2 header,
+        IReadOnlyList<NbsRegionSection> regions,
+        NbsOverlaySection? overlay,
+        string status,
+        string? documentPath = null)
+    {
+        SetDocumentType(DesignerDocumentType.Nbs);
+        _snapshotBytes = snapshotBytes;
+        _documentPath = documentPath;
+        _nbsHeader = header;
+        _nbsRegions = regions;
+        _nbsOverlay = overlay;
+        Brain = null;
+        SelectRegion(null);
+        ClearSelection();
+
+        LoadedSummary = BuildNbsSummary(loadedLabel, header, regions, overlay);
+        Status = status;
+        SetDesignDirty(false);
+        ResetValidation();
+        RaiseDocumentWorkflowCommandStates();
+    }
+
+    private void RaiseDocumentWorkflowCommandStates()
+    {
+        ExportCommand.RaiseCanExecuteChanged();
+        ValidateCommand.RaiseCanExecuteChanged();
+        SpawnBrainCommand.RaiseCanExecuteChanged();
+        ResetBrainCommand.RaiseCanExecuteChanged();
+    }
+
     private sealed class DesignerSpawnState
     {
         private DesignerSpawnState(Guid runtimeBrainId)
@@ -727,6 +798,9 @@ public sealed partial class DesignerPanelViewModel : ViewModelBase
         => value < min ? min : value > max ? max : value;
 }
 
+/// <summary>
+/// Tracks which document type is currently loaded into the Designer.
+/// </summary>
 public enum DesignerDocumentType
 {
     None,
@@ -734,6 +808,9 @@ public enum DesignerDocumentType
     Nbs
 }
 
+/// <summary>
+/// Describes how the Designer should ask runtime placement to shard a spawned brain.
+/// </summary>
 public enum ShardPlanMode
 {
     SingleShardPerRegion,
@@ -741,4 +818,7 @@ public enum ShardPlanMode
     MaxNeuronsPerShard
 }
 
+/// <summary>
+/// Labels a shard-plan choice for binding in the Designer UI.
+/// </summary>
 public sealed record ShardPlanOption(string Label, ShardPlanMode Value, string Description);
