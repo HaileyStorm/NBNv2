@@ -9,9 +9,19 @@ using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Shared.Format;
 
+/// <summary>
+/// Reads and writes the canonical binary layouts for <c>.nbn</c> and <c>.nbs</c> artifacts.
+/// </summary>
 public static class NbnBinary
 {
+    /// <summary>
+    /// Fixed byte size of an NBN header.
+    /// </summary>
     public const int NbnHeaderBytes = 1024;
+
+    /// <summary>
+    /// Fixed byte size of an NBS header.
+    /// </summary>
     public const int NbsHeaderBytes = 512;
 
     private const int NbnRegionDirectoryOffset = 0x100;
@@ -28,6 +38,9 @@ public static class NbnBinary
     private const int NbsHomeostasisEnergyTargetScaleOffset = 0x074;
     private const int NbsHomeostasisEnergyProbabilityScaleOffset = 0x078;
 
+    /// <summary>
+    /// Reads an NBN header from canonical binary bytes.
+    /// </summary>
     public static NbnHeaderV2 ReadNbnHeader(ReadOnlySpan<byte> data)
     {
         if (data.Length < NbnHeaderBytes)
@@ -58,6 +71,9 @@ public static class NbnBinary
             regions);
     }
 
+    /// <summary>
+    /// Writes an NBN header to canonical binary bytes.
+    /// </summary>
     public static void WriteNbnHeader(Span<byte> destination, NbnHeaderV2 header)
     {
         if (destination.Length < NbnHeaderBytes)
@@ -95,6 +111,9 @@ public static class NbnBinary
         }
     }
 
+    /// <summary>
+    /// Reads a single NBN region section from canonical binary bytes.
+    /// </summary>
     public static NbnRegionSection ReadNbnRegionSection(ReadOnlySpan<byte> data, ulong offset)
     {
         if (offset > int.MaxValue)
@@ -160,6 +179,9 @@ public static class NbnBinary
             axonRecords);
     }
 
+    /// <summary>
+    /// Writes a single NBN region section to canonical binary bytes.
+    /// </summary>
     public static void WriteNbnRegionSection(Span<byte> destination, NbnRegionSection section)
     {
         var requiredBytes = section.ByteLength;
@@ -222,6 +244,9 @@ public static class NbnBinary
         }
     }
 
+    /// <summary>
+    /// Writes a complete NBN artifact from a header and its region sections.
+    /// </summary>
     public static byte[] WriteNbn(NbnHeaderV2 header, IReadOnlyList<NbnRegionSection> sections)
     {
         if (header.Regions.Length != NbnConstants.RegionCount)
@@ -302,6 +327,9 @@ public static class NbnBinary
         return buffer;
     }
 
+    /// <summary>
+    /// Reads an NBS header from canonical binary bytes.
+    /// </summary>
     public static NbsHeaderV2 ReadNbsHeader(ReadOnlySpan<byte> data)
     {
         if (data.Length < NbsHeaderBytes)
@@ -349,6 +377,9 @@ public static class NbnBinary
             homeostasisConfig);
     }
 
+    /// <summary>
+    /// Writes an NBS header to canonical binary bytes.
+    /// </summary>
     public static void WriteNbsHeader(Span<byte> destination, NbsHeaderV2 header)
     {
         if (destination.Length < NbsHeaderBytes)
@@ -393,6 +424,9 @@ public static class NbnBinary
         BinaryPrimitives.WriteSingleLittleEndian(destination.Slice(NbsHomeostasisEnergyProbabilityScaleOffset, 4), header.HomeostasisConfig.EnergyProbabilityScale);
     }
 
+    /// <summary>
+    /// Reads an NBS region section from canonical binary bytes.
+    /// </summary>
     public static NbsRegionSection ReadNbsRegionSection(ReadOnlySpan<byte> data, int offset, bool includeEnabledBitset)
     {
         if (offset < 0 || offset >= data.Length)
@@ -432,6 +466,9 @@ public static class NbnBinary
         return new NbsRegionSection(regionId, neuronSpan, bufferCodes, enabledBitset);
     }
 
+    /// <summary>
+    /// Writes an NBS region section to canonical binary bytes.
+    /// </summary>
     public static void WriteNbsRegionSection(Span<byte> destination, NbsRegionSection section, bool includeEnabledBitset)
     {
         var requiredBytes = GetNbsRegionSectionSize(section.NeuronSpan, includeEnabledBitset);
@@ -473,6 +510,9 @@ public static class NbnBinary
         }
     }
 
+    /// <summary>
+    /// Reads the optional NBS overlay section from canonical binary bytes.
+    /// </summary>
     public static NbsOverlaySection ReadNbsOverlaySection(ReadOnlySpan<byte> data, int offset)
     {
         if (offset < 0 || offset >= data.Length)
@@ -505,6 +545,9 @@ public static class NbnBinary
         return new NbsOverlaySection(records, expectedLength);
     }
 
+    /// <summary>
+    /// Writes the optional NBS overlay section to canonical binary bytes.
+    /// </summary>
     public static void WriteNbsOverlaySection(Span<byte> destination, IReadOnlyList<NbsOverlayRecord> overlays)
     {
         var requiredBytes = GetNbsOverlaySectionSize(overlays.Count);
@@ -529,6 +572,9 @@ public static class NbnBinary
         }
     }
 
+    /// <summary>
+    /// Writes a complete NBS artifact from a header, region sections, and optional overlays.
+    /// </summary>
     public static byte[] WriteNbs(
         NbsHeaderV2 header,
         IReadOnlyList<NbsRegionSection> regions,
@@ -572,12 +618,18 @@ public static class NbnBinary
         return buffer;
     }
 
+    /// <summary>
+    /// Computes the byte size of an NBN region section for the supplied counts.
+    /// </summary>
     public static int GetNbnRegionSectionSize(uint neuronSpan, ulong totalAxons, uint stride)
     {
         var checkpointCount = GetCheckpointCount(neuronSpan, stride);
         return checked(24 + ((int)checkpointCount * 8) + ((int)neuronSpan * NbnConstants.NeuronRecordBytes) + ((int)totalAxons * NbnConstants.AxonRecordBytes));
     }
 
+    /// <summary>
+    /// Computes the byte size of an NBS region section for the supplied span.
+    /// </summary>
     public static int GetNbsRegionSectionSize(uint neuronSpan, bool includeEnabledBitset)
     {
         var size = 8 + ((int)neuronSpan * 2);
@@ -589,11 +641,17 @@ public static class NbnBinary
         return size;
     }
 
+    /// <summary>
+    /// Computes the byte size of an NBS overlay section for the supplied record count.
+    /// </summary>
     public static int GetNbsOverlaySectionSize(int overlayCount)
     {
         return checked(4 + (overlayCount * 12));
     }
 
+    /// <summary>
+    /// Builds checkpoint offsets for a region section from neuron-local axon counts.
+    /// </summary>
     public static ulong[] BuildCheckpoints(IReadOnlyList<NeuronRecord> neurons, uint stride)
     {
         if (stride == 0)

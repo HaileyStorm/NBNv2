@@ -3,22 +3,64 @@ using Proto;
 
 namespace Nbn.Shared.HiveMind;
 
+/// <summary>
+/// Starts the global HiveMind tick loop.
+/// </summary>
 public sealed record StartTickLoop;
+
+/// <summary>
+/// Stops the global HiveMind tick loop.
+/// </summary>
 public sealed record StopTickLoop;
 
+/// <summary>
+/// Registers a brain and its root actors with the HiveMind.
+/// </summary>
 public sealed record RegisterBrain(Guid BrainId, PID? BrainRootPid = null, PID? SignalRouterPid = null);
+
+/// <summary>
+/// Updates the signal router PID for a registered brain.
+/// </summary>
 public sealed record UpdateBrainSignalRouter(Guid BrainId, PID SignalRouterPid);
+
+/// <summary>
+/// Unregisters a brain from the HiveMind routing table.
+/// </summary>
 public sealed record UnregisterBrain(Guid BrainId);
 
+/// <summary>
+/// Registers a region shard for a brain.
+/// </summary>
 public sealed record RegisterShard(Guid BrainId, int RegionId, int ShardIndex, PID ShardPid);
+
+/// <summary>
+/// Unregisters a region shard for a brain.
+/// </summary>
 public sealed record UnregisterShard(Guid BrainId, int RegionId, int ShardIndex);
 
+/// <summary>
+/// Requests that a running brain pause execution.
+/// </summary>
 public sealed record PauseBrainRequest(Guid BrainId, string? Reason);
+
+/// <summary>
+/// Requests that a paused brain resume execution.
+/// </summary>
 public sealed record ResumeBrainRequest(Guid BrainId);
 
+/// <summary>
+/// Requests the current HiveMind status snapshot.
+/// </summary>
 public sealed record GetHiveMindStatus;
+
+/// <summary>
+/// Requests the current routing information for a brain.
+/// </summary>
 public sealed record GetBrainRouting(Guid BrainId);
 
+/// <summary>
+/// Summarizes the current HiveMind control-plane state.
+/// </summary>
 public sealed record HiveMindStatus(
     ulong LastCompletedTickId,
     bool TickLoopEnabled,
@@ -29,6 +71,9 @@ public sealed record HiveMindStatus(
     int RegisteredBrains,
     int RegisteredShards);
 
+/// <summary>
+/// Describes the currently registered routing actors and shard counts for a brain.
+/// </summary>
 public sealed record BrainRoutingInfo(
     Guid BrainId,
     PID? BrainRootPid,

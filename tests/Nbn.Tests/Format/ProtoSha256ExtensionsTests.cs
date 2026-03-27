@@ -27,6 +27,17 @@ public class ProtoSha256ExtensionsTests
     }
 
     [Fact]
+    public void TryHelpers_FailOnNull()
+    {
+        Nbn.Proto.Sha256? proto = null;
+
+        Assert.False(proto.TryToByteArray(out var bytes));
+        Assert.Empty(bytes);
+        Assert.False(proto.TryToHex(out var hex));
+        Assert.Equal(string.Empty, hex);
+    }
+
+    [Fact]
     public void Sha256_HexRoundTrips()
     {
         var bytes = Enumerable.Range(0, ProtoSha256Extensions.Sha256Length).Select(i => (byte)(255 - i)).ToArray();

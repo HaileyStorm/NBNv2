@@ -3,6 +3,9 @@ using Proto;
 
 namespace Nbn.Shared;
 
+/// <summary>
+/// Publishes, resolves, and subscribes to canonical service endpoint settings.
+/// </summary>
 public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(5);
@@ -14,20 +17,33 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     private PID? _subscriberPid;
     private HashSet<string>? _watchedKeys;
 
+    /// <summary>
+    /// Creates a discovery client bound to a SettingsMonitor actor PID.
+    /// </summary>
     public ServiceEndpointDiscoveryClient(ActorSystem system, PID settingsPid)
     {
         _system = system ?? throw new ArgumentNullException(nameof(system));
         _settingsPid = settingsPid ?? throw new ArgumentNullException(nameof(settingsPid));
     }
 
+    /// <summary>
+    /// Raised when a watched setting resolves to a valid endpoint registration.
+    /// </summary>
     public event Action<ServiceEndpointRegistration>? EndpointChanged;
+
+    /// <summary>
+    /// Raised for all watched setting updates, including removals and parse failures.
+    /// </summary>
     public event Action<ServiceEndpointObservation>? EndpointObserved;
 
+    /// <summary>
+    /// Creates a discovery client when the SettingsMonitor location is complete.
+    /// </summary>
     public static ServiceEndpointDiscoveryClient? Create(
         ActorSystem? system,
         string? settingsHost,
         int settingsPort,
-        string settingsName)
+        string? settingsName)
     {
         if (system is null)
         {
@@ -44,11 +60,14 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             new PID($"{settingsHost}:{settingsPort}", settingsName));
     }
 
+    /// <summary>
+    /// Attempts to publish a canonical service endpoint registration.
+    /// </summary>
     public static async Task<bool> TryPublishAsync(
         ActorSystem? system,
         string? settingsHost,
         int settingsPort,
-        string settingsName,
+        string? settingsName,
         string settingKey,
         ServiceEndpoint endpoint,
         CancellationToken cancellationToken = default)
@@ -70,6 +89,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Publishes the supplied endpoint under a canonical settings key.
+    /// </summary>
     public async Task PublishAsync(
         string settingKey,
         ServiceEndpoint endpoint,
@@ -91,8 +113,11 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             timeoutCts.Token).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Resolves a single service endpoint registration by key.
+    /// </summary>
     public async Task<ServiceEndpointRegistration?> ResolveAsync(
-        string settingKey,
+        string? settingKey,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(settingKey))
@@ -118,6 +143,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             : null;
     }
 
+    /// <summary>
+    /// Resolves all known service endpoint registrations returned by a list request.
+    /// </summary>
     public async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> ResolveFromListAsync(
         CancellationToken cancellationToken = default)
     {
@@ -146,6 +174,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         return resolved;
     }
 
+    /// <summary>
+    /// Resolves the current registration for every canonical service endpoint key.
+    /// </summary>
     public async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> ResolveKnownAsync(
         CancellationToken cancellationToken = default)
     {
@@ -172,6 +203,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         return resolved;
     }
 
+    /// <summary>
+    /// Subscribes to updates for the supplied keys, or all canonical keys when none are provided.
+    /// </summary>
     public async Task SubscribeAsync(
         IEnumerable<string>? keys = null,
         CancellationToken cancellationToken = default)
@@ -196,6 +230,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         });
     }
 
+    /// <summary>
+    /// Stops watching for endpoint updates and tears down the subscriber actor.
+    /// </summary>
     public Task UnsubscribeAsync()
     {
         PID? subscriberPid;
@@ -220,6 +257,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Unsubscribes from endpoint updates and releases the relay actor.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         await UnsubscribeAsync().ConfigureAwait(false);

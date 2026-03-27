@@ -4,10 +4,19 @@ using Nbn.Proto;
 
 namespace Nbn.Shared;
 
+/// <summary>
+/// Converts shared SHA-256 values between protobuf wrappers, raw bytes, and hexadecimal strings.
+/// </summary>
 public static class ProtoSha256Extensions
 {
+    /// <summary>
+    /// The required byte length of a SHA-256 digest.
+    /// </summary>
     public const int Sha256Length = 32;
 
+    /// <summary>
+    /// Extracts the raw SHA-256 bytes from a protobuf wrapper.
+    /// </summary>
     public static byte[] ToByteArray(this Sha256 sha256)
     {
         if (sha256 is null)
@@ -23,7 +32,10 @@ public static class ProtoSha256Extensions
         return sha256.Value.ToByteArray();
     }
 
-    public static bool TryToByteArray(this Sha256 sha256, out byte[] bytes)
+    /// <summary>
+    /// Attempts to extract the raw SHA-256 bytes from a protobuf wrapper.
+    /// </summary>
+    public static bool TryToByteArray(this Sha256? sha256, out byte[] bytes)
     {
         if (sha256 is null || sha256.Value is null || sha256.Value.Length != Sha256Length)
         {
@@ -35,6 +47,9 @@ public static class ProtoSha256Extensions
         return true;
     }
 
+    /// <summary>
+    /// Wraps raw SHA-256 bytes for protobuf transport.
+    /// </summary>
     public static Sha256 ToProtoSha256(this byte[] bytes)
     {
         if (bytes is null)
@@ -50,6 +65,9 @@ public static class ProtoSha256Extensions
         return new Sha256 { Value = ByteString.CopyFrom(bytes) };
     }
 
+    /// <summary>
+    /// Converts a protobuf SHA-256 wrapper to hexadecimal.
+    /// </summary>
     public static string ToHex(this Sha256 sha256, bool lowerCase = true)
     {
         if (sha256 is null)
@@ -62,7 +80,10 @@ public static class ProtoSha256Extensions
         return lowerCase ? hex.ToLowerInvariant() : hex;
     }
 
-    public static bool TryToHex(this Sha256 sha256, out string hex, bool lowerCase = true)
+    /// <summary>
+    /// Attempts to convert a protobuf SHA-256 wrapper to hexadecimal.
+    /// </summary>
+    public static bool TryToHex(this Sha256? sha256, out string hex, bool lowerCase = true)
     {
         if (sha256 is null)
         {
@@ -81,6 +102,9 @@ public static class ProtoSha256Extensions
         return true;
     }
 
+    /// <summary>
+    /// Parses a hexadecimal SHA-256 string into a protobuf wrapper.
+    /// </summary>
     public static Sha256 FromHex(string hex)
     {
         if (!TryParseHexBytes(hex, out var bytes))
@@ -91,6 +115,9 @@ public static class ProtoSha256Extensions
         return bytes.ToProtoSha256();
     }
 
+    /// <summary>
+    /// Attempts to parse a hexadecimal SHA-256 string into a protobuf wrapper.
+    /// </summary>
     public static bool TryFromHex(string? hex, out Sha256 sha256)
     {
         if (!TryParseHexBytes(hex, out var bytes))
@@ -103,6 +130,9 @@ public static class ProtoSha256Extensions
         return true;
     }
 
+    /// <summary>
+    /// Attempts to parse raw SHA-256 bytes from a hexadecimal string.
+    /// </summary>
     public static bool TryParseHexBytes(string? hex, out byte[] bytes)
     {
         bytes = Array.Empty<byte>();
@@ -114,7 +144,7 @@ public static class ProtoSha256Extensions
         var trimmed = hex.Trim();
         if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
         {
-            trimmed = trimmed.Substring(2);
+            trimmed = trimmed[2..];
         }
 
         if (trimmed.Length != Sha256Length * 2)

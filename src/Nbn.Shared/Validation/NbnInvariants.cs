@@ -2,20 +2,38 @@ using System;
 
 namespace Nbn.Shared.Validation;
 
+/// <summary>
+/// Provides shared invariant checks for region identifiers, neuron spans, and axon connectivity.
+/// </summary>
 public static class NbnInvariants
 {
+    /// <summary>
+    /// Determines whether a region identifier is within the supported 0..31 range.
+    /// </summary>
     public static bool IsValidRegionId(int regionId) =>
         regionId >= NbnConstants.RegionMinId && regionId <= NbnConstants.RegionMaxId;
 
+    /// <summary>
+    /// Determines whether a region span fits in the on-disk 22-bit target range.
+    /// </summary>
     public static bool IsValidRegionSpan(int neuronSpan) =>
         neuronSpan >= 0 && neuronSpan <= NbnConstants.MaxAxonTargetNeuronId;
 
+    /// <summary>
+    /// Determines whether a runtime neuron identifier fits in the 27-bit address space.
+    /// </summary>
     public static bool IsValidAddressNeuronId(int neuronId) =>
         neuronId >= 0 && neuronId <= NbnConstants.MaxAddressNeuronId;
 
+    /// <summary>
+    /// Determines whether an axon target neuron identifier fits in the 22-bit file-format range.
+    /// </summary>
     public static bool IsValidAxonTargetNeuronId(int neuronId) =>
         neuronId >= 0 && neuronId <= NbnConstants.MaxAxonTargetNeuronId;
 
+    /// <summary>
+    /// Validates a neuron record against region-specific invariants.
+    /// </summary>
     public static bool TryValidateNeuronRecord(Packing.NeuronRecord record, int regionId, out string? error)
     {
         if (!IsValidRegionId(regionId))
@@ -46,6 +64,9 @@ public static class NbnInvariants
         return true;
     }
 
+    /// <summary>
+    /// Validates a single axon record against shared routing invariants.
+    /// </summary>
     public static bool TryValidateAxonRecord(
         Packing.AxonRecord record,
         int sourceRegionId,
@@ -92,6 +113,9 @@ public static class NbnInvariants
         return true;
     }
 
+    /// <summary>
+    /// Validates ordering, uniqueness, and per-record invariants for an axon list.
+    /// </summary>
     public static bool TryValidateAxonList(
         ReadOnlySpan<Packing.AxonRecord> axons,
         int sourceRegionId,

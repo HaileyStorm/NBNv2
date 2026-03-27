@@ -43,4 +43,13 @@ public class ProtoUuidExtensionsTests
         Assert.False(uuid.TryToGuid(out var guid));
         Assert.Equal(Guid.Empty, guid);
     }
+
+    [Fact]
+    public void TryToGuid_FailsOnNull()
+    {
+        Uuid? uuid = null;
+
+        Assert.False(uuid.TryToGuid(out var guid));
+        Assert.Equal(Guid.Empty, guid);
+    }
 }

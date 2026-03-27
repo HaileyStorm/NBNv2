@@ -6,10 +6,16 @@ using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Shared.Validation;
 
+/// <summary>
+/// Validates parsed <c>.nbn</c> and <c>.nbs</c> content against shared format invariants.
+/// </summary>
 public static class NbnBinaryValidator
 {
     private const uint NbsAllowedFlagsMask = 0x1Fu;
 
+    /// <summary>
+    /// Validates an NBN header and its region sections.
+    /// </summary>
     public static NbnValidationResult ValidateNbn(NbnHeaderV2 header, IReadOnlyList<NbnRegionSection> regions)
     {
         var result = new NbnValidationResult();
@@ -128,6 +134,9 @@ public static class NbnBinaryValidator
         return result;
     }
 
+    /// <summary>
+    /// Validates an NBS header, region payloads, and optional overlay section.
+    /// </summary>
     public static NbnValidationResult ValidateNbs(
         NbsHeaderV2 header,
         IReadOnlyList<NbsRegionSection> regions,
