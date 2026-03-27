@@ -2,6 +2,9 @@ using System.Security.Cryptography;
 
 namespace Nbn.Runtime.Artifacts;
 
+/// <summary>
+/// Stores artifacts in a local content-addressed chunk store backed by SQLite metadata.
+/// </summary>
 public sealed class LocalArtifactStore : IArtifactStore
 {
     private static readonly TimeSpan ChunkMetadataResolutionTimeout = TimeSpan.FromSeconds(30);
@@ -13,6 +16,9 @@ public sealed class LocalArtifactStore : IArtifactStore
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialized;
 
+    /// <summary>
+    /// Initializes a local artifact store rooted at the provided artifact directory.
+    /// </summary>
     public LocalArtifactStore(ArtifactStoreOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -21,9 +27,10 @@ public sealed class LocalArtifactStore : IArtifactStore
         _database = new ArtifactStoreDatabase(_options.DatabasePath);
     }
 
+    /// <inheritdoc />
     public async Task<ArtifactManifest> StoreAsync(Stream content, string mediaType, ArtifactStoreWriteOptions? options = null, CancellationToken cancellationToken = default)
     {
-        await EnsureInitializedAsync(cancellationToken);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
         if (content is null)
         {
@@ -55,13 +62,13 @@ public sealed class LocalArtifactStore : IArtifactStore
             var chunkHash = Sha256Hash.Compute(chunk.Span);
             var writeResult = PrepareChunk(chunk);
 
-            var wrote = await _chunkStore.TryWriteChunkAsync(chunkHash, writeResult.Payload, cancellationToken);
+            var wrote = await _chunkStore.TryWriteChunkAsync(chunkHash, writeResult.Payload, cancellationToken).ConfigureAwait(false);
             var compression = writeResult.Compression;
             var storedLength = writeResult.StoredLength;
 
             if (!wrote)
             {
-                var metadata = await ResolveChunkMetadataAsync(chunkHash, chunk, cancellationToken);
+                var metadata = await ResolveChunkMetadataAsync(chunkHash, chunk, cancellationToken).ConfigureAwait(false);
                 if (metadata is null)
                 {
                     throw new InvalidOperationException($"Chunk {chunkHash} exists on disk but metadata is missing.");
@@ -78,31 +85,34 @@ public sealed class LocalArtifactStore : IArtifactStore
         var manifest = new ArtifactManifest(artifactId, mediaType, byteLength, chunks, options?.RegionIndex);
         var manifestHash = manifest.ComputeManifestHash();
 
-        var inserted = await _database.TryInsertArtifactAsync(manifest, manifestHash, DateTimeOffset.UtcNow, cancellationToken);
+        var inserted = await _database.TryInsertArtifactAsync(manifest, manifestHash, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
         if (!inserted)
         {
-            var existing = await _database.ResolveExistingManifestAsync(manifest, cancellationToken);
+            var existing = await _database.ResolveExistingManifestAsync(manifest, cancellationToken).ConfigureAwait(false);
             return existing ?? manifest;
         }
 
         return manifest;
     }
 
+    /// <inheritdoc />
     public async Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
-        await EnsureInitializedAsync(cancellationToken);
-        return await _database.TryGetManifestAsync(artifactId, cancellationToken);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        return await _database.TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
-        await EnsureInitializedAsync(cancellationToken);
-        return await _database.ArtifactExistsAsync(artifactId, cancellationToken);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+        return await _database.ArtifactExistsAsync(artifactId, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
-        var manifest = await TryGetManifestAsync(artifactId, cancellationToken);
+        var manifest = await TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
         if (manifest is null)
         {
             return null;
@@ -111,6 +121,7 @@ public sealed class LocalArtifactStore : IArtifactStore
         return OpenArtifactStream(manifest);
     }
 
+    /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactRangeAsync(Sha256Hash artifactId, long offset, long length, CancellationToken cancellationToken = default)
     {
         ArtifactRangeSupport.ValidateRange(offset, length);
@@ -134,6 +145,9 @@ public sealed class LocalArtifactStore : IArtifactStore
         return new ArtifactChunkRangeStream(_chunkStore, manifest.Chunks, offset, length);
     }
 
+    /// <summary>
+    /// Opens a readable stream for a manifest that is already known to exist locally.
+    /// </summary>
     public Stream OpenArtifactStream(ArtifactManifest manifest)
     {
         if (manifest is null)
@@ -172,7 +186,7 @@ public sealed class LocalArtifactStore : IArtifactStore
                 return null;
             }
 
-            await Task.Delay(ChunkMetadataWaitDelay, cancellationToken);
+            await Task.Delay(ChunkMetadataWaitDelay, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -189,7 +203,7 @@ public sealed class LocalArtifactStore : IArtifactStore
                 return null;
             }
 
-            var storedBytes = await File.ReadAllBytesAsync(path, cancellationToken);
+            var storedBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
             if (storedBytes.Length == chunk.Length
                 && storedBytes.AsSpan().SequenceEqual(chunk.Span))
             {
@@ -224,7 +238,7 @@ public sealed class LocalArtifactStore : IArtifactStore
             return;
         }
 
-        await _initLock.WaitAsync(cancellationToken);
+        await _initLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (_initialized)
@@ -234,7 +248,7 @@ public sealed class LocalArtifactStore : IArtifactStore
 
             Directory.CreateDirectory(_options.RootPath);
             Directory.CreateDirectory(_options.ChunkRootPath);
-            await _database.InitializeAsync(cancellationToken);
+            await _database.InitializeAsync(cancellationToken).ConfigureAwait(false);
             _initialized = true;
         }
         finally

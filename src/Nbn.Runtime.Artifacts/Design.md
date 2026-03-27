@@ -38,3 +38,5 @@ Shared-root contention is supported for the local CAS store on a single machine:
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.
+
+Keep the built-in HTTP client and reachable publisher on the same manifest/header codec so protocol-only cleanups do not drift the client/server contract.

@@ -1,15 +1,24 @@
 namespace Nbn.Runtime.Artifacts;
 
+/// <summary>
+/// Resolves artifact store URIs into local stores, registered adapters, or built-in HTTP-backed stores.
+/// </summary>
 public sealed class ArtifactStoreResolver
 {
     private readonly ArtifactStoreResolverOptions _options;
     private readonly Dictionary<string, IArtifactStore> _stores = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Initializes a resolver using the provided local-root and remote-cache settings.
+    /// </summary>
     public ArtifactStoreResolver(ArtifactStoreResolverOptions? options = null)
     {
         _options = options ?? new ArtifactStoreResolverOptions();
     }
 
+    /// <summary>
+    /// Resolves the store for the provided URI, reusing cached instances for identical normalized targets.
+    /// </summary>
     public IArtifactStore Resolve(string? storeUri)
     {
         var cacheKey = BuildCacheKey(storeUri);
@@ -23,6 +32,9 @@ public sealed class ArtifactStoreResolver
         return store;
     }
 
+    /// <summary>
+    /// Returns a human-readable description of the resolved store target.
+    /// </summary>
     public string Describe(string? storeUri)
     {
         if (TryGetLocalStoreRoot(storeUri, _options.LocalStoreRootPath, out var localRootPath))
@@ -33,6 +45,9 @@ public sealed class ArtifactStoreResolver
         return NormalizeNonFileStoreUri(storeUri);
     }
 
+    /// <summary>
+    /// Returns the explicit store URI when present or the default local root path when the caller omitted one.
+    /// </summary>
     public string ResolveStoreUriOrDefault(string? storeUri)
     {
         if (!string.IsNullOrWhiteSpace(storeUri))
@@ -49,9 +64,15 @@ public sealed class ArtifactStoreResolver
         return _options.LocalStoreRootPath;
     }
 
+    /// <summary>
+    /// Returns <see langword="true"/> when the value is a non-file absolute store URI.
+    /// </summary>
     public static bool IsNonFileStoreUri(string? storeUri)
         => TryParseNonFileStoreUri(storeUri, out _);
 
+    /// <summary>
+    /// Resolves relative paths, blank values, and <c>file://</c> URIs to a local store root path.
+    /// </summary>
     public static bool TryGetLocalStoreRoot(string? storeUri, string defaultLocalStoreRootPath, out string localStoreRootPath)
     {
         if (string.IsNullOrWhiteSpace(defaultLocalStoreRootPath))

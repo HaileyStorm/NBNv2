@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -15,14 +14,25 @@ using Nbn.Shared;
 
 namespace Nbn.Runtime.Artifacts;
 
+/// <summary>
+/// Describes the result of publishing or promoting an artifact into a reachable HTTP store.
+/// </summary>
+/// <param name="ArtifactRef">The reachable artifact reference returned to the caller.</param>
+/// <param name="BaseUri">The hosted artifact-service base URI.</param>
+/// <param name="HostedLocally"><see langword="true"/> when this publisher started the reachable store locally.</param>
 public sealed record ReachableArtifactPublication(ArtifactRef ArtifactRef, Uri BaseUri, bool HostedLocally);
 
+/// <summary>
+/// Hosts local artifact roots over the built-in HTTP artifact-service contract for remote runtime consumers.
+/// </summary>
 public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, HostedStore> _stores = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Publishes the provided bytes into a hosted local store and returns a reachable artifact reference.
+    /// </summary>
     public async Task<ReachableArtifactPublication> PublishAsync(
         byte[] bytes,
         string mediaType,
@@ -70,6 +80,9 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
         return new ReachableArtifactPublication(artifactRef, hosted.BaseUri, HostedLocally: true);
     }
 
+    /// <summary>
+    /// Re-hosts a caller-local artifact in a reachable HTTP store when the source reference is not already HTTP-based.
+    /// </summary>
     public async Task<ReachableArtifactPublication> PromoteAsync(
         ArtifactRef artifactRef,
         string defaultLocalStoreRootPath,
@@ -115,6 +128,7 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
         HostedStore[] hostedStores;
@@ -135,6 +149,9 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Returns <see langword="true"/> when the artifact reference already points at an HTTP(S) artifact store.
+    /// </summary>
     public static bool IsDirectHttpStoreUri(string? storeUri)
         => Uri.TryCreate(storeUri, UriKind.Absolute, out var uri)
            && !uri.IsFile
@@ -234,7 +251,7 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
                 }
 
                 mediaType = mediaType.Split(';', 2)[0].Trim();
-                var options = TryParseWriteOptions(context.Request.Headers[HttpArtifactStoreHeaderNames.RegionIndex]);
+                var options = ArtifactStoreHttpPayloads.ParseWriteOptions(context.Request.Headers[HttpArtifactStoreHeaderNames.RegionIndex]);
                 var manifest = await store.StoreAsync(
                         context.Request.Body,
                         mediaType,
@@ -243,7 +260,7 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
                     .ConfigureAwait(false);
                 context.Response.StatusCode = StatusCodes.Status201Created;
                 context.Response.ContentType = "application/json";
-                await WriteJsonAsync(context.Response, ManifestDto.FromManifest(manifest), context.RequestAborted).ConfigureAwait(false);
+                await WriteManifestAsync(context.Response, manifest, context.RequestAborted).ConfigureAwait(false);
             });
 
         app.MapGet(
@@ -273,7 +290,7 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
 
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 context.Response.ContentType = "application/json";
-                await WriteJsonAsync(context.Response, ManifestDto.FromManifest(manifest), context.RequestAborted).ConfigureAwait(false);
+                await WriteManifestAsync(context.Response, manifest, context.RequestAborted).ConfigureAwait(false);
             });
 
         app.MapGet(
@@ -396,27 +413,6 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
         return new Uri(address, UriKind.Absolute);
     }
 
-    private static ArtifactStoreWriteOptions? TryParseWriteOptions(string? encodedRegionIndex)
-    {
-        if (string.IsNullOrWhiteSpace(encodedRegionIndex))
-        {
-            return null;
-        }
-
-        var json = Encoding.UTF8.GetString(Convert.FromBase64String(encodedRegionIndex.Trim()));
-        var entries = JsonSerializer.Deserialize<List<ArtifactRegionIndexEntry>>(json, JsonOptions);
-        return entries is { Count: > 0 }
-            ? new ArtifactStoreWriteOptions { RegionIndex = entries }
-            : null;
-    }
-
-    private static async Task WriteJsonAsync(HttpResponse response, object value, CancellationToken cancellationToken)
-    {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
-        response.ContentLength = bytes.Length;
-        await response.Body.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-    }
-
     private static async Task WriteErrorAsync(
         HttpResponse response,
         int statusCode,
@@ -426,6 +422,16 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
         response.StatusCode = statusCode;
         response.ContentType = "text/plain";
         var bytes = Encoding.UTF8.GetBytes(message);
+        response.ContentLength = bytes.Length;
+        await response.Body.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task WriteManifestAsync(
+        HttpResponse response,
+        ArtifactManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var bytes = ArtifactStoreHttpPayloads.SerializeManifest(manifest);
         response.ContentLength = bytes.Length;
         await response.Body.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }
@@ -465,57 +471,4 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
         WebApplication App,
         LocalArtifactStore Store,
         Uri BaseUri);
-
-    private sealed class ManifestDto
-    {
-        public string ArtifactId { get; set; } = string.Empty;
-        public string MediaType { get; set; } = string.Empty;
-        public long ByteLength { get; set; }
-        public List<ChunkDto> Chunks { get; set; } = [];
-        public List<RegionIndexDto> RegionIndex { get; set; } = [];
-
-        public static ManifestDto FromManifest(ArtifactManifest manifest)
-            => new()
-            {
-                ArtifactId = manifest.ArtifactId.ToHex(),
-                MediaType = manifest.MediaType,
-                ByteLength = manifest.ByteLength,
-                Chunks = manifest.Chunks
-                    .Select(static chunk => new ChunkDto
-                    {
-                        Hash = chunk.Hash.ToHex(),
-                        UncompressedLength = chunk.UncompressedLength,
-                        StoredLength = chunk.StoredLength,
-                        Compression = chunk.Compression switch
-                        {
-                            ChunkCompressionKind.Zstd => "zstd",
-                            _ => "none"
-                        }
-                    })
-                    .ToList(),
-                RegionIndex = manifest.RegionIndex
-                    .Select(static entry => new RegionIndexDto
-                    {
-                        RegionId = entry.RegionId,
-                        Offset = entry.Offset,
-                        Length = entry.Length
-                    })
-                    .ToList()
-            };
-    }
-
-    private sealed class ChunkDto
-    {
-        public string Hash { get; set; } = string.Empty;
-        public int UncompressedLength { get; set; }
-        public int StoredLength { get; set; }
-        public string Compression { get; set; } = string.Empty;
-    }
-
-    private sealed class RegionIndexDto
-    {
-        public int RegionId { get; set; }
-        public long Offset { get; set; }
-        public long Length { get; set; }
-    }
 }

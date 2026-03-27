@@ -1,17 +1,24 @@
 namespace Nbn.Runtime.Artifacts;
 
+/// <summary>
+/// Wraps an upstream store with a node-local cache for manifests, full artifacts, and cached ranges.
+/// </summary>
 public sealed class CachingArtifactStore : IArtifactStore
 {
     private readonly IArtifactStore _upstream;
     private readonly LocalArtifactCache _cache;
     private readonly Dictionary<string, ArtifactManifest> _manifestCache = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Initializes a caching wrapper around the provided upstream store.
+    /// </summary>
     public CachingArtifactStore(IArtifactStore upstream, ArtifactCacheOptions cacheOptions)
     {
         _upstream = upstream ?? throw new ArgumentNullException(nameof(upstream));
         _cache = new LocalArtifactCache(upstream, cacheOptions ?? throw new ArgumentNullException(nameof(cacheOptions)));
     }
 
+    /// <inheritdoc />
     public async Task<ArtifactManifest> StoreAsync(
         Stream content,
         string mediaType,
@@ -25,6 +32,7 @@ public sealed class CachingArtifactStore : IArtifactStore
         return manifest;
     }
 
+    /// <inheritdoc />
     public async Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
         var manifest = await _upstream.TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
@@ -39,6 +47,7 @@ public sealed class CachingArtifactStore : IArtifactStore
             : null;
     }
 
+    /// <inheritdoc />
     public async Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
         var cachedEntry = await _cache.TryGetAsync(artifactId, cancellationToken).ConfigureAwait(false);
@@ -50,6 +59,7 @@ public sealed class CachingArtifactStore : IArtifactStore
         return await _upstream.ContainsAsync(artifactId, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
         var cachedEntry = await _cache.TryGetAsync(artifactId, cancellationToken).ConfigureAwait(false);
@@ -71,6 +81,7 @@ public sealed class CachingArtifactStore : IArtifactStore
             : await _upstream.TryOpenArtifactAsync(artifactId, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactRangeAsync(Sha256Hash artifactId, long offset, long length, CancellationToken cancellationToken = default)
     {
         ArtifactRangeSupport.ValidateRange(offset, length);

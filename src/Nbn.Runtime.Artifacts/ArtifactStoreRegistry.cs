@@ -3,6 +3,9 @@ using System.Text.Json;
 
 namespace Nbn.Runtime.Artifacts;
 
+/// <summary>
+/// Stores in-process artifact-store registrations and resolves environment-mapped or built-in backends.
+/// </summary>
 public static class ArtifactStoreRegistry
 {
     private sealed record Registration(IArtifactStore Store, bool EnableNodeLocalCache);
@@ -12,6 +15,9 @@ public static class ArtifactStoreRegistry
     private static string? _lastEnvironmentMapRaw;
     private static IReadOnlyDictionary<string, string> _lastEnvironmentMap = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Registers a store for the normalized URI and returns a lease that removes that exact registration on disposal.
+    /// </summary>
     public static IDisposable Register(string storeUri, IArtifactStore store, bool enableNodeLocalCache = true)
     {
         if (store is null)
@@ -25,12 +31,18 @@ public static class ArtifactStoreRegistry
         return new RegistrationLease(key, registration);
     }
 
+    /// <summary>
+    /// Removes the explicit registration for the normalized URI when one exists.
+    /// </summary>
     public static bool Unregister(string storeUri)
     {
         var key = NormalizeStoreUri(storeUri);
         return Registrations.TryRemove(key, out _);
     }
 
+    /// <summary>
+    /// Resolves the URI from explicit registrations, <c>NBN_ARTIFACT_STORE_URI_MAP</c>, or the built-in HTTP(S) backend.
+    /// </summary>
     public static bool TryResolve(string storeUri, out IArtifactStore store, out bool enableNodeLocalCache)
     {
         var key = NormalizeStoreUri(storeUri);
@@ -57,6 +69,9 @@ public static class ArtifactStoreRegistry
         return false;
     }
 
+    /// <summary>
+    /// Clears explicit in-process registrations.
+    /// </summary>
     public static void Clear()
     {
         Registrations.Clear();

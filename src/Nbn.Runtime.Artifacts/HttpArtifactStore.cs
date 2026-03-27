@@ -1,21 +1,27 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 
 namespace Nbn.Runtime.Artifacts;
 
+/// <summary>
+/// Talks to the built-in HTTP artifact-service contract for manifest, full-read, and range-read operations.
+/// </summary>
 public sealed class HttpArtifactStore : IArtifactStore
 {
     private static readonly HttpClient SharedHttpClient = CreateSharedHttpClient();
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _httpClient;
 
+    /// <summary>
+    /// Initializes an HTTP artifact store from an absolute base URI string.
+    /// </summary>
     public HttpArtifactStore(string baseUri, HttpClient? httpClient = null)
         : this(CreateBaseUri(baseUri), httpClient)
     {
     }
 
+    /// <summary>
+    /// Initializes an HTTP artifact store from an absolute HTTP(S) base URI.
+    /// </summary>
     public HttpArtifactStore(Uri baseUri, HttpClient? httpClient = null)
     {
         if (baseUri is null)
@@ -38,8 +44,12 @@ public sealed class HttpArtifactStore : IArtifactStore
         _httpClient = httpClient ?? SharedHttpClient;
     }
 
+    /// <summary>
+    /// Gets the normalized artifact-service base URI.
+    /// </summary>
     public Uri BaseUri { get; }
 
+    /// <inheritdoc />
     public async Task<ArtifactManifest> StoreAsync(
         Stream content,
         string mediaType,
@@ -68,13 +78,7 @@ public sealed class HttpArtifactStore : IArtifactStore
             Content = new StreamContent(content)
         };
         request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(mediaType);
-
-        if (options?.RegionIndex is { Count: > 0 })
-        {
-            var raw = JsonSerializer.Serialize(options.RegionIndex, JsonOptions);
-            var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
-            request.Headers.TryAddWithoutValidation(HttpArtifactStoreHeaderNames.RegionIndex, encoded);
-        }
+        ArtifactStoreHttpPayloads.AddRegionIndexHeader(request, options);
 
         using var response = await _httpClient.SendAsync(
                 request,
@@ -83,10 +87,10 @@ public sealed class HttpArtifactStore : IArtifactStore
             .ConfigureAwait(false);
 
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
-        var manifestDto = await DeserializeManifestAsync(response, cancellationToken).ConfigureAwait(false);
-        return manifestDto.ToManifest();
+        return await ArtifactStoreHttpPayloads.DeserializeManifestAsync(response.Content, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildRelativeUri($"v1/manifests/{artifactId.ToHex()}"));
@@ -102,13 +106,14 @@ public sealed class HttpArtifactStore : IArtifactStore
         }
 
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
-        var manifestDto = await DeserializeManifestAsync(response, cancellationToken).ConfigureAwait(false);
-        return manifestDto.ToManifest();
+        return await ArtifactStoreHttpPayloads.DeserializeManifestAsync(response.Content, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
         => await TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false) is not null;
 
+    /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildRelativeUri($"v1/artifacts/{artifactId.ToHex()}"));
@@ -137,6 +142,7 @@ public sealed class HttpArtifactStore : IArtifactStore
         }
     }
 
+    /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactRangeAsync(
         Sha256Hash artifactId,
         long offset,
@@ -192,18 +198,6 @@ public sealed class HttpArtifactStore : IArtifactStore
 
     private Uri BuildRelativeUri(string relative)
         => new(BaseUri, relative);
-
-    private static async Task<ManifestDto> DeserializeManifestAsync(HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        var dto = await JsonSerializer.DeserializeAsync<ManifestDto>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-        if (dto is null)
-        {
-            throw new InvalidOperationException("Artifact store returned an empty manifest payload.");
-        }
-
-        return dto;
-    }
 
     private static async Task EnsureSuccessStatusCodeAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -341,60 +335,5 @@ public sealed class HttpArtifactStore : IArtifactStore
             _response.Dispose();
             await base.DisposeAsync().ConfigureAwait(false);
         }
-    }
-
-    private sealed class ManifestDto
-    {
-        public string ArtifactId { get; set; } = string.Empty;
-        public string MediaType { get; set; } = string.Empty;
-        public long ByteLength { get; set; }
-        public List<ChunkDto> Chunks { get; set; } = [];
-        public List<RegionIndexDto> RegionIndex { get; set; } = [];
-
-        public ArtifactManifest ToManifest()
-        {
-            if (!Sha256Hash.TryParseHex(ArtifactId, out var artifactId))
-            {
-                throw new InvalidOperationException($"Artifact manifest contained invalid artifact id '{ArtifactId}'.");
-            }
-
-            var chunks = new List<ArtifactChunkInfo>(Chunks.Count);
-            foreach (var chunk in Chunks)
-            {
-                if (!Sha256Hash.TryParseHex(chunk.Hash, out var chunkHash))
-                {
-                    throw new InvalidOperationException($"Artifact manifest contained invalid chunk hash '{chunk.Hash}'.");
-                }
-
-                chunks.Add(new ArtifactChunkInfo(
-                    chunkHash,
-                    chunk.UncompressedLength,
-                    chunk.StoredLength,
-                    ChunkCompression.FromLabel(chunk.Compression)));
-            }
-
-            var regionIndex = new List<ArtifactRegionIndexEntry>(RegionIndex.Count);
-            foreach (var entry in RegionIndex)
-            {
-                regionIndex.Add(new ArtifactRegionIndexEntry(entry.RegionId, entry.Offset, entry.Length));
-            }
-
-            return new ArtifactManifest(artifactId, MediaType, ByteLength, chunks, regionIndex);
-        }
-    }
-
-    private sealed class ChunkDto
-    {
-        public string Hash { get; set; } = string.Empty;
-        public int UncompressedLength { get; set; }
-        public int StoredLength { get; set; }
-        public string Compression { get; set; } = ChunkCompression.NoneLabel;
-    }
-
-    private sealed class RegionIndexDto
-    {
-        public int RegionId { get; set; }
-        public long Offset { get; set; }
-        public long Length { get; set; }
     }
 }
