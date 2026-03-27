@@ -628,7 +628,7 @@ public sealed partial class HiveMindActor
             return envRoot;
         }
 
-        return Path.Combine(Environment.CurrentDirectory, "artifacts");
+        return ArtifactStoreResolverOptions.ResolveDefaultArtifactRootPath();
     }
 
     private static ArtifactStoreResolver CreateArtifactStoreResolver(string? storeUri)

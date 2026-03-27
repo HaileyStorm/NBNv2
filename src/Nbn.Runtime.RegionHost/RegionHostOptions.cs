@@ -1,3 +1,4 @@
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Sharding;
 
@@ -47,8 +48,7 @@ public sealed record RegionHostOptions(
         var port = GetEnvInt("NBN_REGIONHOST_PORT") ?? 12040;
         var advertisedHost = GetEnv("NBN_REGIONHOST_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_REGIONHOST_ADVERTISE_PORT");
-        var artifactRoot = GetEnv("NBN_REGIONHOST_ARTIFACT_ROOT")
-                           ?? Path.Combine(Environment.CurrentDirectory, "artifacts");
+        var artifactRoot = ArtifactStoreResolverOptions.ResolveLocalStoreRootPath(GetEnv("NBN_REGIONHOST_ARTIFACT_ROOT"));
         var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";

@@ -223,4 +223,46 @@ public sealed class ArtifactStoreResolverTests
             }
         }
     }
+
+    [Fact]
+    public void ResolveLocalStoreRootPath_WithoutOverrides_Uses_DefaultUserLocalArtifactRoot()
+    {
+        var originalRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        try
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", null);
+
+            var resolved = ArtifactStoreResolverOptions.ResolveLocalStoreRootPath();
+            var expected = ArtifactStoreResolverOptions.ResolveDefaultArtifactRootPath();
+
+            Assert.Equal(expected, resolved);
+            Assert.NotEqual(Path.Combine(Environment.CurrentDirectory, "artifacts"), resolved);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
+        }
+    }
+
+    [Fact]
+    public void ResolveCacheRootPath_WithoutOverrides_Uses_DefaultArtifactCacheUnderResolvedRoot()
+    {
+        var originalRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
+        var originalCache = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        try
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", null);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", null);
+
+            var localRoot = ArtifactStoreResolverOptions.ResolveLocalStoreRootPath();
+            var cacheRoot = ArtifactStoreResolverOptions.ResolveCacheRootPath(localRoot);
+
+            Assert.Equal(Path.Combine(localRoot, ".cache"), cacheRoot);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
+            Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", originalCache);
+        }
+    }
 }

@@ -1,4 +1,5 @@
 using Nbn.Proto;
+using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Proto;
 
@@ -183,20 +184,7 @@ public sealed partial class WorkerNodeActor
            && reference.Sha256.Value.Length == 32;
 
     private static string ResolveArtifactRoot(string? overridePath)
-    {
-        if (!string.IsNullOrWhiteSpace(overridePath))
-        {
-            return overridePath.Trim();
-        }
-
-        var envRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
-        if (!string.IsNullOrWhiteSpace(envRoot))
-        {
-            return envRoot.Trim();
-        }
-
-        return Path.Combine(Environment.CurrentDirectory, "artifacts");
-    }
+        => ArtifactStoreResolverOptions.ResolveLocalStoreRootPath(overridePath);
 
     private static bool IsEnvTrue(string key)
     {

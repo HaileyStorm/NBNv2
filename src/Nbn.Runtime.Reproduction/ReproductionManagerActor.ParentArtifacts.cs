@@ -541,7 +541,7 @@ public sealed partial class ReproductionManagerActor
             return envRoot;
         }
 
-        return Path.Combine(Environment.CurrentDirectory, "artifacts");
+        return ArtifactStoreResolverOptions.ResolveDefaultArtifactRootPath();
     }
 
 }

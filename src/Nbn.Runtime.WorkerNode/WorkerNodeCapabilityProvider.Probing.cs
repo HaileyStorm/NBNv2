@@ -2,6 +2,7 @@ using System.Globalization;
 using ILGPU;
 using ILGPU.Runtime;
 using ILGPU.Runtime.Cuda;
+using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.RegionHost;
 
 namespace Nbn.Runtime.WorkerNode;
@@ -192,13 +193,7 @@ public sealed partial class WorkerNodeCapabilityProvider
             return storageProbePath.Trim();
         }
 
-        var artifactRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_ROOT");
-        if (!string.IsNullOrWhiteSpace(artifactRoot))
-        {
-            return artifactRoot.Trim();
-        }
-
-        return Path.Combine(Environment.CurrentDirectory, "artifacts");
+        return ArtifactStoreResolverOptions.ResolveLocalStoreRootPath();
     }
 
     private static bool TryReadMemInfoValue(string key, out ulong value)

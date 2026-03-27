@@ -34,7 +34,27 @@ public sealed class ArtifactStoreResolverOptions
     public bool EnableRemoteCaching { get; }
 
     /// <summary>
-    /// Resolves the local artifact root from an explicit override, <c>NBN_ARTIFACT_ROOT</c>, or the default <c>artifacts</c> directory.
+    /// Resolves the standard user-local artifact root used when callers do not provide an explicit path or environment override.
+    /// </summary>
+    public static string ResolveDefaultArtifactRootPath()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrWhiteSpace(localAppData))
+        {
+            return Path.Combine(localAppData.Trim(), "NBN", "artifacts");
+        }
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            return Path.Combine(userProfile.Trim(), ".local", "share", "NBN", "artifacts");
+        }
+
+        return Path.Combine(Path.GetTempPath(), "NBN", "artifacts");
+    }
+
+    /// <summary>
+    /// Resolves the local artifact root from an explicit override, <c>NBN_ARTIFACT_ROOT</c>, or the standard user-local artifact root.
     /// </summary>
     public static string ResolveLocalStoreRootPath(string? overridePath = null)
     {
@@ -49,7 +69,7 @@ public sealed class ArtifactStoreResolverOptions
             return envRoot.Trim();
         }
 
-        return Path.Combine(Environment.CurrentDirectory, "artifacts");
+        return ResolveDefaultArtifactRootPath();
     }
 
     /// <summary>
