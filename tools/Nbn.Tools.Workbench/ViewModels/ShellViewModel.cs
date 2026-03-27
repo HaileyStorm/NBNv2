@@ -261,20 +261,12 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         });
     }
 
+    /// <summary>
+    /// Routes a SettingsMonitor update to the panel view-models that mirror settings-backed state.
+    /// </summary>
     public void OnSettingChanged(SettingItem item)
     {
-        _dispatcher.Post(() =>
-        {
-            Orchestrator.UpdateSetting(item);
-            Io.ApplySetting(item);
-            Viz.ApplySetting(item);
-            Repro.ApplySetting(item);
-            Speciation.ApplySetting(item);
-            if (Debug.ApplySetting(item))
-            {
-                UpdateObservabilitySubscriptions();
-            }
-        });
+        _dispatcher.Post(() => ApplyWorkbenchSetting(item));
 
         if (string.Equals(item.Key, TickSettingsKeys.CadenceHzKey, StringComparison.OrdinalIgnoreCase))
         {
@@ -283,6 +275,9 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         }
     }
 
+    /// <summary>
+    /// Stops active connections and child panel resources owned by the Workbench shell.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         await Speciation.DisposeAsync();
@@ -474,6 +469,19 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         await ApplySettingsSnapshotAsync(SpeciationSettingsKeys.AllKeys, item => _ = Speciation.ApplySetting(item)).ConfigureAwait(false);
         await ApplySettingsSnapshotAsync(ServiceEndpointSettings.AllKeys, Orchestrator.UpdateSetting).ConfigureAwait(false);
         _dispatcher.Post(UpdateObservabilitySubscriptions);
+    }
+
+    private void ApplyWorkbenchSetting(SettingItem item)
+    {
+        Orchestrator.UpdateSetting(item);
+        Io.ApplySetting(item);
+        Viz.ApplySetting(item);
+        Repro.ApplySetting(item);
+        Speciation.ApplySetting(item);
+        if (Debug.ApplySetting(item))
+        {
+            UpdateObservabilitySubscriptions();
+        }
     }
 
     private async Task RefreshHiveMindTickCadenceStatusAsync(int refreshVersion)

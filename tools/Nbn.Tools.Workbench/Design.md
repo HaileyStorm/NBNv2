@@ -6,6 +6,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 
 - Host operator workflows over IO/debug/viz and reproduction surfaces without exposing actor placement details.
 - Keep Workbench boundaries explicit: `ShellViewModel` owns reconnect/status fan-out, `OrchestratorPanelViewModel` owns explicit local launch/stop flows and launch diagnostics, and `WorkbenchClient` remains the transport/request boundary without auto-starting runtime services on connect.
+- Keep panel ownership explicit inside Workbench: IO/Reproduction/Speciation/Debug view-models own their panel-specific runtime behavior, settings mapping, and confirmation semantics, while shared picker/export helpers stay utility-only and never own transport or policy decisions.
 - Keep command/view-model correctness independent of Avalonia loop availability (dispatcher wrappers execute inline when no UI lifetime exists).
 - Keep visualization semantics deterministic across rendering modes.
 - Keep visualization ownership split by concern: `VizPanelViewModel.Activity` owns event/cadence/filtering flow, `VizPanelViewModel.Projection` owns versioned projection/layout refresh, `VizPanelViewModel.CanvasInteraction` owns selection/hover/pin/hit-testing state, and `VizActivityProjection*` / `VizActivityCanvasLayout*` remain pure builder helpers.

@@ -1,15 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Platform.Storage;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -70,6 +64,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
 
     public ObservableCollection<VizTypeOption> VizTypeOptions { get; }
 
+    /// <summary>
+    /// Raised when the persisted debug subscription settings change and observability subscriptions should refresh.
+    /// </summary>
     public event Action? SubscriptionSettingsChanged;
 
     public bool StreamEnabled
@@ -226,6 +223,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
 
     public RelayCommand ClearVizCommand { get; }
 
+    /// <summary>
+    /// Records a debug event and reapplies the active text filter.
+    /// </summary>
     public void AddDebugEvent(DebugEventItem item)
     {
         _dispatcher.Post(() =>
@@ -236,6 +236,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
         });
     }
 
+    /// <summary>
+    /// Records a visualization event and reapplies the active visualization filters.
+    /// </summary>
     public void AddVizEvent(VizEventItem item)
     {
         _dispatcher.Post(() =>
@@ -246,6 +249,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
         });
     }
 
+    /// <summary>
+    /// Builds the current debug subscription request from the panel filters.
+    /// </summary>
     public DebugSubscriptionFilter BuildSubscriptionFilter()
         => new(
             StreamEnabled: StreamEnabled,
@@ -256,6 +262,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
             IncludeSummaryPrefixes: SplitList(IncludeSummaryPrefixes),
             ExcludeSummaryPrefixes: SplitList(ExcludeSummaryPrefixes));
 
+    /// <summary>
+    /// Applies a SettingsMonitor-backed debug setting to the local draft state.
+    /// </summary>
     public bool ApplySetting(SettingItem item)
     {
         if (string.IsNullOrWhiteSpace(item.Key))
@@ -264,54 +273,21 @@ public sealed class DebugPanelViewModel : ViewModelBase
         }
 
         var key = item.Key.Trim();
-        if (string.Equals(key, DebugSettingsKeys.EnabledKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() => StreamEnabled = ParseBool(item.Value));
-            return true;
-        }
-
-        if (string.Equals(key, DebugSettingsKeys.MinSeverityKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() =>
-            {
-                var parsed = ParseSeverity(item.Value);
-                var selected = SeverityOptions.FirstOrDefault(option => option.Severity == parsed) ?? SeverityOptions[2];
-                SelectedSeverity = selected;
-            });
-            return true;
-        }
-
-        if (string.Equals(key, DebugSettingsKeys.ContextRegexKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() => ContextRegex = item.Value ?? string.Empty);
-            return true;
-        }
-
-        if (string.Equals(key, DebugSettingsKeys.IncludeContextPrefixesKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() => IncludeContextPrefixes = item.Value ?? string.Empty);
-            return true;
-        }
-
-        if (string.Equals(key, DebugSettingsKeys.ExcludeContextPrefixesKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() => ExcludeContextPrefixes = item.Value ?? string.Empty);
-            return true;
-        }
-
-        if (string.Equals(key, DebugSettingsKeys.IncludeSummaryPrefixesKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() => IncludeSummaryPrefixes = item.Value ?? string.Empty);
-            return true;
-        }
-
-        if (string.Equals(key, DebugSettingsKeys.ExcludeSummaryPrefixesKey, StringComparison.OrdinalIgnoreCase))
-        {
-            _dispatcher.Post(() => ExcludeSummaryPrefixes = item.Value ?? string.Empty);
-            return true;
-        }
-
-        return false;
+        return ApplyPostedSetting(key, DebugSettingsKeys.EnabledKey, () => StreamEnabled = ParseBool(item.Value))
+            || ApplyPostedSetting(
+                key,
+                DebugSettingsKeys.MinSeverityKey,
+                () =>
+                {
+                    var parsed = ParseSeverity(item.Value);
+                    var selected = SeverityOptions.FirstOrDefault(option => option.Severity == parsed) ?? SeverityOptions[2];
+                    SelectedSeverity = selected;
+                })
+            || ApplyPostedSetting(key, DebugSettingsKeys.ContextRegexKey, () => ContextRegex = item.Value ?? string.Empty)
+            || ApplyPostedSetting(key, DebugSettingsKeys.IncludeContextPrefixesKey, () => IncludeContextPrefixes = item.Value ?? string.Empty)
+            || ApplyPostedSetting(key, DebugSettingsKeys.ExcludeContextPrefixesKey, () => ExcludeContextPrefixes = item.Value ?? string.Empty)
+            || ApplyPostedSetting(key, DebugSettingsKeys.IncludeSummaryPrefixesKey, () => IncludeSummaryPrefixes = item.Value ?? string.Empty)
+            || ApplyPostedSetting(key, DebugSettingsKeys.ExcludeSummaryPrefixesKey, () => ExcludeSummaryPrefixes = item.Value ?? string.Empty);
     }
 
     private async Task ApplyFilterAsync()
@@ -385,7 +361,7 @@ public sealed class DebugPanelViewModel : ViewModelBase
             return;
         }
 
-        var file = await PickSaveFileAsync("Export debug events", "JSON files", "json", "debug-events.json");
+        var file = await WorkbenchStorageDialogs.PickSaveFileAsync("Export debug events", "JSON files", "json", "debug-events.json").ConfigureAwait(false);
         if (file is null)
         {
             Status = "Export canceled.";
@@ -396,8 +372,8 @@ public sealed class DebugPanelViewModel : ViewModelBase
         {
             var payload = DebugEvents.Select(DebugExportItem.From).ToList();
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-            await WriteAllTextAsync(file, json);
-            Status = $"Exported {payload.Count} events to {FormatPath(file)}.";
+            await WorkbenchStorageDialogs.WriteAllTextAsync(file, json).ConfigureAwait(false);
+            Status = $"Exported {payload.Count} events to {WorkbenchStorageDialogs.FormatPath(file)}.";
         }
         catch (Exception ex)
         {
@@ -413,7 +389,7 @@ public sealed class DebugPanelViewModel : ViewModelBase
             return;
         }
 
-        var file = await PickSaveFileAsync("Export viz events", "JSON files", "json", "viz-events.json");
+        var file = await WorkbenchStorageDialogs.PickSaveFileAsync("Export viz events", "JSON files", "json", "viz-events.json").ConfigureAwait(false);
         if (file is null)
         {
             VizStatus = "Export canceled.";
@@ -424,8 +400,8 @@ public sealed class DebugPanelViewModel : ViewModelBase
         {
             var payload = VizEvents.Select(VizExportItem.From).ToList();
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
-            await WriteAllTextAsync(file, json);
-            VizStatus = $"Exported {payload.Count} events to {FormatPath(file)}.";
+            await WorkbenchStorageDialogs.WriteAllTextAsync(file, json).ConfigureAwait(false);
+            VizStatus = $"Exported {payload.Count} events to {WorkbenchStorageDialogs.FormatPath(file)}.";
         }
         catch (Exception ex)
         {
@@ -615,51 +591,16 @@ public sealed class DebugPanelViewModel : ViewModelBase
         return $"[{item.Type}] brain={item.BrainId} tick={item.TickId}\nregion={item.Region} source={item.Source} target={item.Target}\nvalue={item.Value} strength={item.Strength}\nEventId={item.EventId}";
     }
 
-    private static async Task<IStorageFile?> PickSaveFileAsync(string title, string filterName, string extension, string? suggestedName)
+    private bool ApplyPostedSetting(string actualKey, string expectedKey, Action apply)
     {
-        var provider = GetStorageProvider();
-        if (provider is null)
+        if (!string.Equals(actualKey, expectedKey, StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return false;
         }
 
-        var options = new FilePickerSaveOptions
-        {
-            Title = title,
-            DefaultExtension = extension,
-            SuggestedFileName = suggestedName,
-            FileTypeChoices = new List<FilePickerFileType>
-            {
-                new(filterName) { Patterns = new List<string> { $"*.{extension}" } }
-            }
-        };
-
-        return await provider.SaveFilePickerAsync(options);
+        _dispatcher.Post(apply);
+        return true;
     }
-
-    private static IStorageProvider? GetStorageProvider()
-    {
-        var window = GetMainWindow();
-        return window?.StorageProvider;
-    }
-
-    private static Window? GetMainWindow()
-        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
-            ? desktop.MainWindow
-            : null;
-
-    private static async Task WriteAllTextAsync(IStorageFile file, string content)
-    {
-        await using var stream = await file.OpenWriteAsync();
-        stream.SetLength(0);
-        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
-        await writer.WriteAsync(content);
-        await writer.FlushAsync();
-        await stream.FlushAsync();
-    }
-
-    private static string FormatPath(IStorageItem item)
-        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
     private static void Trim<T>(ICollection<T> collection)
     {

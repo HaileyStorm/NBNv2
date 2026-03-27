@@ -7,10 +7,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Platform.Storage;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -304,13 +300,13 @@ public sealed partial class SpeciationPanelViewModel
         var title = kind == SimulatorParentFileKind.ParentAOverride
             ? "Select Parent A override file"
             : "Select Parent B override file";
-        var file = await PickOpenFileAsync(title).ConfigureAwait(false);
+        var file = await WorkbenchStorageDialogs.PickOpenFileAsync(title).ConfigureAwait(false);
         if (file is null)
         {
             return;
         }
 
-        var path = FormatPath(file);
+        var path = WorkbenchStorageDialogs.FormatPath(file);
         _dispatcher.Post(() =>
         {
             if (kind == SimulatorParentFileKind.ParentAOverride)
@@ -365,13 +361,13 @@ public sealed partial class SpeciationPanelViewModel
 
     private async Task AddSimulatorSeedParentsFromFileAsync()
     {
-        var file = await PickOpenFileAsync("Select simulator extra-parents file").ConfigureAwait(false);
+        var file = await WorkbenchStorageDialogs.PickOpenFileAsync("Select simulator extra-parents file").ConfigureAwait(false);
         if (file is null)
         {
             return;
         }
 
-        var path = FormatPath(file);
+        var path = WorkbenchStorageDialogs.FormatPath(file);
         IReadOnlyList<Guid> parentIds;
         try
         {
@@ -692,37 +688,6 @@ public sealed partial class SpeciationPanelViewModel
 
         return parentIds;
     }
-
-    private static async Task<IStorageFile?> PickOpenFileAsync(string title)
-    {
-        var provider = GetStorageProvider();
-        if (provider is null)
-        {
-            return null;
-        }
-
-        var options = new FilePickerOpenOptions
-        {
-            Title = title,
-            AllowMultiple = false
-        };
-        var results = await provider.OpenFilePickerAsync(options).ConfigureAwait(false);
-        return results.FirstOrDefault();
-    }
-
-    private static IStorageProvider? GetStorageProvider()
-    {
-        var window = GetMainWindow();
-        return window?.StorageProvider;
-    }
-
-    private static Window? GetMainWindow()
-        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
-            ? desktop.MainWindow
-            : null;
-
-    private static string FormatPath(IStorageItem item)
-        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
     private string BuildEvolutionSimArgs(int ioPort, int simPort, IReadOnlyList<Guid> parentBrainIds)
     {

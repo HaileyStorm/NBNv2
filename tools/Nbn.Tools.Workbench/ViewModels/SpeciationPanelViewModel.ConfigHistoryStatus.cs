@@ -159,6 +159,9 @@ public sealed partial class SpeciationPanelViewModel
         ConfigStatus = "Settings-backed draft active.";
     }
 
+    /// <summary>
+    /// Stops background refresh work and simulator polling owned by the speciation pane.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         _connections.PropertyChanged -= OnConnectionsPropertyChanged;
@@ -272,22 +275,6 @@ public sealed partial class SpeciationPanelViewModel
         }
     }
 
-    private void ResetHistoryMutationConfirmations()
-    {
-        if (_clearAllHistoryConfirmPending)
-        {
-            _clearAllHistoryConfirmPending = false;
-            OnPropertyChanged(nameof(ClearAllHistoryLabel));
-        }
-
-        if (_deleteEpochConfirmPending || _deleteEpochConfirmTarget.HasValue)
-        {
-            _deleteEpochConfirmPending = false;
-            _deleteEpochConfirmTarget = null;
-            OnPropertyChanged(nameof(DeleteEpochLabel));
-        }
-    }
-
     private async Task RefreshStatusAsync()
     {
         var response = await _client.GetSpeciationStatusAsync().ConfigureAwait(false);
@@ -332,8 +319,7 @@ public sealed partial class SpeciationPanelViewModel
 
     private async Task ApplyConfigAsync()
     {
-        _startNewEpochConfirmPending = false;
-        OnPropertyChanged(nameof(StartNewEpochLabel));
+        SetStartNewEpochConfirmation(false);
 
         var config = BuildRuntimeConfigFromDraft();
         var response = await _client.SetSpeciationConfigAsync(config, startNewEpoch: false).ConfigureAwait(false);
@@ -365,15 +351,13 @@ public sealed partial class SpeciationPanelViewModel
         ResetHistoryMutationConfirmations();
         if (!_startNewEpochConfirmPending)
         {
-            _startNewEpochConfirmPending = true;
-            OnPropertyChanged(nameof(StartNewEpochLabel));
+            SetStartNewEpochConfirmation(true);
             ConfigStatus = "Click Start New Epoch again to confirm.";
             Status = ConfigStatus;
             return;
         }
 
-        _startNewEpochConfirmPending = false;
-        OnPropertyChanged(nameof(StartNewEpochLabel));
+        SetStartNewEpochConfirmation(false);
 
         var config = BuildRuntimeConfigFromDraft();
         var response = await _client.SetSpeciationConfigAsync(config, startNewEpoch: true).ConfigureAwait(false);
@@ -400,23 +384,18 @@ public sealed partial class SpeciationPanelViewModel
 
     private async Task ClearAllHistoryAsync()
     {
-        _startNewEpochConfirmPending = false;
-        OnPropertyChanged(nameof(StartNewEpochLabel));
+        SetStartNewEpochConfirmation(false);
 
         if (!_clearAllHistoryConfirmPending)
         {
-            _clearAllHistoryConfirmPending = true;
-            _deleteEpochConfirmPending = false;
-            _deleteEpochConfirmTarget = null;
-            OnPropertyChanged(nameof(ClearAllHistoryLabel));
-            OnPropertyChanged(nameof(DeleteEpochLabel));
+            SetClearAllHistoryConfirmation(true);
+            ResetDeleteEpochConfirmation();
             HistoryStatus = "Click Delete All Epochs again to confirm. This removes all epoch history and starts a new epoch.";
             Status = HistoryStatus;
             return;
         }
 
-        _clearAllHistoryConfirmPending = false;
-        OnPropertyChanged(nameof(ClearAllHistoryLabel));
+        SetClearAllHistoryConfirmation(false);
         var response = await _client.ResetSpeciationHistoryAsync().ConfigureAwait(false);
         if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
         {
@@ -447,14 +426,11 @@ public sealed partial class SpeciationPanelViewModel
 
     private async Task DeleteEpochAsync()
     {
-        _startNewEpochConfirmPending = false;
-        OnPropertyChanged(nameof(StartNewEpochLabel));
+        SetStartNewEpochConfirmation(false);
 
         if (!long.TryParse(DeleteEpochText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var epochId) || epochId <= 0)
         {
-            _deleteEpochConfirmPending = false;
-            _deleteEpochConfirmTarget = null;
-            OnPropertyChanged(nameof(DeleteEpochLabel));
+            ResetDeleteEpochConfirmation();
             HistoryStatus = "Enter a positive epoch id to delete.";
             Status = HistoryStatus;
             return;
@@ -462,19 +438,14 @@ public sealed partial class SpeciationPanelViewModel
 
         if (!_deleteEpochConfirmPending || _deleteEpochConfirmTarget != epochId)
         {
-            _deleteEpochConfirmPending = true;
-            _deleteEpochConfirmTarget = epochId;
-            _clearAllHistoryConfirmPending = false;
-            OnPropertyChanged(nameof(DeleteEpochLabel));
-            OnPropertyChanged(nameof(ClearAllHistoryLabel));
+            ArmDeleteEpochConfirmation(epochId);
+            SetClearAllHistoryConfirmation(false);
             HistoryStatus = $"Click Delete Epoch again to confirm deletion of epoch {epochId}.";
             Status = HistoryStatus;
             return;
         }
 
-        _deleteEpochConfirmPending = false;
-        _deleteEpochConfirmTarget = null;
-        OnPropertyChanged(nameof(DeleteEpochLabel));
+        ResetDeleteEpochConfirmation();
 
         var response = await _client.DeleteSpeciationEpochAsync(epochId).ConfigureAwait(false);
         if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)

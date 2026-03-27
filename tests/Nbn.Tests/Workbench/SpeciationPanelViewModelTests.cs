@@ -255,6 +255,21 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task DeleteEpochText_EditAfterConfirmation_ResetsDeleteEpochLabel()
+    {
+        var vm = CreateViewModel(new FakeWorkbenchClient());
+        vm.DeleteEpochText = "9";
+
+        vm.DeleteEpochCommand.Execute(null);
+        await WaitForAsync(() => vm.HistoryStatus.Contains("confirm", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("Confirm Delete Epoch", vm.DeleteEpochLabel);
+
+        vm.DeleteEpochText = "10";
+
+        Assert.Equal("Delete Epoch", vm.DeleteEpochLabel);
+    }
+
+    [Fact]
     public async Task RefreshMembershipsCommand_BuildsSpeciesCounts()
     {
         var brainA = Guid.NewGuid();

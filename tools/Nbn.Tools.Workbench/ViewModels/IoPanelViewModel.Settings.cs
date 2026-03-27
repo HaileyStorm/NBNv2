@@ -14,6 +14,9 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed partial class IoPanelViewModel
 {
+    /// <summary>
+    /// Applies SettingsMonitor-backed IO policy values into the panel's draft and runtime mirrors.
+    /// </summary>
     public bool ApplySetting(SettingItem item)
     {
         if (item is null || string.IsNullOrWhiteSpace(item.Key))
@@ -24,16 +27,11 @@ public sealed partial class IoPanelViewModel
         if (string.Equals(item.Key, CostEnergySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = ParseBooleanSetting(item.Value, SystemCostEnergyEnabled);
-            _systemSettingsSyncInProgress = true;
-            try
+            ApplySystemSettingsSync(() =>
             {
                 SystemCostEnergyEnabled = parsed;
                 SystemCostEnergyEnabledDraft = parsed;
-            }
-            finally
-            {
-                _systemSettingsSyncInProgress = false;
-            }
+            });
 
             return true;
         }
@@ -41,16 +39,11 @@ public sealed partial class IoPanelViewModel
         if (string.Equals(item.Key, PlasticitySettingsKeys.SystemEnabledKey, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = ParseBooleanSetting(item.Value, SystemPlasticityEnabled);
-            _systemSettingsSyncInProgress = true;
-            try
+            ApplySystemSettingsSync(() =>
             {
                 SystemPlasticityEnabled = parsed;
                 SystemPlasticityEnabledDraft = parsed;
-            }
-            finally
-            {
-                _systemSettingsSyncInProgress = false;
-            }
+            });
 
             return true;
         }
@@ -59,15 +52,10 @@ public sealed partial class IoPanelViewModel
         {
             var parsed = ParseSystemPlasticityRateText(item.Value, fallback: SystemPlasticityRateText);
             SystemPlasticityRateText = parsed;
-            _systemSettingsSyncInProgress = true;
-            try
+            ApplySystemSettingsSync(() =>
             {
                 SystemPlasticityRateTextDraft = parsed;
-            }
-            finally
-            {
-                _systemSettingsSyncInProgress = false;
-            }
+            });
 
             return true;
         }
@@ -77,16 +65,11 @@ public sealed partial class IoPanelViewModel
             var parsed = ParseBooleanSetting(item.Value, SystemPlasticityProbabilisticUpdates);
             SystemPlasticityProbabilisticUpdates = parsed;
             var selectedMode = PlasticityModes.FirstOrDefault(mode => mode.Probabilistic == parsed) ?? PlasticityModes[0];
-            _systemSettingsSyncInProgress = true;
-            try
+            ApplySystemSettingsSync(() =>
             {
                 SystemPlasticityProbabilisticUpdatesDraft = parsed;
                 SelectedSystemPlasticityModeDraft = selectedMode;
-            }
-            finally
-            {
-                _systemSettingsSyncInProgress = false;
-            }
+            });
 
             return true;
         }
@@ -95,16 +78,11 @@ public sealed partial class IoPanelViewModel
         {
             var parsed = ParseInputCoordinatorModeSetting(item.Value, SelectedInputCoordinatorMode.Mode);
             var selectedMode = InputCoordinatorModes.FirstOrDefault(option => option.Mode == parsed) ?? InputCoordinatorModes[0];
-            _systemSettingsSyncInProgress = true;
-            try
+            ApplySystemSettingsSync(() =>
             {
                 SelectedInputCoordinatorMode = selectedMode;
                 SelectedInputCoordinatorModeDraft = selectedMode;
-            }
-            finally
-            {
-                _systemSettingsSyncInProgress = false;
-            }
+            });
 
             return true;
         }
@@ -113,21 +91,29 @@ public sealed partial class IoPanelViewModel
         {
             var parsed = ParseOutputVectorSourceSetting(item.Value, SelectedOutputVectorSource.Source);
             var selectedSource = OutputVectorSources.FirstOrDefault(option => option.Source == parsed) ?? OutputVectorSources[0];
-            _systemSettingsSyncInProgress = true;
-            try
+            ApplySystemSettingsSync(() =>
             {
                 SelectedOutputVectorSource = selectedSource;
                 SelectedOutputVectorSourceDraft = selectedSource;
-            }
-            finally
-            {
-                _systemSettingsSyncInProgress = false;
-            }
+            });
 
             return true;
         }
 
         return false;
+    }
+
+    private void ApplySystemSettingsSync(Action update)
+    {
+        _systemSettingsSyncInProgress = true;
+        try
+        {
+            update();
+        }
+        finally
+        {
+            _systemSettingsSyncInProgress = false;
+        }
     }
 
     private async Task ApplyEnergyCreditAsync()

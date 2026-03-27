@@ -1,12 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Platform.Storage;
 using Nbn.Proto;
 using Nbn.Proto.Repro;
 using Nbn.Runtime.Artifacts;
@@ -98,13 +93,13 @@ public sealed partial class ReproPanelViewModel
     {
         var extension = kind is ParentFileKind.ParentADef or ParentFileKind.ParentBDef ? "nbn" : "nbs";
         var filter = extension.ToUpperInvariant() + " files";
-        var file = await PickOpenFileAsync($"Select .{extension} file", filter, extension);
+        var file = await WorkbenchStorageDialogs.PickOpenFileAsync($"Select .{extension} file", filter, extension).ConfigureAwait(false);
         if (file is null)
         {
             return;
         }
 
-        var path = FormatPath(file);
+        var path = WorkbenchStorageDialogs.FormatPath(file);
         switch (kind)
         {
             case ParentFileKind.ParentADef:
@@ -130,42 +125,6 @@ public sealed partial class ReproPanelViewModel
         ParentBStatePath = string.Empty;
     }
 
-    private static async Task<IStorageFile?> PickOpenFileAsync(string title, string filterName, string extension)
-    {
-        var provider = GetStorageProvider();
-        if (provider is null)
-        {
-            return null;
-        }
-
-        var options = new FilePickerOpenOptions
-        {
-            Title = title,
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType(filterName)
-                {
-                    Patterns = [$"*.{extension}"]
-                }
-            ]
-        };
-
-        var results = await provider.OpenFilePickerAsync(options);
-        return results.FirstOrDefault();
-    }
-
-    private static IStorageProvider? GetStorageProvider()
-    {
-        var window = GetMainWindow();
-        return window?.StorageProvider;
-    }
-
-    private static Window? GetMainWindow()
-        => Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
-            ? desktop.MainWindow
-            : null;
-
     private static string BuildDefaultArtifactRoot()
     {
         var baseDir = Path.Combine(
@@ -175,9 +134,6 @@ public sealed partial class ReproPanelViewModel
         Directory.CreateDirectory(baseDir);
         return baseDir;
     }
-
-    private static string FormatPath(IStorageItem item)
-        => item.Path?.LocalPath ?? item.Path?.ToString() ?? item.Name;
 
     private enum ParentFileKind
     {

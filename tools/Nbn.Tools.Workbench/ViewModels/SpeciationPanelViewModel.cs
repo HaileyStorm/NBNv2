@@ -592,12 +592,7 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
                 return;
             }
 
-            if (_deleteEpochConfirmPending)
-            {
-                _deleteEpochConfirmPending = false;
-                _deleteEpochConfirmTarget = null;
-                OnPropertyChanged(nameof(DeleteEpochLabel));
-            }
+            ResetDeleteEpochConfirmation();
         }
     }
 
@@ -624,10 +619,6 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
             }
         }
     }
-
-    public string StartNewEpochLabel => _startNewEpochConfirmPending ? "Confirm New Epoch" : "Start New Epoch";
-    public string ClearAllHistoryLabel => _clearAllHistoryConfirmPending ? "Confirm Delete All Epochs" : "Delete All Epochs";
-    public string DeleteEpochLabel => _deleteEpochConfirmPending ? "Confirm Delete Epoch" : "Delete Epoch";
 
     public SpeciationSimulatorBrainOption? SimSelectedParentABrain
     {

@@ -10,6 +10,9 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed partial class ReproPanelViewModel
 {
+    /// <summary>
+    /// Refreshes the active-brain parent pickers while preserving any still-live selections.
+    /// </summary>
     public void UpdateActiveBrains(IReadOnlyList<BrainListItem> brains)
     {
         var selectedA = SelectedParentABrain?.BrainId;
@@ -36,6 +39,9 @@ public sealed partial class ReproPanelViewModel
             : ActiveBrains.Skip(1).FirstOrDefault();
     }
 
+    /// <summary>
+    /// Applies SettingsMonitor-backed reproduction defaults into the panel draft state.
+    /// </summary>
     public bool ApplySetting(SettingItem item)
     {
         if (item is null || string.IsNullOrWhiteSpace(item.Key))
