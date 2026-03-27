@@ -16,7 +16,7 @@ NODE_RENDERER = DOCS_DIR / "branding" / "render_png.mjs"
 
 WIDTH = 1600
 HEIGHT = 900
-FONT_STACK = "Segoe UI, Helvetica Neue, Arial, sans-serif"
+FONT_STACK = "DejaVu Sans, Arial, Helvetica, sans-serif"
 
 INK = "#131B2C"
 SLATE = "#556071"
@@ -160,17 +160,17 @@ def card(
     *,
     accent: str,
     fill: str = PAPER,
-    title_size: int = 24,
-    body_size: int = 18,
+    title_size: int = 22,
+    body_size: int = 15,
 ) -> str:
-    padding = 20
-    accent_height = 9
+    padding = 18
+    accent_height = 8
     return group(
         [
             rect(x, y, width, height, rx=26, fill=fill, stroke=BORDER, stroke_width=2, filter="url(#shadow)"),
             rect(x, y, width, accent_height, rx=26, fill=accent),
-            text(x + padding, y + 44, title_text, size=title_size, weight=750, fill=INK),
-            multiline_text(x + padding, y + 78, body_lines, size=body_size, weight=500, fill=SLATE),
+            text(x + padding, y + 40, title_text, size=title_size, weight=750, fill=INK),
+            multiline_text(x + padding, y + 70, body_lines, size=body_size, weight=500, fill=SLATE, line_gap=1.28),
         ]
     )
 
@@ -186,14 +186,16 @@ def section_frame(
     accent: str,
     fill: str = "white",
 ) -> str:
-    return group(
-        [
-            rect(x, y, width, height, rx=34, fill=fill, stroke=BORDER, stroke_width=2),
-            rect(x, y, width, 12, rx=34, fill=accent),
-            text(x + 24, y + 44, title_text, size=28, weight=800, fill=INK),
-            text(x + 24, y + 76, subtitle, size=18, weight=500, fill=MUTED),
-        ]
-    )
+    elements = [
+        rect(x, y, width, height, rx=34, fill=fill, stroke=BORDER, stroke_width=2),
+        rect(x, y, width, 12, rx=34, fill=accent),
+        text(x + 24, y + 42, title_text, size=25, weight=800, fill=INK),
+    ]
+    if subtitle:
+        elements.append(
+            multiline_text(x + 24, y + 68, subtitle.split("\n"), size=15, weight=500, fill=MUTED, line_gap=1.18)
+        )
+    return group(elements)
 
 
 def arrow(
@@ -203,7 +205,7 @@ def arrow(
     y2: float,
     *,
     stroke: str = INK,
-    width: float = 4,
+    width: float = 3,
     dash: str | None = None,
     label_text: str | None = None,
     label_x: float | None = None,
@@ -236,7 +238,7 @@ def arrow(
                 label_x if label_x is not None else (x1 + x2) / 2,
                 label_y if label_y is not None else (y1 + y2) / 2 - 10,
                 label_text,
-                size=17,
+                size=14,
                 weight=700,
                 fill=stroke,
                 anchor="middle",
@@ -249,7 +251,7 @@ def elbow_arrow(
     points: list[tuple[float, float]],
     *,
     stroke: str = INK,
-    width: float = 4,
+    width: float = 3,
     dash: str | None = None,
     label_text: str | None = None,
     label_x: float | None = None,
@@ -281,7 +283,7 @@ def elbow_arrow(
                 label_x if label_x is not None else points[-1][0],
                 label_y if label_y is not None else points[-1][1] - 14,
                 label_text,
-                size=17,
+                size=14,
                 weight=700,
                 fill=stroke,
                 anchor="middle",
@@ -304,8 +306,8 @@ def backdrop() -> str:
 def title_block(title_text: str, subtitle: str) -> str:
     return group(
         [
-            text(70, 70, title_text, size=42, weight=850, fill=INK),
-            text(70, 108, subtitle, size=21, weight=500, fill=SLATE),
+            text(70, 66, title_text, size=34, weight=850, fill=INK),
+            multiline_text(70, 96, subtitle.split("\n"), size=17, weight=500, fill=SLATE, line_gap=1.18),
         ]
     )
 
@@ -315,8 +317,8 @@ def callout_band(x: float, y: float, width: float, height: float, headline: str,
         [
             rect(x, y, width, height, rx=28, fill="white", stroke=BORDER, stroke_width=2),
             rect(x, y, 14, height, rx=28, fill=accent),
-            text(x + 32, y + 40, headline, size=24, weight=780, fill=INK),
-            multiline_text(x + 32, y + 72, body.split("\n"), size=18, weight=500, fill=SLATE),
+            text(x + 32, y + 36, headline, size=21, weight=780, fill=INK),
+            multiline_text(x + 32, y + 64, body.split("\n"), size=15, weight=500, fill=SLATE, line_gap=1.22),
         ]
     )
 
@@ -325,9 +327,9 @@ def worker_box(x: float, y: float, width: float, height: float, name: str, chips
     chip_elements: list[str] = [
         rect(x, y, width, height, rx=28, fill="white", stroke=BORDER, stroke_width=2)
     ]
-    chip_elements.append(text(x + 20, y + 38, name, size=24, weight=800, fill=INK))
+    chip_elements.append(text(x + 20, y + 36, name, size=22, weight=800, fill=INK))
     chip_x = x + 20
-    chip_y = y + 56
+    chip_y = y + 50
     for label, fill in chips:
         chip_width = max(88, 16 + len(label) * 10)
         chip_elements.append(pill(chip_x, chip_y, chip_width, 28, label, fill=fill, text_fill=INK))
@@ -347,25 +349,25 @@ def defs() -> str:
     <stop offset="100%" stop-color="#FFF8EE" />
   </linearGradient>
   <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#131B2C" flood-opacity="0.10" />
+    <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#131B2C" flood-opacity="0.08" />
   </filter>
-  <marker id="arrow-ink" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#131B2C" />
+  <marker id="arrow-ink" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#131B2C" />
   </marker>
-  <marker id="arrow-teal" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#1B8393" />
+  <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B8393" />
   </marker>
-  <marker id="arrow-gold" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#E0A31A" />
+  <marker id="arrow-gold" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#E0A31A" />
   </marker>
-  <marker id="arrow-orange" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#F97316" />
+  <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#F97316" />
   </marker>
-  <marker id="arrow-green" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#2B8857" />
+  <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B8857" />
   </marker>
-  <marker id="arrow-red" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#B94B34" />
+  <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#B94B34" />
   </marker>
 </defs>
 """.strip()
@@ -386,20 +388,20 @@ def runtime_service_topology() -> str:
         backdrop(),
         title_block(
             "NBN runtime service topology",
-            "Control-plane roots stay discoverable while per-brain actors and shards move across workers.",
+            "Stable service roots on the left.\nMovable per-brain actors on the right.",
         ),
-        section_frame(50, 150, 240, 620, "Clients", "Stable public entrypoints", accent=GOLD),
-        section_frame(340, 150, 480, 620, "Core services", "Registry, routing, and durable state", accent=TEAL),
-        section_frame(870, 150, 680, 620, "Per-brain runtime", "Placement can move without changing public endpoints", accent=ORANGE),
-        card(80, 360, 180, 110, "External World", ["Proto.Actor clients", "input writes + subscriptions"], accent=GOLD, fill=PAPER_GOLD, title_size=22, body_size=17),
-        card(80, 540, 180, 110, "Workbench", ["discovery", "control", "visualization peers"], accent=GOLD, fill=PAPER_GOLD, title_size=22, body_size=17),
-        card(380, 220, 180, 110, "SettingsMonitor", ["registry + leases", "settings + capability rows"], accent=TEAL, fill=PAPER_TEAL, title_size=22, body_size=17),
-        card(600, 220, 180, 110, "HiveMind", ["global tick", "spawn / pause / recovery"], accent=TEAL, fill=PAPER_TEAL, title_size=22, body_size=17),
-        card(490, 390, 180, 110, "IO Gateway", ["stable brain-facing IO surface", "spawns coordinators"], accent=TEAL, fill=PAPER_TEAL, title_size=22, body_size=17),
-        card(380, 560, 180, 110, "Observability", ["debug + visualization hubs"], accent=TEAL, fill=PAPER_TEAL, title_size=22, body_size=17),
-        card(600, 560, 180, 110, "Artifact Store", ["CAS for .nbn / .nbs", "recovery + partial fetch"], accent=TEAL, fill=PAPER_TEAL, title_size=22, body_size=17),
-        card(920, 230, 170, 90, "BrainRoot", ["control + metadata"], accent=ORANGE, fill=PAPER_ORANGE, title_size=21, body_size=16),
-        card(1160, 230, 220, 90, "BrainSignalRouter", ["tick delivery + shard routing"], accent=ORANGE, fill=PAPER_ORANGE, title_size=21, body_size=16),
+        section_frame(50, 150, 240, 620, "Clients", "", accent=GOLD),
+        section_frame(340, 150, 480, 620, "Core services", "", accent=TEAL),
+        section_frame(870, 150, 680, 620, "Per-brain runtime", "", accent=ORANGE),
+        card(80, 360, 180, 110, "External World", ["clients", "input + output"], accent=GOLD, fill=PAPER_GOLD),
+        card(80, 540, 180, 110, "Workbench", ["discovery", "control", "visualization"], accent=GOLD, fill=PAPER_GOLD),
+        card(380, 220, 180, 110, "SettingsMonitor", ["registry", "settings", "capabilities"], accent=TEAL, fill=PAPER_TEAL),
+        card(600, 220, 180, 110, "HiveMind", ["global tick", "brain lifecycle", "recovery"], accent=TEAL, fill=PAPER_TEAL),
+        card(490, 390, 180, 110, "IO Gateway", ["public IO surface", "spawns coordinators"], accent=TEAL, fill=PAPER_TEAL),
+        card(380, 560, 180, 110, "Observability", ["debug", "visualization"], accent=TEAL, fill=PAPER_TEAL),
+        card(600, 560, 180, 110, "Artifact Store", [".nbn / .nbs CAS", "partial fetch"], accent=TEAL, fill=PAPER_TEAL),
+        card(920, 230, 170, 90, "BrainRoot", ["control"], accent=ORANGE, fill=PAPER_ORANGE, title_size=20, body_size=15),
+        card(1160, 230, 220, 90, "BrainSignalRouter", ["deliver + route"], accent=ORANGE, fill=PAPER_ORANGE, title_size=20, body_size=15),
         worker_box(910, 390, 180, 250, "Worker A", [("RTT 1x", PAPER_TEAL)]),
         worker_box(1130, 390, 180, 250, "Worker B", [("RTT 1x", PAPER_TEAL)]),
         worker_box(1350, 390, 180, 250, "Worker C", [("RTT 4x", PAPER_SLATE)]),
@@ -415,12 +417,11 @@ def runtime_service_topology() -> str:
         multiline_text(1220, 570, ["RegionShard C", "2048-3071"], size=16, weight=700, fill=INK, anchor="middle"),
         multiline_text(1440, 496, ["RegionShard D", "3072-3499"], size=16, weight=700, fill=INK, anchor="middle"),
         text(1440, 570, "OutputCoordinator", size=17, weight=700, fill=INK, anchor="middle", baseline="middle"),
-        text(980, 360, "worker placement can change", size=17, weight=700, fill=ORANGE),
-        arrow(260, 415, 490, 445, stroke=GOLD, label_text="brain IO + control", label_x=380, label_y=405),
+        arrow(260, 415, 490, 445, stroke=GOLD, label_text="IO + control", label_x=380, label_y=405),
         arrow(260, 595, 380, 615, stroke=GOLD, label_text="subscribe", label_x=320, label_y=580),
-        arrow(560, 275, 600, 275, stroke=INK, label_text="registry + settings", label_x=580, label_y=255),
-        arrow(580, 390, 690, 330, stroke=INK, label_text="spawn / pause / kill", label_x=655, label_y=372),
-        arrow(780, 275, 920, 275, stroke=ORANGE, label_text="place + register", label_x=850, label_y=255),
+        arrow(560, 275, 600, 275, stroke=INK, label_text="registry", label_x=580, label_y=255),
+        arrow(580, 390, 690, 330, stroke=INK, label_text="lifecycle", label_x=655, label_y=372),
+        arrow(780, 275, 920, 275, stroke=ORANGE, label_text="place", label_x=850, label_y=255),
         arrow(1090, 275, 1160, 275, stroke=ORANGE),
         elbow_arrow([(1270, 320), (1270, 360), (1000, 360), (1000, 390)], stroke=ORANGE),
         elbow_arrow([(1270, 320), (1270, 360), (1220, 360), (1220, 390)], stroke=ORANGE),
@@ -432,7 +433,7 @@ def runtime_service_topology() -> str:
             1460,
             70,
             "Abstraction boundary",
-            "External clients and Workbench talk to stable service roots.\nThey do not need shard placement, actor PIDs, or the current worker host for a coordinator.",
+            "Clients and Workbench talk to stable service roots.\nThey do not need shard placement or actor PIDs.",
             accent=GOLD,
         ),
     ]
@@ -441,16 +442,16 @@ def runtime_service_topology() -> str:
 
 def tick_compute_deliver_pipeline() -> str:
     columns = [
-        (60, "Tick N compute", GOLD, PAPER_GOLD, ["merge I into B", "homeostasis / gates", "activate + reset", "fire outgoing axons"]),
-        (430, "Tick N deliver", TEAL, PAPER_TEAL, ["route fired signals", "accumulate into target I", "publish outputs", "buffer input writes"]),
-        (800, "Tick N+1 compute", GOLD, PAPER_GOLD, ["the merged inbox is now visible", "same compute rules", "B persists across idle ticks", "new fires advance the graph"]),
-        (1170, "Tick N+1 deliver", TEAL, PAPER_TEAL, ["deliver the new fires", "replay or dirty-only inputs", "target inboxes refill", "the cycle repeats"]),
+        (60, "Tick N compute", GOLD, PAPER_GOLD, ["merge I into B", "gate + activate", "reset buffer", "fire axons"]),
+        (430, "Tick N deliver", TEAL, PAPER_TEAL, ["route fired signals", "fill target I", "publish outputs", "buffer inputs"]),
+        (800, "Tick N+1 compute", GOLD, PAPER_GOLD, ["merged inbox visible", "same compute rules", "B persists", "new fires advance"]),
+        (1170, "Tick N+1 deliver", TEAL, PAPER_TEAL, ["deliver new fires", "inject inputs", "fill inboxes", "repeat"]),
     ]
     elements = [
         backdrop(),
         title_block(
             "Tick compute / deliver pipeline",
-            "Delivery during tick N feeds inbox I, but activation can only see it at compute start of tick N+1.",
+            "Delivery during tick N fills inbox I.\nCompute sees it at tick N+1.",
         ),
     ]
     for x, title_text, accent, fill, lines in columns:
@@ -460,23 +461,23 @@ def tick_compute_deliver_pipeline() -> str:
             arrow(370, 320, 430, 320, stroke=INK, label_text="phase barrier", label_x=400, label_y=300),
             arrow(740, 320, 800, 320, stroke=INK, label_text="next tick", label_x=770, label_y=300),
             arrow(1110, 320, 1170, 320, stroke=INK, label_text="phase barrier", label_x=1140, label_y=300),
-            card(70, 520, 700, 170, "Neuron state between phases", ["B = persistent buffer", "I = inbox accumulator for the next merge", "Tick N delivery can only change I, so Tick N activation is already decided."], accent=GOLD, fill="white"),
+            card(70, 520, 700, 170, "Neuron state between phases", ["B = persistent buffer", "I = next-merge inbox", "Tick N delivery changes I only."], accent=GOLD, fill="white"),
             rect(150, 598, 180, 70, rx=18, fill=PAPER_GOLD, stroke=BORDER, stroke_width=2),
             rect(500, 598, 180, 70, rx=18, fill=PAPER_TEAL, stroke=BORDER, stroke_width=2),
             text(240, 626, "B", size=36, weight=850, fill=INK, anchor="middle", baseline="middle"),
             text(240, 648, "persistent buffer", size=16, weight=700, fill=SLATE, anchor="middle", baseline="middle"),
             text(590, 626, "I", size=36, weight=850, fill=INK, anchor="middle", baseline="middle"),
             text(590, 648, "next-merge inbox", size=16, weight=700, fill=SLATE, anchor="middle", baseline="middle"),
-            arrow(330, 633, 500, 633, stroke=GOLD, label_text="merged at next compute start", label_x=415, label_y=612),
-            card(860, 520, 280, 120, "Input path", ["InputCoordinator injects buffered writes during delivery."], accent=TEAL, fill="white", title_size=22, body_size=17),
-            card(1220, 520, 280, 120, "Output path", ["Output region 31 publishes events after compute / delivery."], accent=TEAL, fill="white", title_size=22, body_size=17),
+            arrow(330, 633, 500, 633, stroke=GOLD, label_text="merge next tick", label_x=415, label_y=612),
+            card(860, 520, 280, 120, "Input path", ["InputCoordinator injects buffered writes."], accent=TEAL, fill="white"),
+            card(1220, 520, 280, 120, "Output path", ["Output region 31 publishes events."], accent=TEAL, fill="white"),
             callout_band(
                 860,
                 690,
                 640,
                 110,
                 "Critical invariant",
-                "Do not dispatch compute N+1 until deliver N is finalized. This is what keeps signals from tick N visible only on the next compute phase.",
+                "Do not dispatch compute N+1 until deliver N is finalized.\nThat is what keeps tick N signals out of tick N compute.",
                 accent=RED,
             ),
         ]
@@ -501,10 +502,10 @@ def sharding_and_placement() -> str:
         backdrop(),
         title_block(
             "Region sharding and placement locality",
-            "Shard cuts follow stride boundaries, then HiveMind maps the slices onto the lowest-latency worker plan that still fits resources.",
+            "Shard cuts follow stride boundaries.\nPlacement then scores locality and fit.",
         ),
-        section_frame(60, 160, 720, 610, "Shard plan", "One region section cut into stride-aligned slices", accent=GOLD),
-        section_frame(820, 160, 720, 610, "Placement plan", "Locality first, capacity second, epoch activation before resume", accent=TEAL),
+        section_frame(60, 160, 720, 610, "Shard plan", "One region section cut into\nstride-aligned slices", accent=GOLD),
+        section_frame(820, 160, 720, 610, "Placement plan", "Locality first.\nFit second.", accent=TEAL),
         rect(shard_x, shard_y, shard_width, 80, rx=22, fill="white", stroke=BORDER, stroke_width=2),
     ]
     for index in range(4):
@@ -523,12 +524,12 @@ def sharding_and_placement() -> str:
         elements.append(text(label_x, shard_y - 28, str(boundary), size=16, weight=700, fill=SLATE, anchor=label_anchor))
     elements.extend(
         [
-            multiline_text(115, 360, ["Checkpoint stride = 1024 neurons", "Every shard starts on a stride boundary.", "Only the final tail shard may be shorter."], size=19, weight=500, fill=SLATE),
-            card(115, 460, 180, 110, "Stride rule", ["start % stride == 0"], accent=GOLD, fill=PAPER_GOLD, title_size=21, body_size=17),
-            card(310, 460, 180, 110, "Tail rule", ["final shard may end early"], accent=GOLD, fill=PAPER_GOLD, title_size=21, body_size=17),
-            card(505, 460, 180, 110, "Epoch rule", ["routing refresh before resume"], accent=GOLD, fill=PAPER_GOLD, title_size=21, body_size=17),
+            multiline_text(115, 360, ["Stride = 1024 neurons", "All starts align to stride.", "Only the tail can be short."], size=17, weight=500, fill=SLATE),
+            card(115, 460, 180, 110, "Stride rule", ["start % stride == 0"], accent=GOLD, fill=PAPER_GOLD, title_size=20, body_size=15),
+            card(310, 460, 180, 110, "Tail rule", ["final shard may be short"], accent=GOLD, fill=PAPER_GOLD, title_size=20, body_size=15),
+            card(505, 460, 180, 110, "Epoch rule", ["refresh routes before resume"], accent=GOLD, fill=PAPER_GOLD, title_size=20, body_size=15),
             rect(860, 230, 420, 410, rx=28, fill="none", stroke="#C7D8DB", stroke_width=2, stroke_dasharray="10 10"),
-            text(880, 258, "lowest-latency segment", size=18, weight=700, fill=TEAL),
+            text(880, 258, "lowest-latency segment", size=15, weight=700, fill=TEAL),
             worker_box(860, 290, 180, 300, "Worker A", [("RTT 1x", PAPER_TEAL)]),
             worker_box(1080, 290, 180, 300, "Worker B", [("RTT 1x", PAPER_TEAL)]),
             worker_box(1320, 290, 180, 300, "Worker C", [("RTT 4x", PAPER_SLATE)]),
@@ -545,7 +546,7 @@ def sharding_and_placement() -> str:
                 1385,
                 95,
                 "Scheduling preference",
-                "Prefer one machine first, then the lowest-latency worker segment.\nSplit across slower links only when the tighter locality cannot satisfy the shard plan.",
+                "Prefer one machine first, then the lowest-latency segment.\nSplit across slower links only when needed.",
                 accent=TEAL,
             ),
         ]
@@ -555,19 +556,19 @@ def sharding_and_placement() -> str:
 
 def snapshot_and_recovery_lifecycle() -> str:
     steps = [
-        ("Base artifacts", ["brain definition .nbn", "latest snapshot .nbs"], GOLD, PAPER_GOLD),
-        ("Spawn epoch", ["load directories", "place shards + coordinators"], TEAL, PAPER_TEAL),
-        ("Active ticks", ["compute / deliver", "emit outputs + telemetry"], ORANGE, PAPER_ORANGE),
-        ("Boundary snapshot", ["persist B buffers", "enabled bits + overlays"], GREEN, "white"),
-        ("Failure pause", ["stop tick dispatch", "mark Recovering"], RED, "white"),
-        ("Restore + resume", ["reload whole brain from durable artifacts", "activate new epoch before ticks resume"], TEAL, PAPER_TEAL),
+        ("Base artifacts", [".nbn definition", "latest .nbs snapshot"], GOLD, PAPER_GOLD),
+        ("Spawn epoch", ["load directories", "place shards + IO"], TEAL, PAPER_TEAL),
+        ("Active ticks", ["compute / deliver", "emit outputs"], ORANGE, PAPER_ORANGE),
+        ("Boundary snapshot", ["persist B", "enabled bits", "axon overlays"], GREEN, "white"),
+        ("Failure pause", ["stop dispatch", "mark Recovering"], RED, "white"),
+        ("Restore + resume", ["reload whole brain", "activate new epoch", "resume ticks"], TEAL, PAPER_TEAL),
     ]
     positions = [40, 290, 540, 790, 1040, 1290]
     elements = [
         backdrop(),
         title_block(
             "Spawn, snapshot, and recovery lifecycle",
-            "Snapshots are taken at tick boundaries, and recovery always rebuilds the full brain from durable artifacts.",
+            "Snapshots happen at tick boundaries.\nRecovery rebuilds the whole brain from durable artifacts.",
         ),
     ]
     for index, ((title_text, lines, accent, fill), x) in enumerate(zip(steps, positions), start=1):
@@ -578,16 +579,16 @@ def snapshot_and_recovery_lifecycle() -> str:
             elements.append(arrow(x + 210, 305, next_x, 305, stroke=INK))
     elements.extend(
         [
-            card(620, 560, 360, 140, "Durable artifact pair", ["Snapshot bytes are written only at tick boundaries.", "Recovery reads the durable .nbn + .nbs pair rather than patching one missing shard from live peers."], accent=GREEN, fill="white"),
-            arrow(895, 390, 800, 560, stroke=GREEN, label_text="write boundary snapshot", label_x=940, label_y=500),
-            arrow(980, 630, 1395, 390, stroke=GREEN, label_text="source of truth for restore", label_x=1180, label_y=540),
+            card(620, 560, 360, 140, "Durable artifact pair", ["written only at boundaries", "used as full restore source"], accent=GREEN, fill="white"),
+            arrow(895, 390, 800, 560, stroke=GREEN, label_text="write snapshot", label_x=900, label_y=500),
+            arrow(980, 630, 1395, 390, stroke=GREEN, label_text="restore from artifacts", label_x=1180, label_y=540),
             callout_band(
                 70,
                 760,
                 1460,
                 95,
                 "Recovery invariant",
-                "A lost shard does not get patched back from surviving live peers.\nHiveMind reconstructs the entire brain from the last stored .nbn + .nbs pair before ticks resume.",
+                "A lost shard is not patched back from surviving live peers.\nHiveMind reconstructs the whole brain from the last .nbn + .nbs pair.",
                 accent=RED,
             ),
         ]
@@ -609,16 +610,16 @@ def reproduction_flow() -> str:
         backdrop(),
         title_block(
             "Reproduction compatibility and child synthesis",
-            "The runtime can stop at assessment-only reports or continue through locus-aligned mutation into a child artifact and optional spawn.",
+            "Assessment can stop after scoring.\nCompatible requests can continue to child synthesis.",
         ),
-        card(60, 220, 230, 110, "Parent A", ["BrainId or artifact refs", "base or live strength source"], accent=GOLD, fill=PAPER_GOLD, title_size=22, body_size=17),
-        card(60, 380, 230, 110, "Parent B", ["same addressing modes", "same compatibility rules"], accent=GOLD, fill=PAPER_GOLD, title_size=22, body_size=17),
-        card(60, 540, 230, 150, "ReproduceConfig", ["run_count + thresholds", "IO neuron count protected by default", "manual IO add/remove only when protection is off"], accent=GOLD, fill=PAPER_GOLD, title_size=22, body_size=17),
-        section_frame(350, 190, 470, 520, "Compatibility gate cascade", "Abort as soon as one gate fails", accent=TEAL),
-        section_frame(880, 190, 600, 520, "Outputs", "Assessment can stop early; synthesis can continue to a child artifact", accent=ORANGE),
-        card(920, 270, 220, 130, "Assessment only", ["same gate cascade", "no child bytes", "used by speciation bootstrap"], accent=TEAL, fill="white", title_size=22, body_size=17),
-        card(1200, 250, 240, 190, "Child synthesis", ["align by (region_id, neuron_id)", "mutate functions / params / axons", "respect IO invariants + duplicate-target rules", "optional spawn policy after synthesis"], accent=ORANGE, fill="white", title_size=22, body_size=17),
-        card(1030, 540, 260, 110, "Similarity + mutation report", ["assessment-only returns here directly", "successful synthesis also returns here"], accent=GREEN, fill="white", title_size=22, body_size=17),
+        card(60, 220, 230, 110, "Parent A", ["BrainId or artifact refs", "base or live strength"], accent=GOLD, fill=PAPER_GOLD),
+        card(60, 380, 230, 110, "Parent B", ["same addressing modes", "same rules"], accent=GOLD, fill=PAPER_GOLD),
+        card(60, 540, 230, 150, "ReproduceConfig", ["run_count + thresholds", "IO counts protected by default", "manual IO edits only when protection is off"], accent=GOLD, fill=PAPER_GOLD),
+        section_frame(350, 190, 470, 520, "Compatibility gates", "Abort on first failure", accent=TEAL),
+        section_frame(880, 190, 600, 520, "Outputs", "Assessment or synthesis", accent=ORANGE),
+        card(930, 290, 220, 130, "Assessment only", ["same gate cascade", "no child bytes", "used by speciation"], accent=TEAL, fill="white"),
+        card(1200, 280, 240, 175, "Child synthesis", ["align by locus", "mutate functions / params / axons", "respect IO invariants", "optional spawn"], accent=ORANGE, fill="white"),
+        card(1010, 545, 300, 100, "Similarity + mutation report", ["assessment returns here", "synthesis returns here"], accent=GREEN, fill="white"),
     ]
     gate_y = 220
     for index, gate in enumerate(gates, start=1):
@@ -628,20 +629,20 @@ def reproduction_flow() -> str:
         elements.append(text(465, row_y + 29, gate, size=18, weight=650, fill=INK))
     elements.extend(
         [
-            arrow(290, 275, 350, 275, stroke=GOLD, label_text="load parents", label_x=320, label_y=255),
+            arrow(290, 275, 350, 275, stroke=GOLD, label_text="load", label_x=320, label_y=255),
             arrow(290, 435, 350, 435, stroke=GOLD),
-            arrow(290, 615, 350, 615, stroke=GOLD, label_text="thresholds + policy", label_x=320, label_y=595),
-            arrow(820, 330, 920, 330, stroke=TEAL, label_text="stop here for assessment", label_x=870, label_y=310),
-            arrow(820, 360, 1200, 345, stroke=ORANGE, label_text="continue when compatible", label_x=1005, label_y=324),
-            arrow(1030, 400, 1080, 540, stroke=TEAL),
-            arrow(1320, 440, 1240, 540, stroke=ORANGE),
+            arrow(290, 615, 350, 615, stroke=GOLD, label_text="policy", label_x=320, label_y=595),
+            arrow(820, 330, 930, 350, stroke=TEAL),
+            arrow(820, 360, 1200, 365, stroke=ORANGE),
+            arrow(1040, 420, 1090, 545, stroke=TEAL),
+            arrow(1320, 455, 1240, 545, stroke=ORANGE),
             callout_band(
                 60,
                 780,
                 1480,
                 75,
                 "Protected IO regions",
-                "Neuron count changes in regions 0 and 31 are rejected unless the caller disables protection\nand supplies explicit manual add/remove operations. Axon invariants still apply either way.",
+                "Neuron count changes in regions 0 and 31 require protection to be disabled\nand explicit manual add/remove operations. Axon invariants still apply.",
                 accent=RED,
             ),
         ]
@@ -654,36 +655,36 @@ def artifact_store_partial_fetch() -> str:
         backdrop(),
         title_block(
             "Artifact store, resolver, and partial fetch path",
-            "Runtime callers resolve an exact store_uri, load manifests, and then choose either full-artifact or region-index-guided partial reads.",
+            "Callers resolve a store_uri, load a manifest,\nthen choose partial or full reads.",
         ),
-        section_frame(60, 180, 250, 560, "Callers", "All of these honor the resolver path", accent=GOLD),
-        section_frame(370, 240, 250, 180, "Resolver", "Exact store_uri or built-in HTTP(S) backend", accent=TEAL),
-        section_frame(690, 180, 310, 220, "Manifest", "artifact_id, chunk list, optional region index", accent=TEAL),
-        section_frame(690, 460, 310, 220, "CAS storage", "SQLite metadata + chunk payloads", accent=GOLD),
+        section_frame(60, 180, 250, 560, "Callers", "All of these start from\nstore_uri", accent=GOLD),
+        section_frame(370, 240, 250, 180, "Resolver", "Exact store_uri or\nbuilt-in HTTP(S)", accent=TEAL),
+        section_frame(690, 180, 310, 220, "Manifest", "artifact_id, chunk list,\noptional region index", accent=TEAL),
+        section_frame(690, 460, 310, 220, "CAS storage", "SQLite metadata\n+ chunk payloads", accent=GOLD),
         section_frame(1070, 180, 420, 220, "Partial fetch", "Manifest-driven region reads", accent=ORANGE),
         section_frame(1070, 460, 420, 220, "Full read + cache", "Whole artifact remains available", accent=GREEN),
-        card(90, 280, 190, 320, "Runtime callers", ["HiveMind", "RegionHost", "WorkerNode", "Reproduction", "all start from store_uri"], accent=GOLD, fill=PAPER_GOLD, title_size=22, body_size=18),
-        card(400, 285, 190, 90, "Resolver path", ["env map + adapters + HTTP(S)"], accent=TEAL, fill=PAPER_TEAL, title_size=21, body_size=16),
-        card(720, 250, 250, 70, "Manifest row", ["sha256 + media type + chunks"], accent=TEAL, fill=PAPER_TEAL, title_size=21, body_size=15),
-        card(720, 335, 250, 70, "Region index", ["optional offset / length metadata"], accent=TEAL, fill=PAPER_TEAL, title_size=21, body_size=15),
-        card(720, 525, 250, 70, "SQLite metadata", ["artifacts + artifact_chunks"], accent=GOLD, fill=PAPER_GOLD, title_size=21, body_size=15),
-        card(720, 610, 250, 70, "Chunk files", ["chunks/aa/<hash>"], accent=GOLD, fill=PAPER_GOLD, title_size=21, body_size=15),
-        card(1105, 250, 350, 80, "Indexed partial read", ["If index + range support exist, fetch only the needed bytes."], accent=ORANGE, fill=PAPER_ORANGE, title_size=21, body_size=16),
-        card(1105, 345, 350, 70, "Range fallback", ["405 / 501 falls back to a full-artifact read."], accent=ORANGE, fill=PAPER_ORANGE, title_size=21, body_size=16),
-        card(1105, 525, 350, 80, "Node-local cache", ["Reuse after the first successful fetch or write-through."], accent=GREEN, fill="white", title_size=21, body_size=16),
-        card(1105, 620, 350, 70, "Canonical bytes", ["Whole-artifact callers can always rebuild exact bytes."], accent=GREEN, fill="white", title_size=21, body_size=16),
+        card(90, 280, 190, 320, "Runtime callers", ["HiveMind", "RegionHost", "WorkerNode", "Reproduction"], accent=GOLD, fill=PAPER_GOLD),
+        card(400, 285, 190, 90, "Resolver path", ["env map + adapters + HTTP(S)"], accent=TEAL, fill=PAPER_TEAL),
+        card(720, 250, 250, 70, "Manifest row", ["sha256 + media type + chunks"], accent=TEAL, fill=PAPER_TEAL),
+        card(720, 335, 250, 70, "Region index", ["optional offset / length"], accent=TEAL, fill=PAPER_TEAL),
+        card(720, 525, 250, 70, "SQLite metadata", ["artifacts + artifact_chunks"], accent=GOLD, fill=PAPER_GOLD),
+        card(720, 610, 250, 70, "Chunk files", ["chunks/aa/<hash>"], accent=GOLD, fill=PAPER_GOLD),
+        card(1105, 250, 350, 80, "Indexed partial read", ["fetch only the needed bytes"], accent=ORANGE, fill=PAPER_ORANGE),
+        card(1105, 345, 350, 70, "Range fallback", ["405 / 501 -> full artifact read"], accent=ORANGE, fill=PAPER_ORANGE),
+        card(1105, 525, 350, 80, "Node-local cache", ["reuse after first successful fetch"], accent=GREEN, fill="white"),
+        card(1105, 620, 350, 70, "Canonical bytes", ["whole-artifact callers can rebuild exact bytes"], accent=GREEN, fill="white"),
         arrow(310, 335, 370, 330, stroke=GOLD, label_text="store_uri", label_x=340, label_y=315),
-        arrow(620, 330, 690, 290, stroke=TEAL, label_text="resolve backend", label_x=655, label_y=305),
-        arrow(845, 400, 845, 460, stroke=INK, label_text="persist / reuse chunks", label_x=935, label_y=428),
-        arrow(1000, 290, 1070, 290, stroke=ORANGE, label_text="partial path", label_x=1035, label_y=270),
-        arrow(1000, 570, 1070, 570, stroke=GREEN, label_text="full-read path", label_x=1035, label_y=550),
+        arrow(620, 330, 690, 290, stroke=TEAL, label_text="resolve", label_x=655, label_y=305),
+        arrow(845, 400, 845, 460, stroke=INK, label_text="persist chunks", label_x=935, label_y=428),
+        arrow(1000, 290, 1070, 290, stroke=ORANGE, label_text="partial read", label_x=1035, label_y=270),
+        arrow(1000, 570, 1070, 570, stroke=GREEN, label_text="full read", label_x=1035, label_y=550),
         callout_band(
             60,
             785,
             1430,
             70,
             "Operational note",
-            "The local cache is a convenience layer, not an authority layer.\nUpstream manifest/content responses still define truth for a remote artifact store.",
+            "The local cache is a convenience layer, not an authority layer.\nUpstream manifest/content responses still define truth.",
             accent=TEAL,
         ),
     ]

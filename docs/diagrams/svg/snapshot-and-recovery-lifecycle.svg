@@ -5,25 +5,25 @@
     <stop offset="100%" stop-color="#FFF8EE" />
   </linearGradient>
   <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#131B2C" flood-opacity="0.10" />
+    <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#131B2C" flood-opacity="0.08" />
   </filter>
-  <marker id="arrow-ink" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#131B2C" />
+  <marker id="arrow-ink" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#131B2C" />
   </marker>
-  <marker id="arrow-teal" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#1B8393" />
+  <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B8393" />
   </marker>
-  <marker id="arrow-gold" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#E0A31A" />
+  <marker id="arrow-gold" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#E0A31A" />
   </marker>
-  <marker id="arrow-orange" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#F97316" />
+  <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#F97316" />
   </marker>
-  <marker id="arrow-green" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#2B8857" />
+  <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B8857" />
   </marker>
-  <marker id="arrow-red" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#B94B34" />
+  <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#B94B34" />
   </marker>
 </defs>
 <g>
@@ -33,102 +33,102 @@
 <circle cx="1495" cy="820" r="120" fill="#FFF1E7" opacity="0.7" />
 </g>
 <g>
-<text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spawn, snapshot, and recovery lifecycle</text>
-<text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Snapshots are taken at tick boundaries, and recovery always rebuilds the full brain from durable artifacts.</text>
+<text x="70" y="66" fill="#131B2C" font-size="34" font-weight="850" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spawn, snapshot, and recovery lifecycle</text>
+<text x="70" y="96" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="70" dy="0">Snapshots happen at tick boundaries.</tspan><tspan x="70" dy="1.18em">Recovery rebuilds the whole brain from durable artifacts.</tspan></text>
 </g>
 <g>
 <rect x="40" y="220" width="210" height="170" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="40" y="220" width="210" height="9" rx="26" fill="#E0A31A" />
-<text x="60" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Base artifacts</text>
-<text x="60" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="60" dy="0">brain definition .nbn</tspan><tspan x="60" dy="1.35em">latest snapshot .nbs</tspan></text>
+<rect x="40" y="220" width="210" height="8" rx="26" fill="#E0A31A" />
+<text x="58" y="260" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Base artifacts</text>
+<text x="58" y="290" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="58" dy="0">.nbn definition</tspan><tspan x="58" dy="1.28em">latest .nbs snapshot</tspan></text>
 </g>
 <g>
 <circle cx="64" cy="204" r="18" fill="#E0A31A" />
-<text x="64" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">1</text>
+<text x="64" y="205" fill="white" font-size="18" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">1</text>
 </g>
 <g>
-<line x1="250" y1="305" x2="290" y2="305" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<line x1="250" y1="305" x2="290" y2="305" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
 </g>
 <g>
 <rect x="290" y="220" width="210" height="170" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="290" y="220" width="210" height="9" rx="26" fill="#1B8393" />
-<text x="310" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spawn epoch</text>
-<text x="310" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="310" dy="0">load directories</tspan><tspan x="310" dy="1.35em">place shards + coordinators</tspan></text>
+<rect x="290" y="220" width="210" height="8" rx="26" fill="#1B8393" />
+<text x="308" y="260" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spawn epoch</text>
+<text x="308" y="290" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="308" dy="0">load directories</tspan><tspan x="308" dy="1.28em">place shards + IO</tspan></text>
 </g>
 <g>
 <circle cx="314" cy="204" r="18" fill="#1B8393" />
-<text x="314" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2</text>
+<text x="314" y="205" fill="white" font-size="18" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">2</text>
 </g>
 <g>
-<line x1="500" y1="305" x2="540" y2="305" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<line x1="500" y1="305" x2="540" y2="305" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
 </g>
 <g>
 <rect x="540" y="220" width="210" height="170" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="540" y="220" width="210" height="9" rx="26" fill="#F97316" />
-<text x="560" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Active ticks</text>
-<text x="560" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="560" dy="0">compute / deliver</tspan><tspan x="560" dy="1.35em">emit outputs + telemetry</tspan></text>
+<rect x="540" y="220" width="210" height="8" rx="26" fill="#F97316" />
+<text x="558" y="260" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Active ticks</text>
+<text x="558" y="290" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="558" dy="0">compute / deliver</tspan><tspan x="558" dy="1.28em">emit outputs</tspan></text>
 </g>
 <g>
 <circle cx="564" cy="204" r="18" fill="#F97316" />
-<text x="564" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">3</text>
+<text x="564" y="205" fill="white" font-size="18" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">3</text>
 </g>
 <g>
-<line x1="750" y1="305" x2="790" y2="305" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<line x1="750" y1="305" x2="790" y2="305" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
 </g>
 <g>
 <rect x="790" y="220" width="210" height="170" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="790" y="220" width="210" height="9" rx="26" fill="#2B8857" />
-<text x="810" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Boundary snapshot</text>
-<text x="810" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="810" dy="0">persist B buffers</tspan><tspan x="810" dy="1.35em">enabled bits + overlays</tspan></text>
+<rect x="790" y="220" width="210" height="8" rx="26" fill="#2B8857" />
+<text x="808" y="260" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Boundary snapshot</text>
+<text x="808" y="290" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="808" dy="0">persist B</tspan><tspan x="808" dy="1.28em">enabled bits</tspan><tspan x="808" dy="1.28em">axon overlays</tspan></text>
 </g>
 <g>
 <circle cx="814" cy="204" r="18" fill="#2B8857" />
-<text x="814" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">4</text>
+<text x="814" y="205" fill="white" font-size="18" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">4</text>
 </g>
 <g>
-<line x1="1000" y1="305" x2="1040" y2="305" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<line x1="1000" y1="305" x2="1040" y2="305" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
 </g>
 <g>
 <rect x="1040" y="220" width="210" height="170" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1040" y="220" width="210" height="9" rx="26" fill="#B94B34" />
-<text x="1060" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Failure pause</text>
-<text x="1060" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1060" dy="0">stop tick dispatch</tspan><tspan x="1060" dy="1.35em">mark Recovering</tspan></text>
+<rect x="1040" y="220" width="210" height="8" rx="26" fill="#B94B34" />
+<text x="1058" y="260" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Failure pause</text>
+<text x="1058" y="290" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1058" dy="0">stop dispatch</tspan><tspan x="1058" dy="1.28em">mark Recovering</tspan></text>
 </g>
 <g>
 <circle cx="1064" cy="204" r="18" fill="#B94B34" />
-<text x="1064" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">5</text>
+<text x="1064" y="205" fill="white" font-size="18" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">5</text>
 </g>
 <g>
-<line x1="1250" y1="305" x2="1290" y2="305" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<line x1="1250" y1="305" x2="1290" y2="305" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
 </g>
 <g>
 <rect x="1290" y="220" width="210" height="170" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1290" y="220" width="210" height="9" rx="26" fill="#1B8393" />
-<text x="1310" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Restore + resume</text>
-<text x="1310" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1310" dy="0">reload whole brain from durable artifacts</tspan><tspan x="1310" dy="1.35em">activate new epoch before ticks resume</tspan></text>
+<rect x="1290" y="220" width="210" height="8" rx="26" fill="#1B8393" />
+<text x="1308" y="260" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Restore + resume</text>
+<text x="1308" y="290" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1308" dy="0">reload whole brain</tspan><tspan x="1308" dy="1.28em">activate new epoch</tspan><tspan x="1308" dy="1.28em">resume ticks</tspan></text>
 </g>
 <g>
 <circle cx="1314" cy="204" r="18" fill="#1B8393" />
-<text x="1314" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">6</text>
+<text x="1314" y="205" fill="white" font-size="18" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">6</text>
 </g>
 <g>
 <rect x="620" y="560" width="360" height="140" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="620" y="560" width="360" height="9" rx="26" fill="#2B8857" />
-<text x="640" y="604" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Durable artifact pair</text>
-<text x="640" y="638" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="640" dy="0">Snapshot bytes are written only at tick boundaries.</tspan><tspan x="640" dy="1.35em">Recovery reads the durable .nbn + .nbs pair rather than patching one missing shard from live peers.</tspan></text>
+<rect x="620" y="560" width="360" height="8" rx="26" fill="#2B8857" />
+<text x="638" y="600" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Durable artifact pair</text>
+<text x="638" y="630" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="638" dy="0">written only at boundaries</tspan><tspan x="638" dy="1.28em">used as full restore source</tspan></text>
 </g>
 <g>
-<line x1="895" y1="390" x2="800" y2="560" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
-<text x="940" y="500" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">write boundary snapshot</text>
+<line x1="895" y1="390" x2="800" y2="560" stroke="#2B8857" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-green)" />
+<text x="900" y="500" fill="#2B8857" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">write snapshot</text>
 </g>
 <g>
-<line x1="980" y1="630" x2="1395" y2="390" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
-<text x="1180" y="540" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">source of truth for restore</text>
+<line x1="980" y1="630" x2="1395" y2="390" stroke="#2B8857" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-green)" />
+<text x="1180" y="540" fill="#2B8857" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">restore from artifacts</text>
 </g>
 <g>
 <rect x="70" y="760" width="1460" height="95" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="70" y="760" width="14" height="95" rx="28" fill="#B94B34" />
-<text x="102" y="800" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Recovery invariant</text>
-<text x="102" y="832" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="102" dy="0">A lost shard does not get patched back from surviving live peers.</tspan><tspan x="102" dy="1.35em">HiveMind reconstructs the entire brain from the last stored .nbn + .nbs pair before ticks resume.</tspan></text>
+<text x="102" y="796" fill="#131B2C" font-size="21" font-weight="780" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Recovery invariant</text>
+<text x="102" y="824" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="102" dy="0">A lost shard is not patched back from surviving live peers.</tspan><tspan x="102" dy="1.22em">HiveMind reconstructs the whole brain from the last .nbn + .nbs pair.</tspan></text>
 </g>
 </svg>

@@ -5,25 +5,25 @@
     <stop offset="100%" stop-color="#FFF8EE" />
   </linearGradient>
   <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#131B2C" flood-opacity="0.10" />
+    <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#131B2C" flood-opacity="0.08" />
   </filter>
-  <marker id="arrow-ink" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#131B2C" />
+  <marker id="arrow-ink" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#131B2C" />
   </marker>
-  <marker id="arrow-teal" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#1B8393" />
+  <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B8393" />
   </marker>
-  <marker id="arrow-gold" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#E0A31A" />
+  <marker id="arrow-gold" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#E0A31A" />
   </marker>
-  <marker id="arrow-orange" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#F97316" />
+  <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#F97316" />
   </marker>
-  <marker id="arrow-green" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#2B8857" />
+  <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B8857" />
   </marker>
-  <marker id="arrow-red" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#B94B34" />
+  <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#B94B34" />
   </marker>
 </defs>
 <g>
@@ -33,121 +33,121 @@
 <circle cx="1495" cy="820" r="120" fill="#FFF1E7" opacity="0.7" />
 </g>
 <g>
-<text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Region sharding and placement locality</text>
-<text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Shard cuts follow stride boundaries, then HiveMind maps the slices onto the lowest-latency worker plan that still fits resources.</text>
+<text x="70" y="66" fill="#131B2C" font-size="34" font-weight="850" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Region sharding and placement locality</text>
+<text x="70" y="96" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="70" dy="0">Shard cuts follow stride boundaries.</tspan><tspan x="70" dy="1.18em">Placement then scores locality and fit.</tspan></text>
 </g>
 <g>
 <rect x="60" y="160" width="720" height="610" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="60" y="160" width="720" height="12" rx="34" fill="#E0A31A" />
-<text x="84" y="204" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Shard plan</text>
-<text x="84" y="236" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">One region section cut into stride-aligned slices</text>
+<text x="84" y="202" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Shard plan</text>
+<text x="84" y="228" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="84" dy="0">One region section cut into</tspan><tspan x="84" dy="1.18em">stride-aligned slices</tspan></text>
 </g>
 <g>
 <rect x="820" y="160" width="720" height="610" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="820" y="160" width="720" height="12" rx="34" fill="#1B8393" />
-<text x="844" y="204" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Placement plan</text>
-<text x="844" y="236" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Locality first, capacity second, epoch activation before resume</text>
+<text x="844" y="202" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Placement plan</text>
+<text x="844" y="228" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="844" dy="0">Locality first.</tspan><tspan x="844" dy="1.18em">Fit second.</tspan></text>
 </g>
 <rect x="115" y="240" width="590" height="80" rx="22" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="115" y="240" width="172.62" height="80" rx="22" fill="#E0A31A" opacity="0.95" />
-<text x="201.31" y="274" fill="white" font-size="19" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Shard A</text>
-<text x="201.31" y="298" fill="white" font-size="15" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">0-1023</text>
+<text x="201.31" y="274" fill="white" font-size="19" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Shard A</text>
+<text x="201.31" y="298" fill="white" font-size="15" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">0-1023</text>
 <rect x="287.62" y="240" width="172.62" height="80" rx="0" fill="#1B8393" opacity="0.95" />
-<text x="373.93" y="274" fill="white" font-size="19" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Shard B</text>
-<text x="373.93" y="298" fill="white" font-size="15" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">1024-2047</text>
+<text x="373.93" y="274" fill="white" font-size="19" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Shard B</text>
+<text x="373.93" y="298" fill="white" font-size="15" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">1024-2047</text>
 <rect x="460.23" y="240" width="172.62" height="80" rx="0" fill="#F97316" opacity="0.95" />
-<text x="546.54" y="274" fill="white" font-size="19" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Shard C</text>
-<text x="546.54" y="298" fill="white" font-size="15" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">2048-3071</text>
+<text x="546.54" y="274" fill="white" font-size="19" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Shard C</text>
+<text x="546.54" y="298" fill="white" font-size="15" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">2048-3071</text>
 <rect x="632.85" y="240" width="72.15" height="80" rx="22" fill="#2B8857" opacity="0.95" />
-<text x="668.93" y="274" fill="white" font-size="19" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Tail shard</text>
-<text x="668.93" y="298" fill="white" font-size="15" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">3072-3499</text>
+<text x="668.93" y="274" fill="white" font-size="19" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">Tail shard</text>
+<text x="668.93" y="298" fill="white" font-size="15" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">3072-3499</text>
 <line x1="115" y1="220" x2="115" y2="342" stroke="#B7BFCB" stroke-width="2" stroke-dasharray="6 8" />
-<text x="115" y="212" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">0</text>
+<text x="115" y="212" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">0</text>
 <line x1="287.62" y1="220" x2="287.62" y2="342" stroke="#B7BFCB" stroke-width="2" stroke-dasharray="6 8" />
-<text x="287.62" y="212" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">1024</text>
+<text x="287.62" y="212" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">1024</text>
 <line x1="460.23" y1="220" x2="460.23" y2="342" stroke="#B7BFCB" stroke-width="2" stroke-dasharray="6 8" />
-<text x="460.23" y="212" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">2048</text>
+<text x="460.23" y="212" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">2048</text>
 <line x1="632.85" y1="220" x2="632.85" y2="342" stroke="#B7BFCB" stroke-width="2" stroke-dasharray="6 8" />
-<text x="632.85" y="212" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">3072</text>
+<text x="632.85" y="212" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">3072</text>
 <line x1="705" y1="220" x2="705" y2="342" stroke="#B7BFCB" stroke-width="2" stroke-dasharray="6 8" />
-<text x="697" y="212" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">3500</text>
-<text x="115" y="360" fill="#556071" font-size="19" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="115" dy="0">Checkpoint stride = 1024 neurons</tspan><tspan x="115" dy="1.35em">Every shard starts on a stride boundary.</tspan><tspan x="115" dy="1.35em">Only the final tail shard may be shorter.</tspan></text>
+<text x="697" y="212" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">3500</text>
+<text x="115" y="360" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="115" dy="0">Stride = 1024 neurons</tspan><tspan x="115" dy="1.35em">All starts align to stride.</tspan><tspan x="115" dy="1.35em">Only the tail can be short.</tspan></text>
 <g>
 <rect x="115" y="460" width="180" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="115" y="460" width="180" height="9" rx="26" fill="#E0A31A" />
-<text x="135" y="504" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Stride rule</text>
-<text x="135" y="538" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="135" dy="0">start % stride == 0</tspan></text>
+<rect x="115" y="460" width="180" height="8" rx="26" fill="#E0A31A" />
+<text x="133" y="500" fill="#131B2C" font-size="20" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Stride rule</text>
+<text x="133" y="530" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="133" dy="0">start % stride == 0</tspan></text>
 </g>
 <g>
 <rect x="310" y="460" width="180" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="310" y="460" width="180" height="9" rx="26" fill="#E0A31A" />
-<text x="330" y="504" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tail rule</text>
-<text x="330" y="538" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="330" dy="0">final shard may end early</tspan></text>
+<rect x="310" y="460" width="180" height="8" rx="26" fill="#E0A31A" />
+<text x="328" y="500" fill="#131B2C" font-size="20" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tail rule</text>
+<text x="328" y="530" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="328" dy="0">final shard may be short</tspan></text>
 </g>
 <g>
 <rect x="505" y="460" width="180" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="505" y="460" width="180" height="9" rx="26" fill="#E0A31A" />
-<text x="525" y="504" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Epoch rule</text>
-<text x="525" y="538" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="525" dy="0">routing refresh before resume</tspan></text>
+<rect x="505" y="460" width="180" height="8" rx="26" fill="#E0A31A" />
+<text x="523" y="500" fill="#131B2C" font-size="20" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Epoch rule</text>
+<text x="523" y="530" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="523" dy="0">refresh routes before resume</tspan></text>
 </g>
 <rect x="860" y="230" width="420" height="410" rx="28" fill="none" stroke="#C7D8DB" stroke-width="2" stroke-dasharray="10 10" />
-<text x="880" y="258" fill="#1B8393" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">lowest-latency segment</text>
+<text x="880" y="258" fill="#1B8393" font-size="15" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">lowest-latency segment</text>
 <g>
 <rect x="860" y="290" width="180" height="300" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<text x="880" y="328" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker A</text>
+<text x="880" y="326" fill="#131B2C" font-size="22" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker A</text>
 <g>
-<rect x="880" y="346" width="88" height="28" rx="14.0" fill="#EAF7F9" />
-<text x="924" y="361" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
+<rect x="880" y="340" width="88" height="28" rx="14.0" fill="#EAF7F9" />
+<text x="924" y="355" fill="#131B2C" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
 </g>
 </g>
 <g>
 <rect x="1080" y="290" width="180" height="300" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<text x="1100" y="328" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker B</text>
+<text x="1100" y="326" fill="#131B2C" font-size="22" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker B</text>
 <g>
-<rect x="1100" y="346" width="88" height="28" rx="14.0" fill="#EAF7F9" />
-<text x="1144" y="361" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
+<rect x="1100" y="340" width="88" height="28" rx="14.0" fill="#EAF7F9" />
+<text x="1144" y="355" fill="#131B2C" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
 </g>
 </g>
 <g>
 <rect x="1320" y="290" width="180" height="300" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<text x="1340" y="328" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker C</text>
+<text x="1340" y="326" fill="#131B2C" font-size="22" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker C</text>
 <g>
-<rect x="1340" y="346" width="88" height="28" rx="14.0" fill="#F3F5F8" />
-<text x="1384" y="361" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 4x</text>
+<rect x="1340" y="340" width="88" height="28" rx="14.0" fill="#F3F5F8" />
+<text x="1384" y="355" fill="#131B2C" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 4x</text>
 </g>
 </g>
 <g>
 <rect x="900" y="390" width="100" height="34" rx="17.0" fill="#E0A31A" />
-<text x="950" y="408" fill="white" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Shard A</text>
+<text x="950" y="408" fill="white" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">Shard A</text>
 </g>
 <g>
 <rect x="900" y="438" width="100" height="34" rx="17.0" fill="#F97316" />
-<text x="950" y="456" fill="white" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Input IO</text>
+<text x="950" y="456" fill="white" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">Input IO</text>
 </g>
 <g>
 <rect x="1120" y="390" width="100" height="34" rx="17.0" fill="#1B8393" />
-<text x="1170" y="408" fill="white" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Shard B</text>
+<text x="1170" y="408" fill="white" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">Shard B</text>
 </g>
 <g>
 <rect x="1120" y="438" width="100" height="34" rx="17.0" fill="#F97316" />
-<text x="1170" y="456" fill="white" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Shard C</text>
+<text x="1170" y="456" fill="white" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">Shard C</text>
 </g>
 <g>
 <rect x="1360" y="390" width="100" height="34" rx="17.0" fill="#2B8857" />
-<text x="1410" y="408" fill="white" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Tail shard</text>
+<text x="1410" y="408" fill="white" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">Tail shard</text>
 </g>
 <g>
 <rect x="1360" y="438" width="120" height="34" rx="17.0" fill="#F97316" />
-<text x="1420" y="456" fill="white" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">Output IO</text>
+<text x="1420" y="456" fill="white" font-size="18" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">Output IO</text>
 </g>
 <g>
-<line x1="705" y1="280" x2="860" y2="280" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="783" y="258" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">score locality + fit</text>
+<line x1="705" y1="280" x2="860" y2="280" stroke="#E0A31A" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="783" y="258" fill="#E0A31A" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">score locality + fit</text>
 </g>
 <g>
 <rect x="115" y="640" width="1385" height="95" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="115" y="640" width="14" height="95" rx="28" fill="#1B8393" />
-<text x="147" y="680" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Scheduling preference</text>
-<text x="147" y="712" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="147" dy="0">Prefer one machine first, then the lowest-latency worker segment.</tspan><tspan x="147" dy="1.35em">Split across slower links only when the tighter locality cannot satisfy the shard plan.</tspan></text>
+<text x="147" y="676" fill="#131B2C" font-size="21" font-weight="780" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Scheduling preference</text>
+<text x="147" y="704" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="147" dy="0">Prefer one machine first, then the lowest-latency segment.</tspan><tspan x="147" dy="1.22em">Split across slower links only when needed.</tspan></text>
 </g>
 </svg>

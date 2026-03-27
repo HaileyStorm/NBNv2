@@ -5,25 +5,25 @@
     <stop offset="100%" stop-color="#FFF8EE" />
   </linearGradient>
   <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#131B2C" flood-opacity="0.10" />
+    <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#131B2C" flood-opacity="0.08" />
   </filter>
-  <marker id="arrow-ink" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#131B2C" />
+  <marker id="arrow-ink" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#131B2C" />
   </marker>
-  <marker id="arrow-teal" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#1B8393" />
+  <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B8393" />
   </marker>
-  <marker id="arrow-gold" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#E0A31A" />
+  <marker id="arrow-gold" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#E0A31A" />
   </marker>
-  <marker id="arrow-orange" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#F97316" />
+  <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#F97316" />
   </marker>
-  <marker id="arrow-green" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#2B8857" />
+  <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B8857" />
   </marker>
-  <marker id="arrow-red" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#B94B34" />
+  <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#B94B34" />
   </marker>
 </defs>
 <g>
@@ -33,129 +33,129 @@
 <circle cx="1495" cy="820" r="120" fill="#FFF1E7" opacity="0.7" />
 </g>
 <g>
-<text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Artifact store, resolver, and partial fetch path</text>
-<text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Runtime callers resolve an exact store_uri, load manifests, and then choose either full-artifact or region-index-guided partial reads.</text>
+<text x="70" y="66" fill="#131B2C" font-size="34" font-weight="850" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Artifact store, resolver, and partial fetch path</text>
+<text x="70" y="96" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="70" dy="0">Callers resolve a store_uri, load a manifest,</tspan><tspan x="70" dy="1.18em">then choose partial or full reads.</tspan></text>
 </g>
 <g>
 <rect x="60" y="180" width="250" height="560" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="60" y="180" width="250" height="12" rx="34" fill="#E0A31A" />
-<text x="84" y="224" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Callers</text>
-<text x="84" y="256" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">All of these honor the resolver path</text>
+<text x="84" y="222" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Callers</text>
+<text x="84" y="248" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="84" dy="0">All of these start from</tspan><tspan x="84" dy="1.18em">store_uri</tspan></text>
 </g>
 <g>
 <rect x="370" y="240" width="250" height="180" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="370" y="240" width="250" height="12" rx="34" fill="#1B8393" />
-<text x="394" y="284" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Resolver</text>
-<text x="394" y="316" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Exact store_uri or built-in HTTP(S) backend</text>
+<text x="394" y="282" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Resolver</text>
+<text x="394" y="308" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="394" dy="0">Exact store_uri or</tspan><tspan x="394" dy="1.18em">built-in HTTP(S)</tspan></text>
 </g>
 <g>
 <rect x="690" y="180" width="310" height="220" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="690" y="180" width="310" height="12" rx="34" fill="#1B8393" />
-<text x="714" y="224" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Manifest</text>
-<text x="714" y="256" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">artifact_id, chunk list, optional region index</text>
+<text x="714" y="222" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Manifest</text>
+<text x="714" y="248" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="714" dy="0">artifact_id, chunk list,</tspan><tspan x="714" dy="1.18em">optional region index</tspan></text>
 </g>
 <g>
 <rect x="690" y="460" width="310" height="220" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="690" y="460" width="310" height="12" rx="34" fill="#E0A31A" />
-<text x="714" y="504" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">CAS storage</text>
-<text x="714" y="536" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">SQLite metadata + chunk payloads</text>
+<text x="714" y="502" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">CAS storage</text>
+<text x="714" y="528" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="714" dy="0">SQLite metadata</tspan><tspan x="714" dy="1.18em">+ chunk payloads</tspan></text>
 </g>
 <g>
 <rect x="1070" y="180" width="420" height="220" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="1070" y="180" width="420" height="12" rx="34" fill="#F97316" />
-<text x="1094" y="224" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Partial fetch</text>
-<text x="1094" y="256" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Manifest-driven region reads</text>
+<text x="1094" y="222" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Partial fetch</text>
+<text x="1094" y="248" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1094" dy="0">Manifest-driven region reads</tspan></text>
 </g>
 <g>
 <rect x="1070" y="460" width="420" height="220" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="1070" y="460" width="420" height="12" rx="34" fill="#2B8857" />
-<text x="1094" y="504" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Full read + cache</text>
-<text x="1094" y="536" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Whole artifact remains available</text>
+<text x="1094" y="502" fill="#131B2C" font-size="25" font-weight="800" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Full read + cache</text>
+<text x="1094" y="528" fill="#7A8392" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1094" dy="0">Whole artifact remains available</tspan></text>
 </g>
 <g>
 <rect x="90" y="280" width="190" height="320" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="90" y="280" width="190" height="9" rx="26" fill="#E0A31A" />
-<text x="110" y="324" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Runtime callers</text>
-<text x="110" y="358" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="110" dy="0">HiveMind</tspan><tspan x="110" dy="1.35em">RegionHost</tspan><tspan x="110" dy="1.35em">WorkerNode</tspan><tspan x="110" dy="1.35em">Reproduction</tspan><tspan x="110" dy="1.35em">all start from store_uri</tspan></text>
+<rect x="90" y="280" width="190" height="8" rx="26" fill="#E0A31A" />
+<text x="108" y="320" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Runtime callers</text>
+<text x="108" y="350" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="108" dy="0">HiveMind</tspan><tspan x="108" dy="1.28em">RegionHost</tspan><tspan x="108" dy="1.28em">WorkerNode</tspan><tspan x="108" dy="1.28em">Reproduction</tspan></text>
 </g>
 <g>
 <rect x="400" y="285" width="190" height="90" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="400" y="285" width="190" height="9" rx="26" fill="#1B8393" />
-<text x="420" y="329" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Resolver path</text>
-<text x="420" y="363" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="420" dy="0">env map + adapters + HTTP(S)</tspan></text>
+<rect x="400" y="285" width="190" height="8" rx="26" fill="#1B8393" />
+<text x="418" y="325" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Resolver path</text>
+<text x="418" y="355" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="418" dy="0">env map + adapters + HTTP(S)</tspan></text>
 </g>
 <g>
 <rect x="720" y="250" width="250" height="70" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="720" y="250" width="250" height="9" rx="26" fill="#1B8393" />
-<text x="740" y="294" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Manifest row</text>
-<text x="740" y="328" fill="#556071" font-size="15" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="740" dy="0">sha256 + media type + chunks</tspan></text>
+<rect x="720" y="250" width="250" height="8" rx="26" fill="#1B8393" />
+<text x="738" y="290" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Manifest row</text>
+<text x="738" y="320" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="738" dy="0">sha256 + media type + chunks</tspan></text>
 </g>
 <g>
 <rect x="720" y="335" width="250" height="70" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="720" y="335" width="250" height="9" rx="26" fill="#1B8393" />
-<text x="740" y="379" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Region index</text>
-<text x="740" y="413" fill="#556071" font-size="15" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="740" dy="0">optional offset / length metadata</tspan></text>
+<rect x="720" y="335" width="250" height="8" rx="26" fill="#1B8393" />
+<text x="738" y="375" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Region index</text>
+<text x="738" y="405" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="738" dy="0">optional offset / length</tspan></text>
 </g>
 <g>
 <rect x="720" y="525" width="250" height="70" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="720" y="525" width="250" height="9" rx="26" fill="#E0A31A" />
-<text x="740" y="569" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">SQLite metadata</text>
-<text x="740" y="603" fill="#556071" font-size="15" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="740" dy="0">artifacts + artifact_chunks</tspan></text>
+<rect x="720" y="525" width="250" height="8" rx="26" fill="#E0A31A" />
+<text x="738" y="565" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">SQLite metadata</text>
+<text x="738" y="595" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="738" dy="0">artifacts + artifact_chunks</tspan></text>
 </g>
 <g>
 <rect x="720" y="610" width="250" height="70" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="720" y="610" width="250" height="9" rx="26" fill="#E0A31A" />
-<text x="740" y="654" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Chunk files</text>
-<text x="740" y="688" fill="#556071" font-size="15" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="740" dy="0">chunks/aa/&lt;hash&gt;</tspan></text>
+<rect x="720" y="610" width="250" height="8" rx="26" fill="#E0A31A" />
+<text x="738" y="650" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Chunk files</text>
+<text x="738" y="680" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="738" dy="0">chunks/aa/&lt;hash&gt;</tspan></text>
 </g>
 <g>
 <rect x="1105" y="250" width="350" height="80" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1105" y="250" width="350" height="9" rx="26" fill="#F97316" />
-<text x="1125" y="294" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Indexed partial read</text>
-<text x="1125" y="328" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1125" dy="0">If index + range support exist, fetch only the needed bytes.</tspan></text>
+<rect x="1105" y="250" width="350" height="8" rx="26" fill="#F97316" />
+<text x="1123" y="290" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Indexed partial read</text>
+<text x="1123" y="320" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1123" dy="0">fetch only the needed bytes</tspan></text>
 </g>
 <g>
 <rect x="1105" y="345" width="350" height="70" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1105" y="345" width="350" height="9" rx="26" fill="#F97316" />
-<text x="1125" y="389" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Range fallback</text>
-<text x="1125" y="423" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1125" dy="0">405 / 501 falls back to a full-artifact read.</tspan></text>
+<rect x="1105" y="345" width="350" height="8" rx="26" fill="#F97316" />
+<text x="1123" y="385" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Range fallback</text>
+<text x="1123" y="415" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1123" dy="0">405 / 501 -&gt; full artifact read</tspan></text>
 </g>
 <g>
 <rect x="1105" y="525" width="350" height="80" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1105" y="525" width="350" height="9" rx="26" fill="#2B8857" />
-<text x="1125" y="569" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Node-local cache</text>
-<text x="1125" y="603" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1125" dy="0">Reuse after the first successful fetch or write-through.</tspan></text>
+<rect x="1105" y="525" width="350" height="8" rx="26" fill="#2B8857" />
+<text x="1123" y="565" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Node-local cache</text>
+<text x="1123" y="595" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1123" dy="0">reuse after first successful fetch</tspan></text>
 </g>
 <g>
 <rect x="1105" y="620" width="350" height="70" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1105" y="620" width="350" height="9" rx="26" fill="#2B8857" />
-<text x="1125" y="664" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Canonical bytes</text>
-<text x="1125" y="698" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1125" dy="0">Whole-artifact callers can always rebuild exact bytes.</tspan></text>
+<rect x="1105" y="620" width="350" height="8" rx="26" fill="#2B8857" />
+<text x="1123" y="660" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Canonical bytes</text>
+<text x="1123" y="690" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1123" dy="0">whole-artifact callers can rebuild exact bytes</tspan></text>
 </g>
 <g>
-<line x1="310" y1="335" x2="370" y2="330" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="340" y="315" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">store_uri</text>
+<line x1="310" y1="335" x2="370" y2="330" stroke="#E0A31A" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="340" y="315" fill="#E0A31A" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">store_uri</text>
 </g>
 <g>
-<line x1="620" y1="330" x2="690" y2="290" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
-<text x="655" y="305" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">resolve backend</text>
+<line x1="620" y1="330" x2="690" y2="290" stroke="#1B8393" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-teal)" />
+<text x="655" y="305" fill="#1B8393" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">resolve</text>
 </g>
 <g>
-<line x1="845" y1="400" x2="845" y2="460" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="935" y="428" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">persist / reuse chunks</text>
+<line x1="845" y1="400" x2="845" y2="460" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<text x="935" y="428" fill="#131B2C" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">persist chunks</text>
 </g>
 <g>
-<line x1="1000" y1="290" x2="1070" y2="290" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
-<text x="1035" y="270" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">partial path</text>
+<line x1="1000" y1="290" x2="1070" y2="290" stroke="#F97316" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-orange)" />
+<text x="1035" y="270" fill="#F97316" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">partial read</text>
 </g>
 <g>
-<line x1="1000" y1="570" x2="1070" y2="570" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
-<text x="1035" y="550" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">full-read path</text>
+<line x1="1000" y1="570" x2="1070" y2="570" stroke="#2B8857" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-green)" />
+<text x="1035" y="550" fill="#2B8857" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">full read</text>
 </g>
 <g>
 <rect x="60" y="785" width="1430" height="70" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="60" y="785" width="14" height="70" rx="28" fill="#1B8393" />
-<text x="92" y="825" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Operational note</text>
-<text x="92" y="857" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="92" dy="0">The local cache is a convenience layer, not an authority layer.</tspan><tspan x="92" dy="1.35em">Upstream manifest/content responses still define truth for a remote artifact store.</tspan></text>
+<text x="92" y="821" fill="#131B2C" font-size="21" font-weight="780" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Operational note</text>
+<text x="92" y="849" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="92" dy="0">The local cache is a convenience layer, not an authority layer.</tspan><tspan x="92" dy="1.22em">Upstream manifest/content responses still define truth.</tspan></text>
 </g>
 </svg>

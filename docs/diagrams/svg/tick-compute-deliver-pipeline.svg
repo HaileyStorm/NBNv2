@@ -5,25 +5,25 @@
     <stop offset="100%" stop-color="#FFF8EE" />
   </linearGradient>
   <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#131B2C" flood-opacity="0.10" />
+    <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#131B2C" flood-opacity="0.08" />
   </filter>
-  <marker id="arrow-ink" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#131B2C" />
+  <marker id="arrow-ink" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#131B2C" />
   </marker>
-  <marker id="arrow-teal" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#1B8393" />
+  <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B8393" />
   </marker>
-  <marker id="arrow-gold" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#E0A31A" />
+  <marker id="arrow-gold" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#E0A31A" />
   </marker>
-  <marker id="arrow-orange" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#F97316" />
+  <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#F97316" />
   </marker>
-  <marker id="arrow-green" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#2B8857" />
+  <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B8857" />
   </marker>
-  <marker id="arrow-red" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
-    <path d="M 0 0 L 16 8 L 0 16 z" fill="#B94B34" />
+  <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="7" refY="5" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#B94B34" />
   </marker>
 </defs>
 <g>
@@ -33,77 +33,77 @@
 <circle cx="1495" cy="820" r="120" fill="#FFF1E7" opacity="0.7" />
 </g>
 <g>
-<text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick compute / deliver pipeline</text>
-<text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Delivery during tick N feeds inbox I, but activation can only see it at compute start of tick N+1.</text>
+<text x="70" y="66" fill="#131B2C" font-size="34" font-weight="850" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick compute / deliver pipeline</text>
+<text x="70" y="96" fill="#556071" font-size="17" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="70" dy="0">Delivery during tick N fills inbox I.</tspan><tspan x="70" dy="1.18em">Compute sees it at tick N+1.</tspan></text>
 </g>
 <g>
 <rect x="60" y="210" width="310" height="220" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="60" y="210" width="310" height="9" rx="26" fill="#E0A31A" />
-<text x="80" y="254" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N compute</text>
-<text x="80" y="288" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">merge I into B</tspan><tspan x="80" dy="1.35em">homeostasis / gates</tspan><tspan x="80" dy="1.35em">activate + reset</tspan><tspan x="80" dy="1.35em">fire outgoing axons</tspan></text>
+<rect x="60" y="210" width="310" height="8" rx="26" fill="#E0A31A" />
+<text x="78" y="250" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N compute</text>
+<text x="78" y="280" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="78" dy="0">merge I into B</tspan><tspan x="78" dy="1.28em">gate + activate</tspan><tspan x="78" dy="1.28em">reset buffer</tspan><tspan x="78" dy="1.28em">fire axons</tspan></text>
 </g>
 <g>
 <rect x="430" y="210" width="310" height="220" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="430" y="210" width="310" height="9" rx="26" fill="#1B8393" />
-<text x="450" y="254" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N deliver</text>
-<text x="450" y="288" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="450" dy="0">route fired signals</tspan><tspan x="450" dy="1.35em">accumulate into target I</tspan><tspan x="450" dy="1.35em">publish outputs</tspan><tspan x="450" dy="1.35em">buffer input writes</tspan></text>
+<rect x="430" y="210" width="310" height="8" rx="26" fill="#1B8393" />
+<text x="448" y="250" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N deliver</text>
+<text x="448" y="280" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="448" dy="0">route fired signals</tspan><tspan x="448" dy="1.28em">fill target I</tspan><tspan x="448" dy="1.28em">publish outputs</tspan><tspan x="448" dy="1.28em">buffer inputs</tspan></text>
 </g>
 <g>
 <rect x="800" y="210" width="310" height="220" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="800" y="210" width="310" height="9" rx="26" fill="#E0A31A" />
-<text x="820" y="254" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N+1 compute</text>
-<text x="820" y="288" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="820" dy="0">the merged inbox is now visible</tspan><tspan x="820" dy="1.35em">same compute rules</tspan><tspan x="820" dy="1.35em">B persists across idle ticks</tspan><tspan x="820" dy="1.35em">new fires advance the graph</tspan></text>
+<rect x="800" y="210" width="310" height="8" rx="26" fill="#E0A31A" />
+<text x="818" y="250" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N+1 compute</text>
+<text x="818" y="280" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="818" dy="0">merged inbox visible</tspan><tspan x="818" dy="1.28em">same compute rules</tspan><tspan x="818" dy="1.28em">B persists</tspan><tspan x="818" dy="1.28em">new fires advance</tspan></text>
 </g>
 <g>
 <rect x="1170" y="210" width="310" height="220" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1170" y="210" width="310" height="9" rx="26" fill="#1B8393" />
-<text x="1190" y="254" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N+1 deliver</text>
-<text x="1190" y="288" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1190" dy="0">deliver the new fires</tspan><tspan x="1190" dy="1.35em">replay or dirty-only inputs</tspan><tspan x="1190" dy="1.35em">target inboxes refill</tspan><tspan x="1190" dy="1.35em">the cycle repeats</tspan></text>
+<rect x="1170" y="210" width="310" height="8" rx="26" fill="#1B8393" />
+<text x="1188" y="250" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Tick N+1 deliver</text>
+<text x="1188" y="280" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1188" dy="0">deliver new fires</tspan><tspan x="1188" dy="1.28em">inject inputs</tspan><tspan x="1188" dy="1.28em">fill inboxes</tspan><tspan x="1188" dy="1.28em">repeat</tspan></text>
 </g>
 <g>
-<line x1="370" y1="320" x2="430" y2="320" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="400" y="300" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">phase barrier</text>
+<line x1="370" y1="320" x2="430" y2="320" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<text x="400" y="300" fill="#131B2C" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">phase barrier</text>
 </g>
 <g>
-<line x1="740" y1="320" x2="800" y2="320" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="770" y="300" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">next tick</text>
+<line x1="740" y1="320" x2="800" y2="320" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<text x="770" y="300" fill="#131B2C" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">next tick</text>
 </g>
 <g>
-<line x1="1110" y1="320" x2="1170" y2="320" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="1140" y="300" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">phase barrier</text>
+<line x1="1110" y1="320" x2="1170" y2="320" stroke="#131B2C" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<text x="1140" y="300" fill="#131B2C" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">phase barrier</text>
 </g>
 <g>
 <rect x="70" y="520" width="700" height="170" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="70" y="520" width="700" height="9" rx="26" fill="#E0A31A" />
-<text x="90" y="564" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Neuron state between phases</text>
-<text x="90" y="598" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="90" dy="0">B = persistent buffer</tspan><tspan x="90" dy="1.35em">I = inbox accumulator for the next merge</tspan><tspan x="90" dy="1.35em">Tick N delivery can only change I, so Tick N activation is already decided.</tspan></text>
+<rect x="70" y="520" width="700" height="8" rx="26" fill="#E0A31A" />
+<text x="88" y="560" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Neuron state between phases</text>
+<text x="88" y="590" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="88" dy="0">B = persistent buffer</tspan><tspan x="88" dy="1.28em">I = next-merge inbox</tspan><tspan x="88" dy="1.28em">Tick N delivery changes I only.</tspan></text>
 </g>
 <rect x="150" y="598" width="180" height="70" rx="18" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" />
 <rect x="500" y="598" width="180" height="70" rx="18" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" />
-<text x="240" y="626" fill="#131B2C" font-size="36" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">B</text>
-<text x="240" y="648" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">persistent buffer</text>
-<text x="590" y="626" fill="#131B2C" font-size="36" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">I</text>
-<text x="590" y="648" fill="#556071" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">next-merge inbox</text>
+<text x="240" y="626" fill="#131B2C" font-size="36" font-weight="850" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">B</text>
+<text x="240" y="648" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">persistent buffer</text>
+<text x="590" y="626" fill="#131B2C" font-size="36" font-weight="850" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">I</text>
+<text x="590" y="648" fill="#556071" font-size="16" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="middle">next-merge inbox</text>
 <g>
-<line x1="330" y1="633" x2="500" y2="633" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="415" y="612" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">merged at next compute start</text>
+<line x1="330" y1="633" x2="500" y2="633" stroke="#E0A31A" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="415" y="612" fill="#E0A31A" font-size="14" font-weight="700" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">merge next tick</text>
 </g>
 <g>
 <rect x="860" y="520" width="280" height="120" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="860" y="520" width="280" height="9" rx="26" fill="#1B8393" />
-<text x="880" y="564" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Input path</text>
-<text x="880" y="598" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="880" dy="0">InputCoordinator injects buffered writes during delivery.</tspan></text>
+<rect x="860" y="520" width="280" height="8" rx="26" fill="#1B8393" />
+<text x="878" y="560" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Input path</text>
+<text x="878" y="590" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="878" dy="0">InputCoordinator injects buffered writes.</tspan></text>
 </g>
 <g>
 <rect x="1220" y="520" width="280" height="120" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1220" y="520" width="280" height="9" rx="26" fill="#1B8393" />
-<text x="1240" y="564" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Output path</text>
-<text x="1240" y="598" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1240" dy="0">Output region 31 publishes events after compute / delivery.</tspan></text>
+<rect x="1220" y="520" width="280" height="8" rx="26" fill="#1B8393" />
+<text x="1238" y="560" fill="#131B2C" font-size="22" font-weight="750" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Output path</text>
+<text x="1238" y="590" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="1238" dy="0">Output region 31 publishes events.</tspan></text>
 </g>
 <g>
 <rect x="860" y="690" width="640" height="110" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <rect x="860" y="690" width="14" height="110" rx="28" fill="#B94B34" />
-<text x="892" y="730" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Critical invariant</text>
-<text x="892" y="762" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="892" dy="0">Do not dispatch compute N+1 until deliver N is finalized. This is what keeps signals from tick N visible only on the next compute phase.</tspan></text>
+<text x="892" y="726" fill="#131B2C" font-size="21" font-weight="780" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Critical invariant</text>
+<text x="892" y="754" fill="#556071" font-size="15" font-weight="500" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" text-anchor="start"><tspan x="892" dy="0">Do not dispatch compute N+1 until deliver N is finalized.</tspan><tspan x="892" dy="1.22em">That is what keeps tick N signals out of tick N compute.</tspan></text>
 </g>
 </svg>
