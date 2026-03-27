@@ -353,6 +353,125 @@ public class VizActivityProjectionBuilderTests
         Assert.InRange(region.Values[15], 1.79f, 1.81f);
     }
 
+    [Fact]
+    public void Build_DoesNotCrashOrDropValidRows_ForMalformedRegionAndAddressTokens()
+    {
+        var events = new List<VizEventItem>
+        {
+            new(
+                Time: DateTimeOffset.UtcNow,
+                Type: "VizAxonSent",
+                BrainId: Guid.Empty.ToString("D"),
+                TickId: 400,
+                Region: "bad",
+                Source: "R1N",
+                Target: "RxN1",
+                Value: 0.5f,
+                Strength: 0.2f,
+                EventId: Guid.NewGuid().ToString("D")),
+            new(
+                Time: DateTimeOffset.UtcNow,
+                Type: "VizAxonSent",
+                BrainId: Guid.Empty.ToString("D"),
+                TickId: 401,
+                Region: string.Empty,
+                Source: string.Empty,
+                Target: string.Empty,
+                Value: 0.6f,
+                Strength: 0.3f,
+                EventId: Guid.NewGuid().ToString("D")),
+            CreateEvent("VizNeuronFired", tick: 402, region: 2, source: Address(2, 9), target: Address(3, 1), value: 0.9f, strength: 0.1f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 16,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null));
+
+        Assert.NotEmpty(projection.Ticks);
+        Assert.Contains(projection.Edges, edge => string.Equals(edge.RouteLabel, "R1N -> RxN1", StringComparison.Ordinal));
+        Assert.Contains(projection.Regions, region => region.RegionId == 2);
+        Assert.Contains("Ticks", projection.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_LowSignalOnlyInputWithIncludeLowSignalOff_ReturnsStableEmptyMiniChart()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 500, region: 1, source: Address(1, 1), target: Address(2, 2), value: 1e-6f, strength: 0f),
+            CreateEvent("VizNeuronFired", tick: 501, region: 2, source: Address(2, 2), target: Address(3, 3), value: 0f, strength: 1e-6f)
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 8,
+                IncludeLowSignalEvents: false,
+                FocusRegionId: null,
+                TopSeriesCount: 4,
+                EnableMiniChart: true,
+                MiniChartTickWindow: 8));
+
+        Assert.Equal("All events were filtered out by current options.", projection.Summary);
+        Assert.Single(projection.Stats);
+        Assert.Equal("Events", projection.Stats[0].Label);
+        Assert.Equal("0", projection.Stats[0].Value);
+        Assert.Empty(projection.Regions);
+        Assert.Empty(projection.Edges);
+        Assert.Empty(projection.Ticks);
+        Assert.True(projection.MiniChart.Enabled);
+        Assert.Empty(projection.MiniChart.Series);
+        Assert.Empty(projection.MiniChart.Ticks);
+        Assert.Equal(0UL, projection.MiniChart.MinTick);
+        Assert.Equal(0UL, projection.MiniChart.MaxTick);
+    }
+
+    [Fact]
+    public void Build_IgnoresNonFiniteSignals_WhenComputingProjectionAggregates()
+    {
+        var events = new List<VizEventItem>
+        {
+            CreateEvent("VizAxonSent", tick: 600, region: 1, source: Address(1, 1), target: Address(2, 2), value: float.NaN, strength: float.PositiveInfinity),
+            CreateEvent("VizAxonSent", tick: 601, region: 1, source: Address(1, 1), target: Address(2, 2), value: 0.5f, strength: 0.25f),
+            new(
+                Time: DateTimeOffset.UtcNow,
+                Type: "VizNeuronBuffer",
+                BrainId: Guid.Empty.ToString("D"),
+                TickId: 602,
+                Region: "R1",
+                Source: "R1N3",
+                Target: "R1N3",
+                Value: float.NegativeInfinity,
+                Strength: 0f,
+                EventId: Guid.NewGuid().ToString("D"))
+        };
+
+        var projection = VizActivityProjectionBuilder.Build(
+            events,
+            new VizActivityProjectionOptions(
+                TickWindow: 16,
+                IncludeLowSignalEvents: true,
+                FocusRegionId: null,
+                TopSeriesCount: 4,
+                EnableMiniChart: true,
+                MiniChartTickWindow: 16));
+
+        var region = Assert.Single(projection.Regions, item => item.RegionId == 1);
+        var edge = Assert.Single(projection.Edges, item => item.SourceRegionId == 1 && item.TargetRegionId == 2);
+        Assert.True(float.IsFinite(region.AverageMagnitude));
+        Assert.True(float.IsFinite(region.AverageSignedValue));
+        Assert.True(float.IsFinite(edge.AverageMagnitude));
+        Assert.True(float.IsFinite(edge.AverageStrength));
+        Assert.True(float.IsFinite(edge.AverageSignedValue));
+        Assert.True(float.IsFinite(edge.AverageSignedStrength));
+        Assert.All(
+            projection.MiniChart.Series.SelectMany(static item => item.Values),
+            static value => Assert.True(float.IsFinite(value)));
+    }
+
     private static VizEventItem CreateEvent(
         string type,
         ulong tick,

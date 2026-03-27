@@ -699,6 +699,11 @@ public static class VizActivityProjectionBuilder
         var count = 0;
         foreach (var value in values)
         {
+            if (!float.IsFinite(value))
+            {
+                continue;
+            }
+
             total += Math.Abs(value);
             count++;
         }
@@ -712,6 +717,11 @@ public static class VizActivityProjectionBuilder
         var count = 0;
         foreach (var value in values)
         {
+            if (!float.IsFinite(value))
+            {
+                continue;
+            }
+
             total += value;
             count++;
         }
