@@ -5,6 +5,11 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <Deterministic>true</Deterministic>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+    <WarningsAsErrors>$(WarningsAsErrors);nullable</WarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NbnBrandingDir>$(MSBuildThisFileDirectory)docs\branding</NbnBrandingDir>
     <NbnPrimaryIconIco>$(NbnBrandingDir)\ico\nbn-soft-gold-right-n-icon.ico</NbnPrimaryIconIco>
     <NbnPrimaryIconPng>$(NbnBrandingDir)\png\nbn-soft-gold-right-n-icon.png</NbnPrimaryIconPng>

@@ -1,0 +1,108 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.sln]
+indent_style = space
+indent_size = 2
+
+[*.{csproj,props,targets}]
+indent_style = space
+indent_size = 2
+
+[**/bin/**]
+generated_code = true
+
+[**/obj/**]
+generated_code = true
+
+[**/*.g.cs]
+generated_code = true
+
+[**/*.g.i.cs]
+generated_code = true
+
+[**/*.designer.cs]
+generated_code = true
+
+[**/Generated/**/*.cs]
+generated_code = true
+
+[*.cs]
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+dotnet_style_prefer_collection_expression = when_types_loosely_match:silent
+dotnet_style_prefer_null_check_over_type_check = true:suggestion
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:suggestion
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:suggestion
+dotnet_style_readonly_field = true:suggestion
+csharp_preferred_modifier_order = public,private,protected,internal,file,static,extern,new,virtual,abstract,sealed,override,readonly,unsafe,required,volatile,async:suggestion
+csharp_prefer_braces = true:suggestion
+csharp_style_var_when_type_is_apparent = false:silent
+csharp_style_var_elsewhere = false:silent
+
+dotnet_diagnostic.CA1068.severity = suggestion
+dotnet_diagnostic.CA1510.severity = suggestion
+dotnet_diagnostic.CA1511.severity = suggestion
+dotnet_diagnostic.CA1512.severity = suggestion
+dotnet_diagnostic.CA1513.severity = suggestion
+dotnet_diagnostic.IDE0080.severity = warning
+
+dotnet_naming_rule.interfaces_must_start_with_i.symbols = interfaces
+dotnet_naming_rule.interfaces_must_start_with_i.style = interface_prefix
+dotnet_naming_rule.interfaces_must_start_with_i.severity = warning
+
+dotnet_naming_rule.types_must_use_pascal_case.symbols = types
+dotnet_naming_rule.types_must_use_pascal_case.style = pascal_case
+dotnet_naming_rule.types_must_use_pascal_case.severity = warning
+
+dotnet_naming_rule.private_fields_must_use_underscore_prefix.symbols = private_fields
+dotnet_naming_rule.private_fields_must_use_underscore_prefix.style = private_field_style
+dotnet_naming_rule.private_fields_must_use_underscore_prefix.severity = suggestion
+
+dotnet_naming_rule.async_methods_should_end_with_async.symbols = async_methods
+dotnet_naming_rule.async_methods_should_end_with_async.style = async_method_style
+dotnet_naming_rule.async_methods_should_end_with_async.severity = suggestion
+
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+dotnet_naming_symbols.interfaces.applicable_accessibilities = *
+
+dotnet_naming_symbols.types.applicable_kinds = class,struct,interface,enum,delegate
+dotnet_naming_symbols.types.applicable_accessibilities = *
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_symbols.async_methods.applicable_kinds = method
+dotnet_naming_symbols.async_methods.applicable_accessibilities = *
+dotnet_naming_symbols.async_methods.required_modifiers = async
+
+dotnet_naming_style.interface_prefix.required_prefix = I
+dotnet_naming_style.interface_prefix.capitalization = pascal_case
+
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_style.private_field_style.required_prefix = _
+dotnet_naming_style.private_field_style.capitalization = camel_case
+
+dotnet_naming_style.async_method_style.required_suffix = Async
+dotnet_naming_style.async_method_style.capitalization = pascal_case
+
+[src/**/*.cs]
+dotnet_diagnostic.CS1573.severity = suggestion
+dotnet_diagnostic.CS1591.severity = suggestion
+
+[tools/**/*.cs]
+dotnet_diagnostic.CS1573.severity = suggestion
+dotnet_diagnostic.CS1591.severity = suggestion
+
+[tests/**/*.cs]
+dotnet_diagnostic.CS1573.severity = none
+dotnet_diagnostic.CS1591.severity = none
