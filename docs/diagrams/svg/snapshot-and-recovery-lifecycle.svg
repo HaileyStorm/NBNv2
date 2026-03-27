@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none">
+<defs>
+  <linearGradient id="bg-gradient" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+    <stop offset="0%" stop-color="#FFFDF8" />
+    <stop offset="100%" stop-color="#FFF8EE" />
+  </linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#131B2C" flood-opacity="0.10" />
+  </filter>
+  <marker id="arrow-ink" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 16 8 L 0 16 z" fill="#131B2C" />
+  </marker>
+  <marker id="arrow-teal" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 16 8 L 0 16 z" fill="#1B8393" />
+  </marker>
+  <marker id="arrow-gold" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 16 8 L 0 16 z" fill="#E0A31A" />
+  </marker>
+  <marker id="arrow-orange" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 16 8 L 0 16 z" fill="#F97316" />
+  </marker>
+  <marker id="arrow-green" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 16 8 L 0 16 z" fill="#2B8857" />
+  </marker>
+  <marker id="arrow-red" markerWidth="16" markerHeight="16" refX="12" refY="8" orient="auto" markerUnits="strokeWidth">
+    <path d="M 0 0 L 16 8 L 0 16 z" fill="#B94B34" />
+  </marker>
+</defs>
+<g>
+<rect x="0" y="0" width="1600" height="900" fill="url(#bg-gradient)" />
+<circle cx="86" cy="90" r="180" fill="#FFF3CF" opacity="0.8" />
+<circle cx="1510" cy="120" r="180" fill="#EAF7F9" opacity="0.85" />
+<circle cx="1460" cy="830" r="220" fill="#FFF1E7" opacity="0.85" />
+<circle cx="130" cy="790" r="180" fill="#F3F5F8" opacity="0.9" />
+</g>
+<g>
+<text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spawn, snapshot, and recovery lifecycle</text>
+<text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Snapshots are taken at tick boundaries, and recovery always rebuilds the full brain from durable artifacts.</text>
+</g>
+<g>
+<rect x="50" y="180" width="190" height="180" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="50" y="180" width="190" height="9" rx="26" fill="#E0A31A" />
+<text x="70" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Base artifacts</text>
+<text x="70" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="70" dy="0">brain definition .nbn</tspan><tspan x="70" dy="1.35em">optional snapshot .nbs</tspan></text>
+</g>
+<g>
+<circle cx="74" cy="204" r="18" fill="#E0A31A" />
+<text x="74" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">1</text>
+</g>
+<g>
+<line x1="240" y1="270" x2="250" y2="270" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+</g>
+<g>
+<rect x="250" y="180" width="190" height="180" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="250" y="180" width="190" height="9" rx="26" fill="#1B8393" />
+<text x="270" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spawn</text>
+<text x="270" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="270" dy="0">load region directories</tspan><tspan x="270" dy="1.35em">place shards + coordinators</tspan></text>
+</g>
+<g>
+<circle cx="274" cy="204" r="18" fill="#1B8393" />
+<text x="274" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2</text>
+</g>
+<g>
+<line x1="440" y1="270" x2="470" y2="270" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
+</g>
+<g>
+<rect x="470" y="180" width="190" height="180" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="470" y="180" width="190" height="9" rx="26" fill="#F97316" />
+<text x="490" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Active brain</text>
+<text x="490" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="490" dy="0">compute / deliver ticks</tspan><tspan x="490" dy="1.35em">emit outputs + telemetry</tspan></text>
+</g>
+<g>
+<circle cx="494" cy="204" r="18" fill="#F97316" />
+<text x="494" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">3</text>
+</g>
+<g>
+<line x1="660" y1="270" x2="690" y2="270" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
+</g>
+<g>
+<rect x="690" y="180" width="190" height="180" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="690" y="180" width="190" height="9" rx="26" fill="#2B8857" />
+<text x="710" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Boundary snapshot</text>
+<text x="710" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="710" dy="0">persist B buffers</tspan><tspan x="710" dy="1.35em">enabled masks + overlays</tspan></text>
+</g>
+<g>
+<circle cx="714" cy="204" r="18" fill="#2B8857" />
+<text x="714" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">4</text>
+</g>
+<g>
+<line x1="880" y1="270" x2="910" y2="270" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+</g>
+<g>
+<rect x="910" y="180" width="190" height="180" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="910" y="180" width="190" height="9" rx="26" fill="#B94B34" />
+<text x="930" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Failure detected</text>
+<text x="930" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="930" dy="0">pause tick dispatch</tspan><tspan x="930" dy="1.35em">mark brain Recovering</tspan></text>
+</g>
+<g>
+<circle cx="934" cy="204" r="18" fill="#B94B34" />
+<text x="934" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">5</text>
+</g>
+<g>
+<line x1="1100" y1="270" x2="1130" y2="270" stroke="#B94B34" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-red)" />
+</g>
+<g>
+<rect x="1130" y="180" width="190" height="180" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="1130" y="180" width="190" height="9" rx="26" fill="#1B8393" />
+<text x="1150" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Whole-brain restore</text>
+<text x="1150" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1150" dy="0">reload from durable .nbn + .nbs</tspan><tspan x="1150" dy="1.35em">re-place all runtime actors</tspan></text>
+</g>
+<g>
+<circle cx="1154" cy="204" r="18" fill="#1B8393" />
+<text x="1154" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">6</text>
+</g>
+<g>
+<line x1="1320" y1="270" x2="1350" y2="270" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
+</g>
+<g>
+<rect x="1350" y="180" width="190" height="180" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="1350" y="180" width="190" height="9" rx="26" fill="#2B8857" />
+<text x="1370" y="224" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Epoch active</text>
+<text x="1370" y="258" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1370" dy="0">routing refreshed</tspan><tspan x="1370" dy="1.35em">resume Active or Paused</tspan></text>
+</g>
+<g>
+<circle cx="1374" cy="204" r="18" fill="#2B8857" />
+<text x="1374" y="205" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">7</text>
+</g>
+<g>
+<line x1="565" y1="360" x2="785" y2="535" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
+<text x="675" y="430" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">tick-boundary write</text>
+</g>
+<g>
+<rect x="650" y="520" width="270" height="150" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="650" y="520" width="270" height="9" rx="26" fill="#2B8857" />
+<text x="670" y="564" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Latest durable snapshot</text>
+<text x="670" y="598" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="670" dy="0">stores persistent buffers</tspan><tspan x="670" dy="1.35em">optional enabled bits</tspan><tspan x="670" dy="1.35em">axon overlay codes only where changed</tspan></text>
+</g>
+<g>
+<line x1="785" y1="670" x2="1225" y2="360" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
+<text x="1015" y="560" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">restore source of truth</text>
+</g>
+<g>
+<rect x="70" y="710" width="1460" height="125" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="70" y="710" width="14" height="125" rx="28" fill="#B94B34" />
+<text x="102" y="750" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Recovery invariant</text>
+<text x="102" y="782" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="102" dy="0">A lost shard does not get patched back from surviving live peers. HiveMind unloads the old runtime and reconstructs the entire brain from the last stored .nbn + .nbs pair before a new placement epoch can resume ticks.</tspan></text>
+</g>
+<text x="1528" y="875" fill="#7A8392" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="end" dominant-baseline="alphabetic">SVG source + PNG render live together under docs/diagrams/</text>
+</svg>

@@ -56,6 +56,10 @@ Reproduction aborts early if any stage fails:
 6. **Connectivity distribution similarity:** out-degree distribution and target-region distribution within thresholds
 7. **Spot-check overlap:** sample loci and compare connectivity patterns (ignoring strength)
 
+![Reproduction compatibility and child synthesis](../../diagrams/png/reproduction-flow.png)
+
+_Assessment requests stop after compatibility scoring, while full reproduction continues through locus-aligned mutation into a child artifact and optional spawn._
+
 ### 14.4 Alignment and locus
 
 Neuron alignment is by locus:

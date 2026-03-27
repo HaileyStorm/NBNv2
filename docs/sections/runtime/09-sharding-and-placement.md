@@ -61,4 +61,8 @@ Placement heuristics:
 * reject workers whose reported pressure repeatedly exceeds their configured CPU/RAM/storage/VRAM limits, then use the normal queued reschedule path for pressure-triggered rebalance
 * avoid shard sizes that exceed memory limits
 
+![Sharding and placement locality](../../diagrams/png/sharding-and-placement.png)
+
+_Shard boundaries come from stride-aligned region cuts first; placement then scores locality, capacity, backend fit, and epoch activation before ticks resume._
+
 ---

@@ -65,4 +65,8 @@ For each brain:
 * `RegionShards` (compute units, distributed)
 * `InputCoordinator` and `OutputCoordinator` (distributed, controlled via IO Gateway)
 
+![NBN runtime service topology](../../diagrams/png/runtime-service-topology.png)
+
+_Service roots remain stable discovery anchors while per-brain actors and RegionShards move across worker processes._
+
 ---

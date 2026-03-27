@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 INCLUDE_LINE_RE = re.compile(r'^\s*<!--\s*NBN:INCLUDE\s+path="([^"]+)"\s*-->\s*$')
 MANIFEST_ENTRY_RE = re.compile(r"^\d+\.\s+(.+?)\s*$")
 ASSEMBLY_HEADER = "## Assembly order (INDEX include sequence)"
 MOJIBAKE_RE = re.compile(r"(Ã¢â‚¬|â€¢|â€œ|â€[\x9d˜™“”¦]|Ã—|âˆˆ|â†\x90)")
+MARKDOWN_IMAGE_RE = re.compile(r"(!\[[^\]]*\]\()([^)]+)(\))")
 
 
 def fail(message: str) -> None:
@@ -164,6 +167,47 @@ def resolve_path(repo_root: Path, value: str) -> Path:
     return (repo_root / path).resolve()
 
 
+def is_rewritable_relative_url(url: str) -> bool:
+    token = url.strip()
+    if not token or token.startswith("#") or token.startswith("/"):
+        return False
+    parsed = urlsplit(token)
+    if parsed.scheme or parsed.netloc:
+        return False
+    if re.match(r"^[A-Za-z]:", token):
+        return False
+    if token.startswith("//"):
+        return False
+    return True
+
+
+def rewrite_relative_image_paths(include_text: str, source_path: Path, output_path: Path) -> str:
+    output_parent = output_path.parent.resolve()
+    source_parent = source_path.parent.resolve()
+
+    def replace(match: re.Match[str]) -> str:
+        original_url = match.group(2).strip()
+        if not is_rewritable_relative_url(original_url):
+            return match.group(0)
+
+        parsed = urlsplit(original_url)
+        target_path = (source_parent / parsed.path).resolve()
+        rewritten_path = os.path.relpath(target_path, output_parent).replace("\\", "/")
+
+        rewritten_url = urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                rewritten_path,
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+        return f"{match.group(1)}{rewritten_url}{match.group(3)}"
+
+    return MARKDOWN_IMAGE_RE.sub(replace, include_text)
+
+
 def main() -> int:
     script_dir = Path(__file__).resolve().parent
     default_repo_root = script_dir.parent.parent.resolve()
@@ -197,6 +241,7 @@ def main() -> int:
         target_path = assert_within_repo(repo_root, relative_path, "docs/INDEX.md", line_number)
         include_text = read_utf8(target_path)
         assert_no_mojibake(include_text, target_path.as_posix())
+        include_text = rewrite_relative_image_paths(include_text, target_path, output_path)
         include_contents[line_number] = include_text
 
     rendered = render(index_includes, include_contents)
