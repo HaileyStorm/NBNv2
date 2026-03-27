@@ -8,113 +8,52 @@ namespace Nbn.Runtime.IO;
 public sealed partial class IoGatewayActor
 {
     private void HandleReproduceByBrainIds(IContext context, ReproduceByBrainIds message)
-    {
-        if (_reproPid is null)
-        {
-            context.Respond(CreateReproFailure("repro_unavailable"));
-            return;
-        }
-
-        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
-        context.ReenterAfter(reproTask, completed =>
-        {
-            if (completed.IsCompletedSuccessfully)
-            {
-                var result = completed.Result;
-                if (result is null)
-                {
-                    context.Respond(CreateReproFailure("repro_empty_response"));
-                    return Task.CompletedTask;
-                }
-
-                result.Report ??= CreateAbortReport("repro_missing_report");
-                EnsureSimilarityScore(result);
-                context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
-                return Task.CompletedTask;
-            }
-
-            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
-            Console.WriteLine($"ReproduceByBrainIds failed: {detail}");
-            context.Respond(CreateReproFailure("repro_request_failed"));
-            return Task.CompletedTask;
-        });
-    }
+        => ForwardReproRequest(
+            context,
+            message.Request,
+            static result => new Nbn.Proto.Io.ReproduceResult { Result = result },
+            static reason => CreateReproFailure(reason),
+            operationName: nameof(ReproduceByBrainIds));
 
     private void HandleReproduceByArtifacts(IContext context, ReproduceByArtifacts message)
-    {
-        if (_reproPid is null)
-        {
-            context.Respond(CreateReproFailure("repro_unavailable"));
-            return;
-        }
-
-        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
-        context.ReenterAfter(reproTask, completed =>
-        {
-            if (completed.IsCompletedSuccessfully)
-            {
-                var result = completed.Result;
-                if (result is null)
-                {
-                    context.Respond(CreateReproFailure("repro_empty_response"));
-                    return Task.CompletedTask;
-                }
-
-                result.Report ??= CreateAbortReport("repro_missing_report");
-                EnsureSimilarityScore(result);
-                context.Respond(new Nbn.Proto.Io.ReproduceResult { Result = result });
-                return Task.CompletedTask;
-            }
-
-            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
-            Console.WriteLine($"ReproduceByArtifacts failed: {detail}");
-            context.Respond(CreateReproFailure("repro_request_failed"));
-            return Task.CompletedTask;
-        });
-    }
+        => ForwardReproRequest(
+            context,
+            message.Request,
+            static result => new Nbn.Proto.Io.ReproduceResult { Result = result },
+            static reason => CreateReproFailure(reason),
+            operationName: nameof(ReproduceByArtifacts));
 
     private void HandleAssessCompatibilityByBrainIds(IContext context, AssessCompatibilityByBrainIds message)
-    {
-        if (_reproPid is null)
-        {
-            context.Respond(CreateAssessmentFailure("repro_unavailable"));
-            return;
-        }
-
-        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
-        context.ReenterAfter(reproTask, completed =>
-        {
-            if (completed.IsCompletedSuccessfully)
-            {
-                var result = completed.Result;
-                if (result is null)
-                {
-                    context.Respond(CreateAssessmentFailure("repro_empty_response"));
-                    return Task.CompletedTask;
-                }
-
-                result.Report ??= CreateAbortReport("repro_missing_report");
-                EnsureSimilarityScore(result);
-                context.Respond(new AssessCompatibilityResult { Result = result });
-                return Task.CompletedTask;
-            }
-
-            var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
-            Console.WriteLine($"AssessCompatibilityByBrainIds failed: {detail}");
-            context.Respond(CreateAssessmentFailure("repro_request_failed"));
-            return Task.CompletedTask;
-        });
-    }
+        => ForwardReproRequest(
+            context,
+            message.Request,
+            static result => new AssessCompatibilityResult { Result = result },
+            static reason => CreateAssessmentFailure(reason),
+            operationName: nameof(AssessCompatibilityByBrainIds));
 
     private void HandleAssessCompatibilityByArtifacts(IContext context, AssessCompatibilityByArtifacts message)
+        => ForwardReproRequest(
+            context,
+            message.Request,
+            static result => new AssessCompatibilityResult { Result = result },
+            static reason => CreateAssessmentFailure(reason),
+            operationName: nameof(AssessCompatibilityByArtifacts));
+
+    private void ForwardReproRequest<TResult>(
+        IContext context,
+        object? request,
+        Func<Nbn.Proto.Repro.ReproduceResult, TResult> wrapResponse,
+        Func<string, TResult> createFailureResponse,
+        string operationName)
+        where TResult : class
     {
         if (_reproPid is null)
         {
-            context.Respond(CreateAssessmentFailure("repro_unavailable"));
+            context.Respond(createFailureResponse("repro_unavailable"));
             return;
         }
 
-        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, message.Request, ReproRequestTimeout);
+        var reproTask = context.RequestAsync<Nbn.Proto.Repro.ReproduceResult>(_reproPid, request!, ReproRequestTimeout);
         context.ReenterAfter(reproTask, completed =>
         {
             if (completed.IsCompletedSuccessfully)
@@ -122,19 +61,19 @@ public sealed partial class IoGatewayActor
                 var result = completed.Result;
                 if (result is null)
                 {
-                    context.Respond(CreateAssessmentFailure("repro_empty_response"));
+                    context.Respond(createFailureResponse("repro_empty_response"));
                     return Task.CompletedTask;
                 }
 
                 result.Report ??= CreateAbortReport("repro_missing_report");
                 EnsureSimilarityScore(result);
-                context.Respond(new AssessCompatibilityResult { Result = result });
+                context.Respond(wrapResponse(result));
                 return Task.CompletedTask;
             }
 
             var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
-            Console.WriteLine($"AssessCompatibilityByArtifacts failed: {detail}");
-            context.Respond(CreateAssessmentFailure("repro_request_failed"));
+            Console.WriteLine($"{operationName} failed: {detail}");
+            context.Respond(createFailureResponse("repro_request_failed"));
             return Task.CompletedTask;
         });
     }

@@ -5,9 +5,19 @@ using Proto;
 
 namespace Nbn.Runtime.IO;
 
+/// <summary>
+/// Emits a single output value for a brain at a specific tick.
+/// </summary>
 public sealed record EmitOutput(uint OutputIndex, float Value, ulong TickId);
+
+/// <summary>
+/// Requests a width increase for an output coordinator.
+/// </summary>
 public sealed record UpdateOutputWidth(uint OutputWidth);
 
+/// <summary>
+/// Aggregates per-brain output events and publishes them to external subscribers.
+/// </summary>
 public sealed class OutputCoordinatorActor : IActor
 {
     private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
@@ -20,6 +30,9 @@ public sealed class OutputCoordinatorActor : IActor
     private readonly Dictionary<ulong, PendingVectorTick> _pendingVectors = new();
     private ulong _latestCompletedVectorTick;
 
+    /// <summary>
+    /// Initializes a per-brain output coordinator with the supplied width.
+    /// </summary>
     public OutputCoordinatorActor(Guid brainId, uint outputWidth)
     {
         _brainId = brainId;
@@ -27,45 +40,32 @@ public sealed class OutputCoordinatorActor : IActor
         _outputWidth = Math.Max(1, checked((int)outputWidth));
     }
 
+    /// <summary>
+    /// Handles subscription changes, output emission, and width updates.
+    /// </summary>
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
             case SubscribeOutputs subscribe:
-                var singleSubscriber = ResolveSubscriberPid(context, subscribe.SubscriberActor);
-                AddSubscriber(singleSubscriber, _outputSubscribers);
-                if (LogOutput)
-                {
-                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleSubscriber)} total={_outputSubscribers.Count}.");
-                }
-                Respond(context, "subscribe_outputs", success: singleSubscriber is not null);
+                HandleSubscriptionCommand(
+                    context,
+                    new SubscriptionCommand(subscribe.SubscriberActor, _outputSubscribers, "subscribe_outputs", "subscribe single", true));
                 break;
             case UnsubscribeOutputs unsubscribe:
-                var singleUnsubscriber = ResolveSubscriberPid(context, unsubscribe.SubscriberActor);
-                RemoveSubscriber(singleUnsubscriber, _outputSubscribers);
-                if (LogOutput)
-                {
-                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe single sender={PidLabel(context.Sender)} resolved={PidLabel(singleUnsubscriber)} total={_outputSubscribers.Count}.");
-                }
-                Respond(context, "unsubscribe_outputs", success: singleUnsubscriber is not null);
+                HandleSubscriptionCommand(
+                    context,
+                    new SubscriptionCommand(unsubscribe.SubscriberActor, _outputSubscribers, "unsubscribe_outputs", "unsubscribe single", false));
                 break;
             case SubscribeOutputsVector subscribeVector:
-                var vectorSubscriber = ResolveSubscriberPid(context, subscribeVector.SubscriberActor);
-                AddSubscriber(vectorSubscriber, _vectorSubscribers);
-                if (LogOutput)
-                {
-                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] subscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorSubscriber)} total={_vectorSubscribers.Count}.");
-                }
-                Respond(context, "subscribe_outputs_vector", success: vectorSubscriber is not null);
+                HandleSubscriptionCommand(
+                    context,
+                    new SubscriptionCommand(subscribeVector.SubscriberActor, _vectorSubscribers, "subscribe_outputs_vector", "subscribe vector", true));
                 break;
             case UnsubscribeOutputsVector unsubscribeVector:
-                var vectorUnsubscriber = ResolveSubscriberPid(context, unsubscribeVector.SubscriberActor);
-                RemoveSubscriber(vectorUnsubscriber, _vectorSubscribers);
-                if (LogOutput)
-                {
-                    Console.WriteLine($"OutputCoordinator[{_brainId:D}] unsubscribe vector sender={PidLabel(context.Sender)} resolved={PidLabel(vectorUnsubscriber)} total={_vectorSubscribers.Count}.");
-                }
-                Respond(context, "unsubscribe_outputs_vector", success: vectorUnsubscriber is not null);
+                HandleSubscriptionCommand(
+                    context,
+                    new SubscriptionCommand(unsubscribeVector.SubscriberActor, _vectorSubscribers, "unsubscribe_outputs_vector", "unsubscribe vector", false));
                 break;
             case OutputEvent outputEvent:
                 EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
@@ -89,6 +89,27 @@ public sealed class OutputCoordinatorActor : IActor
         }
 
         return Task.CompletedTask;
+    }
+
+    private void HandleSubscriptionCommand(IContext context, SubscriptionCommand command)
+    {
+        var subscriber = ResolveSubscriberPid(context, command.SubscriberActor);
+        if (command.Subscribe)
+        {
+            AddSubscriber(subscriber, command.Set);
+        }
+        else
+        {
+            RemoveSubscriber(subscriber, command.Set);
+        }
+
+        if (LogOutput)
+        {
+            Console.WriteLine(
+                $"OutputCoordinator[{_brainId:D}] {command.LogLabel} sender={PidLabel(context.Sender)} resolved={PidLabel(subscriber)} total={command.Set.Count}.");
+        }
+
+        Respond(context, command.Command, success: subscriber is not null);
     }
 
     private void ApplyOutputWidthUpdate(UpdateOutputWidth message)
@@ -173,12 +194,6 @@ public sealed class OutputCoordinatorActor : IActor
 
     private void EmitVectorSegment(IContext context, EmitOutputVectorSegment message)
     {
-        if (_outputWidth <= 0)
-        {
-            RecordVectorReject("output_width_invalid");
-            return;
-        }
-
         if (message.TickId <= _latestCompletedVectorTick)
         {
             RecordVectorReject("tick_already_completed");
@@ -199,7 +214,7 @@ public sealed class OutputCoordinatorActor : IActor
 
         var startIndex = (int)message.OutputIndexStart;
         var valueCount = message.Values.Count;
-        if (startIndex < 0 || startIndex >= _outputWidth)
+        if (startIndex >= _outputWidth)
         {
             RecordVectorReject("segment_start_out_of_range");
             return;
@@ -422,6 +437,13 @@ public sealed class OutputCoordinatorActor : IActor
         pid = new PID(address, id);
         return true;
     }
+
+    private sealed record SubscriptionCommand(
+        string? SubscriberActor,
+        Dictionary<string, PID> Set,
+        string Command,
+        string LogLabel,
+        bool Subscribe);
 
     private sealed class PendingVectorTick
     {

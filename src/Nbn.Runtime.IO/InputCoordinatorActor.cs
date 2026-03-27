@@ -6,9 +6,19 @@ using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.IO;
 
+/// <summary>
+/// Requests a width increase for an input coordinator.
+/// </summary>
 public sealed record UpdateInputWidth(uint InputWidth);
+
+/// <summary>
+/// Requests an input coordinator mode update.
+/// </summary>
 public sealed record UpdateInputCoordinatorMode(ProtoControl.InputCoordinatorMode Mode);
 
+/// <summary>
+/// Buffers external input writes for a single brain and emits them at drain boundaries.
+/// </summary>
 public sealed class InputCoordinatorActor : IActor
 {
     private readonly Guid _brainId;
@@ -18,6 +28,9 @@ public sealed class InputCoordinatorActor : IActor
     private readonly List<int> _dirtyIndices = new();
     private ProtoControl.InputCoordinatorMode _mode;
 
+    /// <summary>
+    /// Initializes a per-brain input coordinator with the supplied width and drain mode.
+    /// </summary>
     public InputCoordinatorActor(
         Guid brainId,
         uint inputWidth,
@@ -30,6 +43,9 @@ public sealed class InputCoordinatorActor : IActor
         _mode = NormalizeMode(mode);
     }
 
+    /// <summary>
+    /// Handles input writes, drain requests, and coordinator configuration updates.
+    /// </summary>
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
@@ -112,11 +128,7 @@ public sealed class InputCoordinatorActor : IActor
     {
         if (!TryMatchBrain(message.BrainId))
         {
-            context.Respond(new InputDrain
-            {
-                BrainId = _brainId.ToProtoUuid(),
-                TickId = message.TickId
-            });
+            context.Respond(CreateDrain(message.TickId));
             return;
         }
 
@@ -128,18 +140,14 @@ public sealed class InputCoordinatorActor : IActor
 
         if (_dirtyIndices.Count == 0)
         {
-            context.Respond(new InputDrain
-            {
-                BrainId = _brainId.ToProtoUuid(),
-                TickId = message.TickId
-            });
+            context.Respond(CreateDrain(message.TickId));
             return;
         }
 
-        var contribs = new List<Contribution>(_dirtyIndices.Count);
+        var drain = CreateDrain(message.TickId);
         foreach (var index in _dirtyIndices)
         {
-            contribs.Add(new Contribution
+            drain.Contribs.Add(new Contribution
             {
                 TargetNeuronId = (uint)index,
                 Value = _values[index]
@@ -148,22 +156,12 @@ public sealed class InputCoordinatorActor : IActor
         }
 
         _dirtyIndices.Clear();
-        var drain = new InputDrain
-        {
-            BrainId = _brainId.ToProtoUuid(),
-            TickId = message.TickId
-        };
-        drain.Contribs.AddRange(contribs);
         context.Respond(drain);
     }
 
     private InputDrain BuildFullVectorDrain(ulong tickId)
     {
-        var drain = new InputDrain
-        {
-            BrainId = _brainId.ToProtoUuid(),
-            TickId = tickId
-        };
+        var drain = CreateDrain(tickId);
 
         if (_inputWidth <= 0)
         {
@@ -183,6 +181,13 @@ public sealed class InputCoordinatorActor : IActor
         ClearDirtyState();
         return drain;
     }
+
+    private InputDrain CreateDrain(ulong tickId)
+        => new()
+        {
+            BrainId = _brainId.ToProtoUuid(),
+            TickId = tickId
+        };
 
     private bool TryMatchBrain(Nbn.Proto.Uuid? brainId)
     {

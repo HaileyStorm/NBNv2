@@ -219,30 +219,7 @@ public sealed partial class IoGatewayActor
 
             if (message.HasRuntimeConfig)
             {
-                var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
-                existing.Energy.SetRuntimeConfig(
-                    message.CostEnabled,
-                    message.EnergyEnabled,
-                    message.PlasticityEnabled,
-                    message.PlasticityRate,
-                    message.PlasticityProbabilisticUpdates,
-                    effectiveDelta,
-                    message.PlasticityRebaseThreshold,
-                    message.PlasticityRebaseThresholdPct,
-                    message.PlasticityEnergyCostModulationEnabled,
-                    message.PlasticityEnergyCostReferenceTickCost,
-                    message.PlasticityEnergyCostResponseStrength,
-                    message.PlasticityEnergyCostMinScale,
-                    message.PlasticityEnergyCostMaxScale,
-                    message.HomeostasisEnabled,
-                    message.HomeostasisTargetMode,
-                    message.HomeostasisUpdateMode,
-                    message.HomeostasisBaseProbability,
-                    message.HomeostasisMinStepCodes,
-                    message.HomeostasisEnergyCouplingEnabled,
-                    message.HomeostasisEnergyTargetScale,
-                    message.HomeostasisEnergyProbabilityScale,
-                    message.LastTickCost);
+                ApplyRuntimeConfig(existing.Energy, message);
             }
 
             var inputModeChanged = existing.InputCoordinatorMode != inputCoordinatorMode;
@@ -280,32 +257,13 @@ public sealed partial class IoGatewayActor
                 existing.OwnsOutputCoordinator = updatedOwnsOutputCoordinator;
             }
 
-            if (inputWidthChanged || inputCoordinatorChanged)
-            {
-                await DispatchCoordinatorMessageAsync(
-                        context,
-                        existing.InputPid,
-                        new UpdateInputWidth(existing.InputWidth))
-                    .ConfigureAwait(false);
-            }
-
-            if (inputModeChanged || inputCoordinatorChanged)
-            {
-                await DispatchCoordinatorMessageAsync(
-                        context,
-                        existing.InputPid,
-                        new UpdateInputCoordinatorMode(inputCoordinatorMode))
-                    .ConfigureAwait(false);
-            }
-
-            if (outputWidthChanged || outputCoordinatorChanged)
-            {
-                await DispatchCoordinatorMessageAsync(
-                        context,
-                        existing.OutputPid,
-                        new UpdateOutputWidth(existing.OutputWidth))
-                    .ConfigureAwait(false);
-            }
+            await SynchronizeCoordinatorConfigurationAsync(
+                    context,
+                    existing,
+                    updateInputWidth: inputWidthChanged || inputCoordinatorChanged,
+                    updateInputMode: inputModeChanged || inputCoordinatorChanged,
+                    updateOutputWidth: outputWidthChanged || outputCoordinatorChanged)
+                .ConfigureAwait(false);
 
             if (inputCoordinatorChanged)
             {
@@ -350,30 +308,7 @@ public sealed partial class IoGatewayActor
 
         if (message.HasRuntimeConfig)
         {
-            var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
-            energy.SetRuntimeConfig(
-                message.CostEnabled,
-                message.EnergyEnabled,
-                message.PlasticityEnabled,
-                message.PlasticityRate,
-                message.PlasticityProbabilisticUpdates,
-                effectiveDelta,
-                message.PlasticityRebaseThreshold,
-                message.PlasticityRebaseThresholdPct,
-                message.PlasticityEnergyCostModulationEnabled,
-                message.PlasticityEnergyCostReferenceTickCost,
-                message.PlasticityEnergyCostResponseStrength,
-                message.PlasticityEnergyCostMinScale,
-                message.PlasticityEnergyCostMaxScale,
-                message.HomeostasisEnabled,
-                message.HomeostasisTargetMode,
-                message.HomeostasisUpdateMode,
-                message.HomeostasisBaseProbability,
-                message.HomeostasisMinStepCodes,
-                message.HomeostasisEnergyCouplingEnabled,
-                message.HomeostasisEnergyTargetScale,
-                message.HomeostasisEnergyProbabilityScale,
-                message.LastTickCost);
+            ApplyRuntimeConfig(energy, message);
         }
 
         var entry = new BrainIoEntry(
@@ -394,20 +329,12 @@ public sealed partial class IoGatewayActor
 
         _brains.Add(brainId, entry);
 
-        await DispatchCoordinatorMessageAsync(
+        await SynchronizeCoordinatorConfigurationAsync(
                 context,
-                entry.InputPid,
-                new UpdateInputWidth(entry.InputWidth))
-            .ConfigureAwait(false);
-        await DispatchCoordinatorMessageAsync(
-                context,
-                entry.InputPid,
-                new UpdateInputCoordinatorMode(inputCoordinatorMode))
-            .ConfigureAwait(false);
-        await DispatchCoordinatorMessageAsync(
-                context,
-                entry.OutputPid,
-                new UpdateOutputWidth(entry.OutputWidth))
+                entry,
+                updateInputWidth: true,
+                updateInputMode: true,
+                updateOutputWidth: true)
             .ConfigureAwait(false);
 
         if (MergePendingOutputSubscriptions(entry))
@@ -423,6 +350,69 @@ public sealed partial class IoGatewayActor
 
         await EnsureIoGatewayRegisteredAsync(context, brainId);
         await EnsureOutputSinkRegisteredAsync(context, brainId, outputPid, shouldRegisterOutputSink);
+    }
+
+    private static void ApplyRuntimeConfig(BrainEnergyState energy, RegisterBrain message)
+    {
+        var effectiveDelta = ResolvePlasticityDelta(message.PlasticityRate, message.PlasticityDelta);
+        energy.SetRuntimeConfig(
+            message.CostEnabled,
+            message.EnergyEnabled,
+            message.PlasticityEnabled,
+            message.PlasticityRate,
+            message.PlasticityProbabilisticUpdates,
+            effectiveDelta,
+            message.PlasticityRebaseThreshold,
+            message.PlasticityRebaseThresholdPct,
+            message.PlasticityEnergyCostModulationEnabled,
+            message.PlasticityEnergyCostReferenceTickCost,
+            message.PlasticityEnergyCostResponseStrength,
+            message.PlasticityEnergyCostMinScale,
+            message.PlasticityEnergyCostMaxScale,
+            message.HomeostasisEnabled,
+            message.HomeostasisTargetMode,
+            message.HomeostasisUpdateMode,
+            message.HomeostasisBaseProbability,
+            message.HomeostasisMinStepCodes,
+            message.HomeostasisEnergyCouplingEnabled,
+            message.HomeostasisEnergyTargetScale,
+            message.HomeostasisEnergyProbabilityScale,
+            message.LastTickCost);
+    }
+
+    private static async Task SynchronizeCoordinatorConfigurationAsync(
+        IContext context,
+        BrainIoEntry entry,
+        bool updateInputWidth,
+        bool updateInputMode,
+        bool updateOutputWidth)
+    {
+        if (updateInputWidth)
+        {
+            await DispatchCoordinatorMessageAsync(
+                    context,
+                    entry.InputPid,
+                    new UpdateInputWidth(entry.InputWidth))
+                .ConfigureAwait(false);
+        }
+
+        if (updateInputMode)
+        {
+            await DispatchCoordinatorMessageAsync(
+                    context,
+                    entry.InputPid,
+                    new UpdateInputCoordinatorMode(entry.InputCoordinatorMode))
+                .ConfigureAwait(false);
+        }
+
+        if (updateOutputWidth)
+        {
+            await DispatchCoordinatorMessageAsync(
+                    context,
+                    entry.OutputPid,
+                    new UpdateOutputWidth(entry.OutputWidth))
+                .ConfigureAwait(false);
+        }
     }
 
     private void UnregisterBrain(IContext context, UnregisterBrain message)

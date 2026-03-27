@@ -461,40 +461,36 @@ public sealed partial class IoGatewayActor
 
     private static void TrackOutputSubscription(IContext context, BrainIoEntry entry, object message)
     {
-        switch (message)
+        if (!TryGetOutputSubscriptionCommand(message, out var command))
         {
-            case SubscribeOutputs subscribe:
-                AddSubscriber(context, subscribe.SubscriberActor, entry.OutputSubscribers);
-                break;
-            case UnsubscribeOutputs unsubscribe:
-                RemoveSubscriber(context, unsubscribe.SubscriberActor, entry.OutputSubscribers);
-                break;
-            case SubscribeOutputsVector subscribeVector:
-                AddSubscriber(context, subscribeVector.SubscriberActor, entry.OutputVectorSubscribers);
-                break;
-            case UnsubscribeOutputsVector unsubscribeVector:
-                RemoveSubscriber(context, unsubscribeVector.SubscriberActor, entry.OutputVectorSubscribers);
-                break;
+            return;
         }
+
+        ApplySubscriberChange(
+            context,
+            command.SubscriberActor,
+            command.Subscribe,
+            command.IsVector ? entry.OutputVectorSubscribers : entry.OutputSubscribers);
     }
 
     private void TrackPendingOutputSubscription(IContext context, Guid brainId, object message)
     {
-        switch (message)
+        if (!TryGetOutputSubscriptionCommand(message, out var command))
         {
-            case SubscribeOutputs subscribe:
-                AddSubscriber(context, subscribe.SubscriberActor, GetPendingSubscriberSet(brainId, vector: false));
-                break;
-            case UnsubscribeOutputs unsubscribe:
-                RemovePendingSubscriber(context, unsubscribe.SubscriberActor, brainId, vector: false);
-                break;
-            case SubscribeOutputsVector subscribeVector:
-                AddSubscriber(context, subscribeVector.SubscriberActor, GetPendingSubscriberSet(brainId, vector: true));
-                break;
-            case UnsubscribeOutputsVector unsubscribeVector:
-                RemovePendingSubscriber(context, unsubscribeVector.SubscriberActor, brainId, vector: true);
-                break;
+            return;
         }
+
+        if (command.Subscribe)
+        {
+            ApplySubscriberChange(
+                context,
+                command.SubscriberActor,
+                true,
+                GetPendingSubscriberSet(brainId, command.IsVector));
+            return;
+        }
+
+        RemovePendingSubscriber(context, command.SubscriberActor, brainId, command.IsVector);
     }
 
     private bool MergePendingOutputSubscriptions(BrainIoEntry entry)
@@ -546,6 +542,21 @@ public sealed partial class IoGatewayActor
         set.Remove(PidKey(subscriber));
     }
 
+    private static void ApplySubscriberChange(
+        IContext context,
+        string? subscriberActor,
+        bool subscribe,
+        Dictionary<string, PID> set)
+    {
+        if (subscribe)
+        {
+            AddSubscriber(context, subscriberActor, set);
+            return;
+        }
+
+        RemoveSubscriber(context, subscriberActor, set);
+    }
+
     private Dictionary<string, PID> GetPendingSubscriberSet(Guid brainId, bool vector)
     {
         var source = vector ? _pendingOutputVectorSubscribers : _pendingOutputSubscribers;
@@ -585,30 +596,14 @@ public sealed partial class IoGatewayActor
 
     private static object NormalizeOutputSubscriptionMessage(IContext context, object message)
     {
-        return message switch
+        if (!TryGetOutputSubscriptionCommand(message, out var command))
         {
-            SubscribeOutputs subscribe => new SubscribeOutputs
-            {
-                BrainId = subscribe.BrainId,
-                SubscriberActor = ResolveSubscriberActorLabel(context, subscribe.SubscriberActor)
-            },
-            UnsubscribeOutputs unsubscribe => new UnsubscribeOutputs
-            {
-                BrainId = unsubscribe.BrainId,
-                SubscriberActor = ResolveSubscriberActorLabel(context, unsubscribe.SubscriberActor)
-            },
-            SubscribeOutputsVector subscribeVector => new SubscribeOutputsVector
-            {
-                BrainId = subscribeVector.BrainId,
-                SubscriberActor = ResolveSubscriberActorLabel(context, subscribeVector.SubscriberActor)
-            },
-            UnsubscribeOutputsVector unsubscribeVector => new UnsubscribeOutputsVector
-            {
-                BrainId = unsubscribeVector.BrainId,
-                SubscriberActor = ResolveSubscriberActorLabel(context, unsubscribeVector.SubscriberActor)
-            },
-            _ => message
-        };
+            return message;
+        }
+
+        return CreateOutputSubscriptionMessage(
+            command,
+            ResolveSubscriberActorLabel(context, command.SubscriberActor));
     }
 
     private static string ResolveSubscriberActorLabel(IContext context, string? subscriberActor)
@@ -688,14 +683,9 @@ public sealed partial class IoGatewayActor
 
     private static void RespondOutputCommandAck(IContext context, object message, Uuid? brainId, bool success, string ackMessage)
     {
-        var command = message switch
-        {
-            SubscribeOutputs => "subscribe_outputs",
-            UnsubscribeOutputs => "unsubscribe_outputs",
-            SubscribeOutputsVector => "subscribe_outputs_vector",
-            UnsubscribeOutputsVector => "unsubscribe_outputs_vector",
-            _ => "output_command"
-        };
+        var command = TryGetOutputSubscriptionCommand(message, out var subscription)
+            ? subscription.Command
+            : "output_command";
 
         RespondCommandAck(context, brainId, command, success, ackMessage);
     }
@@ -806,4 +796,63 @@ public sealed partial class IoGatewayActor
 
         _routerRegistration[brainId] = routerLabel;
     }
+
+    private static bool TryGetOutputSubscriptionCommand(object message, out OutputSubscriptionCommand command)
+    {
+        switch (message)
+        {
+            case SubscribeOutputs subscribe:
+                command = new OutputSubscriptionCommand(subscribe.BrainId, subscribe.SubscriberActor, false, true, "subscribe_outputs");
+                return true;
+            case UnsubscribeOutputs unsubscribe:
+                command = new OutputSubscriptionCommand(unsubscribe.BrainId, unsubscribe.SubscriberActor, false, false, "unsubscribe_outputs");
+                return true;
+            case SubscribeOutputsVector subscribeVector:
+                command = new OutputSubscriptionCommand(subscribeVector.BrainId, subscribeVector.SubscriberActor, true, true, "subscribe_outputs_vector");
+                return true;
+            case UnsubscribeOutputsVector unsubscribeVector:
+                command = new OutputSubscriptionCommand(unsubscribeVector.BrainId, unsubscribeVector.SubscriberActor, true, false, "unsubscribe_outputs_vector");
+                return true;
+            default:
+                command = default;
+                return false;
+        }
+    }
+
+    private static object CreateOutputSubscriptionMessage(OutputSubscriptionCommand command, string subscriberActor)
+    {
+        if (command.Subscribe)
+        {
+            return command.IsVector
+                ? new SubscribeOutputsVector
+                {
+                    BrainId = command.BrainId,
+                    SubscriberActor = subscriberActor
+                }
+                : new SubscribeOutputs
+                {
+                    BrainId = command.BrainId,
+                    SubscriberActor = subscriberActor
+                };
+        }
+
+        return command.IsVector
+            ? new UnsubscribeOutputsVector
+            {
+                BrainId = command.BrainId,
+                SubscriberActor = subscriberActor
+            }
+            : new UnsubscribeOutputs
+            {
+                BrainId = command.BrainId,
+                SubscriberActor = subscriberActor
+            };
+    }
+
+    private readonly record struct OutputSubscriptionCommand(
+        Uuid? BrainId,
+        string? SubscriberActor,
+        bool IsVector,
+        bool Subscribe,
+        string Command);
 }
