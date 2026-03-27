@@ -233,17 +233,6 @@ public sealed partial class EvolutionSimulationSession
     }
 
     // Caller must hold _gate.
-    private int SelectUniformParentIndex(int excludedIndex)
-    {
-        return SelectUniformParentIndexCore(
-            excludedIndex,
-            excludedParentKey: null,
-            excludeParentKey: false,
-            preferredLineageFamilyKey: null,
-            preferLineageFamily: false);
-    }
-
-    // Caller must hold _gate.
     private int SelectUniformParentIndexCore(
         int excludedIndex,
         string? excludedParentKey,
@@ -312,7 +301,7 @@ public sealed partial class EvolutionSimulationSession
     {
         var normalizedPreferredLineageFamilyKey = NormalizeSpeciesId(preferredLineageFamilyKey);
         if (normalizedPreferredLineageFamilyKey.Length == 0
-            || string.Equals(normalizedPreferredLineageFamilyKey, "(unknown)", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(normalizedPreferredLineageFamilyKey, UnknownTrackedKey, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -557,22 +546,6 @@ public sealed partial class EvolutionSimulationSession
         var speciesKey = ResolveTrackedSpeciesKey(_parentPool[parentIndex]);
         return speciesPopulationByKey.TryGetValue(speciesKey, out var speciesPopulation)
             ? Math.Max(1, speciesPopulation)
-            : 1;
-    }
-
-    // Caller must hold _gate.
-    private int ResolveSelectionLineageFamilyPopulation(
-        int parentIndex,
-        IReadOnlyDictionary<string, int> lineageFamilyPopulationByKey)
-    {
-        if (parentIndex < 0 || parentIndex >= _parentPool.Count)
-        {
-            return 1;
-        }
-
-        var lineageFamilyKey = ResolveTrackedLineageFamilyKey(_parentPool[parentIndex]);
-        return lineageFamilyPopulationByKey.TryGetValue(lineageFamilyKey, out var lineageFamilyPopulation)
-            ? Math.Max(1, lineageFamilyPopulation)
             : 1;
     }
 

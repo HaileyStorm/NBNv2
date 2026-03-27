@@ -8,14 +8,19 @@ namespace Nbn.Tools.EvolutionSim;
 /// </summary>
 public sealed partial class EvolutionSimulationSession
 {
+    private const string ArtifactParentKeyPrefix = "artifact:";
+    private const string ArtifactUriParentKeyPrefix = "artifact-uri:";
+    private const string BrainParentKeyPrefix = "brain:";
     private const ulong CommitSimilarityPlateauWindowSamples = 64;
     private const float MaxRunPressureNudge = 0.35f;
     private const float RunPressureNudgeStep = 0.05f;
     private const float RunPressureRecoveryStep = 0.10f;
+    private const string UnknownTrackedKey = "(unknown)";
     private const double ParentSelectionBiasExponent = 1.8d;
 
     private readonly EvolutionSimulationOptions _options;
     private readonly IEvolutionSimulationClient _client;
+    // _gate protects deterministic RNG access plus all parent-pool, lineage, and telemetry state.
     private readonly object _gate = new();
     private readonly List<EvolutionParentRef> _parentPool;
     private readonly List<ulong> _parentAddedOrdinals;

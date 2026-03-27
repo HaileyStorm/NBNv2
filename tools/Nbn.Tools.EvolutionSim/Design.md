@@ -22,4 +22,6 @@ Owns standalone reproduction/speciation stress simulation runs driven from artif
 
 ## Maintenance guidance
 
+Keep `EvolutionSimulationSession` split by concern (`core`, `selection`, `seeding`, `parent-pool`, `telemetry`, shared helpers), and keep any helper that assumes `_gate` ownership annotated so deterministic state and lock boundaries stay easy to audit.
+
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.

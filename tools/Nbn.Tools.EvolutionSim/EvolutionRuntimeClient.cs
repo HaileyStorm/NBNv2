@@ -12,15 +12,27 @@ using ProtoSpec = Nbn.Proto.Speciation;
 
 namespace Nbn.Tools.EvolutionSim;
 
+/// <summary>
+/// Owns simulator remoting and translates session requests into runtime IO/reproduction/speciation calls.
+/// </summary>
 public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncDisposable
 {
     private readonly ActorSystem _system;
     private readonly PID _ioPid;
     private readonly TimeSpan _requestTimeout;
     private readonly Repro.ReproduceConfig _reproduceConfigTemplate;
+    // _artifactResolutionGate protects the live-brain-to-artifact cache used by mixed parent requests.
     private readonly object _artifactResolutionGate = new();
     private readonly Dictionary<Guid, ArtifactRef> _brainArtifactCache;
     private bool _disposed;
+    private readonly record struct CompatibilityDispatchResult(
+        bool Success,
+        AssessCompatibilityResult? Response,
+        string FailureReason);
+    private readonly record struct ReproductionDispatchResult(
+        bool Success,
+        ReproduceResult? Response,
+        string FailureReason);
 
     private EvolutionRuntimeClient(
         ActorSystem system,
@@ -35,6 +47,9 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         _brainArtifactCache = new Dictionary<Guid, ArtifactRef>();
     }
 
+    /// <summary>
+    /// Starts the local remoting client used by EvolutionSim requests.
+    /// </summary>
     public static async Task<EvolutionRuntimeClient> StartAsync(EvolutionSimulationOptions options)
     {
         if (options is null)
@@ -58,6 +73,9 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
             configTemplate);
     }
 
+    /// <summary>
+    /// Assesses parent compatibility through the runtime, resolving mixed parent modes to artifact requests when needed.
+    /// </summary>
     public async Task<CompatibilityAssessment> AssessCompatibilityAsync(
         EvolutionParentRef parentA,
         EvolutionParentRef parentB,
@@ -67,57 +85,22 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
     {
         try
         {
-            AssessCompatibilityResult? response;
-            if (parentA.IsArtifactRef && parentB.IsArtifactRef)
+            var dispatch = await DispatchCompatibilityAsync(
+                parentA,
+                parentB,
+                seed,
+                strengthSource,
+                cancellationToken).ConfigureAwait(false);
+            if (!dispatch.Success)
             {
-                response = await AssessCompatibilityByArtifactsAsync(
-                    parentA.ArtifactRef!,
-                    parentB.ArtifactRef!,
-                    seed,
-                    strengthSource,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            else if (parentA.IsBrainId && parentB.IsBrainId)
-            {
-                var request = new Repro.AssessCompatibilityByBrainIdsRequest
-                {
-                    ParentA = parentA.BrainId!.Value.ToProtoUuid(),
-                    ParentB = parentB.BrainId!.Value.ToProtoUuid(),
-                    StrengthSource = strengthSource,
-                    Seed = seed,
-                    RunCount = 1,
-                    Config = BuildRequestConfig(Repro.SpawnChildPolicy.SpawnChildNever)
-                };
-                response = await _system.Root.RequestAsync<AssessCompatibilityResult>(
-                        _ioPid,
-                        new AssessCompatibilityByBrainIds { Request = request },
-                        _requestTimeout)
-                    .WaitAsync(cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                var resolution = await ResolveArtifactParentsAsync(
-                    parentA,
-                    parentB,
-                    cancellationToken).ConfigureAwait(false);
-                if (!resolution.Success)
-                {
-                    return new CompatibilityAssessment(
-                        Success: false,
-                        Compatible: false,
-                        SimilarityScore: 0f,
-                        AbortReason: "assess_parent_artifact_unavailable");
-                }
-
-                response = await AssessCompatibilityByArtifactsAsync(
-                    resolution.ParentA!,
-                    resolution.ParentB!,
-                    seed,
-                    strengthSource,
-                    cancellationToken).ConfigureAwait(false);
+                return new CompatibilityAssessment(
+                    Success: false,
+                    Compatible: false,
+                    SimilarityScore: 0f,
+                    AbortReason: dispatch.FailureReason);
             }
 
+            var response = dispatch.Response;
             var result = response?.Result;
             var report = result?.Report;
             return new CompatibilityAssessment(
@@ -140,6 +123,9 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
     }
 
+    /// <summary>
+    /// Executes reproduction through the runtime, keeping artifact and brain-id request routing consistent with session parent mode.
+    /// </summary>
     public async Task<ReproductionOutcome> ReproduceAsync(
         EvolutionParentRef parentA,
         EvolutionParentRef parentB,
@@ -151,66 +137,26 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
     {
         try
         {
-            ReproduceResult? response;
-            if (parentA.IsArtifactRef && parentB.IsArtifactRef)
+            var dispatch = await DispatchReproductionAsync(
+                parentA,
+                parentB,
+                seed,
+                runCount,
+                spawnChildren,
+                strengthSource,
+                cancellationToken).ConfigureAwait(false);
+            if (!dispatch.Success)
             {
-                response = await ReproduceByArtifactsAsync(
-                    parentA.ArtifactRef!,
-                    parentB.ArtifactRef!,
-                    seed,
-                    runCount,
-                    spawnChildren,
-                    strengthSource,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            else if (parentA.IsBrainId && parentB.IsBrainId)
-            {
-                var request = new Repro.ReproduceByBrainIdsRequest
-                {
-                    ParentA = parentA.BrainId!.Value.ToProtoUuid(),
-                    ParentB = parentB.BrainId!.Value.ToProtoUuid(),
-                    StrengthSource = strengthSource,
-                    Seed = seed,
-                    RunCount = runCount,
-                    Config = BuildRequestConfig(
-                        spawnChildren
-                            ? Repro.SpawnChildPolicy.SpawnChildDefaultOn
-                            : Repro.SpawnChildPolicy.SpawnChildNever)
-                };
-                response = await _system.Root.RequestAsync<ReproduceResult>(
-                        _ioPid,
-                        new ReproduceByBrainIds { Request = request },
-                        _requestTimeout)
-                    .WaitAsync(cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                var resolution = await ResolveArtifactParentsAsync(
-                    parentA,
-                    parentB,
-                    cancellationToken).ConfigureAwait(false);
-                if (!resolution.Success)
-                {
-                    return new ReproductionOutcome(
-                        Success: false,
-                        Compatible: false,
-                        AbortReason: "repro_parent_artifact_unavailable",
-                        ChildDefinitions: Array.Empty<ArtifactRef>(),
-                        CommitCandidates: Array.Empty<SpeciationCommitCandidate>(),
-                        Diagnostics: default);
-                }
-
-                response = await ReproduceByArtifactsAsync(
-                    resolution.ParentA!,
-                    resolution.ParentB!,
-                    seed,
-                    runCount,
-                    spawnChildren,
-                    strengthSource,
-                    cancellationToken).ConfigureAwait(false);
+                return new ReproductionOutcome(
+                    Success: false,
+                    Compatible: false,
+                    AbortReason: dispatch.FailureReason,
+                    ChildDefinitions: Array.Empty<ArtifactRef>(),
+                    CommitCandidates: Array.Empty<SpeciationCommitCandidate>(),
+                    Diagnostics: default);
             }
 
+            var response = dispatch.Response;
             var result = response?.Result;
             var report = result?.Report;
             var reproductionData = ExtractReproductionData(result);
@@ -238,6 +184,9 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
     }
 
+    /// <summary>
+    /// Commits a reproduction/speciation candidate through the runtime speciation service.
+    /// </summary>
     public async Task<SpeciationCommitOutcome> CommitSpeciationAsync(
         SpeciationCommitCandidate candidate,
         EvolutionParentRef parentA,
@@ -321,6 +270,9 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         }
     }
 
+    /// <summary>
+    /// Shuts down the local remoting client and actor system.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -331,6 +283,132 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         _disposed = true;
         await _system.Remote().ShutdownAsync(graceful: true).ConfigureAwait(false);
         await _system.ShutdownAsync().ConfigureAwait(false);
+    }
+
+    private async Task<CompatibilityDispatchResult> DispatchCompatibilityAsync(
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
+        ulong seed,
+        Repro.StrengthSource strengthSource,
+        CancellationToken cancellationToken)
+    {
+        if (parentA.IsArtifactRef && parentB.IsArtifactRef)
+        {
+            return new CompatibilityDispatchResult(
+                Success: true,
+                Response: await AssessCompatibilityByArtifactsAsync(
+                        parentA.ArtifactRef!,
+                        parentB.ArtifactRef!,
+                        seed,
+                        strengthSource,
+                        cancellationToken)
+                    .ConfigureAwait(false),
+                FailureReason: string.Empty);
+        }
+
+        if (parentA.IsBrainId && parentB.IsBrainId)
+        {
+            return new CompatibilityDispatchResult(
+                Success: true,
+                Response: await AssessCompatibilityByBrainIdsAsync(
+                        parentA,
+                        parentB,
+                        seed,
+                        strengthSource,
+                        cancellationToken)
+                    .ConfigureAwait(false),
+                FailureReason: string.Empty);
+        }
+
+        var resolution = await ResolveArtifactParentsAsync(
+            parentA,
+            parentB,
+            cancellationToken).ConfigureAwait(false);
+        if (!resolution.Success)
+        {
+            return new CompatibilityDispatchResult(
+                Success: false,
+                Response: null,
+                FailureReason: "assess_parent_artifact_unavailable");
+        }
+
+        return new CompatibilityDispatchResult(
+            Success: true,
+            Response: await AssessCompatibilityByArtifactsAsync(
+                    resolution.ParentA!,
+                    resolution.ParentB!,
+                    seed,
+                    strengthSource,
+                    cancellationToken)
+                .ConfigureAwait(false),
+            FailureReason: string.Empty);
+    }
+
+    private async Task<ReproductionDispatchResult> DispatchReproductionAsync(
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
+        ulong seed,
+        uint runCount,
+        bool spawnChildren,
+        Repro.StrengthSource strengthSource,
+        CancellationToken cancellationToken)
+    {
+        if (parentA.IsArtifactRef && parentB.IsArtifactRef)
+        {
+            return new ReproductionDispatchResult(
+                Success: true,
+                Response: await ReproduceByArtifactsAsync(
+                        parentA.ArtifactRef!,
+                        parentB.ArtifactRef!,
+                        seed,
+                        runCount,
+                        spawnChildren,
+                        strengthSource,
+                        cancellationToken)
+                    .ConfigureAwait(false),
+                FailureReason: string.Empty);
+        }
+
+        if (parentA.IsBrainId && parentB.IsBrainId)
+        {
+            return new ReproductionDispatchResult(
+                Success: true,
+                Response: await ReproduceByBrainIdsAsync(
+                        parentA,
+                        parentB,
+                        seed,
+                        runCount,
+                        spawnChildren,
+                        strengthSource,
+                        cancellationToken)
+                    .ConfigureAwait(false),
+                FailureReason: string.Empty);
+        }
+
+        var resolution = await ResolveArtifactParentsAsync(
+            parentA,
+            parentB,
+            cancellationToken).ConfigureAwait(false);
+        if (!resolution.Success)
+        {
+            return new ReproductionDispatchResult(
+                Success: false,
+                Response: null,
+                FailureReason: "repro_parent_artifact_unavailable");
+        }
+
+        return new ReproductionDispatchResult(
+            Success: true,
+            Response: await ReproduceByArtifactsAsync(
+                    resolution.ParentA!,
+                    resolution.ParentB!,
+                    seed,
+                    runCount,
+                    spawnChildren,
+                    strengthSource,
+                    cancellationToken)
+                .ConfigureAwait(false),
+            FailureReason: string.Empty);
     }
 
     private async Task<AssessCompatibilityResult?> AssessCompatibilityByArtifactsAsync(
@@ -352,6 +430,30 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         return await _system.Root.RequestAsync<AssessCompatibilityResult>(
                 _ioPid,
                 new AssessCompatibilityByArtifacts { Request = request },
+                _requestTimeout)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<AssessCompatibilityResult?> AssessCompatibilityByBrainIdsAsync(
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
+        ulong seed,
+        Repro.StrengthSource strengthSource,
+        CancellationToken cancellationToken)
+    {
+        var request = new Repro.AssessCompatibilityByBrainIdsRequest
+        {
+            ParentA = parentA.BrainId!.Value.ToProtoUuid(),
+            ParentB = parentB.BrainId!.Value.ToProtoUuid(),
+            StrengthSource = strengthSource,
+            Seed = seed,
+            RunCount = 1,
+            Config = BuildRequestConfig(Repro.SpawnChildPolicy.SpawnChildNever)
+        };
+        return await _system.Root.RequestAsync<AssessCompatibilityResult>(
+                _ioPid,
+                new AssessCompatibilityByBrainIds { Request = request },
                 _requestTimeout)
             .WaitAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -381,6 +483,35 @@ public sealed class EvolutionRuntimeClient : IEvolutionSimulationClient, IAsyncD
         return await _system.Root.RequestAsync<ReproduceResult>(
                 _ioPid,
                 new ReproduceByArtifacts { Request = request },
+                _requestTimeout)
+            .WaitAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<ReproduceResult?> ReproduceByBrainIdsAsync(
+        EvolutionParentRef parentA,
+        EvolutionParentRef parentB,
+        ulong seed,
+        uint runCount,
+        bool spawnChildren,
+        Repro.StrengthSource strengthSource,
+        CancellationToken cancellationToken)
+    {
+        var request = new Repro.ReproduceByBrainIdsRequest
+        {
+            ParentA = parentA.BrainId!.Value.ToProtoUuid(),
+            ParentB = parentB.BrainId!.Value.ToProtoUuid(),
+            StrengthSource = strengthSource,
+            Seed = seed,
+            RunCount = runCount,
+            Config = BuildRequestConfig(
+                spawnChildren
+                    ? Repro.SpawnChildPolicy.SpawnChildDefaultOn
+                    : Repro.SpawnChildPolicy.SpawnChildNever)
+        };
+        return await _system.Root.RequestAsync<ReproduceResult>(
+                _ioPid,
+                new ReproduceByBrainIds { Request = request },
                 _requestTimeout)
             .WaitAsync(cancellationToken)
             .ConfigureAwait(false);

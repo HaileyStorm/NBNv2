@@ -39,7 +39,7 @@ public sealed partial class EvolutionSimulationSession
         key = string.Empty;
         if (parentRef.BrainId is Guid brainId && brainId != Guid.Empty)
         {
-            key = $"brain:{brainId:D}";
+            key = $"{BrainParentKeyPrefix}{brainId:D}";
             return true;
         }
 
@@ -47,7 +47,7 @@ public sealed partial class EvolutionSimulationSession
         {
             if (artifactRef.TryToSha256Hex(out var sha))
             {
-                key = $"artifact:{sha}";
+                key = $"{ArtifactParentKeyPrefix}{sha}";
                 return true;
             }
 
@@ -59,12 +59,18 @@ public sealed partial class EvolutionSimulationSession
                 var mediaType = string.IsNullOrWhiteSpace(artifactRef.MediaType)
                     ? string.Empty
                     : artifactRef.MediaType.Trim();
-                key = $"artifact-uri:{storeUri}|{mediaType}|{artifactRef.SizeBytes}";
+                key = $"{ArtifactUriParentKeyPrefix}{storeUri}|{mediaType}|{artifactRef.SizeBytes}";
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static bool IsOpaqueParentIdentityKey(string normalizedKey)
+    {
+        return normalizedKey.StartsWith(BrainParentKeyPrefix, StringComparison.OrdinalIgnoreCase)
+               || normalizedKey.StartsWith(ArtifactParentKeyPrefix, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryBuildSeedCandidate(

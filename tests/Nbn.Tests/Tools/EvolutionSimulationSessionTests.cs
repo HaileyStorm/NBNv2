@@ -69,6 +69,29 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task Controller_CanStartAgainAfterNaturalCompletion()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 4422UL, maxIterations: 1, commitToSpeciation: false);
+        var session = new EvolutionSimulationSession(options, parents, new DeterministicFakeClient());
+        var controller = new EvolutionSimulationController(session);
+
+        Assert.True(controller.Start());
+        var firstRun = controller.CurrentSessionTask;
+        Assert.NotNull(firstRun);
+        await firstRun!;
+        Assert.True(firstRun.IsCompletedSuccessfully);
+        Assert.False(controller.GetStatus().Running);
+
+        Assert.True(controller.Start());
+        var secondRun = controller.CurrentSessionTask;
+        Assert.NotNull(secondRun);
+        await secondRun!;
+        Assert.True(secondRun.IsCompletedSuccessfully);
+        Assert.False(controller.GetStatus().Running);
+    }
+
+    [Fact]
     public async Task RunAsync_UsesHigherRunCountAsCompatibilityDropsAcrossBands()
     {
         var parents = CreateParentPool();
@@ -1145,6 +1168,51 @@ public sealed class EvolutionSimulationSessionTests
         Assert.Equal(1, familyCounts["family-beta"]);
         Assert.Equal(1, familyCounts["family-gamma"]);
         Assert.Equal(1, familyCounts["family-delta"]);
+    }
+
+    [Fact]
+    public void ResolveTrackedKeys_ArtifactUriParentKey_RemainsDistinctFromUnknown()
+    {
+        var uriOnlyParent = EvolutionParentRef.FromArtifactRef(new ArtifactRef
+        {
+            SizeBytes = 256,
+            MediaType = "application/x-nbn",
+            StoreUri = "file:///tmp/uri-only-parent"
+        });
+        var parents = new[]
+        {
+            uriOnlyParent,
+            EvolutionParentRef.FromArtifactRef(BuildArtifact("parent-b", "file:///tmp/b"))
+        };
+        var session = new EvolutionSimulationSession(
+            CreateOptions(seed: 99129UL, maxIterations: 1, commitToSpeciation: false),
+            parents,
+            new DeterministicFakeClient());
+
+        Assert.True(TryBuildParentKey(uriOnlyParent, out var parentKey));
+        Assert.StartsWith("artifact-uri:", parentKey, StringComparison.Ordinal);
+
+        var resolveTrackedSpeciesKeyMethod = typeof(EvolutionSimulationSession).GetMethod(
+            "ResolveTrackedSpeciesKey",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string)],
+            modifiers: null);
+        var resolveTrackedLineageFamilyKeyMethod = typeof(EvolutionSimulationSession).GetMethod(
+            "ResolveTrackedLineageFamilyKey",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(string)],
+            modifiers: null);
+
+        Assert.NotNull(resolveTrackedSpeciesKeyMethod);
+        Assert.NotNull(resolveTrackedLineageFamilyKeyMethod);
+
+        var speciesKey = Assert.IsType<string>(resolveTrackedSpeciesKeyMethod!.Invoke(session, [parentKey]));
+        var lineageFamilyKey = Assert.IsType<string>(resolveTrackedLineageFamilyKeyMethod!.Invoke(session, [parentKey]));
+
+        Assert.Equal(parentKey, speciesKey);
+        Assert.Equal(parentKey, lineageFamilyKey);
     }
 
     private static IReadOnlyDictionary<string, int> SnapshotParentPoolSpeciesCounts(EvolutionSimulationSession session)

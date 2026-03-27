@@ -1,17 +1,27 @@
 namespace Nbn.Tools.EvolutionSim;
 
+/// <summary>
+/// Owns the single-session start/stop lifecycle exposed to CLI and Workbench callers.
+/// </summary>
 public sealed class EvolutionSimulationController
 {
     private readonly EvolutionSimulationSession _session;
+    // _gate owns the active run handles so polling and cancellation observe one coherent session state.
     private readonly object _gate = new();
     private CancellationTokenSource? _runCancellation;
     private Task<EvolutionSimulationStatus>? _runTask;
 
+    /// <summary>
+    /// Initializes a controller for one simulation session instance.
+    /// </summary>
     public EvolutionSimulationController(EvolutionSimulationSession session)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
     }
 
+    /// <summary>
+    /// Gets the currently active session task, or <see langword="null"/> when idle.
+    /// </summary>
     public Task<EvolutionSimulationStatus>? CurrentSessionTask
     {
         get
@@ -23,24 +33,31 @@ public sealed class EvolutionSimulationController
         }
     }
 
+    /// <summary>
+    /// Starts the session if no run is currently active.
+    /// </summary>
     public bool Start()
     {
         lock (_gate)
         {
-            if (_runTask is not null && !_runTask.IsCompleted)
+            if (HasActiveRunLocked())
             {
                 return false;
             }
 
-            _runCancellation?.Dispose();
-            _runCancellation = new CancellationTokenSource();
-            _runTask = Task.Run(() => _session.RunAsync(_runCancellation.Token));
+            StartSessionLocked();
             return true;
         }
     }
 
+    /// <summary>
+    /// Returns the latest observable session status snapshot.
+    /// </summary>
     public EvolutionSimulationStatus GetStatus() => _session.GetStatus();
 
+    /// <summary>
+    /// Requests cancellation of the active run and waits until the session stops.
+    /// </summary>
     public async Task<bool> StopAsync()
     {
         Task<EvolutionSimulationStatus>? runTask;
@@ -48,12 +65,12 @@ public sealed class EvolutionSimulationController
 
         lock (_gate)
         {
-            if (_runTask is null || _runTask.IsCompleted)
+            if (!HasActiveRunLocked())
             {
                 return false;
             }
 
-            runTask = _runTask;
+            runTask = _runTask!;
             runCancellation = _runCancellation;
             runCancellation?.Cancel();
         }
@@ -70,15 +87,36 @@ public sealed class EvolutionSimulationController
         {
             lock (_gate)
             {
-                if (ReferenceEquals(runTask, _runTask))
-                {
-                    _runTask = null;
-                    _runCancellation?.Dispose();
-                    _runCancellation = null;
-                }
+                ClearRunStateLocked(runTask);
             }
         }
 
         return true;
+    }
+
+    // Caller must hold _gate.
+    private bool HasActiveRunLocked()
+        => _runTask is not null && !_runTask.IsCompleted;
+
+    // Caller must hold _gate.
+    private void StartSessionLocked()
+    {
+        _runCancellation?.Dispose();
+        var runCancellation = new CancellationTokenSource();
+        _runCancellation = runCancellation;
+        _runTask = Task.Run(() => _session.RunAsync(runCancellation.Token));
+    }
+
+    // Caller must hold _gate.
+    private void ClearRunStateLocked(Task<EvolutionSimulationStatus>? completedTask)
+    {
+        if (completedTask is not null && !ReferenceEquals(completedTask, _runTask))
+        {
+            return;
+        }
+
+        _runTask = null;
+        _runCancellation?.Dispose();
+        _runCancellation = null;
     }
 }
