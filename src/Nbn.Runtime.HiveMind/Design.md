@@ -5,6 +5,7 @@ Owns global tick loop, scheduling barriers, timeout/lateness handling, and brain
 ## Stable behavior notes
 
 - `HiveMindActor` shell/state, control-plane registration/authorization/brain-control, settings application/parsing/status, worker inventory/visualization/peer-latency, placement, and tick/reschedule work are intentionally split by responsibility so HiveMind refactors can stay file-bounded without changing runtime behavior.
+- `HiveMindActor.ReceiveAsync` is intentionally a thin dispatcher. Message routing stays grouped by responsibility slice so control-plane, artifact, placement, settings, worker-inventory, runtime-surface, and tick/reschedule changes can be reviewed independently without changing behavior.
 - Rescheduling is a real placement transition, not a timer-only delay. HiveMind pauses new ticks, issues placement plan updates, refreshes routing/output-sink state, and resumes only after moved shards re-register for the current placement epoch.
 - Actor-driven `UnregisterBrain` from a hosted brain-root/signal-router is ignored while a placement epoch is being replaced or recovered; only stable current-epoch teardown is allowed to remove the tracked brain.
 - Reschedule throttles (`reschedule_min_ticks`, `reschedule_min_minutes`) may defer a request, but they do not drop it. Deferred requests are coalesced and retried automatically when the earliest legal window opens.

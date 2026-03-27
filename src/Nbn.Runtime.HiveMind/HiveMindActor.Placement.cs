@@ -8,6 +8,59 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
+    private bool HandlePlacementMessage(IContext context)
+    {
+        switch (context.Message)
+        {
+            case ProtoControl.SpawnBrain message:
+                HandleSpawnBrain(context, message);
+                return true;
+            case ProtoControl.RequestPlacement message:
+                HandleRequestPlacement(context, message);
+                return true;
+            case ProtoControl.GetPlacementLifecycle message:
+                if (message.BrainId is not null && message.BrainId.TryToGuid(out var placementBrainId))
+                {
+                    context.Respond(BuildPlacementLifecycleInfo(placementBrainId));
+                }
+                else
+                {
+                    context.Respond(new ProtoControl.PlacementLifecycleInfo());
+                }
+
+                return true;
+            case ProtoControl.PlacementWorkerInventoryRequest:
+                context.Respond(BuildPlacementWorkerInventory());
+                return true;
+            case ProtoControl.PlacementAssignmentAck message:
+                HandlePlacementAssignmentAck(context, message);
+                return true;
+            case ProtoControl.PlacementUnassignmentAck message:
+                HandlePlacementUnassignmentAck(context, message);
+                return true;
+            case ProtoControl.PlacementReconcileReport message:
+                HandlePlacementReconcileReport(context, message);
+                return true;
+            case DispatchPlacementPlan message:
+                HandleDispatchPlacementPlan(context, message);
+                return true;
+            case RetryPlacementAssignment message:
+                HandleRetryPlacementAssignment(context, message);
+                return true;
+            case PlacementAssignmentTimeout message:
+                HandlePlacementAssignmentTimeout(context, message);
+                return true;
+            case PlacementReconcileTimeout message:
+                HandlePlacementReconcileTimeout(context, message);
+                return true;
+            case SpawnCompletionTimeout message:
+                HandleSpawnCompletionTimeout(context, message);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void HandleSpawnBrain(IContext context, ProtoControl.SpawnBrain message)
     {
         Guid brainId = Guid.Empty;

@@ -12,6 +12,40 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
+    private bool HandleRuntimeSurfaceMessage(IContext context)
+    {
+        switch (context.Message)
+        {
+            case ProtoControl.GetBrainIoInfo message:
+                if (message.BrainId is not null && message.BrainId.TryToGuid(out var ioBrainId))
+                {
+                    context.Respond(BuildBrainIoInfo(ioBrainId));
+                }
+                else
+                {
+                    context.Respond(new ProtoControl.BrainIoInfo());
+                }
+
+                return true;
+            case GetBrainRouting message:
+                context.Respond(BuildRoutingInfo(message.BrainId));
+                return true;
+            case ProtoControl.GetBrainRouting message:
+                if (message.BrainId is not null && message.BrainId.TryToGuid(out var routingBrainId))
+                {
+                    context.Respond(BuildRoutingInfoProto(routingBrainId));
+                }
+                else
+                {
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                }
+
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private BrainRoutingInfo BuildRoutingInfo(Guid brainId)
     {
         if (!_brains.TryGetValue(brainId, out var brain))

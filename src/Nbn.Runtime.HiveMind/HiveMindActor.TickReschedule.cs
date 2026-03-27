@@ -9,6 +9,33 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
+    private bool HandleTickAndRescheduleMessage(IContext context)
+    {
+        switch (context.Message)
+        {
+            case ProtoControl.TickComputeDone message:
+                HandleTickComputeDone(context, message);
+                return true;
+            case ProtoControl.TickDeliverDone message:
+                HandleTickDeliverDone(context, message);
+                return true;
+            case TickPhaseTimeout message:
+                HandleTickPhaseTimeout(context, message);
+                return true;
+            case RescheduleNow message:
+                BeginReschedule(context, message);
+                return true;
+            case RescheduleCompleted message:
+                CompleteReschedule(context, message);
+                return true;
+            case RetryQueuedReschedule:
+                HandleRetryQueuedReschedule(context);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void PauseBrain(IContext context, Guid brainId, string? reason)
     {
         if (!_brains.TryGetValue(brainId, out var brain))

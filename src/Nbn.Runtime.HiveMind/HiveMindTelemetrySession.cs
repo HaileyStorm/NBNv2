@@ -7,6 +7,9 @@ using OpenTelemetry.Trace;
 
 namespace Nbn.Runtime.HiveMind;
 
+/// <summary>
+/// Owns the optional OpenTelemetry providers configured for a HiveMind process lifetime.
+/// </summary>
 public sealed class HiveMindTelemetrySession : IDisposable
 {
     private readonly TracerProvider? _tracerProvider;
@@ -18,6 +21,11 @@ public sealed class HiveMindTelemetrySession : IDisposable
         _meterProvider = meterProvider;
     }
 
+    /// <summary>
+    /// Starts the telemetry providers enabled by the supplied HiveMind options.
+    /// </summary>
+    /// <param name="options">The resolved HiveMind runtime options.</param>
+    /// <returns>A disposable session that owns the configured providers.</returns>
     public static HiveMindTelemetrySession Start(HiveMindOptions options)
     {
         if (!options.EnableOpenTelemetry)
@@ -55,6 +63,7 @@ public sealed class HiveMindTelemetrySession : IDisposable
         return new HiveMindTelemetrySession(tracerProvider, meterProvider);
     }
 
+    /// <inheritdoc />
     public void Dispose()
     {
         _meterProvider?.Dispose();

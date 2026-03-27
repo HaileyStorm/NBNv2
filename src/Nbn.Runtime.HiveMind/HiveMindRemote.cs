@@ -10,8 +10,16 @@ using Proto.Remote;
 
 namespace Nbn.Runtime.HiveMind;
 
+/// <summary>
+/// Builds the Proto.Remote configuration used by the HiveMind runtime host.
+/// </summary>
 public static class HiveMindRemote
 {
+    /// <summary>
+    /// Creates a remote configuration that matches the resolved HiveMind bind and advertise settings.
+    /// </summary>
+    /// <param name="options">The resolved HiveMind runtime options.</param>
+    /// <returns>The remote configuration for the HiveMind process.</returns>
     public static RemoteConfig BuildConfig(HiveMindOptions options)
     {
         var bindHost = options.BindHost;

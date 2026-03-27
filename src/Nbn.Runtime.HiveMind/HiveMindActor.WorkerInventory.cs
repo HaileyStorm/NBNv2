@@ -7,6 +7,33 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
+    private bool HandleWorkerInventoryMessage(IContext context)
+    {
+        switch (context.Message)
+        {
+            case ProtoSettings.WorkerInventorySnapshotResponse message:
+                HandleWorkerInventorySnapshotResponse(context, message);
+                return true;
+            case ProtoSettings.NodeListResponse message:
+                HandleNodeListResponse(message);
+                return true;
+            case SweepVisualizationSubscribers:
+                HandleSweepVisualizationSubscribers(context);
+                return true;
+            case RefreshWorkerInventoryTick:
+                RefreshWorkerInventory(context);
+                return true;
+            case RefreshWorkerCapabilitiesTick:
+                RefreshWorkerCapabilities(context);
+                return true;
+            case Terminated message:
+                HandleVisualizationSubscriberTerminated(context, message.Who);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void RefreshWorkerInventory(IContext context)
     {
         if (_settingsPid is null)

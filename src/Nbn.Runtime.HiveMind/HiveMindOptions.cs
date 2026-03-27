@@ -3,15 +3,40 @@ using Nbn.Shared;
 
 namespace Nbn.Runtime.HiveMind;
 
+/// <summary>
+/// Selects how HiveMind orders pause candidates when backpressure forces a brain pause.
+/// </summary>
 public enum BackpressurePauseStrategy
 {
+    /// <summary>
+    /// Pause the oldest eligible brain first.
+    /// </summary>
     OldestFirst = 0,
+
+    /// <summary>
+    /// Pause the newest eligible brain first.
+    /// </summary>
     NewestFirst = 1,
+
+    /// <summary>
+    /// Pause the brain with the lowest remaining energy first.
+    /// </summary>
     LowestEnergy = 2,
+
+    /// <summary>
+    /// Pause the brain with the lowest pause priority first.
+    /// </summary>
     LowestPriority = 3,
+
+    /// <summary>
+    /// Pause brains in the caller-supplied explicit order.
+    /// </summary>
     ExternalOrder = 4
 }
 
+/// <summary>
+/// Configures HiveMind networking, tick cadence, placement, backpressure, and telemetry behavior.
+/// </summary>
 public sealed record HiveMindOptions(
     string BindHost,
     int Port,
@@ -55,6 +80,11 @@ public sealed record HiveMindOptions(
     private const string DefaultIoHost = "127.0.0.1";
     private const int DefaultIoPort = 12050;
 
+    /// <summary>
+    /// Creates an options snapshot by merging environment defaults with supported command-line overrides.
+    /// </summary>
+    /// <param name="args">The process command-line arguments.</param>
+    /// <returns>The resolved HiveMind options.</returns>
     public static HiveMindOptions FromArgs(string[] args)
     {
         var bindHost = GetEnv("NBN_HIVE_BIND_HOST") ?? NetworkAddressDefaults.DefaultBindHost;

@@ -12,6 +12,21 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
+    private bool HandleArtifactMessage(IContext context)
+    {
+        switch (context.Message)
+        {
+            case ProtoIo.ExportBrainDefinition message:
+                HandleExportBrainDefinition(context, message);
+                return true;
+            case ProtoIo.RequestSnapshot message:
+                HandleRequestSnapshot(context, message);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void HandleExportBrainDefinition(IContext context, ProtoIo.ExportBrainDefinition message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))

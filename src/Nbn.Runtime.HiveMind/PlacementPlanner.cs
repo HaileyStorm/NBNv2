@@ -7,10 +7,16 @@ using SharedShardPlanMode = Nbn.Shared.Sharding.ShardPlanMode;
 
 namespace Nbn.Runtime.HiveMind;
 
+/// <summary>
+/// Builds deterministic placement assignments from a worker snapshot without mutating HiveMind runtime state.
+/// </summary>
 public static class PlacementPlanner
 {
     private const int NeuronLocalityThresholdPerWorker = 8192;
 
+    /// <summary>
+    /// Describes one worker snapshot considered during placement planning.
+    /// </summary>
     public readonly record struct WorkerCandidate(
         Guid NodeId,
         string WorkerAddress,
@@ -40,8 +46,14 @@ public static class PlacementPlanner
         uint PeerLatencySampleCount,
         int HostedBrainCount);
 
+    /// <summary>
+    /// Describes the neuron span requested for a single region.
+    /// </summary>
     public readonly record struct RegionSpan(int RegionId, int NeuronSpan);
 
+    /// <summary>
+    /// Captures the immutable inputs needed to build a placement plan for one brain request.
+    /// </summary>
     public readonly record struct PlannerInputs(
         Guid BrainId,
         ulong PlacementEpoch,
@@ -55,6 +67,9 @@ public static class PlacementPlanner
         IReadOnlyList<Guid> CurrentWorkerNodeIds,
         RegionShardComputeBackendPreference ComputeBackendPreference = RegionShardComputeBackendPreference.Auto);
 
+    /// <summary>
+    /// Contains the deterministic result of a placement planning attempt.
+    /// </summary>
     public sealed class PlacementPlanningResult
     {
         public PlacementPlanningResult(
@@ -77,15 +92,49 @@ public static class PlacementPlanner
             PlannerWarnings = plannerWarnings.ToArray();
         }
 
+        /// <summary>
+        /// Gets the placement epoch the plan was produced for.
+        /// </summary>
         public ulong PlacementEpoch { get; }
+
+        /// <summary>
+        /// Gets the caller-supplied request identifier carried through the plan.
+        /// </summary>
         public string RequestId { get; }
+
+        /// <summary>
+        /// Gets the original request timestamp, in Unix milliseconds.
+        /// </summary>
         public long RequestedMs { get; }
+
+        /// <summary>
+        /// Gets the planning timestamp, in Unix milliseconds.
+        /// </summary>
         public long PlannedMs { get; }
+
+        /// <summary>
+        /// Gets the worker snapshot timestamp used to score candidates.
+        /// </summary>
         public ulong WorkerSnapshotMs { get; }
+
+        /// <summary>
+        /// Gets the eligible workers considered while building the plan.
+        /// </summary>
         public IReadOnlyList<WorkerCandidate> EligibleWorkers { get; }
+
+        /// <summary>
+        /// Gets the placement assignments selected for the request.
+        /// </summary>
         public IReadOnlyList<ProtoControl.PlacementAssignment> Assignments { get; }
+
+        /// <summary>
+        /// Gets any non-fatal warnings emitted while normalizing the request.
+        /// </summary>
         public IReadOnlyList<string> PlannerWarnings { get; }
 
+        /// <summary>
+        /// Clones the result so callers can reuse it without sharing mutable proto payload instances.
+        /// </summary>
         public PlacementPlanningResult Clone()
             => new(
                 PlacementEpoch,
@@ -98,6 +147,15 @@ public static class PlacementPlanner
                 PlannerWarnings);
     }
 
+    /// <summary>
+    /// Attempts to build a placement plan from the supplied request and worker snapshot.
+    /// </summary>
+    /// <param name="inputs">The normalized planning request for one brain.</param>
+    /// <param name="workers">The worker candidates available at the snapshot boundary.</param>
+    /// <param name="plan">Receives the successful plan or failure context built during evaluation.</param>
+    /// <param name="failureReason">Receives the placement failure reason when planning cannot succeed.</param>
+    /// <param name="failureMessage">Receives a human-readable planning failure detail.</param>
+    /// <returns><see langword="true"/> when planning succeeds; otherwise, <see langword="false"/>.</returns>
     public static bool TryBuildPlan(
         PlannerInputs inputs,
         IEnumerable<WorkerCandidate> workers,

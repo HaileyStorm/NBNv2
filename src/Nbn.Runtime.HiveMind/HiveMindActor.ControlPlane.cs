@@ -2,6 +2,7 @@ using Nbn.Proto.Viz;
 using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
+using Nbn.Shared.HiveMind;
 using Proto;
 using ProtoSeverity = Nbn.Proto.Severity;
 using ProtoIo = Nbn.Proto.Io;
@@ -11,6 +12,60 @@ namespace Nbn.Runtime.HiveMind;
 
 public sealed partial class HiveMindActor
 {
+    private bool HandleControlPlaneMessage(IContext context)
+    {
+        switch (context.Message)
+        {
+            case ProtoControl.RegisterBrain message:
+                HandleRegisterBrain(context, message);
+                return true;
+            case ProtoControl.UpdateBrainSignalRouter message:
+                HandleUpdateBrainSignalRouter(context, message);
+                return true;
+            case ProtoControl.UnregisterBrain message:
+                HandleUnregisterBrain(context, message);
+                return true;
+            case ProtoControl.RegisterShard message:
+                HandleRegisterShard(context, message);
+                return true;
+            case ProtoControl.UnregisterShard message:
+                HandleUnregisterShard(context, message);
+                return true;
+            case ProtoControl.RegisterOutputSink message:
+                HandleRegisterOutputSink(context, message);
+                return true;
+            case ProtoControl.SetBrainVisualization message:
+                HandleSetBrainVisualization(context, message);
+                return true;
+            case ProtoControl.SetBrainCostEnergy message:
+                HandleSetBrainCostEnergy(context, message);
+                return true;
+            case ProtoControl.SetBrainPlasticity message:
+                HandleSetBrainPlasticity(context, message);
+                return true;
+            case ProtoControl.SetBrainHomeostasis message:
+                HandleSetBrainHomeostasis(context, message);
+                return true;
+            case PauseBrainRequest message:
+                PauseBrain(context, message.BrainId, message.Reason);
+                return true;
+            case ResumeBrainRequest message:
+                ResumeBrain(context, message.BrainId);
+                return true;
+            case ProtoControl.PauseBrain message:
+                HandlePauseBrainControl(context, message);
+                return true;
+            case ProtoControl.ResumeBrain message:
+                HandleResumeBrainControl(context, message);
+                return true;
+            case ProtoControl.KillBrain message:
+                HandleKillBrainControl(context, message);
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void RegisterBrainInternal(IContext context, Guid brainId, PID? brainRootPid, PID? routerPid, int? pausePriority = null)
     {
         var isNew = !_brains.TryGetValue(brainId, out var brain) || brain is null;
