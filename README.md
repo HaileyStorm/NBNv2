@@ -2,7 +2,7 @@
 
 # NBN
 
-This repository contains the NBN codebase and retains the historical `NBNv2` name in some paths and files.
+This repository contains the NBN codebase. There were previous attempts in other repository, thus the NBNv2 moniker and v2.0.0 initial release tag.
 
 NBN is a distributed, tick-based neural simulation system that runs brains across
 multiple runtime services and worker processes.
