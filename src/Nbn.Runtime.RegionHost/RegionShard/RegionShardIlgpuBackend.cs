@@ -9,8 +9,14 @@ using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 namespace Nbn.Runtime.RegionHost;
 
+/// <summary>
+/// Reports whether the ILGPU backend can execute a given shard compute request.
+/// </summary>
 public readonly record struct RegionShardGpuSupport(bool IsSupported, string Reason);
 
+/// <summary>
+/// Optional ILGPU-backed RegionShard compute implementation used when runtime and feature support allow it.
+/// </summary>
 public sealed class RegionShardIlgpuBackend : IDisposable
 {
     private const float RuntimeSignalLimit = 1f;
@@ -74,6 +80,9 @@ public sealed class RegionShardIlgpuBackend : IDisposable
         C = 2
     }
 
+    /// <summary>
+    /// Captures per-tick state passed into the GPU prepare kernel.
+    /// </summary>
     public readonly record struct PrepareKernelConfig(
         ulong TickId,
         ulong BrainSeed,
@@ -178,8 +187,16 @@ public sealed class RegionShardIlgpuBackend : IDisposable
         _resetGroups = BuildGroups(state.ResetFunctions, lease.Accelerator);
     }
 
+    /// <summary>
+    /// Gets the backend label reported in execution metadata.
+    /// </summary>
     public string BackendName => _backendName;
 
+    /// <summary>
+    /// Attempts to create an ILGPU backend using the preferred compatible accelerator.
+    /// </summary>
+    /// <param name="state">Shard state that the backend will execute against.</param>
+    /// <returns>The initialized backend, or <see langword="null"/> when no compatible accelerator is available.</returns>
     public static RegionShardIlgpuBackend? TryCreate(RegionShardState state)
     {
         if (!RegionShardGpuRuntime.TryCreatePreferredAccelerator(out var lease, out _)
@@ -191,6 +208,9 @@ public sealed class RegionShardIlgpuBackend : IDisposable
         return new RegionShardIlgpuBackend(state, lease);
     }
 
+    /// <summary>
+    /// Checks whether the current shard state and compute options can run on the GPU backend.
+    /// </summary>
     public RegionShardGpuSupport GetSupport(
         RegionShardVisualizationComputeScope? visualization,
         bool plasticityEnabled,
@@ -237,6 +257,9 @@ public sealed class RegionShardIlgpuBackend : IDisposable
         return new RegionShardGpuSupport(true, string.Empty);
     }
 
+    /// <summary>
+    /// Executes one shard compute step on the ILGPU backend.
+    /// </summary>
     public RegionShardComputeResult Compute(
         ulong tickId,
         Guid brainId,
@@ -391,6 +414,9 @@ public sealed class RegionShardIlgpuBackend : IDisposable
             outputVectorSource);
     }
 
+    /// <summary>
+    /// Releases accelerator buffers and kernel grouping resources.
+    /// </summary>
     public void Dispose()
     {
         foreach (var group in _activationGroups.Values)

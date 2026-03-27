@@ -8,6 +8,8 @@ RegionHost consumes non-file `store_uri` values through the shared artifact reso
 
 RegionShard execution now routes through a backend dispatcher. `NBN_REGIONSHARD_BACKEND=auto|cpu|gpu` selects the preferred backend: `auto` is capability-first, while `cpu` and `gpu` are explicit overrides. CUDA-first ILGPU probing is used when GPU execution is allowed. OpenCL devices that cannot satisfy the RegionShard kernel requirements, including float64 support, are treated as incompatible and excluded from runtime GPU selection instead of failing after dispatch. Unsupported runtime features or function IDs fall back explicitly to the CPU backend, and the GPU path synchronizes host-visible shard state before `TickComputeDone` or snapshot capture can observe it.
 
+Implementation ownership is intentionally split between entrypoint/bootstrap (`Program`, `RegionHostOptions`), shard actor partials (`RegionShardActor` lifecycle/configuration/execution/observability), and backend-specific compute surfaces (`RegionShardComputeBackendDispatcher`, CPU backend, ILGPU backend) so transport wiring, tick semantics, and backend fallback rules stay easy to audit independently.
+
 ## Maintenance guidance
 
 Keep this file concise and decision-focused. Update when stable behavior, ownership boundaries, or invariants change. Prefer editing/replacing stale text over appending long history; avoid transient run logs or speculative notes.

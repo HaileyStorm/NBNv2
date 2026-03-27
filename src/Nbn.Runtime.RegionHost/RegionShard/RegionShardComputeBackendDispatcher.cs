@@ -4,6 +4,9 @@ using ShardId32 = Nbn.Shared.Addressing.ShardId32;
 
 namespace Nbn.Runtime.RegionHost;
 
+/// <summary>
+/// Reports which compute backend executed the last RegionShard tick and why a fallback occurred.
+/// </summary>
 public readonly record struct RegionShardBackendExecutionInfo(
     RegionShardComputeBackendPreference RequestedPreference,
     string BackendName,
@@ -11,8 +14,13 @@ public readonly record struct RegionShardBackendExecutionInfo(
     string FallbackReason,
     bool HasExecuted);
 
+/// <summary>
+/// Routes shard compute requests to the preferred backend while preserving CPU fallback behavior and execution metadata.
+/// </summary>
 public sealed class RegionShardComputeBackendDispatcher : IDisposable
 {
+    private const string CpuBackendName = "cpu";
+
     private readonly RegionShardState _state;
     private readonly RegionShardCpuBackend _cpu;
     private readonly Func<RegionShardState, RegionShardIlgpuBackend?> _gpuFactory;
@@ -21,6 +29,12 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
     private bool _gpuInitialized;
     private string _gpuInitializationReason;
 
+    /// <summary>
+    /// Creates a backend dispatcher for a single shard state instance.
+    /// </summary>
+    /// <param name="state">Mutable shard state shared by the compute backends.</param>
+    /// <param name="preference">Requested backend preference for future compute calls.</param>
+    /// <param name="gpuFactory">Optional GPU backend factory used for tests or specialized bootstrapping.</param>
     public RegionShardComputeBackendDispatcher(
         RegionShardState state,
         RegionShardComputeBackendPreference preference,
@@ -32,16 +46,18 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
         _gpuFactory = gpuFactory ?? RegionShardIlgpuBackend.TryCreate;
         _gpuInitializationReason = string.Empty;
 
-        LastExecution = new RegionShardBackendExecutionInfo(
-            preference,
-            BackendName: "cpu",
-            UsedGpu: false,
-            FallbackReason: string.Empty,
-            HasExecuted: false);
+        LastExecution = CreateExecutionInfo(CpuBackendName, usedGpu: false, fallbackReason: string.Empty, hasExecuted: false);
     }
 
+    /// <summary>
+    /// Gets metadata for the last attempted compute call.
+    /// </summary>
     public RegionShardBackendExecutionInfo LastExecution { get; private set; }
 
+    /// <summary>
+    /// Executes shard compute on the preferred backend, falling back to CPU when GPU use is disabled or unsupported.
+    /// </summary>
+    /// <returns>The compute result produced by the executing backend.</returns>
     public RegionShardComputeResult Compute(
         ulong tickId,
         Guid brainId,
@@ -68,72 +84,32 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
     {
         EnsureGpuBackend();
 
-        if (_gpu is not null)
-        {
-            var support = _gpu.GetSupport(
+        if (TryComputeWithGpu(
+                tickId,
+                brainId,
+                shardId,
+                routing,
                 visualization,
                 plasticityEnabled,
+                plasticityRate,
                 probabilisticPlasticityUpdates,
                 plasticityDelta,
                 plasticityRebaseThreshold,
                 plasticityRebaseThresholdPct,
+                plasticityEnergyCostConfig,
                 homeostasisConfig,
                 costEnergyEnabled,
-                outputVectorSource);
-            if (support.IsSupported)
-            {
-                try
-                {
-                    var result = _gpu.Compute(
-                        tickId,
-                        brainId,
-                        shardId,
-                        routing,
-                        visualization,
-                        plasticityEnabled,
-                        plasticityRate,
-                        probabilisticPlasticityUpdates,
-                        plasticityDelta,
-                        plasticityRebaseThreshold,
-                        plasticityRebaseThresholdPct,
-                        plasticityEnergyCostConfig,
-                        homeostasisConfig,
-                        costEnergyEnabled,
-                        remoteCostEnabled,
-                        remoteCostPerBatch,
-                        remoteCostPerContribution,
-                        costTierAMultiplier,
-                        costTierBMultiplier,
-                        costTierCMultiplier,
-                        outputVectorSource,
-                        previousTickCostTotal);
-                    LastExecution = new RegionShardBackendExecutionInfo(
-                        _preference,
-                        _gpu.BackendName,
-                        UsedGpu: true,
-                        FallbackReason: string.Empty,
-                        HasExecuted: true);
-                    return result;
-                }
-                catch (Exception ex)
-                {
-                    LastExecution = new RegionShardBackendExecutionInfo(
-                        _preference,
-                        BackendName: "cpu",
-                        UsedGpu: false,
-                        FallbackReason: $"gpu_compute_failed:{ex}",
-                        HasExecuted: true);
-                }
-            }
-            else if (_preference != RegionShardComputeBackendPreference.Cpu)
-            {
-                LastExecution = new RegionShardBackendExecutionInfo(
-                    _preference,
-                    BackendName: "cpu",
-                    UsedGpu: false,
-                    FallbackReason: support.Reason,
-                    HasExecuted: true);
-            }
+                remoteCostEnabled,
+                remoteCostPerBatch,
+                remoteCostPerContribution,
+                costTierAMultiplier,
+                costTierBMultiplier,
+                costTierCMultiplier,
+                outputVectorSource,
+                previousTickCostTotal,
+                out var gpuResult))
+        {
+            return gpuResult;
         }
 
         var cpuResult = _cpu.Compute(
@@ -160,16 +136,7 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
             outputVectorSource,
             previousTickCostTotal);
 
-        if (string.IsNullOrWhiteSpace(LastExecution.FallbackReason))
-        {
-            LastExecution = new RegionShardBackendExecutionInfo(
-                _preference,
-                BackendName: "cpu",
-                UsedGpu: false,
-                FallbackReason: _gpuInitializationReason,
-                HasExecuted: true);
-        }
-
+        RecordCpuExecutionIfUnset();
         return cpuResult;
     }
 
@@ -202,8 +169,120 @@ public sealed class RegionShardComputeBackendDispatcher : IDisposable
             : availability.FailureReason;
     }
 
+    /// <summary>
+    /// Releases any lazily-created GPU backend resources.
+    /// </summary>
     public void Dispose()
     {
         _gpu?.Dispose();
+    }
+
+    private bool TryComputeWithGpu(
+        ulong tickId,
+        Guid brainId,
+        ShardId32 shardId,
+        RegionShardRoutingTable routing,
+        RegionShardVisualizationComputeScope? visualization,
+        bool plasticityEnabled,
+        float plasticityRate,
+        bool probabilisticPlasticityUpdates,
+        float plasticityDelta,
+        uint plasticityRebaseThreshold,
+        float plasticityRebaseThresholdPct,
+        RegionShardPlasticityEnergyCostConfig? plasticityEnergyCostConfig,
+        RegionShardHomeostasisConfig? homeostasisConfig,
+        bool costEnergyEnabled,
+        bool? remoteCostEnabled,
+        long? remoteCostPerBatch,
+        long? remoteCostPerContribution,
+        float? costTierAMultiplier,
+        float? costTierBMultiplier,
+        float? costTierCMultiplier,
+        OutputVectorSource outputVectorSource,
+        long previousTickCostTotal,
+        out RegionShardComputeResult result)
+    {
+        result = default!;
+        if (_gpu is null)
+        {
+            return false;
+        }
+
+        var support = _gpu.GetSupport(
+            visualization,
+            plasticityEnabled,
+            probabilisticPlasticityUpdates,
+            plasticityDelta,
+            plasticityRebaseThreshold,
+            plasticityRebaseThresholdPct,
+            homeostasisConfig,
+            costEnergyEnabled,
+            outputVectorSource);
+        if (!support.IsSupported)
+        {
+            if (_preference != RegionShardComputeBackendPreference.Cpu)
+            {
+                RecordCpuExecution(support.Reason);
+            }
+
+            return false;
+        }
+
+        try
+        {
+            result = _gpu.Compute(
+                tickId,
+                brainId,
+                shardId,
+                routing,
+                visualization,
+                plasticityEnabled,
+                plasticityRate,
+                probabilisticPlasticityUpdates,
+                plasticityDelta,
+                plasticityRebaseThreshold,
+                plasticityRebaseThresholdPct,
+                plasticityEnergyCostConfig,
+                homeostasisConfig,
+                costEnergyEnabled,
+                remoteCostEnabled,
+                remoteCostPerBatch,
+                remoteCostPerContribution,
+                costTierAMultiplier,
+                costTierBMultiplier,
+                costTierCMultiplier,
+                outputVectorSource,
+                previousTickCostTotal);
+            LastExecution = CreateExecutionInfo(_gpu.BackendName, usedGpu: true, fallbackReason: string.Empty, hasExecuted: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            RecordCpuExecution($"gpu_compute_failed:{ex}");
+            return false;
+        }
+    }
+
+    private void RecordCpuExecutionIfUnset()
+    {
+        if (string.IsNullOrWhiteSpace(LastExecution.FallbackReason))
+        {
+            RecordCpuExecution(_gpuInitializationReason);
+        }
+    }
+
+    private void RecordCpuExecution(string fallbackReason)
+    {
+        LastExecution = CreateExecutionInfo(CpuBackendName, usedGpu: false, fallbackReason, hasExecuted: true);
+    }
+
+    private RegionShardBackendExecutionInfo CreateExecutionInfo(string backendName, bool usedGpu, string fallbackReason, bool hasExecuted)
+    {
+        return new RegionShardBackendExecutionInfo(
+            _preference,
+            backendName,
+            usedGpu,
+            fallbackReason,
+            hasExecuted);
     }
 }

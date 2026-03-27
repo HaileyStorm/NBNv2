@@ -168,6 +168,32 @@ public sealed class RegionShardIlgpuBackendParityTests
     }
 
     [Fact]
+    public void Dispatcher_FallsBackToCpu_WhenGpuInitializationThrows()
+    {
+        var state = CreateSupportedOutputState();
+        var routing = CreateRouting();
+        var brainId = Guid.Parse("FDBA2053-77AF-4790-9E4F-9E2CF0EF7B31");
+        var shardId = ShardId32.From(state.RegionId, shardIndex: 0);
+        using var dispatcher = new RegionShardComputeBackendDispatcher(
+            state,
+            RegionShardComputeBackendPreference.Gpu,
+            static _ => throw new InvalidOperationException("gpu init failed for test"));
+
+        var result = dispatcher.Compute(
+            tickId: 1,
+            brainId,
+            shardId,
+            routing,
+            visualization: RegionShardVisualizationComputeScope.Disabled);
+
+        Assert.NotNull(result);
+        Assert.False(dispatcher.LastExecution.UsedGpu);
+        Assert.Equal("cpu", dispatcher.LastExecution.BackendName);
+        Assert.True(dispatcher.LastExecution.HasExecuted);
+        Assert.Contains("gpu_init_failed:gpu init failed for test", dispatcher.LastExecution.FallbackReason);
+    }
+
+    [Fact]
     public void IlgpuBackend_OutrunsCpu_OnHighLoad()
     {
         if (!HasCompatibleGpu())

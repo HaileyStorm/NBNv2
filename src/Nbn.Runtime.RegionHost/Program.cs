@@ -40,20 +40,12 @@ var settingsReporter = SettingsMonitorReporter.Start(
 
 var artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(options.ArtifactRootPath));
 var store = artifactStoreResolver.Resolve(options.StoreUri);
-var nbnRef = BuildArtifactRef(options.NbnSha256, options.NbnSize, "application/x-nbn", options.StoreUri);
-ArtifactRef? nbsRef = null;
-if (!string.IsNullOrWhiteSpace(options.NbsSha256))
-{
-    nbsRef = BuildArtifactRef(options.NbsSha256, options.NbsSize ?? 0, "application/x-nbs", options.StoreUri);
-}
+var (nbnRef, nbsRef) = CreateArtifactRefs(options);
 
 var routerPid = RequirePid(options.RouterAddress, options.RouterId, "router");
 var tickPid = RequirePid(options.TickAddress, options.TickId, "tick");
 var outputPid = TryCreatePid(options.OutputAddress, options.OutputId);
-if (options.RegionId == NbnConstants.OutputRegionId && outputPid is null)
-{
-    Console.WriteLine("Warning: output sink PID not provided for output region shard; awaiting control-plane update.");
-}
+WarnOnMissingOutputSink(options, outputPid);
 
 var shardId = ShardId32.From(options.RegionId, options.ShardIndex);
 var load = await RegionShardArtifactLoader.LoadAsync(
@@ -67,25 +59,18 @@ var load = await RegionShardArtifactLoader.LoadAsync(
 
 var plan = ShardPlanner.BuildPlan(load.Header, options.ShardPlanMode, options.ShardCount, options.MaxNeuronsPerShard);
 var routing = RegionShardRoutingTable.CreateFromPlan(plan.Regions);
-if (plan.Warnings.Count > 0)
-{
-    foreach (var warning in plan.Warnings)
-    {
-        Console.WriteLine($"Shard plan warning: {warning}");
-    }
-}
-var config = new RegionShardActorConfig(
-    options.BrainId,
+WriteShardPlanWarnings(plan);
+var config = CreateShardActorConfig(
+    options,
     shardId,
+    routing,
     routerPid,
     outputPid,
     tickPid,
-    routing,
     obsTargets.VizHub,
     obsTargets.DebugHub,
-    DebugEnabled: debugEnabled,
-    DebugMinSeverity: debugMinSeverity,
-    ComputeBackendPreference: RegionShardComputeBackendPreferenceResolver.Resolve());
+    debugEnabled,
+    debugMinSeverity);
 var shardProps = Props.FromProducer(() => new RegionShardActor(load.State, config));
 var shardPid = system.Root.SpawnNamed(shardProps, options.ShardName);
 var shardRemotePid = new PID(GetAdvertisedAddress(remoteConfig), shardPid.Id);
@@ -100,28 +85,7 @@ system.Root.Send(shardPid, new ProtoControl.RegisterShard
     NeuronCount = (uint)options.NeuronCount
 });
 
-Console.WriteLine("NBN RegionHost online.");
-Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
-Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");
-Console.WriteLine($"Shard: {PidLabel(shardPid)}");
-Console.WriteLine($"Brain: {options.BrainId}");
-Console.WriteLine($"Region: {options.RegionId} ({options.NeuronStart}-{options.NeuronStart + load.State.NeuronCount - 1})");
-if (plan.Regions.TryGetValue(options.RegionId, out var plannedShards)
-    && !plannedShards.Any(span => span.ShardIndex == options.ShardIndex
-                                  && span.NeuronStart == options.NeuronStart
-                                  && span.NeuronCount == load.State.NeuronCount))
-{
-    Console.WriteLine("Warning: shard options do not match the computed shard plan.");
-}
-if (load.SnapshotHeader is null)
-{
-    Console.WriteLine("Snapshot: none");
-}
-else
-{
-    Console.WriteLine($"Snapshot: tick={load.SnapshotHeader.SnapshotTickId} energy={load.SnapshotHeader.EnergyRemaining} cost={load.SnapshotHeader.CostEnabled} energyEnabled={load.SnapshotHeader.EnergyEnabled} plasticity={load.SnapshotHeader.PlasticityEnabled}");
-}
-Console.WriteLine("Press Ctrl+C to shut down.");
+PrintStartupSummary(options, remoteConfig, shardPid, load, plan);
 
 var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -149,6 +113,101 @@ if (settingsReporter is not null)
 
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();
+
+static (ArtifactRef NbnRef, ArtifactRef? NbsRef) CreateArtifactRefs(RegionHostOptions options)
+{
+    var nbnRef = BuildArtifactRef(options.NbnSha256, options.NbnSize, "application/x-nbn", options.StoreUri);
+    ArtifactRef? nbsRef = null;
+    if (!string.IsNullOrWhiteSpace(options.NbsSha256))
+    {
+        nbsRef = BuildArtifactRef(options.NbsSha256, options.NbsSize ?? 0, "application/x-nbs", options.StoreUri);
+    }
+
+    return (nbnRef, nbsRef);
+}
+
+static void WarnOnMissingOutputSink(RegionHostOptions options, PID? outputPid)
+{
+    if (options.RegionId == NbnConstants.OutputRegionId && outputPid is null)
+    {
+        Console.WriteLine("Warning: output sink PID not provided for output region shard; awaiting control-plane update.");
+    }
+}
+
+static void WriteShardPlanWarnings(ShardPlanResult plan)
+{
+    foreach (var warning in plan.Warnings)
+    {
+        Console.WriteLine($"Shard plan warning: {warning}");
+    }
+}
+
+static RegionShardActorConfig CreateShardActorConfig(
+    RegionHostOptions options,
+    ShardId32 shardId,
+    RegionShardRoutingTable routing,
+    PID routerPid,
+    PID? outputPid,
+    PID tickPid,
+    PID? vizHub,
+    PID? debugHub,
+    bool debugEnabled,
+    Severity debugMinSeverity)
+{
+    return new RegionShardActorConfig(
+        options.BrainId,
+        shardId,
+        routerPid,
+        outputPid,
+        tickPid,
+        routing,
+        vizHub,
+        debugHub,
+        DebugEnabled: debugEnabled,
+        DebugMinSeverity: debugMinSeverity,
+        ComputeBackendPreference: RegionShardComputeBackendPreferenceResolver.Resolve());
+}
+
+static void PrintStartupSummary(
+    RegionHostOptions options,
+    RemoteConfig remoteConfig,
+    PID shardPid,
+    RegionShardLoadResult load,
+    ShardPlanResult plan)
+{
+    Console.WriteLine("NBN RegionHost online.");
+    Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
+    Console.WriteLine($"Advertised: {remoteConfig.AdvertisedHost ?? remoteConfig.Host}:{remoteConfig.AdvertisedPort ?? remoteConfig.Port}");
+    Console.WriteLine($"Shard: {PidLabel(shardPid)}");
+    Console.WriteLine($"Brain: {options.BrainId}");
+    Console.WriteLine($"Region: {options.RegionId} ({options.NeuronStart}-{options.NeuronStart + load.State.NeuronCount - 1})");
+    WarnOnShardPlanMismatch(options, load, plan);
+    WriteSnapshotSummary(load);
+    Console.WriteLine("Press Ctrl+C to shut down.");
+}
+
+static void WarnOnShardPlanMismatch(RegionHostOptions options, RegionShardLoadResult load, ShardPlanResult plan)
+{
+    if (plan.Regions.TryGetValue(options.RegionId, out var plannedShards)
+        && !plannedShards.Any(span => span.ShardIndex == options.ShardIndex
+                                      && span.NeuronStart == options.NeuronStart
+                                      && span.NeuronCount == load.State.NeuronCount))
+    {
+        Console.WriteLine("Warning: shard options do not match the computed shard plan.");
+    }
+}
+
+static void WriteSnapshotSummary(RegionShardLoadResult load)
+{
+    if (load.SnapshotHeader is null)
+    {
+        Console.WriteLine("Snapshot: none");
+        return;
+    }
+
+    Console.WriteLine(
+        $"Snapshot: tick={load.SnapshotHeader.SnapshotTickId} energy={load.SnapshotHeader.EnergyRemaining} cost={load.SnapshotHeader.CostEnabled} energyEnabled={load.SnapshotHeader.EnergyEnabled} plasticity={load.SnapshotHeader.PlasticityEnabled}");
+}
 
 static ArtifactRef BuildArtifactRef(string shaHex, long sizeBytes, string mediaType, string? storeUri)
 {

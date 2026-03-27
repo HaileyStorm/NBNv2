@@ -3,6 +3,9 @@ using Nbn.Shared.Sharding;
 
 namespace Nbn.Runtime.RegionHost;
 
+/// <summary>
+/// Captures RegionHost bootstrap settings from environment variables and command-line overrides.
+/// </summary>
 public sealed record RegionHostOptions(
     string BindHost,
     int Port,
@@ -33,6 +36,11 @@ public sealed record RegionHostOptions(
     long? NbsSize,
     string? StoreUri)
 {
+    /// <summary>
+    /// Parses RegionHost options from environment variables first, then applies command-line overrides.
+    /// </summary>
+    /// <param name="args">Command-line arguments passed to the RegionHost process.</param>
+    /// <returns>The resolved RegionHost options.</returns>
     public static RegionHostOptions FromArgs(string[] args)
     {
         var bindHost = GetEnv("NBN_REGIONHOST_BIND_HOST") ?? NetworkAddressDefaults.DefaultBindHost;

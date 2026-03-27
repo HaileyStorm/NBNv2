@@ -9,6 +9,9 @@ using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.RegionHost;
 
+/// <summary>
+/// Reference RegionShard compute backend used for deterministic execution and CPU fallback.
+/// </summary>
 public sealed class RegionShardCpuBackend
 {
     private const float BufferVizEpsilon = 1e-6f;
@@ -48,6 +51,11 @@ public sealed class RegionShardCpuBackend
         C = 2
     }
 
+    /// <summary>
+    /// Creates a CPU backend bound to a shard state instance.
+    /// </summary>
+    /// <param name="state">Mutable shard state used for compute and observability output.</param>
+    /// <param name="costConfig">Optional cost configuration overrides.</param>
     public RegionShardCpuBackend(RegionShardState state, RegionShardCostConfig? costConfig = null)
     {
         _state = state ?? throw new ArgumentNullException(nameof(state));
@@ -57,6 +65,9 @@ public sealed class RegionShardCpuBackend
         _bufferVizTrackingArmed = false;
     }
 
+    /// <summary>
+    /// Executes one shard compute step on CPU and returns outbound batches, outputs, costs, and visualization data.
+    /// </summary>
     public RegionShardComputeResult Compute(
         ulong tickId,
         Guid brainId,
@@ -1287,8 +1298,14 @@ public sealed class RegionShardCpuBackend
     }
 }
 
+/// <summary>
+/// Configures CPU-side cost accounting defaults for RegionShard compute.
+/// </summary>
 public sealed class RegionShardCostConfig
 {
+    /// <summary>
+    /// Gets the default cost configuration used when callers do not provide overrides.
+    /// </summary>
     public static RegionShardCostConfig Default { get; } = new();
 
     public long AxonBaseCost { get; init; } = 1;
@@ -1305,6 +1322,9 @@ public sealed class RegionShardCostConfig
     public float TierCMultiplier { get; init; } = 1f;
 }
 
+/// <summary>
+/// Summarizes cost contributions emitted by a single compute step.
+/// </summary>
 public readonly record struct RegionShardCostSummary(
     long Total,
     long Accum,
@@ -1313,6 +1333,9 @@ public readonly record struct RegionShardCostSummary(
     long Distance,
     long Remote);
 
+/// <summary>
+/// Aggregates visualization data for axon traffic emitted during a compute step.
+/// </summary>
 public readonly record struct RegionShardAxonVizEvent(
     uint SourceAddress,
     uint TargetAddress,
@@ -1323,24 +1346,42 @@ public readonly record struct RegionShardAxonVizEvent(
     float AverageSignedStrength,
     float AverageStrength);
 
+/// <summary>
+/// Captures a neuron firing visualization event.
+/// </summary>
 public readonly record struct RegionShardNeuronVizEvent(
     uint SourceAddress,
     ulong TickId,
     float Potential);
 
+/// <summary>
+/// Captures a sampled neuron buffer visualization event.
+/// </summary>
 public readonly record struct RegionShardNeuronBufferVizEvent(
     uint SourceAddress,
     ulong TickId,
     float Buffer);
 
+/// <summary>
+/// Describes whether visualization data should be collected for a compute call.
+/// </summary>
 public readonly record struct RegionShardVisualizationComputeScope(
     bool Enabled,
     uint? FocusRegionId)
 {
+    /// <summary>
+    /// Gets a scope that enables visualization for all regions touched by the compute call.
+    /// </summary>
     public static RegionShardVisualizationComputeScope EnabledAll { get; } = new(true, null);
+    /// <summary>
+    /// Gets a scope that suppresses visualization collection.
+    /// </summary>
     public static RegionShardVisualizationComputeScope Disabled { get; } = new(false, null);
 }
 
+/// <summary>
+/// Packages the full output of a shard compute call, including side effects for delivery and observability.
+/// </summary>
 public sealed record RegionShardComputeResult(
     Dictionary<ShardId32, List<Contribution>> Outbox,
     IReadOnlyList<OutputEvent> OutputEvents,
@@ -1353,6 +1394,9 @@ public sealed record RegionShardComputeResult(
     IReadOnlyList<RegionShardNeuronBufferVizEvent> BufferNeuronEvents,
     IReadOnlyList<RegionShardNeuronVizEvent> FiredNeuronEvents);
 
+/// <summary>
+/// Configures homeostasis behavior for a compute call.
+/// </summary>
 public readonly record struct RegionShardHomeostasisConfig(
     bool Enabled,
     ProtoControl.HomeostasisTargetMode TargetMode,
@@ -1363,6 +1407,9 @@ public readonly record struct RegionShardHomeostasisConfig(
     float EnergyTargetScale,
     float EnergyProbabilityScale)
 {
+    /// <summary>
+    /// Gets the default homeostasis configuration used by RegionShard compute.
+    /// </summary>
     public static RegionShardHomeostasisConfig Default { get; } = new(
         Enabled: true,
         TargetMode: ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
@@ -1374,6 +1421,9 @@ public readonly record struct RegionShardHomeostasisConfig(
         EnergyProbabilityScale: 1f);
 }
 
+/// <summary>
+/// Configures how prior tick cost influences plasticity work during compute.
+/// </summary>
 public readonly record struct RegionShardPlasticityEnergyCostConfig(
     bool Enabled,
     long ReferenceTickCost,
@@ -1381,6 +1431,9 @@ public readonly record struct RegionShardPlasticityEnergyCostConfig(
     float MinScale,
     float MaxScale)
 {
+    /// <summary>
+    /// Gets the default plasticity energy-cost configuration used by RegionShard compute.
+    /// </summary>
     public static RegionShardPlasticityEnergyCostConfig Default { get; } = new(
         Enabled: false,
         ReferenceTickCost: 100,
@@ -1388,4 +1441,3 @@ public readonly record struct RegionShardPlasticityEnergyCostConfig(
         MinScale: 0.1f,
         MaxScale: 1f);
 }
-

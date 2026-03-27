@@ -14,66 +14,14 @@ public sealed partial class RegionShardActor
 {
     private void HandleCaptureShardSnapshot(IContext context, CaptureShardSnapshot message)
     {
-        var response = new CaptureShardSnapshotAck
+        var response = CreateSnapshotResponse();
+        if (!TryValidateSnapshotRequest(context, message, response))
         {
-            BrainId = _brainId.ToProtoUuid(),
-            RegionId = (uint)_state.RegionId,
-            ShardIndex = (uint)_shardId.ShardIndex,
-            NeuronStart = (uint)_state.NeuronStart,
-            NeuronCount = (uint)_state.NeuronCount,
-            Success = false
-        };
-
-        if (message.BrainId is null || !message.BrainId.TryToGuid(out var brainId) || brainId != _brainId)
-        {
-            response.Error = "brain_id_mismatch";
-            context.Respond(response);
             return;
         }
 
-        if (message.RegionId != (uint)_state.RegionId || message.ShardIndex != (uint)_shardId.ShardIndex)
-        {
-            response.Error = "shard_id_mismatch";
-            context.Respond(response);
-            return;
-        }
-
-        var enabledBytes = new byte[(_state.NeuronCount + 7) / 8];
-        for (var i = 0; i < _state.NeuronCount; i++)
-        {
-            var buffer = _state.Buffer[i];
-            if (!float.IsFinite(buffer))
-            {
-                buffer = 0f;
-            }
-
-            var code = QuantizationSchemas.DefaultBuffer.Encode(buffer, bits: 16);
-            response.BufferCodes.Add(code);
-
-            if (_state.Enabled[i])
-            {
-                enabledBytes[i / 8] |= (byte)(1 << (i % 8));
-            }
-        }
-
-        response.EnabledBitset = ByteString.CopyFrom(enabledBytes);
-
-        for (var i = 0; i < _state.Axons.Count; i++)
-        {
-            var runtimeCode = _state.Axons.RuntimeStrengthCodes[i];
-            if (!_state.Axons.HasRuntimeOverlay[i] || runtimeCode == _state.Axons.BaseStrengthCodes[i])
-            {
-                continue;
-            }
-
-            response.Overlays.Add(new SnapshotOverlayRecord
-            {
-                FromAddress = _state.Axons.FromAddress32[i],
-                ToAddress = _state.Axons.ToAddress32[i],
-                StrengthCode = runtimeCode
-            });
-        }
-
+        WriteSnapshotBufferState(response);
+        WriteSnapshotOverlayState(response);
         response.Success = true;
         context.Respond(response);
     }
@@ -87,10 +35,7 @@ public sealed partial class RegionShardActor
         Address32? target = null,
         float strength = 0f)
     {
-        if (!_vizEnabled
-            || _vizHub is null
-            || !ObservabilityTargets.CanSend(context, _vizHub)
-            || !TouchesFocusRegion(source, target))
+        if (!CanEmitVizEvent(context, source, target))
         {
             return;
         }
@@ -118,7 +63,81 @@ public sealed partial class RegionShardActor
             evt.Target = target.Value.ToProtoAddress32();
         }
 
-        context.Send(_vizHub, evt);
+        context.Send(_vizHub!, evt);
+    }
+
+    private CaptureShardSnapshotAck CreateSnapshotResponse()
+    {
+        return new CaptureShardSnapshotAck
+        {
+            BrainId = _brainId.ToProtoUuid(),
+            RegionId = (uint)_state.RegionId,
+            ShardIndex = (uint)_shardId.ShardIndex,
+            NeuronStart = (uint)_state.NeuronStart,
+            NeuronCount = (uint)_state.NeuronCount,
+            Success = false
+        };
+    }
+
+    private bool TryValidateSnapshotRequest(IContext context, CaptureShardSnapshot message, CaptureShardSnapshotAck response)
+    {
+        if (message.BrainId is null || !message.BrainId.TryToGuid(out var brainId) || brainId != _brainId)
+        {
+            response.Error = "brain_id_mismatch";
+            context.Respond(response);
+            return false;
+        }
+
+        if (message.RegionId != (uint)_state.RegionId || message.ShardIndex != (uint)_shardId.ShardIndex)
+        {
+            response.Error = "shard_id_mismatch";
+            context.Respond(response);
+            return false;
+        }
+
+        return true;
+    }
+
+    private void WriteSnapshotBufferState(CaptureShardSnapshotAck response)
+    {
+        var enabledBytes = new byte[(_state.NeuronCount + 7) / 8];
+        for (var i = 0; i < _state.NeuronCount; i++)
+        {
+            response.BufferCodes.Add(EncodeBufferCode(_state.Buffer[i]));
+            if (_state.Enabled[i])
+            {
+                enabledBytes[i / 8] |= (byte)(1 << (i % 8));
+            }
+        }
+
+        response.EnabledBitset = ByteString.CopyFrom(enabledBytes);
+    }
+
+    private void WriteSnapshotOverlayState(CaptureShardSnapshotAck response)
+    {
+        for (var i = 0; i < _state.Axons.Count; i++)
+        {
+            var runtimeCode = _state.Axons.RuntimeStrengthCodes[i];
+            if (!_state.Axons.HasRuntimeOverlay[i] || runtimeCode == _state.Axons.BaseStrengthCodes[i])
+            {
+                continue;
+            }
+
+            response.Overlays.Add(new SnapshotOverlayRecord
+            {
+                FromAddress = _state.Axons.FromAddress32[i],
+                ToAddress = _state.Axons.ToAddress32[i],
+                StrengthCode = runtimeCode
+            });
+        }
+    }
+
+    private bool CanEmitVizEvent(IContext context, Address32? source, Address32? target)
+    {
+        return _vizEnabled
+               && _vizHub is not null
+               && ObservabilityTargets.CanSend(context, _vizHub)
+               && TouchesFocusRegion(source, target);
     }
 
     private bool TouchesFocusRegion(Address32? source, Address32? target)
@@ -207,6 +226,16 @@ public sealed partial class RegionShardActor
             SenderNode = context.System.Address ?? string.Empty,
             TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         });
+    }
+
+    private static ushort EncodeBufferCode(float value)
+    {
+        if (!float.IsFinite(value))
+        {
+            value = 0f;
+        }
+
+        return (ushort)QuantizationSchemas.DefaultBuffer.Encode(value, bits: 16);
     }
 
     private void LogShardInitDiagnostics()

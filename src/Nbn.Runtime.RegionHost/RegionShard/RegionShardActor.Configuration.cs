@@ -16,21 +16,13 @@ public sealed partial class RegionShardActor
 
         if (string.IsNullOrWhiteSpace(message.OutputPid))
         {
-            _outputSink = null;
-            if (LogOutput && _state.IsOutputRegion)
-            {
-                Console.WriteLine($"[RegionShard] Output sink cleared for brain={_brainId} shard={_shardId}.");
-            }
+            SetOutputSink(outputSink: null, rawPid: null);
             return;
         }
 
         if (TryParsePid(message.OutputPid, out var pid))
         {
-            _outputSink = pid;
-            if (LogOutput && _state.IsOutputRegion)
-            {
-                Console.WriteLine($"[RegionShard] Output sink set for brain={_brainId} shard={_shardId} sink={message.OutputPid}.");
-            }
+            SetOutputSink(pid, message.OutputPid);
         }
     }
 
@@ -46,16 +38,7 @@ public sealed partial class RegionShardActor
             ? message.FocusRegionId
             : null;
         _vizStreamMinIntervalMs = NormalizeVisualizationMinIntervalMs(message.VizStreamMinIntervalMs);
-
-        if (LogViz || LogVizDiagnostics)
-        {
-            var focusLabel = _vizFocusRegionId.HasValue ? _vizFocusRegionId.Value.ToString() : "all";
-            var hubLabel = _vizHub is null
-                ? "(null)"
-                : (string.IsNullOrWhiteSpace(_vizHub.Address) ? _vizHub.Id : $"{_vizHub.Address}/{_vizHub.Id}");
-            Console.WriteLine(
-                $"[RegionShard] Viz config updated brain={_brainId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} streamMinIntervalMs={_vizStreamMinIntervalMs} hub={hubLabel}.");
-        }
+        LogVisualizationConfigUpdate();
     }
 
     private void HandleUpdateRuntimeConfig(UpdateShardRuntimeConfig message)
@@ -65,6 +48,43 @@ public sealed partial class RegionShardActor
             return;
         }
 
+        ApplyCostConfig(message);
+        ApplyPlasticityConfig(message);
+        ApplyHomeostasisConfig(message);
+        ApplyObservabilityConfig(message);
+    }
+
+    private void SetOutputSink(PID? outputSink, string? rawPid)
+    {
+        _outputSink = outputSink;
+        if (!LogOutput || !_state.IsOutputRegion)
+        {
+            return;
+        }
+
+        if (outputSink is null)
+        {
+            Console.WriteLine($"[RegionShard] Output sink cleared for brain={_brainId} shard={_shardId}.");
+            return;
+        }
+
+        Console.WriteLine($"[RegionShard] Output sink set for brain={_brainId} shard={_shardId} sink={rawPid ?? FormatPidLabel(outputSink)}.");
+    }
+
+    private void LogVisualizationConfigUpdate()
+    {
+        if (!LogViz && !LogVizDiagnostics)
+        {
+            return;
+        }
+
+        var focusLabel = _vizFocusRegionId.HasValue ? _vizFocusRegionId.Value.ToString() : "all";
+        Console.WriteLine(
+            $"[RegionShard] Viz config updated brain={_brainId} shard={_shardId} enabled={_vizEnabled} focus={focusLabel} streamMinIntervalMs={_vizStreamMinIntervalMs} hub={FormatPidLabel(_vizHub)}.");
+    }
+
+    private void ApplyCostConfig(UpdateShardRuntimeConfig message)
+    {
         _costEnergyEnabled = message.CostEnabled && message.EnergyEnabled;
         _remoteCostEnabled = message.RemoteCostEnabled;
         _remoteCostPerBatch = Math.Max(0L, message.RemoteCostPerBatch);
@@ -72,6 +92,10 @@ public sealed partial class RegionShardActor
         _costTierAMultiplier = NormalizeTierMultiplier(message.CostTierAMultiplier);
         _costTierBMultiplier = NormalizeTierMultiplier(message.CostTierBMultiplier);
         _costTierCMultiplier = NormalizeTierMultiplier(message.CostTierCMultiplier);
+    }
+
+    private void ApplyPlasticityConfig(UpdateShardRuntimeConfig message)
+    {
         _plasticityEnabled = message.PlasticityEnabled;
         _plasticityRate = message.PlasticityRate;
         _plasticityProbabilisticUpdates = message.ProbabilisticUpdates;
@@ -87,6 +111,10 @@ public sealed partial class RegionShardActor
         {
             _plasticityEnergyCostMaxScale = _plasticityEnergyCostMinScale;
         }
+    }
+
+    private void ApplyHomeostasisConfig(UpdateShardRuntimeConfig message)
+    {
         _homeostasisEnabled = message.HomeostasisEnabled;
         _homeostasisTargetMode = message.HomeostasisTargetMode;
         _homeostasisUpdateMode = message.HomeostasisUpdateMode;
@@ -95,6 +123,10 @@ public sealed partial class RegionShardActor
         _homeostasisEnergyCouplingEnabled = message.HomeostasisEnergyCouplingEnabled;
         _homeostasisEnergyTargetScale = message.HomeostasisEnergyTargetScale;
         _homeostasisEnergyProbabilityScale = message.HomeostasisEnergyProbabilityScale;
+    }
+
+    private void ApplyObservabilityConfig(UpdateShardRuntimeConfig message)
+    {
         _outputVectorSource = NormalizeOutputVectorSource(message.OutputVectorSource);
         _debugEnabled = message.DebugEnabled;
         _debugMinSeverity = message.DebugMinSeverity;
@@ -162,5 +194,15 @@ public sealed partial class RegionShardActor
         pid.Address = address;
         pid.Id = id;
         return true;
+    }
+
+    private static string FormatPidLabel(PID? pid)
+    {
+        if (pid is null)
+        {
+            return "(null)";
+        }
+
+        return string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
     }
 }
