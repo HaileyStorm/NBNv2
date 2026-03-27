@@ -37,6 +37,20 @@ public sealed partial class ReproductionManagerActor
         float LineageParentASimilarityScore = 0f,
         float LineageParentBSimilarityScore = 0f);
 
+    private sealed record PreparedReproductionRun(
+        uint RunCount,
+        bool AssessmentOnly,
+        ParsedParent GateParentA,
+        ParsedParent GateParentB,
+        ParsedParent TransformParentA,
+        ParsedParent TransformParentB,
+        ArtifactRef ParentARef,
+        ArtifactRef ParentBRef,
+        ReproduceConfig? Config,
+        ulong Seed,
+        IReadOnlyList<ManualIoNeuronEdit> ManualIoNeuronAdds,
+        IReadOnlyList<ManualIoNeuronEdit> ManualIoNeuronRemoves);
+
     private readonly record struct LineageSimilarityScores(
         float LineageSimilarityScore,
         float ParentASimilarityScore,

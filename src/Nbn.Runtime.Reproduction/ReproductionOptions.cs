@@ -1,5 +1,8 @@
 namespace Nbn.Runtime.Reproduction;
 
+/// <summary>
+/// Configures the reproduction runtime host, discovery dependencies, and optional IO gateway hint.
+/// </summary>
 public sealed record ReproductionOptions(
     string BindHost,
     int Port,
@@ -13,6 +16,9 @@ public sealed record ReproductionOptions(
     string? IoAddress,
     string? IoName)
 {
+    /// <summary>
+    /// Builds runtime options from environment variables and command-line overrides.
+    /// </summary>
     public static ReproductionOptions FromArgs(string[] args)
     {
         var bindHost = GetEnv("NBN_REPRO_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;

@@ -15,17 +15,7 @@ public sealed partial class ReproductionManagerActor
         AssessCompatibilityByBrainIdsRequest request)
         => HandleReproduceByBrainIdsAsync(
             context,
-            new ReproduceByBrainIdsRequest
-            {
-                ParentA = request.ParentA,
-                ParentB = request.ParentB,
-                StrengthSource = request.StrengthSource,
-                Config = request.Config,
-                Seed = request.Seed,
-                ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
-                ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
-                RunCount = request.RunCount
-            },
+            CreateReproduceRequest(request),
             assessmentOnly: true);
 
     private Task<ReproduceResult> HandleAssessCompatibilityByArtifactsAsync(
@@ -33,19 +23,7 @@ public sealed partial class ReproductionManagerActor
         AssessCompatibilityByArtifactsRequest request)
         => HandleReproduceByArtifactsAsync(
             context,
-            new ReproduceByArtifactsRequest
-            {
-                ParentADef = request.ParentADef,
-                ParentAState = request.ParentAState,
-                ParentBDef = request.ParentBDef,
-                ParentBState = request.ParentBState,
-                StrengthSource = request.StrengthSource,
-                Config = request.Config,
-                Seed = request.Seed,
-                ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
-                ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
-                RunCount = request.RunCount
-            },
+            CreateReproduceRequest(request),
             assessmentOnly: true);
 
     private async Task<ReproduceResult> HandleReproduceByBrainIdsAsync(
@@ -92,19 +70,7 @@ public sealed partial class ReproductionManagerActor
 
         return await HandleReproduceByArtifactsAsync(
                 context,
-                new ReproduceByArtifactsRequest
-                {
-                    ParentADef = parentAResolution.ParentDef!,
-                    ParentBDef = parentBResolution.ParentDef!,
-                    ParentAState = parentAResolution.ParentState,
-                    ParentBState = parentBResolution.ParentState,
-                    StrengthSource = request.StrengthSource,
-                    Config = request.Config,
-                    Seed = request.Seed,
-                    ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
-                    ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
-                    RunCount = request.RunCount
-                },
+                CreateReproduceRequest(request, parentAResolution, parentBResolution),
                 assessmentOnly)
             .ConfigureAwait(false);
     }
@@ -161,18 +127,19 @@ public sealed partial class ReproductionManagerActor
 
             return await ExecuteRunsAsync(
                     context,
-                    runCount,
-                    assessmentOnly,
-                    parentA.Parsed!,
-                    parentB.Parsed!,
-                    transformParentA.Parsed,
-                    transformParentB.Parsed,
-                    request.ParentADef,
-                    request.ParentBDef,
-                    request.Config,
-                    request.Seed,
-                    request.ManualIoNeuronAdds,
-                    request.ManualIoNeuronRemoves)
+                    new PreparedReproductionRun(
+                        runCount,
+                        assessmentOnly,
+                        parentA.Parsed!,
+                        parentB.Parsed!,
+                        transformParentA.Parsed,
+                        transformParentB.Parsed,
+                        request.ParentADef,
+                        request.ParentBDef,
+                        request.Config,
+                        request.Seed,
+                        request.ManualIoNeuronAdds,
+                        request.ManualIoNeuronRemoves))
                 .ConfigureAwait(false);
         }
         catch
@@ -183,46 +150,36 @@ public sealed partial class ReproductionManagerActor
 
     private async Task<ReproduceResult> ExecuteRunsAsync(
         IContext context,
-        uint runCount,
-        bool assessmentOnly,
-        ParsedParent gateParentA,
-        ParsedParent gateParentB,
-        ParsedParent transformParentA,
-        ParsedParent transformParentB,
-        ArtifactRef parentARef,
-        ArtifactRef parentBRef,
-        ReproduceConfig? config,
-        ulong seed,
-        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
-        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves)
+        PreparedReproductionRun execution)
     {
         ReproduceResult? firstRun = null;
-        var outcomes = new List<ReproduceRunOutcome>((int)runCount);
+        var outcomes = new List<ReproduceRunOutcome>((int)execution.RunCount);
 
-        for (uint runIndex = 0; runIndex < runCount; runIndex++)
+        for (uint runIndex = 0; runIndex < execution.RunCount; runIndex++)
         {
-            var runSeed = DeriveRunSeed(seed, runIndex);
-            var runResult = await EvaluateSimilarityGatesAndBuildChildAsync(
-                    context,
-                    gateParentA,
-                    gateParentB,
-                    transformParentA,
-                    transformParentB,
-                    parentARef,
-                    parentBRef,
-                    config,
-                    runSeed,
-                    manualIoNeuronAdds,
-                    manualIoNeuronRemoves,
-                    assessmentOnly)
+            var runSeed = DeriveRunSeed(execution.Seed, runIndex);
+            var runResult = await ExecuteRunAsync(context, execution, runSeed)
                 .ConfigureAwait(false);
 
             outcomes.Add(CreateRunOutcome(runIndex, runSeed, runResult));
             firstRun ??= runResult;
         }
 
-        var response = firstRun ?? CreateAbortResult("repro_internal_error");
-        response.RequestedRunCount = runCount;
+        return CreateMultiRunResponse(firstRun ?? CreateAbortResult("repro_internal_error"), execution.RunCount, outcomes);
+    }
+
+    private Task<ReproduceResult> ExecuteRunAsync(
+        IContext context,
+        PreparedReproductionRun execution,
+        ulong runSeed)
+        => EvaluateSimilarityGatesAndBuildChildAsync(context, execution, runSeed);
+
+    private static ReproduceResult CreateMultiRunResponse(
+        ReproduceResult response,
+        uint requestedRunCount,
+        IReadOnlyList<ReproduceRunOutcome> outcomes)
+    {
+        response.RequestedRunCount = requestedRunCount;
         response.Runs.Clear();
         foreach (var outcome in outcomes)
         {
@@ -305,6 +262,52 @@ public sealed partial class ReproductionManagerActor
         return result;
     }
 
+    private static ReproduceByBrainIdsRequest CreateReproduceRequest(AssessCompatibilityByBrainIdsRequest request)
+        => new()
+        {
+            ParentA = request.ParentA,
+            ParentB = request.ParentB,
+            StrengthSource = request.StrengthSource,
+            Config = request.Config,
+            Seed = request.Seed,
+            ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
+            ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
+            RunCount = request.RunCount
+        };
+
+    private static ReproduceByArtifactsRequest CreateReproduceRequest(AssessCompatibilityByArtifactsRequest request)
+        => new()
+        {
+            ParentADef = request.ParentADef,
+            ParentAState = request.ParentAState,
+            ParentBDef = request.ParentBDef,
+            ParentBState = request.ParentBState,
+            StrengthSource = request.StrengthSource,
+            Config = request.Config,
+            Seed = request.Seed,
+            ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
+            ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
+            RunCount = request.RunCount
+        };
+
+    private static ReproduceByArtifactsRequest CreateReproduceRequest(
+        ReproduceByBrainIdsRequest request,
+        ResolvedParentArtifact parentA,
+        ResolvedParentArtifact parentB)
+        => new()
+        {
+            ParentADef = parentA.ParentDef!,
+            ParentBDef = parentB.ParentDef!,
+            ParentAState = parentA.ParentState,
+            ParentBState = parentB.ParentState,
+            StrengthSource = request.StrengthSource,
+            Config = request.Config,
+            Seed = request.Seed,
+            ManualIoNeuronAdds = { request.ManualIoNeuronAdds },
+            ManualIoNeuronRemoves = { request.ManualIoNeuronRemoves },
+            RunCount = request.RunCount
+        };
+
     private static ulong DeriveRunSeed(ulong requestSeed, uint runIndex)
     {
         if (runIndex == 0)
@@ -363,18 +366,15 @@ public sealed partial class ReproductionManagerActor
         int regionsPresentB)
         => new()
         {
-            Report = new SimilarityReport
-            {
-                Compatible = true,
-                AbortReason = string.Empty,
-                RegionSpanScore = Math.Clamp(regionSpanScore, 0f, 1f),
-                FunctionScore = Math.Clamp(functionScore, 0f, 1f),
-                ConnectivityScore = Math.Clamp(connectivityScore, 0f, 1f),
-                SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
-                RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
-                RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
-                RegionsPresentChild = 0
-            },
+            Report = CreateReport(
+                compatible: true,
+                reason: string.Empty,
+                regionSpanScore: regionSpanScore,
+                functionScore: functionScore,
+                connectivityScore: connectivityScore,
+                similarityScore: similarityScore,
+                regionsPresentA: regionsPresentA,
+                regionsPresentB: regionsPresentB),
             Summary = new MutationSummary(),
             Spawned = false
         };
@@ -394,21 +394,19 @@ public sealed partial class ReproductionManagerActor
         int regionsPresentChild)
         => new()
         {
-            Report = new SimilarityReport
-            {
-                Compatible = true,
-                AbortReason = string.Empty,
-                RegionSpanScore = Math.Clamp(regionSpanScore, 0f, 1f),
-                FunctionScore = Math.Clamp(functionScore, 0f, 1f),
-                ConnectivityScore = Math.Clamp(connectivityScore, 0f, 1f),
-                SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
-                LineageSimilarityScore = Math.Clamp(lineageSimilarityScore, 0f, 1f),
-                LineageParentASimilarityScore = Math.Clamp(lineageParentASimilarityScore, 0f, 1f),
-                LineageParentBSimilarityScore = Math.Clamp(lineageParentBSimilarityScore, 0f, 1f),
-                RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
-                RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
-                RegionsPresentChild = (uint)Math.Max(regionsPresentChild, 0)
-            },
+            Report = CreateReport(
+                compatible: true,
+                reason: string.Empty,
+                regionSpanScore: regionSpanScore,
+                functionScore: functionScore,
+                connectivityScore: connectivityScore,
+                similarityScore: similarityScore,
+                lineageSimilarityScore: lineageSimilarityScore,
+                lineageParentASimilarityScore: lineageParentASimilarityScore,
+                lineageParentBSimilarityScore: lineageParentBSimilarityScore,
+                regionsPresentA: regionsPresentA,
+                regionsPresentB: regionsPresentB,
+                regionsPresentChild: regionsPresentChild),
             Summary = summary,
             ChildDef = childDef,
             Spawned = false
@@ -425,19 +423,46 @@ public sealed partial class ReproductionManagerActor
         int regionsPresentChild = 0)
         => new()
         {
-            Report = new SimilarityReport
-            {
-                Compatible = false,
-                AbortReason = reason,
-                RegionSpanScore = Math.Clamp(regionSpanScore, 0f, 1f),
-                FunctionScore = Math.Clamp(functionScore, 0f, 1f),
-                ConnectivityScore = Math.Clamp(connectivityScore, 0f, 1f),
-                SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
-                RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
-                RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
-                RegionsPresentChild = (uint)Math.Max(regionsPresentChild, 0)
-            },
+            Report = CreateReport(
+                compatible: false,
+                reason: reason,
+                regionSpanScore: regionSpanScore,
+                functionScore: functionScore,
+                connectivityScore: connectivityScore,
+                similarityScore: similarityScore,
+                regionsPresentA: regionsPresentA,
+                regionsPresentB: regionsPresentB,
+                regionsPresentChild: regionsPresentChild),
             Summary = new MutationSummary(),
             Spawned = false
+        };
+
+    private static SimilarityReport CreateReport(
+        bool compatible,
+        string reason,
+        float regionSpanScore = 0f,
+        float functionScore = 0f,
+        float connectivityScore = 0f,
+        float similarityScore = 0f,
+        float lineageSimilarityScore = 0f,
+        float lineageParentASimilarityScore = 0f,
+        float lineageParentBSimilarityScore = 0f,
+        int regionsPresentA = 0,
+        int regionsPresentB = 0,
+        int regionsPresentChild = 0)
+        => new()
+        {
+            Compatible = compatible,
+            AbortReason = reason,
+            RegionSpanScore = Math.Clamp(regionSpanScore, 0f, 1f),
+            FunctionScore = Math.Clamp(functionScore, 0f, 1f),
+            ConnectivityScore = Math.Clamp(connectivityScore, 0f, 1f),
+            SimilarityScore = Math.Clamp(similarityScore, 0f, 1f),
+            LineageSimilarityScore = Math.Clamp(lineageSimilarityScore, 0f, 1f),
+            LineageParentASimilarityScore = Math.Clamp(lineageParentASimilarityScore, 0f, 1f),
+            LineageParentBSimilarityScore = Math.Clamp(lineageParentBSimilarityScore, 0f, 1f),
+            RegionsPresentA = (uint)Math.Max(regionsPresentA, 0),
+            RegionsPresentB = (uint)Math.Max(regionsPresentB, 0),
+            RegionsPresentChild = (uint)Math.Max(regionsPresentChild, 0)
         };
 }

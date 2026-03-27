@@ -81,6 +81,67 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task ReproduceByBrainIds_Uses_Observed_Io_Endpoint_And_Reverts_On_Removal()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ioProbe = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe()));
+        var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor()));
+        var updatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        root.Send(
+            manager,
+            new ReproductionManagerActor.EndpointStateObserved(
+                new ServiceEndpointObservation(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    ServiceEndpointObservationKind.Upserted,
+                    new ServiceEndpointRegistration(
+                        ServiceEndpointSettings.IoGatewayKey,
+                        new ServiceEndpoint(ioProbe.Address, ioProbe.Id),
+                        (long)updatedMs),
+                    string.Empty,
+                    updatedMs)));
+
+        var observedResponse = await root.RequestAsync<Repro.ReproduceResult>(
+            manager,
+            new Repro.ReproduceByBrainIdsRequest
+            {
+                ParentA = Guid.NewGuid().ToProtoUuid(),
+                ParentB = Guid.NewGuid().ToProtoUuid(),
+                Config = new Repro.ReproduceConfig()
+            });
+
+        Assert.NotNull(observedResponse.Report);
+        Assert.False(observedResponse.Report.Compatible);
+        Assert.Equal("repro_parent_a_brain_not_found", observedResponse.Report.AbortReason);
+
+        root.Send(
+            manager,
+            new ReproductionManagerActor.EndpointStateObserved(
+                new ServiceEndpointObservation(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    ServiceEndpointObservationKind.Removed,
+                    null,
+                    string.Empty,
+                    updatedMs + 1)));
+
+        var fallbackResponse = await root.RequestAsync<Repro.ReproduceResult>(
+            manager,
+            new Repro.ReproduceByBrainIdsRequest
+            {
+                ParentA = Guid.NewGuid().ToProtoUuid(),
+                ParentB = Guid.NewGuid().ToProtoUuid(),
+                Config = new Repro.ReproduceConfig()
+            });
+
+        Assert.NotNull(fallbackResponse.Report);
+        Assert.False(fallbackResponse.Report.Compatible);
+        Assert.Equal("repro_parent_resolution_unavailable", fallbackResponse.Report.AbortReason);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ReproduceByBrainIds_Resolves_Parents_FromIoGateway()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-repro-brainid-{Guid.NewGuid():N}");

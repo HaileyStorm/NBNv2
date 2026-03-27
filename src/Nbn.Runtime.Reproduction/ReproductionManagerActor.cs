@@ -1,3 +1,4 @@
+using Nbn.Proto.Repro;
 using Nbn.Runtime.Artifacts;
 using Proto;
 
@@ -47,17 +48,17 @@ public sealed partial class ReproductionManagerActor : IActor
     {
         switch (context.Message)
         {
-            case Nbn.Proto.Repro.ReproduceByBrainIdsRequest message:
-                RespondAfter(context, HandleReproduceByBrainIdsAsync(context, message));
+            case ReproduceByBrainIdsRequest message:
+                RespondToRequest(context, message, (actorContext, request) => HandleReproduceByBrainIdsAsync(actorContext, request));
                 break;
-            case Nbn.Proto.Repro.ReproduceByArtifactsRequest message:
-                RespondAfter(context, HandleReproduceByArtifactsAsync(context, message));
+            case ReproduceByArtifactsRequest message:
+                RespondToRequest(context, message, (actorContext, request) => HandleReproduceByArtifactsAsync(actorContext, request));
                 break;
-            case Nbn.Proto.Repro.AssessCompatibilityByBrainIdsRequest message:
-                RespondAfter(context, HandleAssessCompatibilityByBrainIdsAsync(context, message));
+            case AssessCompatibilityByBrainIdsRequest message:
+                RespondToRequest(context, message, HandleAssessCompatibilityByBrainIdsAsync);
                 break;
-            case Nbn.Proto.Repro.AssessCompatibilityByArtifactsRequest message:
-                RespondAfter(context, HandleAssessCompatibilityByArtifactsAsync(context, message));
+            case AssessCompatibilityByArtifactsRequest message:
+                RespondToRequest(context, message, HandleAssessCompatibilityByArtifactsAsync);
                 break;
             case DiscoverySnapshotApplied snapshot:
                 ApplyDiscoverySnapshot(snapshot);
@@ -70,7 +71,13 @@ public sealed partial class ReproductionManagerActor : IActor
         return Task.CompletedTask;
     }
 
-    private static void RespondAfter(IContext context, Task<Nbn.Proto.Repro.ReproduceResult> responseTask)
+    private static void RespondToRequest<TRequest>(
+        IContext context,
+        TRequest request,
+        Func<IContext, TRequest, Task<ReproduceResult>> handler)
+        => RespondAfter(context, handler(context, request));
+
+    private static void RespondAfter(IContext context, Task<ReproduceResult> responseTask)
     {
         context.ReenterAfter(responseTask, completed =>
         {

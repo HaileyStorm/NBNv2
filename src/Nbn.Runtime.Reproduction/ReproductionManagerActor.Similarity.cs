@@ -11,18 +11,11 @@ public sealed partial class ReproductionManagerActor
 {
     private async Task<ReproduceResult> EvaluateSimilarityGatesAndBuildChildAsync(
         IContext context,
-        ParsedParent gateParentA,
-        ParsedParent gateParentB,
-        ParsedParent transformParentA,
-        ParsedParent transformParentB,
-        ArtifactRef parentARef,
-        ArtifactRef parentBRef,
-        ReproduceConfig? config,
-        ulong seed,
-        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronAdds,
-        IReadOnlyList<ManualIoNeuronEdit> manualIoNeuronRemoves,
-        bool assessmentOnly)
+        PreparedReproductionRun execution,
+        ulong seed)
     {
+        var gateParentA = execution.GateParentA;
+        var gateParentB = execution.GateParentB;
         var presentA = CountPresentRegions(gateParentA.Header);
         var presentB = CountPresentRegions(gateParentB.Header);
 
@@ -38,7 +31,7 @@ public sealed partial class ReproductionManagerActor
 
         var sectionMapA = BuildSectionMap(gateParentA.Regions);
         var sectionMapB = BuildSectionMap(gateParentB.Regions);
-        var spanTolerance = ResolveSpanTolerance(config);
+        var spanTolerance = ResolveSpanTolerance(execution.Config);
         var spanScore = ComputeRegionSpanScore(gateParentA.Header, gateParentB.Header, spanTolerance, out var spanMismatch);
         if (spanMismatch)
         {
@@ -52,7 +45,7 @@ public sealed partial class ReproductionManagerActor
 
         var functionDistance = ComputeFunctionDistance(sectionMapA, sectionMapB);
         var functionScore = 1f - functionDistance;
-        var maxFunctionDistance = ResolveDistanceThreshold(config?.MaxFunctionHistDistance ?? 0f);
+        var maxFunctionDistance = ResolveDistanceThreshold(execution.Config?.MaxFunctionHistDistance ?? 0f);
         if (functionDistance > maxFunctionDistance)
         {
             return CreateAbortResult(
@@ -66,7 +59,7 @@ public sealed partial class ReproductionManagerActor
 
         var connectivityDistance = ComputeConnectivityDistance(sectionMapA, sectionMapB);
         var connectivityScore = 1f - connectivityDistance;
-        var maxConnectivityDistance = ResolveDistanceThreshold(config?.MaxConnectivityHistDistance ?? 0f);
+        var maxConnectivityDistance = ResolveDistanceThreshold(execution.Config?.MaxConnectivityHistDistance ?? 0f);
         if (connectivityDistance > maxConnectivityDistance)
         {
             return CreateAbortResult(
@@ -94,7 +87,7 @@ public sealed partial class ReproductionManagerActor
                 regionsPresentB: presentB);
         }
 
-        if (assessmentOnly)
+        if (execution.AssessmentOnly)
         {
             return CreateAssessmentResult(
                 spanScore,
@@ -106,14 +99,14 @@ public sealed partial class ReproductionManagerActor
         }
 
         var childBuild = await BuildAndStoreChildDefinitionAsync(
-                transformParentA,
-                transformParentB,
-                parentARef,
-                parentBRef,
-                config,
+                execution.TransformParentA,
+                execution.TransformParentB,
+                execution.ParentARef,
+                execution.ParentBRef,
+                execution.Config,
                 seed,
-                manualIoNeuronAdds,
-                manualIoNeuronRemoves)
+                execution.ManualIoNeuronAdds,
+                execution.ManualIoNeuronRemoves)
             .ConfigureAwait(false);
 
         if (childBuild.AbortReason is not null)
@@ -141,7 +134,7 @@ public sealed partial class ReproductionManagerActor
             presentA,
             presentB,
             childBuild.RegionsPresentChild);
-        return await ApplySpawnPolicyAsync(context, result, config).ConfigureAwait(false);
+        return await ApplySpawnPolicyAsync(context, result, execution.Config).ConfigureAwait(false);
     }
 
     private static bool AreFormatContractsCompatible(NbnHeaderV2 parentA, NbnHeaderV2 parentB)

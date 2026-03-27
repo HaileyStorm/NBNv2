@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Nbn.Shared;
+using Proto;
 
 namespace Nbn.Runtime.Reproduction;
 
@@ -24,11 +25,11 @@ public sealed partial class ReproductionManagerActor
 
         if (snapshot.Registrations.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var registration))
         {
-            _ioGatewayPid = registration.Endpoint.ToPid();
+            SetIoGatewayPid(registration.Endpoint.ToPid());
             return;
         }
 
-        _ioGatewayPid = _configuredIoGatewayPid;
+        ResetIoGatewayPid();
     }
 
     private void ApplyObservedEndpoint(ServiceEndpointObservation observation)
@@ -41,7 +42,7 @@ public sealed partial class ReproductionManagerActor
         if (observation.Kind == ServiceEndpointObservationKind.Upserted
             && observation.Registration is ServiceEndpointRegistration registration)
         {
-            _ioGatewayPid = registration.Endpoint.ToPid();
+            SetIoGatewayPid(registration.Endpoint.ToPid());
             return;
         }
 
@@ -49,7 +50,13 @@ public sealed partial class ReproductionManagerActor
             || observation.Kind == ServiceEndpointObservationKind.Invalid
             || observation.Kind == ServiceEndpointObservationKind.Upserted)
         {
-            _ioGatewayPid = _configuredIoGatewayPid;
+            ResetIoGatewayPid();
         }
     }
+
+    private void ResetIoGatewayPid()
+        => _ioGatewayPid = _configuredIoGatewayPid;
+
+    private void SetIoGatewayPid(PID pid)
+        => _ioGatewayPid = pid;
 }

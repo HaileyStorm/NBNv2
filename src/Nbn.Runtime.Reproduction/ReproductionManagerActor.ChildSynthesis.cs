@@ -596,16 +596,6 @@ public sealed partial class ReproductionManagerActor
         return Math.Min(absValue, pctValue);
     }
 
-    private static int ResolveAbsoluteLimit(uint absLimit)
-    {
-        if (absLimit > 0)
-        {
-            return (int)Math.Min(absLimit, int.MaxValue);
-        }
-
-        return int.MaxValue;
-    }
-
     private static int ResolveRegionLimit(uint absLimit)
     {
         if (absLimit > 0)
