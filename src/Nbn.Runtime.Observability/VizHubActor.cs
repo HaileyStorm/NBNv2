@@ -4,34 +4,40 @@ using Proto;
 
 namespace Nbn.Runtime.Observability;
 
+/// <summary>
+/// Publishes visualization events to subscribed actors.
+/// </summary>
 public sealed class VizHubActor : IActor
 {
     private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Handles visualization subscription, publication, and subscriber lifecycle messages.
+    /// </summary>
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
             case Started:
-                return Task.CompletedTask;
-            case Nbn.Proto.Viz.VizSubscribe subscribe:
+                break;
+            case VizSubscribe subscribe:
                 HandleSubscribe(context, subscribe.SubscriberActor);
-                return Task.CompletedTask;
-            case Nbn.Proto.Viz.VizUnsubscribe unsubscribe:
+                break;
+            case VizUnsubscribe unsubscribe:
                 HandleUnsubscribe(context, unsubscribe.SubscriberActor);
-                return Task.CompletedTask;
-            case Nbn.Proto.Viz.VizFlushAll:
+                break;
+            case VizFlushAll:
                 FlushAll(context);
-                return Task.CompletedTask;
+                break;
             case PID pid:
                 HandleSubscribe(context, pid);
-                return Task.CompletedTask;
+                break;
             case VisualizationEvent vizEvent:
                 HandleEvent(context, vizEvent);
-                return Task.CompletedTask;
+                break;
             case Terminated terminated:
                 HandleTerminated(terminated);
-                return Task.CompletedTask;
+                break;
         }
 
         return Task.CompletedTask;
@@ -39,7 +45,7 @@ public sealed class VizHubActor : IActor
 
     private void HandleSubscribe(IContext context, string? subscriberActor)
     {
-        if (!TryParsePid(subscriberActor, out var pid))
+        if (!ObservabilityPid.TryParse(subscriberActor, out var pid))
         {
             return;
         }
@@ -49,7 +55,7 @@ public sealed class VizHubActor : IActor
 
     private void HandleSubscribe(IContext context, PID pid)
     {
-        var key = PidKey(pid);
+        var key = ObservabilityPid.Key(pid);
         if (_subscribers.TryAdd(key, pid))
         {
             context.Watch(pid);
@@ -63,7 +69,7 @@ public sealed class VizHubActor : IActor
 
     private void HandleUnsubscribe(IContext context, string? subscriberActor)
     {
-        if (!TryParsePid(subscriberActor, out var pid))
+        if (!ObservabilityPid.TryParse(subscriberActor, out var pid))
         {
             return;
         }
@@ -73,7 +79,7 @@ public sealed class VizHubActor : IActor
 
     private void HandleUnsubscribe(IContext context, PID pid)
     {
-        var key = PidKey(pid);
+        var key = ObservabilityPid.Key(pid);
         if (_subscribers.Remove(key))
         {
             context.Unwatch(pid);
@@ -130,42 +136,10 @@ public sealed class VizHubActor : IActor
 
     private void HandleTerminated(Terminated terminated)
     {
-        var key = PidKey(terminated.Who);
+        var key = ObservabilityPid.Key(terminated.Who);
         if (_subscribers.Remove(key))
         {
             ObservabilityTelemetry.Metrics.VizSubscribers.Add(-1);
         }
-    }
-
-    private static string PidKey(PID pid)
-        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
-
-    private static bool TryParsePid(string? value, out PID pid)
-    {
-        pid = new PID();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var trimmed = value.Trim();
-        var slashIndex = trimmed.IndexOf('/');
-        if (slashIndex <= 0)
-        {
-            pid.Id = trimmed;
-            return true;
-        }
-
-        var address = trimmed[..slashIndex];
-        var id = trimmed[(slashIndex + 1)..];
-
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return false;
-        }
-
-        pid.Address = address;
-        pid.Id = id;
-        return true;
     }
 }

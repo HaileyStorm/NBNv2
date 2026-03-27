@@ -6,40 +6,50 @@ using Proto;
 
 namespace Nbn.Runtime.Observability;
 
+/// <summary>
+/// Publishes filtered debug events to subscribed actors.
+/// </summary>
 public sealed class DebugHubActor : IActor
 {
     private readonly Dictionary<string, DebugSubscriber> _subscribers = new(StringComparer.Ordinal);
     private readonly TimeProvider _timeProvider;
 
+    /// <summary>
+    /// Creates a debug hub that timestamps inbound events when the server timestamp is missing.
+    /// </summary>
+    /// <param name="timeProvider">Optional time provider used to stamp inbound events.</param>
     public DebugHubActor(TimeProvider? timeProvider = null)
     {
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    /// <summary>
+    /// Handles debug subscription, publication, and subscriber lifecycle messages.
+    /// </summary>
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
             case Started:
-                return Task.CompletedTask;
+                break;
             case DebugSubscribe subscribe:
                 HandleSubscribe(context, subscribe);
-                return Task.CompletedTask;
+                break;
             case DebugUnsubscribe unsubscribe:
                 HandleUnsubscribe(context, unsubscribe);
-                return Task.CompletedTask;
+                break;
             case DebugFlushAll:
                 FlushAll(context);
-                return Task.CompletedTask;
+                break;
             case DebugOutbound outbound:
                 HandleOutbound(context, outbound);
-                return Task.CompletedTask;
+                break;
             case DebugInbound inbound:
                 HandleInbound(context, inbound);
-                return Task.CompletedTask;
+                break;
             case Terminated terminated:
                 HandleTerminated(terminated);
-                return Task.CompletedTask;
+                break;
         }
 
         return Task.CompletedTask;
@@ -47,12 +57,12 @@ public sealed class DebugHubActor : IActor
 
     private void HandleSubscribe(IContext context, DebugSubscribe subscribe)
     {
-        if (!TryParsePid(subscribe.SubscriberActor, out var pid))
+        if (!ObservabilityPid.TryParse(subscribe.SubscriberActor, out var pid))
         {
             return;
         }
 
-        var key = PidKey(pid);
+        var key = ObservabilityPid.Key(pid);
         var regex = CompileRegex(subscribe.ContextRegex);
         var subscriber = new DebugSubscriber(
             pid,
@@ -76,12 +86,12 @@ public sealed class DebugHubActor : IActor
 
     private void HandleUnsubscribe(IContext context, DebugUnsubscribe unsubscribe)
     {
-        if (!TryParsePid(unsubscribe.SubscriberActor, out var pid))
+        if (!ObservabilityPid.TryParse(unsubscribe.SubscriberActor, out var pid))
         {
             return;
         }
 
-        var key = PidKey(pid);
+        var key = ObservabilityPid.Key(pid);
         if (_subscribers.Remove(key))
         {
             context.Unwatch(pid);
@@ -166,7 +176,7 @@ public sealed class DebugHubActor : IActor
 
     private void HandleTerminated(Terminated terminated)
     {
-        var key = PidKey(terminated.Who);
+        var key = ObservabilityPid.Key(terminated.Who);
         if (_subscribers.Remove(key))
         {
             ObservabilityTelemetry.Metrics.DebugSubscribers.Add(-1);
@@ -195,38 +205,6 @@ public sealed class DebugHubActor : IActor
             return null;
         }
     }
-
-    private static bool TryParsePid(string? value, out PID pid)
-    {
-        pid = new PID();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        var trimmed = value.Trim();
-        var slashIndex = trimmed.IndexOf('/');
-        if (slashIndex <= 0)
-        {
-            pid.Id = trimmed;
-            return true;
-        }
-
-        var address = trimmed[..slashIndex];
-        var id = trimmed[(slashIndex + 1)..];
-
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return false;
-        }
-
-        pid.Address = address;
-        pid.Id = id;
-        return true;
-    }
-
-    private static string PidKey(PID pid)
-        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
     private static string[] ParsePrefixes(IEnumerable<string> prefixes)
     {
@@ -313,5 +291,39 @@ public sealed class DebugHubActor : IActor
 
             return false;
         }
+    }
+}
+
+internal static class ObservabilityPid
+{
+    public static string Key(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    public static bool TryParse(string? value, out PID pid)
+    {
+        pid = new PID();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid.Id = trimmed;
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid.Address = address;
+        pid.Id = id;
+        return true;
     }
 }

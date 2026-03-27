@@ -9,3 +9,5 @@ Keep this file concise and decision-focused. Update when stable behavior, owners
 ## Stable behavior notes
 
 - BrainSignalRouter accepts shard delivery acknowledgements from PID-equivalent endpoints for the same actor id, not just byte-for-byte address matches, so mixed-topology hostname/IP/wildcard differences do not stall `TickDeliver`.
+- BrainRoot replays the cached routing snapshot and cached IO gateway registration whenever it attaches or respawns a signal router, so router replacement does not require callers to re-seed control-plane state.
+- Brain actor helper placement stays split by responsibility: `BrainRootActor` owns lifecycle/control forwarding, `BrainSignalRouterActor.Inputs.cs` owns IO drain/runtime input handling, and `BrainSignalRouterActor.Delivery.cs` plus `BrainSignalRouterActor.PidMatching.cs` own delivery completion and ACK trust rules.

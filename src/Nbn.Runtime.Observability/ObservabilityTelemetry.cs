@@ -8,10 +8,24 @@ using OpenTelemetry.Trace;
 
 namespace Nbn.Runtime.Observability;
 
+/// <summary>
+/// Owns OpenTelemetry activity and meter providers for the observability service.
+/// </summary>
 public sealed class ObservabilityTelemetry : IDisposable
 {
+    /// <summary>
+    /// Gets the activity source used for debug and visualization publish spans.
+    /// </summary>
     public static readonly ActivitySource ActivitySource = new("Nbn.Runtime.Observability");
+
+    /// <summary>
+    /// Gets the meter that backs observability counters and gauges.
+    /// </summary>
     public static readonly Meter Meter = new("Nbn.Runtime.Observability");
+
+    /// <summary>
+    /// Gets the named metrics emitted by the observability service.
+    /// </summary>
     public static readonly ObservabilityMetrics Metrics = new(Meter);
 
     private readonly TracerProvider? _tracerProvider;
@@ -23,6 +37,11 @@ public sealed class ObservabilityTelemetry : IDisposable
         _meterProvider = meterProvider;
     }
 
+    /// <summary>
+    /// Starts observability tracing and metrics exporters from the supplied options.
+    /// </summary>
+    /// <param name="options">Telemetry configuration for the observability service.</param>
+    /// <returns>A session that owns any created tracer and meter providers.</returns>
     public static ObservabilityTelemetry Start(ObservabilityOptions options)
     {
         if (!options.EnableOpenTelemetry)
@@ -59,6 +78,9 @@ public sealed class ObservabilityTelemetry : IDisposable
         return new ObservabilityTelemetry(tracerProvider, meterProvider);
     }
 
+    /// <summary>
+    /// Disposes any active tracer and meter providers owned by the session.
+    /// </summary>
     public void Dispose()
     {
         _meterProvider?.Dispose();
@@ -98,15 +120,45 @@ public sealed class ObservabilityTelemetry : IDisposable
     }
 }
 
+/// <summary>
+/// Named counters and gauges emitted by the observability service.
+/// </summary>
 public sealed class ObservabilityMetrics
 {
+    /// <summary>
+    /// Gets the total number of inbound debug events observed by the service.
+    /// </summary>
     public Counter<long> DebugInboundTotal { get; }
+
+    /// <summary>
+    /// Gets the total number of debug deliveries sent to subscribers.
+    /// </summary>
     public Counter<long> DebugDeliveredTotal { get; }
+
+    /// <summary>
+    /// Gets the current number of active debug subscribers.
+    /// </summary>
     public UpDownCounter<long> DebugSubscribers { get; }
+
+    /// <summary>
+    /// Gets the total number of visualization events observed by the service.
+    /// </summary>
     public Counter<long> VizEventTotal { get; }
+
+    /// <summary>
+    /// Gets the total number of visualization deliveries sent to subscribers.
+    /// </summary>
     public Counter<long> VizDeliveredTotal { get; }
+
+    /// <summary>
+    /// Gets the current number of active visualization subscribers.
+    /// </summary>
     public UpDownCounter<long> VizSubscribers { get; }
 
+    /// <summary>
+    /// Creates the observability metrics bound to the supplied meter.
+    /// </summary>
+    /// <param name="meter">Meter used to create the counters and gauges.</param>
     public ObservabilityMetrics(Meter meter)
     {
         DebugInboundTotal = meter.CreateCounter<long>("nbn.debug.inbound");

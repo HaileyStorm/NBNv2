@@ -6,6 +6,9 @@ using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.Brain;
 
+/// <summary>
+/// Coordinates BrainRoot lifecycle messages, cached router state, and HiveMind registration updates.
+/// </summary>
 public sealed class BrainRootActor : IActor
 {
     private readonly Guid _brainId;
@@ -16,6 +19,13 @@ public sealed class BrainRootActor : IActor
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
     private RegisterIoGateway? _pendingIoGateway;
 
+    /// <summary>
+    /// Creates a brain root actor for the supplied brain and optional runtime endpoints.
+    /// </summary>
+    /// <param name="brainId">Owning brain identifier.</param>
+    /// <param name="hiveMindPid">Optional HiveMind PID that receives brain registration updates.</param>
+    /// <param name="signalRouterProps">Optional signal-router props used when the root auto-spawns its router.</param>
+    /// <param name="autoSpawnSignalRouter">Whether the root should spawn a router during startup when one is not attached.</param>
     public BrainRootActor(Guid brainId, PID? hiveMindPid = null, Props? signalRouterProps = null, bool autoSpawnSignalRouter = true)
     {
         _brainId = brainId;
@@ -26,6 +36,9 @@ public sealed class BrainRootActor : IActor
             : null);
     }
 
+    /// <summary>
+    /// Handles brain lifecycle, routing-table, tick-forwarding, and IO gateway coordination messages.
+    /// </summary>
     public Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
@@ -81,16 +94,7 @@ public sealed class BrainRootActor : IActor
 
         _signalRouterPid = context.Spawn(_signalRouterProps);
         context.Watch(_signalRouterPid);
-
-        if (_routingSnapshot.Count > 0)
-        {
-            context.Send(_signalRouterPid, new SetRoutingTable(_routingSnapshot));
-        }
-
-        if (_pendingIoGateway is not null)
-        {
-            context.Send(_signalRouterPid, _pendingIoGateway);
-        }
+        ReplayCachedSignalRouterState(context, _signalRouterPid);
 
         NotifyHiveMind(context, forceRegister: true);
     }
@@ -109,7 +113,13 @@ public sealed class BrainRootActor : IActor
 
         _signalRouterPid = signalRouter;
         context.Watch(signalRouter);
+        ReplayCachedSignalRouterState(context, signalRouter);
 
+        NotifyHiveMind(context, forceRegister: false);
+    }
+
+    private void ReplayCachedSignalRouterState(IContext context, PID signalRouter)
+    {
         if (_routingSnapshot.Count > 0)
         {
             context.Send(signalRouter, new SetRoutingTable(_routingSnapshot));
@@ -119,8 +129,6 @@ public sealed class BrainRootActor : IActor
         {
             context.Send(signalRouter, _pendingIoGateway);
         }
-
-        NotifyHiveMind(context, forceRegister: false);
     }
 
     private void ApplyRoutingTable(IContext context, RoutingTableSnapshot? snapshot)
