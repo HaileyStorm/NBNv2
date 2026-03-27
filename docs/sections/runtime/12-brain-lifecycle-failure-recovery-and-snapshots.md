@@ -39,10 +39,6 @@ Partial shard-only restoration is not used.
 
 RegionShard startup may selectively fetch only the assigned `.nbn` region section when artifact manifests provide region-index metadata, but that optimization does not change recovery ownership or scope. HiveMind still restores the entire brain from durable `.nbn + .nbs` artifacts, and `.nbs` snapshot validation still uses whole-brain snapshot bytes rather than shard-only snapshot fragments.
 
-![Snapshot and recovery lifecycle](../../diagrams/png/snapshot-and-recovery-lifecycle.png)
-
-_Snapshots are written at tick boundaries, and recovery rebuilds the full brain from the latest durable `.nbn + .nbs` pair before a new placement epoch becomes active._
-
 ### 12.4 Brain termination notifications and rebalancing
 
 When a brain terminates (energy exhaustion, explicit kill from External World or Workbench, unrecoverable error):

@@ -138,10 +138,6 @@ For each brain:
 * `RegionShards` (compute units, distributed)
 * `InputCoordinator` and `OutputCoordinator` (distributed, controlled via IO Gateway)
 
-![NBN runtime service topology](diagrams/png/runtime-service-topology.png)
-
-_Service roots remain stable discovery anchors while per-brain actors and RegionShards move across worker processes._
-
 ---
 
 ## 4. Identifiers, addressing, and IDs
@@ -257,10 +253,6 @@ Homeostasis defaults:
 * `homeostasis_energy_coupling_enabled=false`
 * `homeostasis_energy_target_scale=1`
 * `homeostasis_energy_probability_scale=1`
-
-![Tick compute and deliver pipeline](diagrams/png/tick-compute-deliver-pipeline.png)
-
-_Delivery during tick `N` only fills inbox state for the next compute phase; it never mutates activation inside the same tick._
 
 ### 5.5 I/O connectivity rules (invariants)
 
@@ -580,10 +572,6 @@ Placement heuristics:
 * reject workers whose reported pressure repeatedly exceeds their configured CPU/RAM/storage/VRAM limits, then use the normal queued reschedule path for pressure-triggered rebalance
 * avoid shard sizes that exceed memory limits
 
-![Sharding and placement locality](diagrams/png/sharding-and-placement.png)
-
-_Shard boundaries come from stride-aligned region cuts first; placement then scores locality, capacity, backend fit, and epoch activation before ticks resume._
-
 ---
 
 ## 10. RegionShard compute backends
@@ -830,10 +818,6 @@ Partial shard-only restoration is not used.
 
 RegionShard startup may selectively fetch only the assigned `.nbn` region section when artifact manifests provide region-index metadata, but that optimization does not change recovery ownership or scope. HiveMind still restores the entire brain from durable `.nbn + .nbs` artifacts, and `.nbs` snapshot validation still uses whole-brain snapshot bytes rather than shard-only snapshot fragments.
 
-![Snapshot and recovery lifecycle](diagrams/png/snapshot-and-recovery-lifecycle.png)
-
-_Snapshots are written at tick boundaries, and recovery rebuilds the full brain from the latest durable `.nbn + .nbs` pair before a new placement epoch becomes active._
-
 ### 12.4 Brain termination notifications and rebalancing
 
 When a brain terminates (energy exhaustion, explicit kill from External World or Workbench, unrecoverable error):
@@ -1029,10 +1013,6 @@ Reproduction aborts early if any stage fails:
 5. **Function distribution similarity:** activation/reset/accum histograms within thresholds, for each region
 6. **Connectivity distribution similarity:** out-degree distribution and target-region distribution within thresholds
 7. **Spot-check overlap:** sample loci and compare connectivity patterns (ignoring strength)
-
-![Reproduction compatibility and child synthesis](diagrams/png/reproduction-flow.png)
-
-_Assessment requests stop after compatibility scoring, while full reproduction continues through locus-aligned mutation into a child artifact and optional spawn._
 
 ### 14.4 Alignment and locus
 
@@ -1332,10 +1312,6 @@ The store may additionally index `.nbn` region sections:
 * the built-in HTTP(S) backend issues HTTP `Range` requests when manifest metadata carries a matching region index; if the remote service returns `405`/`501`, callers fall back to full-artifact reads instead of failing solely because range reads are unavailable
 
 Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
-
-![Artifact store resolver and partial fetch path](diagrams/png/artifact-store-partial-fetch.png)
-
-_All runtime callers go through the same exact-`store_uri` resolver, then choose full-artifact or region-index-guided partial reads from the manifest._
 
 ### 16.6 Retention and maintenance limits
 

@@ -61,10 +61,6 @@ Homeostasis defaults:
 * `homeostasis_energy_target_scale=1`
 * `homeostasis_energy_probability_scale=1`
 
-![Tick compute and deliver pipeline](../../diagrams/png/tick-compute-deliver-pipeline.png)
-
-_Delivery during tick `N` only fills inbox state for the next compute phase; it never mutates activation inside the same tick._
-
 ### 5.5 I/O connectivity rules (invariants)
 
 These apply to all brain creation paths: random generation, manual editing, reproduction, and imports.

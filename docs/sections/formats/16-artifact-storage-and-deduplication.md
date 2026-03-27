@@ -97,10 +97,6 @@ The store may additionally index `.nbn` region sections:
 
 Selective reads use a dedicated partial-fetch path; the existing full-artifact open contract remains available for callers that need complete bytes or operate against stores without indexed/range-read support.
 
-![Artifact store resolver and partial fetch path](../../diagrams/png/artifact-store-partial-fetch.png)
-
-_All runtime callers go through the same exact-`store_uri` resolver, then choose full-artifact or region-index-guided partial reads from the manifest._
-
 ### 16.6 Retention and maintenance limits
 
 Current artifact-store lifecycle management is append-only:

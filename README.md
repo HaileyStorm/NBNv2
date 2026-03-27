@@ -35,10 +35,6 @@ NBN is not a gradient-descent/backprop training framework.
 5. Shared contracts and formats live in `Nbn.Shared`.
 6. Tooling surfaces include `Nbn.Tools.Workbench` plus targeted CLI tools under `tools/`.
 
-![NBN runtime service topology](docs/diagrams/png/runtime-service-topology.png)
-
-_Runtime overview: stable client-facing services on the left, control-plane coordination in the middle, and worker-hosted per-brain actors on the right._
-
 ## Repository Layout
 
 - `src/`
