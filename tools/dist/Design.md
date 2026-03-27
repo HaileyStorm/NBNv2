@@ -96,6 +96,7 @@ Shared layout rules:
 - `services/*/` contains managed runtime service binaries
 - `tools/*/` contains standalone CLI tools
 - `share/runbooks/` carries checked-in operator runbooks in the full suite bundle
+- Linux suite layouts also carry a Workbench desktop-entry template plus branded icon assets so `.deb` packages and `.run` installs can register a desktop launcher without changing the manifest/binary layout
 - `runtime-manifest.json` at the install root is the authoritative installed-layout map for Workbench installed-mode launches
 
 ## Workbench handoff
@@ -118,6 +119,8 @@ Shared layout rules:
 - Windows uses Inno Setup for full-suite and worker installers.
 - Linux uses `dpkg-deb` for `.deb` packages and the checked-in `.run` installer stub for distro-agnostic installers.
 - Worker portable archives reuse the staged worker install layout without writing system paths.
+- Windows installers and published Windows executables use the primary NBN application icon.
+- Linux suite packages/installers register a branded `NBN Workbench` desktop entry and icon where the target system layout supports desktop launchers.
 
 ## Maintenance guidance
 

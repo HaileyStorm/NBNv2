@@ -34,6 +34,13 @@ def find_repo_root(start: Path) -> Path:
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = find_repo_root(SCRIPT_DIR)
 CONFIG_PATH = REPO_ROOT / "tools" / "dist" / "release-config.json"
+BRANDING_DIR = REPO_ROOT / "docs" / "branding"
+PRIMARY_ICON_ICO = BRANDING_DIR / "ico" / "nbn-soft-gold-right-n-icon.ico"
+PRIMARY_ICON_PNG = BRANDING_DIR / "png" / "nbn-soft-gold-right-n-icon.png"
+LINUX_WORKBENCH_DESKTOP_TEMPLATE = REPO_ROOT / "tools" / "dist" / "packaging" / "linux" / "nbn-workbench.desktop.template"
+LINUX_WORKBENCH_DESKTOP_TEMPLATE_NAME = "nbn-workbench.desktop.template"
+LINUX_WORKBENCH_DESKTOP_FILE_NAME = "nbn-workbench.desktop"
+LINUX_WORKBENCH_ICON_FILE_NAME = "nbn-workbench.png"
 
 
 @dataclass(frozen=True)
@@ -367,6 +374,51 @@ def write_layout_readme(bundle: Bundle, version: str, aliases: Iterable[str], de
     destination.write_text(text, encoding="utf-8", newline="\n")
 
 
+def bundle_includes_application(config: ReleaseConfig, bundle_name: str, application_id: str) -> bool:
+    return any(application.id == application_id for application in bundle_applications(config, bundle_name))
+
+
+def stage_linux_workbench_desktop_assets(layout_root: Path) -> None:
+    if not PRIMARY_ICON_PNG.exists():
+        raise FileNotFoundError(f"Missing primary PNG icon asset: {PRIMARY_ICON_PNG}")
+    if not LINUX_WORKBENCH_DESKTOP_TEMPLATE.exists():
+        raise FileNotFoundError(f"Missing Linux desktop-entry template: {LINUX_WORKBENCH_DESKTOP_TEMPLATE}")
+
+    applications_root = layout_root / "share" / "applications"
+    applications_root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(
+        LINUX_WORKBENCH_DESKTOP_TEMPLATE,
+        applications_root / LINUX_WORKBENCH_DESKTOP_TEMPLATE_NAME,
+    )
+
+    icons_root = layout_root / "share" / "icons" / "hicolor" / "256x256" / "apps"
+    icons_root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(PRIMARY_ICON_PNG, icons_root / LINUX_WORKBENCH_ICON_FILE_NAME)
+
+
+def render_linux_workbench_desktop_entry(install_root: str) -> str:
+    template = LINUX_WORKBENCH_DESKTOP_TEMPLATE.read_text(encoding="utf-8")
+    return template.replace("__INSTALL_ROOT__", install_root)
+
+
+def stage_linux_system_desktop_assets(stage_root: Path, install_root: Path, configured_install_root: str) -> None:
+    template_path = install_root / "share" / "applications" / LINUX_WORKBENCH_DESKTOP_TEMPLATE_NAME
+    if not template_path.exists():
+        return
+
+    desktop_root = stage_root / "usr" / "share" / "applications"
+    desktop_root.mkdir(parents=True, exist_ok=True)
+    (desktop_root / LINUX_WORKBENCH_DESKTOP_FILE_NAME).write_text(
+        render_linux_workbench_desktop_entry(configured_install_root),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    icons_root = install_root / "share" / "icons"
+    if icons_root.exists():
+        shutil.copytree(icons_root, stage_root / "usr" / "share" / "icons", dirs_exist_ok=True)
+
+
 def stage_bundle_layout(
     config: ReleaseConfig,
     *,
@@ -397,6 +449,9 @@ def stage_bundle_layout(
         runbooks_root.mkdir(parents=True, exist_ok=True)
         for runbook in config.runbooks:
             shutil.copy2(runbook, runbooks_root / runbook.name)
+
+    if platform == "linux" and bundle_includes_application(config, bundle_name, "workbench"):
+        stage_linux_workbench_desktop_assets(layout_root)
 
     write_layout_readme(bundle, version, aliases, layout_root / "README.txt")
 
@@ -442,6 +497,8 @@ def build_run_uninstall_script(bundle: Bundle, aliases: Iterable[str]) -> str:
         set -euo pipefail
 
         BIN_DIR="${{1:-/usr/local/bin}}"
+        DESKTOP_DIR="${{2:-/usr/share/applications}}"
+        ICON_ROOT="${{3:-/usr/share/icons}}"
         INSTALL_ROOT="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
         declare -a ALIASES=()
         {alias_lines}
@@ -452,6 +509,26 @@ def build_run_uninstall_script(bundle: Bundle, aliases: Iterable[str]) -> str:
             rm -f "$link_path"
           fi
         done
+
+        desktop_template="${{INSTALL_ROOT}}/share/applications/{LINUX_WORKBENCH_DESKTOP_TEMPLATE_NAME}"
+        desktop_file="${{DESKTOP_DIR}}/{LINUX_WORKBENCH_DESKTOP_FILE_NAME}"
+        if [[ -n "${{DESKTOP_DIR}}" && -f "$desktop_template" && -f "$desktop_file" ]] && grep -Fq "Exec=${{INSTALL_ROOT}}/bin/nbn-workbench" "$desktop_file"; then
+          rm -f "$desktop_file"
+        fi
+
+        icon_source="${{INSTALL_ROOT}}/share/icons/hicolor/256x256/apps/{LINUX_WORKBENCH_ICON_FILE_NAME}"
+        icon_target="${{ICON_ROOT}}/hicolor/256x256/apps/{LINUX_WORKBENCH_ICON_FILE_NAME}"
+        if [[ -n "${{ICON_ROOT}}" && -f "$icon_source" && -f "$icon_target" ]]; then
+          rm -f "$icon_target"
+        fi
+
+        if command -v update-desktop-database >/dev/null 2>&1 && [[ -n "${{DESKTOP_DIR}}" && -d "${{DESKTOP_DIR}}" ]]; then
+          update-desktop-database "${{DESKTOP_DIR}}" >/dev/null 2>&1 || true
+        fi
+
+        if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -n "${{ICON_ROOT}}" && -d "${{ICON_ROOT}}/hicolor" ]]; then
+          gtk-update-icon-cache -q -t "${{ICON_ROOT}}/hicolor" >/dev/null 2>&1 || true
+        fi
 
         rm -rf "$INSTALL_ROOT"
         echo "Removed {bundle.display_name} from $INSTALL_ROOT"
@@ -473,6 +550,7 @@ def create_linux_deb(
         install_root = stage_root / bundle.linux_install_root.lstrip("/")
         install_root.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(layout_root, install_root, dirs_exist_ok=True)
+        stage_linux_system_desktop_assets(stage_root, install_root, bundle.linux_install_root)
 
         bin_root = stage_root / "usr" / "bin"
         bin_root.mkdir(parents=True, exist_ok=True)
@@ -587,6 +665,8 @@ def create_windows_installer(
 ) -> Path:
     output_base_name = f"{bundle.artifact_prefix}-{version}-win-x64-setup"
     template_path = REPO_ROOT / "tools" / "dist" / "packaging" / "windows" / f"{bundle.artifact_prefix}.iss"
+    if not PRIMARY_ICON_ICO.exists():
+        raise FileNotFoundError(f"Missing primary ICO icon asset: {PRIMARY_ICON_ICO}")
     run(
         [
             resolve_iscc_path(iscc_path),
@@ -596,6 +676,7 @@ def create_windows_installer(
             f"/DAppVersion={version}",
             f"/DOutputBaseFilename={output_base_name}",
             f"/DInstallDirName={bundle.windows_install_dir_name}",
+            f"/DBrandingIconFile={PRIMARY_ICON_ICO}",
         ]
     )
     artifact_path = artifacts_root / f"{output_base_name}.exe"

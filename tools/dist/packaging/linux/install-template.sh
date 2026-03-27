@@ -6,6 +6,9 @@ DEFAULT_INSTALL_ROOT="__DEFAULT_INSTALL_ROOT__"
 ALIASES=(__ALIASES__)
 INSTALL_ROOT="${DEFAULT_INSTALL_ROOT}"
 BIN_DIR="/usr/bin"
+DESKTOP_DIR="/usr/share/applications"
+ICON_ROOT="/usr/share/icons"
+INSTALL_DESKTOP_ENTRY=true
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,8 +20,20 @@ while [[ $# -gt 0 ]]; do
       BIN_DIR="$2"
       shift 2
       ;;
+    --desktop-dir)
+      DESKTOP_DIR="$2"
+      shift 2
+      ;;
+    --icon-dir)
+      ICON_ROOT="$2"
+      shift 2
+      ;;
     --no-bin-links)
       BIN_DIR=""
+      shift
+      ;;
+    --no-desktop-entry)
+      INSTALL_DESKTOP_ENTRY=false
       shift
       ;;
     *)
@@ -52,12 +67,37 @@ if [[ -n "${BIN_DIR}" ]]; then
   done
 fi
 
+desktop_template="${INSTALL_ROOT}/share/applications/nbn-workbench.desktop.template"
+desktop_file="${DESKTOP_DIR}/nbn-workbench.desktop"
+icon_source="${INSTALL_ROOT}/share/icons/hicolor/256x256/apps/nbn-workbench.png"
+icon_target="${ICON_ROOT}/hicolor/256x256/apps/nbn-workbench.png"
+if [[ "${INSTALL_DESKTOP_ENTRY}" == "true" && -f "${desktop_template}" ]]; then
+  escaped_install_root="${INSTALL_ROOT//&/\\&}"
+  if [[ -f "${icon_source}" && -n "${ICON_ROOT}" ]]; then
+    mkdir -p "$(dirname "${icon_target}")"
+    cp -f "${icon_source}" "${icon_target}"
+  fi
+  if [[ -n "${DESKTOP_DIR}" ]]; then
+    mkdir -p "${DESKTOP_DIR}"
+    sed "s|__INSTALL_ROOT__|${escaped_install_root}|g" "${desktop_template}" > "${desktop_file}"
+  fi
+  if command -v update-desktop-database >/dev/null 2>&1 && [[ -n "${DESKTOP_DIR}" && -d "${DESKTOP_DIR}" ]]; then
+    update-desktop-database "${DESKTOP_DIR}" >/dev/null 2>&1 || true
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -n "${ICON_ROOT}" && -d "${ICON_ROOT}/hicolor" ]]; then
+    gtk-update-icon-cache -q -t "${ICON_ROOT}/hicolor" >/dev/null 2>&1 || true
+  fi
+fi
+
 echo "Installed ${DISPLAY_NAME} to ${INSTALL_ROOT}."
 if [[ -n "${BIN_DIR}" ]]; then
   echo "Linked aliases into ${BIN_DIR}."
 else
   echo "Skipped command symlink creation."
 fi
-echo "Use ${INSTALL_ROOT}/uninstall.sh ${BIN_DIR} to remove it."
+if [[ "${INSTALL_DESKTOP_ENTRY}" == "true" && -f "${desktop_template}" ]]; then
+  echo "Installed Workbench desktop entry into ${DESKTOP_DIR}."
+fi
+echo "Use ${INSTALL_ROOT}/uninstall.sh ${BIN_DIR} ${DESKTOP_DIR} ${ICON_ROOT} to remove it."
 exit 0
 __ARCHIVE_BELOW__

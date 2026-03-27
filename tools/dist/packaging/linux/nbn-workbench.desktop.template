@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NBN Workbench
+Comment=NothingButNeurons operator workbench
+Exec=__INSTALL_ROOT__/bin/nbn-workbench
+Icon=nbn-workbench
+Terminal=false
+Categories=Science;Development;
+StartupNotify=true

@@ -13,6 +13,9 @@
 #ifndef InstallDirName
   #error InstallDirName is required.
 #endif
+#ifndef BrandingIconFile
+  #error BrandingIconFile is required.
+#endif
 
 #define EnvironmentKey "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 
@@ -30,6 +33,7 @@ SolidCompression=yes
 ChangesEnvironment=yes
 PrivilegesRequired=admin
 WizardStyle=modern
+SetupIconFile={#BrandingIconFile}
 UninstallDisplayIcon={app}\apps\workbench\Nbn.Tools.Workbench.exe
 
 [Tasks]

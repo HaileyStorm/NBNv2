@@ -19,6 +19,10 @@
     <PackageIcon>nbn-soft-gold-right-n-icon.png</PackageIcon>
   </PropertyGroup>
 
+  <PropertyGroup Condition="('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe') and Exists('$(NbnPrimaryIconIco)')">
+    <ApplicationIcon>$(NbnPrimaryIconIco)</ApplicationIcon>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(IsPackable)' != 'false' and Exists('$(NbnPrimaryIconPng)')">
     <None Include="$(NbnPrimaryIconPng)" Pack="true" PackagePath="\" Visible="false" Link="nbn-soft-gold-right-n-icon.png" />
   </ItemGroup>

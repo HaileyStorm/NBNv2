@@ -53,6 +53,7 @@ NBN is not a gradient-descent/backprop training framework.
 - Worker-only artifacts are `nbn-worker-<version>-win-x64-setup.exe`, `nbn-worker_<version>_amd64.deb`, `nbn-worker-<version>-linux-x64-installer.run`, `nbn-worker-<version>-win-x64-portable.zip`, and `nbn-worker-<version>-linux-x64-portable.tar.gz`.
 - Full-suite installers place files under `C:\Program Files\NBN\` on Windows and `/opt/nbn/` on Linux. Worker-only installers use `C:\Program Files\NBN Worker\` and `/opt/nbn-worker/`.
 - Installers place one `bin` directory on `PATH`. Portable worker archives do not modify `PATH`; run `bin/nbn-worker` from the extracted directory.
+- Windows installers and installed Windows executables use the primary NBN icon. Linux full-suite installs also register a branded `NBN Workbench` desktop entry/icon where the target desktop environment honors standard application entries.
 - Full-suite installed aliases are `nbn-workbench`, `nbn-settings`, `nbn-hivemind`, `nbn-io`, `nbn-repro`, `nbn-speciation`, `nbn-observability`, `nbn-worker`, `nbn-brainhost`, `nbn-regionhost`, `nbn-evolution-sim`, and `nbn-perf-probe`. Worker-only installs expose `nbn-worker`.
 - Installed Workbench resolves managed runtime launches from `runtime-manifest.json` first and PATH aliases second. It does not require a source checkout or the .NET SDK for `Start` / `Start All`.
 - `nbn-settings` is the installed alias for SettingsMonitor. Its key options are `--db <path>`, `--bind-host <host>`, `--port <port>`, `--advertise-host <host>`, and `--advertise-port <port>`.

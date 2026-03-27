@@ -13,6 +13,9 @@
 #ifndef InstallDirName
   #error InstallDirName is required.
 #endif
+#ifndef BrandingIconFile
+  #error BrandingIconFile is required.
+#endif
 
 #define EnvironmentKey "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 
@@ -30,6 +33,8 @@ SolidCompression=yes
 ChangesEnvironment=yes
 PrivilegesRequired=admin
 WizardStyle=modern
+SetupIconFile={#BrandingIconFile}
+UninstallDisplayIcon={app}\services\worker\Nbn.Runtime.WorkerNode.exe
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
