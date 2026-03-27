@@ -42,6 +42,16 @@ public class VizPanelViewModelInteractionTests
             "ApplyKeyedDiff",
             BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ApplyKeyedDiff method not found.");
+    private static readonly MethodInfo TrimCanvasInteractionToLayoutMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "TrimCanvasInteractionToLayout",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("TrimCanvasInteractionToLayout method not found.");
+    private static readonly MethodInfo NormalizeCanvasLayoutMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "NormalizeCanvasLayout",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("NormalizeCanvasLayout method not found.");
     private static readonly MethodInfo EnsureDefinitionTopologyCoverageMethod =
         typeof(VizPanelViewModel).GetMethod(
             "EnsureDefinitionTopologyCoverage",
@@ -72,6 +82,26 @@ public class VizPanelViewModelInteractionTests
             "_selectedCanvasRouteLabel",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("_selectedCanvasRouteLabel field not found.");
+    private static readonly FieldInfo HoverCanvasNodeKeyField =
+        typeof(VizPanelViewModel).GetField(
+            "_hoverCanvasNodeKey",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_hoverCanvasNodeKey field not found.");
+    private static readonly FieldInfo HoverCanvasRouteLabelField =
+        typeof(VizPanelViewModel).GetField(
+            "_hoverCanvasRouteLabel",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_hoverCanvasRouteLabel field not found.");
+    private static readonly FieldInfo PinnedCanvasNodesField =
+        typeof(VizPanelViewModel).GetField(
+            "_pinnedCanvasNodes",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_pinnedCanvasNodes field not found.");
+    private static readonly FieldInfo PinnedCanvasRoutesField =
+        typeof(VizPanelViewModel).GetField(
+            "_pinnedCanvasRoutes",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_pinnedCanvasRoutes field not found.");
     private static readonly MethodInfo ApplyVisualizationCadenceAsyncMethod =
         typeof(VizPanelViewModel).GetMethod(
             "ApplyVisualizationCadenceAsync",
@@ -1096,6 +1126,99 @@ public class VizPanelViewModelInteractionTests
         Assert.Contains("hit_test last_ms=", report);
         Assert.Contains("queue pending=", report);
         Assert.Contains("canvas_diff nodes(", report);
+    }
+
+    [Fact]
+    public void TrimCanvasInteractionToLayout_PrunesMissingSelectionHoverAndPins_CaseInsensitive()
+    {
+        var vm = CreateViewModel();
+        var node = CreateNode("region:9", "R9", left: 80, top: 80, regionId: 9, neuronId: null, navigateRegionId: 9);
+        var edge = CreateEdge();
+
+        SetCanvasSelection(vm, "REGION:99", "R99 -> R100");
+        HoverCanvasNodeKeyField.SetValue(vm, "ReGiOn:9");
+        HoverCanvasRouteLabelField.SetValue(vm, "r9 -> r10");
+        var pinnedNodes = (HashSet<string>)PinnedCanvasNodesField.GetValue(vm)!;
+        var pinnedRoutes = (HashSet<string>)PinnedCanvasRoutesField.GetValue(vm)!;
+        pinnedNodes.Add("region:9");
+        pinnedNodes.Add("region:99");
+        pinnedRoutes.Add("R9 -> R10");
+        pinnedRoutes.Add("R99 -> R100");
+
+        var changed = (bool)TrimCanvasInteractionToLayoutMethod.Invoke(
+            vm,
+            new object[]
+            {
+                new List<VizActivityCanvasNode> { node },
+                new List<VizActivityCanvasEdge> { edge }
+            })!;
+
+        Assert.True(changed);
+        Assert.Null(SelectedCanvasNodeKeyField.GetValue(vm) as string);
+        Assert.Null(SelectedCanvasRouteLabelField.GetValue(vm) as string);
+        Assert.Equal("ReGiOn:9", HoverCanvasNodeKeyField.GetValue(vm) as string);
+        Assert.Equal("r9 -> r10", HoverCanvasRouteLabelField.GetValue(vm) as string);
+        Assert.Equal(new[] { "region:9" }, pinnedNodes.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(new[] { "R9 -> R10" }, pinnedRoutes.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void NormalizeCanvasLayout_RebasesGeometryAndUpdatesCanvasDimensions()
+    {
+        var vm = CreateViewModel();
+        var originalNode = CreateNode("region:9", "R9", left: -120, top: -80, regionId: 9, neuronId: null, navigateRegionId: 9);
+        var originalEdge = new VizActivityCanvasEdge(
+            RouteLabel: "R9 -> R10",
+            Detail: "edge detail",
+            PathData: "M -100 -40 Q 40 -20 120 30",
+            SourceX: -100,
+            SourceY: -40,
+            ControlX: 40,
+            ControlY: -20,
+            TargetX: 120,
+            TargetY: 30,
+            Stroke: "#7A838A",
+            DirectionDashArray: string.Empty,
+            ActivityStroke: "#2ECC71",
+            StrokeThickness: 2.0,
+            ActivityStrokeThickness: 1.2,
+            HitTestThickness: 12.0,
+            Opacity: 0.9,
+            ActivityOpacity: 0.7,
+            IsFocused: false,
+            LastTick: 100,
+            EventCount: 5,
+            SourceRegionId: 9,
+            TargetRegionId: 10,
+            IsSelected: false,
+            IsHovered: false,
+            IsPinned: false);
+        var originalCanvas = new VizActivityCanvasLayout(
+            200,
+            100,
+            "test",
+            new List<VizActivityCanvasNode> { originalNode },
+            new List<VizActivityCanvasEdge> { originalEdge });
+
+        var normalized = (VizActivityCanvasLayout)NormalizeCanvasLayoutMethod.Invoke(vm, new object[] { originalCanvas })!;
+
+        var shiftedNode = Assert.Single(normalized.Nodes);
+        var shiftedEdge = Assert.Single(normalized.Edges);
+        var deltaX = shiftedNode.Left - originalNode.Left;
+        var deltaY = shiftedNode.Top - originalNode.Top;
+
+        Assert.True(deltaX > 0);
+        Assert.True(deltaY > 0);
+        Assert.Equal(deltaX, shiftedEdge.SourceX - originalEdge.SourceX, 6);
+        Assert.Equal(deltaY, shiftedEdge.SourceY - originalEdge.SourceY, 6);
+        Assert.Equal(deltaX, shiftedEdge.ControlX - originalEdge.ControlX, 6);
+        Assert.Equal(deltaY, shiftedEdge.ControlY - originalEdge.ControlY, 6);
+        Assert.Equal(deltaX, shiftedEdge.TargetX - originalEdge.TargetX, 6);
+        Assert.Equal(deltaY, shiftedEdge.TargetY - originalEdge.TargetY, 6);
+        Assert.Equal(normalized.Width, vm.ActivityCanvasWidth, 6);
+        Assert.Equal(normalized.Height, vm.ActivityCanvasHeight, 6);
+        Assert.True(normalized.Width >= VizActivityCanvasLayoutBuilder.CanvasWidth);
+        Assert.True(normalized.Height >= VizActivityCanvasLayoutBuilder.CanvasHeight);
     }
 
     [Fact]

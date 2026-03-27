@@ -119,21 +119,15 @@ public sealed partial class VizPanelViewModel
             topology,
             SelectedCanvasColorMode.Mode,
             renderOptions);
-
-        if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
-        {
-            interaction = BuildCanvasInteractionState();
-            canvas = VizActivityCanvasLayoutBuilder.Build(
-                _currentProjection,
-                _currentProjectionOptions,
-                interaction,
-                topology,
-                SelectedCanvasColorMode.Mode,
-                renderOptions);
-        }
-
-        canvas = NormalizeCanvasLayout(canvas);
-        _lastCanvasLayoutBuildMs = StopwatchElapsedMs(layoutStart);
+        var finalized = FinalizeCanvasLayout(
+            canvas,
+            _currentProjection,
+            _currentProjectionOptions,
+            topology,
+            SelectedCanvasColorMode.Mode,
+            renderOptions);
+        canvas = finalized.Canvas;
+        _lastCanvasLayoutBuildMs = StopwatchElapsedMs(layoutStart) + finalized.AdditionalLayoutMs;
 
         var applyStart = Stopwatch.GetTimestamp();
         _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
@@ -194,20 +188,15 @@ public sealed partial class VizPanelViewModel
         ApplyMiniActivityChartSnapshot(snapshot.MiniChart);
 
         var layoutMs = snapshot.LayoutMs;
-        var canvas = NormalizeCanvasLayout(snapshot.Canvas);
-        if (TrimCanvasInteractionToLayout(canvas.Nodes, canvas.Edges))
-        {
-            var layoutRebuildStart = Stopwatch.GetTimestamp();
-            canvas = NormalizeCanvasLayout(
-                VizActivityCanvasLayoutBuilder.Build(
-                    snapshot.Projection,
-                    snapshot.Options,
-                    BuildCanvasInteractionState(),
-                    BuildTopologySnapshotForSelectedBrain(),
-                    SelectedCanvasColorMode.Mode,
-                    BuildCanvasRenderOptions()));
-            layoutMs += StopwatchElapsedMs(layoutRebuildStart);
-        }
+        var finalized = FinalizeCanvasLayout(
+            snapshot.Canvas,
+            snapshot.Projection,
+            snapshot.Options,
+            BuildTopologySnapshotForSelectedBrain(),
+            SelectedCanvasColorMode.Mode,
+            BuildCanvasRenderOptions());
+        var canvas = finalized.Canvas;
+        layoutMs += finalized.AdditionalLayoutMs;
 
         var applyStart = Stopwatch.GetTimestamp();
         _lastCanvasNodeDiffStats = ApplyKeyedDiff(CanvasNodes, canvas.Nodes, static item => item.NodeKey);
@@ -699,6 +688,32 @@ public sealed partial class VizPanelViewModel
             canvas.Legend,
             shiftedNodes,
             shiftedEdges);
+    }
+
+    private (VizActivityCanvasLayout Canvas, double AdditionalLayoutMs) FinalizeCanvasLayout(
+        VizActivityCanvasLayout canvas,
+        VizActivityProjection projection,
+        VizActivityProjectionOptions options,
+        VizActivityCanvasTopology topology,
+        VizActivityCanvasColorMode colorMode,
+        VizActivityCanvasRenderOptions renderOptions)
+    {
+        var normalized = NormalizeCanvasLayout(canvas);
+        if (!TrimCanvasInteractionToLayout(normalized.Nodes, normalized.Edges))
+        {
+            return (normalized, 0.0);
+        }
+
+        var rebuildStart = Stopwatch.GetTimestamp();
+        normalized = NormalizeCanvasLayout(
+            VizActivityCanvasLayoutBuilder.Build(
+                projection,
+                options,
+                BuildCanvasInteractionState(),
+                topology,
+                colorMode,
+                renderOptions));
+        return (normalized, StopwatchElapsedMs(rebuildStart));
     }
 
     private void SetActivityCanvasDimensions(double width, double height)
