@@ -59,37 +59,23 @@ public sealed record VizActivityCanvasInteractionState(
     /// <summary>
     /// Determines whether the node key is pinned.
     /// </summary>
-    public bool IsNodePinned(string? nodeKey)
-    {
-        if (string.IsNullOrWhiteSpace(nodeKey))
-        {
-            return false;
-        }
-
-        foreach (var pinned in PinnedNodeKeys)
-        {
-            if (KeyEquals(pinned, nodeKey))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    public bool IsNodePinned(string? nodeKey) => ContainsKey(PinnedNodeKeys, nodeKey);
 
     /// <summary>
     /// Determines whether the route label is pinned.
     /// </summary>
-    public bool IsRoutePinned(string? routeLabel)
+    public bool IsRoutePinned(string? routeLabel) => ContainsKey(PinnedRouteLabels, routeLabel);
+
+    private static bool ContainsKey(IReadOnlySet<string> keys, string? candidate)
     {
-        if (string.IsNullOrWhiteSpace(routeLabel))
+        if (string.IsNullOrWhiteSpace(candidate))
         {
             return false;
         }
 
-        foreach (var pinned in PinnedRouteLabels)
+        foreach (var key in keys)
         {
-            if (KeyEquals(pinned, routeLabel))
+            if (KeyEquals(key, candidate))
             {
                 return true;
             }

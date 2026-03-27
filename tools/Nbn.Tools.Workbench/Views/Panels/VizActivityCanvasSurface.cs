@@ -10,6 +10,9 @@ using Nbn.Tools.Workbench.ViewModels;
 
 namespace Nbn.Tools.Workbench.Views.Panels;
 
+/// <summary>
+/// Renders the Workbench visualization canvas from precomputed node and edge snapshots.
+/// </summary>
 public sealed class VizActivityCanvasSurface : Control
 {
     public static readonly StyledProperty<IReadOnlyList<VizActivityCanvasNode>?> NodesProperty =
@@ -26,12 +29,18 @@ public sealed class VizActivityCanvasSurface : Control
     private INotifyCollectionChanged? _nodesNotifier;
     private INotifyCollectionChanged? _edgesNotifier;
 
+    /// <summary>
+    /// Gets or sets the render-ready canvas nodes.
+    /// </summary>
     public IReadOnlyList<VizActivityCanvasNode>? Nodes
     {
         get => GetValue(NodesProperty);
         set => SetValue(NodesProperty, value);
     }
 
+    /// <summary>
+    /// Gets or sets the render-ready canvas edges.
+    /// </summary>
     public IReadOnlyList<VizActivityCanvasEdge>? Edges
     {
         get => GetValue(EdgesProperty);
@@ -100,39 +109,9 @@ public sealed class VizActivityCanvasSurface : Control
 
                 context.DrawGeometry(null, directionPen, geometry);
                 context.DrawGeometry(null, activityPen, geometry);
-
-                if (edge.IsPinned)
-                {
-                    var pinnedPen = CreatePen(
-                        pinnedBrush,
-                        Math.Max(1.0, edge.StrokeThickness),
-                        dashStyle,
-                        viewScale,
-                        minVisiblePixels: 1.1);
-                    context.DrawGeometry(null, pinnedPen, geometry);
-                }
-
-                if (edge.IsHovered)
-                {
-                    var hoverPen = CreatePen(
-                        hoverBrush,
-                        Math.Max(1.0, edge.StrokeThickness),
-                        dashStyle,
-                        viewScale,
-                        minVisiblePixels: 1.1);
-                    context.DrawGeometry(null, hoverPen, geometry);
-                }
-
-                if (edge.IsSelected)
-                {
-                    var selectedPen = CreatePen(
-                        selectedBrush,
-                        Math.Max(1.0, edge.StrokeThickness),
-                        dashStyle,
-                        viewScale,
-                        minVisiblePixels: 1.2);
-                    context.DrawGeometry(null, selectedPen, geometry);
-                }
+                DrawEdgeStateOverlay(context, geometry, edge.IsPinned, pinnedBrush, edge.StrokeThickness, dashStyle, viewScale, 1.1);
+                DrawEdgeStateOverlay(context, geometry, edge.IsHovered, hoverBrush, edge.StrokeThickness, dashStyle, viewScale, 1.1);
+                DrawEdgeStateOverlay(context, geometry, edge.IsSelected, selectedBrush, edge.StrokeThickness, dashStyle, viewScale, 1.2);
             }
         }
 
@@ -157,24 +136,9 @@ public sealed class VizActivityCanvasSurface : Control
                 viewScale,
                 minVisiblePixels: 0.95);
             context.DrawEllipse(null, baseStroke, center, radius, radius);
-
-            if (node.IsPinned)
-            {
-                var pinStroke = new Pen(pinnedBrush, 2.2, lineCap: PenLineCap.Round);
-                context.DrawEllipse(null, pinStroke, center, radius, radius);
-            }
-
-            if (node.IsHovered)
-            {
-                var hoverStroke = new Pen(hoverBrush, 2.2, lineCap: PenLineCap.Round);
-                context.DrawEllipse(null, hoverStroke, center, radius, radius);
-            }
-
-            if (node.IsSelected)
-            {
-                var selectedStroke = new Pen(selectedBrush, 2.8, lineCap: PenLineCap.Round);
-                context.DrawEllipse(null, selectedStroke, center, radius, radius);
-            }
+            DrawNodeStateOverlay(context, center, radius, node.IsPinned, pinnedBrush, 2.2);
+            DrawNodeStateOverlay(context, center, radius, node.IsHovered, hoverBrush, 2.2);
+            DrawNodeStateOverlay(context, center, radius, node.IsSelected, selectedBrush, 2.8);
 
             if (node.IsPinned)
             {
@@ -191,6 +155,47 @@ public sealed class VizActivityCanvasSurface : Control
                 context.DrawText(text, textOrigin);
             }
         }
+    }
+
+    private void DrawEdgeStateOverlay(
+        DrawingContext context,
+        Geometry geometry,
+        bool isVisible,
+        IBrush brush,
+        double thickness,
+        DashStyle? dashStyle,
+        double viewScale,
+        double minVisiblePixels)
+    {
+        if (!isVisible)
+        {
+            return;
+        }
+
+        var overlayPen = CreatePen(
+            brush,
+            Math.Max(1.0, thickness),
+            dashStyle,
+            viewScale,
+            minVisiblePixels);
+        context.DrawGeometry(null, overlayPen, geometry);
+    }
+
+    private static void DrawNodeStateOverlay(
+        DrawingContext context,
+        Point center,
+        double radius,
+        bool isVisible,
+        IBrush brush,
+        double thickness)
+    {
+        if (!isVisible)
+        {
+            return;
+        }
+
+        var overlayPen = new Pen(brush, thickness, lineCap: PenLineCap.Round);
+        context.DrawEllipse(null, overlayPen, center, radius, radius);
     }
 
     private void AttachCollectionNotifier(

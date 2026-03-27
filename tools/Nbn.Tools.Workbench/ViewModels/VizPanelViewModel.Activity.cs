@@ -24,11 +24,17 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed partial class VizPanelViewModel
 {
+    /// <summary>
+    /// Adds the supplied brain identifier to the known-brains list and selects it.
+    /// </summary>
     public void AddBrainId(Guid id)
     {
         AddBrainId(id.ToString("D"));
     }
 
+    /// <summary>
+    /// Replaces the known-brains list while preserving the preferred selection when possible.
+    /// </summary>
     public void SetBrains(IReadOnlyList<BrainListItem> brains)
     {
         var previousSelection = SelectedBrain;
@@ -128,6 +134,9 @@ public sealed partial class VizPanelViewModel
         RefreshFilteredEvents();
     }
 
+    /// <summary>
+    /// Applies the latest HiveMind tick cadence status to the visualization controls.
+    /// </summary>
     public void ApplyHiveMindTickStatus(float targetTickHz, bool hasOverride, float overrideTickHz)
     {
         if (targetTickHz > 0f && float.IsFinite(targetTickHz))
@@ -152,6 +161,9 @@ public sealed partial class VizPanelViewModel
         RefreshActivityProjection();
     }
 
+    /// <summary>
+    /// Applies a runtime setting update that affects visualization cadence or filtering behavior.
+    /// </summary>
     public bool ApplySetting(SettingItem item)
     {
         if (string.Equals(item.Key, TickSettingsKeys.CadenceHzKey, StringComparison.OrdinalIgnoreCase))
@@ -183,6 +195,9 @@ public sealed partial class VizPanelViewModel
         return false;
     }
 
+    /// <summary>
+    /// Queues a visualization event for projection and canvas refresh.
+    /// </summary>
     public void AddVizEvent(VizEventItem item)
     {
         var droppedThisCall = 0;
@@ -261,6 +276,9 @@ public sealed partial class VizPanelViewModel
         ZoomToRegion(regionId);
     }
 
+    /// <summary>
+    /// Switches the visualization surface into focus mode for the supplied region.
+    /// </summary>
     public bool ZoomToRegion(uint regionId)
     {
         if (regionId < NbnConstants.RegionMinId || regionId > NbnConstants.RegionMaxId)
@@ -280,6 +298,9 @@ public sealed partial class VizPanelViewModel
         return true;
     }
 
+    /// <summary>
+    /// Resolves the empty-canvas double-click behavior for the current focus and view state.
+    /// </summary>
     public EmptyCanvasDoubleClickAction ResolveEmptyCanvasDoubleClickAction(bool isDefaultCanvasView)
     {
         if (ActiveFocusRegionId.HasValue && isDefaultCanvasView)
@@ -290,6 +311,9 @@ public sealed partial class VizPanelViewModel
         return EmptyCanvasDoubleClickAction.ResetView;
     }
 
+    /// <summary>
+    /// Handles empty-canvas double-click behavior and returns the action that was applied.
+    /// </summary>
     public EmptyCanvasDoubleClickAction HandleEmptyCanvasDoubleClick(bool isDefaultCanvasView)
     {
         var action = ResolveEmptyCanvasDoubleClickAction(isDefaultCanvasView);
@@ -301,6 +325,9 @@ public sealed partial class VizPanelViewModel
         return action;
     }
 
+    /// <summary>
+    /// Clears the current canvas selection when the operator clicks empty canvas space.
+    /// </summary>
     public bool TryClearCanvasSelectionFromEmptyClick()
     {
         if (string.IsNullOrWhiteSpace(_selectedCanvasNodeKey) && string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))

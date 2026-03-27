@@ -7,6 +7,9 @@ using Nbn.Tools.Workbench.Models;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
+/// <summary>
+/// Configures how visualization events are windowed and projected into Workbench activity views.
+/// </summary>
 public sealed record VizActivityProjectionOptions(
     int TickWindow,
     bool IncludeLowSignalEvents,
@@ -17,6 +20,9 @@ public sealed record VizActivityProjectionOptions(
     ulong? MiniChartMinTickFloor = null,
     ulong? LatestTickHint = null);
 
+/// <summary>
+/// Represents a projection snapshot derived from the current visualization event window.
+/// </summary>
 public sealed record VizActivityProjection(
     string Summary,
     IReadOnlyList<VizActivityStatItem> Stats,
@@ -26,8 +32,14 @@ public sealed record VizActivityProjection(
     IReadOnlyList<VizEventItem> WindowEvents,
     VizMiniActivityChart MiniChart);
 
+/// <summary>
+/// Represents a compact projection statistic for the summary card.
+/// </summary>
 public sealed record VizActivityStatItem(string Label, string Value, string Detail);
 
+/// <summary>
+/// Represents projected activity for a single region in the current window.
+/// </summary>
 public sealed record VizRegionActivityItem(
     uint RegionId,
     string RegionLabel,
@@ -39,6 +51,9 @@ public sealed record VizRegionActivityItem(
     float AverageMagnitude,
     float AverageSignedValue);
 
+/// <summary>
+/// Represents projected activity for a single routed edge in the current window.
+/// </summary>
 public sealed record VizEdgeActivityItem(
     string RouteLabel,
     int EventCount,
@@ -50,6 +65,9 @@ public sealed record VizEdgeActivityItem(
     uint? SourceRegionId,
     uint? TargetRegionId);
 
+/// <summary>
+/// Represents activity aggregated at a single global tick.
+/// </summary>
 public sealed record VizTickActivityItem(
     ulong TickId,
     int EventCount,
@@ -57,6 +75,9 @@ public sealed record VizTickActivityItem(
     int AxonCount,
     int BufferCount);
 
+/// <summary>
+/// Represents the compact top-N activity chart rendered with the visualization canvas.
+/// </summary>
 public sealed record VizMiniActivityChart(
     bool Enabled,
     string ModeLabel,
@@ -69,6 +90,9 @@ public sealed record VizMiniActivityChart(
     float MinScore = 0f,
     bool UseSignedLinearScale = false);
 
+/// <summary>
+/// Represents one line series inside the compact activity chart.
+/// </summary>
 public sealed record VizMiniActivitySeries(
     string Key,
     string Label,
@@ -76,6 +100,9 @@ public sealed record VizMiniActivitySeries(
     ulong LastActiveTick,
     IReadOnlyList<float> Values);
 
+/// <summary>
+/// Builds deterministic visualization projections from raw visualization events.
+/// </summary>
 public static class VizActivityProjectionBuilder
 {
     private const int DefaultTickWindow = 64;
@@ -87,6 +114,9 @@ public static class VizActivityProjectionBuilder
     private const string MiniChartScoreMetricLabel = "score = 1 + |value| + |strength| per event contribution";
     private const string MiniChartFocusBufferMetricLabel = "value = neuron buffer (signed, VizNeuronBuffer)";
 
+    /// <summary>
+    /// Builds a projection snapshot for the supplied visualization event stream and projection options.
+    /// </summary>
     public static VizActivityProjection Build(IEnumerable<VizEventItem> events, VizActivityProjectionOptions options)
     {
         var source = events?.ToList() ?? new List<VizEventItem>();
@@ -94,23 +124,12 @@ public static class VizActivityProjectionBuilder
         var hasLatestTickHint = options.LatestTickHint.HasValue;
         if (source.Count == 0)
         {
-            var minTickFromHint = hasLatestTickHint
-                ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
-                : 0UL;
-            minTickFromHint = ApplyMiniChartTickFloor(minTickFromHint, latestTickHint, options.MiniChartMinTickFloor);
-            var miniChart = BuildMiniChart(
-                windowed: Array.Empty<VizEventItem>(),
-                minTick: minTickFromHint,
-                maxTick: latestTickHint,
-                options);
-            return new VizActivityProjection(
+            return BuildEmptyProjection(
                 "No visualization events in the current filter.",
-                new[] { new VizActivityStatItem("Events", "0", "Awaiting stream data") },
-                Array.Empty<VizRegionActivityItem>(),
-                Array.Empty<VizEdgeActivityItem>(),
-                Array.Empty<VizTickActivityItem>(),
-                Array.Empty<VizEventItem>(),
-                miniChart);
+                "Awaiting stream data",
+                options,
+                latestTickHint,
+                hasLatestTickHint);
         }
 
         var tickWindow = NormalizeTickWindow(options.TickWindow);
@@ -120,26 +139,12 @@ public static class VizActivityProjectionBuilder
 
         if (filtered.Count == 0)
         {
-            var minTickFromHint = hasLatestTickHint
-                ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
-                : 0UL;
-            minTickFromHint = ApplyMiniChartTickFloor(minTickFromHint, latestTickHint, options.MiniChartMinTickFloor);
-            var miniChart = BuildMiniChart(
-                windowed: Array.Empty<VizEventItem>(),
-                minTick: minTickFromHint,
-                maxTick: latestTickHint,
-                options);
-            return new VizActivityProjection(
+            return BuildEmptyProjection(
                 "All events were filtered out by current options.",
-                new[]
-                {
-                    new VizActivityStatItem("Events", "0", "Try enabling low-signal events.")
-                },
-                Array.Empty<VizRegionActivityItem>(),
-                Array.Empty<VizEdgeActivityItem>(),
-                Array.Empty<VizTickActivityItem>(),
-                Array.Empty<VizEventItem>(),
-                miniChart);
+                "Try enabling low-signal events.",
+                options,
+                latestTickHint,
+                hasLatestTickHint);
         }
 
         var latestTick = filtered.Max(item => item.TickId);
@@ -193,6 +198,32 @@ public static class VizActivityProjectionBuilder
         var chart = BuildMiniChart(filtered, chartMinTick, latestTick, options);
 
         return new VizActivityProjection(summary, stats, regionRows, edgeRows, tickRows, windowed, chart);
+    }
+
+    private static VizActivityProjection BuildEmptyProjection(
+        string summary,
+        string detail,
+        VizActivityProjectionOptions options,
+        ulong latestTickHint,
+        bool hasLatestTickHint)
+    {
+        var minTickFromHint = hasLatestTickHint
+            ? ComputeWindowStart(latestTickHint, NormalizeTickWindow(options.MiniChartTickWindow))
+            : 0UL;
+        minTickFromHint = ApplyMiniChartTickFloor(minTickFromHint, latestTickHint, options.MiniChartMinTickFloor);
+        var miniChart = BuildMiniChart(
+            windowed: Array.Empty<VizEventItem>(),
+            minTick: minTickFromHint,
+            maxTick: latestTickHint,
+            options);
+        return new VizActivityProjection(
+            summary,
+            new[] { new VizActivityStatItem("Events", "0", detail) },
+            Array.Empty<VizRegionActivityItem>(),
+            Array.Empty<VizEdgeActivityItem>(),
+            Array.Empty<VizTickActivityItem>(),
+            Array.Empty<VizEventItem>(),
+            miniChart);
     }
 
     private static IReadOnlyList<VizRegionActivityItem> BuildRegionRows(IReadOnlyList<VizEventItem> events)

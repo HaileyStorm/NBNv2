@@ -24,6 +24,9 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed partial class VizPanelViewModel : ViewModelBase
 {
+    /// <summary>
+    /// Describes how empty-canvas double-click interactions should be interpreted.
+    /// </summary>
     public enum EmptyCanvasDoubleClickAction
     {
         ResetView = 0,
@@ -1024,8 +1027,14 @@ public sealed partial class VizPanelViewModel : ViewModelBase
     }
 }
 
+/// <summary>
+/// Represents a visualization event-type filter option shown in the Workbench visualizer.
+/// </summary>
 public sealed record VizPanelTypeOption(string Label, string? TypeFilter)
 {
+    /// <summary>
+    /// Creates the default event-type filter options for the visualization stream.
+    /// </summary>
     public static IReadOnlyList<VizPanelTypeOption> CreateDefaults()
     {
         var options = new List<VizPanelTypeOption> { new("All types", null) };
@@ -1043,8 +1052,14 @@ public sealed record VizPanelTypeOption(string Label, string? TypeFilter)
     }
 }
 
+/// <summary>
+/// Represents a canvas color-mode option and its operator-facing legend text.
+/// </summary>
 public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasColorMode Mode, string LegendHint, string Tooltip)
 {
+    /// <summary>
+    /// Creates the default color-mode options for the activity canvas.
+    /// </summary>
     public static IReadOnlyList<VizCanvasColorModeOption> CreateDefaults()
         => new[]
         {
@@ -1076,8 +1091,14 @@ public sealed record VizCanvasColorModeOption(string Label, VizActivityCanvasCol
         };
 }
 
+/// <summary>
+/// Represents a canvas transfer-curve option and its operator-facing legend text.
+/// </summary>
 public sealed record VizCanvasTransferCurveOption(string Label, VizActivityCanvasTransferCurve Curve, string LegendHint, string Tooltip)
 {
+    /// <summary>
+    /// Creates the default transfer-curve options for the activity canvas.
+    /// </summary>
     public static IReadOnlyList<VizCanvasTransferCurveOption> CreateDefaults()
         => new[]
         {
@@ -1094,8 +1115,14 @@ public sealed record VizCanvasTransferCurveOption(string Label, VizActivityCanva
         };
 }
 
+/// <summary>
+/// Represents a canvas layout-mode option shown in the visualization toolbar.
+/// </summary>
 public sealed record VizCanvasLayoutModeOption(string Label, VizActivityCanvasLayoutMode Mode)
 {
+    /// <summary>
+    /// Creates the default layout-mode options for the activity canvas.
+    /// </summary>
     public static IReadOnlyList<VizCanvasLayoutModeOption> CreateDefaults()
         => new[]
         {
@@ -1104,12 +1131,18 @@ public sealed record VizCanvasLayoutModeOption(string Label, VizActivityCanvasLa
         };
 }
 
+/// <summary>
+/// Represents one rendered mini-chart series path for the visualization overlay.
+/// </summary>
 public sealed record VizMiniActivityChartSeriesItem(
     string Key,
     string Label,
     string Stroke,
     string PathData);
 
+/// <summary>
+/// Represents one exported visualization event row.
+/// </summary>
 public sealed record VizPanelExportItem(
     string Time,
     string Type,
@@ -1122,6 +1155,9 @@ public sealed record VizPanelExportItem(
     float Strength,
     string EventId)
 {
+    /// <summary>
+    /// Creates an export row from a visualization event item.
+    /// </summary>
     public static VizPanelExportItem From(VizEventItem item)
         => new(
             item.Time.ToString("O"),

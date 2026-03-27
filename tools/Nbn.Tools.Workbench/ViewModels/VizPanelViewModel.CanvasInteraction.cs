@@ -24,6 +24,9 @@ namespace Nbn.Tools.Workbench.ViewModels;
 
 public sealed partial class VizPanelViewModel
 {
+    /// <summary>
+    /// Updates the viewport scale used by adaptive visualization LOD.
+    /// </summary>
     public void SetCanvasViewportScale(double scale)
     {
         if (!double.IsFinite(scale) || scale <= 0.0)
@@ -39,6 +42,9 @@ public sealed partial class VizPanelViewModel
         }
     }
 
+    /// <summary>
+    /// Selects the supplied canvas node and refreshes the selection summaries.
+    /// </summary>
     public void SelectCanvasNode(VizActivityCanvasNode? node)
     {
         if (node is null)
@@ -47,14 +53,12 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        _selectedCanvasNodeKey = node.NodeKey;
-        _selectedCanvasRouteLabel = null;
-        OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshCanvasLayoutOnly();
-        Status = $"Selected node {node.Label}.";
-        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+        CommitCanvasSelection(node.NodeKey, null, $"Selected node {node.Label}.");
     }
 
+    /// <summary>
+    /// Selects the supplied canvas edge and refreshes the selection summaries.
+    /// </summary>
     public void SelectCanvasEdge(VizActivityCanvasEdge? edge)
     {
         if (edge is null)
@@ -63,14 +67,12 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        _selectedCanvasRouteLabel = edge.RouteLabel;
-        _selectedCanvasNodeKey = null;
-        OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshCanvasLayoutOnly();
-        Status = $"Selected route {edge.RouteLabel}.";
-        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+        CommitCanvasSelection(null, edge.RouteLabel, $"Selected route {edge.RouteLabel}.");
     }
 
+    /// <summary>
+    /// Updates node hover state and hover-card placement for the current pointer location.
+    /// </summary>
     public void SetCanvasNodeHover(VizActivityCanvasNode? node, double pointerX = double.NaN, double pointerY = double.NaN)
     {
         if (node is null)
@@ -87,12 +89,12 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        _hoverCanvasNodeKey = nextNode;
-        _hoverCanvasRouteLabel = null;
-        UpdateCanvasHoverCard(node.Detail, pointerX, pointerY);
-        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+        ApplyCanvasHover(nextNode, null, node.Detail, pointerX, pointerY);
     }
 
+    /// <summary>
+    /// Updates edge hover state and hover-card placement for the current pointer location.
+    /// </summary>
     public void SetCanvasEdgeHover(VizActivityCanvasEdge? edge, double pointerX = double.NaN, double pointerY = double.NaN)
     {
         if (edge is null)
@@ -109,12 +111,12 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        _hoverCanvasRouteLabel = nextRoute;
-        _hoverCanvasNodeKey = null;
-        UpdateCanvasHoverCard(edge.Detail, pointerX, pointerY);
-        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+        ApplyCanvasHover(null, nextRoute, edge.Detail, pointerX, pointerY);
     }
 
+    /// <summary>
+    /// Schedules hover state to clear after the supplied delay unless another hover update arrives first.
+    /// </summary>
     public void ClearCanvasHoverDeferred(int delayMs = HoverClearDelayMs)
     {
         if (string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
@@ -142,6 +144,9 @@ public sealed partial class VizPanelViewModel
         });
     }
 
+    /// <summary>
+    /// Clears the current canvas hover state and hover card.
+    /// </summary>
     public void ClearCanvasHover()
     {
         CancelPendingHoverClear();
@@ -161,6 +166,9 @@ public sealed partial class VizPanelViewModel
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
 
+    /// <summary>
+    /// Cancels any pending hover-clear operation while hover content is still active.
+    /// </summary>
     public void KeepCanvasHoverAlive()
     {
         var hasHover = !string.IsNullOrWhiteSpace(_hoverCanvasNodeKey)
@@ -175,6 +183,9 @@ public sealed partial class VizPanelViewModel
         CancelPendingHoverClear();
     }
 
+    /// <summary>
+    /// Resolves the highest-priority node or edge hit for direct selection interactions.
+    /// </summary>
     public bool TryResolveCanvasHit(double pointerX, double pointerY, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
     {
         var startedAt = Stopwatch.GetTimestamp();
@@ -197,6 +208,9 @@ public sealed partial class VizPanelViewModel
         }
     }
 
+    /// <summary>
+    /// Resolves the highest-priority node or edge hit for hover interactions.
+    /// </summary>
     public bool TryResolveCanvasHoverHit(double pointerX, double pointerY, out VizActivityCanvasNode? node, out VizActivityCanvasEdge? edge)
     {
         var startedAt = Stopwatch.GetTimestamp();
@@ -219,6 +233,9 @@ public sealed partial class VizPanelViewModel
         }
     }
 
+    /// <summary>
+    /// Selects or pins the currently hovered node or route.
+    /// </summary>
     public bool TrySelectHoveredCanvasItem(bool togglePin)
     {
         if (!string.IsNullOrWhiteSpace(_hoverCanvasNodeKey))
@@ -266,6 +283,9 @@ public sealed partial class VizPanelViewModel
         return true;
     }
 
+    /// <summary>
+    /// Toggles the pinned state for the supplied node while keeping it selected.
+    /// </summary>
     public void TogglePinCanvasNode(VizActivityCanvasNode? node)
     {
         if (node is null)
@@ -273,17 +293,14 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        if (!_pinnedCanvasNodes.Add(node.NodeKey))
-        {
-            _pinnedCanvasNodes.Remove(node.NodeKey);
-        }
-
-        _selectedCanvasNodeKey = node.NodeKey;
-        _selectedCanvasRouteLabel = null;
-        OnPropertyChanged(nameof(TogglePinSelectionLabel));
+        ToggleCanvasPinState(_pinnedCanvasNodes, node.NodeKey);
+        SetCanvasSelectionTarget(node.NodeKey, null);
         RefreshCanvasLayoutOnly();
     }
 
+    /// <summary>
+    /// Toggles the pinned state for the supplied edge while keeping it selected.
+    /// </summary>
     public void TogglePinCanvasEdge(VizActivityCanvasEdge? edge)
     {
         if (edge is null || string.IsNullOrWhiteSpace(edge.RouteLabel))
@@ -291,15 +308,43 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        if (!_pinnedCanvasRoutes.Add(edge.RouteLabel))
+        ToggleCanvasPinState(_pinnedCanvasRoutes, edge.RouteLabel);
+        SetCanvasSelectionTarget(null, edge.RouteLabel);
+        RefreshCanvasLayoutOnly();
+    }
+
+    private void CommitCanvasSelection(string? nodeKey, string? routeLabel, string status)
+    {
+        SetCanvasSelectionTarget(nodeKey, routeLabel);
+        RefreshCanvasLayoutOnly();
+        Status = status;
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+    }
+
+    private void SetCanvasSelectionTarget(string? nodeKey, string? routeLabel)
+    {
+        _selectedCanvasNodeKey = nodeKey;
+        _selectedCanvasRouteLabel = routeLabel;
+        OnPropertyChanged(nameof(TogglePinSelectionLabel));
+    }
+
+    private void ApplyCanvasHover(string? nodeKey, string? routeLabel, string detail, double pointerX, double pointerY)
+    {
+        _hoverCanvasNodeKey = nodeKey;
+        _hoverCanvasRouteLabel = routeLabel;
+        UpdateCanvasHoverCard(detail, pointerX, pointerY);
+        UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
+    }
+
+    private static bool ToggleCanvasPinState(HashSet<string> pinnedKeys, string key)
+    {
+        if (pinnedKeys.Add(key))
         {
-            _pinnedCanvasRoutes.Remove(edge.RouteLabel);
+            return true;
         }
 
-        _selectedCanvasRouteLabel = edge.RouteLabel;
-        _selectedCanvasNodeKey = null;
-        OnPropertyChanged(nameof(TogglePinSelectionLabel));
-        RefreshCanvasLayoutOnly();
+        pinnedKeys.Remove(key);
+        return false;
     }
 
     private void NavigateCanvasRelative(int delta)
@@ -361,14 +406,10 @@ public sealed partial class VizPanelViewModel
         {
             var nodeKey = _selectedCanvasNodeKey!;
             var node = CanvasNodes.FirstOrDefault(item => string.Equals(item.NodeKey, nodeKey, StringComparison.OrdinalIgnoreCase));
-            if (!_pinnedCanvasNodes.Add(nodeKey))
-            {
-                _pinnedCanvasNodes.Remove(nodeKey);
-            }
-
+            var isPinned = ToggleCanvasPinState(_pinnedCanvasNodes, nodeKey);
             RefreshCanvasLayoutOnly();
             var label = node?.Label ?? nodeKey;
-            Status = _pinnedCanvasNodes.Contains(nodeKey)
+            Status = isPinned
                 ? $"Pinned node {label}."
                 : $"Unpinned node {label}.";
             return;
@@ -377,13 +418,9 @@ public sealed partial class VizPanelViewModel
         if (!string.IsNullOrWhiteSpace(_selectedCanvasRouteLabel))
         {
             var routeLabel = _selectedCanvasRouteLabel!;
-            if (!_pinnedCanvasRoutes.Add(routeLabel))
-            {
-                _pinnedCanvasRoutes.Remove(routeLabel);
-            }
-
+            var isPinned = ToggleCanvasPinState(_pinnedCanvasRoutes, routeLabel);
             RefreshCanvasLayoutOnly();
-            Status = _pinnedCanvasRoutes.Contains(routeLabel)
+            Status = isPinned
                 ? $"Pinned route {routeLabel}."
                 : $"Unpinned route {routeLabel}.";
             return;
@@ -406,9 +443,7 @@ public sealed partial class VizPanelViewModel
             return;
         }
 
-        _selectedCanvasNodeKey = null;
-        _selectedCanvasRouteLabel = null;
-        OnPropertyChanged(nameof(TogglePinSelectionLabel));
+        SetCanvasSelectionTarget(null, null);
         RefreshCanvasLayoutOnly();
         UpdateCanvasInteractionSummaries(CanvasNodes, CanvasEdges);
     }
