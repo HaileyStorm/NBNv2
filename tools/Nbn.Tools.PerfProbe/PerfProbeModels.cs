@@ -2,11 +2,17 @@ using System.Text.Json.Serialization;
 
 namespace Nbn.Tools.PerfProbe;
 
+/// <summary>
+/// Captures the complete configuration for a probe run that can execute multiple suites.
+/// </summary>
 public sealed record PerfProbeConfig(
     string OutputDirectory,
     WorkerProfileConfig WorkerProfile,
     LocalhostStressConfig LocalhostStress);
 
+/// <summary>
+/// Describes how the current-system snapshot mode should attach to a running runtime.
+/// </summary>
 public sealed record CurrentSystemProfileConfig(
     string SettingsHost,
     int SettingsPort,
@@ -14,11 +20,17 @@ public sealed record CurrentSystemProfileConfig(
     string BindHost,
     int BindPort);
 
+/// <summary>
+/// Configures placement-planner and capability sampling for the worker-profile suite.
+/// </summary>
 public sealed record WorkerProfileConfig(
     int PlannerWorkerCount,
     int PlannerIterations,
     int HiddenRegionNeurons);
 
+/// <summary>
+/// Configures localhost runtime stress scenarios and their shared workload knobs.
+/// </summary>
 public sealed record LocalhostStressConfig(
     IReadOnlyList<float> TargetTickRates,
     IReadOnlyList<int> BrainSizes,
@@ -30,21 +42,33 @@ public sealed record LocalhostStressConfig(
     int RunSeconds,
     ComputeDominantStressConfig ComputeDominantWorkload);
 
+/// <summary>
+/// Configures the recurrent workload used for compute-dominant localhost measurements.
+/// </summary>
 public sealed record ComputeDominantStressConfig(
     float TargetTickHz,
     int HiddenNeurons,
     int BrainCount,
     int RunSeconds);
 
+/// <summary>
+/// Represents a complete PerfProbe run and the scenario rows emitted for that run.
+/// </summary>
 public sealed record PerfReport(
     string ToolName,
     DateTimeOffset GeneratedAtUtc,
     IReadOnlyDictionary<string, string> Environment,
     IReadOnlyList<PerfScenarioResult> Scenarios)
 {
+    /// <summary>
+    /// Gets the wall-clock duration for the overall probe run in milliseconds.
+    /// </summary>
     public double TotalDurationMs { get; init; }
 }
 
+/// <summary>
+/// Represents one stable report row emitted by a PerfProbe scenario.
+/// </summary>
 public sealed record PerfScenarioResult(
     string Suite,
     string Scenario,
@@ -64,6 +88,9 @@ public sealed record PerfScenarioResult(
     [JsonIgnore]
     public string PrimaryMetricLabel => ResolvePrimaryMetricLabel();
 
+    /// <summary>
+    /// Resolves the primary metric value that should drive summaries and chart ordering.
+    /// </summary>
     public bool TryResolvePrimaryMetric(out double value)
         => TryResolvePrimaryMetricCore(out _, out value);
 
@@ -180,6 +207,9 @@ public sealed record PerfScenarioResult(
     ];
 }
 
+/// <summary>
+/// Describes the stable outcome for an individual PerfProbe scenario row.
+/// </summary>
 public enum PerfScenarioStatus
 {
     Passed = 0,
@@ -187,8 +217,14 @@ public enum PerfScenarioStatus
     Failed = 2
 }
 
+/// <summary>
+/// Provides the default configuration used by the PerfProbe CLI.
+/// </summary>
 public static class PerfProbeDefaults
 {
+    /// <summary>
+    /// Creates the default probe configuration rooted at the resolved output directory.
+    /// </summary>
     public static PerfProbeConfig Create(string outputDirectory)
         => new(
             OutputDirectory: outputDirectory,

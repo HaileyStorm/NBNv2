@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using Nbn.Proto;
 using Nbn.Proto.Control;
@@ -43,6 +42,13 @@ public static partial class PerfProbeRunner
     internal sealed class LocalRuntimeHarness : IAsyncDisposable
     {
         private static readonly SemaphoreSlim BackendPreferenceGate = new(1, 1);
+        private static readonly TimeSpan WorkerEndpointBootstrapTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan PlacementAssignmentTimeout = TimeSpan.FromSeconds(10);
+        private static readonly TimeSpan BrainInfoRegistrationTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan RoutingStabilizationTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan BackendProbeTimeout = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan SpawnBrainTimeout = TimeSpan.FromSeconds(70);
+        private static readonly TimeSpan PerfRuntimeConfigTimeout = TimeSpan.FromSeconds(2);
 
         private LocalRuntimeHarness(
             ActorSystem system,
@@ -83,6 +89,9 @@ public static partial class PerfProbeRunner
         public RegionShardComputeBackendPreference ComputeBackendPreference { get; }
         public LocalRuntimeWorkloadProfile WorkloadProfile { get; }
 
+        /// <summary>
+        /// Creates an isolated in-process runtime harness with stable actor names and perf-safe defaults.
+        /// </summary>
         public static async Task<LocalRuntimeHarness> CreateAsync(
             int hiddenNeuronCount,
             float targetTickHz,
@@ -125,21 +134,18 @@ public static partial class PerfProbeRunner
             await system.Remote().StartAsync().ConfigureAwait(false);
             var root = system.Root;
             var workerId = Guid.NewGuid();
-            var hiveName = $"hive-{Guid.NewGuid():N}";
-            var ioName = $"io-{Guid.NewGuid():N}";
-            var metadataName = $"brain-info-{Guid.NewGuid():N}";
-            var workerName = $"worker-{Guid.NewGuid():N}";
-            var ioPid = new PID(string.Empty, ioName);
+            var actorNames = CreateHarnessActorNames();
+            var ioPid = new PID(string.Empty, actorNames.IoGateway);
 
             var hiveMind = root.SpawnNamed(
                 Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(targetTickHz), ioPid: ioPid)),
-                hiveName);
+                actorNames.HiveMind);
             var ioGateway = root.SpawnNamed(
                 Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(), hiveMindPid: hiveMind)),
-                ioName);
+                actorNames.IoGateway);
             _ = root.SpawnNamed(
                 Props.FromProducer(() => new FixedBrainInfoActor(brainDef, (uint)inputWidth, DefaultOutputWidth)),
-                metadataName);
+                actorNames.Metadata);
             var capabilityProvider = new WorkerNodeCapabilityProvider(availability: benchmarkAvailability);
             var worker = root.SpawnNamed(
                 Props.FromProducer(() => new WorkerNodeActor(
@@ -147,22 +153,11 @@ public static partial class PerfProbeRunner
                     string.Empty,
                     artifactRootPath: artifactRoot,
                     resourceAvailability: benchmarkAvailability)),
-                workerName);
+                actorNames.Worker);
 
-            PrimeWorkerDiscoveryEndpoints(root, worker, hiveName, metadataName);
+            PrimeWorkerDiscoveryEndpoints(root, worker, actorNames.HiveMind, actorNames.Metadata);
             PrimeWorkers(root, hiveMind, worker, workerId, capabilityProvider.GetCapabilities());
-
-            await WaitForAsync(
-                    async () =>
-                    {
-                        var snapshot = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
-                            worker,
-                            new WorkerNodeActor.GetWorkerNodeSnapshot()).ConfigureAwait(false);
-                        return snapshot.HiveMindEndpoint.HasValue && snapshot.IoGatewayEndpoint.HasValue;
-                    },
-                    TimeSpan.FromSeconds(5),
-                    cancellationToken)
-                .ConfigureAwait(false);
+            await WaitForWorkerEndpointBootstrapAsync(root, worker, cancellationToken).ConfigureAwait(false);
 
             return new LocalRuntimeHarness(
                 system,
@@ -173,36 +168,88 @@ public static partial class PerfProbeRunner
                 hiddenNeuronCount,
                 (uint)inputWidth,
                 brainDef,
-                metadataName,
+                actorNames.Metadata,
                 computeBackendPreference,
                 workloadProfile);
         }
 
+        /// <summary>
+        /// Spawns a perf brain through IO, applies benchmark-safe runtime config, and waits for routing to settle.
+        /// </summary>
         public async Task<Guid> SpawnBrainAsync(CancellationToken cancellationToken)
         {
+            // The worker advertises the fixed metadata actor until the real IO gateway is ready for BrainInfo traffic.
             PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, BootstrapIoEndpointActorName);
 
-            var response = await WithScopedBackendPreferenceAsync(
-                    ComputeBackendPreference,
-                    () => Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
-                        IoGateway,
-                        new ProtoIo.SpawnBrainViaIO
-                        {
-                            Request = new ProtoControl.SpawnBrain
-                            {
-                                BrainDef = BrainDef
-                            }
-                        },
-                        TimeSpan.FromSeconds(70)))
+            var response = await RequestSpawnBrainAsync().ConfigureAwait(false);
+            var brainId = ResolveSpawnedBrainId(response);
+            await WaitForPlacementAssignmentAsync(brainId, cancellationToken).ConfigureAwait(false);
+            PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, IoGateway.Id);
+            RegisterBrainWithIo(brainId);
+            await WaitForBrainInfoRegistrationAsync(brainId, cancellationToken).ConfigureAwait(false);
+
+            if (WorkloadProfile == LocalRuntimeWorkloadProfile.ComputeDominantRecurrent)
+            {
+                await PrimeComputeDominantActivityAsync(brainId, cancellationToken).ConfigureAwait(false);
+            }
+
+            await ApplyBenchmarkSafeRuntimeConfigAsync(brainId).ConfigureAwait(false);
+            await WaitForRoutingStabilizationAsync(brainId, cancellationToken).ConfigureAwait(false);
+
+            return brainId;
+        }
+
+        private static HarnessActorNames CreateHarnessActorNames()
+            => new(
+                HiveMind: $"hive-{Guid.NewGuid():N}",
+                IoGateway: $"io-{Guid.NewGuid():N}",
+                Metadata: $"brain-info-{Guid.NewGuid():N}",
+                Worker: $"worker-{Guid.NewGuid():N}");
+
+        private static async Task WaitForWorkerEndpointBootstrapAsync(
+            IRootContext root,
+            PID worker,
+            CancellationToken cancellationToken)
+            => await WaitForAsync(
+                    async () =>
+                    {
+                        var snapshot = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                                worker,
+                                new WorkerNodeActor.GetWorkerNodeSnapshot())
+                            .ConfigureAwait(false);
+                        return snapshot.HiveMindEndpoint.HasValue && snapshot.IoGatewayEndpoint.HasValue;
+                    },
+                    WorkerEndpointBootstrapTimeout,
+                    cancellationToken)
                 .ConfigureAwait(false);
 
+        private Task<ProtoIo.SpawnBrainViaIOAck> RequestSpawnBrainAsync()
+            => WithScopedBackendPreferenceAsync(
+                ComputeBackendPreference,
+                () => Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                    IoGateway,
+                    new ProtoIo.SpawnBrainViaIO
+                    {
+                        Request = new ProtoControl.SpawnBrain
+                        {
+                            BrainDef = BrainDef
+                        }
+                    },
+                    SpawnBrainTimeout));
+
+        private static Guid ResolveSpawnedBrainId(ProtoIo.SpawnBrainViaIOAck response)
+        {
             if (response.Ack is null || !response.Ack.BrainId.TryToGuid(out var brainId) || brainId == Guid.Empty)
             {
                 throw new InvalidOperationException(
                     $"SpawnBrainViaIOAck did not return a brain id. failure={response.Ack?.FailureReasonCode} message={response.Ack?.FailureMessage}");
             }
 
-            await WaitForAsync(
+            return brainId;
+        }
+
+        private async Task WaitForPlacementAssignmentAsync(Guid brainId, CancellationToken cancellationToken)
+            => await WaitForAsync(
                     async () =>
                     {
                         var lifecycle = await Root.RequestAsync<ProtoControl.PlacementLifecycleInfo>(
@@ -216,12 +263,12 @@ public static partial class PerfProbeRunner
                         return lifecycle.LifecycleState is ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
                             or ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning;
                     },
-                    TimeSpan.FromSeconds(10),
+                    PlacementAssignmentTimeout,
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, IoGateway.Id);
-
+        private void RegisterBrainWithIo(Guid brainId)
+        {
             Root.Send(IoGateway, new ProtoIo.RegisterBrain
             {
                 BrainId = brainId.ToProtoUuid(),
@@ -233,8 +280,10 @@ public static partial class PerfProbeRunner
                 IoGatewayOwnsInputCoordinator = true,
                 IoGatewayOwnsOutputCoordinator = true
             });
+        }
 
-            await WaitForAsync(
+        private async Task WaitForBrainInfoRegistrationAsync(Guid brainId, CancellationToken cancellationToken)
+            => await WaitForAsync(
                     async () =>
                     {
                         var brainInfo = await Root.RequestAsync<ProtoIo.BrainInfo>(
@@ -246,132 +295,123 @@ public static partial class PerfProbeRunner
                             .ConfigureAwait(false);
                         return brainInfo.InputWidth >= InputWidth && brainInfo.OutputWidth >= DefaultOutputWidth;
                     },
-                    TimeSpan.FromSeconds(5),
+                    BrainInfoRegistrationTimeout,
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            if (WorkloadProfile == LocalRuntimeWorkloadProfile.ComputeDominantRecurrent)
-            {
-                await PrimeComputeDominantActivityAsync(brainId, cancellationToken).ConfigureAwait(false);
-            }
+        private async Task ApplyBenchmarkSafeRuntimeConfigAsync(Guid brainId)
+        {
+            var plasticityAck = await RequestIoCommandAckAsync(
+                    new ProtoIo.SetPlasticityEnabled
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        PlasticityEnabled = false,
+                        PlasticityRate = 0f,
+                        ProbabilisticUpdates = false,
+                        PlasticityDelta = 0f,
+                        PlasticityRebaseThreshold = 0,
+                        PlasticityRebaseThresholdPct = 0f,
+                        PlasticityEnergyCostModulationEnabled = false,
+                        PlasticityEnergyCostReferenceTickCost = 0,
+                        PlasticityEnergyCostResponseStrength = 1f,
+                        PlasticityEnergyCostMinScale = 1f,
+                        PlasticityEnergyCostMaxScale = 1f
+                    },
+                    $"Timed out applying perf plasticity config for brain {brainId:N}.")
+                .ConfigureAwait(false);
+            EnsureIoCommandSucceeded(
+                plasticityAck,
+                $"Failed to disable plasticity for perf brain {brainId:N}: {plasticityAck.Message}");
 
-            ProtoIo.IoCommandAck plasticityAck;
+            var homeostasisAck = await RequestIoCommandAckAsync(
+                    new ProtoIo.SetHomeostasisEnabled
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        HomeostasisEnabled = false,
+                        HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
+                        HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
+                        HomeostasisBaseProbability = 0f,
+                        HomeostasisMinStepCodes = 1,
+                        HomeostasisEnergyCouplingEnabled = false,
+                        HomeostasisEnergyTargetScale = 1f,
+                        HomeostasisEnergyProbabilityScale = 1f
+                    },
+                    $"Timed out applying perf homeostasis config for brain {brainId:N}.")
+                .ConfigureAwait(false);
+            EnsureIoCommandSucceeded(
+                homeostasisAck,
+                $"Failed to disable homeostasis for perf brain {brainId:N}: {homeostasisAck.Message}");
+        }
+
+        private async Task<ProtoIo.IoCommandAck> RequestIoCommandAckAsync(object command, string timeoutMessage)
+        {
             try
             {
-                plasticityAck = await Root.RequestAsync<ProtoIo.IoCommandAck>(
+                return await Root.RequestAsync<ProtoIo.IoCommandAck>(
                         IoGateway,
-                        new ProtoIo.SetPlasticityEnabled
-                        {
-                            BrainId = brainId.ToProtoUuid(),
-                            PlasticityEnabled = false,
-                            PlasticityRate = 0f,
-                            ProbabilisticUpdates = false,
-                            PlasticityDelta = 0f,
-                            PlasticityRebaseThreshold = 0,
-                            PlasticityRebaseThresholdPct = 0f,
-                            PlasticityEnergyCostModulationEnabled = false,
-                            PlasticityEnergyCostReferenceTickCost = 0,
-                            PlasticityEnergyCostResponseStrength = 1f,
-                            PlasticityEnergyCostMinScale = 1f,
-                            PlasticityEnergyCostMaxScale = 1f
-                        },
-                        TimeSpan.FromSeconds(2))
+                        command,
+                        PerfRuntimeConfigTimeout)
                     .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException(
-                    $"Timed out applying perf plasticity config for brain {brainId:N}.",
-                    ex);
+                throw new InvalidOperationException(timeoutMessage, ex);
             }
-            if (!plasticityAck.Success)
-            {
-                throw new InvalidOperationException(
-                    $"Failed to disable plasticity for perf brain {brainId:N}: {plasticityAck.Message}");
-            }
+        }
 
-            ProtoIo.IoCommandAck homeostasisAck;
-            try
+        private static void EnsureIoCommandSucceeded(ProtoIo.IoCommandAck ack, string failureMessage)
+        {
+            if (!ack.Success)
             {
-                homeostasisAck = await Root.RequestAsync<ProtoIo.IoCommandAck>(
-                        IoGateway,
-                        new ProtoIo.SetHomeostasisEnabled
-                        {
-                            BrainId = brainId.ToProtoUuid(),
-                            HomeostasisEnabled = false,
-                            HomeostasisTargetMode = ProtoControl.HomeostasisTargetMode.HomeostasisTargetZero,
-                            HomeostasisUpdateMode = ProtoControl.HomeostasisUpdateMode.HomeostasisUpdateProbabilisticQuantizedStep,
-                            HomeostasisBaseProbability = 0f,
-                            HomeostasisMinStepCodes = 1,
-                            HomeostasisEnergyCouplingEnabled = false,
-                            HomeostasisEnergyTargetScale = 1f,
-                            HomeostasisEnergyProbabilityScale = 1f
-                        },
-                        TimeSpan.FromSeconds(2))
-                    .ConfigureAwait(false);
+                throw new InvalidOperationException(failureMessage);
             }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException(
-                    $"Timed out applying perf homeostasis config for brain {brainId:N}.",
-                    ex);
-            }
-            if (!homeostasisAck.Success)
-            {
-                throw new InvalidOperationException(
-                    $"Failed to disable homeostasis for perf brain {brainId:N}: {homeostasisAck.Message}");
-            }
+        }
 
-            WorkerNodeActor.HostedBrainSnapshot? lastHosted = null;
-            ProtoControl.BrainRoutingInfo? lastHiveRouting = null;
-            var lastControlPid = "<none>";
-            var lastHiddenRoutePresent = false;
-            var lastControllerRouteCount = -1;
-            var routingReadyDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        private async Task WaitForRoutingStabilizationAsync(Guid brainId, CancellationToken cancellationToken)
+        {
+            var observation = new RoutingReadinessObservation();
+            var deadline = DateTime.UtcNow + RoutingStabilizationTimeout;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (DateTime.UtcNow >= routingReadyDeadline)
+                if (DateTime.UtcNow >= deadline)
                 {
-                    throw new InvalidOperationException(
-                        $"Local runtime routing did not stabilize for brain {brainId:N}. " +
-                        $"hostedControl={lastControlPid} regionShards={lastHosted?.RegionShardCount ?? 0} hiddenShard={FormatPid(lastHosted?.HiddenShardPid)} " +
-                        $"hiveRoot={lastHiveRouting?.BrainRootPid ?? "<none>"} hiveRouter={lastHiveRouting?.SignalRouterPid ?? "<none>"} " +
-                        $"hiveShardCount={lastHiveRouting?.ShardCount ?? 0} hiveRoutingCount={lastHiveRouting?.RoutingCount ?? 0} " +
-                        $"controllerRouteCount={lastControllerRouteCount} hiddenRoutePresent={lastHiddenRoutePresent}");
+                    throw new InvalidOperationException(observation.BuildFailureMessage(brainId));
                 }
 
-                lastHosted = await Root.RequestAsync<WorkerNodeActor.HostedBrainSnapshot>(
+                observation.LastHosted = await Root.RequestAsync<WorkerNodeActor.HostedBrainSnapshot>(
                         Worker,
                         new WorkerNodeActor.GetHostedBrainSnapshot(brainId),
-                        TimeSpan.FromSeconds(2))
+                        BackendProbeTimeout)
                     .ConfigureAwait(false);
-                if (lastHosted.RegionShardCount == 0 || lastHosted.HiddenShardPid is null)
+                if (observation.LastHosted.RegionShardCount == 0 || observation.LastHosted.HiddenShardPid is null)
                 {
                     await Task.Delay(50, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                var controlPid = lastHosted.SignalRouterPid ?? lastHosted.BrainRootPid;
+                var controlPid = observation.LastHosted.SignalRouterPid ?? observation.LastHosted.BrainRootPid;
                 if (controlPid is null)
                 {
                     await Task.Delay(50, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
-                lastControlPid = FormatPid(controlPid);
-                lastHiveRouting = await Root.RequestAsync<ProtoControl.BrainRoutingInfo>(
+                observation.LastControlPid = FormatPid(controlPid);
+                observation.LastHiveRouting = await Root.RequestAsync<ProtoControl.BrainRoutingInfo>(
                         HiveMind,
                         new ProtoControl.GetBrainRouting
                         {
                             BrainId = brainId.ToProtoUuid()
                         },
-                        TimeSpan.FromSeconds(2))
+                        BackendProbeTimeout)
                     .ConfigureAwait(false);
                 var controlKnownByHiveMind =
-                    PidLabelRefersToActor(lastHiveRouting.SignalRouterPid, controlPid)
-                    || PidLabelRefersToActor(lastHiveRouting.BrainRootPid, controlPid);
-                if (!controlKnownByHiveMind || lastHiveRouting.ShardCount == 0 || lastHiveRouting.RoutingCount == 0)
+                    PidLabelRefersToActor(observation.LastHiveRouting.SignalRouterPid, controlPid)
+                    || PidLabelRefersToActor(observation.LastHiveRouting.BrainRootPid, controlPid);
+                if (!controlKnownByHiveMind
+                    || observation.LastHiveRouting.ShardCount == 0
+                    || observation.LastHiveRouting.RoutingCount == 0)
                 {
                     await Task.Delay(50, cancellationToken).ConfigureAwait(false);
                     continue;
@@ -380,19 +420,17 @@ public static partial class PerfProbeRunner
                 var routing = await Root.RequestAsync<RoutingTableSnapshot>(
                         controlPid,
                         new GetRoutingTable(),
-                        TimeSpan.FromSeconds(2))
+                        BackendProbeTimeout)
                     .ConfigureAwait(false);
-                lastControllerRouteCount = routing.Count;
-                lastHiddenRoutePresent = routing.Routes.Any(static route => route.ShardId.RegionId == 1 && route.ShardId.ShardIndex == 0);
-                if (lastHiddenRoutePresent)
+                observation.LastControllerRouteCount = routing.Count;
+                observation.LastHiddenRoutePresent = routing.Routes.Any(static route => route.ShardId.RegionId == 1 && route.ShardId.ShardIndex == 0);
+                if (observation.LastHiddenRoutePresent)
                 {
-                    break;
+                    return;
                 }
 
                 await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             }
-
-            return brainId;
         }
 
         private async Task PrimeComputeDominantActivityAsync(Guid brainId, CancellationToken cancellationToken)
@@ -429,6 +467,9 @@ public static partial class PerfProbeRunner
             return seeds;
         }
 
+        /// <summary>
+        /// Confirms that the hidden shard executed on the requested backend when backend forcing is enabled.
+        /// </summary>
         public async Task<string?> VerifyBackendExecutionAsync(
             IReadOnlyCollection<Guid> brainIds,
             CancellationToken cancellationToken)
@@ -447,7 +488,7 @@ public static partial class PerfProbeRunner
                     info = await Root.RequestAsync<RegionShardBackendExecutionInfo>(
                             Worker,
                             new WorkerNodeActor.GetHostedRegionShardBackendExecutionInfo(brainId, RegionId: 1, ShardIndex: 0),
-                            TimeSpan.FromSeconds(2))
+                            BackendProbeTimeout)
                         .ConfigureAwait(false);
                     if (info.HasExecuted)
                     {
@@ -482,6 +523,9 @@ public static partial class PerfProbeRunner
             return null;
         }
 
+        /// <summary>
+        /// Measures observed HiveMind tick throughput while the harness applies the requested input load profile.
+        /// </summary>
         public async Task<double> MeasureTickRateAsync(
             IReadOnlyCollection<Guid> brainIds,
             float targetTickHz,
@@ -645,6 +689,28 @@ public static partial class PerfProbeRunner
                     previous);
                 BackendPreferenceGate.Release();
             }
+        }
+
+        private readonly record struct HarnessActorNames(
+            string HiveMind,
+            string IoGateway,
+            string Metadata,
+            string Worker);
+
+        private sealed class RoutingReadinessObservation
+        {
+            public WorkerNodeActor.HostedBrainSnapshot? LastHosted { get; set; }
+            public ProtoControl.BrainRoutingInfo? LastHiveRouting { get; set; }
+            public string LastControlPid { get; set; } = "<none>";
+            public bool LastHiddenRoutePresent { get; set; }
+            public int LastControllerRouteCount { get; set; } = -1;
+
+            public string BuildFailureMessage(Guid brainId)
+                => $"Local runtime routing did not stabilize for brain {brainId:N}. " +
+                   $"hostedControl={LastControlPid} regionShards={LastHosted?.RegionShardCount ?? 0} hiddenShard={FormatPid(LastHosted?.HiddenShardPid)} " +
+                   $"hiveRoot={LastHiveRouting?.BrainRootPid ?? "<none>"} hiveRouter={LastHiveRouting?.SignalRouterPid ?? "<none>"} " +
+                   $"hiveShardCount={LastHiveRouting?.ShardCount ?? 0} hiveRoutingCount={LastHiveRouting?.RoutingCount ?? 0} " +
+                   $"controllerRouteCount={LastControllerRouteCount} hiddenRoutePresent={LastHiddenRoutePresent}";
         }
     }
 

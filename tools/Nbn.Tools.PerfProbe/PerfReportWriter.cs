@@ -4,8 +4,15 @@ using System.Text.Json;
 
 namespace Nbn.Tools.PerfProbe;
 
+/// <summary>
+/// Writes PerfProbe reports in the stable artifact formats consumed by operators and tests.
+/// </summary>
 public static class PerfReportWriter
 {
+    private const string JsonReportFileName = "perf-report.json";
+    private const string CsvReportFileName = "perf-report.csv";
+    private const string MarkdownReportFileName = "perf-report.md";
+    private const string HtmlReportFileName = "perf-report.html";
     private const string BrandIconFileName = "nbn-soft-gold-right-n-icon.png";
     private const string BrandIconResourceName = "Nbn.Tools.PerfProbe.Branding.nbn-soft-gold-right-n-icon.png";
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -14,6 +21,9 @@ public static class PerfReportWriter
     };
     private static readonly byte[] BrandIconBytes = LoadBrandIconBytes();
 
+    /// <summary>
+    /// Writes the JSON, CSV, Markdown, HTML, and branding assets for a completed probe run.
+    /// </summary>
     public static async Task WriteAsync(
         PerfReport report,
         string outputDirectory,
@@ -21,39 +31,35 @@ public static class PerfReportWriter
     {
         Directory.CreateDirectory(outputDirectory);
 
-        var jsonPath = Path.Combine(outputDirectory, "perf-report.json");
-        var csvPath = Path.Combine(outputDirectory, "perf-report.csv");
-        var markdownPath = Path.Combine(outputDirectory, "perf-report.md");
-        var htmlPath = Path.Combine(outputDirectory, "perf-report.html");
-        var brandIconPath = Path.Combine(outputDirectory, BrandIconFileName);
+        var artifactPaths = ResolveArtifactPaths(outputDirectory);
 
-        await File.WriteAllBytesAsync(brandIconPath, BrandIconBytes, cancellationToken);
-        await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(report, JsonOptions), cancellationToken);
-        await File.WriteAllTextAsync(csvPath, BuildCsv(report), cancellationToken);
-        await File.WriteAllTextAsync(markdownPath, BuildMarkdown(report), cancellationToken);
-        await File.WriteAllTextAsync(htmlPath, BuildHtml(report), cancellationToken);
+        await File.WriteAllBytesAsync(artifactPaths.BrandIconPath, BrandIconBytes, cancellationToken);
+        await File.WriteAllTextAsync(artifactPaths.JsonPath, JsonSerializer.Serialize(report, JsonOptions), cancellationToken);
+        await File.WriteAllTextAsync(artifactPaths.CsvPath, BuildCsv(report), cancellationToken);
+        await File.WriteAllTextAsync(artifactPaths.MarkdownPath, BuildMarkdown(report), cancellationToken);
+        await File.WriteAllTextAsync(artifactPaths.HtmlPath, BuildHtml(report), cancellationToken);
     }
 
+    /// <summary>
+    /// Builds the stable CSV export for a probe run.
+    /// </summary>
     public static string BuildCsv(PerfReport report)
     {
         var builder = new StringBuilder();
         builder.AppendLine("suite,scenario,backend,status,duration_ms,summary,skip_reason,failure,primary_metric_label,primary_metric_value,parameters_json,metrics_json");
         foreach (var scenario in report.Scenarios)
         {
-            var primaryValue = scenario.TryResolvePrimaryMetric(out var value)
-                ? value.ToString("0.###", CultureInfo.InvariantCulture)
-                : string.Empty;
             builder.AppendLine(string.Join(",",
                 EscapeCsv(scenario.Suite),
                 EscapeCsv(scenario.Scenario),
                 EscapeCsv(scenario.Backend),
                 EscapeCsv(scenario.Status.ToString()),
-                EscapeCsv(scenario.DurationMs.ToString("0.###", CultureInfo.InvariantCulture)),
+                EscapeCsv(FormatMetricValue(scenario.DurationMs)),
                 EscapeCsv(scenario.Summary),
                 EscapeCsv(scenario.SkipReason ?? string.Empty),
                 EscapeCsv(scenario.Failure ?? string.Empty),
                 EscapeCsv(scenario.PrimaryMetricLabel),
-                EscapeCsv(primaryValue),
+                EscapeCsv(FormatPrimaryMetricValueForCsv(scenario)),
                 EscapeCsv(JsonSerializer.Serialize(scenario.Parameters, JsonOptions)),
                 EscapeCsv(JsonSerializer.Serialize(scenario.Metrics, JsonOptions))));
         }
@@ -61,6 +67,9 @@ public static class PerfReportWriter
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Builds the Markdown summary report for a probe run.
+    /// </summary>
     public static string BuildMarkdown(PerfReport report)
     {
         var builder = new StringBuilder();
@@ -76,16 +85,16 @@ public static class PerfReportWriter
 
         foreach (var scenario in report.Scenarios)
         {
-            var primaryMetric = scenario.TryResolvePrimaryMetric(out var value)
-                ? $"{scenario.PrimaryMetricLabel}={value:0.###}"
-                : "(none)";
             builder.AppendLine(
-                $"| {EscapeMarkdown(scenario.Suite)} | {EscapeMarkdown(scenario.Scenario)} | {EscapeMarkdown(scenario.Backend)} | {scenario.Status} | {scenario.DurationMs:0.###} | {EscapeMarkdown(primaryMetric)} | {EscapeMarkdown(FormatKeyValueSummary(scenario.Metrics))} | {EscapeMarkdown(scenario.Summary)} |");
+                $"| {EscapeMarkdown(scenario.Suite)} | {EscapeMarkdown(scenario.Scenario)} | {EscapeMarkdown(scenario.Backend)} | {scenario.Status} | {FormatMetricValue(scenario.DurationMs)} | {EscapeMarkdown(FormatPrimaryMetric(scenario))} | {EscapeMarkdown(FormatKeyValueSummary(scenario.Metrics))} | {EscapeMarkdown(scenario.Summary)} |");
         }
 
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Builds the HTML report, including the scenario chart and tabular summary.
+    /// </summary>
     public static string BuildHtml(PerfReport report)
     {
         const double svgWidth = 1280d;
@@ -218,15 +227,6 @@ public static class PerfReportWriter
             PerfScenarioStatus.Failed => "status-failed",
             _ => string.Empty
         };
-        var primaryMetric = scenario.TryResolvePrimaryMetric(out var value)
-            ? $"{scenario.PrimaryMetricLabel}={value:0.###}"
-            : "(none)";
-        var summary = scenario.Status switch
-        {
-            PerfScenarioStatus.Skipped when !string.IsNullOrWhiteSpace(scenario.SkipReason) => $"{scenario.Summary} [{scenario.SkipReason}]",
-            PerfScenarioStatus.Failed when !string.IsNullOrWhiteSpace(scenario.Failure) => $"{scenario.Summary} [{scenario.Failure}]",
-            _ => scenario.Summary
-        };
 
         return $$"""
         <tr>
@@ -234,13 +234,31 @@ public static class PerfReportWriter
           <td>{{EscapeHtml(scenario.Scenario)}}</td>
           <td>{{EscapeHtml(scenario.Backend)}}</td>
           <td class="{{statusClass}}">{{scenario.Status}}</td>
-          <td>{{scenario.DurationMs.ToString("0.###", CultureInfo.InvariantCulture)}}</td>
-          <td>{{EscapeHtml(primaryMetric)}}</td>
+          <td>{{FormatMetricValue(scenario.DurationMs)}}</td>
+          <td>{{EscapeHtml(FormatPrimaryMetric(scenario))}}</td>
           <td>{{EscapeHtml(FormatKeyValueSummary(scenario.Metrics))}}</td>
-          <td>{{EscapeHtml(summary)}}</td>
+          <td>{{EscapeHtml(FormatTableSummary(scenario))}}</td>
         </tr>
 """;
     }
+
+    private static string FormatPrimaryMetric(PerfScenarioResult scenario)
+        => scenario.TryResolvePrimaryMetric(out var value)
+            ? $"{scenario.PrimaryMetricLabel}={FormatMetricValue(value)}"
+            : "(none)";
+
+    private static string FormatPrimaryMetricValueForCsv(PerfScenarioResult scenario)
+        => scenario.TryResolvePrimaryMetric(out var value)
+            ? FormatMetricValue(value)
+            : string.Empty;
+
+    private static string FormatTableSummary(PerfScenarioResult scenario)
+        => scenario.Status switch
+        {
+            PerfScenarioStatus.Skipped when !string.IsNullOrWhiteSpace(scenario.SkipReason) => $"{scenario.Summary} [{scenario.SkipReason}]",
+            PerfScenarioStatus.Failed when !string.IsNullOrWhiteSpace(scenario.Failure) => $"{scenario.Summary} [{scenario.Failure}]",
+            _ => scenario.Summary
+        };
 
     private static string FormatKeyValueSummary(IReadOnlyDictionary<string, double> values)
     {
@@ -253,18 +271,11 @@ public static class PerfReportWriter
             "; ",
             values
                 .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
-                .Select(pair => $"{pair.Key}={pair.Value:0.###}"));
+                .Select(pair => $"{pair.Key}={FormatMetricValue(pair.Value)}"));
     }
 
-    private static string TruncateText(string value, int maxLength)
-    {
-        if (value.Length <= maxLength)
-        {
-            return value;
-        }
-
-        return value[..Math.Max(0, maxLength - 3)] + "...";
-    }
+    private static string FormatMetricValue(double value)
+        => value.ToString("0.###", CultureInfo.InvariantCulture);
 
     private static string EscapeCsv(string value)
         => $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
@@ -287,4 +298,19 @@ public static class PerfReportWriter
         stream.CopyTo(memory);
         return memory.ToArray();
     }
+
+    private static ArtifactPaths ResolveArtifactPaths(string outputDirectory)
+        => new(
+            JsonPath: Path.Combine(outputDirectory, JsonReportFileName),
+            CsvPath: Path.Combine(outputDirectory, CsvReportFileName),
+            MarkdownPath: Path.Combine(outputDirectory, MarkdownReportFileName),
+            HtmlPath: Path.Combine(outputDirectory, HtmlReportFileName),
+            BrandIconPath: Path.Combine(outputDirectory, BrandIconFileName));
+
+    private readonly record struct ArtifactPaths(
+        string JsonPath,
+        string CsvPath,
+        string MarkdownPath,
+        string HtmlPath,
+        string BrandIconPath);
 }
