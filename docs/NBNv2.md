@@ -68,7 +68,7 @@ NBN is not an ML training framework (no backpropagation/gradient descent).
 * `Nbn.Shared`: shared contracts/helpers (addressing, quantization, generated proto code, validation).
 * Runtime service roots: `Nbn.Runtime.SettingsMonitor`, `Nbn.Runtime.HiveMind`, `Nbn.Runtime.Reproduction`, `Nbn.Runtime.IO`, `Nbn.Runtime.Observability`, `Nbn.Runtime.Artifacts`.
 * Runtime execution: `Nbn.Runtime.Brain` (BrainRoot/BrainSignalRouter) and `Nbn.Runtime.RegionHost` (RegionShard workers, optional debug mirrors).
-* Tools/UI: `Nbn.Tools.Workbench` (orchestrator, designer, visualizer, debug/IO/energy/reproduction consoles), `Nbn.Tools.EvolutionSim` (standalone artifact-first evolution/speciation stress simulator).
+* Tools/UI: `Nbn.Tools.Workbench` (operator desktop over runtime APIs and local launch helpers), `Nbn.Tools.EvolutionSim` (standalone artifact-first evolution/speciation stress simulator), `Nbn.Tools.PerfProbe` (placement/runtime profiling and report generation).
 * Tests: `Nbn.Tests` (format, simulation, parity, reproduction).
 
 ## 3. Distributed architecture and service topology
