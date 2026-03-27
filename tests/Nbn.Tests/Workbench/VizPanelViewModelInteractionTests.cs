@@ -52,6 +52,16 @@ public class VizPanelViewModelInteractionTests
             "NormalizeCanvasLayout",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("NormalizeCanvasLayout method not found.");
+    private static readonly MethodInfo BuildProjectionAndCanvasSnapshotMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "BuildProjectionAndCanvasSnapshot",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("BuildProjectionAndCanvasSnapshot method not found.");
+    private static readonly MethodInfo ApplyProjectionAndCanvasSnapshotMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "ApplyProjectionAndCanvasSnapshot",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("ApplyProjectionAndCanvasSnapshot method not found.");
     private static readonly MethodInfo EnsureDefinitionTopologyCoverageMethod =
         typeof(VizPanelViewModel).GetMethod(
             "EnsureDefinitionTopologyCoverage",
@@ -102,6 +112,11 @@ public class VizPanelViewModelInteractionTests
             "_pinnedCanvasRoutes",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("_pinnedCanvasRoutes field not found.");
+    private static readonly FieldInfo ProjectionLayoutRefreshVersionField =
+        typeof(VizPanelViewModel).GetField(
+            "_projectionLayoutRefreshVersion",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_projectionLayoutRefreshVersion field not found.");
     private static readonly MethodInfo ApplyVisualizationCadenceAsyncMethod =
         typeof(VizPanelViewModel).GetMethod(
             "ApplyVisualizationCadenceAsync",
@@ -1860,6 +1875,53 @@ public class VizPanelViewModelInteractionTests
         Assert.True(rebased);
     }
 
+    [Fact]
+    public void ApplyProjectionAndCanvasSnapshot_StaleVersionDoesNotOverwriteNewerProjection()
+    {
+        var vm = CreateViewModel();
+        var options = new VizActivityProjectionOptions(TickWindow: 64, IncludeLowSignalEvents: false, FocusRegionId: null);
+        var staleSnapshot = BuildProjectionCanvasSnapshot(
+            vm,
+            Array.Empty<VizEventItem>(),
+            options,
+            VizActivityCanvasColorMode.Topology);
+        var freshSnapshot = BuildProjectionCanvasSnapshot(
+            vm,
+            new[]
+            {
+                CreateVizEvent(
+                    type: VizEventType.VizAxonSent.ToString(),
+                    brainId: Guid.Empty.ToString("D"),
+                    tickId: 100,
+                    region: "1",
+                    source: "65537",
+                    target: "131073",
+                    value: 0.9f,
+                    strength: 0.3f)
+            },
+            options,
+            VizActivityCanvasColorMode.Topology);
+
+        ProjectionLayoutRefreshVersionField.SetValue(vm, 2);
+        ApplyProjectionAndCanvasSnapshotMethod.Invoke(vm, new[] { 2, freshSnapshot });
+
+        var expectedSummary = vm.ActivitySummary;
+        var expectedLegend = vm.ActivityCanvasLegend;
+        var expectedNodeCount = vm.CanvasNodes.Count;
+        var expectedTickCount = vm.TickActivity.Count;
+        var expectedMiniRange = vm.MiniActivityChartRangeLabel;
+
+        ApplyProjectionAndCanvasSnapshotMethod.Invoke(vm, new[] { 1, staleSnapshot });
+
+        Assert.Equal(expectedSummary, vm.ActivitySummary);
+        Assert.Equal(expectedLegend, vm.ActivityCanvasLegend);
+        Assert.Equal(expectedNodeCount, vm.CanvasNodes.Count);
+        Assert.Equal(expectedTickCount, vm.TickActivity.Count);
+        Assert.Equal(expectedMiniRange, vm.MiniActivityChartRangeLabel);
+        Assert.NotEqual("No visualization events in the current filter.", vm.ActivitySummary);
+        Assert.NotEmpty(vm.CanvasNodes);
+    }
+
     private static void UpdateInteractionSummaries(
         VizPanelViewModel vm,
         IReadOnlyList<VizActivityCanvasNode> nodes,
@@ -1958,6 +2020,26 @@ public class VizPanelViewModelInteractionTests
         Assert.NotNull(task);
         await task!;
         return task.GetType().GetProperty("Result", BindingFlags.Instance | BindingFlags.Public)?.GetValue(task);
+    }
+
+    private static object BuildProjectionCanvasSnapshot(
+        VizPanelViewModel vm,
+        IReadOnlyList<VizEventItem> events,
+        VizActivityProjectionOptions options,
+        VizActivityCanvasColorMode colorMode)
+    {
+        return BuildProjectionAndCanvasSnapshotMethod.Invoke(
+            vm,
+            new object?[]
+            {
+                events,
+                options,
+                VizActivityCanvasTopology.Empty,
+                VizActivityCanvasInteractionState.Empty,
+                colorMode,
+                VizActivityCanvasRenderOptions.Default,
+                CancellationToken.None
+            })!;
     }
 
     private static object? GetAttemptTopology(object? attempt)
