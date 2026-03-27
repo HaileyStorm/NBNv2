@@ -2,7 +2,6 @@ using System.Diagnostics;
 using Google.Protobuf;
 using Nbn.Proto;
 using Nbn.Proto.Control;
-using Nbn.Runtime.Brain;
 using Nbn.Shared;
 using Proto;
 using SharedShardId32 = Nbn.Shared.Addressing.ShardId32;
@@ -13,152 +12,34 @@ public sealed partial class WorkerNodeActor
 {
     private async Task HandlePlacementAssignmentAsync(IContext context, PlacementAssignmentRequest request)
     {
-        var assignment = request.Assignment;
-        if (assignment is null)
+        if (!TryValidatePlacementRequest(request.Assignment, out var validated, out var validationFailure))
         {
-            RespondFailedPlacement(context, FailedAck(
-                assignmentId: string.Empty,
-                brainId: null,
-                placementEpoch: 0,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "assignment payload was empty"), PlacementAssignmentTarget.PlacementTargetUnknown);
+            RespondFailedPlacement(
+                context,
+                FailedAck(
+                    validationFailure.AssignmentId,
+                    validationFailure.BrainId,
+                    validationFailure.PlacementEpoch,
+                    validationFailure.FailureReason,
+                    validationFailure.Message),
+                validationFailure.Target);
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
+        var assignment = validated.Assignment;
+        if (!TryValidateAssignmentTargetRole(context, assignment))
         {
-            RespondFailedPlacement(context, FailedAck(
-                assignmentId: string.Empty,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "assignment_id is required"), assignment.Target);
-            return;
-        }
-
-        if (assignment.BrainId is null || !assignment.BrainId.TryToGuid(out var brainId))
-        {
-            RespondFailedPlacement(context, FailedAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "brain_id was invalid"), assignment.Target);
-            return;
-        }
-
-        if (!assignment.WorkerNodeId.TryToGuid(out var targetWorkerNodeId))
-        {
-            RespondFailedPlacement(context, FailedAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "worker_node_id was invalid"), assignment.Target);
-            return;
-        }
-
-        if (targetWorkerNodeId != _workerNodeId)
-        {
-            RespondFailedPlacement(context, FailedAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}"), assignment.Target);
-            return;
-        }
-
-        if (!IsTargetRoleEnabled(assignment.Target, out var requiredRole))
-        {
-            var roleToken = WorkerServiceRoles.ToRoleToken(requiredRole);
-            var targetToken = ToPlacementTargetLabel(assignment.Target);
-            RespondFailedPlacement(context, FailedAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureAssignmentRejected,
-                $"assignment target '{targetToken}' requires service role '{roleToken}', but that role is disabled on worker {_workerNodeId}. Enable it with --service-role {roleToken} or --service-roles all."), assignment.Target);
             return;
         }
 
         MaybeCaptureHiveMindHint(context.Sender);
 
-        var brain = GetOrCreateBrainState(brainId);
-
-        if (assignment.PlacementEpoch < brain.PlacementEpoch)
+        var brain = GetOrCreateBrainState(validated.BrainId);
+        if (!TryPrepareBrainForAssignment(context, brain, assignment)
+            || !TryReuseOrRejectExistingAssignment(context, assignment)
+            || !await EnsureAssignmentMetadataAsync(context, brain, assignment).ConfigureAwait(false))
         {
-            RespondFailedPlacement(context, FailedAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                $"assignment epoch {assignment.PlacementEpoch} is older than hosted epoch {brain.PlacementEpoch}"), assignment.Target);
             return;
-        }
-
-        if (assignment.PlacementEpoch > brain.PlacementEpoch)
-        {
-            ResetBrainState(context, brain);
-            brain.PlacementEpoch = assignment.PlacementEpoch;
-        }
-        else if (brain.PlacementEpoch == 0)
-        {
-            brain.PlacementEpoch = assignment.PlacementEpoch;
-        }
-
-        if (_assignments.TryGetValue(assignment.AssignmentId, out var existing))
-        {
-            var existingAssignment = existing.Assignment;
-            if (existing.State == PlacementAssignmentState.PlacementAssignmentReady
-                && AssignmentSemanticallyMatches(existingAssignment, assignment))
-            {
-                RespondReadyPlacement(context, existing.Assignment, "already_ready", hostingMs: 0);
-                return;
-            }
-
-            if (existing.State == PlacementAssignmentState.PlacementAssignmentReady)
-            {
-                RespondFailedPlacement(context, FailedAck(
-                    assignment.AssignmentId,
-                    assignment.BrainId,
-                    assignment.PlacementEpoch,
-                    PlacementFailureReason.PlacementFailureAssignmentRejected,
-                    "assignment_id conflicts with an existing ready assignment"), assignment.Target);
-                return;
-            }
-        }
-
-        if (assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard)
-        {
-            var metadataReady = await EnsureRuntimeInfoAsync(context, brain, requireArtifacts: true).ConfigureAwait(false);
-            var requesterIsEphemeral = IsEphemeralRequestSender(context.Sender);
-            var shouldRequireArtifacts = HasKnownIoGatewayEndpoint() || HasHiveMindHint() || !requesterIsEphemeral;
-            if (!metadataReady && shouldRequireArtifacts)
-            {
-                var ioError = string.IsNullOrWhiteSpace(brain.RuntimeInfo?.LastIoError)
-                    ? "metadata_unavailable"
-                    : brain.RuntimeInfo!.LastIoError;
-
-                if (LogRuntimeMetadataDiagnostics)
-                {
-                    Console.WriteLine(
-                        $"[WorkerNode] Region shard placement deferred pending artifact metadata. brain={brain.BrainId} assignment={assignment.AssignmentId} region={assignment.RegionId} shard={assignment.ShardIndex} hasIoEndpoint={HasKnownIoGatewayEndpoint()} hasHiveHint={HasHiveMindHint()} ioError={ioError}");
-                }
-
-                RespondFailedPlacement(
-                    context,
-                    FailedAck(
-                        assignment.AssignmentId,
-                        assignment.BrainId,
-                        assignment.PlacementEpoch,
-                        PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                        $"artifact metadata unavailable for brain {brain.BrainId}; retry when IO/Hive metadata is ready (detail={ioError})",
-                        retryable: true,
-                        retryAfterMs: (ulong)Math.Max(50, RuntimeMetadataRetryDelay.TotalMilliseconds)),
-                    assignment.Target);
-                return;
-            }
         }
 
         var hostingStarted = Stopwatch.GetTimestamp();
@@ -170,82 +51,26 @@ public sealed partial class WorkerNodeActor
             return;
         }
 
-        var hostedState = new HostedAssignmentState(hosted.Assignment!, hosted.HostedPid)
-        {
-            State = PlacementAssignmentState.PlacementAssignmentReady,
-            Message = "ready"
-        };
-
-        _assignments[assignment.AssignmentId] = hostedState;
-        brain.Assignments[assignment.AssignmentId] = hostedState;
-        UpdateRuntimeWidthsFromShards(brain);
-        UpdateInputCoordinatorWidth(context, brain);
-        UpdateOutputCoordinatorWidth(context, brain);
-        PushRouting(context, brain);
-        PushShardEndpoints(context, brain);
-        PushIoGatewayRegistration(context, brain);
-        RegisterOutputSink(context, brain);
-
+        RegisterHostedAssignment(context, brain, hosted);
         RespondReadyPlacement(context, hosted.Assignment!, "ready", hostingMs);
     }
 
     private void HandlePlacementUnassignment(IContext context, PlacementUnassignmentRequest request)
     {
-        var assignment = request.Assignment;
-        if (assignment is null)
+        if (!TryValidatePlacementRequest(request.Assignment, out var validated, out var validationFailure))
         {
-            ReplyToSender(context, FailedUnassignmentAck(
-                assignmentId: string.Empty,
-                brainId: null,
-                placementEpoch: 0,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "assignment payload was empty"));
+            ReplyToSender(
+                context,
+                FailedUnassignmentAck(
+                    validationFailure.AssignmentId,
+                    validationFailure.BrainId,
+                    validationFailure.PlacementEpoch,
+                    validationFailure.FailureReason,
+                    validationFailure.Message));
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
-        {
-            ReplyToSender(context, FailedUnassignmentAck(
-                assignmentId: string.Empty,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "assignment_id is required"));
-            return;
-        }
-
-        if (assignment.BrainId is null || !assignment.BrainId.TryToGuid(out var brainId))
-        {
-            ReplyToSender(context, FailedUnassignmentAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "brain_id was invalid"));
-            return;
-        }
-
-        if (!assignment.WorkerNodeId.TryToGuid(out var targetWorkerNodeId))
-        {
-            ReplyToSender(context, FailedUnassignmentAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureInternalError,
-                "worker_node_id was invalid"));
-            return;
-        }
-
-        if (targetWorkerNodeId != _workerNodeId)
-        {
-            ReplyToSender(context, FailedUnassignmentAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}"));
-            return;
-        }
+        var assignment = validated.Assignment;
 
         MaybeCaptureHiveMindHint(context.Sender);
 
@@ -266,7 +91,7 @@ public sealed partial class WorkerNodeActor
             return;
         }
 
-        if (!_brains.TryGetValue(brainId, out var brain))
+        if (!_brains.TryGetValue(validated.BrainId, out var brain))
         {
             _assignments.Remove(assignment.AssignmentId);
             ReplyToSender(context, BuildUnassignmentAck(assignment, accepted: true, "already_unassigned"));
@@ -344,13 +169,244 @@ public sealed partial class WorkerNodeActor
             }
         }
 
+        PublishHostedBrainState(context, brain, refreshCoordinatorWidths: false, allowClearOutputSink: true);
+        return removed;
+    }
+
+    private bool TryValidatePlacementRequest(
+        PlacementAssignment? assignment,
+        out ValidatedPlacementRequest validated,
+        out PlacementValidationFailure failure)
+    {
+        if (assignment is null)
+        {
+            validated = default;
+            failure = new PlacementValidationFailure(
+                AssignmentId: string.Empty,
+                BrainId: null,
+                PlacementEpoch: 0,
+                FailureReason: PlacementFailureReason.PlacementFailureInternalError,
+                Message: "assignment payload was empty",
+                Target: PlacementAssignmentTarget.PlacementTargetUnknown);
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(assignment.AssignmentId))
+        {
+            validated = default;
+            failure = new PlacementValidationFailure(
+                AssignmentId: string.Empty,
+                BrainId: assignment.BrainId,
+                PlacementEpoch: assignment.PlacementEpoch,
+                FailureReason: PlacementFailureReason.PlacementFailureInternalError,
+                Message: "assignment_id is required",
+                Target: assignment.Target);
+            return false;
+        }
+
+        if (assignment.BrainId is null || !assignment.BrainId.TryToGuid(out var brainId))
+        {
+            validated = default;
+            failure = new PlacementValidationFailure(
+                AssignmentId: assignment.AssignmentId,
+                BrainId: assignment.BrainId,
+                PlacementEpoch: assignment.PlacementEpoch,
+                FailureReason: PlacementFailureReason.PlacementFailureInternalError,
+                Message: "brain_id was invalid",
+                Target: assignment.Target);
+            return false;
+        }
+
+        if (!assignment.WorkerNodeId.TryToGuid(out var targetWorkerNodeId))
+        {
+            validated = default;
+            failure = new PlacementValidationFailure(
+                AssignmentId: assignment.AssignmentId,
+                BrainId: assignment.BrainId,
+                PlacementEpoch: assignment.PlacementEpoch,
+                FailureReason: PlacementFailureReason.PlacementFailureInternalError,
+                Message: "worker_node_id was invalid",
+                Target: assignment.Target);
+            return false;
+        }
+
+        if (targetWorkerNodeId != _workerNodeId)
+        {
+            validated = default;
+            failure = new PlacementValidationFailure(
+                AssignmentId: assignment.AssignmentId,
+                BrainId: assignment.BrainId,
+                PlacementEpoch: assignment.PlacementEpoch,
+                FailureReason: PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                Message: $"assignment is for worker {targetWorkerNodeId}, not {_workerNodeId}",
+                Target: assignment.Target);
+            return false;
+        }
+
+        validated = new ValidatedPlacementRequest(assignment, brainId);
+        failure = default;
+        return true;
+    }
+
+    private bool TryValidateAssignmentTargetRole(IContext context, PlacementAssignment assignment)
+    {
+        if (IsTargetRoleEnabled(assignment.Target, out var requiredRole))
+        {
+            return true;
+        }
+
+        var roleToken = WorkerServiceRoles.ToRoleToken(requiredRole);
+        var targetToken = ToPlacementTargetLabel(assignment.Target);
+        RespondFailedPlacement(
+            context,
+            FailedAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureAssignmentRejected,
+                $"assignment target '{targetToken}' requires service role '{roleToken}', but that role is disabled on worker {_workerNodeId}. Enable it with --service-role {roleToken} or --service-roles all."),
+            assignment.Target);
+        return false;
+    }
+
+    private bool TryPrepareBrainForAssignment(IContext context, BrainHostingState brain, PlacementAssignment assignment)
+    {
+        if (assignment.PlacementEpoch < brain.PlacementEpoch)
+        {
+            RespondFailedPlacement(
+                context,
+                FailedAck(
+                    assignment.AssignmentId,
+                    assignment.BrainId,
+                    assignment.PlacementEpoch,
+                    PlacementFailureReason.PlacementFailureInternalError,
+                    $"assignment epoch {assignment.PlacementEpoch} is older than hosted epoch {brain.PlacementEpoch}"),
+                assignment.Target);
+            return false;
+        }
+
+        if (assignment.PlacementEpoch > brain.PlacementEpoch)
+        {
+            ResetBrainState(context, brain);
+            brain.PlacementEpoch = assignment.PlacementEpoch;
+        }
+        else if (brain.PlacementEpoch == 0)
+        {
+            brain.PlacementEpoch = assignment.PlacementEpoch;
+        }
+
+        return true;
+    }
+
+    private bool TryReuseOrRejectExistingAssignment(IContext context, PlacementAssignment assignment)
+    {
+        if (!_assignments.TryGetValue(assignment.AssignmentId, out var existing))
+        {
+            return true;
+        }
+
+        var existingAssignment = existing.Assignment;
+        if (existing.State == PlacementAssignmentState.PlacementAssignmentReady
+            && AssignmentSemanticallyMatches(existingAssignment, assignment))
+        {
+            RespondReadyPlacement(context, existing.Assignment, "already_ready", hostingMs: 0);
+            return false;
+        }
+
+        if (existing.State == PlacementAssignmentState.PlacementAssignmentReady)
+        {
+            RespondFailedPlacement(
+                context,
+                FailedAck(
+                    assignment.AssignmentId,
+                    assignment.BrainId,
+                    assignment.PlacementEpoch,
+                    PlacementFailureReason.PlacementFailureAssignmentRejected,
+                    "assignment_id conflicts with an existing ready assignment"),
+                assignment.Target);
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<bool> EnsureAssignmentMetadataAsync(
+        IContext context,
+        BrainHostingState brain,
+        PlacementAssignment assignment)
+    {
+        if (assignment.Target != PlacementAssignmentTarget.PlacementTargetRegionShard)
+        {
+            return true;
+        }
+
+        var metadataReady = await EnsureRuntimeInfoAsync(context, brain, requireArtifacts: true).ConfigureAwait(false);
+        var requesterIsEphemeral = IsEphemeralRequestSender(context.Sender);
+        var shouldRequireArtifacts = HasKnownIoGatewayEndpoint() || HasHiveMindHint() || !requesterIsEphemeral;
+        if (metadataReady || !shouldRequireArtifacts)
+        {
+            return true;
+        }
+
+        RespondArtifactMetadataUnavailable(context, brain, assignment);
+        return false;
+    }
+
+    private void RespondArtifactMetadataUnavailable(IContext context, BrainHostingState brain, PlacementAssignment assignment)
+    {
+        var ioError = string.IsNullOrWhiteSpace(brain.RuntimeInfo?.LastIoError)
+            ? "metadata_unavailable"
+            : brain.RuntimeInfo!.LastIoError;
+
+        if (LogRuntimeMetadataDiagnostics)
+        {
+            Console.WriteLine(
+                $"[WorkerNode] Region shard placement deferred pending artifact metadata. brain={brain.BrainId} assignment={assignment.AssignmentId} region={assignment.RegionId} shard={assignment.ShardIndex} hasIoEndpoint={HasKnownIoGatewayEndpoint()} hasHiveHint={HasHiveMindHint()} ioError={ioError}");
+        }
+
+        RespondFailedPlacement(
+            context,
+            FailedAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                $"artifact metadata unavailable for brain {brain.BrainId}; retry when IO/Hive metadata is ready (detail={ioError})",
+                retryable: true,
+                retryAfterMs: (ulong)Math.Max(50, RuntimeMetadataRetryDelay.TotalMilliseconds)),
+            assignment.Target);
+    }
+
+    private void RegisterHostedAssignment(IContext context, BrainHostingState brain, HostingResult hosted)
+    {
+        var assignment = hosted.Assignment!;
+        var hostedState = new HostedAssignmentState(assignment, hosted.HostedPid)
+        {
+            State = PlacementAssignmentState.PlacementAssignmentReady
+        };
+
+        _assignments[assignment.AssignmentId] = hostedState;
+        brain.Assignments[assignment.AssignmentId] = hostedState;
+        PublishHostedBrainState(context, brain, refreshCoordinatorWidths: true, allowClearOutputSink: false);
+    }
+
+    private void PublishHostedBrainState(
+        IContext context,
+        BrainHostingState brain,
+        bool refreshCoordinatorWidths,
+        bool allowClearOutputSink)
+    {
         UpdateRuntimeWidthsFromShards(brain);
+        if (refreshCoordinatorWidths)
+        {
+            UpdateInputCoordinatorWidth(context, brain);
+            UpdateOutputCoordinatorWidth(context, brain);
+        }
+
         PushRouting(context, brain);
         PushShardEndpoints(context, brain);
         PushIoGatewayRegistration(context, brain);
-        RegisterOutputSink(context, brain, allowClear: true);
-
-        return removed;
+        RegisterOutputSink(context, brain, allowClear: allowClearOutputSink);
     }
 
     private void HandlePlacementReconcile(IContext context, PlacementReconcileRequest request)
@@ -403,7 +459,7 @@ public sealed partial class WorkerNodeActor
 
     private void HandleWorkerCapabilityRefresh(IContext context, WorkerCapabilityRefreshRequest request)
     {
-        NotifyCapabilityProfileChanged();
+        _capabilityProfileChanged?.Invoke();
         ReplyToSender(context, new WorkerCapabilityRefreshAck
         {
             Accepted = true,
@@ -411,9 +467,6 @@ public sealed partial class WorkerNodeActor
             Message = "scheduled_for_next_heartbeat"
         });
     }
-
-    private void NotifyCapabilityProfileChanged()
-        => _capabilityProfileChanged?.Invoke();
 
     private async Task HandlePlacementPeerLatencyAsync(IContext context, PlacementPeerLatencyRequest request)
     {
@@ -535,7 +588,6 @@ public sealed partial class WorkerNodeActor
                 {
                     assignment.HostedPid = null;
                     assignment.State = PlacementAssignmentState.PlacementAssignmentFailed;
-                    assignment.Message = "terminated";
                 }
             }
         }
@@ -794,6 +846,16 @@ public sealed partial class WorkerNodeActor
 
     private PID ToObservedRemotePid(IContext context, PID pid)
         => ToRemotePid(context, pid);
+
+    private readonly record struct ValidatedPlacementRequest(PlacementAssignment Assignment, Guid BrainId);
+
+    private readonly record struct PlacementValidationFailure(
+        string AssignmentId,
+        Uuid? BrainId,
+        ulong PlacementEpoch,
+        PlacementFailureReason FailureReason,
+        string Message,
+        PlacementAssignmentTarget Target);
 
     private static PID? ResolvePeerLatencyProbePid(PlacementPeerTarget peer)
     {

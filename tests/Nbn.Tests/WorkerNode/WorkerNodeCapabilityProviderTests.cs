@@ -108,4 +108,84 @@ public sealed class WorkerNodeCapabilityProviderTests
         Assert.Equal(10f, fourth.CpuScore);
         Assert.Equal(20f, fifth.CpuScore);
     }
+
+    [Fact]
+    public void GetCapabilities_RebenchmarksWhenHardwareSignatureChanges()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var baselineCalls = 0;
+        var scoreCalls = 0;
+
+        var provider = new WorkerNodeCapabilityProvider(
+            probeRefreshInterval: TimeSpan.FromMinutes(1),
+            clock: () => now,
+            baselineProbe: () =>
+            {
+                baselineCalls++;
+                return baselineCalls == 1
+                    ? new WorkerNodeCapabilityProvider.WorkerCapabilityBaseline(
+                        CpuCores: 8,
+                        RamFreeBytes: 1_000,
+                        RamTotalBytes: 16_000,
+                        StorageFreeBytes: 2_000,
+                        StorageTotalBytes: 8_000,
+                        HasGpu: false,
+                        GpuName: string.Empty,
+                        VramFreeBytes: 0,
+                        VramTotalBytes: 0,
+                        IlgpuCudaAvailable: false,
+                        IlgpuOpenclAvailable: false)
+                    : new WorkerNodeCapabilityProvider.WorkerCapabilityBaseline(
+                        CpuCores: 8,
+                        RamFreeBytes: 1_500,
+                        RamTotalBytes: 16_000,
+                        StorageFreeBytes: 2_000,
+                        StorageTotalBytes: 8_000,
+                        HasGpu: true,
+                        GpuName: "gpu0",
+                        VramFreeBytes: 4_000,
+                        VramTotalBytes: 8_000,
+                        IlgpuCudaAvailable: true,
+                        IlgpuOpenclAvailable: false);
+            },
+            scoreProbe: _ =>
+            {
+                scoreCalls++;
+                return new WorkerNodeCapabilityProvider.WorkerCapabilityScores(
+                    CpuScore: 10f * scoreCalls,
+                    GpuScore: 20f * scoreCalls);
+            });
+
+        var first = provider.GetCapabilities();
+
+        now = now.AddMinutes(2);
+        var second = provider.GetCapabilities();
+
+        Assert.Equal(2, baselineCalls);
+        Assert.Equal(2, scoreCalls);
+        Assert.False(first.HasGpu);
+        Assert.True(second.HasGpu);
+        Assert.Equal(10f, first.CpuScore);
+        Assert.Equal(20f, second.CpuScore);
+        Assert.Equal(40f, second.GpuScore);
+    }
+
+    [Fact]
+    public void GetCapabilities_UsesFallbackBaselineAndEmptyScoresWhenProbesFail()
+    {
+        var provider = new WorkerNodeCapabilityProvider(
+            baselineProbe: () => throw new InvalidOperationException("baseline failed"),
+            scoreProbe: _ => throw new InvalidOperationException("score failed"));
+
+        var capabilities = provider.GetCapabilities();
+
+        Assert.Equal((uint)Math.Max(1, Environment.ProcessorCount), capabilities.CpuCores);
+        Assert.Equal(0f, capabilities.CpuScore);
+        Assert.Equal(0f, capabilities.GpuScore);
+        Assert.False(capabilities.HasGpu);
+        Assert.Equal(string.Empty, capabilities.GpuName);
+        Assert.Equal((ulong)0, capabilities.RamFreeBytes);
+        Assert.Equal((ulong)0, capabilities.StorageFreeBytes);
+        Assert.Equal((ulong)0, capabilities.VramFreeBytes);
+    }
 }

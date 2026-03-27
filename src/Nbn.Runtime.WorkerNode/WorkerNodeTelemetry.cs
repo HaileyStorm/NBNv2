@@ -4,6 +4,9 @@ using System.Diagnostics.Metrics;
 
 namespace Nbn.Runtime.WorkerNode;
 
+/// <summary>
+/// Emits placement, discovery, and capability-adjacent telemetry for WorkerNode runtime flows.
+/// </summary>
 public static class WorkerNodeTelemetry
 {
     private const string MeterName = "Nbn.Runtime.WorkerNode";
@@ -13,8 +16,6 @@ public static class WorkerNodeTelemetry
 
     private static readonly Meter Meter = new(MeterName);
     private static readonly ActivitySource ActivitySource = new(MeterName);
-
-    public static string MeterNameValue => Meter.Name;
 
     private static readonly Counter<long> PlacementAssignmentHostedAccepted =
         Meter.CreateCounter<long>("nbn.workernode.placement.assignment.hosted.accepted");
@@ -37,6 +38,14 @@ public static class WorkerNodeTelemetry
     private static readonly Counter<long> DiscoveryEndpointResolve =
         Meter.CreateCounter<long>("nbn.workernode.discovery.endpoint.resolve");
 
+    /// <summary>
+    /// Gets the <see cref="Meter"/> name used by WorkerNode runtime metrics.
+    /// </summary>
+    public static string MeterNameValue => Meter.Name;
+
+    /// <summary>
+    /// Records a successful placement assignment and the time it took to host.
+    /// </summary>
     public static void RecordPlacementAssignmentHostedAccepted(
         Guid workerNodeId,
         Guid brainId,
@@ -45,38 +54,32 @@ public static class WorkerNodeTelemetry
         string outcome,
         double hostingMs)
     {
-        var worker = workerNodeId.ToString("D");
-        var brain = brainId == Guid.Empty ? string.Empty : brainId.ToString("D");
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
-        var acceptedOutcome = string.IsNullOrWhiteSpace(outcome) ? "ready" : outcome;
-        PlacementAssignmentHostedAccepted.Add(
-            1,
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", brain),
-            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", assignmentTarget),
+        var dimensions = CreateCommonDimensions(
+            workerNodeId,
+            brainId == Guid.Empty ? null : brainId,
+            placementEpoch,
+            NormalizeLabel(target, "unknown"));
+        var acceptedOutcome = NormalizeLabel(outcome, "ready");
+        var metricTags = BuildTags(
+            dimensions,
             new KeyValuePair<string, object?>("outcome", acceptedOutcome),
             new KeyValuePair<string, object?>("failure_reason", "none"));
 
-        PlacementAssignmentHostingMs.Record(
-            Math.Max(0, hostingMs),
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", brain),
-            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", assignmentTarget),
-            new KeyValuePair<string, object?>("outcome", acceptedOutcome),
-            new KeyValuePair<string, object?>("failure_reason", "none"));
+        PlacementAssignmentHostedAccepted.Add(1, metricTags);
+
+        var normalizedHostingMs = Math.Max(0, hostingMs);
+        PlacementAssignmentHostingMs.Record(normalizedHostingMs, metricTags);
 
         using var activity = ActivitySource.StartActivity("workernode.placement.assignment.hosted.accepted");
-        activity?.SetTag("worker_node.id", worker);
-        activity?.SetTag("brain.id", brain);
-        activity?.SetTag("placement.epoch", (long)placementEpoch);
-        activity?.SetTag("placement.target", assignmentTarget);
+        ApplyPlacementTags(activity, dimensions);
         activity?.SetTag("placement.outcome", acceptedOutcome);
         activity?.SetTag("placement.failure_reason", "none");
-        activity?.SetTag("placement.hosting_ms", Math.Max(0, hostingMs));
+        activity?.SetTag("placement.hosting_ms", normalizedHostingMs);
     }
 
+    /// <summary>
+    /// Records a failed placement assignment attempt.
+    /// </summary>
     public static void RecordPlacementAssignmentHostedFailed(
         Guid workerNodeId,
         Guid? brainId,
@@ -84,48 +87,41 @@ public static class WorkerNodeTelemetry
         string target,
         string failureReason)
     {
-        var worker = workerNodeId.ToString("D");
-        var brain = brainId.HasValue && brainId.Value != Guid.Empty
-            ? brainId.Value.ToString("D")
-            : string.Empty;
-        var assignmentTarget = string.IsNullOrWhiteSpace(target) ? "unknown" : target;
-        var reason = string.IsNullOrWhiteSpace(failureReason) ? "unknown" : failureReason;
+        var dimensions = CreateCommonDimensions(
+            workerNodeId,
+            brainId,
+            placementEpoch,
+            NormalizeLabel(target, "unknown"));
+        var reason = NormalizeLabel(failureReason, "unknown");
+
         PlacementAssignmentHostedFailed.Add(
             1,
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", brain),
-            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", assignmentTarget),
-            new KeyValuePair<string, object?>("failure_reason", reason));
+            BuildTags(dimensions, new KeyValuePair<string, object?>("failure_reason", reason)));
 
         using var activity = ActivitySource.StartActivity("workernode.placement.assignment.hosted.failed");
-        activity?.SetTag("worker_node.id", worker);
-        activity?.SetTag("brain.id", brain);
-        activity?.SetTag("placement.epoch", (long)placementEpoch);
-        activity?.SetTag("placement.target", assignmentTarget);
+        ApplyPlacementTags(activity, dimensions);
         activity?.SetTag("placement.failure_reason", reason);
     }
 
+    /// <summary>
+    /// Records a placement reconcile request received by the worker.
+    /// </summary>
     public static void RecordPlacementReconcileRequested(Guid workerNodeId, Guid? brainId, ulong placementEpoch)
     {
-        var worker = workerNodeId.ToString("D");
-        var brain = FormatBrainId(brainId);
+        var dimensions = CreateCommonDimensions(workerNodeId, brainId, placementEpoch, ReconcileTarget);
+
         PlacementReconcileRequested.Add(
             1,
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", brain),
-            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", ReconcileTarget),
-            new KeyValuePair<string, object?>("failure_reason", "none"));
+            BuildTags(dimensions, new KeyValuePair<string, object?>("failure_reason", "none")));
 
         using var activity = ActivitySource.StartActivity("workernode.placement.reconcile.requested");
-        activity?.SetTag("worker_node.id", worker);
-        activity?.SetTag("brain.id", brain);
-        activity?.SetTag("placement.epoch", (long)placementEpoch);
-        activity?.SetTag("placement.target", ReconcileTarget);
+        ApplyPlacementTags(activity, dimensions);
         activity?.SetTag("placement.failure_reason", "none");
     }
 
+    /// <summary>
+    /// Records the outcome of a placement reconcile report emitted by the worker.
+    /// </summary>
     public static void RecordPlacementReconcileReported(
         Guid workerNodeId,
         Guid? brainId,
@@ -134,60 +130,59 @@ public static class WorkerNodeTelemetry
         string outcome,
         string failureReason)
     {
-        var worker = workerNodeId.ToString("D");
-        var brain = FormatBrainId(brainId);
-        var reconcileOutcome = string.IsNullOrWhiteSpace(outcome) ? "matched" : outcome;
-        var reason = string.IsNullOrWhiteSpace(failureReason) ? "none" : failureReason;
+        var dimensions = CreateCommonDimensions(workerNodeId, brainId, placementEpoch, ReconcileTarget);
+        var reconcileOutcome = NormalizeLabel(outcome, "matched");
+        var reason = NormalizeLabel(failureReason, "none");
+        var normalizedAssignmentCount = Math.Max(0, assignmentCount);
 
         PlacementReconcileReported.Add(
             1,
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", brain),
-            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", ReconcileTarget),
-            new KeyValuePair<string, object?>("failure_reason", reason),
-            new KeyValuePair<string, object?>("outcome", reconcileOutcome),
-            new KeyValuePair<string, object?>("assignment_count", Math.Max(0, assignmentCount)));
+            BuildTags(
+                dimensions,
+                new KeyValuePair<string, object?>("failure_reason", reason),
+                new KeyValuePair<string, object?>("outcome", reconcileOutcome),
+                new KeyValuePair<string, object?>("assignment_count", normalizedAssignmentCount)));
 
         using var activity = ActivitySource.StartActivity("workernode.placement.reconcile.reported");
-        activity?.SetTag("worker_node.id", worker);
-        activity?.SetTag("brain.id", brain);
-        activity?.SetTag("placement.epoch", (long)placementEpoch);
-        activity?.SetTag("placement.target", ReconcileTarget);
+        ApplyPlacementTags(activity, dimensions);
         activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("placement.outcome", reconcileOutcome);
-        activity?.SetTag("placement.assignment_count", Math.Max(0, assignmentCount));
+        activity?.SetTag("placement.assignment_count", normalizedAssignmentCount);
     }
 
+    /// <summary>
+    /// Records a discovery endpoint registration, removal, or invalidation observation.
+    /// </summary>
     public static void RecordDiscoveryEndpointObserved(
         Guid workerNodeId,
         string target,
         string outcome,
         string failureReason)
     {
-        var worker = workerNodeId.ToString("D");
-        var discoveryTarget = string.IsNullOrWhiteSpace(target) ? DiscoveryTarget : target;
-        var observationOutcome = string.IsNullOrWhiteSpace(outcome) ? "updated" : outcome;
-        var reason = string.IsNullOrWhiteSpace(failureReason) ? "none" : failureReason;
+        var dimensions = CreateCommonDimensions(
+            workerNodeId,
+            brainId: null,
+            DiscoveryPlacementEpoch,
+            NormalizeLabel(target, DiscoveryTarget));
+        var observationOutcome = NormalizeLabel(outcome, "updated");
+        var reason = NormalizeLabel(failureReason, "none");
 
         DiscoveryEndpointObserved.Add(
             1,
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", string.Empty),
-            new KeyValuePair<string, object?>("placement_epoch", (long)DiscoveryPlacementEpoch),
-            new KeyValuePair<string, object?>("target", discoveryTarget),
-            new KeyValuePair<string, object?>("failure_reason", reason),
-            new KeyValuePair<string, object?>("outcome", observationOutcome));
+            BuildTags(
+                dimensions,
+                new KeyValuePair<string, object?>("failure_reason", reason),
+                new KeyValuePair<string, object?>("outcome", observationOutcome)));
 
         using var activity = ActivitySource.StartActivity("workernode.discovery.endpoint.observed");
-        activity?.SetTag("worker_node.id", worker);
-        activity?.SetTag("brain.id", string.Empty);
-        activity?.SetTag("placement.epoch", (long)DiscoveryPlacementEpoch);
-        activity?.SetTag("placement.target", discoveryTarget);
+        ApplyPlacementTags(activity, dimensions);
         activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("discovery.outcome", observationOutcome);
     }
 
+    /// <summary>
+    /// Records whether a discovery endpoint lookup resolved directly or fell back to a hint.
+    /// </summary>
     public static void RecordDiscoveryEndpointResolve(
         Guid workerNodeId,
         Guid? brainId,
@@ -196,32 +191,74 @@ public static class WorkerNodeTelemetry
         string outcome,
         string failureReason)
     {
-        var worker = workerNodeId.ToString("D");
-        var brain = FormatBrainId(brainId);
-        var resolveTarget = string.IsNullOrWhiteSpace(target) ? DiscoveryTarget : target;
-        var resolveOutcome = string.IsNullOrWhiteSpace(outcome) ? "resolved" : outcome;
-        var reason = string.IsNullOrWhiteSpace(failureReason) ? "none" : failureReason;
+        var dimensions = CreateCommonDimensions(
+            workerNodeId,
+            brainId,
+            placementEpoch,
+            NormalizeLabel(target, DiscoveryTarget));
+        var resolveOutcome = NormalizeLabel(outcome, "resolved");
+        var reason = NormalizeLabel(failureReason, "none");
 
         DiscoveryEndpointResolve.Add(
             1,
-            new KeyValuePair<string, object?>("worker_node_id", worker),
-            new KeyValuePair<string, object?>("brain_id", brain),
-            new KeyValuePair<string, object?>("placement_epoch", (long)placementEpoch),
-            new KeyValuePair<string, object?>("target", resolveTarget),
-            new KeyValuePair<string, object?>("failure_reason", reason),
-            new KeyValuePair<string, object?>("outcome", resolveOutcome));
+            BuildTags(
+                dimensions,
+                new KeyValuePair<string, object?>("failure_reason", reason),
+                new KeyValuePair<string, object?>("outcome", resolveOutcome)));
 
         using var activity = ActivitySource.StartActivity("workernode.discovery.endpoint.resolve");
-        activity?.SetTag("worker_node.id", worker);
-        activity?.SetTag("brain.id", brain);
-        activity?.SetTag("placement.epoch", (long)placementEpoch);
-        activity?.SetTag("placement.target", resolveTarget);
+        ApplyPlacementTags(activity, dimensions);
         activity?.SetTag("placement.failure_reason", reason);
         activity?.SetTag("discovery.outcome", resolveOutcome);
     }
+
+    private static CommonDimensions CreateCommonDimensions(
+        Guid workerNodeId,
+        Guid? brainId,
+        ulong placementEpoch,
+        string target)
+        => new(
+            workerNodeId.ToString("D"),
+            FormatBrainId(brainId),
+            (long)placementEpoch,
+            target);
+
+    private static KeyValuePair<string, object?>[] BuildTags(
+        CommonDimensions dimensions,
+        params KeyValuePair<string, object?>[] extraTags)
+    {
+        var tags = new KeyValuePair<string, object?>[4 + extraTags.Length];
+        tags[0] = new KeyValuePair<string, object?>("worker_node_id", dimensions.WorkerNodeId);
+        tags[1] = new KeyValuePair<string, object?>("brain_id", dimensions.BrainId);
+        tags[2] = new KeyValuePair<string, object?>("placement_epoch", dimensions.PlacementEpoch);
+        tags[3] = new KeyValuePair<string, object?>("target", dimensions.Target);
+        for (var i = 0; i < extraTags.Length; i++)
+        {
+            tags[4 + i] = extraTags[i];
+        }
+
+        return tags;
+    }
+
+    private static void ApplyPlacementTags(Activity? activity, CommonDimensions dimensions)
+    {
+        activity?.SetTag("worker_node.id", dimensions.WorkerNodeId);
+        activity?.SetTag("brain.id", dimensions.BrainId);
+        activity?.SetTag("placement.epoch", dimensions.PlacementEpoch);
+        activity?.SetTag("placement.target", dimensions.Target);
+    }
+
+    private static string NormalizeLabel(string value, string fallback)
+        => string.IsNullOrWhiteSpace(value) ? fallback : value;
 
     private static string FormatBrainId(Guid? brainId)
         => brainId.HasValue && brainId.Value != Guid.Empty
             ? brainId.Value.ToString("D")
             : string.Empty;
+
+    private readonly record struct CommonDimensions(
+        string WorkerNodeId,
+        string BrainId,
+        long PlacementEpoch,
+        string Target);
 }

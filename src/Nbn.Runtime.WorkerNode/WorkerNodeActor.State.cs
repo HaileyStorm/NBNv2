@@ -51,7 +51,6 @@ public sealed partial class WorkerNodeActor
         public PlacementAssignment Assignment { get; }
         public PID? HostedPid { get; set; }
         public PlacementAssignmentState State { get; set; }
-        public string Message { get; set; } = string.Empty;
     }
 
     private readonly record struct HostedShard(

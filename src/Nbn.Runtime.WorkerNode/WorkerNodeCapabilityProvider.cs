@@ -55,11 +55,8 @@ public sealed partial class WorkerNodeCapabilityProvider
     {
         lock (_sync)
         {
-            var now = _clock();
-            var baseline = GetOrRefreshBaseline(now);
-            var scores = GetOrRefreshScores(baseline);
-            var runtimeLoad = SampleRuntimeLoad(now);
-            var capabilities = CreateCapabilitySnapshot(baseline, scores, runtimeLoad);
+            var snapshot = CaptureCapabilitySnapshot(_clock());
+            var capabilities = CreateCapabilitySnapshot(snapshot.Baseline, snapshot.Scores, snapshot.RuntimeLoad);
             return WorkerCapabilityScaling.ApplyScale(capabilities, _availability);
         }
     }
@@ -105,6 +102,15 @@ public sealed partial class WorkerNodeCapabilityProvider
         };
     }
 
+    private CapabilitySnapshot CaptureCapabilitySnapshot(DateTimeOffset now)
+    {
+        var baseline = GetOrRefreshBaseline(now);
+        return new CapabilitySnapshot(
+            baseline,
+            GetOrRefreshScores(baseline),
+            SampleRuntimeLoad(now));
+    }
+
     private WorkerCapabilityBaseline GetOrRefreshBaseline(DateTimeOffset now)
     {
         if (_baseline is not null && now - _baselineSampledAt < _probeRefreshInterval)
@@ -113,25 +119,28 @@ public sealed partial class WorkerNodeCapabilityProvider
         }
 
         var previous = _baseline;
-        _baseline = SafeProbeBaseline();
+        var current = SafeProbeBaseline();
+        _baseline = current;
         _baselineSampledAt = now;
-        if (previous is null || !CanReuseScores(previous, _baseline))
-        {
-            _scores = null;
-        }
+        InvalidateScoresIfHardwareProfileChanged(previous, current);
 
-        return _baseline;
+        return current;
     }
 
     private WorkerCapabilityScores GetOrRefreshScores(WorkerCapabilityBaseline baseline)
     {
-        if (_scores is not null)
-        {
-            return _scores;
-        }
-
-        _scores = SafeProbeScores(baseline);
+        _scores ??= SafeProbeScores(baseline);
         return _scores;
+    }
+
+    private void InvalidateScoresIfHardwareProfileChanged(
+        WorkerCapabilityBaseline? previous,
+        WorkerCapabilityBaseline current)
+    {
+        if (previous is null || !CanReuseScores(previous, current))
+        {
+            _scores = null;
+        }
     }
 
     private WorkerCapabilityRuntimeLoad SampleRuntimeLoad(DateTimeOffset now)
@@ -166,6 +175,20 @@ public sealed partial class WorkerNodeCapabilityProvider
            && left.IlgpuCudaAvailable == right.IlgpuCudaAvailable
            && left.IlgpuOpenclAvailable == right.IlgpuOpenclAvailable;
 
+    private static WorkerCapabilityBaseline CreateFallbackBaseline()
+        => new(
+            CpuCores: (uint)Math.Max(1, Environment.ProcessorCount),
+            RamFreeBytes: 0,
+            RamTotalBytes: 0,
+            StorageFreeBytes: 0,
+            StorageTotalBytes: 0,
+            HasGpu: false,
+            GpuName: string.Empty,
+            VramFreeBytes: 0,
+            VramTotalBytes: 0,
+            IlgpuCudaAvailable: false,
+            IlgpuOpenclAvailable: false);
+
     /// <summary>
     /// Raw, unscaled worker capabilities sampled directly from the host.
     /// </summary>
@@ -192,6 +215,11 @@ public sealed partial class WorkerNodeCapabilityProvider
         /// </summary>
         public static readonly WorkerCapabilityScores Empty = new(0f, 0f);
     }
+
+    private sealed record CapabilitySnapshot(
+        WorkerCapabilityBaseline Baseline,
+        WorkerCapabilityScores Scores,
+        WorkerCapabilityRuntimeLoad RuntimeLoad);
 
     private sealed record WorkerCapabilityRuntimeLoad(float ProcessCpuLoadPercent, ulong ProcessRamUsedBytes);
 

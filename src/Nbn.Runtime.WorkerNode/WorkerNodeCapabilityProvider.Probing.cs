@@ -16,18 +16,7 @@ public sealed partial class WorkerNodeCapabilityProvider
         }
         catch
         {
-            return new WorkerCapabilityBaseline(
-                CpuCores: (uint)Math.Max(1, Environment.ProcessorCount),
-                RamFreeBytes: 0,
-                RamTotalBytes: 0,
-                StorageFreeBytes: 0,
-                StorageTotalBytes: 0,
-                HasGpu: false,
-                GpuName: string.Empty,
-                VramFreeBytes: 0,
-                VramTotalBytes: 0,
-                IlgpuCudaAvailable: false,
-                IlgpuOpenclAvailable: false);
+            return CreateFallbackBaseline();
         }
     }
 
