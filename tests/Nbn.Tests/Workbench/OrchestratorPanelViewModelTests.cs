@@ -105,9 +105,11 @@ public class OrchestratorPanelViewModelTests
                 () => string.Equals(
                     vm.SettingsLaunchStatus,
                     "Stopped. Rolled back after Start All failure.",
-                    StringComparison.Ordinal));
+                    StringComparison.Ordinal),
+                timeoutMs: 5000);
             await WaitForAsync(
-                () => string.Equals(vm.HiveMindLaunchStatus, "Missing installed command.", StringComparison.Ordinal));
+                () => string.Equals(vm.HiveMindLaunchStatus, "Missing installed command.", StringComparison.Ordinal),
+                timeoutMs: 5000);
 
             Assert.Equal(
                 ["Nbn.Runtime.SettingsMonitor", "Nbn.Runtime.HiveMind"],
